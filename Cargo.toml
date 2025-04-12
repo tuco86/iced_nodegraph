@@ -1,0 +1,11 @@
+[package]
+name = "iced_nodegraph"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+[dependencies.iced]
+path = "../iced"
+default-features = false
+features = ["advanced", "wgpu", "tokio"]
