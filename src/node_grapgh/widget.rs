@@ -188,18 +188,11 @@ where
                     layout
                         .children()
                         .enumerate()
-                        .find_map(|(node_index, layout)| {
-                            if cursor.is_over(layout.bounds()) {
-                                if let Some(origin) = cursor.position() {
-                                    println!("clicked node {:?} at {:?}", node_index, origin);
-                                    shell.capture_event();
-                                    Some((node_index, origin))
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
+                        .filter(|(i, l)| cursor.is_over(l.bounds()))
+                        .find_map(|(i, l)| cursor.position().map(|p| (i, p)))
+                        .map(|(node_index, origin)| {
+                            println!("clicked node {:?} at {:?}", node_index, origin);
+                            (node_index, origin)
                         });
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
