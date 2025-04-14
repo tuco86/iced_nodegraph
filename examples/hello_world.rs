@@ -1,7 +1,7 @@
 use iced::{
-    advanced::mouse, widget::{self, column, container, row, stack, text}, Element, Length, Point
+    widget::{self, column, container, mouse_area, row, stack, text}, Length, Point
 };
-use iced_nodegraph::node_graph;
+use iced_nodegraph::{node_graph, node_pin, PinSide};
 
 pub fn main() -> iced::Result {
     iced::application(Application::new, Application::update, Application::view)
@@ -47,16 +47,8 @@ where
 {
     // Title bar with collapse button, name, burger button
     let collapse_button = widget::button(text("-"));
-    // .on_press(NodeMessage::ToggleCollapse);
-
     let burger_button = widget::button(text("≡"));
-    // .on_press(NodeMessage::ShowContextMenu);
-
-    let title_text = widget::MouseArea::new(text(name).size(16).width(Length::Fill))
-        // .on_press(NodeMessage::DragStart)
-        // .on_release(NodeMessage::DragEnd) // TODO: release is better handled by NodeGraph
-        .interaction(iced::mouse::Interaction::Move);
-
+    let title_text = widget::text(name).size(16).width(Length::Fill);
     let title_bar = container(
         row![collapse_button, title_text, burger_button,]
             .spacing(8)
@@ -67,19 +59,11 @@ where
 
     column!(
         title_bar,
-        node_pin("pin a"),
-        node_pin("pin b"),
-        node_pin("pin c"),
-        node_pin("pin d"),
+        column![
+            node_pin(PinSide::Left, mouse_area(text!("pin a")).interaction(iced::mouse::Interaction::Move)),
+            node_pin(PinSide::Right, text!("pin b")),
+            node_pin(PinSide::Top, text!("pin c")),
+            node_pin(PinSide::Bottom, text!("pin d")),
+        ].padding(4.0),
     ).width(200.0).into()
-}
-
-fn node_pin<'a, Message>(text: impl widget::text::IntoFragment<'a>) -> Element<'a, Message>
-where
-    Message: Clone + 'a,
-{
-    row![
-        widget::mouse_area(widget::text("#")).interaction(mouse::Interaction::Grab),
-        widget::text(text).size(12),
-    ].into()
 }

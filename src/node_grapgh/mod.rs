@@ -1,4 +1,4 @@
-use iced::{Length, Point, Size, Vector};
+use iced::{Length, Point, Size};
 
 mod widget;
 
