@@ -49,7 +49,9 @@ where
     Message: 'a,
 {
     fn tag(&self) -> tree::Tag {
-        tree::Tag::of::<NodePinState>()
+        let t= tree::Tag::of::<NodePinState>();
+        println!("tag: {:?}", t);
+        t
     }
 
     fn state(&self) -> tree::State {

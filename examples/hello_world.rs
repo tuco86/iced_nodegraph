@@ -55,21 +55,16 @@ where
     .width(Length::Fill)
     .padding([4, 4]);
 
-    container(
-        column!(
-            title_bar,
-            column![
-                node_pin(
-                    PinSide::Left,
-                    mouse_area(text!("pin a")).interaction(iced::mouse::Interaction::Move)
-                ),
-                node_pin(PinSide::Right, text!("pin b")),
-                node_pin(PinSide::Top, text!("pin c")),
-                node_pin(PinSide::Bottom, text!("pin d")),
-            ]
-            .padding(6.0),
-        )
-        .width(200.0),
+    column!(
+        title_bar,
+        node_pin(
+            PinSide::Left,
+            mouse_area(text!("pin a")).interaction(iced::mouse::Interaction::Move)
+        ),
+        node_pin(PinSide::Right, text!("pin b")),
+        node_pin(PinSide::Top, text!("pin c")),
+        node_pin(PinSide::Bottom, text!("pin d")),
     )
-    .into()
+        .width(200.0)
+        .into()
 }

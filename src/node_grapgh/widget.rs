@@ -24,7 +24,9 @@ where
     Renderer: iced::advanced::renderer::Renderer,
 {
     fn tag(&self) -> tree::Tag {
-        tree::Tag::of::<NodeGraphState>()
+        let t= tree::Tag::of::<NodeGraphState>();
+        println!("tag: {:?}", t);
+        t
     }
 
     fn state(&self) -> tree::State {
@@ -34,6 +36,8 @@ where
     fn size(&self) -> Size<Length> {
         self.size
     }
+
+    
 
     fn layout(
         &self,
@@ -92,6 +96,8 @@ where
                     .zip(layout.children())
                     .enumerate()
                 {
+                    println!("layout.children: {:?} tree.children: {:?}", layout.children().count(), tree.children.len());
+
                     let node_move_offset =
                         if let Dragging::Node(dragging_node_index, origin) = state.dragging {
                             cursor
@@ -445,6 +451,7 @@ fn find_pins<'a>(
 ) -> Vec<(usize, &'a NodePinState, Layout<'a>, (Point, Point))> {
     let mut flat = Vec::new();
     let mut pin_index = 0;
+    println!("find_pins");
     inner_find_pins(&mut flat, &mut pin_index, tree, layout, tree, layout);
     flat
 }
@@ -464,7 +471,11 @@ fn inner_find_pins<'a>(
         let pin_positions = pin_positions(pin_state.side, node_bounds);
         flat.push((*pin_index, pin_state, pin_layout, pin_positions));
         *pin_index += 1;
+    } else if pin_tree.tag == tree::Tag::of::<NodeGraphState>() {
+        println!("found node: {:?}", pin_tree.tag);
     }
+
+    println!("pin_layout.children: {:?} pin_tree.children: {:?}", pin_layout.children().count(), pin_tree.children.len());
 
     for (child_layout, child_tree) in pin_layout.children().zip(&pin_tree.children) {
         inner_find_pins(
