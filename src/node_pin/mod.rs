@@ -1,8 +1,11 @@
-use iced::advanced::{
-    Clipboard, Layout, Shell, Widget, layout, mouse, renderer,
-    widget::{Tree, tree},
-};
 use iced::{Element, Event, Length, Rectangle, Size};
+use iced::{
+    Point,
+    advanced::{
+        Clipboard, Layout, Shell, Widget, layout, mouse, renderer,
+        widget::{Tree, tree},
+    },
+};
 
 /// An edge to attach a `NodePinWidget` to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -39,6 +42,7 @@ where
 #[derive(Debug, Clone, Default)]
 pub(super) struct NodePinState {
     pub side: PinSide,
+    pub position: Point,
 }
 
 impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
@@ -49,13 +53,14 @@ where
     Message: 'a,
 {
     fn tag(&self) -> tree::Tag {
-        let t= tree::Tag::of::<NodePinState>();
-        println!("tag: {:?}", t);
-        t
+        tree::Tag::of::<NodePinState>()
     }
 
     fn state(&self) -> tree::State {
-        tree::State::new(NodePinState { side: self.side })
+        tree::State::new(NodePinState {
+            side: self.side,
+            position: Point::new(0.0, 0.0),
+        })
     }
 
     fn size(&self) -> Size<Length> {
@@ -91,6 +96,11 @@ where
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
+        {
+            let state = tree.state.downcast_mut::<NodePinState>();
+            state.side = self.side;
+            state.position = layout.bounds().center();
+        }
         if let Some((child_layout, child_tree)) = layout.children().zip(&mut tree.children).next() {
             self.content.as_widget_mut().update(
                 child_tree,

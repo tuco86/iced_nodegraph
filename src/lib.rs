@@ -1,4 +1,3 @@
-use iced::Element;
 pub use node_grapgh::{NodeGraph, widget::node_graph};
 pub use node_pin::{NodePin, PinSide, node_pin};
 

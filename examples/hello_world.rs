@@ -65,6 +65,7 @@ where
         node_pin(PinSide::Top, text!("pin c")),
         node_pin(PinSide::Bottom, text!("pin d")),
     )
-        .width(200.0)
-        .into()
+    .width(200.0)
+    .padding(4.0)
+    .into()
 }

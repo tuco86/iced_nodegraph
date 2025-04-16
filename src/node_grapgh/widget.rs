@@ -24,9 +24,7 @@ where
     Renderer: iced::advanced::renderer::Renderer,
 {
     fn tag(&self) -> tree::Tag {
-        let t= tree::Tag::of::<NodeGraphState>();
-        println!("tag: {:?}", t);
-        t
+        tree::Tag::of::<NodeGraphState>()
     }
 
     fn state(&self) -> tree::State {
@@ -36,8 +34,6 @@ where
     fn size(&self) -> Size<Length> {
         self.size
     }
-
-    
 
     fn layout(
         &self,
@@ -96,8 +92,6 @@ where
                     .zip(layout.children())
                     .enumerate()
                 {
-                    println!("layout.children: {:?} tree.children: {:?}", layout.children().count(), tree.children.len());
-
                     let node_move_offset =
                         if let Dragging::Node(dragging_node_index, origin) = state.dragging {
                             cursor
@@ -132,14 +126,14 @@ where
                         // println!("pins: {:?}", pins.len());
 
                         // find node_pin elements in layouy children
-                        for (pin_index, pin_state, pin_layout, _) in pins {
+                        for (_, pin_state, _) in pins {
                             // println!("pin_index: {:?}", pin_index);
                             // use renderer.fill_quad to draw a circle around a point at the center of the pin but moved to the border of the node.
                             let pin_radius = 5.0;
                             let pin_size = Size::new(pin_radius * 2.0, pin_radius * 2.0);
                             let pin_offset =
                                 Vector::new(-pin_size.width / 2.0, -pin_size.height / 2.0);
-                            let (a, b) = pin_positions(pin_state.side, layout.bounds());
+                            let (a, b) = pin_positions(pin_state, layout.bounds());
                             for pin_position in [a, b] {
                                 let pin_rectangle =
                                     Rectangle::new(pin_position + pin_offset, pin_size);
@@ -321,7 +315,7 @@ where
                             for (node_index, (node_layout, node_tree)) in
                                 layout.children().zip(&mut tree.children).enumerate()
                             {
-                                for (pin_index, _, _, (a, b)) in find_pins(node_tree, node_layout) {
+                                for (pin_index, _, (a, b)) in find_pins(node_tree, node_layout) {
                                     let distance = a
                                         .distance(cursor_position)
                                         .min(b.distance(cursor_position));
@@ -382,7 +376,7 @@ where
             let state = tree.state.downcast_ref::<NodeGraphState>();
             let cursor_position = state.camera.screen_to_world(cursor_position);
 
-            for (_, state, _, (a, b)) in find_pins(tree, layout) {
+            for (_, state, (a, b)) in find_pins(tree, layout) {
                 let distance = a
                     .into_euclid()
                     .distance_to(cursor_position)
@@ -448,68 +442,50 @@ where
 fn find_pins<'a>(
     tree: &'a Tree,
     layout: Layout<'a>,
-) -> Vec<(usize, &'a NodePinState, Layout<'a>, (Point, Point))> {
+) -> Vec<(usize, &'a NodePinState, (Point, Point))> {
     let mut flat = Vec::new();
     let mut pin_index = 0;
-    println!("find_pins");
-    inner_find_pins(&mut flat, &mut pin_index, tree, layout, tree, layout);
+    inner_find_pins(&mut flat, &mut pin_index, layout, tree);
     flat
 }
 
 fn inner_find_pins<'a>(
-    flat: &mut Vec<(usize, &'a NodePinState, Layout<'a>, (Point, Point))>,
+    flat: &mut Vec<(usize, &'a NodePinState, (Point, Point))>,
     pin_index: &mut usize,
-    node_tree: &'a Tree,
     node_layout: Layout<'a>,
     pin_tree: &'a Tree,
-    pin_layout: Layout<'a>,
 ) {
     if pin_tree.tag == tree::Tag::of::<NodePinState>() {
-        println!("found pin: {:?}", pin_tree.tag);
         let pin_state = pin_tree.state.downcast_ref::<NodePinState>();
         let node_bounds = node_layout.bounds();
-        let pin_positions = pin_positions(pin_state.side, node_bounds);
-        flat.push((*pin_index, pin_state, pin_layout, pin_positions));
+        let pin_positions = pin_positions(pin_state, node_bounds);
+        flat.push((*pin_index, pin_state, pin_positions));
         *pin_index += 1;
-    } else if pin_tree.tag == tree::Tag::of::<NodeGraphState>() {
-        println!("found node: {:?}", pin_tree.tag);
     }
 
-    println!("pin_layout.children: {:?} pin_tree.children: {:?}", pin_layout.children().count(), pin_tree.children.len());
-
-    for (child_layout, child_tree) in pin_layout.children().zip(&pin_tree.children) {
-        inner_find_pins(
-            flat,
-            pin_index,
-            node_tree,
-            node_layout,
-            child_tree,
-            child_layout,
-        );
+    for child_tree in &pin_tree.children {
+        inner_find_pins(flat, pin_index, node_layout, child_tree);
     }
 }
 
-fn pin_positions(side: PinSide, node_bounds: Rectangle) -> (Point, Point) {
-    if side == PinSide::Row {
+fn pin_positions(state: &NodePinState, node_bounds: Rectangle) -> (Point, Point) {
+    if state.side == PinSide::Row {
         (
-            pin_position(PinSide::Left, node_bounds),
-            pin_position(PinSide::Right, node_bounds),
+            pin_position(state.position, PinSide::Left, node_bounds),
+            pin_position(state.position, PinSide::Right, node_bounds),
         )
     } else {
-        let position = pin_position(side, node_bounds);
+        let position = pin_position(state.position, state.side, node_bounds);
         (position, position)
     }
 }
 
-fn pin_position(side: PinSide, node_bounds: Rectangle) -> Point {
+fn pin_position(position: Point, side: PinSide, node_bounds: Rectangle) -> Point {
     match side {
         PinSide::Row => panic!("Row pin is supposed to be handled separately"),
-        PinSide::Left => Point::new(node_bounds.x + 0.5, node_bounds.y + 0.5),
-        PinSide::Right => Point::new(node_bounds.x + node_bounds.width - 0.5, node_bounds.y + 0.5),
-        PinSide::Top => Point::new(node_bounds.x + 0.5, node_bounds.y + 0.5),
-        PinSide::Bottom => Point::new(
-            node_bounds.x + 0.5,
-            node_bounds.y + node_bounds.height - 0.5,
-        ),
+        PinSide::Left => Point::new(node_bounds.x + 0.5, position.y),
+        PinSide::Right => Point::new(node_bounds.x + node_bounds.width - 0.5, position.y),
+        PinSide::Top => Point::new(position.x, node_bounds.y + 0.5),
+        PinSide::Bottom => Point::new(position.x, node_bounds.y + node_bounds.height - 0.5),
     }
 }
