@@ -906,6 +906,7 @@ dependencies = [
 name = "iced_nodegraph"
 version = "0.1.0"
 dependencies = [
+ "euclid",
  "iced",
 ]
 

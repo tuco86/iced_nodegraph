@@ -1,7 +1,8 @@
 use iced::{
-    widget::{self, column, container, mouse_area, row, stack, text}, Length, Point
+    Length, Point,
+    widget::{self, column, container, mouse_area, row, stack, text},
 };
-use iced_nodegraph::{node_graph, node_pin, PinSide};
+use iced_nodegraph::{PinSide, node_graph, node_pin};
 
 pub fn main() -> iced::Result {
     iced::application(Application::new, Application::update, Application::view)
@@ -34,10 +35,7 @@ impl Application {
         let mut ng = node_graph();
         ng.push_node(Point::new(100.0, 50.0), node("Node 1"));
         ng.push_node(Point::new(325.0, 50.0), node("Node 2"));
-        stack!(ng)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        stack!(ng).width(Length::Fill).height(Length::Fill).into()
     }
 }
 
@@ -57,13 +55,21 @@ where
     .width(Length::Fill)
     .padding([4, 4]);
 
-    column!(
-        title_bar,
-        column![
-            node_pin(PinSide::Left, mouse_area(text!("pin a")).interaction(iced::mouse::Interaction::Move)),
-            node_pin(PinSide::Right, text!("pin b")),
-            node_pin(PinSide::Top, text!("pin c")),
-            node_pin(PinSide::Bottom, text!("pin d")),
-        ].padding(4.0),
-    ).width(200.0).into()
+    container(
+        column!(
+            title_bar,
+            column![
+                node_pin(
+                    PinSide::Left,
+                    mouse_area(text!("pin a")).interaction(iced::mouse::Interaction::Move)
+                ),
+                node_pin(PinSide::Right, text!("pin b")),
+                node_pin(PinSide::Top, text!("pin c")),
+                node_pin(PinSide::Bottom, text!("pin d")),
+            ]
+            .padding(6.0),
+        )
+        .width(200.0),
+    )
+    .into()
 }

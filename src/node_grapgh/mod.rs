@@ -1,5 +1,8 @@
 use iced::{Length, Point, Size};
 
+mod camera;
+mod euclid;
+mod state;
 mod widget;
 
 /// A container that distributes its contents according to their coordinates.
@@ -10,8 +13,6 @@ pub struct NodeGraph<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer
     size: Size<Length>,
     nodes: Vec<(Point, iced::Element<'a, Message, Theme, Renderer>)>, // (node_id, pin_id) -> node
     edges: Vec<((usize, usize), (usize, usize))>, // (from_node, from_pin) -> (to_node, to_pin)
-    dragging_node: Option<(usize, Point)>,        // draging node with offset
-    dragging_edge: Option<(usize, usize)>,        // connecting (from_node, from_pin)
 }
 
 impl<Message, Theme, Renderer> Default for NodeGraph<'_, Message, Theme, Renderer>
@@ -23,8 +24,6 @@ where
             size: Size::new(Length::Fill, Length::Fill),
             nodes: Vec::new(),
             edges: Vec::new(),
-            dragging_node: None,
-            dragging_edge: None,
         }
     }
 }

@@ -1,11 +1,8 @@
 use iced::advanced::{
-    Clipboard, Layout, Shell, Widget,
-    layout, mouse, renderer,
-    widget::{tree, Tree},
+    Clipboard, Layout, Shell, Widget, layout, mouse, renderer,
+    widget::{Tree, tree},
 };
-use iced::{
-    Element, Event, Length, Rectangle, Size,
-};
+use iced::{Element, Event, Length, Rectangle, Size};
 
 /// An edge to attach a `NodePinWidget` to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -31,10 +28,7 @@ impl<'a, Message, Theme, Renderer> NodePin<'a, Message, Theme, Renderer>
 where
     Renderer: renderer::Renderer,
 {
-    pub fn new(
-        side: PinSide,
-        content: impl Into<Element<'a, Message, Theme, Renderer>>,
-    ) -> Self {
+    pub fn new(side: PinSide, content: impl Into<Element<'a, Message, Theme, Renderer>>) -> Self {
         Self {
             side,
             content: content.into(),
@@ -59,9 +53,7 @@ where
     }
 
     fn state(&self) -> tree::State {
-        tree::State::new(NodePinState {
-            side: self.side,
-        })
+        tree::State::new(NodePinState { side: self.side })
     }
 
     fn size(&self) -> Size<Length> {
@@ -78,7 +70,10 @@ where
         renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
-        let content_layout = self.content.as_widget().layout(&mut tree.children[0], renderer, limits);
+        let content_layout =
+            self.content
+                .as_widget()
+                .layout(&mut tree.children[0], renderer, limits);
         let size = content_layout.size();
         layout::Node::with_children(size, vec![content_layout])
     }
