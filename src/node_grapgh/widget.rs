@@ -431,6 +431,13 @@ where
     }
 }
 
+pub fn node_graph<'a, Message, Theme, Renderer>() -> NodeGraph<'a, Message, Theme, Renderer>
+where
+    Renderer: iced::advanced::renderer::Renderer,
+{
+    NodeGraph::default()
+}
+
 //// Helper function to find all NodePin elements in the tree - OF A Node!!!
 fn find_pins<'a>(
     tree: &'a Tree,

@@ -1,9 +1,9 @@
 use iced::{Length, Point, Size};
 
-mod camera;
-mod euclid;
-mod state;
-mod widget;
+pub(crate) mod camera;
+pub(crate) mod euclid;
+pub(crate) mod state;
+pub(crate) mod widget;
 
 /// A container that distributes its contents according to their coordinates.
 ///

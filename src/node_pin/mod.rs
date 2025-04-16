@@ -157,3 +157,13 @@ where
         Element::new(widget)
     }
 }
+
+pub fn node_pin<'a, Message, Theme, Renderer>(
+    side: PinSide,
+    content: impl Into<Element<'a, Message, Theme, Renderer>>,
+) -> NodePin<'a, Message, Theme, Renderer>
+where
+    Renderer: iced::advanced::renderer::Renderer,
+{
+    NodePin::new(side, content)
+}
