@@ -1,11 +1,15 @@
+use std::time::Instant;
+
 use iced::{
-    Length, Point,
+    Length, Point, Subscription,
     widget::{self, column, container, mouse_area, row, stack, text},
+    window,
 };
 use iced_nodegraph::{PinSide, node_graph, node_pin};
 
 pub fn main() -> iced::Result {
     iced::application(Application::new, Application::update, Application::view)
+        .subscription(Application::subscription)
         .title("Node Graph Example")
         .theme(|_| iced::Theme::CatppuccinFrappe)
         .run()
@@ -15,6 +19,7 @@ pub fn main() -> iced::Result {
 enum ApplicationMessage {
     #[default]
     Noop,
+    Tick(Instant),
 }
 
 #[derive(Default)]
@@ -28,6 +33,7 @@ impl Application {
     fn update(&mut self, message: ApplicationMessage) {
         match message {
             ApplicationMessage::Noop => (),
+            ApplicationMessage::Tick(_) => (),
         }
     }
 
@@ -36,6 +42,10 @@ impl Application {
         ng.push_node(Point::new(100.0, 50.0), node("Node 1"));
         ng.push_node(Point::new(325.0, 50.0), node("Node 2"));
         stack!(ng).width(Length::Fill).height(Length::Fill).into()
+    }
+
+    fn subscription(&self) -> Subscription<ApplicationMessage> {
+        window::frames().map(ApplicationMessage::Tick)
     }
 }
 

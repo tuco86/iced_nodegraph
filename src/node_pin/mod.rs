@@ -18,6 +18,18 @@ pub enum PinSide {
     Row,
 }
 
+impl Into<u32> for PinSide {
+    fn into(self) -> u32 {
+        match self {
+            PinSide::Left => 0,
+            PinSide::Right => 1,
+            PinSide::Top => 2,
+            PinSide::Bottom => 3,
+            PinSide::Row => 4,
+        }
+    }
+}
+
 /// A transparent wrapper used as a marker within `NodeGraph`.
 pub struct NodePin<'a, Message, Theme, Renderer>
 where
@@ -77,12 +89,16 @@ where
         renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
-        let content_layout =
-            self.content
+        if let Some(content_tree) = tree.children.first_mut() {
+            let content_layout = self
+                .content
                 .as_widget()
-                .layout(&mut tree.children[0], renderer, limits);
-        let size = content_layout.size();
-        layout::Node::with_children(size, vec![content_layout])
+                .layout(content_tree, renderer, limits);
+            let size = content_layout.size();
+            layout::Node::with_children(size, vec![content_layout])
+        } else {
+            layout::Node::new(Size::ZERO)
+        }
     }
 
     fn update(
@@ -156,6 +172,37 @@ where
             renderer,
         )
     }
+
+    fn size_hint(&self) -> Size<Length> {
+        self.content.as_widget().size_hint()
+    }
+
+    fn diff(&self, tree: &mut Tree) {
+        if let Some(content_tree) = tree.children.first_mut() {
+            self.content.as_widget().diff(content_tree);
+        } else {
+            tree.children.push(Tree::new(&self.content));
+        }
+    }
+
+    // fn operate(
+    //     &self,
+    //     _state: &mut Tree,
+    //     _layout: Layout<'_>,
+    //     _renderer: &Renderer,
+    //     _operation: &mut dyn Operation,
+    // ) {
+    // }
+
+    // fn overlay<'a>(
+    //     &'a mut self,
+    //     _state: &'a mut Tree,
+    //     _layout: Layout<'_>,
+    //     _renderer: &Renderer,
+    //     _translation: Vector,
+    // ) -> Option<overlay::Element<'a, Message, Theme, Renderer>> {
+    //     None
+    // }
 }
 
 impl<'a, Message, Theme, Renderer> From<NodePin<'a, Message, Theme, Renderer>>

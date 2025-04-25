@@ -1,6 +1,7 @@
 use iced::{Length, Point, Size};
 
 pub(crate) mod camera;
+pub(crate) mod effects;
 pub(crate) mod euclid;
 pub(crate) mod state;
 pub(crate) mod widget;

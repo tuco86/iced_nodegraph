@@ -4,9 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-euclid = "0.22.11"
+euclid = { version = "0.22.11", features = [ "bytemuck" ] }
+bytemuck = { version = "1.0", features = ["derive"] }
+glam = { version = "0.25", features = ["bytemuck"] }
 
 [dependencies.iced]
 path = "../iced"
 default-features = false
 features = ["advanced", "wgpu", "tokio"]
+
+[dependencies.iced_wgpu]
+path = "../iced/wgpu"

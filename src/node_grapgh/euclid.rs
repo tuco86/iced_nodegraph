@@ -1,5 +1,5 @@
-use euclid::{Point2D, Transform2D, Vector2D};
-use iced::{Point, Vector};
+use euclid::{Point2D, Size2D, Transform2D, Vector2D};
+use iced::{Point, Size, Vector};
 
 #[derive(Debug, Clone, Copy)]
 pub enum World {}
@@ -12,6 +12,9 @@ pub type ScreenPoint = Point2D<f32, Screen>;
 
 pub type WorldVector = Vector2D<f32, World>;
 pub type ScreenVector = Vector2D<f32, Screen>;
+
+pub type WorldSize = Size2D<f32, World>;
+pub type ScreenSize = Size2D<f32, Screen>;
 
 pub type WorldToScreen = Transform2D<f32, World, Screen>;
 pub type ScreenToWorld = Transform2D<f32, Screen, World>;
@@ -48,6 +51,12 @@ impl<Unit> IntoEuclid<Point2D<f32, Unit>> for Point {
 impl<Unit> IntoEuclid<Vector2D<f32, Unit>> for Vector {
     fn into_euclid(self) -> Vector2D<f32, Unit> {
         Vector2D::new(self.x, self.y)
+    }
+}
+
+impl<Unit> IntoEuclid<Size2D<f32, Unit>> for Size {
+    fn into_euclid(self) -> Size2D<f32, Unit> {
+        Size2D::new(self.width, self.height)
     }
 }
 

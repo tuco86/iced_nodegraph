@@ -9,6 +9,7 @@ use iced::{
 
 use super::{
     NodeGraph,
+    effects::{self, Layer},
     euclid::IntoIced,
     state::{Dragging, NodeGraphState},
 };
@@ -21,7 +22,7 @@ use crate::{
 impl<Message, Theme, Renderer> iced::advanced::Widget<Message, Theme, Renderer>
     for NodeGraph<'_, Message, Theme, Renderer>
 where
-    Renderer: iced::advanced::renderer::Renderer,
+    Renderer: iced::advanced::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
     fn tag(&self) -> tree::Tag {
         tree::Tag::of::<NodeGraphState>()
@@ -80,11 +81,42 @@ where
             .camera
             .with_extra_offset(graph_move_offset)
             .draw_with::<_, Renderer>(renderer, viewport, cursor, |renderer, viewport, cursor| {
-                // println!("camera: {:?}", state.camera);
-                // println!("cursor: {:?}", cursor);
-                // println!("viewport: {:?}", viewport);
-                // println!("state.offset: {:?}", state.offset);
-                // println!("state.zoom: {:?}", state.zoom);
+                renderer.draw_primitive(
+                    *viewport,
+                    effects::Primitive {
+                        layer: Layer::Background,
+                        dragging: Dragging::None,
+                        nodes: self
+                            .nodes
+                            .iter()
+                            .zip(&tree.children)
+                            .zip(layout.children())
+                            .enumerate()
+                            .map(
+                                |(node_index, (((_position, element), node_tree), node_layout))| {
+                                    effects::Node {
+                                        position: node_layout
+                                            .bounds()
+                                            .position()
+                                            .into_euclid()
+                                            .to_vector(),
+                                        size: node_layout.bounds().size().into_euclid(),
+                                        corner_radius: 5.0,
+                                        pins: find_pins(node_tree, node_layout)
+                                            .iter()
+                                            .map(|(pin_index, pin_state, (a, b))| effects::Pin {
+                                                side: pin_state.side.into(),
+                                                offset: a.into_euclid().to_vector(),
+                                                radius: 5.0,
+                                            })
+                                            .collect(),
+                                    }
+                                },
+                            )
+                            .collect(),
+                        edges: vec![],
+                    },
+                );
 
                 for (node_index, (((_position, element), tree), layout)) in self
                     .elements_iter()
@@ -126,14 +158,13 @@ where
                         // println!("pins: {:?}", pins.len());
 
                         // find node_pin elements in layouy children
-                        for (_, pin_state, _) in pins {
+                        for (_pin_index, _pin_state, (a, b)) in pins {
                             // println!("pin_index: {:?}", pin_index);
                             // use renderer.fill_quad to draw a circle around a point at the center of the pin but moved to the border of the node.
                             let pin_radius = 5.0;
                             let pin_size = Size::new(pin_radius * 2.0, pin_radius * 2.0);
                             let pin_offset =
                                 Vector::new(-pin_size.width / 2.0, -pin_size.height / 2.0);
-                            let (a, b) = pin_positions(pin_state, layout.bounds());
                             for pin_position in [a, b] {
                                 let pin_rectangle =
                                     Rectangle::new(pin_position + pin_offset, pin_size);
@@ -261,7 +292,7 @@ where
                         }
                         _ => {}
                     },
-                    Dragging::Edge(_, _, point) => match event {
+                    Dragging::Edge(_, _, _) | Dragging::EdgeOver(_, _, _, _) => match event {
                         Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                             state.dragging = Dragging::None;
                             shell.capture_event();
@@ -338,10 +369,7 @@ where
                             // check bounds for nodes
                             for (node_index, node_layout) in layout.children().enumerate() {
                                 if world_cursor.is_over(node_layout.bounds()) {
-                                    println!(
-                                        "clicked node {:?} at {:?}",
-                                        node_index, cursor_position
-                                    );
+                                    println!("dragging node {:?}", node_index);
                                     let state = tree.state.downcast_mut::<NodeGraphState>();
                                     state.dragging =
                                         Dragging::Node(node_index, cursor_position.into_euclid());
@@ -372,6 +400,7 @@ where
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
+        // TODO: this is all wrong. bounds checks happen in update. and a hover would be reflected here
         if let Some(cursor_position) = cursor.position() {
             let state = tree.state.downcast_ref::<NodeGraphState>();
             let cursor_position = state.camera.screen_to_world(cursor_position);
@@ -412,6 +441,7 @@ where
                 Dragging::Graph(_) => mouse::Interaction::Grabbing,
                 Dragging::Node(_, _) => mouse::Interaction::Grabbing,
                 Dragging::Edge(_, _, _) => mouse::Interaction::Grabbing,
+                Dragging::EdgeOver(_, _, _, _) => mouse::Interaction::Grabbing,
             }
         } else {
             mouse::Interaction::default()
@@ -422,12 +452,12 @@ where
 impl<'a, Message, Theme, Renderer> From<NodeGraph<'a, Message, Theme, Renderer>>
     for Element<'a, Message, Theme, Renderer>
 where
-    Renderer: iced::advanced::renderer::Renderer + 'a,
+    Renderer: iced::advanced::renderer::Renderer + 'a + iced_wgpu::primitive::Renderer,
     Message: 'static,
     Theme: 'a,
 {
-    fn from(grid: NodeGraph<'a, Message, Theme, Renderer>) -> Self {
-        Element::new(grid)
+    fn from(graph: NodeGraph<'a, Message, Theme, Renderer>) -> Self {
+        Element::new(graph)
     }
 }
 

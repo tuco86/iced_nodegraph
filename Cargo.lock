@@ -502,6 +502,7 @@ version = "0.22.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ad9cdb4b747e485a12abb0e6566612956c7a1bafa3bdb8d682c5b6d403589e48"
 dependencies = [
+ "bytemuck",
  "num-traits",
 ]
 
@@ -714,6 +715,9 @@ name = "glam"
 version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "151665d9be52f9bb40fc7966565d39666f2d1e69233571b71b87791c7e0528b3"
+dependencies = [
+ "bytemuck",
+]
 
 [[package]]
 name = "glow"
@@ -906,8 +910,11 @@ dependencies = [
 name = "iced_nodegraph"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "euclid",
+ "glam",
  "iced",
+ "iced_wgpu",
 ]
 
 [[package]]
