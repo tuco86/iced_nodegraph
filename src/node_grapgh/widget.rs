@@ -81,109 +81,121 @@ where
             .camera
             .with_extra_offset(graph_move_offset)
             .draw_with::<_, Renderer>(renderer, viewport, cursor, |renderer, viewport, cursor| {
-                renderer.draw_primitive(
-                    *viewport,
-                    effects::Primitive {
-                        layer: Layer::Background,
-                        dragging: Dragging::None,
-                        nodes: self
-                            .nodes
-                            .iter()
-                            .zip(&tree.children)
-                            .zip(layout.children())
-                            .enumerate()
-                            .map(
-                                |(node_index, (((_position, element), node_tree), node_layout))| {
-                                    effects::Node {
-                                        position: node_layout
-                                            .bounds()
-                                            .position()
-                                            .into_euclid()
-                                            .to_vector(),
-                                        size: node_layout.bounds().size().into_euclid(),
-                                        corner_radius: 5.0,
-                                        pins: find_pins(node_tree, node_layout)
-                                            .iter()
-                                            .map(|(pin_index, pin_state, (a, b))| effects::Pin {
-                                                side: pin_state.side.into(),
-                                                offset: a.into_euclid().to_vector(),
-                                                radius: 5.0,
-                                            })
-                                            .collect(),
-                                    }
-                                },
-                            )
-                            .collect(),
-                        edges: vec![],
-                    },
-                );
-
-                for (node_index, (((_position, element), tree), layout)) in self
-                    .elements_iter()
-                    .zip(&tree.children)
-                    .zip(layout.children())
-                    .enumerate()
-                {
-                    let node_move_offset =
-                        if let Dragging::Node(dragging_node_index, origin) = state.dragging {
-                            cursor
-                                .position()
-                                .filter(|_| dragging_node_index == node_index)
-                                .map(|cursor_position| cursor_position - origin.into_iced())
-                        } else {
-                            None
-                        }
-                        .unwrap_or(Vector::ZERO);
-                    renderer.with_translation(node_move_offset, |renderer| {
-                        renderer.fill_quad(
-                            renderer::Quad {
-                                bounds: layout.bounds(),
-                                border: border::Border {
-                                    color: Color::WHITE,
-                                    width: 1.0,
-                                    radius: border::Radius::new(5.0),
-                                },
-                                ..Default::default()
+                let primitive_background = effects::Primitive {
+                    layer: Layer::Background,
+                    dragging: Dragging::None,
+                    nodes: self
+                        .nodes
+                        .iter()
+                        .zip(&tree.children)
+                        .zip(layout.children())
+                        .enumerate()
+                        .map(
+                            |(node_index, (((_position, element), node_tree), node_layout))| {
+                                effects::Node {
+                                    position: node_layout
+                                        .bounds()
+                                        .position()
+                                        .into_euclid()
+                                        .to_vector(),
+                                    size: node_layout.bounds().size().into_euclid(),
+                                    corner_radius: 5.0,
+                                    pins: find_pins(node_tree, node_layout)
+                                        .iter()
+                                        .map(|(pin_index, pin_state, (a, b))| effects::Pin {
+                                            side: pin_state.side.into(),
+                                            offset: a.into_euclid().to_vector(),
+                                            radius: 5.0,
+                                        })
+                                        .inspect(|p| println!("pin: {:?}", p))
+                                        .collect(),
+                                }
                             },
-                            Background::Color(Color::from_rgb(0.1, 0.15, 0.13)),
-                        );
+                        )
+                        .inspect(|n| println!("node: {:?}", n))
+                        .collect(),
+                    edges: vec![],
+                };
 
-                        element
-                            .as_widget()
-                            .draw(tree, renderer, theme, style, layout, cursor, &viewport);
+                let mut primitive_foreground = primitive_background.clone();
+                primitive_foreground.layer = Layer::Foreground;
 
-                        let pins = find_pins(tree, layout);
-                        // let pins: Vec<(&NodePinState, Layout<'_>)> = vec![];
+                renderer.with_layer(*viewport, |renderer| {
+                    renderer.draw_primitive(*viewport, primitive_background);
+                });
 
-                        // println!("pins: {:?}", pins.len());
-
-                        // find node_pin elements in layouy children
-                        for (_pin_index, _pin_state, (a, b)) in pins {
-                            // println!("pin_index: {:?}", pin_index);
-                            // use renderer.fill_quad to draw a circle around a point at the center of the pin but moved to the border of the node.
-                            let pin_radius = 5.0;
-                            let pin_size = Size::new(pin_radius * 2.0, pin_radius * 2.0);
-                            let pin_offset =
-                                Vector::new(-pin_size.width / 2.0, -pin_size.height / 2.0);
-                            for pin_position in [a, b] {
-                                let pin_rectangle =
-                                    Rectangle::new(pin_position + pin_offset, pin_size);
-                                renderer.fill_quad(
-                                    renderer::Quad {
-                                        bounds: pin_rectangle,
-                                        border: border::Border {
-                                            color: Color::WHITE,
-                                            width: 1.0,
-                                            radius: border::Radius::new(pin_radius),
-                                        },
-                                        ..Default::default()
-                                    },
-                                    Background::Color(Color::from_rgb(0.1, 0.15, 0.13)),
-                                );
+                renderer.with_layer(*viewport, |renderer| {
+                    for (node_index, (((_position, element), tree), layout)) in self
+                        .elements_iter()
+                        .zip(&tree.children)
+                        .zip(layout.children())
+                        .enumerate()
+                    {
+                        let node_move_offset =
+                            if let Dragging::Node(dragging_node_index, origin) = state.dragging {
+                                cursor
+                                    .position()
+                                    .filter(|_| dragging_node_index == node_index)
+                                    .map(|cursor_position| cursor_position - origin.into_iced())
+                            } else {
+                                None
                             }
-                        }
-                    });
-                }
+                            .unwrap_or(Vector::ZERO);
+                        renderer.with_translation(node_move_offset, |renderer| {
+                            // renderer.fill_quad(
+                            //     renderer::Quad {
+                            //         bounds: layout.bounds(),
+                            //         border: border::Border {
+                            //             color: Color::WHITE,
+                            //             width: 1.0,
+                            //             radius: border::Radius::new(5.0),
+                            //         },
+                            //         ..Default::default()
+                            //     },
+                            //     Background::Color(Color::from_rgb(0.1, 0.15, 0.13)),
+                            // );
+
+                            element
+                                .as_widget()
+                                .draw(tree, renderer, theme, style, layout, cursor, &viewport);
+
+                            let pins = find_pins(tree, layout);
+                            // let pins: Vec<(&NodePinState, Layout<'_>)> = vec![];
+
+                            // println!("pins: {:?}", pins.len());
+
+                            // find node_pin elements in layouy children
+                            for (_pin_index, _pin_state, (a, b)) in pins {
+                                // println!("pin_index: {:?}", pin_index);
+                                // use renderer.fill_quad to draw a circle around a point at the center of the pin but moved to the border of the node.
+                                let pin_radius = 5.0;
+                                let pin_size = Size::new(pin_radius * 2.0, pin_radius * 2.0);
+                                let pin_offset =
+                                    Vector::new(-pin_size.width / 2.0, -pin_size.height / 2.0);
+                                for pin_position in [a, b] {
+                                    let pin_rectangle =
+                                        Rectangle::new(pin_position + pin_offset, pin_size);
+                                    renderer.fill_quad(
+                                        renderer::Quad {
+                                            bounds: pin_rectangle,
+                                            border: border::Border {
+                                                color: Color::WHITE,
+                                                width: 1.0,
+                                                radius: border::Radius::new(pin_radius),
+                                            },
+                                            ..Default::default()
+                                        },
+                                        Background::Color(Color::from_rgb(0.1, 0.15, 0.13)),
+                                    );
+                                }
+                            }
+                        });
+                    }
+                });
+
+                renderer.with_layer(*viewport, |renderer| {
+                    renderer.draw_primitive(*viewport, primitive_foreground);
+                });
             });
     }
 

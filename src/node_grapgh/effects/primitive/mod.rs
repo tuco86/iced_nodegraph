@@ -12,13 +12,13 @@ use crate::node_grapgh::state::Dragging;
 
 use super::pipeline::Pipeline;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum Layer {
     Background,
     Foreground,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Primitive {
     pub layer: Layer,
     pub dragging: Dragging,
@@ -51,8 +51,7 @@ impl shader::Primitive for Primitive {
         clip_bounds: &Rectangle<u32>,
     ) {
         let pipeline = storage.get::<Pipeline>().unwrap();
-
-        pipeline.render(target, encoder, *clip_bounds);
+        pipeline.render(target, encoder, *clip_bounds, self.layer);
     }
 }
 
@@ -84,6 +83,6 @@ impl shader::Primitive for EchoPrimitive {
         clip_bounds: &Rectangle<u32>,
     ) {
         let pipeline = storage.get::<Pipeline>().unwrap();
-        pipeline.render(target, encoder, *clip_bounds);
+        pipeline.render(target, encoder, *clip_bounds, Layer::Foreground);
     }
 }

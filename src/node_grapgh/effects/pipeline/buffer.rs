@@ -1,5 +1,5 @@
 use bytemuck::NoUninit;
-use iced::wgpu;
+use iced::wgpu::{self, BindingResource};
 
 // mod uniforms;
 // mod nodes;
@@ -34,12 +34,18 @@ impl<T> Buffer<T> {
         self.buffer_vec.len()
     }
 
+    pub fn capacity(&self) -> usize {
+        self.buffer_vec.capacity()
+    }
+
+    #[must_use]
     pub fn update<I: IntoIterator<Item = T>>(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         data: I,
-    ) where
+    ) -> u32
+    where
         T: NoUninit,
     {
         self.buffer_vec.clear();
@@ -51,6 +57,12 @@ impl<T> Buffer<T> {
             self.buffer_wgpu = create_wgpu_buffer(device, self.label, size, self.usage);
         }
         queue.write_buffer(&self.buffer_wgpu, 0, bytemuck::cast_slice(&self.buffer_vec));
+
+        self.buffer_vec.len() as _
+    }
+
+    pub fn as_entire_binding(&self) -> BindingResource<'_> {
+        self.buffer_wgpu.as_entire_binding()
     }
 }
 

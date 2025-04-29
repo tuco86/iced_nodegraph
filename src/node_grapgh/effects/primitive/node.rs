@@ -2,7 +2,7 @@ use crate::node_grapgh::euclid::{WorldSize, WorldVector};
 
 use super::Pin;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Node {
     pub(crate) position: WorldVector,
     pub(crate) size: WorldSize,
