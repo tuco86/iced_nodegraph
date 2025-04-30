@@ -1,17 +1,12 @@
 use iced::{
-    Background, Color, Element, Event, Length, Point, Rectangle, Size, Vector,
     advanced::{
-        Clipboard, Layout, Shell, layout, mouse, renderer,
-        widget::{self, Tree, tree},
-    },
-    border,
+        layout, mouse, renderer, widget::{self, tree, Tree}, Clipboard, Layout, Shell
+    }, border, widget::text_input::cursor, Background, Color, Element, Event, Length, Point, Rectangle, Size, Vector
 };
+use iced_wgpu::core::window;
 
 use super::{
-    NodeGraph,
-    effects::{self, Layer},
-    euclid::IntoIced,
-    state::{Dragging, NodeGraphState},
+    effects::{self, Layer}, euclid::{IntoIced, WorldVector}, state::{Dragging, NodeGraphState}, NodeGraph
 };
 use crate::{
     PinSide,
@@ -68,63 +63,69 @@ where
         viewport: &Rectangle,
     ) {
         let state = tree.state.downcast_ref::<NodeGraphState>();
-        let graph_move_offset = if let Dragging::Graph(origin) = state.dragging {
-            cursor
-                .position()
-                .map(|cursor_position| cursor_position - origin.into_iced())
-        } else {
-            None
+        let mut camera = state.camera;
+        if let Dragging::Graph(origin) = state.dragging {
+            if let Some(cursor_position) = cursor.position() {
+                let cursor_position: ScreenPoint = cursor_position.into_euclid();
+                let cursor_position: WorldPoint = state.camera.screen_to_world().transform_point(cursor_position);
+                camera = camera.move_by(cursor_position - origin)
+            }
         }
-        .unwrap_or(Vector::ZERO);
-        // println!("dragging: {:?} cursor_position {:?} graph_move_offset: {:?}", state.dragging, cursor.position(), graph_move_offset);
-        state
-            .camera
-            .with_extra_offset(graph_move_offset)
-            .draw_with::<_, Renderer>(renderer, viewport, cursor, |renderer, viewport, cursor| {
-                let primitive_background = effects::Primitive {
-                    layer: Layer::Background,
-                    dragging: Dragging::None,
-                    nodes: self
-                        .nodes
-                        .iter()
-                        .zip(&tree.children)
-                        .zip(layout.children())
-                        .enumerate()
-                        .map(
-                            |(node_index, (((_position, element), node_tree), node_layout))| {
-                                effects::Node {
-                                    position: node_layout
-                                        .bounds()
-                                        .position()
-                                        .into_euclid()
-                                        .to_vector(),
-                                    size: node_layout.bounds().size().into_euclid(),
-                                    corner_radius: 5.0,
-                                    pins: find_pins(node_tree, node_layout)
-                                        .iter()
-                                        .map(|(pin_index, pin_state, (a, b))| effects::Pin {
-                                            side: pin_state.side.into(),
-                                            offset: a.into_euclid().to_vector(),
-                                            radius: 5.0,
-                                        })
-                                        .inspect(|p| println!("pin: {:?}", p))
-                                        .collect(),
-                                }
-                            },
-                        )
-                        .inspect(|n| println!("node: {:?}", n))
-                        .collect(),
-                    edges: vec![],
-                };
+        let primitive_background = effects::Primitive {
+            layer: Layer::Background,
+            camera_zoom: camera.zoom(),
+            camera_position: camera.position(),
+            dragging: Dragging::None,
+            nodes: self
+                .nodes
+                .iter()
+                .zip(&tree.children)
+                .zip(layout.children())
+                .enumerate()
+                .map(
+                    |(node_index, (((_position, element), node_tree), node_layout))| {
+                        let mut offset = WorldVector::zero();
+                        if let (Dragging::Node(drag_node_index, origin), Some(cursor_position)) = (state.dragging.clone(), cursor.position()) {
+                            if drag_node_index == node_index {
+                                let cursor_position: ScreenPoint = cursor_position.into_euclid();
+                                let cursor_position: WorldPoint = camera.screen_to_world().transform_point(cursor_position);
+                                offset = cursor_position - origin
+                            }
+                        }
+                        effects::Node {
+                            position: node_layout
+                                .bounds()
+                                .position()
+                                .into_euclid()
+                                .to_vector() + offset,
+                            size: node_layout.bounds().size().into_euclid(),
+                            corner_radius: 5.0,
+                            pins: find_pins(node_tree, node_layout)
+                                .iter()
+                                .map(|(pin_index, pin_state, (a, b))| effects::Pin {
+                                    side: pin_state.side.into(),
+                                    offset: a.into_euclid().to_vector() + offset,
+                                    radius: 5.0,
+                                })
+                                // .inspect(|p| println!("pin: {:?}", p))
+                                .collect(),
+                        }
+                    },
+                )
+                // .inspect(|n| println!("node: {:?}", n))
+                .collect(),
+            edges: vec![],
+        };
+        let mut primitive_foreground = primitive_background.clone();
+        primitive_foreground.layer = Layer::Foreground;
 
-                let mut primitive_foreground = primitive_background.clone();
-                primitive_foreground.layer = Layer::Foreground;
+        renderer.with_layer(*viewport, |renderer| {
+            renderer.draw_primitive(*viewport, primitive_background);
+        });
 
-                renderer.with_layer(*viewport, |renderer| {
-                    renderer.draw_primitive(*viewport, primitive_background);
-                });
-
-                renderer.with_layer(*viewport, |renderer| {
+        renderer.with_layer(*viewport, |renderer| {
+            camera
+                .draw_with::<_, Renderer>(renderer, viewport, cursor, |renderer, viewport, cursor| {
                     for (node_index, (((_position, element), tree), layout)) in self
                         .elements_iter()
                         .zip(&tree.children)
@@ -159,43 +160,42 @@ where
                                 .as_widget()
                                 .draw(tree, renderer, theme, style, layout, cursor, &viewport);
 
-                            let pins = find_pins(tree, layout);
-                            // let pins: Vec<(&NodePinState, Layout<'_>)> = vec![];
+                            // let pins = find_pins(tree, layout);
+                            // // let pins: Vec<(&NodePinState, Layout<'_>)> = vec![];
 
-                            // println!("pins: {:?}", pins.len());
+                            // // println!("pins: {:?}", pins.len());
 
-                            // find node_pin elements in layouy children
-                            for (_pin_index, _pin_state, (a, b)) in pins {
-                                // println!("pin_index: {:?}", pin_index);
-                                // use renderer.fill_quad to draw a circle around a point at the center of the pin but moved to the border of the node.
-                                let pin_radius = 5.0;
-                                let pin_size = Size::new(pin_radius * 2.0, pin_radius * 2.0);
-                                let pin_offset =
-                                    Vector::new(-pin_size.width / 2.0, -pin_size.height / 2.0);
-                                for pin_position in [a, b] {
-                                    let pin_rectangle =
-                                        Rectangle::new(pin_position + pin_offset, pin_size);
-                                    renderer.fill_quad(
-                                        renderer::Quad {
-                                            bounds: pin_rectangle,
-                                            border: border::Border {
-                                                color: Color::WHITE,
-                                                width: 1.0,
-                                                radius: border::Radius::new(pin_radius),
-                                            },
-                                            ..Default::default()
-                                        },
-                                        Background::Color(Color::from_rgb(0.1, 0.15, 0.13)),
-                                    );
-                                }
-                            }
+                            // // find node_pin elements in layouy children
+                            // for (_pin_index, _pin_state, (a, b)) in pins {
+                            //     // println!("pin_index: {:?}", pin_index);
+                            //     // use renderer.fill_quad to draw a circle around a point at the center of the pin but moved to the border of the node.
+                            //     let pin_radius = 5.0;
+                            //     let pin_size = Size::new(pin_radius * 2.0, pin_radius * 2.0);
+                            //     let pin_offset =
+                            //         Vector::new(-pin_size.width / 2.0, -pin_size.height / 2.0);
+                            //     for pin_position in [a, b] {
+                            //         let pin_rectangle =
+                            //             Rectangle::new(pin_position + pin_offset, pin_size);
+                            //         renderer.fill_quad(
+                            //             renderer::Quad {
+                            //                 bounds: pin_rectangle,
+                            //                 border: border::Border {
+                            //                     color: Color::WHITE,
+                            //                     width: 1.0,
+                            //                     radius: border::Radius::new(pin_radius),
+                            //                 },
+                            //                 ..Default::default()
+                            //             },
+                            //             Background::Color(Color::from_rgb(0.1, 0.15, 0.13)),
+                            //         );
+                            //     }
+                            // }
                         });
                     }
                 });
-
-                renderer.with_layer(*viewport, |renderer| {
-                    renderer.draw_primitive(*viewport, primitive_foreground);
-                });
+            });
+            renderer.with_layer(*viewport, |renderer| {
+                renderer.draw_primitive(*viewport, primitive_foreground);
             });
     }
 
@@ -255,7 +255,7 @@ where
         .unwrap_or(Vector::ZERO);
         state
             .camera
-            .with_extra_offset(graph_move_offset)
+            .move_by(graph_move_offset.into_euclid())
             .update_with(viewport, screen_cursor, |viewport, world_cursor| {
                 let state = tree.state.downcast_mut::<NodeGraphState>();
                 // println!("camera: {:?}", state.camera);
@@ -279,9 +279,11 @@ where
                     Dragging::Graph(origin) => match event {
                         Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                             if let Some(cursor_position) = screen_cursor.position() {
+                                let screen_to_world = state.camera.screen_to_world();
                                 let cursor_position: ScreenPoint = cursor_position.into_euclid();
+                                let cursor_position: WorldPoint = screen_to_world.transform_point(cursor_position);
                                 let offset = cursor_position - origin;
-                                state.camera.translate_screen(offset);
+                                state.camera = state.camera.move_by(offset);
                             }
                             state.dragging = Dragging::None;
                             shell.capture_event();
@@ -339,6 +341,7 @@ where
                     Event::Mouse(mouse::Event::WheelScrolled { delta, .. }) => {
                         if let Some(cursor_pos) = screen_cursor.position() {
                             let cursor_pos: ScreenPoint = cursor_pos.into_euclid();
+                            let cursor_pos = state.camera.screen_to_world().transform_point(cursor_pos);
 
                             let scroll_amount = match delta {
                                 mouse::ScrollDelta::Pixels { y, .. } => *y,
@@ -392,7 +395,9 @@ where
                         }
                         if let Some(cursor_position) = screen_cursor.position() {
                             // else drag the whole graph
-                            println!("clicked graph at {:?}", cursor_position);
+                            let cursor_position: ScreenPoint = cursor_position.into_euclid();
+                            let cursor_position: WorldPoint = state.camera.screen_to_world().transform_point(cursor_position);
+                            println!("dragging graph from {:?}", cursor_position);
                             let state = tree.state.downcast_mut::<NodeGraphState>();
                             state.dragging = Dragging::Graph(cursor_position.into_euclid());
                             shell.capture_event();
@@ -415,7 +420,8 @@ where
         // TODO: this is all wrong. bounds checks happen in update. and a hover would be reflected here
         if let Some(cursor_position) = cursor.position() {
             let state = tree.state.downcast_ref::<NodeGraphState>();
-            let cursor_position = state.camera.screen_to_world(cursor_position);
+            let cursor_position: ScreenPoint = cursor_position.into_euclid();
+            let cursor_position = state.camera.screen_to_world().transform_point(cursor_position);
 
             for (_, state, (a, b)) in find_pins(tree, layout) {
                 let distance = a
@@ -525,9 +531,9 @@ fn pin_positions(state: &NodePinState, node_bounds: Rectangle) -> (Point, Point)
 fn pin_position(position: Point, side: PinSide, node_bounds: Rectangle) -> Point {
     match side {
         PinSide::Row => panic!("Row pin is supposed to be handled separately"),
-        PinSide::Left => Point::new(node_bounds.x + 0.5, position.y),
-        PinSide::Right => Point::new(node_bounds.x + node_bounds.width - 0.5, position.y),
-        PinSide::Top => Point::new(position.x, node_bounds.y + 0.5),
-        PinSide::Bottom => Point::new(position.x, node_bounds.y + node_bounds.height - 0.5),
+        PinSide::Left => Point::new(node_bounds.x, position.y),
+        PinSide::Right => Point::new(node_bounds.x + node_bounds.width, position.y),
+        PinSide::Top => Point::new(position.x, node_bounds.y),
+        PinSide::Bottom => Point::new(position.x, node_bounds.y + node_bounds.height),
     }
 }

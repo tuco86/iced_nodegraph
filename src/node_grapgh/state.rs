@@ -6,7 +6,7 @@ use super::camera::Camera2D;
 pub(super) enum Dragging {
     #[default]
     None,
-    Graph(ScreenPoint),                   // cursor origin
+    Graph(WorldPoint),                   // cursor origin
     Node(usize, WorldPoint),              // node id and cursor origin
     Edge(usize, usize, WorldPoint),       // from_node and from_pin and cursor origin
     EdgeOver(usize, usize, usize, usize), // from_node, from_pin, to_node and to_pin

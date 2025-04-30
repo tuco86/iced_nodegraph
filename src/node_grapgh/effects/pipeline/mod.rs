@@ -14,6 +14,7 @@ use iced::{
         StoreOp, TextureFormat, TextureView, VertexState,
     },
 };
+use iced_wgpu::graphics::Viewport;
 
 use super::{Layer, primitive::Primitive};
 
@@ -98,7 +99,7 @@ impl Pipeline {
         }
     }
 
-    pub fn update(&mut self, device: &Device, queue: &Queue, primitive: &Primitive) {
+    pub fn update(&mut self, device: &Device, queue: &Queue, viewport: &Viewport, primitive: &Primitive) {
         let mut pin_start = 0;
         let num_nodes = self.nodes.update(
             device,
@@ -149,7 +150,10 @@ impl Pipeline {
                 }),
         );
 
-        let uniforms = types::Uniforms {
+        let uniforms = types::Uniforms {            
+            os_scale_factor: viewport.scale_factor() as _,
+            camera_zoom: primitive.camera_zoom,
+            camera_position: primitive.camera_position,
             border_color: vec4(0.5, 0.6, 0.7, 1.0),
             fill_color: vec4(0.5, 0.3, 0.1, 1.0),
             num_nodes,
@@ -157,6 +161,7 @@ impl Pipeline {
             num_edges,
             _padding: 0,
         };
+        println!("uniforms: {:?}", uniforms);
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
 
         self.bind_group = create_bind_group(
@@ -168,15 +173,15 @@ impl Pipeline {
             self.edges.as_entire_binding(),
         );
 
-        println!(
-            "nodes: {:?} ({:?}), pins: {:?} ({:?}), edges: {:?} ({:?})",
-            self.nodes.len(),
-            self.nodes.capacity(),
-            self.pins.len(),
-            self.pins.capacity(),
-            self.edges.len(),
-            self.edges.capacity(),
-        );
+        // println!(
+        //     "nodes: {:?} ({:?}), pins: {:?} ({:?}), edges: {:?} ({:?})",
+        //     self.nodes.len(),
+        //     self.nodes.capacity(),
+        //     self.pins.len(),
+        //     self.pins.capacity(),
+        //     self.edges.len(),
+        //     self.edges.capacity(),
+        // );
     }
 
     pub fn update_echo(&mut self, queue: &Queue) {

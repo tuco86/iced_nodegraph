@@ -9,7 +9,7 @@ use iced_nodegraph::{PinSide, node_graph, node_pin};
 
 pub fn main() -> iced::Result {
     iced::application(Application::new, Application::update, Application::view)
-        .subscription(Application::subscription)
+        // .subscription(Application::subscription)
         .title("Node Graph Example")
         .theme(|_| iced::Theme::CatppuccinFrappe)
         .run()

@@ -8,7 +8,7 @@ use iced::{
 pub use node::Node;
 pub use pin::Pin;
 
-use crate::node_grapgh::state::Dragging;
+use crate::node_grapgh::{euclid::WorldPoint, state::Dragging};
 
 use super::pipeline::Pipeline;
 
@@ -21,6 +21,8 @@ pub enum Layer {
 #[derive(Debug, Clone)]
 pub struct Primitive {
     pub layer: Layer,
+    pub camera_zoom: f32,
+    pub camera_position: WorldPoint,
     pub dragging: Dragging,
     pub nodes: Vec<Node>,
     pub edges: Vec<((usize, usize), (usize, usize))>, // (from_node, from_pin) -> (to_node, to_pin)
@@ -34,13 +36,13 @@ impl shader::Primitive for Primitive {
         format: wgpu::TextureFormat,
         storage: &mut shader::Storage,
         _bounds: &Rectangle,
-        _viewport: &Viewport,
+        viewport: &Viewport,
     ) {
         if !storage.has::<Pipeline>() {
             storage.store(Pipeline::new(device, format));
         }
         let pipeline = storage.get_mut::<Pipeline>().unwrap();
-        pipeline.update(device, queue, self);
+        pipeline.update(device, queue, viewport, self);
     }
 
     fn render(

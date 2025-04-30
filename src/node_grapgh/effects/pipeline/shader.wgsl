@@ -1,4 +1,8 @@
 struct Uniforms {
+    os_scale_factor: f32,       // e.g. 1.0, 1.5
+    camera_zoom: f32,
+    camera_position: vec2<f32>,
+
     border_color: vec4<f32>,  // RGBA for node border
     fill_color: vec4<f32>,    // RGBA for node fill
 
@@ -86,7 +90,7 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> @builtin(position) vec4<
 
 @fragment
 fn fs_background(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<f32> {
-    let uv = frag_coord.xy;
+    let uv = (frag_coord.xy / uniforms.os_scale_factor * uniforms.camera_zoom) - uniforms.camera_position;
     var d = 1e5;
 
     for (var i = 0u; i < uniforms.num_nodes; i++) {
