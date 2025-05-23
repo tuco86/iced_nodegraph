@@ -6,14 +6,22 @@ pub struct Uniforms {
     pub os_scale_factor: f32,       // e.g. 1.0, 1.5
     pub camera_zoom: f32,
     pub camera_position: WorldPoint,
-
+    
     pub border_color: glam::Vec4, // RGBA for node border
     pub fill_color: glam::Vec4,   // RGBA for node fill
+    
+    pub cursor_position: WorldPoint, // in world coordinates
 
     pub num_nodes: u32,
     pub num_pins: u32,
     pub num_edges: u32,
-    pub _padding: u32, // <- für 16-Byte-Alignment
+
+    pub dragging: u32,
+    pub dragging_edge_from_node: u32,
+    pub dragging_edge_from_pin: u32,
+    pub dragging_edge_from_origin: WorldPoint,
+
+    pub _padding: [u32; 2], // Padding to ensure 768-bit alignment
 }
 
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]

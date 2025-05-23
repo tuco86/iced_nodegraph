@@ -31,16 +31,19 @@ impl Camera2D {
     }
 
     pub fn screen_to_world(&self) -> ScreenToWorld {
+        // Converts screen coordinates to world coordinates, factoring in zoom and position.
         let zoom = self.zoom.get();
         Transform2D::translation(-self.position.x, -self.position.y)
             .pre_scale(zoom, zoom)
     }
 
     pub fn world_to_screen(&self) -> WorldToScreen {
+        // Converts world coordinates to screen coordinates.
         self.screen_to_world().inverse().unwrap()
     }
 
     pub fn move_by(&self, offset: WorldVector) -> Self {
+        // Moves the camera by a given offset in world space.
         Self {
             zoom: self.zoom,
             position: self.position + offset,
@@ -48,9 +51,13 @@ impl Camera2D {
     }
 
     pub fn zoom_at(&self, cursor: WorldPoint, offset: f32) -> Self {
+        // Adjusts the zoom level, keeping the cursor position stable in world space.
+        let old_zoom = self.zoom;
+        let zoom = Scale::new(self.zoom.get() + offset);
+        let offset = zoom.transform_point(old_zoom.inverse().transform_point(cursor)) - cursor;
         Self {
-            zoom: self.zoom,
-            position: self.position,
+            zoom,
+            position: self.position + offset,
         }
     }
 

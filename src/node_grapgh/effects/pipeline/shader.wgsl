@@ -6,10 +6,17 @@ struct Uniforms {
     border_color: vec4<f32>,  // RGBA for node border
     fill_color: vec4<f32>,    // RGBA for node fill
 
+    cursor_position: vec2<f32>,
+
     num_nodes: u32,
     num_pins: u32,
     num_edges: u32,
-    _padding: u32,
+    
+    dragging: u32,
+    dragging_edge_from_node: u32,
+    dragging_edge_from_pin: u32,
+    dragging_edge_to_x: f32,
+    dragging_edge_to_y: f32,
 };
 
 struct Node {
@@ -90,20 +97,25 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> @builtin(position) vec4<
 
 @fragment
 fn fs_background(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<f32> {
-    let uv = (frag_coord.xy / uniforms.os_scale_factor * uniforms.camera_zoom) - uniforms.camera_position;
+// Adjust UV coordinates based on camera zoom and position.
+    let uv = (frag_coord.xy / (uniforms.os_scale_factor * uniforms.camera_zoom)) - uniforms.camera_position;
+
     var d = 1e5;
 
+// Iterate over nodes and apply transformations.
     for (var i = 0u; i < uniforms.num_nodes; i++) {
         let node = nodes[i];
         let node_half_size = node.size * 0.5;
         let node_center = uv - (node.position + node_half_size);
         let node_d = sd_rounded_box(node_center, node_half_size, vec4(node.corner_radius));
         d = min(node_d, d);
+
+        // Iterate over pins and apply transformations.
         for (var j = 0u; j < node.pin_count; j++) {
             let pin = pins[node.pin_start + j];
             let pin_center = uv - pin.position;
             let pin_d = sd_circle(pin_center, pin.radius);
-            d = max(d, -pin_d); // subtract pin from box
+            d = max(d, -pin_d); // Subtract pin from box.
         }
     }
 
@@ -121,9 +133,110 @@ fn fs_background(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<
     return vec4(col, 1.0);
 }
 
+fn dot2(v: vec2<f32>) -> f32 {
+    return dot(v, v);
+}
+
+// Signed distance to quadratic Bezier curve (A, B, C)
+fn sdBezier(pos: vec2<f32>, A: vec2<f32>, B: vec2<f32>, C: vec2<f32>) -> f32 {
+    let a = B - A;
+    let b = A - 2.0 * B + C;
+    let c = a * 2.0;
+    let d = A - pos;
+    let kk = 1.0 / dot(b, b);
+    let kx = kk * dot(a, b);
+    let ky = kk * (2.0 * dot(a, a) + dot(d, b)) / 3.0;
+    let kz = kk * dot(d, a);
+    let p = ky - kx * kx;
+    let p3 = p * p * p;
+    let q = kx * (2.0 * kx * kx - 3.0 * ky) + kz;
+    let h = q * q + 4.0 * p3;
+    var res = 0.0;
+    if (h >= 0.0) {
+        let h_sqrt = sqrt(h);
+        let x1 = (h_sqrt - q) / 2.0;
+        let x2 = (-h_sqrt - q) / 2.0;
+        let uv1 = sign(x1) * pow(abs(x1), 1.0 / 3.0);
+        let uv2 = sign(x2) * pow(abs(x2), 1.0 / 3.0);
+        let t = clamp(uv1 + uv2 - kx, 0.0, 1.0);
+        res = dot2(d + (c + b * t) * t);
+    } else {
+        let z = sqrt(-p);
+        let v = acos(q / (2.0 * p * z)) / 3.0;
+        let m = cos(v);
+        let n = sin(v) * 1.732050808;
+        let t1 = clamp(m + m, 0.0, 1.0) * z - kx;
+        let t2 = clamp(-n - m, 0.0, 1.0) * z - kx;
+        let t3 = clamp(n - m, 0.0, 1.0) * z - kx;
+        let t1c = clamp(t1, 0.0, 1.0);
+        let t2c = clamp(t2, 0.0, 1.0);
+        res = min(
+            dot2(d + (c + b * t1c) * t1c),
+            dot2(d + (c + b * t2c) * t2c)
+        );
+        // The third root cannot be the closest
+        // res = min(res, dot2(d + (c + b * t3c) * t3c));
+    }
+    return sqrt(res);
+}
+
+// Signed distance to a line segment AB
+fn sdSegment(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
+    let pa = p - a;
+    let ba = b - a;
+    let h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+    return length(pa - ba * h);
+}
+
 @fragment
 fn fs_foreground(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<f32> {
-    let uv = frag_coord.xy;
-    var dist = 1e5;
-    return vec4(1.0, 0.0, 0.0, 0.0);
+    let uv = (frag_coord.xy / (uniforms.os_scale_factor * uniforms.camera_zoom)) - uniforms.camera_position;
+    var color = vec4<f32>(0.0);
+
+    if (uniforms.dragging == 3u) {
+        // Pin-Side Mapping: 0=Left, 1=Right, 2=Top, 3=Bottom, 4=Row
+        let from_node = nodes[uniforms.dragging_edge_from_node];
+        let from_pin = pins[from_node.pin_start + uniforms.dragging_edge_from_pin];
+        // let to_pos = vec2<f32>(uniforms.dragging_edge_to_x, uniforms.dragging_edge_to_y);
+
+        // Segment 1: Gerade aus dem Pin heraus
+        var dir_from = vec2<f32>(0.0, 0.0);
+        switch (from_pin.side) {
+            case 0u: { dir_from = vec2<f32>(-1.0, 0.0); }  // Left: nach außen (rechts)
+            case 1u: { dir_from = vec2<f32>(1.0, 0.0); } // Right: nach außen (links)
+            case 2u: { dir_from = vec2<f32>(0.0, -1.0); }  // Top: nach außen (unten)
+            case 3u: { dir_from = vec2<f32>(0.0, 1.0); } // Bottom: nach außen (oben)
+            default: { dir_from = normalize(uv - from_pin.position); }
+        }
+        let seg_len = 24.0 / uniforms.camera_zoom;
+        let p0 = from_pin.position;
+        let p1 = from_pin.position + dir_from * seg_len;
+
+        // Segment 4: Gerade in den Zielpin (angenommen gegenüberliegende Seite)
+        var dir_to = -dir_from;
+        let p4 = uniforms.cursor_position;
+        let p3 = uniforms.cursor_position + dir_to * seg_len;
+
+        // S-Kurve: Zwei Bezier-Segmente
+        // Kontrollpunkte für die S-Kurve
+        let delta = p3 - p1;
+        let curve_strength = length(delta) * 0.5;
+        let ctrl1 = p1 + dir_from * curve_strength;
+        let ctrl2 = p3 + dir_to * curve_strength;
+
+        // S-Kurve-Mitte
+        let p2 = mix(p1, p3, 0.5);
+
+        // SDF für alle Segmente
+        var dist = sdSegment(uv, p0, p1);
+        dist = min(dist, sdBezier(uv, p1, ctrl1, p2));
+        dist = min(dist, sdBezier(uv, p2, ctrl2, p3));
+        dist = min(dist, sdSegment(uv, p3, p4));
+
+        let edge_thickness = 4.0 / uniforms.camera_zoom;
+        let alpha = 1.0 - smoothstep(edge_thickness, edge_thickness + 1.5, dist);
+        color = mix(vec4<f32>(0.0), vec4<f32>(uniforms.border_color.xyz, 1.0), alpha);
+    }
+
+    return color;
 }

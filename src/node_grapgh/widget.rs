@@ -64,18 +64,23 @@ where
     ) {
         let state = tree.state.downcast_ref::<NodeGraphState>();
         let mut camera = state.camera;
+
+        // Handle panning when dragging the graph.
         if let Dragging::Graph(origin) = state.dragging {
             if let Some(cursor_position) = cursor.position() {
                 let cursor_position: ScreenPoint = cursor_position.into_euclid();
                 let cursor_position: WorldPoint = state.camera.screen_to_world().transform_point(cursor_position);
-                camera = camera.move_by(cursor_position - origin)
+                camera = camera.move_by(cursor_position - origin);
             }
         }
         let primitive_background = effects::Primitive {
             layer: Layer::Background,
             camera_zoom: camera.zoom(),
             camera_position: camera.position(),
-            dragging: Dragging::None,
+            cursor_position: camera.screen_to_world().transform_point(
+                cursor.position().unwrap_or(Point::new(0.0, 0.0)).into_euclid(),
+            ),
+            dragging: state.dragging.clone(),
             nodes: self
                 .nodes
                 .iter()
@@ -244,7 +249,29 @@ where
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
-        let state = tree.state.downcast_ref::<NodeGraphState>();
+        let state = tree.state.downcast_mut::<NodeGraphState>();
+        
+        match event {
+            Event::Mouse(mouse::Event::WheelScrolled { delta, .. }) => {
+                if let Some(cursor_pos) = screen_cursor.position() {
+                    let cursor_pos: ScreenPoint = cursor_pos.into_euclid();
+                    let cursor_pos = state.camera.screen_to_world().transform_point(cursor_pos);
+
+                    let scroll_amount = match delta {
+                        mouse::ScrollDelta::Pixels { y, .. } => *y,
+                        mouse::ScrollDelta::Lines { y, .. } => *y * 10.0,
+                    };
+
+                    let zoom_delta = scroll_amount / 100.0;
+
+                    state.camera = state.camera.zoom_at(cursor_pos, zoom_delta);
+                }
+                shell.capture_event();
+                shell.request_redraw();
+            }
+            _ => {}
+        }
+
         let graph_move_offset = if let Dragging::Graph(origin) = state.dragging {
             screen_cursor
                 .position()
@@ -350,7 +377,7 @@ where
 
                             let zoom_delta = scroll_amount / 100.0;
 
-                            state.camera.zoom_at(cursor_pos, zoom_delta);
+                            state.camera = state.camera.zoom_at(cursor_pos, zoom_delta);
                         }
                         shell.capture_event();
                         shell.request_redraw();

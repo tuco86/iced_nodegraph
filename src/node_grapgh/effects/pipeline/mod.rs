@@ -16,6 +16,8 @@ use iced::{
 };
 use iced_wgpu::graphics::Viewport;
 
+use crate::node_grapgh::{euclid::WorldPoint, state::Dragging};
+
 use super::{Layer, primitive::Primitive};
 
 mod buffer;
@@ -150,16 +152,36 @@ impl Pipeline {
                 }),
         );
 
+        let dragging: u32 = match primitive.dragging {
+            Dragging::None => 0,
+            Dragging::Graph(_) => 1,
+            Dragging::Node(_, _) => 2,
+            Dragging::Edge(_, _, _) => 3,
+            Dragging::EdgeOver(_, _, _, _) => 4,
+        };
+
+        let (dragging_edge_from_node, dragging_edge_from_pin, dragging_edge_from_origin) = {
+            match primitive.dragging {
+                Dragging::Edge(from_node, from_pin, position) => (from_node as _, from_pin as _, position),
+                _ => (0, 0, WorldPoint::zero()),
+            }
+        };
+
         let uniforms = types::Uniforms {            
             os_scale_factor: viewport.scale_factor() as _,
             camera_zoom: primitive.camera_zoom,
             camera_position: primitive.camera_position,
             border_color: vec4(0.5, 0.6, 0.7, 1.0),
             fill_color: vec4(0.5, 0.3, 0.1, 1.0),
+            cursor_position: primitive.cursor_position,
             num_nodes,
             num_pins,
             num_edges,
-            _padding: 0,
+            dragging, // primitive.dragging as u32,
+            dragging_edge_from_node,
+            dragging_edge_from_pin,
+            dragging_edge_from_origin,
+            _padding: [0, 0], // Padding to ensure 768-bit alignment
         };
         println!("uniforms: {:?}", uniforms);
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));

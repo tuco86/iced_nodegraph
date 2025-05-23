@@ -23,6 +23,7 @@ pub struct Primitive {
     pub layer: Layer,
     pub camera_zoom: f32,
     pub camera_position: WorldPoint,
+    pub cursor_position: WorldPoint,
     pub dragging: Dragging,
     pub nodes: Vec<Node>,
     pub edges: Vec<((usize, usize), (usize, usize))>, // (from_node, from_pin) -> (to_node, to_pin)
