@@ -208,30 +208,23 @@ fn fs_foreground(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<
             case 3u: { dir_from = vec2<f32>(0.0, 1.0); } // Bottom: nach außen (oben)
             default: { dir_from = normalize(uv - from_pin.position); }
         }
+        var dir_to = -dir_from;
+
         let seg_len = 24.0 / uniforms.camera_zoom;
         let p0 = from_pin.position;
         let p1 = from_pin.position + dir_from * seg_len;
 
         // Segment 4: Gerade in den Zielpin (angenommen gegenüberliegende Seite)
-        var dir_to = -dir_from;
-        let p4 = uniforms.cursor_position;
-        let p3 = uniforms.cursor_position + dir_to * seg_len;
+        let p3 = uniforms.cursor_position;
+        let p2 = uniforms.cursor_position + dir_to * seg_len;
 
-        // S-Kurve: Zwei Bezier-Segmente
-        // Kontrollpunkte für die S-Kurve
-        let delta = p3 - p1;
-        let curve_strength = length(delta) * 0.5;
-        let ctrl1 = p1 + dir_from * curve_strength;
-        let ctrl2 = p3 + dir_to * curve_strength;
+        // Use a fixed control point offset for a visually pleasing curve
+        let ctrl = (p1 + p2) * 0.5 + vec2<f32>(0.0, 0.0); // try offsetting here if you want more curve
 
-        // S-Kurve-Mitte
-        let p2 = mix(p1, p3, 0.5);
-
-        // SDF für alle Segmente
+        // SDF for start segment, bezier, end segment
         var dist = sdSegment(uv, p0, p1);
-        dist = min(dist, sdBezier(uv, p1, ctrl1, p2));
-        dist = min(dist, sdBezier(uv, p2, ctrl2, p3));
-        dist = min(dist, sdSegment(uv, p3, p4));
+        dist = min(dist, sdSegment(uv, p1, p2));
+        dist = min(dist, sdSegment(uv, p2, p3));
 
         let edge_thickness = 4.0 / uniforms.camera_zoom;
         let alpha = 1.0 - smoothstep(edge_thickness, edge_thickness + 1.5, dist);

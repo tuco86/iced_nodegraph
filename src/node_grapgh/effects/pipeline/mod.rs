@@ -183,7 +183,7 @@ impl Pipeline {
             dragging_edge_from_origin,
             _padding: [0, 0], // Padding to ensure 768-bit alignment
         };
-        println!("uniforms: {:?}", uniforms);
+        // println!("uniforms: {:?}", uniforms);
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
 
         self.bind_group = create_bind_group(
