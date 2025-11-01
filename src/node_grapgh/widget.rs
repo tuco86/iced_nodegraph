@@ -323,8 +323,13 @@ where
                             if let Some(cursor_position) = world_cursor.position() {
                                 let cursor_position = cursor_position.into_euclid();
                                 let offset = cursor_position - origin;
-                                self.nodes[node_index].0 =
-                                    self.nodes[node_index].0 + offset.into_iced();
+                                let new_position = self.nodes[node_index].0 + offset.into_iced();
+                                
+                                // Call on_move handler if set
+                                if let Some(handler) = self.on_move_handler() {
+                                    let message = handler(node_index, new_position);
+                                    shell.publish(message);
+                                }
                             }
                             state.dragging = Dragging::None;
                             shell.capture_event();
@@ -480,6 +485,59 @@ where
                                             "clicked pin {:?} on node {:?} at {:?}",
                                             pin_index, node_index, cursor_position
                                         );
+                                        
+                                        // Check if this pin has existing connections
+                                        // If it does, we want to grab the OTHER end and drag it
+                                        for ((from_node, from_pin), (to_node, to_pin)) in &self.edges {
+                                            // If we clicked the "from" pin, grab the "to" end
+                                            if *from_node == node_index && *from_pin == pin_index {
+                                                println!(
+                                                    "grabbing other end of cable: disconnecting from node {} pin {}, keeping node {} pin {}",
+                                                    to_node, to_pin, from_node, from_pin
+                                                );
+                                                
+                                                // Disconnect the edge
+                                                if let Some(handler) = self.on_disconnect_handler() {
+                                                    let message = handler(*from_node, *from_pin, *to_node, *to_pin);
+                                                    shell.publish(message);
+                                                }
+                                                
+                                                // Start dragging from the original "from" pin
+                                                let state = tree.state.downcast_mut::<NodeGraphState>();
+                                                state.dragging = Dragging::Edge(
+                                                    node_index,
+                                                    pin_index,
+                                                    cursor_position.into_euclid(),
+                                                );
+                                                shell.capture_event();
+                                                return;
+                                            }
+                                            // If we clicked the "to" pin, grab the "from" end
+                                            else if *to_node == node_index && *to_pin == pin_index {
+                                                println!(
+                                                    "grabbing other end of cable: disconnecting from node {} pin {}, keeping node {} pin {}",
+                                                    from_node, from_pin, to_node, to_pin
+                                                );
+                                                
+                                                // Disconnect the edge
+                                                if let Some(handler) = self.on_disconnect_handler() {
+                                                    let message = handler(*from_node, *from_pin, *to_node, *to_pin);
+                                                    shell.publish(message);
+                                                }
+                                                
+                                                // Start dragging from the original "from" pin (we flip the direction)
+                                                let state = tree.state.downcast_mut::<NodeGraphState>();
+                                                state.dragging = Dragging::Edge(
+                                                    *from_node,
+                                                    *from_pin,
+                                                    cursor_position.into_euclid(),
+                                                );
+                                                shell.capture_event();
+                                                return;
+                                            }
+                                        }
+                                        
+                                        // If no existing connection, start a new drag
                                         let state = tree.state.downcast_mut::<NodeGraphState>();
                                         state.dragging = Dragging::Edge(
                                             node_index,
@@ -491,6 +549,59 @@ where
                                     }
                                 }
                             }
+                            
+                            // check for edge clicks (before checking nodes)
+                            let edge_click_threshold = 5.0;
+                            for ((from_node, from_pin), (to_node, to_pin)) in &self.edges {
+                                // Get pin positions for both ends of the edge
+                                if let (Some((from_layout, from_tree)), Some((to_layout, to_tree))) = (
+                                    layout.children().zip(&tree.children).nth(*from_node),
+                                    layout.children().zip(&tree.children).nth(*to_node),
+                                ) {
+                                    let from_pins = find_pins(from_tree, from_layout);
+                                    let to_pins = find_pins(to_tree, to_layout);
+                                    
+                                    if let (Some((_, _, from_pos)), Some((_, to_pin_state, to_pos))) = (
+                                        from_pins.get(*from_pin),
+                                        to_pins.get(*to_pin),
+                                    ) {
+                                        // Pick the correct position based on pin side
+                                        let from_point = from_pos.1; // Use right side for output
+                                        let to_point = if to_pin_state.side == PinSide::Row {
+                                            to_pos.0 // Use left side for Row pins
+                                        } else {
+                                            to_pos.0
+                                        };
+                                        
+                                        // Calculate distance to edge segments
+                                        let mid_point = Point::new(
+                                            (from_point.x + to_point.x) / 2.0,
+                                            (from_point.y + to_point.y) / 2.0,
+                                        );
+                                        
+                                        let dist1 = distance_to_segment(cursor_position, from_point, mid_point);
+                                        let dist2 = distance_to_segment(cursor_position, mid_point, to_point);
+                                        let min_distance = dist1.min(dist2);
+                                        
+                                        if min_distance < edge_click_threshold {
+                                            println!(
+                                                "clicked edge: node {} pin {} -> node {} pin {}",
+                                                from_node, from_pin, to_node, to_pin
+                                            );
+                                            
+                                            // Publish edge disconnected message
+                                            if let Some(handler) = self.on_disconnect_handler() {
+                                                let message = handler(*from_node, *from_pin, *to_node, *to_pin);
+                                                shell.publish(message);
+                                            }
+                                            
+                                            shell.capture_event();
+                                            return;
+                                        }
+                                    }
+                                }
+                            }
+                            
                             // check bounds for nodes
                             for (node_index, node_layout) in layout.children().enumerate() {
                                 if world_cursor.is_over(node_layout.bounds()) {
@@ -597,6 +708,20 @@ where
 }
 
 //// Helper function to find all NodePin elements in the tree - OF A Node!!!
+// Calculate distance from a point to a line segment
+fn distance_to_segment(p: Point, a: Point, b: Point) -> f32 {
+    let pa = Point::new(p.x - a.x, p.y - a.y);
+    let ba = Point::new(b.x - a.x, b.y - a.y);
+    
+    let h = (pa.x * ba.x + pa.y * ba.y) / (ba.x * ba.x + ba.y * ba.y);
+    let h = h.clamp(0.0, 1.0);
+    
+    let closest = Point::new(a.x + h * ba.x, a.y + h * ba.y);
+    let dx = p.x - closest.x;
+    let dy = p.y - closest.y;
+    (dx * dx + dy * dy).sqrt()
+}
+
 fn find_pins<'a>(
     tree: &'a Tree,
     layout: Layout<'a>,

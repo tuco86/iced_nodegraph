@@ -15,6 +15,8 @@ pub struct NodeGraph<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer
     nodes: Vec<(Point, iced::Element<'a, Message, Theme, Renderer>)>, // (node_id, pin_id) -> node
     edges: Vec<((usize, usize), (usize, usize))>, // (from_node, from_pin) -> (to_node, to_pin)
     on_connect: Option<Box<dyn Fn(usize, usize, usize, usize) -> Message + 'a>>,
+    on_disconnect: Option<Box<dyn Fn(usize, usize, usize, usize) -> Message + 'a>>,
+    on_move: Option<Box<dyn Fn(usize, Point) -> Message + 'a>>,
 }
 
 impl<Message, Theme, Renderer> Default for NodeGraph<'_, Message, Theme, Renderer>
@@ -27,6 +29,8 @@ where
             nodes: Vec::new(),
             edges: Vec::new(),
             on_connect: None,
+            on_disconnect: None,
+            on_move: None,
         }
     }
 }
@@ -64,6 +68,28 @@ where
         self
     }
 
+    /// Sets the message that will be produced when an edge is disconnected.
+    /// 
+    /// The closure receives (from_node, from_pin, to_node, to_pin) indices.
+    pub fn on_disconnect(
+        mut self,
+        f: impl Fn(usize, usize, usize, usize) -> Message + 'a,
+    ) -> Self {
+        self.on_disconnect = Some(Box::new(f));
+        self
+    }
+
+    /// Sets the message that will be produced when a node is moved.
+    /// 
+    /// The closure receives (node_index, new_position).
+    pub fn on_move(
+        mut self,
+        f: impl Fn(usize, Point) -> Message + 'a,
+    ) -> Self {
+        self.on_move = Some(Box::new(f));
+        self
+    }
+
     /// Sets the width of the [`NodeGraph`].
     pub fn width(mut self, width: impl Into<Length>) -> Self {
         self.size.width = width.into();
@@ -90,5 +116,13 @@ where
 
     pub(super) fn on_connect_handler(&self) -> Option<&Box<dyn Fn(usize, usize, usize, usize) -> Message + 'a>> {
         self.on_connect.as_ref()
+    }
+
+    pub(super) fn on_disconnect_handler(&self) -> Option<&Box<dyn Fn(usize, usize, usize, usize) -> Message + 'a>> {
+        self.on_disconnect.as_ref()
+    }
+
+    pub(super) fn on_move_handler(&self) -> Option<&Box<dyn Fn(usize, Point) -> Message + 'a>> {
+        self.on_move.as_ref()
     }
 }

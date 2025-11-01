@@ -24,6 +24,16 @@ enum ApplicationMessage {
         to_node: usize,
         to_pin: usize,
     },
+    NodeMoved {
+        node_index: usize,
+        new_position: Point,
+    },
+    EdgeDisconnected {
+        from_node: usize,
+        from_pin: usize,
+        to_node: usize,
+        to_pin: usize,
+    },
     ToggleCommandPalette,
     CommandPaletteInput(String),
     SpawnNode { x: f32, y: f32, name: String },
@@ -74,6 +84,29 @@ impl Application {
                 );
                 self.edges.push(((from_node, from_pin), (to_node, to_pin)));
             }
+            ApplicationMessage::NodeMoved {
+                node_index,
+                new_position,
+            } => {
+                if let Some((position, _)) = self.nodes.get_mut(node_index) {
+                    *position = new_position;
+                    println!("Node {} moved to {:?}", node_index, new_position);
+                }
+            }
+            ApplicationMessage::EdgeDisconnected {
+                from_node,
+                from_pin,
+                to_node,
+                to_pin,
+            } => {
+                self.edges.retain(|edge| {
+                    *edge != ((from_node, from_pin), (to_node, to_pin))
+                });
+                println!(
+                    "Edge disconnected: node {} pin {} -> node {} pin {}",
+                    from_node, from_pin, to_node, to_pin
+                );
+            }
             ApplicationMessage::ToggleCommandPalette => {
                 self.command_palette_open = !self.command_palette_open;
                 if !self.command_palette_open {
@@ -105,6 +138,20 @@ impl Application {
                     from_pin,
                     to_node,
                     to_pin,
+                }
+            })
+            .on_disconnect(|from_node, from_pin, to_node, to_pin| {
+                ApplicationMessage::EdgeDisconnected {
+                    from_node,
+                    from_pin,
+                    to_node,
+                    to_pin,
+                }
+            })
+            .on_move(|node_index, new_position| {
+                ApplicationMessage::NodeMoved {
+                    node_index,
+                    new_position,
                 }
             });
         
