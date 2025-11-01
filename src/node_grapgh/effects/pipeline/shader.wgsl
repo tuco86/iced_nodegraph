@@ -15,8 +15,9 @@ struct Uniforms {
     dragging: u32,
     dragging_edge_from_node: u32,
     dragging_edge_from_pin: u32,
-    dragging_edge_to_x: f32,
-    dragging_edge_to_y: f32,
+    dragging_edge_from_origin: vec2<f32>,
+    dragging_edge_to_node: u32,
+    dragging_edge_to_pin: u32,
 };
 
 struct Node {
@@ -192,43 +193,102 @@ fn sdSegment(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
 fn fs_foreground(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<f32> {
     let uv = (frag_coord.xy / (uniforms.os_scale_factor * uniforms.camera_zoom)) - uniforms.camera_position;
     var color = vec4<f32>(0.0);
+    let edge_thickness = 4.0 / uniforms.camera_zoom;
 
-    if (uniforms.dragging == 3u) {
-        // Pin-Side Mapping: 0=Left, 1=Right, 2=Top, 3=Bottom, 4=Row
-        let from_node = nodes[uniforms.dragging_edge_from_node];
-        let from_pin = pins[from_node.pin_start + uniforms.dragging_edge_from_pin];
-        // let to_pos = vec2<f32>(uniforms.dragging_edge_to_x, uniforms.dragging_edge_to_y);
+    // Render static edges
+    for (var i = 0u; i < uniforms.num_edges; i++) {
+        let edge = edges[i];
+        let from_node = nodes[edge.from_node];
+        let from_pin = pins[from_node.pin_start + edge.from_pin];
+        let to_node = nodes[edge.to_node];
+        let to_pin = pins[to_node.pin_start + edge.to_pin];
 
-        // Segment 1: Gerade aus dem Pin heraus
+        // Calculate direction from pin side
         var dir_from = vec2<f32>(0.0, 0.0);
         switch (from_pin.side) {
-            case 0u: { dir_from = vec2<f32>(-1.0, 0.0); }  // Left: nach außen (rechts)
-            case 1u: { dir_from = vec2<f32>(1.0, 0.0); } // Right: nach außen (links)
-            case 2u: { dir_from = vec2<f32>(0.0, -1.0); }  // Top: nach außen (unten)
-            case 3u: { dir_from = vec2<f32>(0.0, 1.0); } // Bottom: nach außen (oben)
-            default: { dir_from = normalize(uv - from_pin.position); }
+            case 0u: { dir_from = vec2<f32>(-1.0, 0.0); }
+            case 1u: { dir_from = vec2<f32>(1.0, 0.0); }
+            case 2u: { dir_from = vec2<f32>(0.0, -1.0); }
+            case 3u: { dir_from = vec2<f32>(0.0, 1.0); }
+            default: { dir_from = vec2<f32>(1.0, 0.0); }
         }
-        var dir_to = -dir_from;
+
+        var dir_to = vec2<f32>(0.0, 0.0);
+        switch (to_pin.side) {
+            case 0u: { dir_to = vec2<f32>(-1.0, 0.0); }
+            case 1u: { dir_to = vec2<f32>(1.0, 0.0); }
+            case 2u: { dir_to = vec2<f32>(0.0, -1.0); }
+            case 3u: { dir_to = vec2<f32>(0.0, 1.0); }
+            default: { dir_to = vec2<f32>(-1.0, 0.0); }
+        }
 
         let seg_len = 24.0 / uniforms.camera_zoom;
         let p0 = from_pin.position;
         let p1 = from_pin.position + dir_from * seg_len;
+        let p3 = to_pin.position;
+        let p2 = to_pin.position + dir_to * seg_len;
 
-        // Segment 4: Gerade in den Zielpin (angenommen gegenüberliegende Seite)
-        let p3 = uniforms.cursor_position;
-        let p2 = uniforms.cursor_position + dir_to * seg_len;
-
-        // Use a fixed control point offset for a visually pleasing curve
-        let ctrl = (p1 + p2) * 0.5 + vec2<f32>(0.0, 0.0); // try offsetting here if you want more curve
-
-        // SDF for start segment, bezier, end segment
+        // SDF for segments
         var dist = sdSegment(uv, p0, p1);
         dist = min(dist, sdSegment(uv, p1, p2));
         dist = min(dist, sdSegment(uv, p2, p3));
 
-        let edge_thickness = 4.0 / uniforms.camera_zoom;
         let alpha = 1.0 - smoothstep(edge_thickness, edge_thickness + 1.5, dist);
-        color = mix(vec4<f32>(0.0), vec4<f32>(uniforms.border_color.xyz, 1.0), alpha);
+        let edge_color = vec4<f32>(0.7, 0.8, 0.9, 1.0); // Light blue for static edges
+        color = mix(color, edge_color, alpha);
+    }
+
+    // Render dragging edge (Edge or EdgeOver state)
+    if (uniforms.dragging == 3u || uniforms.dragging == 4u) {
+        let from_node = nodes[uniforms.dragging_edge_from_node];
+        let from_pin = pins[from_node.pin_start + uniforms.dragging_edge_from_pin];
+
+        var dir_from = vec2<f32>(0.0, 0.0);
+        switch (from_pin.side) {
+            case 0u: { dir_from = vec2<f32>(-1.0, 0.0); }
+            case 1u: { dir_from = vec2<f32>(1.0, 0.0); }
+            case 2u: { dir_from = vec2<f32>(0.0, -1.0); }
+            case 3u: { dir_from = vec2<f32>(0.0, 1.0); }
+            default: { dir_from = normalize(uv - from_pin.position); }
+        }
+
+        let seg_len = 24.0 / uniforms.camera_zoom;
+        let p0 = from_pin.position;
+        let p1 = from_pin.position + dir_from * seg_len;
+        
+        var p3 = uniforms.cursor_position;
+        var dir_to = -dir_from;
+        
+        // If in EdgeOver state, use the actual target pin position and direction
+        if (uniforms.dragging == 4u) {
+            let to_node = nodes[uniforms.dragging_edge_to_node];
+            let to_pin = pins[to_node.pin_start + uniforms.dragging_edge_to_pin];
+            p3 = to_pin.position;
+            
+            // Get proper direction based on target pin side
+            switch (to_pin.side) {
+                case 0u: { dir_to = vec2<f32>(-1.0, 0.0); }
+                case 1u: { dir_to = vec2<f32>(1.0, 0.0); }
+                case 2u: { dir_to = vec2<f32>(0.0, -1.0); }
+                case 3u: { dir_to = vec2<f32>(0.0, 1.0); }
+                default: { dir_to = -dir_from; }
+            }
+        }
+        
+        let p2 = p3 + dir_to * seg_len;
+
+        var dist = sdSegment(uv, p0, p1);
+        dist = min(dist, sdSegment(uv, p1, p2));
+        dist = min(dist, sdSegment(uv, p2, p3));
+
+        let alpha = 1.0 - smoothstep(edge_thickness, edge_thickness + 1.5, dist);
+        // Different color for EdgeOver (green) vs Edge (orange)
+        let drag_color = select(
+            vec4<f32>(1.0, 0.6, 0.2, 1.0), // Orange when dragging
+            vec4<f32>(0.2, 1.0, 0.4, 1.0), // Green when hovering over valid pin
+            uniforms.dragging == 4u
+        );
+        color = mix(color, drag_color, alpha);
     }
 
     return color;

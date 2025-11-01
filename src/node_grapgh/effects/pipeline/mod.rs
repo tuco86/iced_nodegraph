@@ -160,10 +160,15 @@ impl Pipeline {
             Dragging::EdgeOver(_, _, _, _) => 4,
         };
 
-        let (dragging_edge_from_node, dragging_edge_from_pin, dragging_edge_from_origin) = {
+        let (dragging_edge_from_node, dragging_edge_from_pin, dragging_edge_from_origin, dragging_edge_to_node, dragging_edge_to_pin) = {
             match primitive.dragging {
-                Dragging::Edge(from_node, from_pin, position) => (from_node as _, from_pin as _, position),
-                _ => (0, 0, WorldPoint::zero()),
+                Dragging::Edge(from_node, from_pin, position) => {
+                    (from_node as _, from_pin as _, position, 0, 0)
+                },
+                Dragging::EdgeOver(from_node, from_pin, to_node, to_pin) => {
+                    (from_node as _, from_pin as _, WorldPoint::zero(), to_node as _, to_pin as _)
+                },
+                _ => (0, 0, WorldPoint::zero(), 0, 0),
             }
         };
 
@@ -177,11 +182,12 @@ impl Pipeline {
             num_nodes,
             num_pins,
             num_edges,
-            dragging, // primitive.dragging as u32,
+            dragging,
             dragging_edge_from_node,
             dragging_edge_from_pin,
             dragging_edge_from_origin,
-            _padding: [0, 0], // Padding to ensure 768-bit alignment
+            dragging_edge_to_node,
+            dragging_edge_to_pin,
         };
         // println!("uniforms: {:?}", uniforms);
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
@@ -271,7 +277,7 @@ fn create_render_pipeline(
         layout: Some(layout),
         vertex: VertexState {
             module: module,
-            entry_point: Some("vs_main"), // Vertex shader entry point
+            entry_point: None, // Vertex shader entry point
             buffers: &[],                 // No vertex buffer needed
             compilation_options: PipelineCompilationOptions::default(),
         },

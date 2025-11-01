@@ -119,7 +119,7 @@ where
                 )
                 // .inspect(|n| println!("node: {:?}", n))
                 .collect(),
-            edges: vec![],
+            edges: self.edges.clone(),
         };
         let mut primitive_foreground = primitive_background.clone();
         primitive_foreground.layer = Layer::Foreground;
@@ -333,8 +333,91 @@ where
                         }
                         _ => {}
                     },
-                    Dragging::Edge(_, _, _) | Dragging::EdgeOver(_, _, _, _) => match event {
+                    Dragging::Edge(from_node, from_pin, _) => match event {
+                        Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                            // Check if cursor is over a pin to transition to EdgeOver
+                            if let Some(cursor_position) = world_cursor.position() {
+                                let mut target_pin: Option<(usize, usize)> = None;
+                                for (node_index, (node_layout, node_tree)) in
+                                    layout.children().zip(&tree.children).enumerate()
+                                {
+                                    for (pin_index, _, (a, b)) in find_pins(node_tree, node_layout) {
+                                        let distance = a
+                                            .distance(cursor_position)
+                                            .min(b.distance(cursor_position));
+                                        if distance < 5.0 {
+                                            // Don't connect to the same pin we're dragging from
+                                            if node_index != from_node || pin_index != from_pin {
+                                                target_pin = Some((node_index, pin_index));
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if target_pin.is_some() {
+                                        break;
+                                    }
+                                }
+                                
+                                if let Some((to_node, to_pin)) = target_pin {
+                                    println!(
+                                        "hovering over pin {:?} on node {:?}",
+                                        to_pin, to_node
+                                    );
+                                    state.dragging = Dragging::EdgeOver(
+                                        from_node,
+                                        from_pin,
+                                        to_node,
+                                        to_pin,
+                                    );
+                                }
+                            }
+                            shell.request_redraw();
+                        }
                         Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                            state.dragging = Dragging::None;
+                            shell.capture_event();
+                            shell.request_redraw();
+                        }
+                        _ => {}
+                    },
+                    Dragging::EdgeOver(from_node, from_pin, to_node, to_pin) => match event {
+                        Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                            // Check if still over the target pin, otherwise go back to Edge state
+                            if let Some(cursor_position) = world_cursor.position() {
+                                let mut still_over_pin = false;
+                                if let Some((node_layout, node_tree)) = layout
+                                    .children()
+                                    .zip(&tree.children)
+                                    .nth(to_node)
+                                {
+                                    if let Some((_, _, (a, b))) = find_pins(node_tree, node_layout)
+                                        .into_iter()
+                                        .nth(to_pin)
+                                    {
+                                        let distance = a
+                                            .distance(cursor_position)
+                                            .min(b.distance(cursor_position));
+                                        still_over_pin = distance < 5.0;
+                                    }
+                                }
+                                
+                                if !still_over_pin {
+                                    // Moved away from pin, go back to dragging
+                                    state.dragging = Dragging::Edge(
+                                        from_node,
+                                        from_pin,
+                                        cursor_position.into_euclid(),
+                                    );
+                                }
+                            }
+                            shell.request_redraw();
+                        }
+                        Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                            // Connection successful! Call the on_connect handler
+                            if let Some(handler) = self.on_connect_handler() {
+                                let message = handler(from_node, from_pin, to_node, to_pin);
+                                shell.publish(message);
+                            }
                             state.dragging = Dragging::None;
                             shell.capture_event();
                             shell.request_redraw();

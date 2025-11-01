@@ -20,8 +20,9 @@ pub struct Uniforms {
     pub dragging_edge_from_node: u32,
     pub dragging_edge_from_pin: u32,
     pub dragging_edge_from_origin: WorldPoint,
-
-    pub _padding: [u32; 2], // Padding to ensure 768-bit alignment
+    pub dragging_edge_to_node: u32,
+    pub dragging_edge_to_pin: u32,
+    // No padding needed - now 832 bits which is already aligned
 }
 
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
