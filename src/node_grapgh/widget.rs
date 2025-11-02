@@ -76,6 +76,32 @@ where
                 camera = camera.move_by(cursor_position - origin);
             }
         }
+        // Theme-aware colors
+        let text_color = style.text_color;
+        
+        // Edge color - use text color for visibility
+        let edge_color = glam::vec4(text_color.r, text_color.g, text_color.b, text_color.a);
+        
+        // Derive other colors from text color to adapt to theme
+        // Dark themes have light text, light themes have dark text
+        let is_dark_theme = (text_color.r + text_color.g + text_color.b) > 1.5; // Bright text = dark theme
+        
+        let (bg_color, border_color, fill_color) = if is_dark_theme {
+            // Dark theme: dark backgrounds
+            (
+                glam::vec4(0.08, 0.08, 0.09, 1.0),    // Background
+                glam::vec4(0.20, 0.20, 0.22, 1.0),    // Border
+                glam::vec4(0.14, 0.14, 0.16, 1.0),    // Fill
+            )
+        } else {
+            // Light theme: light backgrounds
+            (
+                glam::vec4(0.92, 0.92, 0.93, 1.0),    // Background
+                glam::vec4(0.70, 0.70, 0.72, 1.0),    // Border
+                glam::vec4(0.84, 0.84, 0.86, 1.0),    // Fill
+            )
+        };
+        
         let primitive_background = effects::Primitive {
             layer: Layer::Background,
             camera_zoom: camera.zoom(),
@@ -123,6 +149,10 @@ where
                 // .inspect(|n| println!("node: {:?}", n))
                 .collect(),
             edges: self.edges.clone(),
+            edge_color,
+            background_color: bg_color,
+            border_color,
+            fill_color,
         };
         let mut primitive_foreground = primitive_background.clone();
         primitive_foreground.layer = Layer::Foreground;

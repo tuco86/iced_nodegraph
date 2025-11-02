@@ -3,8 +3,10 @@ struct Uniforms {
     camera_zoom: f32,
     camera_position: vec2<f32>,
 
-    border_color: vec4<f32>,  // RGBA for node border
-    fill_color: vec4<f32>,    // RGBA for node fill
+    border_color: vec4<f32>,     // RGBA for node border
+    fill_color: vec4<f32>,       // RGBA for node fill
+    edge_color: vec4<f32>,       // RGBA for edges
+    background_color: vec4<f32>, // RGBA for background
 
     cursor_position: vec2<f32>,
 
@@ -96,11 +98,74 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> @builtin(position) vec4<
     return vec4<f32>(pos, 0.0, 1.0);
 }
 
+// Helper function to render edges - called from background to put edges behind nodes
+fn render_edges(uv: vec2<f32>, base_color: vec3<f32>) -> vec3<f32> {
+    var col = base_color;
+    let edge_thickness = 2.0 / uniforms.camera_zoom;
+    let endpoint_radius = 4.0 / uniforms.camera_zoom;
+    
+    // Render static edges
+    for (var i = 0u; i < uniforms.num_edges; i++) {
+        let edge = edges[i];
+        let from_node = nodes[edge.from_node];
+        let from_pin = pins[from_node.pin_start + edge.from_pin];
+        let to_node = nodes[edge.to_node];
+        let to_pin = pins[to_node.pin_start + edge.to_pin];
+
+        // Calculate direction from pin side
+        var dir_from = vec2<f32>(0.0, 0.0);
+        switch (from_pin.side) {
+            case 0u: { dir_from = vec2<f32>(-1.0, 0.0); }
+            case 1u: { dir_from = vec2<f32>(1.0, 0.0); }
+            case 2u: { dir_from = vec2<f32>(0.0, -1.0); }
+            case 3u: { dir_from = vec2<f32>(0.0, 1.0); }
+            default: { dir_from = vec2<f32>(1.0, 0.0); }
+        }
+
+        var dir_to = vec2<f32>(0.0, 0.0);
+        switch (to_pin.side) {
+            case 0u: { dir_to = vec2<f32>(-1.0, 0.0); }
+            case 1u: { dir_to = vec2<f32>(1.0, 0.0); }
+            case 2u: { dir_to = vec2<f32>(0.0, -1.0); }
+            case 3u: { dir_to = vec2<f32>(0.0, 1.0); }
+            default: { dir_to = vec2<f32>(-1.0, 0.0); }
+        }
+
+        let seg_len = 80.0 / uniforms.camera_zoom;
+        let p0 = from_pin.position;
+        let p1 = from_pin.position + dir_from * seg_len;
+        let p3 = to_pin.position;
+        let p2 = to_pin.position + dir_to * seg_len;
+
+        let dist = sdCubicBezier(uv, p0, p1, p2, p3);
+        let alpha = 1.0 - smoothstep(edge_thickness, edge_thickness + 1.0, dist);
+        col = mix(col, uniforms.edge_color.xyz, alpha);
+        
+        // Add solid dots at endpoints
+        let dist_start = length(uv - p0);
+        let dist_end = length(uv - p3);
+        let dot_alpha_start = 1.0 - smoothstep(endpoint_radius, endpoint_radius + 1.0, dist_start);
+        let dot_alpha_end = 1.0 - smoothstep(endpoint_radius, endpoint_radius + 1.0, dist_end);
+        col = mix(col, uniforms.edge_color.xyz, max(dot_alpha_start, dot_alpha_end));
+    }
+    
+    return col;
+}
+
 @fragment
 fn fs_background(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<f32> {
 // Adjust UV coordinates based on camera zoom and position.
     // Original shader formula (this is correct for rendering!)
     let uv = (frag_coord.xy / (uniforms.os_scale_factor * uniforms.camera_zoom)) - uniforms.camera_position;
+
+    // Start with theme background color and add grid pattern
+    let grid_intensity = grid_pattern(uv, 100.0, 1000.0, uniforms.camera_zoom);
+    // Grid lines in white/bright color for maximum visibility
+    let grid_color = vec3<f32>(0.3, 0.3, 0.35);  // Bright gray lines
+    var col = mix(uniforms.background_color.xyz, grid_color, grid_intensity);
+
+    // Render edges BEFORE nodes (so they appear behind)
+    col = render_edges(uv, col);
 
     var d = 1e5;
 
@@ -121,22 +186,61 @@ fn fs_background(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<
         }
     }
 
-    // coloring
-    var col = select(
-        uniforms.border_color.xyz,
-        uniforms.fill_color.xyz,
-        d > 0.0
-    );
-
-    col *= 1.0 - exp(-6.0 * abs(d));
-    col *= 0.8 + 0.2 * cos(0.1 * d);
-    col = mix(col, vec3<f32>(0.0), 1.0 - smoothstep(1.2, 1.3, abs(d)));
+    // Render nodes with clean anti-aliasing (UE5-style: thin border)
+    let border_width = 1.0 / uniforms.camera_zoom;  // Thinner border (1px instead of 2px)
+    let aa = 0.5 / uniforms.camera_zoom;  // Tighter anti-aliasing
+    let node_opacity = 0.75;  // 75% opacity = 25% transparent
+    
+    // Inside node (d < 0)
+    if (d < 0.0) {
+        // We're inside the node
+        if (d > -border_width) {
+            // Inside border region - blend with background using transparency
+            col = mix(col, uniforms.border_color.xyz, node_opacity);
+        } else {
+            // Inside fill region - blend with background using transparency
+            col = mix(col, uniforms.fill_color.xyz, node_opacity);
+        }
+    } else if (d < aa) {
+        // Anti-aliasing on the outer edge
+        let alpha = (1.0 - smoothstep(0.0, aa, d)) * node_opacity;
+        col = mix(col, uniforms.border_color.xyz, alpha);
+    }
 
     return vec4(col, 1.0);
 }
 
 fn dot2(v: vec2<f32>) -> f32 {
     return dot(v, v);
+}
+
+// Grid pattern: returns intensity of grid lines
+fn grid_pattern(uv: vec2<f32>, minor_spacing: f32, major_spacing: f32, zoom: f32) -> f32 {
+    // Simple approach: use modulo to find distance to nearest grid line
+    let coord_minor = abs(uv % minor_spacing);
+    let dist_minor_x = min(coord_minor.x, minor_spacing - coord_minor.x);
+    let dist_minor_y = min(coord_minor.y, minor_spacing - coord_minor.y);
+    
+    let coord_major = abs(uv % major_spacing);
+    let dist_major_x = min(coord_major.x, major_spacing - coord_major.x);
+    let dist_major_y = min(coord_major.y, major_spacing - coord_major.y);
+    
+    // Line thickness in world space
+    let minor_width = 1.0;
+    let major_width = 2.0;
+    
+    var intensity = 0.0;
+    
+    // Major grid lines (every 1000px)
+    if (dist_major_x < major_width || dist_major_y < major_width) {
+        intensity = 0.7;
+    }
+    // Minor grid lines (every 100px)
+    else if (dist_minor_x < minor_width || dist_minor_y < minor_width) {
+        intensity = 0.35;
+    }
+    
+    return intensity;
 }
 
 // Analytical signed distance to cubic Bezier curve (p0, p1, p2, p3)
@@ -260,50 +364,11 @@ fn fs_foreground(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<
     // Original shader formula (this is correct for rendering!)
     let uv = (frag_coord.xy / (uniforms.os_scale_factor * uniforms.camera_zoom)) - uniforms.camera_position;
     var color = vec4<f32>(0.0);
-    let edge_thickness = 4.0 / uniforms.camera_zoom;
+    let edge_thickness = 2.0 / uniforms.camera_zoom;
+    let endpoint_radius = 4.0 / uniforms.camera_zoom;
 
-    // Render static edges
-    for (var i = 0u; i < uniforms.num_edges; i++) {
-        let edge = edges[i];
-        let from_node = nodes[edge.from_node];
-        let from_pin = pins[from_node.pin_start + edge.from_pin];
-        let to_node = nodes[edge.to_node];
-        let to_pin = pins[to_node.pin_start + edge.to_pin];
-
-        // Calculate direction from pin side
-        var dir_from = vec2<f32>(0.0, 0.0);
-        switch (from_pin.side) {
-            case 0u: { dir_from = vec2<f32>(-1.0, 0.0); }
-            case 1u: { dir_from = vec2<f32>(1.0, 0.0); }
-            case 2u: { dir_from = vec2<f32>(0.0, -1.0); }
-            case 3u: { dir_from = vec2<f32>(0.0, 1.0); }
-            default: { dir_from = vec2<f32>(1.0, 0.0); }
-        }
-
-        var dir_to = vec2<f32>(0.0, 0.0);
-        switch (to_pin.side) {
-            case 0u: { dir_to = vec2<f32>(-1.0, 0.0); }
-            case 1u: { dir_to = vec2<f32>(1.0, 0.0); }
-            case 2u: { dir_to = vec2<f32>(0.0, -1.0); }
-            case 3u: { dir_to = vec2<f32>(0.0, 1.0); }
-            default: { dir_to = vec2<f32>(-1.0, 0.0); }
-        }
-
-        let seg_len = 24.0 / uniforms.camera_zoom;
-        let p0 = from_pin.position;
-        let p1 = from_pin.position + dir_from * seg_len;
-        let p3 = to_pin.position;
-        let p2 = to_pin.position + dir_to * seg_len;
-
-        // Render entire edge as cubic bezier curve
-        let dist = sdCubicBezier(uv, p0, p1, p2, p3);
-
-        let alpha = 1.0 - smoothstep(edge_thickness, edge_thickness + 1.5, dist);
-        let edge_color = vec4<f32>(0.7, 0.8, 0.9, 1.0); // Light blue for static edges
-        color = mix(color, edge_color, alpha);
-    }
-
-    // Render dragging edge (Edge or EdgeOver state)
+    // Static edges are now rendered in background shader (behind nodes)
+    // Only render dragging edge here (Edge or EdgeOver state)
     if (uniforms.dragging == 3u || uniforms.dragging == 4u) {
         let from_node = nodes[uniforms.dragging_edge_from_node];
         let from_pin = pins[from_node.pin_start + uniforms.dragging_edge_from_pin];
@@ -317,7 +382,7 @@ fn fs_foreground(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<
             default: { dir_from = normalize(uv - from_pin.position); }
         }
 
-        let seg_len = 24.0 / uniforms.camera_zoom;
+        let seg_len = 80.0 / uniforms.camera_zoom;  // Longer segments for curvier bezier
         let p0 = from_pin.position;
         let p1 = from_pin.position + dir_from * seg_len;
         
@@ -345,7 +410,7 @@ fn fs_foreground(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<
         // Render entire dragging edge as cubic bezier curve
         let dist = sdCubicBezier(uv, p0, p1, p2, p3);
 
-        let alpha = 1.0 - smoothstep(edge_thickness, edge_thickness + 1.5, dist);
+        let alpha = 1.0 - smoothstep(edge_thickness, edge_thickness + 1.0, dist);
         // Different color for EdgeOver (green) vs Edge (orange)
         let drag_color = select(
             vec4<f32>(1.0, 0.6, 0.2, 1.0), // Orange when dragging
@@ -353,6 +418,13 @@ fn fs_foreground(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<
             uniforms.dragging == 4u
         );
         color = mix(color, drag_color, alpha);
+        
+        // Add solid dots at endpoints for dragging edge
+        let dist_start_drag = length(uv - p0);
+        let dist_end_drag = length(uv - p3);
+        let dot_alpha_start_drag = 1.0 - smoothstep(endpoint_radius, endpoint_radius + 1.0, dist_start_drag);
+        let dot_alpha_end_drag = 1.0 - smoothstep(endpoint_radius, endpoint_radius + 1.0, dist_end_drag);
+        color = mix(color, drag_color, max(dot_alpha_start_drag, dot_alpha_end_drag));
     }
 
     return color;

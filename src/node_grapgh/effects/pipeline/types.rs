@@ -7,8 +7,10 @@ pub struct Uniforms {
     pub camera_zoom: f32,
     pub camera_position: WorldPoint,
     
-    pub border_color: glam::Vec4, // RGBA for node border
-    pub fill_color: glam::Vec4,   // RGBA for node fill
+    pub border_color: glam::Vec4,     // RGBA for node border
+    pub fill_color: glam::Vec4,       // RGBA for node fill
+    pub edge_color: glam::Vec4,       // RGBA for edges
+    pub background_color: glam::Vec4, // RGBA for background
     
     pub cursor_position: WorldPoint, // in world coordinates
 
@@ -22,7 +24,6 @@ pub struct Uniforms {
     pub dragging_edge_from_origin: WorldPoint,
     pub dragging_edge_to_node: u32,
     pub dragging_edge_to_pin: u32,
-    // No padding needed - now 832 bits which is already aligned
 }
 
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]

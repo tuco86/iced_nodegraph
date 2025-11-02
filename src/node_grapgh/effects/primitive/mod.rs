@@ -27,6 +27,10 @@ pub struct Primitive {
     pub dragging: Dragging,
     pub nodes: Vec<Node>,
     pub edges: Vec<((usize, usize), (usize, usize))>, // (from_node, from_pin) -> (to_node, to_pin)
+    pub edge_color: glam::Vec4,
+    pub background_color: glam::Vec4,
+    pub border_color: glam::Vec4,
+    pub fill_color: glam::Vec4,
 }
 
 impl shader::Primitive for Primitive {

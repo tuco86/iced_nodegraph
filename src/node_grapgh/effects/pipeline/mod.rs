@@ -1,6 +1,5 @@
 use std::num::NonZeroU64;
 
-use glam::vec4;
 use iced::{
     Rectangle,
     wgpu::{
@@ -176,8 +175,10 @@ impl Pipeline {
             os_scale_factor: viewport.scale_factor() as _,
             camera_zoom: primitive.camera_zoom,
             camera_position: primitive.camera_position,
-            border_color: vec4(0.5, 0.6, 0.7, 1.0),
-            fill_color: vec4(0.5, 0.3, 0.1, 1.0),
+            border_color: primitive.border_color,
+            fill_color: primitive.fill_color,
+            edge_color: primitive.edge_color,
+            background_color: primitive.background_color,
             cursor_position: primitive.cursor_position,
             num_nodes,
             num_pins,
