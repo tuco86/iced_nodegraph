@@ -148,16 +148,37 @@ fn render_edges(uv: vec2<f32>, base_color: vec3<f32>) -> vec3<f32> {
         let p3 = to_pin.position;
         let p2 = to_pin.position + dir_to * seg_len;
 
+        // Determine edge color based on pin directions and colors
+        // Priority: Output > Input > Both
+        var edge_color = vec3<f32>(0.5, 0.5, 0.5); // Fallback gray
+        
+        if (from_pin.direction == 1u) {
+            // From pin is Output - use its color (highest priority)
+            edge_color = from_pin.color.xyz;
+        } else if (to_pin.direction == 1u) {
+            // To pin is Output - use its color
+            edge_color = to_pin.color.xyz;
+        } else if (from_pin.direction == 0u) {
+            // From pin is Input - use its color (second priority)
+            edge_color = from_pin.color.xyz;
+        } else if (to_pin.direction == 0u) {
+            // To pin is Input - use its color
+            edge_color = to_pin.color.xyz;
+        } else {
+            // Both pins are Both direction - use from pin color
+            edge_color = from_pin.color.xyz;
+        }
+
         let dist = sdCubicBezier(uv, p0, p1, p2, p3);
         let alpha = 1.0 - smoothstep(edge_thickness, edge_thickness + 1.0, dist);
-        col = mix(col, uniforms.edge_color.xyz, alpha);
+        col = mix(col, edge_color, alpha);
         
-        // Add solid dots at endpoints
+        // Add solid dots at endpoints with matching color
         let dist_start = length(uv - p0);
         let dist_end = length(uv - p3);
         let dot_alpha_start = 1.0 - smoothstep(endpoint_radius, endpoint_radius + 1.0, dist_start);
         let dot_alpha_end = 1.0 - smoothstep(endpoint_radius, endpoint_radius + 1.0, dist_end);
-        col = mix(col, uniforms.edge_color.xyz, max(dot_alpha_start, dot_alpha_end));
+        col = mix(col, edge_color, max(dot_alpha_start, dot_alpha_end));
     }
     
     return col;
@@ -444,16 +465,20 @@ fn fs_foreground(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<
         
         let p2 = p3 + dir_to * seg_len;
 
+        // Determine drag edge color based on source pin
+        // Use pin color when valid connection, theme color for invalid
+        var drag_color = vec4<f32>(0.0);
+        if (uniforms.dragging == 4u) {
+            // EdgeOver - valid connection, use source pin color
+            drag_color = from_pin.color;
+        } else {
+            // Edge - dragging without valid target, use warning theme color
+            drag_color = uniforms.drag_edge_color;
+        }
+
         // Render entire dragging edge as cubic bezier curve
         let dist = sdCubicBezier(uv, p0, p1, p2, p3);
-
         let alpha = 1.0 - smoothstep(edge_thickness, edge_thickness + 1.0, dist);
-        // Different color for EdgeOver (success) vs Edge (warning) - from theme
-        let drag_color = select(
-            uniforms.drag_edge_color,        // Warning color when dragging
-            uniforms.drag_edge_valid_color,  // Success color when hovering over valid pin
-            uniforms.dragging == 4u
-        );
         color = mix(color, drag_color, alpha);
         
         // Add solid dots at endpoints for dragging edge
