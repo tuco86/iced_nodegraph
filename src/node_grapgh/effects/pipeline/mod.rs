@@ -179,6 +179,8 @@ impl Pipeline {
             fill_color: primitive.fill_color,
             edge_color: primitive.edge_color,
             background_color: primitive.background_color,
+            drag_edge_color: primitive.drag_edge_color,
+            drag_edge_valid_color: primitive.drag_edge_valid_color,
             cursor_position: primitive.cursor_position,
             num_nodes,
             num_pins,

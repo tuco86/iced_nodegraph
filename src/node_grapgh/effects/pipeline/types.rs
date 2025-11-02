@@ -11,6 +11,8 @@ pub struct Uniforms {
     pub fill_color: glam::Vec4,       // RGBA for node fill
     pub edge_color: glam::Vec4,       // RGBA for edges
     pub background_color: glam::Vec4, // RGBA for background
+    pub drag_edge_color: glam::Vec4,  // RGBA for dragging edge (warning color)
+    pub drag_edge_valid_color: glam::Vec4, // RGBA for valid connection (success color)
     
     pub cursor_position: WorldPoint, // in world coordinates
 

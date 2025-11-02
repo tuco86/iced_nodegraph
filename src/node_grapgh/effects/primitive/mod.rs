@@ -31,6 +31,8 @@ pub struct Primitive {
     pub background_color: glam::Vec4,
     pub border_color: glam::Vec4,
     pub fill_color: glam::Vec4,
+    pub drag_edge_color: glam::Vec4,
+    pub drag_edge_valid_color: glam::Vec4,
 }
 
 impl shader::Primitive for Primitive {

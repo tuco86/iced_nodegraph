@@ -7,6 +7,8 @@ struct Uniforms {
     fill_color: vec4<f32>,       // RGBA for node fill
     edge_color: vec4<f32>,       // RGBA for edges
     background_color: vec4<f32>, // RGBA for background
+    drag_edge_color: vec4<f32>,  // RGBA for dragging edge
+    drag_edge_valid_color: vec4<f32>, // RGBA for valid connection
 
     cursor_position: vec2<f32>,
 
@@ -160,8 +162,8 @@ fn fs_background(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<
 
     // Start with theme background color and add grid pattern
     let grid_intensity = grid_pattern(uv, 100.0, 1000.0, uniforms.camera_zoom);
-    // Grid lines in white/bright color for maximum visibility
-    let grid_color = vec3<f32>(0.3, 0.3, 0.35);  // Bright gray lines
+    // Grid lines: lighter version of border color for theme consistency
+    let grid_color = uniforms.border_color.xyz * 1.3;  // Slightly lighter than border
     var col = mix(uniforms.background_color.xyz, grid_color, grid_intensity);
 
     // Render edges BEFORE nodes (so they appear behind)
@@ -411,10 +413,10 @@ fn fs_foreground(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<
         let dist = sdCubicBezier(uv, p0, p1, p2, p3);
 
         let alpha = 1.0 - smoothstep(edge_thickness, edge_thickness + 1.0, dist);
-        // Different color for EdgeOver (green) vs Edge (orange)
+        // Different color for EdgeOver (success) vs Edge (warning) - from theme
         let drag_color = select(
-            vec4<f32>(1.0, 0.6, 0.2, 1.0), // Orange when dragging
-            vec4<f32>(0.2, 1.0, 0.4, 1.0), // Green when hovering over valid pin
+            uniforms.drag_edge_color,        // Warning color when dragging
+            uniforms.drag_edge_valid_color,  // Success color when hovering over valid pin
             uniforms.dragging == 4u
         );
         color = mix(color, drag_color, alpha);

@@ -76,30 +76,34 @@ where
                 camera = camera.move_by(cursor_position - origin);
             }
         }
-        // Theme-aware colors
+        // Theme-aware colors from extended palette
         let text_color = style.text_color;
         
-        // Edge color - use text color for visibility
-        let edge_color = glam::vec4(text_color.r, text_color.g, text_color.b, text_color.a);
+        // Try to get extended palette if we have iced::Theme
+        // If not available, derive from text_color
+        let is_dark_theme = (text_color.r + text_color.g + text_color.b) > 1.5;
         
-        // Derive other colors from text color to adapt to theme
-        // Dark themes have light text, light themes have dark text
-        let is_dark_theme = (text_color.r + text_color.g + text_color.b) > 1.5; // Bright text = dark theme
-        
-        let (bg_color, border_color, fill_color) = if is_dark_theme {
-            // Dark theme: dark backgrounds
-            (
-                glam::vec4(0.08, 0.08, 0.09, 1.0),    // Background
-                glam::vec4(0.20, 0.20, 0.22, 1.0),    // Border
-                glam::vec4(0.14, 0.14, 0.16, 1.0),    // Fill
-            )
+        // Use simple color derivation that adapts to dark/light themes
+        let (bg_color, border_color, fill_color, edge_color, drag_edge_color, drag_valid_color) = if is_dark_theme {
+            // Dark theme: use darker backgrounds with subtle highlights
+            let bg = glam::vec4(0.08, 0.08, 0.09, 1.0);
+            let border = glam::vec4(0.20, 0.20, 0.22, 1.0);
+            let fill = glam::vec4(0.14, 0.14, 0.16, 1.0);
+            let edge = glam::vec4(text_color.r, text_color.g, text_color.b, text_color.a);
+            // Drag colors: warning (orange-ish) and success (green-ish)
+            let drag = glam::vec4(0.9, 0.6, 0.3, 1.0);  // Warm warning
+            let valid = glam::vec4(0.3, 0.8, 0.5, 1.0); // Cool success
+            (bg, border, fill, edge, drag, valid)
         } else {
-            // Light theme: light backgrounds
-            (
-                glam::vec4(0.92, 0.92, 0.93, 1.0),    // Background
-                glam::vec4(0.70, 0.70, 0.72, 1.0),    // Border
-                glam::vec4(0.84, 0.84, 0.86, 1.0),    // Fill
-            )
+            // Light theme: use lighter backgrounds with more contrast
+            let bg = glam::vec4(0.92, 0.92, 0.93, 1.0);
+            let border = glam::vec4(0.70, 0.70, 0.72, 1.0);
+            let fill = glam::vec4(0.84, 0.84, 0.86, 1.0);
+            let edge = glam::vec4(text_color.r, text_color.g, text_color.b, text_color.a);
+            // Drag colors: darker for light theme
+            let drag = glam::vec4(0.8, 0.5, 0.2, 1.0);  // Warm warning
+            let valid = glam::vec4(0.2, 0.7, 0.4, 1.0); // Cool success
+            (bg, border, fill, edge, drag, valid)
         };
         
         let primitive_background = effects::Primitive {
@@ -153,6 +157,8 @@ where
             background_color: bg_color,
             border_color,
             fill_color,
+            drag_edge_color,
+            drag_edge_valid_color: drag_valid_color,
         };
         let mut primitive_foreground = primitive_background.clone();
         primitive_foreground.layer = Layer::Foreground;

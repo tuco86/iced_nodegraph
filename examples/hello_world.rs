@@ -480,13 +480,15 @@ fn command_palette<'a>(input: &str, view: &PaletteView) -> iced::Element<'a, App
         .width(500.0)
     );
     
-    // Background overlay that closes on click
+    // Background overlay that closes on click - use theme background with transparency
     mouse_area(
         container(palette_content)
             .center(Length::Fill)
-            .style(|_theme: &iced::Theme| {
+            .style(|theme: &iced::Theme| {
+                let palette = theme.extended_palette();
+                let bg = palette.background.base.color;
                 container::Style {
-                    background: Some(iced::Background::Color(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.5))),
+                    background: Some(iced::Background::Color(iced::Color::from_rgba(bg.r, bg.g, bg.b, 0.7))),
                     ..container::Style::default()
                 }
             })
