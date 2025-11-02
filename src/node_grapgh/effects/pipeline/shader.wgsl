@@ -37,6 +37,7 @@ struct Pin {
     position: vec2<f32>,         // position from top-left
     side: u32,                 // 0 = top, 1 = right, 2 = bottom, 3 = left, 4 = row
     radius: f32,
+    color: vec4<f32>,          // RGBA color for pin type indicator
 };
 
 struct Edge {
@@ -169,6 +170,7 @@ fn fs_background(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<
     // Render edges BEFORE nodes (so they appear behind)
     col = render_edges(uv, col);
 
+    let aa = 0.5 / uniforms.camera_zoom;  // Tighter anti-aliasing for smooth edges
     var d = 1e5;
 
 // Iterate over nodes and apply transformations.
@@ -188,9 +190,21 @@ fn fs_background(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<
         }
     }
 
+    // Render colored pin type indicators (small filled circles in pin center)
+    for (var i = 0u; i < uniforms.num_nodes; i++) {
+        let node = nodes[i];
+        for (var j = 0u; j < node.pin_count; j++) {
+            let pin = pins[node.pin_start + j];
+            let pin_center = uv - pin.position;
+            let indicator_radius = pin.radius * 0.4; // 40% of pin radius
+            let indicator_d = sd_circle(pin_center, indicator_radius);
+            let indicator_alpha = 1.0 - smoothstep(0.0, aa, indicator_d);
+            col = mix(col, pin.color.xyz, indicator_alpha * pin.color.w);
+        }
+    }
+
     // Render nodes with clean anti-aliasing (UE5-style: thin border)
     let border_width = 1.0 / uniforms.camera_zoom;  // Thinner border (1px instead of 2px)
-    let aa = 0.5 / uniforms.camera_zoom;  // Tighter anti-aliasing
     let node_opacity = 0.75;  // 75% opacity = 25% transparent
     
     // Inside node (d < 0)

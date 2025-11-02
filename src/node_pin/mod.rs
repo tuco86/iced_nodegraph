@@ -1,4 +1,4 @@
-use iced::{Element, Event, Length, Rectangle, Size};
+use iced::{Color, Element, Event, Length, Rectangle, Size};
 use iced::{
     Point,
     advanced::{
@@ -16,6 +16,15 @@ pub enum PinSide {
     Top,
     Bottom,
     Row,
+}
+
+/// Direction of data flow for a pin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PinDirection {
+    Input,
+    Output,
+    #[default]
+    Both,
 }
 
 impl Into<u32> for PinSide {
@@ -36,6 +45,9 @@ where
     Renderer: renderer::Renderer,
 {
     pub side: PinSide,
+    pub direction: PinDirection,
+    pub pin_type: String,
+    pub color: Color,
     pub content: Element<'a, Message, Theme, Renderer>,
 }
 
@@ -46,14 +58,35 @@ where
     pub fn new(side: PinSide, content: impl Into<Element<'a, Message, Theme, Renderer>>) -> Self {
         Self {
             side,
+            direction: PinDirection::Both,
+            pin_type: String::from("any"),
+            color: Color::from_rgb(0.5, 0.5, 0.5),
             content: content.into(),
         }
+    }
+
+    pub fn direction(mut self, direction: PinDirection) -> Self {
+        self.direction = direction;
+        self
+    }
+
+    pub fn pin_type(mut self, pin_type: impl Into<String>) -> Self {
+        self.pin_type = pin_type.into();
+        self
+    }
+
+    pub fn color(mut self, color: Color) -> Self {
+        self.color = color;
+        self
     }
 }
 
 #[derive(Debug, Clone, Default)]
 pub(super) struct NodePinState {
     pub side: PinSide,
+    pub direction: PinDirection,
+    pub pin_type: String,
+    pub color: Color,
     pub position: Point,
 }
 
@@ -71,6 +104,9 @@ where
     fn state(&self) -> tree::State {
         tree::State::new(NodePinState {
             side: self.side,
+            direction: self.direction,
+            pin_type: self.pin_type.clone(),
+            color: self.color,
             position: Point::new(0.0, 0.0),
         })
     }
@@ -115,6 +151,9 @@ where
         {
             let state = tree.state.downcast_mut::<NodePinState>();
             state.side = self.side;
+            state.direction = self.direction;
+            state.pin_type = self.pin_type.clone();
+            state.color = self.color;
             state.position = layout.bounds().center();
         }
         if let Some((child_layout, child_tree)) = layout.children().zip(&mut tree.children).next() {

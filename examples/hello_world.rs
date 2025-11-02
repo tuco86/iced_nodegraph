@@ -1,8 +1,8 @@
 use iced::{
-    event, keyboard,
+    event, keyboard, Color,
     widget::{self, column, container, mouse_area, row, stack, text, text_input}, Event, Length, Point, Subscription, Theme
 };
-use iced_nodegraph::{PinSide, node_graph, node_pin};
+use iced_nodegraph::{PinSide, PinDirection, node_graph, node_pin};
 
 pub fn main() -> iced::Result {
     iced::application(Application::new, Application::update, Application::view)
@@ -245,7 +245,10 @@ where
         });
 
     let pin_list = column![
-        node_pin(PinSide::Right, container(text!("on email").size(11)).padding([0, 8])),
+        node_pin(PinSide::Right, container(text!("on email").size(11)).padding([0, 8]))
+            .direction(PinDirection::Output)
+            .pin_type("email")
+            .color(Color::from_rgb(0.3, 0.7, 0.9)), // Blue for email data
     ]
     .spacing(2);
 
@@ -272,10 +275,22 @@ where
         });
 
     let pin_list = column![
-        node_pin(PinSide::Left, container(text!("email").size(11)).padding([0, 8])),
-        node_pin(PinSide::Right, container(text!("subject").size(11)).padding([0, 8])),
-        node_pin(PinSide::Right, container(text!("datetime").size(11)).padding([0, 8])),
-        node_pin(PinSide::Right, container(text!("body").size(11)).padding([0, 8])),
+        node_pin(PinSide::Left, container(text!("email").size(11)).padding([0, 8]))
+            .direction(PinDirection::Input)
+            .pin_type("email")
+            .color(Color::from_rgb(0.3, 0.7, 0.9)), // Blue for email data
+        node_pin(PinSide::Right, container(text!("subject").size(11)).padding([0, 8]))
+            .direction(PinDirection::Output)
+            .pin_type("string")
+            .color(Color::from_rgb(0.9, 0.7, 0.3)), // Orange for strings
+        node_pin(PinSide::Right, container(text!("datetime").size(11)).padding([0, 8]))
+            .direction(PinDirection::Output)
+            .pin_type("datetime")
+            .color(Color::from_rgb(0.7, 0.3, 0.9)), // Purple for datetime
+        node_pin(PinSide::Right, container(text!("body").size(11)).padding([0, 8]))
+            .direction(PinDirection::Output)
+            .pin_type("string")
+            .color(Color::from_rgb(0.9, 0.7, 0.3)), // Orange for strings
     ]
     .spacing(2);
 
@@ -302,8 +317,14 @@ where
         });
 
     let pin_list = column![
-        node_pin(PinSide::Left, container(text!("input").size(11)).padding([0, 8])),
-        node_pin(PinSide::Right, container(text!("matches").size(11)).padding([0, 8])),
+        node_pin(PinSide::Left, container(text!("input").size(11)).padding([0, 8]))
+            .direction(PinDirection::Input)
+            .pin_type("string")
+            .color(Color::from_rgb(0.9, 0.7, 0.3)), // Orange for strings
+        node_pin(PinSide::Right, container(text!("matches").size(11)).padding([0, 8]))
+            .direction(PinDirection::Output)
+            .pin_type("string")
+            .color(Color::from_rgb(0.9, 0.7, 0.3)), // Orange for strings
     ]
     .spacing(2);
 
@@ -330,9 +351,18 @@ where
         });
 
     let pin_list = column![
-        node_pin(PinSide::Left, container(text!("datetime").size(11)).padding([0, 8])),
-        node_pin(PinSide::Left, container(text!("title").size(11)).padding([0, 8])),
-        node_pin(PinSide::Left, container(text!("description").size(11)).padding([0, 8])),
+        node_pin(PinSide::Left, container(text!("datetime").size(11)).padding([0, 8]))
+            .direction(PinDirection::Input)
+            .pin_type("datetime")
+            .color(Color::from_rgb(0.7, 0.3, 0.9)), // Purple for datetime
+        node_pin(PinSide::Left, container(text!("title").size(11)).padding([0, 8]))
+            .direction(PinDirection::Input)
+            .pin_type("string")
+            .color(Color::from_rgb(0.9, 0.7, 0.3)), // Orange for strings
+        node_pin(PinSide::Left, container(text!("description").size(11)).padding([0, 8]))
+            .direction(PinDirection::Input)
+            .pin_type("string")
+            .color(Color::from_rgb(0.9, 0.7, 0.3)), // Orange for strings
     ]
     .spacing(2);
 

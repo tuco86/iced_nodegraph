@@ -134,6 +134,7 @@ impl Pipeline {
                     side: pin.side,
                     position: pin.offset,
                     radius: pin.radius,
+                    color: glam::Vec4::new(pin.color.r, pin.color.g, pin.color.b, pin.color.a),
                 }),
         );
 

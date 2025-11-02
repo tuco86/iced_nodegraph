@@ -144,6 +144,7 @@ where
                                     side: pin_state.side.into(),
                                     offset: a.into_euclid().to_vector() + offset,
                                     radius: 5.0,
+                                    color: pin_state.color,
                                 })
                                 // .inspect(|p| println!("pin: {:?}", p))
                                 .collect(),
@@ -391,10 +392,16 @@ where
                             // Check if cursor is over a pin to transition to EdgeOver
                             if let Some(cursor_position) = world_cursor.position() {
                                 let mut target_pin: Option<(usize, usize)> = None;
+                                
+                                // Get the source pin state for validation
+                                let from_pin_state = find_pins(&tree.children[from_node], layout.children().nth(from_node).unwrap())
+                                    .get(from_pin)
+                                    .map(|(_, state, _)| *state);
+                                
                                 for (node_index, (node_layout, node_tree)) in
                                     layout.children().zip(&tree.children).enumerate()
                                 {
-                                    for (pin_index, _, (a, b)) in find_pins(node_tree, node_layout) {
+                                    for (pin_index, pin_state, (a, b)) in find_pins(node_tree, node_layout) {
                                         // Pin positions are already in world space (from layout)
                                         let distance = a
                                             .distance(cursor_position)
@@ -402,8 +409,13 @@ where
                                         if distance < PIN_CLICK_THRESHOLD {
                                             // Don't connect to the same pin we're dragging from
                                             if node_index != from_node || pin_index != from_pin {
-                                                target_pin = Some((node_index, pin_index));
-                                                break;
+                                                // Validate pin connection (direction and type compatibility)
+                                                if let Some(from_state) = from_pin_state {
+                                                    if validate_pin_connection(from_state, pin_state) {
+                                                        target_pin = Some((node_index, pin_index));
+                                                        break;
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -842,6 +854,37 @@ fn inner_find_pins<'a>(
     for child_tree in &pin_tree.children {
         inner_find_pins(flat, pin_index, node_layout, child_tree);
     }
+}
+
+/// Validates if two pins can be connected based on direction and type.
+/// Returns true if connection is valid.
+fn validate_pin_connection(
+    from_pin: &NodePinState,
+    to_pin: &NodePinState,
+) -> bool {
+    use crate::node_pin::PinDirection;
+    
+    // Check direction compatibility:
+    // - Output can connect to Input or Both
+    // - Input can connect to Output or Both
+    // - Both can connect to anything
+    let direction_valid = match (from_pin.direction, to_pin.direction) {
+        // Both can connect to anything
+        (PinDirection::Both, _) | (_, PinDirection::Both) => true,
+        // Output -> Input or Input -> Output is valid
+        (PinDirection::Output, PinDirection::Input) | (PinDirection::Input, PinDirection::Output) => true,
+        // Same direction is not allowed (Output->Output or Input->Input)
+        _ => false,
+    };
+    
+    // Check type compatibility (empty string or "any" matches everything)
+    let type_valid = from_pin.pin_type == to_pin.pin_type
+        || from_pin.pin_type == "any"
+        || to_pin.pin_type == "any"
+        || from_pin.pin_type.is_empty()
+        || to_pin.pin_type.is_empty();
+    
+    direction_valid && type_valid
 }
 
 fn pin_positions(state: &NodePinState, node_bounds: Rectangle) -> (Point, Point) {

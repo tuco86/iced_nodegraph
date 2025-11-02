@@ -45,6 +45,7 @@ pub struct Pin {
     pub position: WorldVector, // offset from top-left
     pub side: u32,
     pub radius: f32,
+    pub color: glam::Vec4, // RGBA color for pin type indicator
 }
 
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
