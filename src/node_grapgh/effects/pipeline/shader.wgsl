@@ -139,6 +139,71 @@ fn dot2(v: vec2<f32>) -> f32 {
     return dot(v, v);
 }
 
+// Analytical signed distance to cubic Bezier curve (p0, p1, p2, p3)
+// Based on Inigo Quilez's approach - finds closest point using iterative refinement
+fn sdCubicBezier(pos: vec2<f32>, p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>) -> f32 {
+    // Transform to polynomial form: P(t) = A*t³ + B*t² + C*t + D
+    let A = -p0 + 3.0 * p1 - 3.0 * p2 + p3;
+    let B = 3.0 * p0 - 6.0 * p1 + 3.0 * p2;
+    let C = -3.0 * p0 + 3.0 * p1;
+    let D = p0;
+    
+    // Iterate to find parameter t of closest point on curve
+    // Start with a few seed points and refine the best one
+    var min_dist = dot2(pos - p0);
+    var best_t = 0.0;
+    
+    // Check multiple starting points along the curve
+    for (var i = 0; i <= 8; i = i + 1) {
+        var t = f32(i) / 8.0;
+        
+        // Newton-Raphson refinement (few iterations)
+        for (var iter = 0; iter < 4; iter = iter + 1) {
+            let t2 = t * t;
+            let t3 = t2 * t;
+            
+            // Point on curve: P(t)
+            let point = A * t3 + B * t2 + C * t + D;
+            
+            // First derivative: P'(t) = 3A*t² + 2B*t + C
+            let deriv = 3.0 * A * t2 + 2.0 * B * t + C;
+            
+            // Second derivative: P''(t) = 6A*t + 2B
+            let deriv2 = 6.0 * A * t + 2.0 * B;
+            
+            // Vector from curve to query point
+            let diff = point - pos;
+            
+            // Newton-Raphson step: t_new = t - f(t)/f'(t)
+            // where f(t) = dot(P(t)-pos, P'(t))
+            let f = dot(diff, deriv);
+            let fp = dot(deriv, deriv) + dot(diff, deriv2);
+            
+            if (abs(fp) > 0.00001) {
+                t = t - f / fp;
+            }
+            
+            t = clamp(t, 0.0, 1.0);
+        }
+        
+        // Evaluate distance at refined t
+        let t2 = t * t;
+        let t3 = t2 * t;
+        let point = A * t3 + B * t2 + C * t + D;
+        let dist = dot2(pos - point);
+        
+        if (dist < min_dist) {
+            min_dist = dist;
+            best_t = t;
+        }
+    }
+    
+    // Also check endpoints
+    min_dist = min(min_dist, dot2(pos - p3));
+    
+    return sqrt(min_dist);
+}
+
 // Signed distance to quadratic Bezier curve (A, B, C)
 fn sdBezier(pos: vec2<f32>, A: vec2<f32>, B: vec2<f32>, C: vec2<f32>) -> f32 {
     let a = B - A;
@@ -230,10 +295,8 @@ fn fs_foreground(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<
         let p3 = to_pin.position;
         let p2 = to_pin.position + dir_to * seg_len;
 
-        // SDF for segments
-        var dist = sdSegment(uv, p0, p1);
-        dist = min(dist, sdSegment(uv, p1, p2));
-        dist = min(dist, sdSegment(uv, p2, p3));
+        // Render entire edge as cubic bezier curve
+        let dist = sdCubicBezier(uv, p0, p1, p2, p3);
 
         let alpha = 1.0 - smoothstep(edge_thickness, edge_thickness + 1.5, dist);
         let edge_color = vec4<f32>(0.7, 0.8, 0.9, 1.0); // Light blue for static edges
@@ -279,9 +342,8 @@ fn fs_foreground(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<
         
         let p2 = p3 + dir_to * seg_len;
 
-        var dist = sdSegment(uv, p0, p1);
-        dist = min(dist, sdSegment(uv, p1, p2));
-        dist = min(dist, sdSegment(uv, p2, p3));
+        // Render entire dragging edge as cubic bezier curve
+        let dist = sdCubicBezier(uv, p0, p1, p2, p3);
 
         let alpha = 1.0 - smoothstep(edge_thickness, edge_thickness + 1.5, dist);
         // Different color for EdgeOver (green) vs Edge (orange)
