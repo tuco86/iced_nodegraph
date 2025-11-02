@@ -6,6 +6,9 @@ pub(crate) mod euclid;
 pub(crate) mod state;
 pub(crate) mod widget;
 
+#[cfg(test)]
+mod interaction_tests;
+
 /// A container that distributes its contents according to their coordinates.
 ///
 /// The number of columns is determined by the row with the most elements.

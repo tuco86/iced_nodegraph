@@ -14,6 +14,10 @@ use crate::{
     node_pin::NodePinState,
 };
 
+// Click detection thresholds (in world-space pixels)
+const PIN_CLICK_THRESHOLD: f32 = 8.0;
+const EDGE_CLICK_THRESHOLD: f32 = 8.0;
+
 impl<Message, Theme, Renderer> iced::advanced::Widget<Message, Theme, Renderer>
     for NodeGraph<'_, Message, Theme, Renderer>
 where
@@ -255,7 +259,7 @@ where
             Event::Mouse(mouse::Event::WheelScrolled { delta, .. }) => {
                 if let Some(cursor_pos) = screen_cursor.position() {
                     let cursor_pos: ScreenPoint = cursor_pos.into_euclid();
-                    let cursor_pos = state.camera.screen_to_world().transform_point(cursor_pos);
+                    let cursor_pos_world = state.camera.screen_to_world().transform_point(cursor_pos);
 
                     let scroll_amount = match delta {
                         mouse::ScrollDelta::Pixels { y, .. } => *y,
@@ -263,8 +267,18 @@ where
                     };
 
                     let zoom_delta = scroll_amount / 100.0;
+                    let new_zoom = state.camera.zoom() + zoom_delta;
 
-                    state.camera = state.camera.zoom_at(cursor_pos, zoom_delta);
+                    #[cfg(debug_assertions)]
+                    println!(
+                        "\n=== ZOOM: {:.2} -> {:.2} (delta={:.2}) at screen={:?} ===",
+                        state.camera.zoom(), new_zoom, zoom_delta, cursor_pos
+                    );
+
+                    state.camera = state.camera.zoom_at(cursor_pos_world, zoom_delta);
+                    
+                    #[cfg(debug_assertions)]
+                    println!("  New camera: zoom={:.2}, position={:?}", state.camera.zoom(), state.camera.position());
                 }
                 shell.capture_event();
                 shell.request_redraw();
@@ -351,7 +365,7 @@ where
                                         let distance = a
                                             .distance(cursor_position)
                                             .min(b.distance(cursor_position));
-                                        if distance < 5.0 {
+                                        if distance < PIN_CLICK_THRESHOLD {
                                             // Don't connect to the same pin we're dragging from
                                             if node_index != from_node || pin_index != from_pin {
                                                 target_pin = Some((node_index, pin_index));
@@ -365,10 +379,9 @@ where
                                 }
                                 
                                 if let Some((to_node, to_pin)) = target_pin {
-                                    println!(
-                                        "hovering over pin {:?} on node {:?}",
-                                        to_pin, to_node
-                                    );
+                                    #[cfg(debug_assertions)]
+                                    println!("  ✓ HOVER OVER PIN: node={}, pin={}", to_node, to_pin);
+                                    
                                     state.dragging = Dragging::EdgeOver(
                                         from_node,
                                         from_pin,
@@ -404,7 +417,7 @@ where
                                         let distance = a
                                             .distance(cursor_position)
                                             .min(b.distance(cursor_position));
-                                        still_over_pin = distance < 5.0;
+                                        still_over_pin = distance < PIN_CLICK_THRESHOLD;
                                     }
                                 }
                                 
@@ -421,6 +434,9 @@ where
                         }
                         Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                             // Connection successful! Call the on_connect handler
+                            #[cfg(debug_assertions)]
+                            println!("  ✓ CONNECTION COMPLETE: node {} pin {} -> node {} pin {}\n", from_node, from_pin, to_node, to_pin);
+                            
                             if let Some(handler) = self.on_connect_handler() {
                                 let message = handler(from_node, from_pin, to_node, to_pin);
                                 shell.publish(message);
@@ -473,22 +489,51 @@ where
                         shell.request_redraw();
                     }
                     Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                        // === MEASUREMENT POINT: Mouse Click ===
+                        #[cfg(debug_assertions)]
+                        {
+                            if let Some(screen_pos) = screen_cursor.position() {
+                                let screen_pos_euclid: ScreenPoint = screen_pos.into_euclid();
+                                let world_pos = state.camera.screen_to_world().transform_point(screen_pos_euclid);
+                                println!(
+                                    "\n=== CLICK: screen={:?}, world={:?}, zoom={:.2}, cam_pos={:?} ===",
+                                    screen_pos, world_pos, state.camera.zoom(), state.camera.position()
+                                );
+                            }
+                        }
+                        
                         if let Some(cursor_position) = world_cursor.position() {
                             // check bounds for pins
                             for (node_index, (node_layout, node_tree)) in
                                 layout.children().zip(&mut tree.children).enumerate()
                             {
-                                for (pin_index, _, (a, b)) in find_pins(node_tree, node_layout) {
+                                let pins = find_pins(node_tree, node_layout);
+                                #[cfg(debug_assertions)]
+                                if !pins.is_empty() {
+                                    println!("  Node {} has {} pins at node_bounds={:?}", node_index, pins.len(), node_layout.bounds());
+                                    for (idx, _, (pin_pos, _)) in &pins {
+                                        println!("    Pin {} at world position: {:?}", idx, pin_pos);
+                                    }
+                                }
+                                
+                                for (pin_index, _, (a, b)) in pins {
                                     // Pin positions from layout are ALREADY in world space
                                     // because layout was created with .move_to(world_position)
                                     let distance = a
                                         .distance(cursor_position)
                                         .min(b.distance(cursor_position));
-                                    if distance < 5.0 {
+                                    
+                                    #[cfg(debug_assertions)]
+                                    if distance < 10.0 {  // Log if we're anywhere near (increased threshold for visibility)
                                         println!(
-                                            "clicked pin {:?} on node {:?} at {:?}",
-                                            pin_index, node_index, cursor_position
+                                            "  PIN CHECK: node={}, pin={}, pin_world={:?}, cursor_world={:?}, distance={:.2}",
+                                            node_index, pin_index, a, cursor_position, distance
                                         );
+                                    }
+                                    
+                                    if distance < PIN_CLICK_THRESHOLD {
+                                        #[cfg(debug_assertions)]
+                                        println!("  ✓ PIN HIT!");
                                         
                                         // Check if this pin has existing connections
                                         // If it does, we want to grab the OTHER end and drag it
@@ -555,7 +600,6 @@ where
                             }
                             
                             // check for edge clicks (before checking nodes)
-                            let edge_click_threshold = 5.0;
                             for ((from_node, from_pin), (to_node, to_pin)) in &self.edges {
                                 // Get pin positions for both ends of the edge
                                 if let (Some((from_layout, from_tree)), Some((to_layout, to_tree))) = (
@@ -587,11 +631,17 @@ where
                                         let dist2 = distance_to_segment(cursor_position, mid_point, to_point);
                                         let min_distance = dist1.min(dist2);
                                         
-                                        if min_distance < edge_click_threshold {
+                                        #[cfg(debug_assertions)]
+                                        if min_distance < 10.0 {  // Log if close
                                             println!(
-                                                "clicked edge: node {} pin {} -> node {} pin {}",
-                                                from_node, from_pin, to_node, to_pin
+                                                "  EDGE CHECK: from_world={:?}, to_world={:?}, cursor_world={:?}, distance={:.2}",
+                                                from_point, to_point, cursor_position, min_distance
                                             );
+                                        }
+                                        
+                                        if min_distance < EDGE_CLICK_THRESHOLD {
+                                            #[cfg(debug_assertions)]
+                                            println!("  ✓ EDGE HIT!");
                                             
                                             // Publish edge disconnected message
                                             if let Some(handler) = self.on_disconnect_handler() {
@@ -653,7 +703,7 @@ where
                     .into_euclid()
                     .distance_to(cursor_position)
                     .min(b.into_euclid().distance_to(cursor_position));
-                if distance < 5.0 {
+                if distance < PIN_CLICK_THRESHOLD {
                     return match state.side {
                         PinSide::Row => mouse::Interaction::Crosshair,
                         PinSide::Left | PinSide::Right => mouse::Interaction::ResizingHorizontally,

@@ -72,9 +72,11 @@ impl Camera2D {
 
     pub fn screen_to_world(&self) -> ScreenToWorld {
         // Converts screen coordinates to world coordinates, factoring in zoom and position.
-        // Original formula that matches the existing tests
-        Transform2D::translation(-self.position.x, -self.position.y)
-            .pre_scale(self.zoom.get(), self.zoom.get())
+        // draw_with() does: screen = (world + position) * zoom
+        // So inverse is: world = screen / zoom - position
+        let inv_zoom = 1.0 / self.zoom.get();
+        Transform2D::scale(inv_zoom, inv_zoom)
+            .then_translate(-self.position.to_vector())
     }
 
     pub fn world_to_screen(&self) -> WorldToScreen {
