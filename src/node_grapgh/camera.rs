@@ -2,42 +2,160 @@
 //!
 //! # Coordinate Spaces
 //!
-//! This module manages two coordinate spaces:
-//! - **Screen Space**: Raw pixel coordinates from user input (mouse, viewport)
-//! - **World Space**: Virtual canvas where nodes exist, affected by camera zoom/pan
+//! This module manages two distinct coordinate spaces with compile-time type safety:
 //!
-//! The `euclid` crate provides type safety to prevent mixing coordinate spaces.
+//! - **Screen Space**: Raw pixel coordinates from user input (mouse position, viewport dimensions).
+//!   Origin at top-left of viewport. Used for mouse events and rendering commands.
 //!
-//! # Transformation Formula
+//! - **World Space**: Virtual infinite canvas where nodes exist. Origin arbitrary.
+//!   Unaffected by zoom/pan - node positions remain constant in world coordinates.
 //!
-//! **Screen → World:**
-//! ```text
-//! world_point = (screen_point * zoom) - camera_position
-//! ```
+//! The `euclid` crate provides phantom types (`Screen`, `World`) that prevent accidentally
+//! mixing coordinate spaces at compile time.
 //!
-//! **World → Screen:**
-//! ```text
-//! screen_point = (world_point + camera_position) / zoom
-//! ```
-//!
-//! # Key Functions
-//!
-//! - [`screen_to_world()`](Camera2D::screen_to_world) - Get transformation matrix
-//! - [`zoom_at()`](Camera2D::zoom_at) - Zoom while keeping cursor position fixed
-//! - [`move_by()`](Camera2D::move_by) - Pan camera in world space
-//!
-//! # Examples
+//! ## Camera2D Structure
 //!
 //! ```rust,ignore
-//! // Transform mouse input to world coordinates
-//! let screen_pos: ScreenPoint = cursor.position().into_euclid();
-//! let world_pos: WorldPoint = camera.screen_to_world().transform_point(screen_pos);
-//!
-//! // Zoom at cursor position (keeps point under cursor fixed)
-//! let new_camera = camera.zoom_at(world_cursor, 0.5); // zoom in by 0.5
+//! pub struct Camera2D {
+//!     zoom: Scale<f32, Screen, World>,  // Magnification level (1.0 = 1:1, 2.0 = zoomed in 2x)
+//!     position: WorldPoint,              // Camera look-at point in world coordinates
+//! }
 //! ```
 //!
-//! See [`COORDINATE_SYSTEM.md`](./COORDINATE_SYSTEM.md) for detailed documentation.
+//! # Transformation Formulas
+//!
+//! The core transformations between coordinate spaces follow these formulas:
+//!
+//! ## Screen → World (Mouse Input)
+//!
+//! ```text
+//! world_point = screen_point / zoom - camera_position
+//! ```
+//!
+//! Implementation uses `Transform2D::scale(1/zoom).then_translate(-position)`:
+//! 1. Scale by inverse zoom (divide screen coordinates by zoom factor)
+//! 2. Translate by negative camera position (shift to world origin)
+//!
+//! **Critical**: The order matters! `scale().then_translate()` is NOT equivalent to
+//! `translate().then_scale()` or `.pre_scale()`. The chosen order ensures correct
+//! mathematical inverse relationship with the rendering formula.
+//!
+//! ## World → Screen (Rendering)
+//!
+//! ```text
+//! screen_point = (world_point + camera_position) * zoom
+//! ```
+//!
+//! Implementation in `draw_with()`:
+//! 1. Translate by camera position (shift world to camera view)
+//! 2. Scale by zoom (magnify)
+//!
+//! This is applied to the renderer transformation stack, so GPU performs the conversion.
+//!
+//! ## Zoom at Cursor (Preserve Point Under Cursor)
+//!
+//! When zooming, we want the point under the cursor to remain visually fixed:
+//!
+//! ```text
+//! new_position = old_position + cursor_screen * (1/new_zoom - 1/old_zoom)
+//! ```
+//!
+//! **Derivation**: For a point to remain at the same screen position after zoom:
+//! ```text
+//! (world + pos1) * zoom1 = (world + pos2) * zoom2
+//! world + pos1 = (world + pos2) * (zoom2 / zoom1)
+//! pos2 = pos1 + world * (1 - zoom2/zoom1)
+//! pos2 = pos1 + (cursor_screen / zoom1 - pos1) * (1 - zoom2/zoom1)
+//! pos2 = pos1 + cursor_screen * (1/zoom1 - 1/zoom2)
+//! ```
+//!
+//! # Common Pitfalls
+//!
+//! ## ❌ Wrong: Using .pre_scale()
+//!
+//! ```rust,ignore
+//! // INCORRECT - produces wrong formula
+//! Transform2D::translation(-position).pre_scale(zoom, zoom)
+//! // Result: world = screen * zoom - position  (WRONG!)
+//! ```
+//!
+//! ## ✅ Correct: Using .scale().then_translate()
+//!
+//! ```rust,ignore
+//! // CORRECT - matches rendering inverse
+//! let inv_zoom = 1.0 / zoom.get();
+//! Transform2D::scale(inv_zoom, inv_zoom).then_translate(-position.to_vector())
+//! // Result: world = screen / zoom - position  (CORRECT!)
+//! ```
+//!
+//! ## Why It Matters
+//!
+//! The rendering pipeline uses `(world + position) * zoom`. If screen_to_world() doesn't
+//! produce the mathematical inverse, click detection will fail - mouse clicks won't hit
+//! the rendered elements at zoom levels != 1.0.
+//!
+//! # Usage Patterns
+//!
+//! ## Mouse Input → World Coordinates
+//!
+//! ```rust,ignore
+//! use crate::node_grapgh::euclid::IntoEuclid;
+//!
+//! // Mouse events arrive in screen space
+//! if let Some(cursor_position) = screen_cursor.position() {
+//!     // Convert to typed screen point
+//!     let cursor: ScreenPoint = cursor_position.into_euclid();
+//!     
+//!     // Transform to world space for hit testing
+//!     let world_cursor: WorldPoint = camera.screen_to_world().transform_point(cursor);
+//!     
+//!     // Now compare with node positions (which are in world space)
+//!     for (world_pos, node) in &nodes {
+//!         if world_cursor.distance_to(*world_pos) < threshold {
+//!             // Hit!
+//!         }
+//!     }
+//! }
+//! ```
+//!
+//! ## Rendering with Camera Transform
+//!
+//! ```rust,ignore
+//! // Rendering happens through draw_with() which sets up GPU transforms
+//! camera.draw_with(renderer, viewport, cursor, |renderer, world_viewport, world_cursor| {
+//!     // Inside this closure:
+//!     // - Renderer has camera transform applied (position + zoom)
+//!     // - world_viewport is the visible rectangle in world coordinates
+//!     // - world_cursor is mouse position in world coordinates
+//!     
+//!     for (world_pos, element) in &nodes {
+//!         // Draw at world positions - GPU handles screen transform
+//!         renderer.draw_rect(*world_pos, size);
+//!     }
+//! });
+//! ```
+//!
+//! ## Zoom While Preserving Cursor Position
+//!
+//! ```rust,ignore
+//! // User scrolls mouse wheel
+//! let zoom_delta = 0.1; // Positive = zoom in, negative = zoom out
+//! camera = camera.zoom_at(cursor_screen_pos, zoom_delta);
+//! // Point under cursor stays visually fixed
+//! ```
+//!
+//! # Testing
+//!
+//! This module includes 15 comprehensive tests covering:
+//! - Identity transforms (no zoom/pan)
+//! - Zoom-only transforms at various levels
+//! - Pan-only transforms
+//! - Combined zoom + pan
+//! - Inverse consistency (screen→world→screen = identity)
+//! - Multiple zoom steps (cursor drift prevention)
+//! - Real-world scenarios from bug reports
+//!
+//! Run tests with: `cargo test --lib camera`
 
 use super::euclid::{
     IntoEuclid, IntoIced, Screen, ScreenPoint, ScreenRect, ScreenToWorld, World, WorldPoint, WorldToScreen, WorldVector

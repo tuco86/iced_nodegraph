@@ -534,13 +534,15 @@ where
                                         println!("  ✓ PIN HIT!");
                                         
                                         // Check if this pin has existing connections
-                                        // If it does, we want to grab the OTHER end and drag it
+                                        // If it does, "unplug" the clicked end (like pulling a cable)
                                         for ((from_node, from_pin), (to_node, to_pin)) in &self.edges {
-                                            // If we clicked the "from" pin, grab the "to" end
+                                            // If we clicked the "from" pin, unplug FROM and drag it
+                                            // Keep TO pin connected, drag away from it
                                             if *from_node == node_index && *from_pin == pin_index {
+                                                #[cfg(debug_assertions)]
                                                 println!(
-                                                    "grabbing other end of cable: disconnecting from node {} pin {}, keeping node {} pin {}",
-                                                    to_node, to_pin, from_node, from_pin
+                                                    "  Unplugging FROM pin - keep TO pin at node {} pin {}, drag FROM end",
+                                                    to_node, to_pin
                                                 );
                                                 
                                                 // Disconnect the edge
@@ -549,21 +551,24 @@ where
                                                     shell.publish(message);
                                                 }
                                                 
-                                                // Start dragging from the original "from" pin
+                                                // Start dragging FROM the TO pin (the end that stays connected)
+                                                // We're now dragging back towards the TO pin
                                                 let state = tree.state.downcast_mut::<NodeGraphState>();
                                                 state.dragging = Dragging::Edge(
-                                                    node_index,
-                                                    pin_index,
+                                                    *to_node,
+                                                    *to_pin,
                                                     cursor_position.into_euclid(),
                                                 );
                                                 shell.capture_event();
                                                 return;
                                             }
-                                            // If we clicked the "to" pin, grab the "from" end
+                                            // If we clicked the "to" pin, unplug TO and drag it
+                                            // Keep FROM pin connected, drag away from it
                                             else if *to_node == node_index && *to_pin == pin_index {
+                                                #[cfg(debug_assertions)]
                                                 println!(
-                                                    "grabbing other end of cable: disconnecting from node {} pin {}, keeping node {} pin {}",
-                                                    from_node, from_pin, to_node, to_pin
+                                                    "  Unplugging TO pin - keep FROM pin at node {} pin {}, drag TO end",
+                                                    from_node, from_pin
                                                 );
                                                 
                                                 // Disconnect the edge
@@ -572,7 +577,8 @@ where
                                                     shell.publish(message);
                                                 }
                                                 
-                                                // Start dragging from the original "from" pin (we flip the direction)
+                                                // Start dragging FROM the FROM pin (the end that stays connected)
+                                                // We're now dragging away from the FROM pin
                                                 let state = tree.state.downcast_mut::<NodeGraphState>();
                                                 state.dragging = Dragging::Edge(
                                                     *from_node,

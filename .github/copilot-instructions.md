@@ -9,15 +9,27 @@ This workspace contains **4 interdependent Rust projects** forming a node graph 
 - **`iced_aw`** - Additional widgets library extending Iced's capabilities
 - **`ngwa-rs`** - SpacetimeDB module for backend data persistence
 
-**Current Status**: Node rendering and pin interaction work, but **edge rendering between nodes is incomplete**.
+**Current Status**: Core functionality is working - node/pin interaction, edge dragging, and coordinate transformations are fully functional. **Edge rendering between nodes is incomplete** (static edge rendering needs implementation).
 
 ## Core Architecture Patterns
 
-### Coordinate System Abstraction
+### Coordinate System Abstraction ✅ VERIFIED & TESTED
 The project uses **euclid** crate for type-safe coordinate transformations:
-- `WorldPoint`/`ScreenPoint` distinguish coordinate spaces
+- `WorldPoint`/`ScreenPoint` distinguish coordinate spaces with compile-time type safety
 - `Camera2D` handles zoom/pan transformations in `src/node_grapgh/camera.rs`
 - Convert between coordinate systems using `IntoIced`/`IntoEuclid` traits in `src/node_grapgh/euclid.rs`
+
+**Critical Transformation Formulas** (mathematically verified):
+- **Screen → World**: `world = screen / zoom - position`
+  - Implementation: `Transform2D::scale(1/zoom).then_translate(-position)`
+- **World → Screen**: `screen = (world + position) * zoom`
+  - Applied in rendering pipeline via `draw_with()`
+- **Zoom at Cursor**: `new_pos = old_pos + cursor_screen * (1/new_zoom - 1/old_zoom)`
+  - Maintains visual stability when zooming
+
+**Test Coverage**: 15 comprehensive tests in `src/node_grapgh/camera.rs` validate all transformations.
+
+**See `src/node_grapgh/camera.rs` module documentation for complete mathematical derivations and usage patterns.**
 
 ### Widget Architecture
 - **NodeGraph** (`src/node_grapgh/mod.rs`) - Main container widget managing nodes and edges
@@ -68,11 +80,22 @@ All custom widgets follow Iced's advanced widget pattern:
 4. Use `tree::State` for persistent widget state
 
 ### Coordinate Transform Pattern
-Always use typed coordinates:
+Always use typed coordinates and proper transformation order:
 ```rust
+// Mouse input: Screen → World
 let cursor_position: ScreenPoint = cursor.position().into_euclid();
 let world_cursor: WorldPoint = camera.screen_to_world().transform_point(cursor_position);
+
+// CRITICAL: Order matters!
+// ✅ CORRECT: Transform2D::scale(1/zoom).then_translate(-position)
+//    Result: world = screen / zoom - position
+// ❌ WRONG: Transform2D::translation(-position).pre_scale(zoom)
+//    Result: world = screen * zoom - position (incorrect inverse)
 ```
+
+**Click Detection Thresholds**:
+- `PIN_CLICK_THRESHOLD = 8.0` pixels (in world space)
+- `EDGE_CLICK_THRESHOLD = 8.0` pixels (in world space)
 
 ### Rendering Effects Pattern
 Custom effects use `shader::Primitive` trait:

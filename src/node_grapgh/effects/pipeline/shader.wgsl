@@ -99,6 +99,7 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> @builtin(position) vec4<
 @fragment
 fn fs_background(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<f32> {
 // Adjust UV coordinates based on camera zoom and position.
+    // Original shader formula (this is correct for rendering!)
     let uv = (frag_coord.xy / (uniforms.os_scale_factor * uniforms.camera_zoom)) - uniforms.camera_position;
 
     var d = 1e5;
@@ -191,6 +192,7 @@ fn sdSegment(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
 
 @fragment
 fn fs_foreground(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<f32> {
+    // Original shader formula (this is correct for rendering!)
     let uv = (frag_coord.xy / (uniforms.os_scale_factor * uniforms.camera_zoom)) - uniforms.camera_position;
     var color = vec4<f32>(0.0);
     let edge_thickness = 4.0 / uniforms.camera_zoom;
