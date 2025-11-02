@@ -259,7 +259,6 @@ where
             Event::Mouse(mouse::Event::WheelScrolled { delta, .. }) => {
                 if let Some(cursor_pos) = screen_cursor.position() {
                     let cursor_pos: ScreenPoint = cursor_pos.into_euclid();
-                    let cursor_pos_world = state.camera.screen_to_world().transform_point(cursor_pos);
 
                     let scroll_amount = match delta {
                         mouse::ScrollDelta::Pixels { y, .. } => *y,
@@ -275,7 +274,7 @@ where
                         state.camera.zoom(), new_zoom, zoom_delta, cursor_pos
                     );
 
-                    state.camera = state.camera.zoom_at(cursor_pos_world, zoom_delta);
+                    state.camera = state.camera.zoom_at(cursor_pos, zoom_delta);
                     
                     #[cfg(debug_assertions)]
                     println!("  New camera: zoom={:.2}, position={:?}", state.camera.zoom(), state.camera.position());
@@ -474,7 +473,6 @@ where
                     Event::Mouse(mouse::Event::WheelScrolled { delta, .. }) => {
                         if let Some(cursor_pos) = screen_cursor.position() {
                             let cursor_pos: ScreenPoint = cursor_pos.into_euclid();
-                            let cursor_pos = state.camera.screen_to_world().transform_point(cursor_pos);
 
                             let scroll_amount = match delta {
                                 mouse::ScrollDelta::Pixels { y, .. } => *y,
