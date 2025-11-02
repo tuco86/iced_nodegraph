@@ -215,19 +215,6 @@ impl Pipeline {
         // );
     }
 
-    pub fn update_echo(&mut self, _queue: &Queue) {
-        // Update the echo pipeline here
-        println!(
-            "echo - nodes: {:?} ({:?}), pins: {:?} ({:?}), edges: {:?} ({:?})",
-            self.nodes.len(),
-            self.nodes.capacity(),
-            self.pins.len(),
-            self.pins.capacity(),
-            self.edges.len(),
-            self.edges.capacity(),
-        );
-    }
-
     pub fn render(
         &self,
         target: &TextureView,

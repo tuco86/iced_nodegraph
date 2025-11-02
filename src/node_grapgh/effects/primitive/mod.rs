@@ -63,35 +63,3 @@ impl shader::Primitive for Primitive {
         pipeline.render(target, encoder, *clip_bounds, self.layer);
     }
 }
-
-#[derive(Debug)]
-pub struct EchoPrimitive;
-
-impl shader::Primitive for EchoPrimitive {
-    fn prepare(
-        &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        format: wgpu::TextureFormat,
-        storage: &mut shader::Storage,
-        _bounds: &Rectangle,
-        _viewport: &Viewport,
-    ) {
-        if storage.has::<Pipeline>() {
-            storage.store(Pipeline::new(device, format));
-        }
-        let pipeline = storage.get_mut::<Pipeline>().unwrap();
-        pipeline.update_echo(queue);
-    }
-
-    fn render(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        storage: &shader::Storage,
-        target: &wgpu::TextureView,
-        clip_bounds: &Rectangle<u32>,
-    ) {
-        let pipeline = storage.get::<Pipeline>().unwrap();
-        pipeline.render(target, encoder, *clip_bounds, Layer::Foreground);
-    }
-}

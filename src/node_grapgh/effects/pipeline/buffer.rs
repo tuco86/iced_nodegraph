@@ -30,14 +30,6 @@ impl<T> Buffer<T> {
         }
     }
 
-    pub fn len(&self) -> usize {
-        self.buffer_vec.len()
-    }
-
-    pub fn capacity(&self) -> usize {
-        self.buffer_vec.capacity()
-    }
-
     #[must_use]
     pub fn update<I: IntoIterator<Item = T>>(
         &mut self,
