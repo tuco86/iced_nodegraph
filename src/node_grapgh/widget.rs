@@ -145,6 +145,7 @@ where
                                     offset: a.into_euclid().to_vector() + offset,
                                     radius: 5.0,
                                     color: pin_state.color,
+                                    direction: pin_state.direction,
                                 })
                                 // .inspect(|p| println!("pin: {:?}", p))
                                 .collect(),

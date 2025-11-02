@@ -130,11 +130,22 @@ impl Pipeline {
                 .nodes
                 .iter()
                 .flat_map(|node| node.pins.iter())
-                .map(|pin| types::Pin {
-                    side: pin.side,
-                    position: pin.offset,
-                    radius: pin.radius,
-                    color: glam::Vec4::new(pin.color.r, pin.color.g, pin.color.b, pin.color.a),
+                .map(|pin| {
+                    use crate::node_pin::PinDirection;
+                    types::Pin {
+                        position: pin.offset,
+                        color: glam::Vec4::new(pin.color.r, pin.color.g, pin.color.b, pin.color.a),
+                        side: pin.side,
+                        radius: pin.radius,
+                        direction: match pin.direction {
+                            PinDirection::Input => 0,
+                            PinDirection::Output => 1,
+                            PinDirection::Both => 2,
+                        },
+                        flags: 0,
+                        _pad0: 0,
+                        _pad1: 0,
+                    }
                 }),
         );
 
@@ -186,7 +197,11 @@ impl Pipeline {
             num_nodes,
             num_pins,
             num_edges,
+            time: 0.0, // TODO: pass actual time from widget
             dragging,
+            _pad_uniforms0: 0,
+            _pad_uniforms1: 0,
+            _pad_uniforms2: 0,
             dragging_edge_from_node,
             dragging_edge_from_pin,
             dragging_edge_from_origin,

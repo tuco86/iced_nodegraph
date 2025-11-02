@@ -19,8 +19,12 @@ pub struct Uniforms {
     pub num_nodes: u32,
     pub num_pins: u32,
     pub num_edges: u32,
+    pub time: f32,              // Time in seconds for animations
 
     pub dragging: u32,
+    pub _pad_uniforms0: u32,
+    pub _pad_uniforms1: u32,
+    pub _pad_uniforms2: u32,
     pub dragging_edge_from_node: u32,
     pub dragging_edge_from_pin: u32,
     pub dragging_edge_from_origin: WorldPoint,
@@ -39,13 +43,17 @@ pub struct Node {
     pub _padding: u32, // <- für 16-Byte-Alignment
 }
 
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Pin {
-    pub position: WorldVector, // offset from top-left
-    pub side: u32,
-    pub radius: f32,
-    pub color: glam::Vec4, // RGBA color for pin type indicator
+    pub position: WorldVector, // vec2<f32> = 8 bytes
+    pub side: u32,             // 4 bytes
+    pub radius: f32,           // 4 bytes (total 16 bytes - aligned)
+    pub color: glam::Vec4,     // vec4<f32> = 16 bytes (total 32 bytes - aligned)
+    pub direction: u32,        // 4 bytes
+    pub flags: u32,            // 4 bytes
+    pub _pad0: u32,            // 4 bytes
+    pub _pad1: u32,            // 4 bytes (total 48 bytes - aligned to 16)
 }
 
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]

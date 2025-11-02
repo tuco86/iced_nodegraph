@@ -15,8 +15,12 @@ struct Uniforms {
     num_nodes: u32,
     num_pins: u32,
     num_edges: u32,
+    time: f32,                  // Time in seconds for animations
     
     dragging: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
     dragging_edge_from_node: u32,
     dragging_edge_from_pin: u32,
     dragging_edge_from_origin: vec2<f32>,
@@ -34,10 +38,14 @@ struct Node {
 };
 
 struct Pin {
-    position: vec2<f32>,         // position from top-left
-    side: u32,                 // 0 = top, 1 = right, 2 = bottom, 3 = left, 4 = row
-    radius: f32,
-    color: vec4<f32>,          // RGBA color for pin type indicator
+    position: vec2<f32>,       // position from top-left (8 bytes)
+    side: u32,                 // 0 = top, 1 = right, 2 = bottom, 3 = left, 4 = row (4 bytes)
+    radius: f32,               // 4 bytes (total 16 bytes)
+    color: vec4<f32>,          // RGBA color for pin type indicator (16 bytes, total 32)
+    direction: u32,            // 0 = Input, 1 = Output, 2 = Both (4 bytes)
+    flags: u32,                // Future use (4 bytes)
+    _pad0: u32,                // Alignment (4 bytes)
+    _pad1: u32,                // Alignment (4 bytes, total 48)
 };
 
 struct Edge {
@@ -190,16 +198,29 @@ fn fs_background(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<
         }
     }
 
-    // Render colored pin type indicators (small filled circles in pin center)
+    // Render colored pin type indicators
+    // Output (1) = filled circle, Input (0) = hollow circle (ring), Both (2) = filled
     for (var i = 0u; i < uniforms.num_nodes; i++) {
         let node = nodes[i];
         for (var j = 0u; j < node.pin_count; j++) {
             let pin = pins[node.pin_start + j];
             let pin_center = uv - pin.position;
             let indicator_radius = pin.radius * 0.4; // 40% of pin radius
-            let indicator_d = sd_circle(pin_center, indicator_radius);
-            let indicator_alpha = 1.0 - smoothstep(0.0, aa, indicator_d);
-            col = mix(col, pin.color.xyz, indicator_alpha * pin.color.w);
+            
+            if (pin.direction == 0u) {
+                // Input: Hollow circle (ring)
+                let ring_thickness = indicator_radius * 0.4; // Ring thickness
+                let outer_d = sd_circle(pin_center, indicator_radius);
+                let inner_d = sd_circle(pin_center, indicator_radius - ring_thickness);
+                // Ring is where outer is inside but inner is outside
+                let ring_alpha = (1.0 - smoothstep(0.0, aa, outer_d)) * smoothstep(0.0, aa, inner_d);
+                col = mix(col, pin.color.xyz, ring_alpha * pin.color.w);
+            } else {
+                // Output or Both: Filled circle
+                let indicator_d = sd_circle(pin_center, indicator_radius);
+                let indicator_alpha = 1.0 - smoothstep(0.0, aa, indicator_d);
+                col = mix(col, pin.color.xyz, indicator_alpha * pin.color.w);
+            }
         }
     }
 
