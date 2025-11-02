@@ -37,6 +37,7 @@ enum ApplicationMessage {
     ChangeTheme(Theme),
     NavigateToSubmenu(String),
     NavigateBack,
+    Tick,  // For continuous animation updates
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -153,6 +154,9 @@ impl Application {
                 self.palette_view = PaletteView::Main;
                 self.command_input.clear();
             }
+            ApplicationMessage::Tick => {
+                // Just trigger a redraw for animations
+            }
         }
     }
     
@@ -211,18 +215,23 @@ impl Application {
     }
 
     fn subscription(&self) -> Subscription<ApplicationMessage> {
-        event::listen().map(|event| {
-            match event {
-                Event::Keyboard(keyboard::Event::KeyPressed { 
-                    key: keyboard::Key::Character(c),
-                    modifiers,
-                    ..
-                }) if modifiers.command() && c.as_ref() == "k" => {
-                    ApplicationMessage::ToggleCommandPalette
+        Subscription::batch([
+            event::listen().map(|event| {
+                match event {
+                    Event::Keyboard(keyboard::Event::KeyPressed { 
+                        key: keyboard::Key::Character(c),
+                        modifiers,
+                        ..
+                    }) if modifiers.command() && c.as_ref() == "k" => {
+                        ApplicationMessage::ToggleCommandPalette
+                    }
+                    _ => ApplicationMessage::Noop,
                 }
-                _ => ApplicationMessage::Noop,
-            }
-        })
+            }),
+            // Continuous tick for animations (60 FPS)
+            iced::time::every(std::time::Duration::from_millis(16))
+                .map(|_| ApplicationMessage::Tick),
+        ])
     }
 }
 

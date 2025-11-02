@@ -68,6 +68,15 @@ where
         let state = tree.state.downcast_ref::<NodeGraphState>();
         let mut camera = state.camera;
 
+        // Update time for animations
+        let now = std::time::Instant::now();
+        let time = if let Some(last_update) = state.last_update {
+            let delta = now.duration_since(last_update).as_secs_f32();
+            state.time + delta
+        } else {
+            state.time
+        };
+
         // Handle panning when dragging the graph.
         if let Dragging::Graph(origin) = state.dragging {
             if let Some(cursor_position) = cursor.position() {
@@ -113,6 +122,7 @@ where
             cursor_position: camera.screen_to_world().transform_point(
                 cursor.position().unwrap_or(Point::new(0.0, 0.0)).into_euclid(),
             ),
+            time,
             dragging: state.dragging.clone(),
             nodes: self
                 .nodes
@@ -291,6 +301,14 @@ where
         viewport: &Rectangle,
     ) {
         let state = tree.state.downcast_mut::<NodeGraphState>();
+        
+        // Update time for animations
+        let now = std::time::Instant::now();
+        if let Some(last_update) = state.last_update {
+            let delta = now.duration_since(last_update).as_secs_f32();
+            state.time += delta;
+        }
+        state.last_update = Some(now);
         
         match event {
             Event::Mouse(mouse::Event::WheelScrolled { delta, .. }) => {

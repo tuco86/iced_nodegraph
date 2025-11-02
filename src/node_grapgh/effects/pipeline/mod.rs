@@ -197,7 +197,7 @@ impl Pipeline {
             num_nodes,
             num_pins,
             num_edges,
-            time: 0.0, // TODO: pass actual time from widget
+            time: primitive.time,
             dragging,
             _pad_uniforms0: 0,
             _pad_uniforms1: 0,

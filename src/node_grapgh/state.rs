@@ -16,6 +16,8 @@ pub(crate) enum Dragging {
 pub(super) struct NodeGraphState {
     pub(super) camera: Camera2D,
     pub(super) dragging: Dragging,
+    pub(super) time: f32,  // Time in seconds for animations
+    pub(super) last_update: Option<std::time::Instant>,
 }
 
 impl Default for NodeGraphState {
@@ -23,6 +25,8 @@ impl Default for NodeGraphState {
         Self {
             camera: Camera2D::new(),
             dragging: Default::default(),
+            time: 0.0,
+            last_update: None,
         }
     }
 }

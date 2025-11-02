@@ -219,14 +219,46 @@ fn fs_background(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<
         }
     }
 
-    // Render colored pin type indicators
+    // Render colored pin type indicators with animation for valid drop targets
     // Output (1) = filled circle, Input (0) = hollow circle (ring), Both (2) = filled
     for (var i = 0u; i < uniforms.num_nodes; i++) {
         let node = nodes[i];
         for (var j = 0u; j < node.pin_count; j++) {
             let pin = pins[node.pin_start + j];
             let pin_center = uv - pin.position;
-            let indicator_radius = pin.radius * 0.4; // 40% of pin radius
+            
+            // Check if this pin is a valid drop target during dragging
+            var is_valid_target = false;
+            if (uniforms.dragging == 3u) { // Edge dragging
+                let from_node = nodes[uniforms.dragging_edge_from_node];
+                let from_pin = pins[from_node.pin_start + uniforms.dragging_edge_from_pin];
+                
+                // Check direction compatibility
+                var direction_valid = false;
+                if (from_pin.direction == 2u || pin.direction == 2u) {
+                    direction_valid = true; // Both can connect to anything
+                } else if ((from_pin.direction == 1u && pin.direction == 0u) || 
+                           (from_pin.direction == 0u && pin.direction == 1u)) {
+                    direction_valid = true; // Output <-> Input
+                }
+                
+                // Check type compatibility (color match with small tolerance)
+                let color_diff = length(from_pin.color.xyz - pin.color.xyz);
+                let type_valid = color_diff < 0.1; // Same color = same type
+                
+                // Don't highlight the source pin itself
+                let is_source_pin = (i == uniforms.dragging_edge_from_node) && (j == uniforms.dragging_edge_from_pin);
+                is_valid_target = direction_valid && type_valid && !is_source_pin;
+            }
+            
+            // Animate valid targets: pulsing size
+            var anim_scale = 1.0;
+            if (is_valid_target) {
+                let pulse = sin(uniforms.time * 6.0) * 0.5 + 0.5; // 0.0 to 1.0 pulsing
+                anim_scale = 1.0 + pulse * 0.5; // Scale from 1.0 to 1.5
+            }
+            
+            let indicator_radius = pin.radius * 0.4 * anim_scale;
             
             if (pin.direction == 0u) {
                 // Input: Hollow circle (ring)
