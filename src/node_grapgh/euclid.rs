@@ -14,6 +14,8 @@ pub type WorldVector = Vector2D<f32, World>;
 
 pub type WorldSize = Size2D<f32, World>;
 
+pub type WorldRect = Rect<f32, World>;
+
 pub type ScreenRect = Rect<f32, Screen>;
 
 pub type ScreenToWorld = Transform2D<f32, Screen, World>;

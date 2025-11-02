@@ -158,7 +158,7 @@
 //! Run tests with: `cargo test --lib camera`
 
 use super::euclid::{
-    IntoEuclid, IntoIced, Screen, ScreenPoint, ScreenRect, ScreenToWorld, World, WorldPoint, WorldVector
+    IntoEuclid, IntoIced, Screen, ScreenPoint, ScreenRect, ScreenToWorld, World, WorldPoint, WorldVector, WorldRect, WorldSize
 };
 use euclid::{Scale, Transform2D};
 use iced::{
@@ -294,7 +294,20 @@ impl Camera2D {
 
     fn viewport_screen_to_world(&self, viewport: &Rectangle<f32>) -> Rectangle<f32> {
         let viewport: ScreenRect = viewport.into_euclid();
-        self.zoom.transform_rect(&viewport).translate(-self.position.to_vector()).into_iced()
+        // Convert screen viewport to world space using same formula as screen_to_world
+        // world = screen / zoom - position
+        let inv_zoom = 1.0 / self.zoom.get();
+        let world_viewport: WorldRect = WorldRect::new(
+            WorldPoint::new(
+                viewport.origin.x * inv_zoom - self.position.x,
+                viewport.origin.y * inv_zoom - self.position.y,
+            ),
+            WorldSize::new(
+                viewport.size.width * inv_zoom,
+                viewport.size.height * inv_zoom,
+            ),
+        );
+        world_viewport.into_iced()
     }
 }
 
