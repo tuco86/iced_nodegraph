@@ -347,6 +347,7 @@ where
                                     layout.children().zip(&tree.children).enumerate()
                                 {
                                     for (pin_index, _, (a, b)) in find_pins(node_tree, node_layout) {
+                                        // Pin positions are already in world space (from layout)
                                         let distance = a
                                             .distance(cursor_position)
                                             .min(b.distance(cursor_position));
@@ -399,6 +400,7 @@ where
                                         .into_iter()
                                         .nth(to_pin)
                                     {
+                                        // Pin positions are already in world space (from layout)
                                         let distance = a
                                             .distance(cursor_position)
                                             .min(b.distance(cursor_position));
@@ -477,6 +479,8 @@ where
                                 layout.children().zip(&mut tree.children).enumerate()
                             {
                                 for (pin_index, _, (a, b)) in find_pins(node_tree, node_layout) {
+                                    // Pin positions from layout are ALREADY in world space
+                                    // because layout was created with .move_to(world_position)
                                     let distance = a
                                         .distance(cursor_position)
                                         .min(b.distance(cursor_position));
