@@ -212,7 +212,7 @@ impl Pipeline {
         // );
     }
 
-    pub fn update_echo(&mut self, queue: &Queue) {
+    pub fn update_echo(&mut self, _queue: &Queue) {
         // Update the echo pipeline here
         println!(
             "echo - nodes: {:?} ({:?}), pins: {:?} ({:?}), edges: {:?} ({:?})",

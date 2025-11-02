@@ -1,9 +1,8 @@
 use iced::{
     advanced::{
         layout, mouse, renderer, widget::{self, tree, Tree}, Clipboard, Layout, Shell
-    }, border, widget::text_input::cursor, Background, Color, Element, Event, Length, Point, Rectangle, Size, Vector
+    }, Element, Event, Length, Point, Rectangle, Size, Vector
 };
-use iced_wgpu::core::window;
 
 use super::{
     effects::{self, Layer}, euclid::{IntoIced, WorldVector}, state::{Dragging, NodeGraphState}, NodeGraph
@@ -92,7 +91,7 @@ where
                 .zip(layout.children())
                 .enumerate()
                 .map(
-                    |(node_index, (((_position, element), node_tree), node_layout))| {
+                    |(node_index, (((_position, _element), node_tree), node_layout))| {
                         let mut offset = WorldVector::zero();
                         if let (Dragging::Node(drag_node_index, origin), Some(cursor_position)) = (state.dragging.clone(), cursor.position()) {
                             if drag_node_index == node_index {
@@ -111,7 +110,7 @@ where
                             corner_radius: 5.0,
                             pins: find_pins(node_tree, node_layout)
                                 .iter()
-                                .map(|(pin_index, pin_state, (a, b))| effects::Pin {
+                                .map(|(_pin_index, pin_state, (a, _b))| effects::Pin {
                                     side: pin_state.side.into(),
                                     offset: a.into_euclid().to_vector() + offset,
                                     radius: 5.0,

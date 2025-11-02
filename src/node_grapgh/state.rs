@@ -1,9 +1,9 @@
-use super::euclid::{ScreenPoint, WorldPoint};
+use super::euclid::WorldPoint;
 
 use super::camera::Camera2D;
 
 #[derive(Debug, Clone, Default, PartialEq)]
-pub(super) enum Dragging {
+pub(crate) enum Dragging {
     #[default]
     None,
     Graph(WorldPoint),                   // cursor origin

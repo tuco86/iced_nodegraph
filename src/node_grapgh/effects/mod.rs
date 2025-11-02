@@ -1,6 +1,6 @@
 pub use primitive::Node;
 pub use primitive::Pin;
-pub use primitive::{EchoPrimitive, Layer, Primitive};
+pub use primitive::{Layer, Primitive};
 // pub use primitive::Edge;
 
 mod pipeline;

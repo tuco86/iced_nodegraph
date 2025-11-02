@@ -1,8 +1,6 @@
-use std::time::Instant;
-
 use iced::{
     event, keyboard,
-    widget::{self, column, container, mouse_area, row, stack, text, text_input}, window, Event, Length, Point, Subscription
+    widget::{self, column, container, mouse_area, row, stack, text, text_input}, Event, Length, Point, Subscription
 };
 use iced_nodegraph::{PinSide, node_graph, node_pin};
 
@@ -17,7 +15,6 @@ pub fn main() -> iced::Result {
 #[derive(Debug, Clone)]
 enum ApplicationMessage {
     Noop,
-    Tick(Instant),
     EdgeConnected {
         from_node: usize,
         from_pin: usize,
@@ -44,7 +41,6 @@ struct Application {
     nodes: Vec<(Point, String)>, // position and name
     command_palette_open: bool,
     command_input: String,
-    cursor_position: Option<Point>,
 }
 
 impl Default for Application {
@@ -58,7 +54,6 @@ impl Default for Application {
             ],
             command_palette_open: false,
             command_input: String::new(),
-            cursor_position: None,
         }
     }
 }
@@ -71,7 +66,6 @@ impl Application {
     fn update(&mut self, message: ApplicationMessage) {
         match message {
             ApplicationMessage::Noop => (),
-            ApplicationMessage::Tick(_) => (),
             ApplicationMessage::EdgeConnected {
                 from_node,
                 from_pin,

@@ -11,16 +11,6 @@ mod tests {
     use crate::node_grapgh::euclid::*;
     use iced::Point;
 
-    const EPSILON: f32 = 0.1;
-
-    fn approx_eq(a: f32, b: f32, eps: f32) -> bool {
-        (a - b).abs() < eps
-    }
-
-    fn point_approx_eq(a: Point, b: Point, eps: f32) -> bool {
-        approx_eq(a.x, b.x, eps) && approx_eq(a.y, b.y, eps)
-    }
-
     #[test]
     fn test_pin_detection_at_zoom_1() {
         // At zoom 1.0, pin at world(100, 100) should be clickable at screen(100, 100)

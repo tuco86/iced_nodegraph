@@ -158,7 +158,7 @@
 //! Run tests with: `cargo test --lib camera`
 
 use super::euclid::{
-    IntoEuclid, IntoIced, Screen, ScreenPoint, ScreenRect, ScreenToWorld, World, WorldPoint, WorldToScreen, WorldVector
+    IntoEuclid, IntoIced, Screen, ScreenPoint, ScreenRect, ScreenToWorld, World, WorldPoint, WorldVector
 };
 use euclid::{Scale, Transform2D};
 use iced::{
@@ -206,7 +206,8 @@ impl Camera2D {
             .then_translate(-self.position.to_vector())
     }
 
-    pub fn world_to_screen(&self) -> WorldToScreen {
+    #[cfg(test)]
+    pub fn world_to_screen(&self) -> Transform2D<f32, World, Screen> {
         // Converts world coordinates to screen coordinates.
         self.screen_to_world().inverse().unwrap()
     }
@@ -256,7 +257,7 @@ impl Camera2D {
         Renderer: renderer::Renderer,
         F: FnOnce(&mut Renderer, &iced::Rectangle, mouse::Cursor),
     {
-        let zoom = self.zoom;
+        let _zoom = self.zoom;
         let offset = self.position;
 
         let transformed_cursor = self.cursor_screen_to_world(cursor);

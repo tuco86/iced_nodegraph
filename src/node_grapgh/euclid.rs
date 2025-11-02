@@ -11,15 +11,11 @@ pub type WorldPoint = Point2D<f32, World>;
 pub type ScreenPoint = Point2D<f32, Screen>;
 
 pub type WorldVector = Vector2D<f32, World>;
-pub type ScreenVector = Vector2D<f32, Screen>;
 
 pub type WorldSize = Size2D<f32, World>;
-pub type ScreenSize = Size2D<f32, Screen>;
 
-pub type WorldRect = Rect<f32, World>;
 pub type ScreenRect = Rect<f32, Screen>;
 
-pub type WorldToScreen = Transform2D<f32, World, Screen>;
 pub type ScreenToWorld = Transform2D<f32, Screen, World>;
 
 // Define a custom Into trait
