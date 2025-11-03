@@ -2,20 +2,31 @@
 
 A high-performance node graph editor widget for the [Iced](https://github.com/iced-rs/iced) GUI framework, featuring GPU-accelerated rendering with custom WGPU shaders and type-safe coordinate transformations.
 
+## 🎉 Iced 0.14 Ready!
+
+✅ **Fully updated and tested with Iced 0.14**  
+✅ **All warnings fixed and dependencies optimized**  
+✅ **Smooth animations restored (droppable pins pulsing)**  
+✅ **Cross-platform support (Windows, macOS, Linux)**  
+
+**[🌐 Live Demo](https://tuco86.github.io/iced_nodegraph/) | [📖 Documentation](https://github.com/tuco86/iced_nodegraph/tree/main/examples) | [🚀 Examples](https://github.com/tuco86/iced_nodegraph/tree/main/examples)**
+
 ## ⚠️ Development Status
 
 **This project is actively being developed with AI assistance (Claude Sonnet 4.5) and is in a state of flux.** Many features are still being refactored and the API may change significantly. Use at your own risk.
 
-**Target**: Iced 0.14 (unreleased) - This library requires features from the upcoming 0.14 release and currently builds against the master branch of Iced.
+**Target**: Iced 0.14 (master branch) - This library requires features from the Iced master branch and is now fully compatible with the latest API changes.
 
 ## Features
 
-- **Nodes** - Draggable containers for your custom widgets
-- **Pins** - Connection points on nodes with type checking and visual feedback
-- **Edges** - Connect pins to build data flow graphs
-- **Interactive Connections** - Drag to connect, click edges to re-route (cable-like unplugging)
-- **Zoom & Pan** - Smooth infinite canvas navigation
-- **GPU Rendering** - High-performance visualization with custom WGPU shaders
+- **🎯 Nodes** - Draggable containers for your custom widgets
+- **📌 Pins** - Connection points on nodes with type checking and visual feedback
+- **🔗 Edges** - Connect pins to build data flow graphs
+- **🖱️ Interactive Connections** - Drag to connect, click edges to re-route (cable-like unplugging)
+- **🔍 Zoom & Pan** - Smooth infinite canvas navigation
+- **⚡ GPU Rendering** - High-performance visualization with custom WGPU shaders
+- **✨ Smooth Animations** - Monitor-synchronized pin pulsing and transitions
+- **🎨 Theme Support** - Integrates with Iced's theming system
 
 ## Quick Start
 

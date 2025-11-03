@@ -3,6 +3,10 @@ name = "iced_nodegraph"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+wasm = []
+
 [dependencies]
 euclid = { version = "0.22.11", features = [ "bytemuck" ] }
 bytemuck = { version = "1.24.0", features = ["derive"] }
@@ -10,3 +14,9 @@ glam = { version = "0.25.0", features = ["bytemuck"] }
 iced = { git = "https://github.com/iced-rs/iced.git", branch = "master" }
 iced_wgpu = { git = "https://github.com/iced-rs/iced.git", branch = "master" }
 iced_widget = { git = "https://github.com/iced-rs/iced.git", branch = "master" }
+
+# Force newer versions to reduce duplicates where possible
+# Note: Some duplicates remain due to external dependencies (winit fork, WGPU stack)
+bitflags = "2.10"
+thiserror = "2.0"
+rustc-hash = "2.1"

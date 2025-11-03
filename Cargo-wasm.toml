@@ -1,0 +1,31 @@
+[package]
+name = "iced_nodegraph_wasm"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Core dependencies
+euclid = { version = "0.22.11", features = [ "bytemuck" ] }
+bytemuck = { version = "1.24.0", features = ["derive"] }
+glam = { version = "0.25.0", features = ["bytemuck"] }
+
+# Iced with WASM features
+iced = { git = "https://github.com/iced-rs/iced.git", branch = "master", features = ["canvas", "wasm"] }
+iced_widget = { git = "https://github.com/iced-rs/iced.git", branch = "master" }
+
+# WASM-specific dependencies
+wasm-bindgen = "0.2"
+web-sys = "0.3"
+console_error_panic_hook = "0.1"
+
+[dependencies.iced_nodegraph]
+path = "."
+features = ["wasm"]
+
+[profile.release]
+# Optimize for size in WASM builds
+opt-level = "s"
+lto = true
