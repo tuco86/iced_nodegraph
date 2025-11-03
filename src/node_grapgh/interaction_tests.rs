@@ -88,11 +88,12 @@ mod tests {
     fn test_pin_detection_with_zoom_and_pan() {
         // Camera: zoom=2.0, position=(100, 100)
         // Pin at world(200, 200) renders at:
-        // screen = world * zoom + position = (200, 200) * 2 + (100, 100) = (500, 500)
+        // CORRECT formula: screen = (world + position) * zoom
+        // screen = (200 + 100, 200 + 100) * 2 = (600, 600)
         let camera = Camera2D::with_zoom_and_position(2.0, WorldPoint::new(100.0, 100.0));
 
         let pin_world = WorldPoint::new(200.0, 200.0);
-        let cursor_screen = ScreenPoint::new(500.0, 500.0);
+        let cursor_screen = ScreenPoint::new(600.0, 600.0); // Fixed: was 500, should be 600
 
         let cursor_world = camera.screen_to_world().transform_point(cursor_screen);
 
