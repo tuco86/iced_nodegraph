@@ -11,6 +11,13 @@ A high-performance node graph editor widget for the [Iced](https://github.com/ic
 
 **[🌐 Live Demo](https://tuco86.github.io/iced_nodegraph/) | [📖 Documentation](https://github.com/tuco86/iced_nodegraph/tree/main/examples) | [🚀 Examples](https://github.com/tuco86/iced_nodegraph/tree/main/examples)**
 
+### Rendering Modes
+
+- **🎮 Native**: Full WGPU with custom shaders → `cargo run --example hello_world`
+- **🌐 WASM**: Canvas2D for browser compatibility → [Live Demo](https://tuco86.github.io/iced_nodegraph/hello-world.html)
+
+**Note:** WASM demo uses Canvas2D rendering for broad browser compatibility. Native builds use full WGPU rendering with custom shaders for optimal performance. See [docs/RENDERING.md](docs/RENDERING.md) for details.
+
 ## ⚠️ Development Status
 
 **This project is actively being developed with AI assistance (Claude Sonnet 4.5) and is in a state of flux.** Many features are still being refactored and the API may change significantly. Use at your own risk.

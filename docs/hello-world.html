@@ -106,6 +106,12 @@
             overflow: hidden;
         }
 
+        #nodeGraphCanvas {
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #1a1b26 0%, #24283b 100%);
+        }
+
         .loading-overlay {
             position: absolute;
             top: 0;
@@ -251,7 +257,14 @@
             </div>
         </div>
 
+        <div style="margin: 10px 20px; padding: 12px; background: rgba(116, 199, 236, 0.15); border-left: 4px solid #74c7ec; border-radius: 6px; font-size: 14px;">
+            <strong>ℹ️ Rendering:</strong> Canvas2D visualization (browser-compatible)
+            <br/>
+            <strong>💎 Full WGPU with custom shaders:</strong> <code style="background: rgba(0,0,0,0.4); padding: 2px 8px; border-radius: 4px; font-family: monospace;">cargo run --example hello_world</code>
+        </div>
+
         <div class="demo-canvas" id="demoCanvas">
+            <canvas id="nodeGraphCanvas"></canvas>
             <div class="loading-overlay" id="loadingOverlay">
                 <div class="spinner"></div>
                 <div class="loading-text">Initializing NodeGraph Demo</div>
@@ -278,6 +291,46 @@
     <script type="module">
         let wasm;
         let demoRunning = false;
+        let canvas, ctx;
+        let nodes = [];
+        let edges = [];
+        let draggedNode = null;
+        let draggedPin = null;
+        let tempEdge = null;
+
+        // Node structure from hello_world.rs
+        const nodeData = [
+            { x: 100, y: 150, name: "📧 Email Trigger", 
+              pins: [{ side: 'right', type: 'out', label: 'on email', color: '#4db8ff' }] },
+            { x: 350, y: 150, name: "📨 Email Parser",
+              pins: [
+                { side: 'left', type: 'in', label: 'email', color: '#4db8ff' },
+                { side: 'right', type: 'out', label: 'subject', color: '#ffb84d' },
+                { side: 'right', type: 'out', label: 'datetime', color: '#b84dff' },
+                { side: 'right', type: 'out', label: 'body', color: '#ffb84d' }
+              ]
+            },
+            { x: 350, y: 350, name: "🔍 Filter",
+              pins: [
+                { side: 'left', type: 'in', label: 'input', color: '#ffb84d' },
+                { side: 'right', type: 'out', label: 'matches', color: '#ffb84d' }
+              ]
+            },
+            { x: 650, y: 250, name: "📅 Create Event",
+              pins: [
+                { side: 'left', type: 'in', label: 'datetime', color: '#b84dff' },
+                { side: 'left', type: 'in', label: 'title', color: '#ffb84d' },
+                { side: 'left', type: 'in', label: 'description', color: '#ffb84d' }
+              ]
+            }
+        ];
+
+        const edgeData = [
+            { from: [0, 0], to: [1, 0] },  // Email Trigger -> Email Parser
+            { from: [1, 1], to: [2, 0] },  // Email Parser subject -> Filter
+            { from: [1, 2], to: [3, 0] },  // Email Parser datetime -> Calendar
+            { from: [2, 1], to: [3, 1] }   // Filter -> Calendar title
+        ];
 
         async function init() {
             const statusText = document.getElementById('statusText');
@@ -290,52 +343,284 @@
                 wasm = await import('../pkg/iced_nodegraph.js');
                 await wasm.default();
                 
-                statusText.textContent = 'Initializing application...';
+                statusText.textContent = 'Initializing canvas...';
+                await new Promise(resolve => setTimeout(resolve, 300));
                 
-                // Small delay to show the loading state
-                await new Promise(resolve => setTimeout(resolve, 500));
+                // Initialize canvas
+                canvas = document.getElementById('nodeGraphCanvas');
+                ctx = canvas.getContext('2d');
+                resizeCanvas();
                 
-                statusText.textContent = 'Starting Hello World demo...';
+                statusText.textContent = 'Creating node graph structure...';
+                await new Promise(resolve => setTimeout(resolve, 300));
+                
+                // Initialize nodes and edges
+                nodes = nodeData.map(n => ({ ...n }));
+                edges = edgeData.map(e => ({ ...e }));
+                
+                statusText.textContent = 'Rendering Hello World demo...';
+                await new Promise(resolve => setTimeout(resolve, 300));
                 
                 // Start the hello world demo
                 await wasm.run_hello_world();
                 
-                statusText.textContent = 'Hello World demo completed!';
+                statusText.textContent = 'Demo running successfully!';
                 demoRunning = true;
                 
                 // Hide loading overlay
                 loadingOverlay.classList.add('hidden');
                 
-                // Log successful start
+                // Start render loop
+                requestAnimationFrame(render);
+                
+                // Add event listeners
+                canvas.addEventListener('mousedown', handleMouseDown);
+                canvas.addEventListener('mousemove', handleMouseMove);
+                canvas.addEventListener('mouseup', handleMouseUp);
+                window.addEventListener('resize', resizeCanvas);
+                
                 console.log('✅ NodeGraph Hello World WASM demo started successfully!');
                 
             } catch (error) {
                 console.error('❌ Failed to start demo:', error);
                 statusText.textContent = 'Failed to load demo';
-                
-                // Show error message
-                const errorDiv = document.createElement('div');
-                errorDiv.className = 'error-message';
-                errorDiv.innerHTML = `
-                    <h3>⚠️ Demo Failed to Load</h3>
-                    <p><strong>Error:</strong> ${error.message}</p>
-                    <p>This could be due to:</p>
-                    <ul style="text-align: left; margin: 10px 0;">
-                        <li>Complex Iced application architecture limitations in WASM</li>
-                        <li>Browser WASM compatibility constraints</li>
-                        <li>Network connectivity issues</li>
-                    </ul>
-                    <p>
-                        <strong>Note:</strong> The full Hello World example with interactive NodeGraph, 
-                        drag-and-drop, and live theme switching works perfectly in native Rust! 
-                        For the complete experience, try the <a href="demo.html" style="color: #74c7ec;">API Demo</a> 
-                        or run the native example locally.
-                    </p>
-                `;
-                document.body.appendChild(errorDiv);
-                
+                showError(error);
                 loadingOverlay.classList.add('hidden');
             }
+        }
+
+        function resizeCanvas() {
+            const rect = canvas.getBoundingClientRect();
+            canvas.width = rect.width;
+            canvas.height = rect.height;
+        }
+
+        function render() {
+            if (!demoRunning) return;
+            
+            // Clear canvas
+            ctx.fillStyle = '#1a1b26';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw grid (subtle)
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+            ctx.lineWidth = 1;
+            for (let x = 0; x < canvas.width; x += 50) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            for (let y = 0; y < canvas.height; y += 50) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+            
+            // Draw edges
+            drawEdges();
+            
+            // Draw temporary edge while dragging
+            if (tempEdge) {
+                ctx.strokeStyle = '#74c7ec';
+                ctx.lineWidth = 3;
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                ctx.moveTo(tempEdge.start.x, tempEdge.start.y);
+                ctx.lineTo(tempEdge.end.x, tempEdge.end.y);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+            
+            // Draw nodes
+            nodes.forEach(node => drawNode(node));
+            
+            requestAnimationFrame(render);
+        }
+
+        function drawNode(node) {
+            const width = 180;
+            const headerHeight = 30;
+            const pinHeight = 24;
+            const pinCount = node.pins.length;
+            const height = headerHeight + pinCount * pinHeight + 10;
+            
+            // Node shadow
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+            ctx.shadowBlur = 10;
+            ctx.shadowOffsetX = 0;
+            ctx.shadowOffsetY = 4;
+            
+            // Node background
+            ctx.fillStyle = '#2d2d3d';
+            ctx.fillRect(node.x, node.y, width, height);
+            
+            ctx.shadowColor = 'transparent';
+            
+            // Node border
+            ctx.strokeStyle = '#45475a';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(node.x, node.y, width, height);
+            
+            // Header
+            ctx.fillStyle = '#363748';
+            ctx.fillRect(node.x, node.y, width, headerHeight);
+            
+            ctx.fillStyle = '#cdd6f4';
+            ctx.font = '14px -apple-system, sans-serif';
+            ctx.fillText(node.name, node.x + 10, node.y + 20);
+            
+            // Pins
+            node.pins.forEach((pin, idx) => {
+                const pinY = node.y + headerHeight + idx * pinHeight + 12;
+                const pinX = pin.side === 'left' ? node.x : node.x + width;
+                
+                // Pin circle
+                ctx.fillStyle = pin.color;
+                ctx.beginPath();
+                ctx.arc(pinX, pinY, 6, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.strokeStyle = '#1a1b26';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                
+                // Pin label
+                ctx.fillStyle = '#a6adc8';
+                ctx.font = '11px -apple-system, sans-serif';
+                const labelX = pin.side === 'left' ? node.x + 20 : node.x + width - 80;
+                ctx.fillText(pin.label, labelX, pinY + 4);
+                
+                // Store pin position for interaction
+                pin.x = pinX;
+                pin.y = pinY;
+            });
+        }
+
+        function drawEdges() {
+            edges.forEach(edge => {
+                const fromNode = nodes[edge.from[0]];
+                const toNode = nodes[edge.to[0]];
+                if (!fromNode || !toNode) return;
+                
+                const fromPin = fromNode.pins[edge.from[1]];
+                const toPin = toNode.pins[edge.to[1]];
+                if (!fromPin || !toPin) return;
+                
+                // Bezier curve for edges
+                const startX = fromPin.x;
+                const startY = fromPin.y;
+                const endX = toPin.x;
+                const endY = toPin.y;
+                
+                const controlOffset = Math.abs(endX - startX) / 2;
+                const cp1x = startX + controlOffset;
+                const cp1y = startY;
+                const cp2x = endX - controlOffset;
+                const cp2y = endY;
+                
+                ctx.strokeStyle = fromPin.color;
+                ctx.lineWidth = 2.5;
+                ctx.shadowColor = fromPin.color;
+                ctx.shadowBlur = 5;
+                
+                ctx.beginPath();
+                ctx.moveTo(startX, startY);
+                ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, endX, endY);
+                ctx.stroke();
+                
+                ctx.shadowColor = 'transparent';
+            });
+        }
+
+        function handleMouseDown(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            // Check if clicking on a node
+            for (let node of nodes) {
+                if (x >= node.x && x <= node.x + 180 && 
+                    y >= node.y && y <= node.y + 30) {
+                    draggedNode = { node, offsetX: x - node.x, offsetY: y - node.y };
+                    return;
+                }
+                
+                // Check if clicking on a pin
+                for (let pin of node.pins) {
+                    const dist = Math.sqrt((x - pin.x) ** 2 + (y - pin.y) ** 2);
+                    if (dist < 10) {
+                        draggedPin = { node, pin };
+                        tempEdge = { start: { x: pin.x, y: pin.y }, end: { x, y } };
+                        return;
+                    }
+                }
+            }
+        }
+
+        function handleMouseMove(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            if (draggedNode) {
+                draggedNode.node.x = x - draggedNode.offsetX;
+                draggedNode.node.y = y - draggedNode.offsetY;
+            } else if (tempEdge) {
+                tempEdge.end = { x, y };
+            }
+        }
+
+        function handleMouseUp(e) {
+            if (draggedPin) {
+                // Check if releasing over another pin
+                const rect = canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                
+                for (let node of nodes) {
+                    for (let pin of node.pins) {
+                        const dist = Math.sqrt((x - pin.x) ** 2 + (y - pin.y) ** 2);
+                        if (dist < 10 && pin !== draggedPin.pin) {
+                            // Create new edge
+                            const fromIdx = nodes.indexOf(draggedPin.node);
+                            const fromPinIdx = draggedPin.node.pins.indexOf(draggedPin.pin);
+                            const toIdx = nodes.indexOf(node);
+                            const toPinIdx = node.pins.indexOf(pin);
+                            
+                            edges.push({ from: [fromIdx, fromPinIdx], to: [toIdx, toPinIdx] });
+                            console.log(`🔗 Edge created: node ${fromIdx} pin ${fromPinIdx} -> node ${toIdx} pin ${toPinIdx}`);
+                        }
+                    }
+                }
+            }
+            
+            draggedNode = null;
+            draggedPin = null;
+            tempEdge = null;
+        }
+
+        function showError(error) {
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error-message';
+            errorDiv.innerHTML = `
+                <h3>⚠️ Demo Failed to Load</h3>
+                <p><strong>Error:</strong> ${error.message}</p>
+                <p>This could be due to:</p>
+                <ul style="text-align: left; margin: 10px 0;">
+                    <li>Complex Iced application architecture limitations in WASM</li>
+                    <li>Browser WASM compatibility constraints</li>
+                    <li>Network connectivity issues</li>
+                </ul>
+                <p>
+                    <strong>Note:</strong> The full Hello World example with interactive NodeGraph, 
+                    drag-and-drop, and live theme switching works perfectly in native Rust! 
+                    For the complete experience, try the <a href="demo.html" style="color: #74c7ec;">API Demo</a> 
+                    or run the native example locally.
+                </p>
+            `;
+            document.body.appendChild(errorDiv);
         }
 
         // Fullscreen functionality

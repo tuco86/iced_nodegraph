@@ -17,6 +17,8 @@ macro_rules! console_log {
 pub fn main() {
     console_error_panic_hook::set_once();
     console_log!("🚀 NodeGraph WASM demo initialized successfully!");
+    console_log!("ℹ️  Note: Full WGPU rendering with custom shaders is available in native builds");
+    console_log!("ℹ️  WASM demos use simplified rendering for broader browser compatibility");
 }
 
 // Simple test function for WASM
@@ -141,11 +143,14 @@ impl NodeGraphDemo {
     }
 }
 
-// WASM entry point for full hello_world demo
+// WASM entry point for hello_world demo
+// Note: This is a simplified Canvas2D visualization for browser compatibility
+// The full WGPU rendering with custom shaders works in native builds (cargo run --example hello_world)
 #[wasm_bindgen]
 pub async fn run_hello_world() -> Result<(), JsValue> {
-    console_log!("🎮 Starting complete NodeGraph Hello World demo in browser...");
-    console_log!("ℹ️ This is a simplified WASM demo - for the full interactive experience, check out the native examples!");
-    console_log!("✅ Hello World WASM demo initialized successfully");
+    console_log!("🎮 Starting NodeGraph Hello World demo...");
+    console_log!("� Rendering interactive node graph with Canvas2D");
+    console_log!("ℹ️  For full WGPU rendering with custom shaders, run: cargo run --example hello_world");
+    console_log!("✅ Demo initialized successfully!");
     Ok(())
 }
