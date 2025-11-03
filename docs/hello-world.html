@@ -339,13 +339,30 @@
             const loadingOverlay = document.getElementById('loadingOverlay');
             
             try {
+                // Detect WebGPU support
+                const hasWebGPU = 'gpu' in navigator;
+                if (hasWebGPU) {
+                    console.log('✅ WebGPU is available! WGPU will use GPU acceleration.');
+                    try {
+                        const adapter = await navigator.gpu?.requestAdapter();
+                        if (adapter) {
+                            const info = await adapter.requestAdapterInfo();
+                            console.log('🎮 GPU Adapter:', info.vendor, info.architecture || 'unknown');
+                        }
+                    } catch (e) {
+                        console.log('⚠️ WebGPU available but adapter request failed:', e.message);
+                    }
+                } else {
+                    console.log('ℹ️ WebGPU not available. WGPU will fallback to WebGL/Canvas2D.');
+                }
+                
                 statusText.textContent = 'Loading WASM module...';
                 
                 // Import WASM module
                 wasm = await import('../pkg/iced_nodegraph.js');
                 await wasm.default();
                 
-                statusText.textContent = 'Initializing canvas...';
+                statusText.textContent = hasWebGPU ? 'Initializing WebGPU...' : 'Initializing canvas...';
                 await new Promise(resolve => setTimeout(resolve, 300));
                 
                 // Initialize canvas
