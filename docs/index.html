@@ -270,14 +270,38 @@
                 <h2>🚀 Interactive Demo</h2>
                 <p>Experience the node graph widget in action. This demo showcases drag-and-drop nodes, smart pin connections, smooth animations, and real-time edge validation.</p>
                 
-                <!-- Placeholder for future WASM demo -->
-                <div style="background: #11111b; border: 2px dashed #45475a; border-radius: 12px; padding: 3rem; margin: 2rem 0;">
-                    <h3 style="color: #74c7ec; margin-bottom: 1rem;">🔧 WASM Demo Coming Soon</h3>
-                    <p style="color: #a6adc8; margin-bottom: 2rem;">We're working on a WebAssembly demo that will run directly in your browser. For now, check out the native examples!</p>
-                    
-                    <div class="buttons">
-                        <a href="https://github.com/tuco86/iced_nodegraph/tree/main/examples" class="btn">📁 View Examples</a>
-                        <a href="#installation" class="btn secondary">📦 Installation Guide</a>
+                <!-- Interactive WASM Demo -->
+                <div style="background: linear-gradient(135deg, #1e1e2e 0%, #2d2d3d 100%); border: 2px solid #74c7ec; border-radius: 12px; padding: 3rem; margin: 2rem 0; position: relative; overflow: hidden;">
+                    <div style="position: absolute; top: -50%; right: -50%; width: 200%; height: 200%; background: radial-gradient(circle, rgba(116, 199, 236, 0.1) 0%, transparent 70%); pointer-events: none;"></div>
+                    <div style="position: relative; z-index: 1;">
+                        <h3 style="color: #74c7ec; margin-bottom: 1rem;">🎯 Interactive WASM Demo</h3>
+                        <p style="color: #a6adc8; margin-bottom: 2rem;">Experience the power of iced_nodegraph directly in your browser! This interactive demo showcases the core functionality compiled to WebAssembly.</p>
+                        
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin: 2rem 0;">
+                            <div style="background: rgba(116, 199, 236, 0.1); padding: 1rem; border-radius: 8px; border: 1px solid rgba(116, 199, 236, 0.3);">
+                                <div style="font-size: 1.5rem; margin-bottom: 0.5rem;">🚀</div>
+                                <strong style="color: #74c7ec;">Live Testing</strong>
+                                <p style="font-size: 0.9rem; margin: 0.5rem 0 0 0; color: #a6adc8;">Test core library functions interactively</p>
+                            </div>
+                            <div style="background: rgba(250, 179, 135, 0.1); padding: 1rem; border-radius: 8px; border: 1px solid rgba(250, 179, 135, 0.3);">
+                                <div style="font-size: 1.5rem; margin-bottom: 0.5rem;">🔧</div>
+                                <strong style="color: #fab387;">Node Builder</strong>
+                                <p style="font-size: 0.9rem; margin: 0.5rem 0 0 0; color: #a6adc8;">Create and connect nodes dynamically</p>
+                            </div>
+                            <div style="background: rgba(166, 227, 161, 0.1); padding: 1rem; border-radius: 8px; border: 1px solid rgba(166, 227, 161, 0.3);">
+                                <div style="font-size: 1.5rem; margin-bottom: 0.5rem;">📊</div>
+                                <strong style="color: #a6e3a1;">Real-time Stats</strong>
+                                <p style="font-size: 0.9rem; margin: 0.5rem 0 0 0; color: #a6adc8;">Monitor graph structure and operations</p>
+                            </div>
+                        </div>
+                        
+                        <div class="buttons">
+                            <a href="demo.html" class="btn" style="background: linear-gradient(135deg, #74c7ec 0%, #89b4fa 100%); color: #1e1e2e; font-weight: bold; text-decoration: none; padding: 12px 24px; border-radius: 8px; display: inline-block; transition: all 0.3s ease; box-shadow: 0 4px 15px rgba(116, 199, 236, 0.4);">🎮 Launch Interactive Demo</a>
+                        </div>
+                        
+                        <p style="color: #6c7086; font-style: italic; margin-top: 1rem; font-size: 0.9rem;">
+                            Cross-platform compatibility test - Works on Windows, macOS, Linux, and mobile browsers!
+                        </p>
                     </div>
                 </div>
             </div>
