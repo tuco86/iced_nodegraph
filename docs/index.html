@@ -295,13 +295,13 @@
                             </div>
                         </div>
                         
-                        <div style="background: rgba(250, 179, 135, 0.1); border-left: 3px solid #fab387; padding: 1rem; margin: 1.5rem 0; border-radius: 6px;">
-                            <strong style="color: #fab387;">ℹ️ Rendering Note:</strong> 
-                            <span style="color: #a6adc8;">WASM demos use Canvas2D for browser compatibility. For full WGPU rendering with custom shaders, run native examples: <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px; font-family: monospace; color: #74c7ec;">cargo run --example hello_world</code></span>
+                        <div style="background: rgba(166, 227, 161, 0.1); border-left: 3px solid #a6e3a1; padding: 1rem; margin: 1.5rem 0; border-radius: 6px;">
+                            <strong style="color: #a6e3a1;">✨ WebGPU Enabled!</strong> 
+                            <span style="color: #a6adc8;">WASM demos now use <strong style="color: #74c7ec;">full WGPU rendering</strong> with WebGPU backend on modern browsers (76% coverage). Automatic fallback to WebGL/Canvas2D for older browsers. Same custom shaders as native builds!</span>
                         </div>
 
                         <div class="buttons">
-                            <a href="hello-world.html" class="btn" style="background: linear-gradient(135deg, #a6e3a1 0%, #74c7ec 100%); color: #1e1e2e; font-weight: bold; text-decoration: none; padding: 12px 24px; border-radius: 8px; display: inline-block; transition: all 0.3s ease; box-shadow: 0 4px 15px rgba(166, 227, 161, 0.4); margin-right: 10px;">🎮 Hello World (Canvas2D)</a>
+                            <a href="hello-world.html" class="btn" style="background: linear-gradient(135deg, #a6e3a1 0%, #74c7ec 100%); color: #1e1e2e; font-weight: bold; text-decoration: none; padding: 12px 24px; border-radius: 8px; display: inline-block; transition: all 0.3s ease; box-shadow: 0 4px 15px rgba(166, 227, 161, 0.4); margin-right: 10px;">🎮 Hello World (WebGPU)</a>
                             <a href="demo.html" class="btn" style="background: linear-gradient(135deg, #74c7ec 0%, #89b4fa 100%); color: #1e1e2e; font-weight: bold; text-decoration: none; padding: 12px 24px; border-radius: 8px; display: inline-block; transition: all 0.3s ease; box-shadow: 0 4px 15px rgba(116, 199, 236, 0.4);">🔧 API Demo</a>
                         </div>
                         

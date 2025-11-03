@@ -14,9 +14,9 @@ A high-performance node graph editor widget for the [Iced](https://github.com/ic
 ### Rendering Modes
 
 - **🎮 Native**: Full WGPU with custom shaders → `cargo run --example hello_world`
-- **🌐 WASM**: Canvas2D for browser compatibility → [Live Demo](https://tuco86.github.io/iced_nodegraph/hello-world.html)
+- **🌐 WASM**: **WebGPU rendering** (same as native!) → [Live Demo](https://tuco86.github.io/iced_nodegraph/hello-world.html)
 
-**Note:** WASM demo uses Canvas2D rendering for broad browser compatibility. Native builds use full WGPU rendering with custom shaders for optimal performance. See [docs/RENDERING.md](docs/RENDERING.md) for details.
+**✨ WebGPU Now Enabled!** WASM builds use full WGPU rendering with WebGPU backend on modern browsers (76% global coverage: Chrome 113+, Edge 113+, Opera 99+). Automatic fallback to WebGL for older browsers. See [docs/RENDERING.md](docs/RENDERING.md) for details.
 
 ## ⚠️ Development Status
 

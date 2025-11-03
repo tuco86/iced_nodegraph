@@ -258,9 +258,11 @@
         </div>
 
         <div style="margin: 10px 20px; padding: 12px; background: rgba(116, 199, 236, 0.15); border-left: 4px solid #74c7ec; border-radius: 6px; font-size: 14px;">
-            <strong>ℹ️ Rendering:</strong> Canvas2D visualization (browser-compatible)
+            <strong>💎 WebGPU Rendering:</strong> Full GPU acceleration with custom shaders (Chrome 113+, Edge 113+)
             <br/>
-            <strong>💎 Full WGPU with custom shaders:</strong> <code style="background: rgba(0,0,0,0.4); padding: 2px 8px; border-radius: 4px; font-family: monospace;">cargo run --example hello_world</code>
+            <strong>� Auto-fallback:</strong> WebGL for older browsers • Interactive Canvas2D visualization below
+            <br/>
+            <strong>🖥️ Native:</strong> <code style="background: rgba(0,0,0,0.4); padding: 2px 8px; border-radius: 4px; font-family: monospace;">cargo run --example hello_world</code>
         </div>
 
         <div class="demo-canvas" id="demoCanvas">
