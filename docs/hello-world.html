@@ -293,15 +293,17 @@
     <script type="module">
         let wasm;
         let demoRunning = false;
-        let canvas, ctx;
-        let nodes = [];
-        let edges = [];
-        let draggedNode = null;
-        let draggedPin = null;
-        let tempEdge = null;
+        
+        // Canvas2D variables - no longer used (Iced creates its own canvas)
+        // let canvas, ctx;
+        // let nodes = [];
+        // let edges = [];
+        // let draggedNode = null;
+        // let draggedPin = null;
+        // let tempEdge = null;
 
-        // Node structure from hello_world.rs
-        const nodeData = [
+        // Node structure from hello_world.rs - for reference only
+        /* const nodeData = [
             { x: 100, y: 150, name: "📧 Email Trigger", 
               pins: [{ side: 'right', type: 'out', label: 'on email', color: '#4db8ff' }] },
             { x: 350, y: 150, name: "📨 Email Parser",
@@ -332,7 +334,7 @@
             { from: [1, 1], to: [2, 0] },  // Email Parser subject -> Filter
             { from: [1, 2], to: [3, 0] },  // Email Parser datetime -> Calendar
             { from: [2, 1], to: [3, 1] }   // Filter -> Calendar title
-        ];
+        ]; */
 
         async function init() {
             const statusText = document.getElementById('statusText');
@@ -362,43 +364,23 @@
                 wasm = await import('../pkg/iced_nodegraph.js');
                 await wasm.default();
                 
-                statusText.textContent = hasWebGPU ? 'Initializing WebGPU...' : 'Initializing canvas...';
-                await new Promise(resolve => setTimeout(resolve, 300));
+                statusText.textContent = hasWebGPU ? 'Starting WebGPU application...' : 'Starting application...';
                 
-                // Initialize canvas
-                canvas = document.getElementById('nodeGraphCanvas');
-                ctx = canvas.getContext('2d');
-                resizeCanvas();
-                
-                statusText.textContent = 'Creating node graph structure...';
-                await new Promise(resolve => setTimeout(resolve, 300));
-                
-                // Initialize nodes and edges
-                nodes = nodeData.map(n => ({ ...n }));
-                edges = edgeData.map(e => ({ ...e }));
-                
-                statusText.textContent = 'Rendering Hello World demo...';
-                await new Promise(resolve => setTimeout(resolve, 300));
-                
-                // Start the hello world demo
-                await wasm.run_hello_world();
-                
-                statusText.textContent = 'Demo running successfully!';
-                demoRunning = true;
-                
-                // Hide loading overlay
+                // Hide loading overlay immediately
                 loadingOverlay.classList.add('hidden');
                 
-                // Start render loop
-                requestAnimationFrame(render);
+                // Start the Iced application - this will take over rendering with WGPU!
+                // This is an async operation that returns when the app is ready
+                statusText.textContent = 'Launching Iced/WGPU...';
+                console.log('🚀 Starting Iced application with WGPU rendering...');
                 
-                // Add event listeners
-                canvas.addEventListener('mousedown', handleMouseDown);
-                canvas.addEventListener('mousemove', handleMouseMove);
-                canvas.addEventListener('mouseup', handleMouseUp);
-                window.addEventListener('resize', resizeCanvas);
+                await wasm.run_hello_world();
                 
-                console.log('✅ NodeGraph Hello World WASM demo started successfully!');
+                // If we get here, the app started successfully
+                statusText.textContent = 'WGPU app running!';
+                demoRunning = true;
+                
+                console.log('✅ Iced WGPU application started successfully!');
                 
             } catch (error) {
                 console.error('❌ Failed to start demo:', error);
@@ -408,6 +390,8 @@
             }
         }
 
+        // Canvas2D rendering disabled - Iced/WGPU handles all rendering now
+        /*
         function resizeCanvas() {
             const rect = canvas.getBoundingClientRect();
             canvas.width = rect.width;
@@ -619,6 +603,8 @@
             draggedPin = null;
             tempEdge = null;
         }
+        */
+        // End Canvas2D code - all rendering is now handled by Iced/WGPU
 
         function showError(error) {
             const errorDiv = document.createElement('div');
