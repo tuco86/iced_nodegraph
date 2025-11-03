@@ -1,9 +1,8 @@
 use iced::{
-    event, keyboard, Color,
+    Color, Event, Length, Point, Subscription, Theme, event, keyboard,
     widget::{column, container, mouse_area, row, stack, text},
-    Event, Length, Point, Subscription, Theme,
 };
-use iced_nodegraph::{node_graph, node_pin, PinDirection, PinSide};
+use iced_nodegraph::{PinDirection, PinSide, node_graph, node_pin};
 
 pub fn main() -> iced::Result {
     iced::application(Application::new, Application::update, Application::view)
@@ -38,7 +37,11 @@ enum ApplicationMessage {
     CommandPaletteNavigateDown,
     CommandPaletteConfirm,
     CommandPaletteCancel,
-    SpawnNode { x: f32, y: f32, name: String },
+    SpawnNode {
+        x: f32,
+        y: f32,
+        name: String,
+    },
     ChangeTheme(Theme),
     NavigateToSubmenu(String),
     NavigateBack,
@@ -67,10 +70,10 @@ impl Default for Application {
     fn default() -> Self {
         Self {
             edges: vec![
-                ((0, 0), (1, 0)),  // Email Trigger -> Email Parser
-                ((1, 0), (2, 0)),  // Email Parser subject -> Filter
-                ((1, 1), (3, 0)),  // Email Parser datetime -> Calendar
-                ((2, 0), (3, 1)),  // Filter -> Calendar title
+                ((0, 0), (1, 0)), // Email Trigger -> Email Parser
+                ((1, 0), (2, 0)), // Email Parser subject -> Filter
+                ((1, 1), (3, 0)), // Email Parser datetime -> Calendar
+                ((2, 0), (3, 1)), // Filter -> Calendar title
             ],
             nodes: vec![
                 (Point::new(100.0, 150.0), "email_trigger".to_string()),
@@ -124,9 +127,8 @@ impl Application {
                 to_node,
                 to_pin,
             } => {
-                self.edges.retain(|edge| {
-                    *edge != ((from_node, from_pin), (to_node, to_pin))
-                });
+                self.edges
+                    .retain(|edge| *edge != ((from_node, from_pin), (to_node, to_pin)));
                 println!(
                     "Edge disconnected: node {} pin {} -> node {} pin {}",
                     from_node, from_pin, to_node, to_pin
@@ -160,13 +162,14 @@ impl Application {
                 }
                 if self.palette_selected_index > 0 {
                     self.palette_selected_index -= 1;
-                    
+
                     // Apply live preview for theme submenu
                     if let PaletteView::Submenu(ref submenu) = self.palette_view {
                         if submenu == "themes" {
                             let themes = Self::get_available_themes();
                             if self.palette_selected_index < themes.len() {
-                                self.palette_preview_theme = Some(themes[self.palette_selected_index].clone());
+                                self.palette_preview_theme =
+                                    Some(themes[self.palette_selected_index].clone());
                             }
                         }
                     }
@@ -178,20 +181,25 @@ impl Application {
                 }
                 let max_items = match &self.palette_view {
                     PaletteView::Main => Self::get_main_options().len(),
-                    PaletteView::Submenu(submenu) if submenu == "themes" => Self::get_available_themes().len(),
-                    PaletteView::Submenu(submenu) if submenu == "nodes" => Self::get_node_types().len(),
+                    PaletteView::Submenu(submenu) if submenu == "themes" => {
+                        Self::get_available_themes().len()
+                    }
+                    PaletteView::Submenu(submenu) if submenu == "nodes" => {
+                        Self::get_node_types().len()
+                    }
                     _ => 0,
                 };
-                
+
                 if self.palette_selected_index + 1 < max_items {
                     self.palette_selected_index += 1;
-                    
+
                     // Apply live preview for theme submenu
                     if let PaletteView::Submenu(ref submenu) = self.palette_view {
                         if submenu == "themes" {
                             let themes = Self::get_available_themes();
                             if self.palette_selected_index < themes.len() {
-                                self.palette_preview_theme = Some(themes[self.palette_selected_index].clone());
+                                self.palette_preview_theme =
+                                    Some(themes[self.palette_selected_index].clone());
                             }
                         }
                     }
@@ -231,7 +239,8 @@ impl Application {
                         if self.palette_selected_index < node_types.len() {
                             let node_type = node_types[self.palette_selected_index];
                             // Spawn in center of view
-                            self.nodes.push((Point::new(400.0, 300.0), node_type.to_string()));
+                            self.nodes
+                                .push((Point::new(400.0, 300.0), node_type.to_string()));
                             self.command_palette_open = false;
                             self.command_input.clear();
                             self.palette_view = PaletteView::Main;
@@ -281,10 +290,11 @@ impl Application {
             }
         }
     }
-    
+
     fn theme(&self) -> Theme {
         // Use preview theme if available (live preview)
-        self.palette_preview_theme.as_ref()
+        self.palette_preview_theme
+            .as_ref()
             .unwrap_or(&self.current_theme)
             .clone()
     }
@@ -354,14 +364,14 @@ impl Application {
 
     fn view(&self) -> iced::Element<'_, ApplicationMessage> {
         let mut ng = node_graph()
-            .on_connect(|from_node, from_pin, to_node, to_pin| {
-                ApplicationMessage::EdgeConnected {
+            .on_connect(
+                |from_node, from_pin, to_node, to_pin| ApplicationMessage::EdgeConnected {
                     from_node,
                     from_pin,
                     to_node,
                     to_pin,
-                }
-            })
+                },
+            )
             .on_disconnect(|from_node, from_pin, to_node, to_pin| {
                 ApplicationMessage::EdgeDisconnected {
                     from_node,
@@ -370,29 +380,32 @@ impl Application {
                     to_pin,
                 }
             })
-            .on_move(|node_index, new_position| {
-                ApplicationMessage::NodeMoved {
-                    node_index,
-                    new_position,
-                }
+            .on_move(|node_index, new_position| ApplicationMessage::NodeMoved {
+                node_index,
+                new_position,
             });
-        
+
         // Add all nodes from state
         for (position, name) in &self.nodes {
             ng.push_node(*position, node(name.as_str(), &self.current_theme));
         }
-        
+
         // Add stored edges
         for ((from_node, from_pin), (to_node, to_pin)) in &self.edges {
             ng.push_edge(*from_node, *from_pin, *to_node, *to_pin);
         }
-        
+
         let graph_view = ng.into();
-        
+
         if self.command_palette_open {
             stack!(
                 graph_view,
-                command_palette(&self.command_input, &self.palette_view, self.palette_selected_index, &self.current_theme)
+                command_palette(
+                    &self.command_input,
+                    &self.palette_view,
+                    self.palette_selected_index,
+                    &self.current_theme
+                )
             )
             .width(Length::Fill)
             .height(Length::Fill)
@@ -403,51 +416,39 @@ impl Application {
     }
 
     fn subscription(&self) -> Subscription<ApplicationMessage> {
-        let mut subscriptions = vec![
-            event::listen().map(|event| {
-                match event {
-                    Event::Keyboard(keyboard::Event::KeyPressed { 
-                        key: keyboard::Key::Character(c),
-                        modifiers,
-                        ..
-                    }) if modifiers.command() && c.as_ref() == "k" => {
-                        ApplicationMessage::ToggleCommandPalette
-                    }
-                    Event::Keyboard(keyboard::Event::KeyPressed { 
-                        key: keyboard::Key::Named(keyboard::key::Named::ArrowUp),
-                        ..
-                    }) => {
-                        ApplicationMessage::CommandPaletteNavigateUp
-                    }
-                    Event::Keyboard(keyboard::Event::KeyPressed { 
-                        key: keyboard::Key::Named(keyboard::key::Named::ArrowDown),
-                        ..
-                    }) => {
-                        ApplicationMessage::CommandPaletteNavigateDown
-                    }
-                    Event::Keyboard(keyboard::Event::KeyPressed { 
-                        key: keyboard::Key::Named(keyboard::key::Named::Enter),
-                        ..
-                    }) => {
-                        ApplicationMessage::CommandPaletteConfirm
-                    }
-                    Event::Keyboard(keyboard::Event::KeyPressed { 
-                        key: keyboard::Key::Named(keyboard::key::Named::Escape),
-                        ..
-                    }) => {
-                        ApplicationMessage::CommandPaletteCancel
-                    }
-                    _ => ApplicationMessage::Noop,
-                }
-            })
-        ];
+        let mut subscriptions = vec![event::listen().map(|event| match event {
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key: keyboard::Key::Character(c),
+                modifiers,
+                ..
+            }) if modifiers.command() && c.as_ref() == "k" => {
+                ApplicationMessage::ToggleCommandPalette
+            }
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key: keyboard::Key::Named(keyboard::key::Named::ArrowUp),
+                ..
+            }) => ApplicationMessage::CommandPaletteNavigateUp,
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key: keyboard::Key::Named(keyboard::key::Named::ArrowDown),
+                ..
+            }) => ApplicationMessage::CommandPaletteNavigateDown,
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key: keyboard::Key::Named(keyboard::key::Named::Enter),
+                ..
+            }) => ApplicationMessage::CommandPaletteConfirm,
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key: keyboard::Key::Named(keyboard::key::Named::Escape),
+                ..
+            }) => ApplicationMessage::CommandPaletteCancel,
+            _ => ApplicationMessage::Noop,
+        })];
 
         // Only enable continuous animation when command palette is open (for theme preview)
         // Otherwise, the app would redraw at 60 FPS constantly, wasting GPU resources
         if self.command_palette_open {
             subscriptions.push(
                 iced::time::every(std::time::Duration::from_millis(16))
-                    .map(|_| ApplicationMessage::Tick)
+                    .map(|_| ApplicationMessage::Tick),
             );
         }
 
@@ -461,23 +462,24 @@ where
     Message: Clone + 'a,
 {
     let palette = theme.extended_palette();
-    
+
     let title_bar = container(text("📧 Email Trigger").size(13).width(Length::Fill))
         .width(Length::Fill)
         .padding([2, 8])
-        .style(move |_theme: &iced::Theme| {
-            container::Style {
-                background: None,
-                text_color: Some(palette.background.base.text),
-                ..container::Style::default()
-            }
+        .style(move |_theme: &iced::Theme| container::Style {
+            background: None,
+            text_color: Some(palette.background.base.text),
+            ..container::Style::default()
         });
 
     let pin_list = column![
-        node_pin(PinSide::Right, container(text!("on email").size(11)).padding([0, 8]))
-            .direction(PinDirection::Output)
-            .pin_type("email")
-            .color(Color::from_rgb(0.3, 0.7, 0.9)), // Blue for email data
+        node_pin(
+            PinSide::Right,
+            container(text!("on email").size(11)).padding([0, 8])
+        )
+        .direction(PinDirection::Output)
+        .pin_type("email")
+        .color(Color::from_rgb(0.3, 0.7, 0.9)), // Blue for email data
     ]
     .spacing(2);
 
@@ -491,35 +493,45 @@ where
     Message: Clone + 'a,
 {
     let palette = theme.extended_palette();
-    
+
     let title_bar = container(text("📨 Email Parser").size(13).width(Length::Fill))
         .width(Length::Fill)
         .padding([2, 8])
-        .style(move |_theme: &iced::Theme| {
-            container::Style {
-                background: None,
-                text_color: Some(palette.background.base.text),
-                ..container::Style::default()
-            }
+        .style(move |_theme: &iced::Theme| container::Style {
+            background: None,
+            text_color: Some(palette.background.base.text),
+            ..container::Style::default()
         });
 
     let pin_list = column![
-        node_pin(PinSide::Left, container(text!("email").size(11)).padding([0, 8]))
-            .direction(PinDirection::Input)
-            .pin_type("email")
-            .color(Color::from_rgb(0.3, 0.7, 0.9)), // Blue for email data
-        node_pin(PinSide::Right, container(text!("subject").size(11)).padding([0, 8]))
-            .direction(PinDirection::Output)
-            .pin_type("string")
-            .color(Color::from_rgb(0.9, 0.7, 0.3)), // Orange for strings
-        node_pin(PinSide::Right, container(text!("datetime").size(11)).padding([0, 8]))
-            .direction(PinDirection::Output)
-            .pin_type("datetime")
-            .color(Color::from_rgb(0.7, 0.3, 0.9)), // Purple for datetime
-        node_pin(PinSide::Right, container(text!("body").size(11)).padding([0, 8]))
-            .direction(PinDirection::Output)
-            .pin_type("string")
-            .color(Color::from_rgb(0.9, 0.7, 0.3)), // Orange for strings
+        node_pin(
+            PinSide::Left,
+            container(text!("email").size(11)).padding([0, 8])
+        )
+        .direction(PinDirection::Input)
+        .pin_type("email")
+        .color(Color::from_rgb(0.3, 0.7, 0.9)), // Blue for email data
+        node_pin(
+            PinSide::Right,
+            container(text!("subject").size(11)).padding([0, 8])
+        )
+        .direction(PinDirection::Output)
+        .pin_type("string")
+        .color(Color::from_rgb(0.9, 0.7, 0.3)), // Orange for strings
+        node_pin(
+            PinSide::Right,
+            container(text!("datetime").size(11)).padding([0, 8])
+        )
+        .direction(PinDirection::Output)
+        .pin_type("datetime")
+        .color(Color::from_rgb(0.7, 0.3, 0.9)), // Purple for datetime
+        node_pin(
+            PinSide::Right,
+            container(text!("body").size(11)).padding([0, 8])
+        )
+        .direction(PinDirection::Output)
+        .pin_type("string")
+        .color(Color::from_rgb(0.9, 0.7, 0.3)), // Orange for strings
     ]
     .spacing(2);
 
@@ -533,27 +545,31 @@ where
     Message: Clone + 'a,
 {
     let palette = theme.extended_palette();
-    
+
     let title_bar = container(text("🔍 Filter").size(13).width(Length::Fill))
         .width(Length::Fill)
         .padding([2, 8])
-        .style(move |_theme: &iced::Theme| {
-            container::Style {
-                background: None,
-                text_color: Some(palette.background.base.text),
-                ..container::Style::default()
-            }
+        .style(move |_theme: &iced::Theme| container::Style {
+            background: None,
+            text_color: Some(palette.background.base.text),
+            ..container::Style::default()
         });
 
     let pin_list = column![
-        node_pin(PinSide::Left, container(text!("input").size(11)).padding([0, 8]))
-            .direction(PinDirection::Input)
-            .pin_type("string")
-            .color(Color::from_rgb(0.9, 0.7, 0.3)), // Orange for strings
-        node_pin(PinSide::Right, container(text!("matches").size(11)).padding([0, 8]))
-            .direction(PinDirection::Output)
-            .pin_type("string")
-            .color(Color::from_rgb(0.9, 0.7, 0.3)), // Orange for strings
+        node_pin(
+            PinSide::Left,
+            container(text!("input").size(11)).padding([0, 8])
+        )
+        .direction(PinDirection::Input)
+        .pin_type("string")
+        .color(Color::from_rgb(0.9, 0.7, 0.3)), // Orange for strings
+        node_pin(
+            PinSide::Right,
+            container(text!("matches").size(11)).padding([0, 8])
+        )
+        .direction(PinDirection::Output)
+        .pin_type("string")
+        .color(Color::from_rgb(0.9, 0.7, 0.3)), // Orange for strings
     ]
     .spacing(2);
 
@@ -567,31 +583,38 @@ where
     Message: Clone + 'a,
 {
     let palette = theme.extended_palette();
-    
+
     let title_bar = container(text("📅 Create Event").size(13).width(Length::Fill))
         .width(Length::Fill)
         .padding([2, 8])
-        .style(move |_theme: &iced::Theme| {
-            container::Style {
-                background: None,
-                text_color: Some(palette.background.base.text),
-                ..container::Style::default()
-            }
+        .style(move |_theme: &iced::Theme| container::Style {
+            background: None,
+            text_color: Some(palette.background.base.text),
+            ..container::Style::default()
         });
 
     let pin_list = column![
-        node_pin(PinSide::Left, container(text!("datetime").size(11)).padding([0, 8]))
-            .direction(PinDirection::Input)
-            .pin_type("datetime")
-            .color(Color::from_rgb(0.7, 0.3, 0.9)), // Purple for datetime
-        node_pin(PinSide::Left, container(text!("title").size(11)).padding([0, 8]))
-            .direction(PinDirection::Input)
-            .pin_type("string")
-            .color(Color::from_rgb(0.9, 0.7, 0.3)), // Orange for strings
-        node_pin(PinSide::Left, container(text!("description").size(11)).padding([0, 8]))
-            .direction(PinDirection::Input)
-            .pin_type("string")
-            .color(Color::from_rgb(0.9, 0.7, 0.3)), // Orange for strings
+        node_pin(
+            PinSide::Left,
+            container(text!("datetime").size(11)).padding([0, 8])
+        )
+        .direction(PinDirection::Input)
+        .pin_type("datetime")
+        .color(Color::from_rgb(0.7, 0.3, 0.9)), // Purple for datetime
+        node_pin(
+            PinSide::Left,
+            container(text!("title").size(11)).padding([0, 8])
+        )
+        .direction(PinDirection::Input)
+        .pin_type("string")
+        .color(Color::from_rgb(0.9, 0.7, 0.3)), // Orange for strings
+        node_pin(
+            PinSide::Left,
+            container(text!("description").size(11)).padding([0, 8])
+        )
+        .direction(PinDirection::Input)
+        .pin_type("string")
+        .color(Color::from_rgb(0.9, 0.7, 0.3)), // Orange for strings
     ]
     .spacing(2);
 
@@ -613,16 +636,15 @@ where
 }
 
 fn command_palette<'a>(
-    _input: &str, 
-    view: &PaletteView, 
+    _input: &str,
+    view: &PaletteView,
     selected_index: usize,
-    _current_theme: &Theme
-) -> iced::Element<'a, ApplicationMessage>
-{
+    _current_theme: &Theme,
+) -> iced::Element<'a, ApplicationMessage> {
     use iced::widget::button;
-    
+
     let title_text: &'static str;
-    
+
     // Build list items with selection highlight directly
     let command_items: Vec<iced::Element<ApplicationMessage>> = match view {
         PaletteView::Main => {
@@ -639,7 +661,9 @@ fn command_palette<'a>(
                             let palette = theme.extended_palette();
                             if is_selected {
                                 container::Style {
-                                    background: Some(iced::Background::Color(palette.primary.base.color)),
+                                    background: Some(iced::Background::Color(
+                                        palette.primary.base.color,
+                                    )),
                                     text_color: Some(palette.primary.base.text),
                                     border: iced::Border {
                                         color: palette.primary.strong.color,
@@ -650,7 +674,9 @@ fn command_palette<'a>(
                                 }
                             } else {
                                 container::Style {
-                                    background: Some(iced::Background::Color(palette.background.weak.color)),
+                                    background: Some(iced::Background::Color(
+                                        palette.background.weak.color,
+                                    )),
                                     text_color: Some(palette.background.base.text),
                                     border: iced::Border {
                                         color: Color::TRANSPARENT,
@@ -679,7 +705,9 @@ fn command_palette<'a>(
                             let palette = theme.extended_palette();
                             if is_selected {
                                 container::Style {
-                                    background: Some(iced::Background::Color(palette.primary.base.color)),
+                                    background: Some(iced::Background::Color(
+                                        palette.primary.base.color,
+                                    )),
                                     text_color: Some(palette.primary.base.text),
                                     border: iced::Border {
                                         color: palette.primary.strong.color,
@@ -690,7 +718,9 @@ fn command_palette<'a>(
                                 }
                             } else {
                                 container::Style {
-                                    background: Some(iced::Background::Color(palette.background.weak.color)),
+                                    background: Some(iced::Background::Color(
+                                        palette.background.weak.color,
+                                    )),
                                     text_color: Some(palette.background.base.text),
                                     border: iced::Border {
                                         color: Color::TRANSPARENT,
@@ -720,7 +750,9 @@ fn command_palette<'a>(
                             let palette = theme.extended_palette();
                             if is_selected {
                                 container::Style {
-                                    background: Some(iced::Background::Color(palette.primary.base.color)),
+                                    background: Some(iced::Background::Color(
+                                        palette.primary.base.color,
+                                    )),
                                     text_color: Some(palette.primary.base.text),
                                     border: iced::Border {
                                         color: palette.primary.strong.color,
@@ -731,7 +763,9 @@ fn command_palette<'a>(
                                 }
                             } else {
                                 container::Style {
-                                    background: Some(iced::Background::Color(palette.background.weak.color)),
+                                    background: Some(iced::Background::Color(
+                                        palette.background.weak.color,
+                                    )),
                                     text_color: Some(palette.background.base.text),
                                     border: iced::Border {
                                         color: Color::TRANSPARENT,
@@ -751,9 +785,9 @@ fn command_palette<'a>(
             Vec::new()
         }
     };
-    
+
     let command_list = column(command_items).spacing(4);
-    
+
     // Build header
     let header = row![
         text(title_text).size(16).width(Length::Fill),
@@ -762,7 +796,7 @@ fn command_palette<'a>(
             .padding(4)
     ]
     .align_y(iced::Alignment::Center);
-    
+
     let palette_content = container(
         column![
             header,
@@ -785,7 +819,7 @@ fn command_palette<'a>(
         ]
         .spacing(12)
         .padding(20)
-        .width(600.0)
+        .width(600.0),
     )
     .style(|theme: &Theme| {
         let palette = theme.extended_palette();
@@ -804,7 +838,7 @@ fn command_palette<'a>(
             ..container::Style::default()
         }
     });
-    
+
     // Background overlay
     mouse_area(
         container(palette_content)
@@ -813,12 +847,13 @@ fn command_palette<'a>(
                 let palette = theme.extended_palette();
                 let bg = palette.background.base.color;
                 container::Style {
-                    background: Some(iced::Background::Color(iced::Color::from_rgba(bg.r, bg.g, bg.b, 0.85))),
+                    background: Some(iced::Background::Color(iced::Color::from_rgba(
+                        bg.r, bg.g, bg.b, 0.85,
+                    ))),
                     ..container::Style::default()
                 }
-            })
+            }),
     )
     .on_press(ApplicationMessage::CommandPaletteCancel)
     .into()
 }
-

@@ -158,7 +158,8 @@
 //! Run tests with: `cargo test --lib camera`
 
 use super::euclid::{
-    IntoEuclid, IntoIced, Screen, ScreenPoint, ScreenRect, ScreenToWorld, World, WorldPoint, WorldVector, WorldRect, WorldSize
+    IntoEuclid, IntoIced, Screen, ScreenPoint, ScreenRect, ScreenToWorld, World, WorldPoint,
+    WorldRect, WorldSize, WorldVector,
 };
 use euclid::{Scale, Transform2D};
 use iced::{
@@ -202,8 +203,7 @@ impl Camera2D {
         // draw_with() does: screen = (world + position) * zoom
         // So inverse is: world = screen / zoom - position
         let inv_zoom = 1.0 / self.zoom.get();
-        Transform2D::scale(inv_zoom, inv_zoom)
-            .then_translate(-self.position.to_vector())
+        Transform2D::scale(inv_zoom, inv_zoom).then_translate(-self.position.to_vector())
     }
 
     #[cfg(test)]
@@ -230,17 +230,15 @@ impl Camera2D {
         //
         // Solving for pos2:
         //   pos2 = pos1 + screen * (1/zoom1 - 1/zoom2)
-        
+
         let old_zoom = self.zoom.get();
         let new_zoom = old_zoom + offset;
-        
+
         // zoom_delta = 1/new_zoom - 1/old_zoom (not the other way around!)
         let zoom_delta = 1.0 / new_zoom - 1.0 / old_zoom;
-        let position_offset = WorldVector::new(
-            cursor_screen.x * zoom_delta,
-            cursor_screen.y * zoom_delta,
-        );
-        
+        let position_offset =
+            WorldVector::new(cursor_screen.x * zoom_delta, cursor_screen.y * zoom_delta);
+
         Self {
             zoom: Scale::new(new_zoom),
             position: self.position + position_offset,
@@ -282,12 +280,16 @@ impl Camera2D {
     fn cursor_screen_to_world(&self, cursor: mouse::Cursor) -> mouse::Cursor {
         let screen_to_world = self.screen_to_world();
         match cursor {
-            mouse::Cursor::Available(pos) => {
-                mouse::Cursor::Available(screen_to_world.transform_point(pos.into_euclid()).into_iced())
-            }
-            mouse::Cursor::Levitating(pos) => {
-                mouse::Cursor::Levitating(screen_to_world.transform_point(pos.into_euclid()).into_iced())
-            }
+            mouse::Cursor::Available(pos) => mouse::Cursor::Available(
+                screen_to_world
+                    .transform_point(pos.into_euclid())
+                    .into_iced(),
+            ),
+            mouse::Cursor::Levitating(pos) => mouse::Cursor::Levitating(
+                screen_to_world
+                    .transform_point(pos.into_euclid())
+                    .into_iced(),
+            ),
             mouse::Cursor::Unavailable => mouse::Cursor::Unavailable,
         }
     }
@@ -314,28 +316,36 @@ impl Camera2D {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     const EPSILON: f32 = 0.001;
-    
+
     fn approx_eq(a: f32, b: f32) -> bool {
         (a - b).abs() < EPSILON
     }
-    
+
     fn point_approx_eq(a: WorldPoint, b: WorldPoint) -> bool {
         approx_eq(a.x, b.x) && approx_eq(a.y, b.y)
     }
-    
+
     #[test]
     fn test_identity_transform() {
         // At default zoom (1.0) and position (0,0), screen = world
         let camera = Camera2D::new();
         let screen = ScreenPoint::new(100.0, 200.0);
         let world = camera.screen_to_world().transform_point(screen);
-        
-        assert!(approx_eq(world.x, 100.0), "x: expected 100.0, got {}", world.x);
-        assert!(approx_eq(world.y, 200.0), "y: expected 200.0, got {}", world.y);
+
+        assert!(
+            approx_eq(world.x, 100.0),
+            "x: expected 100.0, got {}",
+            world.x
+        );
+        assert!(
+            approx_eq(world.y, 200.0),
+            "y: expected 200.0, got {}",
+            world.y
+        );
     }
-    
+
     #[test]
     fn test_zoom_transform() {
         // Zooming in 2x means screen coordinates are divided to get world coordinates
@@ -343,15 +353,23 @@ mod tests {
         // Inverse: world = screen / zoom, so screen 100 becomes world 50
         let mut camera = Camera2D::new();
         camera.zoom = euclid::Scale::new(2.0);
-        
+
         let screen = ScreenPoint::new(100.0, 200.0);
         let world = camera.screen_to_world().transform_point(screen);
-        
+
         // world = screen / zoom - position = (100, 200) / 2.0 - (0, 0) = (50, 100)
-        assert!(approx_eq(world.x, 50.0), "x: expected 50.0, got {}", world.x);
-        assert!(approx_eq(world.y, 100.0), "y: expected 100.0, got {}", world.y);
+        assert!(
+            approx_eq(world.x, 50.0),
+            "x: expected 50.0, got {}",
+            world.x
+        );
+        assert!(
+            approx_eq(world.y, 100.0),
+            "y: expected 100.0, got {}",
+            world.y
+        );
     }
-    
+
     #[test]
     fn test_pan_transform() {
         // Moving camera position should offset world coordinates
@@ -359,43 +377,59 @@ mod tests {
         // Inverse: world = screen / zoom - position
         let mut camera = Camera2D::new();
         camera.position = WorldPoint::new(50.0, 100.0);
-        
+
         let screen = ScreenPoint::new(100.0, 200.0);
         let world = camera.screen_to_world().transform_point(screen);
-        
+
         // world = screen / zoom - position
         // world = (100, 200) / 1.0 - (50, 100) = (100, 200) - (50, 100) = (50, 100)
-        assert!(approx_eq(world.x, 50.0), "x: expected 50.0, got {}", world.x);
-        assert!(approx_eq(world.y, 100.0), "y: expected 100.0, got {}", world.y);
+        assert!(
+            approx_eq(world.x, 50.0),
+            "x: expected 50.0, got {}",
+            world.x
+        );
+        assert!(
+            approx_eq(world.y, 100.0),
+            "y: expected 100.0, got {}",
+            world.y
+        );
     }
-    
+
     #[test]
     fn test_zoom_and_pan() {
         // Combined zoom + pan - most common real-world scenario
         let mut camera = Camera2D::new();
         camera.zoom = euclid::Scale::new(2.0);
         camera.position = WorldPoint::new(100.0, 200.0);
-        
+
         let screen = ScreenPoint::new(100.0, 200.0);
         let world = camera.screen_to_world().transform_point(screen);
-        
+
         // world = screen / zoom - position
         // world = (100, 200) / 2.0 - (100, 200) = (50, 100) - (100, 200) = (-50, -100)
-        assert!(approx_eq(world.x, -50.0), "x: expected -50.0, got {}", world.x);
-        assert!(approx_eq(world.y, -100.0), "y: expected -100.0, got {}", world.y);
+        assert!(
+            approx_eq(world.x, -50.0),
+            "x: expected -50.0, got {}",
+            world.x
+        );
+        assert!(
+            approx_eq(world.y, -100.0),
+            "y: expected -100.0, got {}",
+            world.y
+        );
     }
-    
+
     #[test]
     fn test_zoom_at_cursor() {
         // When zooming at a cursor position, that world point should stay fixed
         let camera = Camera2D::new();
         let cursor_screen = ScreenPoint::new(400.0, 300.0);
         let cursor_world_before = camera.screen_to_world().transform_point(cursor_screen);
-        
+
         // Zoom in by 1.0
         let camera = camera.zoom_at(cursor_screen, 1.0);
         let cursor_world_after = camera.screen_to_world().transform_point(cursor_screen);
-        
+
         // The world point under the cursor should be the same
         assert!(
             point_approx_eq(cursor_world_before, cursor_world_after),
@@ -404,76 +438,85 @@ mod tests {
             cursor_world_after
         );
     }
-    
+
     #[test]
     fn test_round_trip() {
         // Screen -> World -> Screen should give original
         let camera = Camera2D::new();
         let screen_orig = ScreenPoint::new(150.0, 250.0);
-        
+
         let world = camera.screen_to_world().transform_point(screen_orig);
         let screen_back = camera.world_to_screen().transform_point(world);
-        
-        assert!(approx_eq(screen_orig.x, screen_back.x), "x roundtrip failed");
-        assert!(approx_eq(screen_orig.y, screen_back.y), "y roundtrip failed");
+
+        assert!(
+            approx_eq(screen_orig.x, screen_back.x),
+            "x roundtrip failed"
+        );
+        assert!(
+            approx_eq(screen_orig.y, screen_back.y),
+            "y roundtrip failed"
+        );
     }
-    
+
     #[test]
     fn test_move_by() {
         // Camera move_by should offset world coordinates correctly
         let camera = Camera2D::new();
         let offset = WorldVector::new(100.0, 50.0);
         let camera = camera.move_by(offset);
-        
+
         assert!(approx_eq(camera.position.x, 100.0), "position.x");
         assert!(approx_eq(camera.position.y, 50.0), "position.y");
-        
+
         // A screen point should now map to different world position
         let screen = ScreenPoint::new(0.0, 0.0);
         let world = camera.screen_to_world().transform_point(screen);
-        
+
         // At (0,0) screen, we should see world (-100, -50) because camera moved
         assert!(approx_eq(world.x, -100.0), "world.x at origin");
         assert!(approx_eq(world.y, -50.0), "world.y at origin");
     }
-    
+
     #[test]
     fn test_zoom_increases() {
         // Zoom value should increase/decrease correctly
         let camera = Camera2D::new();
         assert!(approx_eq(camera.zoom(), 1.0), "initial zoom");
-        
+
         let camera = camera.zoom_at(ScreenPoint::new(0.0, 0.0), 0.5);
         assert!(approx_eq(camera.zoom(), 1.5), "zoomed in");
-        
+
         let camera = camera.zoom_at(ScreenPoint::new(0.0, 0.0), -0.5);
         assert!(approx_eq(camera.zoom(), 1.0), "zoomed back");
     }
 
     // === NEW COMPREHENSIVE TESTS FOR TRANSFORMATION CONSISTENCY ===
-    
+
     #[test]
     fn test_inverse_consistency_at_various_zooms() {
         // Test that screen_to_world and world_to_screen are true inverses
         // at different zoom levels
         let test_cases = vec![0.5, 1.0, 1.5, 2.0, 3.0];
-        
+
         for zoom in test_cases {
             let mut camera = Camera2D::new();
             camera.zoom = euclid::Scale::new(zoom);
-            
+
             let screen_orig = ScreenPoint::new(250.0, 180.0);
             let world = camera.screen_to_world().transform_point(screen_orig);
             let screen_back = camera.world_to_screen().transform_point(world);
-            
+
             assert!(
                 approx_eq(screen_orig.x, screen_back.x) && approx_eq(screen_orig.y, screen_back.y),
                 "Round-trip failed at zoom {}: {:?} -> {:?} -> {:?}",
-                zoom, screen_orig, world, screen_back
+                zoom,
+                screen_orig,
+                world,
+                screen_back
             );
         }
     }
-    
+
     #[test]
     fn test_inverse_consistency_at_various_positions() {
         // Test inverse consistency at different camera positions
@@ -483,23 +526,26 @@ mod tests {
             WorldPoint::new(-100.0, -50.0),
             WorldPoint::new(500.0, 300.0),
         ];
-        
+
         for pos in test_positions {
             let mut camera = Camera2D::new();
             camera.position = pos;
-            
+
             let screen_orig = ScreenPoint::new(320.0, 240.0);
             let world = camera.screen_to_world().transform_point(screen_orig);
             let screen_back = camera.world_to_screen().transform_point(world);
-            
+
             assert!(
                 approx_eq(screen_orig.x, screen_back.x) && approx_eq(screen_orig.y, screen_back.y),
                 "Round-trip failed at position {:?}: {:?} -> {:?} -> {:?}",
-                pos, screen_orig, world, screen_back
+                pos,
+                screen_orig,
+                world,
+                screen_back
             );
         }
     }
-    
+
     #[test]
     fn test_inverse_consistency_combined() {
         // Test with realistic zoom + pan combinations
@@ -509,134 +555,152 @@ mod tests {
             (2.0, WorldPoint::new(-300.0, -200.0)),
             (0.8, WorldPoint::new(50.0, 30.0)),
         ];
-        
+
         for (zoom, pos) in test_cases {
             let mut camera = Camera2D::new();
             camera.zoom = euclid::Scale::new(zoom);
             camera.position = pos;
-            
+
             // Test multiple screen points
             let screen_points = vec![
                 ScreenPoint::new(0.0, 0.0),
                 ScreenPoint::new(400.0, 300.0),
                 ScreenPoint::new(800.0, 600.0),
             ];
-            
+
             for screen_orig in screen_points {
                 let world = camera.screen_to_world().transform_point(screen_orig);
                 let screen_back = camera.world_to_screen().transform_point(world);
-                
+
                 assert!(
-                    approx_eq(screen_orig.x, screen_back.x) && approx_eq(screen_orig.y, screen_back.y),
+                    approx_eq(screen_orig.x, screen_back.x)
+                        && approx_eq(screen_orig.y, screen_back.y),
                     "Round-trip failed at zoom {} pos {:?}: {:?} -> {:?} -> {:?}",
-                    zoom, pos, screen_orig, world, screen_back
+                    zoom,
+                    pos,
+                    screen_orig,
+                    world,
+                    screen_back
                 );
             }
         }
     }
-    
+
     #[test]
     fn test_rendering_formula_consistency() {
         // Verify that our formula matches the rendering transformation:
         // Rendering: screen = (world + position) * zoom
         // Mouse: world = screen / zoom - position
-        
+
         let mut camera = Camera2D::new();
         camera.zoom = euclid::Scale::new(1.4);
         camera.position = WorldPoint::new(-170.4, -91.8);
-        
+
         // A node at world position (400, 224)
         let node_world = WorldPoint::new(400.0, 224.0);
-        
+
         // Should render at screen position:
         // screen = (400 + (-170.4)) * 1.4 = 229.6 * 1.4 = 321.44
         // screen = (224 + (-91.8)) * 1.4 = 132.2 * 1.4 = 185.08
         let expected_screen_x = (node_world.x + camera.position.x) * camera.zoom.get();
         let expected_screen_y = (node_world.y + camera.position.y) * camera.zoom.get();
         let expected_screen = ScreenPoint::new(expected_screen_x, expected_screen_y);
-        
+
         // Now verify mouse click at that screen position finds the node
         let calculated_world = camera.screen_to_world().transform_point(expected_screen);
-        
+
         assert!(
             point_approx_eq(node_world, calculated_world),
             "Rendering formula mismatch: node at {:?} renders at {:?}, but mouse at {:?} calculates {:?}",
-            node_world, expected_screen, expected_screen, calculated_world
+            node_world,
+            expected_screen,
+            expected_screen,
+            calculated_world
         );
     }
-    
+
     #[test]
     fn test_zoom_at_maintains_cursor_position() {
         // When zooming at various cursor positions, the world point under cursor stays fixed
         let test_cursors = vec![
-            ScreenPoint::new(400.0, 300.0),  // Center
-            ScreenPoint::new(0.0, 0.0),      // Top-left
-            ScreenPoint::new(800.0, 600.0),  // Bottom-right
-            ScreenPoint::new(200.0, 450.0),  // Arbitrary
+            ScreenPoint::new(400.0, 300.0), // Center
+            ScreenPoint::new(0.0, 0.0),     // Top-left
+            ScreenPoint::new(800.0, 600.0), // Bottom-right
+            ScreenPoint::new(200.0, 450.0), // Arbitrary
         ];
-        
+
         for cursor_screen in test_cursors {
             let camera = Camera2D::new();
             let world_before = camera.screen_to_world().transform_point(cursor_screen);
-            
+
             // Zoom in by 0.5
             let camera = camera.zoom_at(cursor_screen, 0.5);
             let world_after = camera.screen_to_world().transform_point(cursor_screen);
-            
+
             assert!(
                 point_approx_eq(world_before, world_after),
                 "Cursor world position changed during zoom at {:?}: {:?} -> {:?}",
-                cursor_screen, world_before, world_after
+                cursor_screen,
+                world_before,
+                world_after
             );
         }
     }
-    
+
     #[test]
     fn test_zoom_at_multiple_steps() {
         // Multiple zoom operations should maintain cursor stability
         let camera = Camera2D::new();
         let cursor_screen = ScreenPoint::new(426.0, 222.0);
         let world_initial = camera.screen_to_world().transform_point(cursor_screen);
-        
+
         // Simulate scrolling in 4 times
         let mut camera = camera;
         for _ in 0..4 {
             camera = camera.zoom_at(cursor_screen, 0.1);
         }
-        
+
         let world_final = camera.screen_to_world().transform_point(cursor_screen);
-        
+
         assert!(
             point_approx_eq(world_initial, world_final),
             "Cursor position drifted after multiple zooms: {:?} -> {:?} (delta: {}, {})",
-            world_initial, world_final,
+            world_initial,
+            world_final,
             world_final.x - world_initial.x,
             world_final.y - world_initial.y
         );
     }
-    
+
     #[test]
     fn test_real_world_scenario_from_bug_report() {
         // This is the exact scenario from the bug report that was failing
         let mut camera = Camera2D::new();
-        
+
         // User zoomed 4 times at screen (426, 222)
         let cursor_screen = ScreenPoint::new(426.0, 222.0);
         for _ in 0..4 {
             camera = camera.zoom_at(cursor_screen, 0.1);
         }
-        
+
         // Final state: zoom=1.40
-        assert!(approx_eq(camera.zoom(), 1.4), "zoom should be 1.4, got {}", camera.zoom());
-        
+        assert!(
+            approx_eq(camera.zoom(), 1.4),
+            "zoom should be 1.4, got {}",
+            camera.zoom()
+        );
+
         // The world point under the original cursor should still be the same
         let world_after_zoom = camera.screen_to_world().transform_point(cursor_screen);
-        let world_before_zoom = Camera2D::new().screen_to_world().transform_point(cursor_screen);
-        
+        let world_before_zoom = Camera2D::new()
+            .screen_to_world()
+            .transform_point(cursor_screen);
+
         assert!(
             point_approx_eq(world_before_zoom, world_after_zoom),
             "Cursor position drifted: {:?} -> {:?}",
-            world_before_zoom, world_after_zoom
+            world_before_zoom,
+            world_after_zoom
         );
     }
 }

@@ -50,45 +50,30 @@ where
         self.nodes.push((position, element.into()));
     }
 
-    pub fn push_edge(
-        &mut self,
-        from_node: usize,
-        from_pin: usize,
-        to_node: usize,
-        to_pin: usize,
-    ) {
+    pub fn push_edge(&mut self, from_node: usize, from_pin: usize, to_node: usize, to_pin: usize) {
         self.edges.push(((from_node, from_pin), (to_node, to_pin)));
     }
 
     /// Sets the message that will be produced when an edge connection is completed.
-    /// 
+    ///
     /// The closure receives (from_node, from_pin, to_node, to_pin) indices.
-    pub fn on_connect(
-        mut self,
-        f: impl Fn(usize, usize, usize, usize) -> Message + 'a,
-    ) -> Self {
+    pub fn on_connect(mut self, f: impl Fn(usize, usize, usize, usize) -> Message + 'a) -> Self {
         self.on_connect = Some(Box::new(f));
         self
     }
 
     /// Sets the message that will be produced when an edge is disconnected.
-    /// 
+    ///
     /// The closure receives (from_node, from_pin, to_node, to_pin) indices.
-    pub fn on_disconnect(
-        mut self,
-        f: impl Fn(usize, usize, usize, usize) -> Message + 'a,
-    ) -> Self {
+    pub fn on_disconnect(mut self, f: impl Fn(usize, usize, usize, usize) -> Message + 'a) -> Self {
         self.on_disconnect = Some(Box::new(f));
         self
     }
 
     /// Sets the message that will be produced when a node is moved.
-    /// 
+    ///
     /// The closure receives (node_index, new_position).
-    pub fn on_move(
-        mut self,
-        f: impl Fn(usize, Point) -> Message + 'a,
-    ) -> Self {
+    pub fn on_move(mut self, f: impl Fn(usize, Point) -> Message + 'a) -> Self {
         self.on_move = Some(Box::new(f));
         self
     }
@@ -117,11 +102,15 @@ where
         self.nodes.iter_mut().map(|(p, e)| (*p, e))
     }
 
-    pub(super) fn on_connect_handler(&self) -> Option<&Box<dyn Fn(usize, usize, usize, usize) -> Message + 'a>> {
+    pub(super) fn on_connect_handler(
+        &self,
+    ) -> Option<&Box<dyn Fn(usize, usize, usize, usize) -> Message + 'a>> {
         self.on_connect.as_ref()
     }
 
-    pub(super) fn on_disconnect_handler(&self) -> Option<&Box<dyn Fn(usize, usize, usize, usize) -> Message + 'a>> {
+    pub(super) fn on_disconnect_handler(
+        &self,
+    ) -> Option<&Box<dyn Fn(usize, usize, usize, usize) -> Message + 'a>> {
         self.on_disconnect.as_ref()
     }
 

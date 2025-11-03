@@ -100,7 +100,13 @@ impl Pipeline {
         }
     }
 
-    pub fn update(&mut self, device: &Device, queue: &Queue, viewport: &Viewport, primitive: &Primitive) {
+    pub fn update(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        viewport: &Viewport,
+        primitive: &Primitive,
+    ) {
         let mut pin_start = 0;
         let num_nodes = self.nodes.update(
             device,
@@ -171,19 +177,29 @@ impl Pipeline {
             Dragging::EdgeOver(_, _, _, _) => 4,
         };
 
-        let (dragging_edge_from_node, dragging_edge_from_pin, dragging_edge_from_origin, dragging_edge_to_node, dragging_edge_to_pin) = {
+        let (
+            dragging_edge_from_node,
+            dragging_edge_from_pin,
+            dragging_edge_from_origin,
+            dragging_edge_to_node,
+            dragging_edge_to_pin,
+        ) = {
             match primitive.dragging {
                 Dragging::Edge(from_node, from_pin, position) => {
                     (from_node as _, from_pin as _, position, 0, 0)
-                },
-                Dragging::EdgeOver(from_node, from_pin, to_node, to_pin) => {
-                    (from_node as _, from_pin as _, WorldPoint::zero(), to_node as _, to_pin as _)
-                },
+                }
+                Dragging::EdgeOver(from_node, from_pin, to_node, to_pin) => (
+                    from_node as _,
+                    from_pin as _,
+                    WorldPoint::zero(),
+                    to_node as _,
+                    to_pin as _,
+                ),
                 _ => (0, 0, WorldPoint::zero(), 0, 0),
             }
         };
 
-        let uniforms = types::Uniforms {            
+        let uniforms = types::Uniforms {
             os_scale_factor: viewport.scale_factor() as _,
             camera_zoom: primitive.camera_zoom,
             camera_position: primitive.camera_position,
@@ -285,7 +301,7 @@ fn create_render_pipeline(
         vertex: VertexState {
             module: module,
             entry_point: None, // Vertex shader entry point
-            buffers: &[],                 // No vertex buffer needed
+            buffers: &[],      // No vertex buffer needed
             compilation_options: PipelineCompilationOptions::default(),
         },
         primitive: PrimitiveState {

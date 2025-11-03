@@ -1,11 +1,16 @@
 use iced::{
+    Element, Event, Length, Point, Rectangle, Size, Vector,
     advanced::{
-        layout, mouse, renderer, widget::{self, tree, Tree}, Clipboard, Layout, Shell
-    }, Element, Event, Length, Point, Rectangle, Size, Vector
+        Clipboard, Layout, Shell, layout, mouse, renderer,
+        widget::{self, Tree, tree},
+    },
 };
 
 use super::{
-    effects::{self, Layer}, euclid::{IntoIced, WorldVector}, state::{Dragging, NodeGraphState}, NodeGraph
+    NodeGraph,
+    effects::{self, Layer},
+    euclid::{IntoIced, WorldVector},
+    state::{Dragging, NodeGraphState},
 };
 use crate::{
     PinSide,
@@ -81,46 +86,53 @@ where
         if let Dragging::Graph(origin) = state.dragging {
             if let Some(cursor_position) = cursor.position() {
                 let cursor_position: ScreenPoint = cursor_position.into_euclid();
-                let cursor_position: WorldPoint = state.camera.screen_to_world().transform_point(cursor_position);
+                let cursor_position: WorldPoint = state
+                    .camera
+                    .screen_to_world()
+                    .transform_point(cursor_position);
                 camera = camera.move_by(cursor_position - origin);
             }
         }
         // Theme-aware colors from extended palette
         let text_color = style.text_color;
-        
+
         // Try to get extended palette if we have iced::Theme
         // If not available, derive from text_color
         let is_dark_theme = (text_color.r + text_color.g + text_color.b) > 1.5;
-        
+
         // Use simple color derivation that adapts to dark/light themes
-        let (bg_color, border_color, fill_color, edge_color, drag_edge_color, drag_valid_color) = if is_dark_theme {
-            // Dark theme: use darker backgrounds with subtle highlights
-            let bg = glam::vec4(0.08, 0.08, 0.09, 1.0);
-            let border = glam::vec4(0.20, 0.20, 0.22, 1.0);
-            let fill = glam::vec4(0.14, 0.14, 0.16, 1.0);
-            let edge = glam::vec4(text_color.r, text_color.g, text_color.b, text_color.a);
-            // Drag colors: warning (orange-ish) and success (green-ish)
-            let drag = glam::vec4(0.9, 0.6, 0.3, 1.0);  // Warm warning
-            let valid = glam::vec4(0.3, 0.8, 0.5, 1.0); // Cool success
-            (bg, border, fill, edge, drag, valid)
-        } else {
-            // Light theme: use lighter backgrounds with more contrast
-            let bg = glam::vec4(0.92, 0.92, 0.93, 1.0);
-            let border = glam::vec4(0.70, 0.70, 0.72, 1.0);
-            let fill = glam::vec4(0.84, 0.84, 0.86, 1.0);
-            let edge = glam::vec4(text_color.r, text_color.g, text_color.b, text_color.a);
-            // Drag colors: darker for light theme
-            let drag = glam::vec4(0.8, 0.5, 0.2, 1.0);  // Warm warning
-            let valid = glam::vec4(0.2, 0.7, 0.4, 1.0); // Cool success
-            (bg, border, fill, edge, drag, valid)
-        };
-        
+        let (bg_color, border_color, fill_color, edge_color, drag_edge_color, drag_valid_color) =
+            if is_dark_theme {
+                // Dark theme: use darker backgrounds with subtle highlights
+                let bg = glam::vec4(0.08, 0.08, 0.09, 1.0);
+                let border = glam::vec4(0.20, 0.20, 0.22, 1.0);
+                let fill = glam::vec4(0.14, 0.14, 0.16, 1.0);
+                let edge = glam::vec4(text_color.r, text_color.g, text_color.b, text_color.a);
+                // Drag colors: warning (orange-ish) and success (green-ish)
+                let drag = glam::vec4(0.9, 0.6, 0.3, 1.0); // Warm warning
+                let valid = glam::vec4(0.3, 0.8, 0.5, 1.0); // Cool success
+                (bg, border, fill, edge, drag, valid)
+            } else {
+                // Light theme: use lighter backgrounds with more contrast
+                let bg = glam::vec4(0.92, 0.92, 0.93, 1.0);
+                let border = glam::vec4(0.70, 0.70, 0.72, 1.0);
+                let fill = glam::vec4(0.84, 0.84, 0.86, 1.0);
+                let edge = glam::vec4(text_color.r, text_color.g, text_color.b, text_color.a);
+                // Drag colors: darker for light theme
+                let drag = glam::vec4(0.8, 0.5, 0.2, 1.0); // Warm warning
+                let valid = glam::vec4(0.2, 0.7, 0.4, 1.0); // Cool success
+                (bg, border, fill, edge, drag, valid)
+            };
+
         let primitive_background = effects::Primitive {
             layer: Layer::Background,
             camera_zoom: camera.zoom(),
             camera_position: camera.position(),
             cursor_position: camera.screen_to_world().transform_point(
-                cursor.position().unwrap_or(Point::new(0.0, 0.0)).into_euclid(),
+                cursor
+                    .position()
+                    .unwrap_or(Point::new(0.0, 0.0))
+                    .into_euclid(),
             ),
             time,
             dragging: state.dragging.clone(),
@@ -133,19 +145,19 @@ where
                 .map(
                     |(node_index, (((_position, _element), node_tree), node_layout))| {
                         let mut offset = WorldVector::zero();
-                        if let (Dragging::Node(drag_node_index, origin), Some(cursor_position)) = (state.dragging.clone(), cursor.position()) {
+                        if let (Dragging::Node(drag_node_index, origin), Some(cursor_position)) =
+                            (state.dragging.clone(), cursor.position())
+                        {
                             if drag_node_index == node_index {
                                 let cursor_position: ScreenPoint = cursor_position.into_euclid();
-                                let cursor_position: WorldPoint = camera.screen_to_world().transform_point(cursor_position);
+                                let cursor_position: WorldPoint =
+                                    camera.screen_to_world().transform_point(cursor_position);
                                 offset = cursor_position - origin
                             }
                         }
                         effects::Node {
-                            position: node_layout
-                                .bounds()
-                                .position()
-                                .into_euclid()
-                                .to_vector() + offset,
+                            position: node_layout.bounds().position().into_euclid().to_vector()
+                                + offset,
                             size: node_layout.bounds().size().into_euclid(),
                             corner_radius: 5.0,
                             pins: find_pins(node_tree, node_layout)
@@ -180,8 +192,11 @@ where
         });
 
         renderer.with_layer(*viewport, |renderer| {
-            camera
-                .draw_with::<_, Renderer>(renderer, viewport, cursor, |renderer, viewport, cursor| {
+            camera.draw_with::<_, Renderer>(
+                renderer,
+                viewport,
+                cursor,
+                |renderer, viewport, cursor| {
                     for (node_index, (((_position, element), tree), layout)) in self
                         .elements_iter()
                         .zip(&tree.children)
@@ -248,11 +263,12 @@ where
                             // }
                         });
                     }
-                });
-            });
-            renderer.with_layer(*viewport, |renderer| {
-                renderer.draw_primitive(*viewport, primitive_foreground);
-            });
+                },
+            );
+        });
+        renderer.with_layer(*viewport, |renderer| {
+            renderer.draw_primitive(*viewport, primitive_foreground);
+        });
     }
 
     fn size_hint(&self) -> Size<Length> {
@@ -301,7 +317,7 @@ where
         viewport: &Rectangle,
     ) {
         let state = tree.state.downcast_mut::<NodeGraphState>();
-        
+
         // Update time for animations
         let now = std::time::Instant::now();
         if let Some(last_update) = state.last_update {
@@ -309,7 +325,7 @@ where
             state.time += delta;
         }
         state.last_update = Some(now);
-        
+
         match event {
             Event::Mouse(mouse::Event::WheelScrolled { delta, .. }) => {
                 if let Some(cursor_pos) = screen_cursor.position() {
@@ -326,13 +342,20 @@ where
                     #[cfg(debug_assertions)]
                     println!(
                         "\n=== ZOOM: {:.2} -> {:.2} (delta={:.2}) at screen={:?} ===",
-                        state.camera.zoom(), new_zoom, zoom_delta, cursor_pos
+                        state.camera.zoom(),
+                        new_zoom,
+                        zoom_delta,
+                        cursor_pos
                     );
 
                     state.camera = state.camera.zoom_at(cursor_pos, zoom_delta);
-                    
+
                     #[cfg(debug_assertions)]
-                    println!("  New camera: zoom={:.2}, position={:?}", state.camera.zoom(), state.camera.position());
+                    println!(
+                        "  New camera: zoom={:.2}, position={:?}",
+                        state.camera.zoom(),
+                        state.camera.position()
+                    );
                 }
                 shell.capture_event();
                 shell.request_redraw();
@@ -392,7 +415,7 @@ where
                                 let cursor_position = cursor_position.into_euclid();
                                 let offset = cursor_position - origin;
                                 let new_position = self.nodes[node_index].0 + offset.into_iced();
-                                
+
                                 // Call on_move handler if set
                                 if let Some(handler) = self.on_move_handler() {
                                     let message = handler(node_index, new_position);
@@ -411,12 +434,12 @@ where
                             // Check if cursor is over a pin to transition to EdgeOver
                             if let Some(cursor_position) = world_cursor.position() {
                                 let mut target_pin: Option<(usize, usize)> = None;
-                                
+
                                 // Get the source pin state for validation
                                 let from_pin_state = find_pins(&tree.children[from_node], layout.children().nth(from_node).unwrap())
                                     .get(from_pin)
                                     .map(|(_, state, _)| *state);
-                                
+
                                 for (node_index, (node_layout, node_tree)) in
                                     layout.children().zip(&tree.children).enumerate()
                                 {
@@ -442,11 +465,11 @@ where
                                         break;
                                     }
                                 }
-                                
+
                                 if let Some((to_node, to_pin)) = target_pin {
                                     #[cfg(debug_assertions)]
                                     println!("  ✓ HOVER OVER PIN: node={}, pin={}", to_node, to_pin);
-                                    
+
                                     state.dragging = Dragging::EdgeOver(
                                         from_node,
                                         from_pin,
@@ -485,7 +508,7 @@ where
                                         still_over_pin = distance < PIN_CLICK_THRESHOLD;
                                     }
                                 }
-                                
+
                                 if !still_over_pin {
                                     // Moved away from pin, go back to dragging
                                     state.dragging = Dragging::Edge(
@@ -501,7 +524,7 @@ where
                             // Connection successful! Call the on_connect handler
                             #[cfg(debug_assertions)]
                             println!("  ✓ CONNECTION COMPLETE: node {} pin {} -> node {} pin {}\n", from_node, from_pin, to_node, to_pin);
-                            
+
                             if let Some(handler) = self.on_connect_handler() {
                                 let message = handler(from_node, from_pin, to_node, to_pin);
                                 shell.publish(message);
@@ -565,7 +588,7 @@ where
                                 );
                             }
                         }
-                        
+
                         if let Some(cursor_position) = world_cursor.position() {
                             // check bounds for pins
                             for (node_index, (node_layout, node_tree)) in
@@ -579,14 +602,14 @@ where
                                         println!("    Pin {} at world position: {:?}", idx, pin_pos);
                                     }
                                 }
-                                
+
                                 for (pin_index, _, (a, b)) in pins {
                                     // Pin positions from layout are ALREADY in world space
                                     // because layout was created with .move_to(world_position)
                                     let distance = a
                                         .distance(cursor_position)
                                         .min(b.distance(cursor_position));
-                                    
+
                                     #[cfg(debug_assertions)]
                                     if distance < 10.0 {  // Log if we're anywhere near (increased threshold for visibility)
                                         println!(
@@ -594,11 +617,11 @@ where
                                             node_index, pin_index, a, cursor_position, distance
                                         );
                                     }
-                                    
+
                                     if distance < PIN_CLICK_THRESHOLD {
                                         #[cfg(debug_assertions)]
                                         println!("  ✓ PIN HIT!");
-                                        
+
                                         // Check if this pin has existing connections
                                         // If it does, "unplug" the clicked end (like pulling a cable)
                                         for ((from_node, from_pin), (to_node, to_pin)) in &self.edges {
@@ -610,13 +633,13 @@ where
                                                     "  Unplugging FROM pin - keep TO pin at node {} pin {}, drag FROM end",
                                                     to_node, to_pin
                                                 );
-                                                
+
                                                 // Disconnect the edge
                                                 if let Some(handler) = self.on_disconnect_handler() {
                                                     let message = handler(*from_node, *from_pin, *to_node, *to_pin);
                                                     shell.publish(message);
                                                 }
-                                                
+
                                                 // Start dragging FROM the TO pin (the end that stays connected)
                                                 // We're now dragging back towards the TO pin
                                                 let state = tree.state.downcast_mut::<NodeGraphState>();
@@ -636,13 +659,13 @@ where
                                                     "  Unplugging TO pin - keep FROM pin at node {} pin {}, drag TO end",
                                                     from_node, from_pin
                                                 );
-                                                
+
                                                 // Disconnect the edge
                                                 if let Some(handler) = self.on_disconnect_handler() {
                                                     let message = handler(*from_node, *from_pin, *to_node, *to_pin);
                                                     shell.publish(message);
                                                 }
-                                                
+
                                                 // Start dragging FROM the FROM pin (the end that stays connected)
                                                 // We're now dragging away from the FROM pin
                                                 let state = tree.state.downcast_mut::<NodeGraphState>();
@@ -655,7 +678,7 @@ where
                                                 return;
                                             }
                                         }
-                                        
+
                                         // If no existing connection, start a new drag
                                         let state = tree.state.downcast_mut::<NodeGraphState>();
                                         state.dragging = Dragging::Edge(
@@ -668,7 +691,7 @@ where
                                     }
                                 }
                             }
-                            
+
                             // check for edge clicks (before checking nodes)
                             for ((from_node, from_pin), (to_node, to_pin)) in &self.edges {
                                 // Get pin positions for both ends of the edge
@@ -678,7 +701,7 @@ where
                                 ) {
                                     let from_pins = find_pins(from_tree, from_layout);
                                     let to_pins = find_pins(to_tree, to_layout);
-                                    
+
                                     if let (Some((_, _, from_pos)), Some((_, to_pin_state, to_pos))) = (
                                         from_pins.get(*from_pin),
                                         to_pins.get(*to_pin),
@@ -690,17 +713,17 @@ where
                                         } else {
                                             to_pos.0
                                         };
-                                        
+
                                         // Calculate distance to edge segments
                                         let mid_point = Point::new(
                                             (from_point.x + to_point.x) / 2.0,
                                             (from_point.y + to_point.y) / 2.0,
                                         );
-                                        
+
                                         let dist1 = distance_to_segment(cursor_position, from_point, mid_point);
                                         let dist2 = distance_to_segment(cursor_position, mid_point, to_point);
                                         let min_distance = dist1.min(dist2);
-                                        
+
                                         #[cfg(debug_assertions)]
                                         if min_distance < 10.0 {  // Log if close
                                             println!(
@@ -708,24 +731,24 @@ where
                                                 from_point, to_point, cursor_position, min_distance
                                             );
                                         }
-                                        
+
                                         if min_distance < EDGE_CLICK_THRESHOLD {
                                             #[cfg(debug_assertions)]
                                             println!("  ✓ EDGE HIT!");
-                                            
+
                                             // Publish edge disconnected message
                                             if let Some(handler) = self.on_disconnect_handler() {
                                                 let message = handler(*from_node, *from_pin, *to_node, *to_pin);
                                                 shell.publish(message);
                                             }
-                                            
+
                                             shell.capture_event();
                                             return;
                                         }
                                     }
                                 }
                             }
-                            
+
                             // check bounds for nodes
                             for (node_index, node_layout) in layout.children().enumerate() {
                                 if world_cursor.is_over(node_layout.bounds()) {
@@ -766,7 +789,10 @@ where
         if let Some(cursor_position) = cursor.position() {
             let state = tree.state.downcast_ref::<NodeGraphState>();
             let cursor_position: ScreenPoint = cursor_position.into_euclid();
-            let cursor_position = state.camera.screen_to_world().transform_point(cursor_position);
+            let cursor_position = state
+                .camera
+                .screen_to_world()
+                .transform_point(cursor_position);
 
             for (_, state, (a, b)) in find_pins(tree, layout) {
                 let distance = a
@@ -836,10 +862,10 @@ where
 fn distance_to_segment(p: Point, a: Point, b: Point) -> f32 {
     let pa = Point::new(p.x - a.x, p.y - a.y);
     let ba = Point::new(b.x - a.x, b.y - a.y);
-    
+
     let h = (pa.x * ba.x + pa.y * ba.y) / (ba.x * ba.x + ba.y * ba.y);
     let h = h.clamp(0.0, 1.0);
-    
+
     let closest = Point::new(a.x + h * ba.x, a.y + h * ba.y);
     let dx = p.x - closest.x;
     let dy = p.y - closest.y;
@@ -877,12 +903,9 @@ fn inner_find_pins<'a>(
 
 /// Validates if two pins can be connected based on direction and type.
 /// Returns true if connection is valid.
-fn validate_pin_connection(
-    from_pin: &NodePinState,
-    to_pin: &NodePinState,
-) -> bool {
+fn validate_pin_connection(from_pin: &NodePinState, to_pin: &NodePinState) -> bool {
     use crate::node_pin::PinDirection;
-    
+
     // Check direction compatibility:
     // - Output can connect to Input or Both
     // - Input can connect to Output or Both
@@ -891,18 +914,19 @@ fn validate_pin_connection(
         // Both can connect to anything
         (PinDirection::Both, _) | (_, PinDirection::Both) => true,
         // Output -> Input or Input -> Output is valid
-        (PinDirection::Output, PinDirection::Input) | (PinDirection::Input, PinDirection::Output) => true,
+        (PinDirection::Output, PinDirection::Input)
+        | (PinDirection::Input, PinDirection::Output) => true,
         // Same direction is not allowed (Output->Output or Input->Input)
         _ => false,
     };
-    
+
     // Check type compatibility (empty string or "any" matches everything)
     let type_valid = from_pin.pin_type == to_pin.pin_type
         || from_pin.pin_type == "any"
         || to_pin.pin_type == "any"
         || from_pin.pin_type.is_empty()
         || to_pin.pin_type.is_empty();
-    
+
     direction_valid && type_valid
 }
 
