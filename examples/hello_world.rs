@@ -1,13 +1,14 @@
 use iced::{
     event, keyboard, Color,
-    widget::{self, column, container, mouse_area, row, stack, text, text_input}, Event, Length, Point, Subscription, Theme
+    widget::{column, container, mouse_area, row, stack, text},
+    Event, Length, Point, Subscription, Theme,
 };
-use iced_nodegraph::{PinSide, PinDirection, node_graph, node_pin};
+use iced_nodegraph::{node_graph, node_pin, PinDirection, PinSide};
 
 pub fn main() -> iced::Result {
     iced::application(Application::new, Application::update, Application::view)
         .subscription(Application::subscription)
-        .title("Node Graph Example")
+        .title("Hello World")
         .theme(Application::theme)
         .run()
 }
@@ -33,11 +34,15 @@ enum ApplicationMessage {
     },
     ToggleCommandPalette,
     CommandPaletteInput(String),
+    CommandPaletteNavigateUp,
+    CommandPaletteNavigateDown,
+    CommandPaletteConfirm,
+    CommandPaletteCancel,
     SpawnNode { x: f32, y: f32, name: String },
     ChangeTheme(Theme),
     NavigateToSubmenu(String),
     NavigateBack,
-    Tick,  // For continuous animation updates
+    Tick,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -53,6 +58,9 @@ struct Application {
     command_input: String,
     current_theme: Theme,
     palette_view: PaletteView,
+    palette_selected_index: usize,
+    palette_preview_theme: Option<Theme>, // Theme being previewed
+    palette_original_theme: Option<Theme>, // Original theme before opening palette
 }
 
 impl Default for Application {
@@ -74,6 +82,9 @@ impl Default for Application {
             command_input: String::new(),
             current_theme: Theme::CatppuccinFrappe,
             palette_view: PaletteView::Main,
+            palette_selected_index: 0,
+            palette_preview_theme: None,
+            palette_original_theme: None,
         }
     }
 }
@@ -124,14 +135,125 @@ impl Application {
             ApplicationMessage::ToggleCommandPalette => {
                 self.command_palette_open = !self.command_palette_open;
                 if !self.command_palette_open {
+                    // Closing - restore original theme if cancelled
+                    if let Some(original) = self.palette_original_theme.take() {
+                        self.current_theme = original;
+                    }
+                    self.palette_preview_theme = None;
                     self.command_input.clear();
                     self.palette_view = PaletteView::Main;
+                    self.palette_selected_index = 0;
                 } else {
+                    // Opening - save original theme
+                    self.palette_original_theme = Some(self.current_theme.clone());
                     self.palette_view = PaletteView::Main;
+                    self.palette_selected_index = 0;
                 }
             }
             ApplicationMessage::CommandPaletteInput(input) => {
                 self.command_input = input;
+                self.palette_selected_index = 0; // Reset selection on input change
+            }
+            ApplicationMessage::CommandPaletteNavigateUp => {
+                if !self.command_palette_open {
+                    return; // Ignore if palette is closed
+                }
+                if self.palette_selected_index > 0 {
+                    self.palette_selected_index -= 1;
+                    
+                    // Apply live preview for theme submenu
+                    if let PaletteView::Submenu(ref submenu) = self.palette_view {
+                        if submenu == "themes" {
+                            let themes = Self::get_available_themes();
+                            if self.palette_selected_index < themes.len() {
+                                self.palette_preview_theme = Some(themes[self.palette_selected_index].clone());
+                            }
+                        }
+                    }
+                }
+            }
+            ApplicationMessage::CommandPaletteNavigateDown => {
+                if !self.command_palette_open {
+                    return; // Ignore if palette is closed
+                }
+                let max_items = match &self.palette_view {
+                    PaletteView::Main => Self::get_main_options().len(),
+                    PaletteView::Submenu(submenu) if submenu == "themes" => Self::get_available_themes().len(),
+                    PaletteView::Submenu(submenu) if submenu == "nodes" => Self::get_node_types().len(),
+                    _ => 0,
+                };
+                
+                if self.palette_selected_index + 1 < max_items {
+                    self.palette_selected_index += 1;
+                    
+                    // Apply live preview for theme submenu
+                    if let PaletteView::Submenu(ref submenu) = self.palette_view {
+                        if submenu == "themes" {
+                            let themes = Self::get_available_themes();
+                            if self.palette_selected_index < themes.len() {
+                                self.palette_preview_theme = Some(themes[self.palette_selected_index].clone());
+                            }
+                        }
+                    }
+                }
+            }
+            ApplicationMessage::CommandPaletteConfirm => {
+                if !self.command_palette_open {
+                    return; // Ignore if palette is closed
+                }
+                match &self.palette_view {
+                    PaletteView::Main => {
+                        let options = Self::get_main_options();
+                        if self.palette_selected_index < options.len() {
+                            let selected = options[self.palette_selected_index];
+                            if selected == "Add Node" {
+                                self.palette_view = PaletteView::Submenu("nodes".to_string());
+                                self.palette_selected_index = 0;
+                            } else if selected == "Change Theme" {
+                                self.palette_view = PaletteView::Submenu("themes".to_string());
+                                self.palette_selected_index = 0;
+                            }
+                        }
+                    }
+                    PaletteView::Submenu(submenu) if submenu == "themes" => {
+                        // Confirm theme change
+                        if let Some(preview_theme) = self.palette_preview_theme.take() {
+                            self.current_theme = preview_theme;
+                            self.palette_original_theme = None; // Committed, no need to restore
+                        }
+                        self.command_palette_open = false;
+                        self.command_input.clear();
+                        self.palette_view = PaletteView::Main;
+                        self.palette_selected_index = 0;
+                    }
+                    PaletteView::Submenu(submenu) if submenu == "nodes" => {
+                        let node_types = Self::get_node_types();
+                        if self.palette_selected_index < node_types.len() {
+                            let node_type = node_types[self.palette_selected_index];
+                            // Spawn in center of view
+                            self.nodes.push((Point::new(400.0, 300.0), node_type.to_string()));
+                            self.command_palette_open = false;
+                            self.command_input.clear();
+                            self.palette_view = PaletteView::Main;
+                            self.palette_selected_index = 0;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            ApplicationMessage::CommandPaletteCancel => {
+                if !self.command_palette_open {
+                    return; // Ignore if palette is closed
+                }
+                // Restore original theme
+                if let Some(original) = self.palette_original_theme.take() {
+                    self.current_theme = original;
+                }
+                self.palette_preview_theme = None;
+                self.command_palette_open = false;
+                self.command_input.clear();
+                self.palette_view = PaletteView::Main;
+                self.palette_selected_index = 0;
             }
             ApplicationMessage::SpawnNode { x, y, name } => {
                 // Use node type directly
@@ -161,7 +283,73 @@ impl Application {
     }
     
     fn theme(&self) -> Theme {
-        self.current_theme.clone()
+        // Use preview theme if available (live preview)
+        self.palette_preview_theme.as_ref()
+            .unwrap_or(&self.current_theme)
+            .clone()
+    }
+
+    fn get_main_options() -> Vec<&'static str> {
+        vec!["Add Node", "Change Theme"]
+    }
+
+    fn get_node_types() -> Vec<&'static str> {
+        vec!["email_trigger", "email_parser", "filter", "calendar"]
+    }
+
+    fn get_available_themes() -> Vec<Theme> {
+        vec![
+            Theme::Dark,
+            Theme::Light,
+            Theme::Dracula,
+            Theme::Nord,
+            Theme::SolarizedLight,
+            Theme::SolarizedDark,
+            Theme::GruvboxLight,
+            Theme::GruvboxDark,
+            Theme::CatppuccinLatte,
+            Theme::CatppuccinFrappe,
+            Theme::CatppuccinMacchiato,
+            Theme::CatppuccinMocha,
+            Theme::TokyoNight,
+            Theme::TokyoNightStorm,
+            Theme::TokyoNightLight,
+            Theme::KanagawaWave,
+            Theme::KanagawaDragon,
+            Theme::KanagawaLotus,
+            Theme::Moonfly,
+            Theme::Nightfly,
+            Theme::Oxocarbon,
+            Theme::Ferra,
+        ]
+    }
+
+    fn get_theme_name(theme: &Theme) -> &'static str {
+        match theme {
+            Theme::Dark => "Dark",
+            Theme::Light => "Light",
+            Theme::Dracula => "Dracula",
+            Theme::Nord => "Nord",
+            Theme::SolarizedLight => "Solarized Light",
+            Theme::SolarizedDark => "Solarized Dark",
+            Theme::GruvboxLight => "Gruvbox Light",
+            Theme::GruvboxDark => "Gruvbox Dark",
+            Theme::CatppuccinLatte => "Catppuccin Latte",
+            Theme::CatppuccinFrappe => "Catppuccin Frappe",
+            Theme::CatppuccinMacchiato => "Catppuccin Macchiato",
+            Theme::CatppuccinMocha => "Catppuccin Mocha",
+            Theme::TokyoNight => "Tokyo Night",
+            Theme::TokyoNightStorm => "Tokyo Night Storm",
+            Theme::TokyoNightLight => "Tokyo Night Light",
+            Theme::KanagawaWave => "Kanagawa Wave",
+            Theme::KanagawaDragon => "Kanagawa Dragon",
+            Theme::KanagawaLotus => "Kanagawa Lotus",
+            Theme::Moonfly => "Moonfly",
+            Theme::Nightfly => "Nightfly",
+            Theme::Oxocarbon => "Oxocarbon",
+            Theme::Ferra => "Ferra",
+            _ => "Unknown",
+        }
     }
 
     fn view(&self) -> iced::Element<'_, ApplicationMessage> {
@@ -204,7 +392,7 @@ impl Application {
         if self.command_palette_open {
             stack!(
                 graph_view,
-                command_palette(&self.command_input, &self.palette_view)
+                command_palette(&self.command_input, &self.palette_view, self.palette_selected_index, &self.current_theme)
             )
             .width(Length::Fill)
             .height(Length::Fill)
@@ -215,7 +403,7 @@ impl Application {
     }
 
     fn subscription(&self) -> Subscription<ApplicationMessage> {
-        Subscription::batch([
+        let mut subscriptions = vec![
             event::listen().map(|event| {
                 match event {
                     Event::Keyboard(keyboard::Event::KeyPressed { 
@@ -225,13 +413,45 @@ impl Application {
                     }) if modifiers.command() && c.as_ref() == "k" => {
                         ApplicationMessage::ToggleCommandPalette
                     }
+                    Event::Keyboard(keyboard::Event::KeyPressed { 
+                        key: keyboard::Key::Named(keyboard::key::Named::ArrowUp),
+                        ..
+                    }) => {
+                        ApplicationMessage::CommandPaletteNavigateUp
+                    }
+                    Event::Keyboard(keyboard::Event::KeyPressed { 
+                        key: keyboard::Key::Named(keyboard::key::Named::ArrowDown),
+                        ..
+                    }) => {
+                        ApplicationMessage::CommandPaletteNavigateDown
+                    }
+                    Event::Keyboard(keyboard::Event::KeyPressed { 
+                        key: keyboard::Key::Named(keyboard::key::Named::Enter),
+                        ..
+                    }) => {
+                        ApplicationMessage::CommandPaletteConfirm
+                    }
+                    Event::Keyboard(keyboard::Event::KeyPressed { 
+                        key: keyboard::Key::Named(keyboard::key::Named::Escape),
+                        ..
+                    }) => {
+                        ApplicationMessage::CommandPaletteCancel
+                    }
                     _ => ApplicationMessage::Noop,
                 }
-            }),
-            // Continuous tick for animations (60 FPS)
-            iced::time::every(std::time::Duration::from_millis(16))
-                .map(|_| ApplicationMessage::Tick),
-        ])
+            })
+        ];
+
+        // Only enable continuous animation when command palette is open (for theme preview)
+        // Otherwise, the app would redraw at 60 FPS constantly, wasting GPU resources
+        if self.command_palette_open {
+            subscriptions.push(
+                iced::time::every(std::time::Duration::from_millis(16))
+                    .map(|_| ApplicationMessage::Tick)
+            );
+        }
+
+        Subscription::batch(subscriptions)
     }
 }
 
@@ -242,7 +462,7 @@ where
 {
     let palette = theme.extended_palette();
     
-    let title_bar = container(widget::text("📧 Email Trigger").size(13).width(Length::Fill))
+    let title_bar = container(text("📧 Email Trigger").size(13).width(Length::Fill))
         .width(Length::Fill)
         .padding([2, 8])
         .style(move |_theme: &iced::Theme| {
@@ -272,7 +492,7 @@ where
 {
     let palette = theme.extended_palette();
     
-    let title_bar = container(widget::text("📨 Email Parser").size(13).width(Length::Fill))
+    let title_bar = container(text("📨 Email Parser").size(13).width(Length::Fill))
         .width(Length::Fill)
         .padding([2, 8])
         .style(move |_theme: &iced::Theme| {
@@ -314,7 +534,7 @@ where
 {
     let palette = theme.extended_palette();
     
-    let title_bar = container(widget::text("🔍 Filter").size(13).width(Length::Fill))
+    let title_bar = container(text("🔍 Filter").size(13).width(Length::Fill))
         .width(Length::Fill)
         .padding([2, 8])
         .style(move |_theme: &iced::Theme| {
@@ -348,7 +568,7 @@ where
 {
     let palette = theme.extended_palette();
     
-    let title_bar = container(widget::text("📅 Create Event").size(13).width(Length::Fill))
+    let title_bar = container(text("📅 Create Event").size(13).width(Length::Fill))
         .width(Length::Fill)
         .padding([2, 8])
         .style(move |_theme: &iced::Theme| {
@@ -392,134 +612,200 @@ where
     }
 }
 
-fn command_palette<'a>(input: &str, view: &PaletteView) -> iced::Element<'a, ApplicationMessage>
+fn command_palette<'a>(
+    _input: &str, 
+    view: &PaletteView, 
+    selected_index: usize,
+    _current_theme: &Theme
+) -> iced::Element<'a, ApplicationMessage>
 {
-    use iced::widget::{button, scrollable};
+    use iced::widget::button;
     
-    let mut commands: Vec<(&str, ApplicationMessage)> = Vec::new();
-    let title_text: &str;
+    let title_text: &'static str;
     
-    match view {
+    // Build list items with selection highlight directly
+    let command_items: Vec<iced::Element<ApplicationMessage>> = match view {
         PaletteView::Main => {
             title_text = "Command Palette";
-            commands.push((
-                "Add Nodes...",
-                ApplicationMessage::NavigateToSubmenu("nodes".to_string())
-            ));
-            commands.push((
-                "Choose Theme...",
-                ApplicationMessage::NavigateToSubmenu("themes".to_string())
-            ));
+            Application::get_main_options()
+                .iter()
+                .enumerate()
+                .map(|(index, label)| {
+                    let is_selected = index == selected_index;
+                    container(text(*label).size(14))
+                        .padding(10)
+                        .width(Length::Fill)
+                        .style(move |theme: &Theme| {
+                            let palette = theme.extended_palette();
+                            if is_selected {
+                                container::Style {
+                                    background: Some(iced::Background::Color(palette.primary.base.color)),
+                                    text_color: Some(palette.primary.base.text),
+                                    border: iced::Border {
+                                        color: palette.primary.strong.color,
+                                        width: 2.0,
+                                        radius: 4.0.into(),
+                                    },
+                                    ..container::Style::default()
+                                }
+                            } else {
+                                container::Style {
+                                    background: Some(iced::Background::Color(palette.background.weak.color)),
+                                    text_color: Some(palette.background.base.text),
+                                    border: iced::Border {
+                                        color: Color::TRANSPARENT,
+                                        width: 1.0,
+                                        radius: 4.0.into(),
+                                    },
+                                    ..container::Style::default()
+                                }
+                            }
+                        })
+                        .into()
+                })
+                .collect()
         }
         PaletteView::Submenu(submenu) if submenu == "nodes" => {
             title_text = "Add Node";
-            commands.push((
-                "📧 Email Trigger",
-                ApplicationMessage::SpawnNode { 
-                    x: 400.0, 
-                    y: 300.0, 
-                    name: "email_trigger".to_string() 
-                }
-            ));
-            commands.push((
-                "📨 Email Parser",
-                ApplicationMessage::SpawnNode { 
-                    x: 400.0, 
-                    y: 300.0, 
-                    name: "email_parser".to_string() 
-                }
-            ));
-            commands.push((
-                "🔍 Filter",
-                ApplicationMessage::SpawnNode { 
-                    x: 400.0, 
-                    y: 300.0, 
-                    name: "filter".to_string() 
-                }
-            ));
-            commands.push((
-                "📅 Create Calendar Event",
-                ApplicationMessage::SpawnNode { 
-                    x: 400.0, 
-                    y: 300.0, 
-                    name: "calendar".to_string() 
-                }
-            ));
+            Application::get_node_types()
+                .iter()
+                .enumerate()
+                .map(|(index, label)| {
+                    let is_selected = index == selected_index;
+                    container(text(*label).size(14))
+                        .padding(10)
+                        .width(Length::Fill)
+                        .style(move |theme: &Theme| {
+                            let palette = theme.extended_palette();
+                            if is_selected {
+                                container::Style {
+                                    background: Some(iced::Background::Color(palette.primary.base.color)),
+                                    text_color: Some(palette.primary.base.text),
+                                    border: iced::Border {
+                                        color: palette.primary.strong.color,
+                                        width: 2.0,
+                                        radius: 4.0.into(),
+                                    },
+                                    ..container::Style::default()
+                                }
+                            } else {
+                                container::Style {
+                                    background: Some(iced::Background::Color(palette.background.weak.color)),
+                                    text_color: Some(palette.background.base.text),
+                                    border: iced::Border {
+                                        color: Color::TRANSPARENT,
+                                        width: 1.0,
+                                        radius: 4.0.into(),
+                                    },
+                                    ..container::Style::default()
+                                }
+                            }
+                        })
+                        .into()
+                })
+                .collect()
         }
         PaletteView::Submenu(submenu) if submenu == "themes" => {
-            title_text = "Choose Theme";
-            // Add all available themes
-            for theme in Theme::ALL {
-                let theme_label = format!("{}", theme);
-                commands.push((
-                    Box::leak(theme_label.into_boxed_str()),
-                    ApplicationMessage::ChangeTheme(theme.clone()),
-                ));
-            }
+            title_text = "Choose Theme (↑↓ to preview, Enter to confirm, Esc to cancel)";
+            Application::get_available_themes()
+                .iter()
+                .enumerate()
+                .map(|(index, theme)| {
+                    let is_selected = index == selected_index;
+                    let theme_name = Application::get_theme_name(theme);
+                    container(text(theme_name).size(14))
+                        .padding(10)
+                        .width(Length::Fill)
+                        .style(move |theme: &Theme| {
+                            let palette = theme.extended_palette();
+                            if is_selected {
+                                container::Style {
+                                    background: Some(iced::Background::Color(palette.primary.base.color)),
+                                    text_color: Some(palette.primary.base.text),
+                                    border: iced::Border {
+                                        color: palette.primary.strong.color,
+                                        width: 2.0,
+                                        radius: 4.0.into(),
+                                    },
+                                    ..container::Style::default()
+                                }
+                            } else {
+                                container::Style {
+                                    background: Some(iced::Background::Color(palette.background.weak.color)),
+                                    text_color: Some(palette.background.base.text),
+                                    border: iced::Border {
+                                        color: Color::TRANSPARENT,
+                                        width: 1.0,
+                                        radius: 4.0.into(),
+                                    },
+                                    ..container::Style::default()
+                                }
+                            }
+                        })
+                        .into()
+                })
+                .collect()
         }
         _ => {
             title_text = "Command Palette";
+            Vec::new()
         }
-    }
-    
-    let filtered_commands: Vec<_> = commands
-        .into_iter()
-        .filter(|(label, _)| {
-            input.is_empty() || label.to_lowercase().contains(&input.to_lowercase())
-        })
-        .collect();
-    
-    let mut command_items = Vec::new();
-    for (label, msg) in filtered_commands {
-        command_items.push(
-            button(text(label).size(14))
-                .on_press(msg)
-                .width(Length::Fill)
-                .padding(8)
-                .into()
-        );
-    }
+    };
     
     let command_list = column(command_items).spacing(4);
     
-    // Build header with back button if in submenu
-    let header = if matches!(view, PaletteView::Submenu(_)) {
-        row![
-            button(text("← Back").size(14))
-                .on_press(ApplicationMessage::NavigateBack)
-                .padding(4),
-            text(title_text).size(18).width(Length::Fill),
-            button(text("✕").size(16))
-                .on_press(ApplicationMessage::ToggleCommandPalette)
-                .padding(4)
-        ]
-        .align_y(iced::Alignment::Center)
-    } else {
-        row![
-            text(title_text).size(18).width(Length::Fill),
-            button(text("✕").size(16))
-                .on_press(ApplicationMessage::ToggleCommandPalette)
-                .padding(4)
-        ]
-        .align_y(iced::Alignment::Center)
-    };
+    // Build header
+    let header = row![
+        text(title_text).size(16).width(Length::Fill),
+        button(text("✕").size(16))
+            .on_press(ApplicationMessage::CommandPaletteCancel)
+            .padding(4)
+    ]
+    .align_y(iced::Alignment::Center);
     
     let palette_content = container(
         column![
             header,
-            text_input("Type to search...", input)
-                .on_input(ApplicationMessage::CommandPaletteInput)
+            container(command_list)
                 .padding(8)
-                .width(Length::Fill),
-            scrollable(command_list)
-                .height(Length::Fixed(300.0))
+                .width(Length::Fill)
+                .height(Length::Fixed(400.0))
+                .style(|theme: &Theme| {
+                    let palette = theme.extended_palette();
+                    container::Style {
+                        background: Some(iced::Background::Color(palette.background.base.color)),
+                        border: iced::Border {
+                            color: palette.background.strong.color,
+                            width: 1.0,
+                            radius: 8.0.into(),
+                        },
+                        ..container::Style::default()
+                    }
+                }),
         ]
-        .spacing(8)
-        .padding(16)
-        .width(500.0)
-    );
+        .spacing(12)
+        .padding(20)
+        .width(600.0)
+    )
+    .style(|theme: &Theme| {
+        let palette = theme.extended_palette();
+        container::Style {
+            background: Some(iced::Background::Color(palette.background.weak.color)),
+            border: iced::Border {
+                color: palette.primary.base.color,
+                width: 2.0,
+                radius: 12.0.into(),
+            },
+            shadow: iced::Shadow {
+                color: Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+                offset: iced::Vector::new(0.0, 8.0),
+                blur_radius: 16.0,
+            },
+            ..container::Style::default()
+        }
+    });
     
-    // Background overlay that closes on click - use theme background with transparency
+    // Background overlay
     mouse_area(
         container(palette_content)
             .center(Length::Fill)
@@ -527,11 +813,12 @@ fn command_palette<'a>(input: &str, view: &PaletteView) -> iced::Element<'a, App
                 let palette = theme.extended_palette();
                 let bg = palette.background.base.color;
                 container::Style {
-                    background: Some(iced::Background::Color(iced::Color::from_rgba(bg.r, bg.g, bg.b, 0.7))),
+                    background: Some(iced::Background::Color(iced::Color::from_rgba(bg.r, bg.g, bg.b, 0.85))),
                     ..container::Style::default()
                 }
             })
     )
-    .on_press(ApplicationMessage::ToggleCommandPalette)
+    .on_press(ApplicationMessage::CommandPaletteCancel)
     .into()
 }
+
