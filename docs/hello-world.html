@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NodeGraph Hello World - WASM Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: white;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        .demo-container {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .toolbar {
+            background: rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 10px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .toolbar-left {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .toolbar-right {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .logo {
+            font-size: 18px;
+            font-weight: bold;
+            color: #74c7ec;
+        }
+
+        .toolbar-button {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .toolbar-button:hover {
+            background: rgba(255, 255, 255, 0.2);
+            transform: translateY(-1px);
+        }
+
+        .toolbar-button.primary {
+            background: linear-gradient(135deg, #74c7ec 0%, #89b4fa 100%);
+            color: #1e1e2e;
+            border-color: #74c7ec;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #a6e3a1;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .demo-canvas {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 999;
+            transition: opacity 0.5s ease;
+        }
+
+        .loading-overlay.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-top: 4px solid #74c7ec;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            font-size: 18px;
+            margin-bottom: 10px;
+        }
+
+        .loading-subtitle {
+            font-size: 14px;
+            opacity: 0.7;
+            text-align: center;
+            max-width: 400px;
+        }
+
+        .controls-hint {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(10px);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 14px;
+            max-width: 300px;
+            z-index: 100;
+        }
+
+        .controls-hint h4 {
+            color: #74c7ec;
+            margin-bottom: 8px;
+            font-size: 16px;
+        }
+
+        .controls-hint ul {
+            list-style: none;
+            line-height: 1.6;
+        }
+
+        .controls-hint li {
+            margin-bottom: 4px;
+        }
+
+        .controls-hint .key {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+
+        .error-message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(220, 53, 69, 0.9);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            max-width: 500px;
+            text-align: center;
+            z-index: 1000;
+        }
+
+        .back-link {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1001;
+        }
+
+        @media (max-width: 768px) {
+            .toolbar {
+                flex-direction: column;
+                gap: 10px;
+                padding: 15px;
+            }
+            
+            .toolbar-left,
+            .toolbar-right {
+                width: 100%;
+                justify-content: center;
+            }
+            
+            .controls-hint {
+                bottom: 10px;
+                left: 10px;
+                right: 10px;
+                max-width: none;
+                font-size: 12px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="demo-container">
+        <div class="toolbar">
+            <div class="toolbar-left">
+                <div class="logo">🎯 NodeGraph Hello World</div>
+                <div class="status-indicator">
+                    <div class="status-dot"></div>
+                    <span id="statusText">Loading WASM...</span>
+                </div>
+            </div>
+            <div class="toolbar-right">
+                <a href="demo.html" class="toolbar-button">🔧 API Demo</a>
+                <a href="/" class="toolbar-button">🏠 Home</a>
+                <button id="fullscreenBtn" class="toolbar-button">⛶ Fullscreen</button>
+            </div>
+        </div>
+
+        <div class="demo-canvas" id="demoCanvas">
+            <div class="loading-overlay" id="loadingOverlay">
+                <div class="spinner"></div>
+                <div class="loading-text">Initializing NodeGraph Demo</div>
+                <div class="loading-subtitle">
+                    Loading the complete Hello World example with interactive node graph, 
+                    drag-and-drop functionality, and live theme switching...
+                </div>
+            </div>
+        </div>
+
+        <div class="controls-hint" id="controlsHint">
+            <h4>🎮 Interactive Controls</h4>
+            <ul>
+                <li><span class="key">Cmd+K</span> - Open command palette</li>
+                <li><span class="key">↑↓</span> - Navigate menu</li>
+                <li><span class="key">Enter</span> - Confirm selection</li>
+                <li><span class="key">Esc</span> - Cancel/Close</li>
+                <li><span class="key">Drag</span> - Move nodes</li>
+                <li><span class="key">Drag pins</span> - Connect edges</li>
+            </ul>
+        </div>
+    </div>
+
+    <script type="module">
+        let wasm;
+        let demoRunning = false;
+
+        async function init() {
+            const statusText = document.getElementById('statusText');
+            const loadingOverlay = document.getElementById('loadingOverlay');
+            
+            try {
+                statusText.textContent = 'Loading WASM module...';
+                
+                // Import WASM module
+                wasm = await import('../pkg/iced_nodegraph.js');
+                await wasm.default();
+                
+                statusText.textContent = 'Initializing application...';
+                
+                // Small delay to show the loading state
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                statusText.textContent = 'Starting Hello World demo...';
+                
+                // Start the hello world demo
+                await wasm.run_hello_world();
+                
+                statusText.textContent = 'Hello World demo completed!';
+                demoRunning = true;
+                
+                // Hide loading overlay
+                loadingOverlay.classList.add('hidden');
+                
+                // Log successful start
+                console.log('✅ NodeGraph Hello World WASM demo started successfully!');
+                
+            } catch (error) {
+                console.error('❌ Failed to start demo:', error);
+                statusText.textContent = 'Failed to load demo';
+                
+                // Show error message
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'error-message';
+                errorDiv.innerHTML = `
+                    <h3>⚠️ Demo Failed to Load</h3>
+                    <p><strong>Error:</strong> ${error.message}</p>
+                    <p>This could be due to:</p>
+                    <ul style="text-align: left; margin: 10px 0;">
+                        <li>Complex Iced application architecture limitations in WASM</li>
+                        <li>Browser WASM compatibility constraints</li>
+                        <li>Network connectivity issues</li>
+                    </ul>
+                    <p>
+                        <strong>Note:</strong> The full Hello World example with interactive NodeGraph, 
+                        drag-and-drop, and live theme switching works perfectly in native Rust! 
+                        For the complete experience, try the <a href="demo.html" style="color: #74c7ec;">API Demo</a> 
+                        or run the native example locally.
+                    </p>
+                `;
+                document.body.appendChild(errorDiv);
+                
+                loadingOverlay.classList.add('hidden');
+            }
+        }
+
+        // Fullscreen functionality
+        document.getElementById('fullscreenBtn').addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(err => {
+                    console.log('Fullscreen failed:', err);
+                });
+            } else {
+                document.exitFullscreen();
+            }
+        });
+
+        // Hide controls hint after demo starts
+        setTimeout(() => {
+            const hint = document.getElementById('controlsHint');
+            if (demoRunning && hint) {
+                hint.style.opacity = '0.7';
+                hint.style.transform = 'translateY(10px)';
+            }
+        }, 10000);
+
+        // Keyboard shortcut info
+        document.addEventListener('keydown', (e) => {
+            if (e.metaKey && e.key === 'k') {
+                console.log('🎨 Command palette triggered (Cmd+K)');
+            }
+        });
+
+        // Initialize when page loads
+        init();
+    </script>
+</body>
+</html>

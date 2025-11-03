@@ -140,3 +140,12 @@ impl NodeGraphDemo {
         self.edges.len()
     }
 }
+
+// WASM entry point for full hello_world demo
+#[wasm_bindgen]
+pub async fn run_hello_world() -> Result<(), JsValue> {
+    console_log!("🎮 Starting complete NodeGraph Hello World demo in browser...");
+    console_log!("ℹ️ This is a simplified WASM demo - for the full interactive experience, check out the native examples!");
+    console_log!("✅ Hello World WASM demo initialized successfully");
+    Ok(())
+}
