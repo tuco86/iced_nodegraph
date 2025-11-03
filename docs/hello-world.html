@@ -17,9 +17,25 @@
             color: white;
             overflow: hidden;
             height: 100vh;
+            margin: 0;
+            padding: 0;
+        }
+
+        /* Make Iced canvas visible - it gets created directly in body */
+        canvas {
+            display: block !important;
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 100vw !important;
+            height: 100vh !important;
+            z-index: 999999 !important;
+            background: #1a1b26 !important;
         }
 
         .demo-container {
+            position: relative;
+            z-index: 1;
             width: 100vw;
             height: 100vh;
             position: relative;
@@ -381,6 +397,36 @@
                 demoRunning = true;
                 
                 console.log('✅ Iced WGPU application started successfully!');
+                
+                // Debug: Find and log all canvas elements
+                setTimeout(() => {
+                    const canvases = document.querySelectorAll('canvas');
+                    console.log(`🔍 Found ${canvases.length} canvas element(s)`);
+                    canvases.forEach((c, i) => {
+                        console.log(`Canvas ${i}:`, {
+                            width: c.width,
+                            height: c.height,
+                            clientWidth: c.clientWidth,
+                            clientHeight: c.clientHeight,
+                            offsetWidth: c.offsetWidth,
+                            offsetHeight: c.offsetHeight,
+                            display: getComputedStyle(c).display,
+                            visibility: getComputedStyle(c).visibility,
+                            opacity: getComputedStyle(c).opacity,
+                            zIndex: getComputedStyle(c).zIndex,
+                            position: getComputedStyle(c).position
+                        });
+                        
+                        // Force canvas to be visible
+                        if (c.width === 0 || c.height === 0) {
+                            console.warn('⚠️ Canvas has 0 size! Setting to window size...');
+                            c.width = window.innerWidth;
+                            c.height = window.innerHeight;
+                            c.style.width = '100vw';
+                            c.style.height = '100vh';
+                        }
+                    });
+                }, 100);
                 
             } catch (error) {
                 console.error('❌ Failed to start demo:', error);
