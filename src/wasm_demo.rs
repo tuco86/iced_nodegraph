@@ -143,7 +143,7 @@ impl NodeGraphDemo {
     }
 }
 
-use iced::{Point, Theme};
+use iced::Theme;
 
 #[derive(Debug, Clone)]
 enum Message {
@@ -190,6 +190,14 @@ pub async fn run_hello_world() -> Result<(), JsValue> {
     console_log!("🎮 Starting NodeGraph Hello World with WebGPU/WGPU rendering...");
     console_log!("🚀 Initializing Iced application...");
     
+    use iced::Settings;
+    
+    // Configure settings for WASM
+    let settings = Settings {
+        id: Some("iced-nodegraph".to_string()),
+        ..Default::default()
+    };
+    
     // Run full Iced application - this will use WGPU with WebGPU backend!
     iced::application(
         HelloWorldApp::new,
@@ -197,6 +205,7 @@ pub async fn run_hello_world() -> Result<(), JsValue> {
         HelloWorldApp::view
     )
     .theme(HelloWorldApp::theme)
+    .settings(settings)
     .run()
     .map_err(|e| {
         let err_msg = format!("Failed to run Iced application: {:?}", e);

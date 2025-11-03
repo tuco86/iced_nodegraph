@@ -29,7 +29,7 @@
             left: 0 !important;
             width: 100vw !important;
             height: 100vh !important;
-            z-index: 999999 !important;
+            z-index: 1 !important;
             background: #1a1b26 !important;
         }
 
@@ -51,7 +51,8 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            z-index: 1000;
+            z-index: 10000;
+            position: relative;
         }
 
         .toolbar-left {
@@ -122,11 +123,7 @@
             overflow: hidden;
         }
 
-        #nodeGraphCanvas {
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(135deg, #1a1b26 0%, #24283b 100%);
-        }
+        /* Old nodeGraphCanvas removed - Iced creates its own */
 
         .loading-overlay {
             position: absolute;
@@ -282,7 +279,7 @@
         </div>
 
         <div class="demo-canvas" id="demoCanvas">
-            <canvas id="nodeGraphCanvas"></canvas>
+            <!-- Iced creates its own canvas automatically - don't add one here! -->
             <div class="loading-overlay" id="loadingOverlay">
                 <div class="spinner"></div>
                 <div class="loading-text">Initializing NodeGraph Demo</div>
@@ -416,6 +413,21 @@
                             zIndex: getComputedStyle(c).zIndex,
                             position: getComputedStyle(c).position
                         });
+                        
+                        // Get canvas context to see if it's being used
+                        const ctx = c.getContext('2d');
+                        if (ctx) {
+                            const imageData = ctx.getImageData(0, 0, 1, 1);
+                            console.log(`Canvas ${i} pixel data:`, imageData.data);
+                        }
+                        
+                        // Try to access WebGPU context
+                        try {
+                            const gpuCtx = c.getContext('webgpu');
+                            console.log(`Canvas ${i} WebGPU context:`, gpuCtx ? '✅ exists' : '❌ null');
+                        } catch(e) {
+                            console.log(`Canvas ${i} WebGPU context error:`, e.message);
+                        }
                         
                         // Force canvas to be visible
                         if (c.width === 0 || c.height === 0) {
