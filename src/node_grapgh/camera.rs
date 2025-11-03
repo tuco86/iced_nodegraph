@@ -162,10 +162,8 @@ use super::euclid::{
     WorldRect, WorldSize, WorldVector,
 };
 use euclid::{Scale, Transform2D};
-use iced::{
-    Rectangle,
-    advanced::{mouse, renderer},
-};
+use iced::Rectangle;
+use iced_widget::core::{mouse, renderer};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Camera2D {

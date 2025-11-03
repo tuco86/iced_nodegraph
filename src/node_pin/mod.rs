@@ -1,10 +1,7 @@
-use iced::{Color, Element, Event, Length, Rectangle, Size};
-use iced::{
-    Point,
-    advanced::{
-        Clipboard, Layout, Shell, Widget, layout, mouse, renderer,
-        widget::{Tree, tree},
-    },
+use iced::{Color, Element, Event, Length, Point, Rectangle, Size};
+use iced_widget::core::{
+    Clipboard, Layout, Shell, Widget, layout, mouse, renderer,
+    widget::{Tree, tree},
 };
 
 /// An edge to attach a `NodePinWidget` to.
@@ -120,20 +117,20 @@ where
     }
 
     fn layout(
-        &self,
+        &mut self,
         tree: &mut Tree,
         renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
         if let Some(content_tree) = tree.children.first_mut() {
-            let content_layout = self
-                .content
-                .as_widget()
-                .layout(content_tree, renderer, limits);
+            let content_layout =
+                self.content
+                    .as_widget_mut()
+                    .layout(content_tree, renderer, limits);
             let size = content_layout.size();
             layout::Node::with_children(size, vec![content_layout])
         } else {
-            layout::Node::new(Size::ZERO)
+            layout::Node::new(Size::new(50.0, 20.0)) // Default pin size
         }
     }
 
@@ -261,7 +258,7 @@ pub fn node_pin<'a, Message, Theme, Renderer>(
     content: impl Into<Element<'a, Message, Theme, Renderer>>,
 ) -> NodePin<'a, Message, Theme, Renderer>
 where
-    Renderer: iced::advanced::renderer::Renderer,
+    Renderer: iced_widget::core::renderer::Renderer,
 {
     NodePin::new(side, content)
 }

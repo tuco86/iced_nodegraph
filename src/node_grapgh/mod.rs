@@ -24,7 +24,7 @@ pub struct NodeGraph<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer
 
 impl<Message, Theme, Renderer> Default for NodeGraph<'_, Message, Theme, Renderer>
 where
-    Renderer: iced::advanced::renderer::Renderer,
+    Renderer: iced_widget::core::renderer::Renderer,
 {
     fn default() -> Self {
         Self {
@@ -40,7 +40,7 @@ where
 
 impl<'a, Message, Theme, Renderer> NodeGraph<'a, Message, Theme, Renderer>
 where
-    Renderer: iced::advanced::renderer::Renderer,
+    Renderer: iced_widget::core::renderer::Renderer,
 {
     pub fn push_node(
         &mut self,
@@ -116,5 +116,12 @@ where
 
     pub(super) fn on_move_handler(&self) -> Option<&Box<dyn Fn(usize, Point) -> Message + 'a>> {
         self.on_move.as_ref()
+    }
+
+    /// Checks if the NodeGraph currently needs continuous animation updates
+    pub fn needs_animation(&self) -> bool {
+        // The widget itself will determine this based on its internal state
+        // This is a placeholder - the actual implementation is in the widget
+        false
     }
 }

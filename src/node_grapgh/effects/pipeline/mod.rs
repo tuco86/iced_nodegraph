@@ -15,9 +15,9 @@ use iced::{
 };
 use iced_wgpu::graphics::Viewport;
 
-use crate::node_grapgh::{euclid::WorldPoint, state::Dragging};
+use crate::node_grapgh::{effects::Node, euclid::WorldPoint, state::Dragging};
 
-use super::{Layer, primitive::Primitive};
+use super::{Layer, primitive::NodeGraphPrimitive};
 
 mod buffer;
 mod types;
@@ -100,18 +100,58 @@ impl Pipeline {
         }
     }
 
+    #[allow(dead_code)]
     pub fn update(
         &mut self,
         device: &Device,
         queue: &Queue,
         viewport: &Viewport,
-        primitive: &Primitive,
+        primitive: &NodeGraphPrimitive,
+    ) {
+        self.update_new(
+            device,
+            queue,
+            viewport,
+            primitive.camera_zoom,
+            primitive.camera_position,
+            primitive.cursor_position,
+            primitive.time,
+            &primitive.dragging,
+            &primitive.nodes,
+            &primitive.edges,
+            primitive.edge_color,
+            primitive.background_color,
+            primitive.border_color,
+            primitive.fill_color,
+            primitive.drag_edge_color,
+            primitive.drag_edge_valid_color,
+        );
+    }
+
+    pub fn update_new(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        viewport: &Viewport,
+        camera_zoom: f32,
+        camera_position: WorldPoint,
+        cursor_position: WorldPoint,
+        time: f32,
+        dragging: &Dragging,
+        nodes: &[Node],
+        edges: &[((usize, usize), (usize, usize))],
+        edge_color: glam::Vec4,
+        background_color: glam::Vec4,
+        border_color: glam::Vec4,
+        fill_color: glam::Vec4,
+        drag_edge_color: glam::Vec4,
+        drag_edge_valid_color: glam::Vec4,
     ) {
         let mut pin_start = 0;
         let num_nodes = self.nodes.update(
             device,
             queue,
-            primitive.nodes.iter().map(|node| {
+            nodes.iter().map(|node| {
                 let (pin_start, pin_count) = {
                     let count = node.pins.len() as u32;
                     let start = pin_start;
@@ -132,34 +172,29 @@ impl Pipeline {
         let num_pins = self.pins.update(
             device,
             queue,
-            primitive
-                .nodes
-                .iter()
-                .flat_map(|node| node.pins.iter())
-                .map(|pin| {
-                    use crate::node_pin::PinDirection;
-                    types::Pin {
-                        position: pin.offset,
-                        color: glam::Vec4::new(pin.color.r, pin.color.g, pin.color.b, pin.color.a),
-                        side: pin.side,
-                        radius: pin.radius,
-                        direction: match pin.direction {
-                            PinDirection::Input => 0,
-                            PinDirection::Output => 1,
-                            PinDirection::Both => 2,
-                        },
-                        flags: 0,
-                        _pad0: 0,
-                        _pad1: 0,
-                    }
-                }),
+            nodes.iter().flat_map(|node| node.pins.iter()).map(|pin| {
+                use crate::node_pin::PinDirection;
+                types::Pin {
+                    position: pin.offset,
+                    color: glam::Vec4::new(pin.color.r, pin.color.g, pin.color.b, pin.color.a),
+                    side: pin.side,
+                    radius: pin.radius,
+                    direction: match pin.direction {
+                        PinDirection::Input => 0,
+                        PinDirection::Output => 1,
+                        PinDirection::Both => 2,
+                    },
+                    flags: 0,
+                    _pad0: 0,
+                    _pad1: 0,
+                }
+            }),
         );
 
         let num_edges = self.edges.update(
             device,
             queue,
-            primitive
-                .edges
+            edges
                 .iter()
                 .map(|((from_node, from_pin), (to_node, to_pin))| types::Edge {
                     from_node: *from_node as _,
@@ -169,7 +204,7 @@ impl Pipeline {
                 }),
         );
 
-        let dragging: u32 = match primitive.dragging {
+        let dragging_type: u32 = match dragging {
             Dragging::None => 0,
             Dragging::Graph(_) => 1,
             Dragging::Node(_, _) => 2,
@@ -184,16 +219,16 @@ impl Pipeline {
             dragging_edge_to_node,
             dragging_edge_to_pin,
         ) = {
-            match primitive.dragging {
+            match dragging {
                 Dragging::Edge(from_node, from_pin, position) => {
-                    (from_node as _, from_pin as _, position, 0, 0)
+                    (*from_node as _, *from_pin as _, *position, 0, 0)
                 }
                 Dragging::EdgeOver(from_node, from_pin, to_node, to_pin) => (
-                    from_node as _,
-                    from_pin as _,
+                    *from_node as _,
+                    *from_pin as _,
                     WorldPoint::zero(),
-                    to_node as _,
-                    to_pin as _,
+                    *to_node as _,
+                    *to_pin as _,
                 ),
                 _ => (0, 0, WorldPoint::zero(), 0, 0),
             }
@@ -201,20 +236,20 @@ impl Pipeline {
 
         let uniforms = types::Uniforms {
             os_scale_factor: viewport.scale_factor() as _,
-            camera_zoom: primitive.camera_zoom,
-            camera_position: primitive.camera_position,
-            border_color: primitive.border_color,
-            fill_color: primitive.fill_color,
-            edge_color: primitive.edge_color,
-            background_color: primitive.background_color,
-            drag_edge_color: primitive.drag_edge_color,
-            drag_edge_valid_color: primitive.drag_edge_valid_color,
-            cursor_position: primitive.cursor_position,
+            camera_zoom,
+            camera_position,
+            border_color,
+            fill_color,
+            edge_color,
+            background_color,
+            drag_edge_color,
+            drag_edge_valid_color,
+            cursor_position,
             num_nodes,
             num_pins,
             num_edges,
-            time: primitive.time,
-            dragging,
+            time,
+            dragging: dragging_type,
             _pad_uniforms0: 0,
             _pad_uniforms1: 0,
             _pad_uniforms2: 0,
@@ -247,6 +282,7 @@ impl Pipeline {
         // );
     }
 
+    #[allow(dead_code)]
     pub fn render(
         &self,
         target: &TextureView,
@@ -269,7 +305,18 @@ impl Pipeline {
             timestamp_writes: None,
             occlusion_query_set: None,
         });
-        pass.set_scissor_rect(viewport.x, viewport.y, viewport.width, viewport.height);
+
+        self.render_pass(&mut pass, viewport, layer);
+    }
+
+    pub fn render_pass(
+        &self,
+        pass: &mut iced::wgpu::RenderPass<'_>,
+        _viewport: Rectangle<u32>,
+        layer: Layer,
+    ) {
+        // Don't set scissor rect - let the parent handle clipping
+        // This avoids scissor rect validation errors
         pass.set_pipeline(match layer {
             Layer::Background => &self.pipeline_background,
             Layer::Foreground => &self.pipeline_foreground,

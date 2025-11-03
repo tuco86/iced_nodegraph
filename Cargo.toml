@@ -7,11 +7,6 @@ edition = "2024"
 euclid = { version = "0.22.11", features = [ "bytemuck" ] }
 bytemuck = { version = "1.24.0", features = ["derive"] }
 glam = { version = "0.25.0", features = ["bytemuck"] }
-
-[dependencies.iced]
-path = "../iced"
-default-features = false
-features = ["advanced", "wgpu", "tokio"]
-
-[dependencies.iced_wgpu]
-path = "../iced/wgpu"
+iced = { git = "https://github.com/iced-rs/iced.git", branch = "master" }
+iced_wgpu = { git = "https://github.com/iced-rs/iced.git", branch = "master" }
+iced_widget = { git = "https://github.com/iced-rs/iced.git", branch = "master" }

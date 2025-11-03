@@ -1,10 +1,9 @@
 mod node;
 mod pin;
 
-use iced::{
-    Rectangle, wgpu,
-    widget::shader::{self, Viewport},
-};
+use iced::{Rectangle, wgpu};
+use iced_wgpu::graphics::Viewport;
+use iced_wgpu::primitive::Primitive;
 pub use node::Node;
 pub use pin::Pin;
 
@@ -19,7 +18,7 @@ pub enum Layer {
 }
 
 #[derive(Debug, Clone)]
-pub struct Primitive {
+pub struct NodeGraphPrimitive {
     pub layer: Layer,
     pub camera_zoom: f32,
     pub camera_position: WorldPoint,
@@ -36,31 +35,59 @@ pub struct Primitive {
     pub drag_edge_valid_color: glam::Vec4,
 }
 
-impl shader::Primitive for Primitive {
-    fn prepare(
+impl Primitive for NodeGraphPrimitive {
+    type Renderer = Pipeline;
+
+    fn initialize(
         &self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        _queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
-        storage: &mut shader::Storage,
+    ) -> Self::Renderer {
+        Pipeline::new(device, format)
+    }
+
+    fn prepare(
+        &self,
+        renderer: &mut Self::Renderer,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
         _bounds: &Rectangle,
         viewport: &Viewport,
     ) {
-        if !storage.has::<Pipeline>() {
-            storage.store(Pipeline::new(device, format));
-        }
-        let pipeline = storage.get_mut::<Pipeline>().unwrap();
-        pipeline.update(device, queue, viewport, self);
+        renderer.update_new(
+            device,
+            queue,
+            viewport,
+            self.camera_zoom,
+            self.camera_position,
+            self.cursor_position,
+            self.time,
+            &self.dragging,
+            &self.nodes,
+            &self.edges,
+            self.edge_color,
+            self.background_color,
+            self.border_color,
+            self.fill_color,
+            self.drag_edge_color,
+            self.drag_edge_valid_color,
+        );
     }
 
-    fn render(
+    fn draw(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
-        storage: &shader::Storage,
-        target: &wgpu::TextureView,
-        clip_bounds: &Rectangle<u32>,
-    ) {
-        let pipeline = storage.get::<Pipeline>().unwrap();
-        pipeline.render(target, encoder, *clip_bounds, self.layer);
+        renderer: &Self::Renderer,
+        render_pass: &mut iced::wgpu::RenderPass<'_>,
+    ) -> bool {
+        // Use default viewport - this should come from the bounds in practice
+        let viewport = Rectangle {
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+        };
+        renderer.render_pass(render_pass, viewport, self.layer);
+        true // We handle the drawing ourselves
     }
 }

@@ -1,5 +1,5 @@
 use iced::{
-    Color, Event, Length, Point, Subscription, Theme, event, keyboard,
+    Color, Event, Length, Point, Subscription, Theme, event, keyboard, window,
     widget::{column, container, mouse_area, row, stack, text},
 };
 use iced_nodegraph::{PinDirection, PinSide, node_graph, node_pin};
@@ -443,14 +443,13 @@ impl Application {
             _ => ApplicationMessage::Noop,
         })];
 
-        // Only enable continuous animation when command palette is open (for theme preview)
-        // Otherwise, the app would redraw at 60 FPS constantly, wasting GPU resources
-        if self.command_palette_open {
-            subscriptions.push(
-                iced::time::every(std::time::Duration::from_millis(16))
-                    .map(|_| ApplicationMessage::Tick),
-            );
-        }
+        // Enable continuous animation for:
+        // 1. Command palette (for theme preview)
+        // 2. Always enabled for NodeGraph animations (droppable pins pulsing)
+        // Using window::frames() for monitor-synchronized refresh rate
+        subscriptions.push(
+            window::frames().map(|_| ApplicationMessage::Tick)
+        );
 
         Subscription::batch(subscriptions)
     }

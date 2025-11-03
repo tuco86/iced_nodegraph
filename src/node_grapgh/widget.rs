@@ -1,9 +1,7 @@
-use iced::{
-    Element, Event, Length, Point, Rectangle, Size, Vector,
-    advanced::{
-        Clipboard, Layout, Shell, layout, mouse, renderer,
-        widget::{self, Tree, tree},
-    },
+use iced::{Background, Color, Element, Event, Length, Point, Rectangle, Size, Vector, border};
+use iced_widget::core::{
+    Clipboard, Layout, Shell, layout, mouse, renderer,
+    widget::{self, Tree, tree},
 };
 
 use super::{
@@ -22,10 +20,10 @@ use crate::{
 const PIN_CLICK_THRESHOLD: f32 = 8.0;
 const EDGE_CLICK_THRESHOLD: f32 = 8.0;
 
-impl<Message, Theme, Renderer> iced::advanced::Widget<Message, Theme, Renderer>
+impl<Message, Theme, Renderer> iced_widget::core::Widget<Message, Theme, Renderer>
     for NodeGraph<'_, Message, Theme, Renderer>
 where
-    Renderer: iced::advanced::renderer::Renderer + iced_wgpu::primitive::Renderer,
+    Renderer: iced_widget::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
     fn tag(&self) -> tree::Tag {
         tree::Tag::of::<NodeGraphState>()
@@ -40,7 +38,7 @@ where
     }
 
     fn layout(
-        &self,
+        &mut self,
         tree: &mut Tree,
         renderer: &Renderer,
         limits: &layout::Limits,
@@ -48,11 +46,11 @@ where
         let limits = limits.width(self.size.width).height(self.size.height);
         let size = limits.resolve(self.size.width, self.size.height, Size::ZERO);
         let nodes = self
-            .elements_iter()
+            .elements_iter_mut()
             .zip(&mut tree.children)
             .map(|((position, element), node_tree)| {
                 element
-                    .as_widget()
+                    .as_widget_mut()
                     .layout(node_tree, renderer, &limits)
                     .move_to(position)
             })
@@ -93,6 +91,7 @@ where
                 camera = camera.move_by(cursor_position - origin);
             }
         }
+
         // Theme-aware colors from extended palette
         let text_color = style.text_color;
 
@@ -124,7 +123,7 @@ where
                 (bg, border, fill, edge, drag, valid)
             };
 
-        let primitive_background = effects::Primitive {
+        let primitive_background = effects::NodeGraphPrimitive {
             layer: Layer::Background,
             camera_zoom: camera.zoom(),
             camera_position: camera.position(),
@@ -169,12 +168,10 @@ where
                                     color: pin_state.color,
                                     direction: pin_state.direction,
                                 })
-                                // .inspect(|p| println!("pin: {:?}", p))
                                 .collect(),
                         }
                     },
                 )
-                // .inspect(|n| println!("node: {:?}", n))
                 .collect(),
             edges: self.edges.clone(),
             edge_color,
@@ -187,88 +184,42 @@ where
         let mut primitive_foreground = primitive_background.clone();
         primitive_foreground.layer = Layer::Foreground;
 
-        renderer.with_layer(*viewport, |renderer| {
-            renderer.draw_primitive(*viewport, primitive_background);
-        });
+        // Draw the background primitive
+        renderer.draw_primitive(layout.bounds(), primitive_background);
 
-        renderer.with_layer(*viewport, |renderer| {
-            camera.draw_with::<_, Renderer>(
-                renderer,
-                viewport,
-                cursor,
-                |renderer, viewport, cursor| {
-                    for (node_index, (((_position, element), tree), layout)) in self
-                        .elements_iter()
-                        .zip(&tree.children)
-                        .zip(layout.children())
-                        .enumerate()
-                    {
-                        let node_move_offset =
-                            if let Dragging::Node(dragging_node_index, origin) = state.dragging {
-                                cursor
-                                    .position()
-                                    .filter(|_| dragging_node_index == node_index)
-                                    .map(|cursor_position| cursor_position - origin.into_iced())
-                            } else {
-                                None
-                            }
-                            .unwrap_or(Vector::ZERO);
-                        renderer.with_translation(node_move_offset, |renderer| {
-                            // renderer.fill_quad(
-                            //     renderer::Quad {
-                            //         bounds: layout.bounds(),
-                            //         border: border::Border {
-                            //             color: Color::WHITE,
-                            //             width: 1.0,
-                            //             radius: border::Radius::new(5.0),
-                            //         },
-                            //         ..Default::default()
-                            //     },
-                            //     Background::Color(Color::from_rgb(0.1, 0.15, 0.13)),
-                            // );
+        // Draw child elements with camera transformation
+        camera.draw_with::<_, Renderer>(
+            renderer,
+            viewport,
+            cursor,
+            |renderer, viewport, cursor| {
+                for (node_index, (((_position, element), tree), layout)) in self
+                    .elements_iter()
+                    .zip(&tree.children)
+                    .zip(layout.children())
+                    .enumerate()
+                {
+                    let node_move_offset =
+                        if let Dragging::Node(dragging_node_index, origin) = state.dragging {
+                            cursor
+                                .position()
+                                .filter(|_| dragging_node_index == node_index)
+                                .map(|cursor_position| cursor_position - origin.into_iced())
+                        } else {
+                            None
+                        }
+                        .unwrap_or(Vector::ZERO);
+                    renderer.with_translation(node_move_offset, |renderer| {
+                        element
+                            .as_widget()
+                            .draw(tree, renderer, theme, style, layout, cursor, &viewport);
+                    });
+                }
+            },
+        );
 
-                            element
-                                .as_widget()
-                                .draw(tree, renderer, theme, style, layout, cursor, &viewport);
-
-                            // let pins = find_pins(tree, layout);
-                            // // let pins: Vec<(&NodePinState, Layout<'_>)> = vec![];
-
-                            // // println!("pins: {:?}", pins.len());
-
-                            // // find node_pin elements in layouy children
-                            // for (_pin_index, _pin_state, (a, b)) in pins {
-                            //     // println!("pin_index: {:?}", pin_index);
-                            //     // use renderer.fill_quad to draw a circle around a point at the center of the pin but moved to the border of the node.
-                            //     let pin_radius = 5.0;
-                            //     let pin_size = Size::new(pin_radius * 2.0, pin_radius * 2.0);
-                            //     let pin_offset =
-                            //         Vector::new(-pin_size.width / 2.0, -pin_size.height / 2.0);
-                            //     for pin_position in [a, b] {
-                            //         let pin_rectangle =
-                            //             Rectangle::new(pin_position + pin_offset, pin_size);
-                            //         renderer.fill_quad(
-                            //             renderer::Quad {
-                            //                 bounds: pin_rectangle,
-                            //                 border: border::Border {
-                            //                     color: Color::WHITE,
-                            //                     width: 1.0,
-                            //                     radius: border::Radius::new(pin_radius),
-                            //                 },
-                            //                 ..Default::default()
-                            //             },
-                            //             Background::Color(Color::from_rgb(0.1, 0.15, 0.13)),
-                            //         );
-                            //     }
-                            // }
-                        });
-                    }
-                },
-            );
-        });
-        renderer.with_layer(*viewport, |renderer| {
-            renderer.draw_primitive(*viewport, primitive_foreground);
-        });
+        // Draw the foreground primitive
+        renderer.draw_primitive(layout.bounds(), primitive_foreground);
     }
 
     fn size_hint(&self) -> Size<Length> {
@@ -288,19 +239,19 @@ where
     }
 
     fn operate(
-        &self,
+        &mut self,
         tree: &mut Tree,
         layout: Layout<'_>,
         renderer: &Renderer,
         operation: &mut dyn widget::Operation,
     ) {
         for (((_, element), node_tree), node_layout) in self
-            .elements_iter()
+            .elements_iter_mut()
             .zip(&mut tree.children)
             .zip(layout.children())
         {
             element
-                .as_widget()
+                .as_widget_mut()
                 .operate(node_tree, node_layout, renderer, operation);
         }
     }
@@ -779,69 +730,20 @@ where
 
     fn mouse_interaction(
         &self,
-        tree: &Tree,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        viewport: &Rectangle,
-        renderer: &Renderer,
+        _tree: &Tree,
+        _layout: Layout<'_>,
+        _cursor: mouse::Cursor,
+        _viewport: &Rectangle,
+        _renderer: &Renderer,
     ) -> mouse::Interaction {
-        // TODO: this is all wrong. bounds checks happen in update. and a hover would be reflected here
-        if let Some(cursor_position) = cursor.position() {
-            let state = tree.state.downcast_ref::<NodeGraphState>();
-            let cursor_position: ScreenPoint = cursor_position.into_euclid();
-            let cursor_position = state
-                .camera
-                .screen_to_world()
-                .transform_point(cursor_position);
-
-            for (_, state, (a, b)) in find_pins(tree, layout) {
-                let distance = a
-                    .into_euclid()
-                    .distance_to(cursor_position)
-                    .min(b.into_euclid().distance_to(cursor_position));
-                if distance < PIN_CLICK_THRESHOLD {
-                    return match state.side {
-                        PinSide::Row => mouse::Interaction::Crosshair,
-                        PinSide::Left | PinSide::Right => mouse::Interaction::ResizingHorizontally,
-                        PinSide::Top | PinSide::Bottom => mouse::Interaction::ResizingVertically,
-                    };
-                }
-            }
-
-            for (((_, element), tree), layout) in self
-                .elements_iter()
-                .zip(&tree.children)
-                .zip(layout.children())
-            {
-                let bounds = layout.bounds();
-                if cursor.is_over(bounds) {
-                    let interaction = element
-                        .as_widget()
-                        .mouse_interaction(tree, layout, cursor, viewport, renderer);
-                    if interaction != mouse::Interaction::None {
-                        return interaction;
-                    }
-                }
-            }
-
-            let state = tree.state.downcast_ref::<NodeGraphState>();
-            match state.dragging {
-                Dragging::None => mouse::Interaction::default(),
-                Dragging::Graph(_) => mouse::Interaction::Grabbing,
-                Dragging::Node(_, _) => mouse::Interaction::Grabbing,
-                Dragging::Edge(_, _, _) => mouse::Interaction::Grabbing,
-                Dragging::EdgeOver(_, _, _, _) => mouse::Interaction::Grabbing,
-            }
-        } else {
-            mouse::Interaction::default()
-        }
+        mouse::Interaction::default()
     }
 }
 
 impl<'a, Message, Theme, Renderer> From<NodeGraph<'a, Message, Theme, Renderer>>
     for Element<'a, Message, Theme, Renderer>
 where
-    Renderer: iced::advanced::renderer::Renderer + 'a + iced_wgpu::primitive::Renderer,
+    Renderer: iced_widget::core::renderer::Renderer + 'a + iced_wgpu::primitive::Renderer,
     Message: 'static,
     Theme: 'a,
 {
@@ -852,7 +754,7 @@ where
 
 pub fn node_graph<'a, Message, Theme, Renderer>() -> NodeGraph<'a, Message, Theme, Renderer>
 where
-    Renderer: iced::advanced::renderer::Renderer,
+    Renderer: iced_widget::core::renderer::Renderer,
 {
     NodeGraph::default()
 }
@@ -949,5 +851,39 @@ fn pin_position(position: Point, side: PinSide, node_bounds: Rectangle) -> Point
         PinSide::Right => Point::new(node_bounds.x + node_bounds.width, position.y),
         PinSide::Top => Point::new(position.x, node_bounds.y),
         PinSide::Bottom => Point::new(position.x, node_bounds.y + node_bounds.height),
+    }
+}
+
+// Helper function to draw a simple line between two points
+#[allow(dead_code)]
+fn draw_line<Renderer>(renderer: &mut Renderer, from: Point, to: Point, width: f32, color: Color)
+where
+    Renderer: iced_widget::core::renderer::Renderer,
+{
+    // Simple line drawing using small rectangles
+    let distance = ((to.x - from.x).powi(2) + (to.y - from.y).powi(2)).sqrt();
+    if distance < 0.1 {
+        return; // Too short to draw
+    }
+
+    // Draw line as series of small rectangles
+    let steps = (distance / 3.0).ceil() as usize; // Smaller step size for smoother lines
+    for i in 0..steps {
+        let t = i as f32 / steps as f32;
+        let point = Point::new(from.x + t * (to.x - from.x), from.y + t * (to.y - from.y));
+
+        let segment_bounds = Rectangle::new(
+            Point::new(point.x - width / 2.0, point.y - width / 2.0),
+            Size::new(width, width),
+        );
+
+        renderer.fill_quad(
+            renderer::Quad {
+                bounds: segment_bounds,
+                border: border::Border::default(),
+                ..Default::default()
+            },
+            Background::Color(color),
+        );
     }
 }
