@@ -54,9 +54,6 @@ jobs:
             --out-name iced_nodegraph \
             --features wasm
 
-      - name: Copy HTML launcher
-        run: cp docs/hello_world.html target/doc/iced_nodegraph/hello_world.html
-
       - name: Create .nojekyll file
         run: touch target/doc/.nojekyll
 

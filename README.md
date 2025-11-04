@@ -90,18 +90,15 @@ cargo test
 
 The hello_world example can be compiled to WebAssembly with full WebGPU acceleration:
 
-```powershell
-# Build WASM bundle with wasm-pack
-wasm-pack build --target web --out-dir target/doc/iced_nodegraph/pkg --out-name iced_nodegraph --features wasm
-
-# Copy HTML launcher
-Copy-Item docs\hello_world.html target\doc\iced_nodegraph\hello_world.html
-
+```sh
 # Build documentation
 cargo doc --no-deps
 
+# Build WASM bundle with wasm-pack
+wasm-pack build --target web --out-dir target/doc/iced_nodegraph/pkg --out-name iced_nodegraph --features wasm
+
 # Serve locally (WASM requires HTTP server, file:// doesn't work)
-cd target\doc
+cd target/doc
 python -m http.server 8080
 ```
 
