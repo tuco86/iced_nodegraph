@@ -18,10 +18,23 @@ pub fn main() -> iced::Result {
     #[cfg(target_arch = "wasm32")]
     web_sys::console::log_1(&"🎮 Starting Iced application...".into());
     
+    // Configure window settings to attach to our container
+    #[cfg(target_arch = "wasm32")]
+    let window_settings = iced::window::Settings {
+        platform_specific: iced::window::settings::PlatformSpecific {
+            target: Some(String::from("canvas-container")),
+        },
+        ..Default::default()
+    };
+    
+    #[cfg(not(target_arch = "wasm32"))]
+    let window_settings = iced::window::Settings::default();
+    
     iced::application(Application::new, Application::update, Application::view)
         .subscription(Application::subscription)
         .title("NodeGraph Demo - WebGPU Accelerated")
         .theme(Application::theme)
+        .window(window_settings)
         .run()
 }
 
