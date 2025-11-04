@@ -1,5 +1,13 @@
 # AI Coding Instructions for iced_nodegraph
 
+## Documentation Standards
+
+**CRITICAL**: Use minimal, professional language in all documentation:
+- **NO EMOJIS** in code comments, documentation, or console output
+- Use clear, technical language without informal expressions
+- Status indicators: "VERIFIED", "TESTED", "INCOMPLETE" instead of emoji symbols
+- Professional tone in all user-facing text and developer documentation
+
 ## Architecture Overview
 
 This workspace contains **4 interdependent Rust projects** forming a node graph editor ecosystem:
@@ -13,7 +21,7 @@ This workspace contains **4 interdependent Rust projects** forming a node graph 
 
 ## Core Architecture Patterns
 
-### Coordinate System Abstraction ✅ VERIFIED & TESTED
+### Coordinate System Abstraction - VERIFIED & TESTED
 The project uses **euclid** crate for type-safe coordinate transformations:
 - `WorldPoint`/`ScreenPoint` distinguish coordinate spaces with compile-time type safety
 - `Camera2D` handles zoom/pan transformations in `src/node_grapgh/camera.rs`
@@ -43,7 +51,7 @@ Uses **WGPU shaders** for high-performance node graph rendering:
 - Background/Foreground layers for proper rendering order
 - GPU-accelerated with custom vertex/fragment shaders
 
-**⚠️ Known Issue**: Edge rendering is partially implemented but incomplete:
+**WARNING - Known Issue**: Edge rendering is partially implemented but incomplete:
 - Edge dragging works (temporary edge while connecting pins)
 - Static edge rendering is missing - `edges: vec![]` hardcoded in widget.rs:122
 - Missing API: No `push_edge()` method in NodeGraph struct

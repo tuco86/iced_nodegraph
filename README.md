@@ -2,23 +2,23 @@
 
 A high-performance node graph editor widget for the [Iced](https://github.com/iced-rs/iced) GUI framework, featuring GPU-accelerated rendering with custom WGPU shaders and type-safe coordinate transformations.
 
-## 🎉 Iced 0.14 Ready!
+## Iced 0.14 Ready!
 
-✅ **Fully updated and tested with Iced 0.14**  
-✅ **All warnings fixed and dependencies optimized**  
-✅ **Smooth animations restored (droppable pins pulsing)**  
-✅ **Cross-platform support (Windows, macOS, Linux)**  
+**Fully updated and tested with Iced 0.14**  
+**All warnings fixed and dependencies optimized**  
+**Smooth animations restored (droppable pins pulsing)**  
+**Cross-platform support (Windows, macOS, Linux)**  
 
-**[🌐 Live Demo](https://tuco86.github.io/iced_nodegraph/) | [📖 Documentation](https://github.com/tuco86/iced_nodegraph/tree/main/examples) | [🚀 Examples](https://github.com/tuco86/iced_nodegraph/tree/main/examples)**
+**[Live Demo](https://tuco86.github.io/iced_nodegraph/) | [Documentation](https://github.com/tuco86/iced_nodegraph/tree/main/examples) | [Examples](https://github.com/tuco86/iced_nodegraph/tree/main/examples)**
 
 ### Rendering Modes
 
-- **🎮 Native**: Full WGPU with custom shaders → `cargo run --example hello_world`
-- **🌐 WASM**: **WebGPU rendering** (same as native!) → [Live Demo](https://tuco86.github.io/iced_nodegraph/hello-world.html)
+- **Native**: Full WGPU with custom shaders → `cargo run --example hello_world`
+- **WASM**: **WebGPU rendering** (same as native!) → [Live Demo](https://tuco86.github.io/iced_nodegraph/hello-world.html)
 
-**✨ WebGPU Now Enabled!** WASM builds use full WGPU rendering with WebGPU backend on modern browsers (76% global coverage: Chrome 113+, Edge 113+, Opera 99+). Automatic fallback to WebGL for older browsers. See [docs/RENDERING.md](docs/RENDERING.md) for details.
+**WebGPU Now Enabled!** WASM builds use full WGPU rendering with WebGPU backend on modern browsers (76% global coverage: Chrome 113+, Edge 113+, Opera 99+). Automatic fallback to WebGL for older browsers. See [docs/RENDERING.md](docs/RENDERING.md) for details.
 
-## ⚠️ Development Status
+## Development Status
 
 **This project is actively being developed with AI assistance (Claude Sonnet 4.5) and is in a state of flux.** Many features are still being refactored and the API may change significantly. Use at your own risk.
 
@@ -26,14 +26,14 @@ A high-performance node graph editor widget for the [Iced](https://github.com/ic
 
 ## Features
 
-- **🎯 Nodes** - Draggable containers for your custom widgets
-- **📌 Pins** - Connection points on nodes with type checking and visual feedback
-- **🔗 Edges** - Connect pins to build data flow graphs
-- **🖱️ Interactive Connections** - Drag to connect, click edges to re-route (cable-like unplugging)
-- **🔍 Zoom & Pan** - Smooth infinite canvas navigation
-- **⚡ GPU Rendering** - High-performance visualization with custom WGPU shaders
-- **✨ Smooth Animations** - Monitor-synchronized pin pulsing and transitions
-- **🎨 Theme Support** - Integrates with Iced's theming system
+- **Nodes** - Draggable containers for your custom widgets
+- **Pins** - Connection points on nodes with type checking and visual feedback
+- **Edges** - Connect pins to build data flow graphs
+- **Interactive Connections** - Drag to connect, click edges to re-route (cable-like unplugging)
+- **Zoom & Pan** - Smooth infinite canvas navigation
+- **GPU Rendering** - High-performance visualization with custom WGPU shaders
+- **Smooth Animations** - Monitor-synchronized pin pulsing and transitions
+- **Theme Support** - Integrates with Iced's theming system
 
 ## Quick Start
 

@@ -71,15 +71,14 @@
 //!
 //! # Common Pitfalls
 //!
-//! ## ❌ Wrong: Using .pre_scale()
+//! ## Wrong: Using .pre_scale()
 //!
-//! ```rust,ignore
-//! // INCORRECT - produces wrong formula
-//! Transform2D::translation(-position).pre_scale(zoom, zoom)
-//! // Result: world = screen * zoom - position  (WRONG!)
+//! ```text
+//! Transform2D::translation(-position).pre_scale(zoom)
+//! Result: world = screen * zoom - position  ← INCORRECT INVERSE
 //! ```
 //!
-//! ## ✅ Correct: Using .scale().then_translate()
+//! ## Correct: Using .scale().then_translate()
 //!
 //! ```rust,ignore
 //! // CORRECT - matches rendering inverse

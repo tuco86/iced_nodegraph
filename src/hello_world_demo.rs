@@ -11,12 +11,12 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen(start)]
 pub fn wasm_init() {
     console_error_panic_hook::set_once();
-    web_sys::console::log_1(&"🚀 NodeGraph WASM demo with WebGPU shaders initialized!".into());
+    web_sys::console::log_1(&"NodeGraph WASM demo with WebGPU shaders initialized".into());
 }
 
 pub fn main() -> iced::Result {
     #[cfg(target_arch = "wasm32")]
-    web_sys::console::log_1(&"🎮 Starting Iced application...".into());
+    web_sys::console::log_1(&"Starting Iced application...".into());
     
     // Configure window settings to attach to our container
     #[cfg(target_arch = "wasm32")]
@@ -43,8 +43,8 @@ pub fn main() -> iced::Result {
 #[wasm_bindgen]
 pub fn run() {
     match main() {
-        Ok(_) => web_sys::console::log_1(&"✅ Iced application started successfully".into()),
-        Err(e) => web_sys::console::error_1(&format!("❌ Iced application failed: {:?}", e).into()),
+        Ok(_) => web_sys::console::log_1(&"Iced application started successfully".into()),
+        Err(e) => web_sys::console::error_1(&format!("Iced application failed: {:?}", e).into()),
     }
 }
 

@@ -80,7 +80,7 @@
 //!     </div>
 //!     <div id="canvas-container"></div>
 //!     <div id="wasm-demo-info">
-//!       <h4>🎯 Controls</h4>
+//!       <h4>Controls</h4>
 //!       <ul>
 //!         <li>Drag nodes to move</li>
 //!         <li>Drag from pins to connect</li>
@@ -130,22 +130,22 @@
 //! </div>
 //!
 //! **Features:**
-//! - 🎯 Interactive node dragging and positioning
-//! - 📌 Animated connection pins with pulsing effects
-//! - 🔗 Real-time edge dragging with visual feedback
-//! - 🔍 Smooth zoom and pan navigation
-//! - ⚡ GPU-accelerated rendering via WebGPU
+//! - Interactive node dragging and positioning
+//! - Animated connection pins with pulsing effects
+//! - Real-time edge dragging with visual feedback
+//! - Smooth zoom and pan navigation
+//! - GPU-accelerated rendering via WebGPU
 //!
 //! ## Features
 //!
-//! - **🎯 Nodes** - Draggable containers for your custom widgets
-//! - **📌 Pins** - Connection points on nodes with type checking and visual feedback
-//! - **🔗 Edges** - Connect pins to build data flow graphs
-//! - **🖱️ Interactive Connections** - Drag to connect, click edges to re-route (cable-like unplugging)
-//! - **🔍 Zoom & Pan** - Smooth infinite canvas navigation
-//! - **⚡ GPU Rendering** - High-performance visualization with custom WGPU shaders
-//! - **✨ Smooth Animations** - Monitor-synchronized pin pulsing and transitions
-//! - **🎨 Theme Support** - Integrates with Iced's theming system
+//! - **Nodes** - Draggable containers for your custom widgets
+//! - **Pins** - Connection points on nodes with type checking and visual feedback
+//! - **Edges** - Connect pins to build data flow graphs
+//! - **Interactive Connections** - Drag to connect, click edges to re-route (cable-like unplugging)
+//! - **Zoom & Pan** - Smooth infinite canvas navigation
+//! - **GPU Rendering** - High-performance visualization with custom WGPU shaders
+//! - **Smooth Animations** - Monitor-synchronized pin pulsing and transitions
+//! - **Theme Support** - Integrates with Iced's theming system
 //!
 //! ## Quick Start
 //!
