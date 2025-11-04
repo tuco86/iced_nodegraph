@@ -1321,30 +1321,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "iced_nodegraph_demo_hello_world"
-version = "0.1.0"
-dependencies = [
- "iced",
- "iced_nodegraph",
-]
-
-[[package]]
-name = "iced_nodegraph_demo_interaction"
-version = "0.1.0"
-dependencies = [
- "iced",
- "iced_nodegraph",
-]
-
-[[package]]
-name = "iced_nodegraph_demo_styling"
-version = "0.1.0"
-dependencies = [
- "iced",
- "iced_nodegraph",
-]
-
-[[package]]
 name = "iced_program"
 version = "0.14.0-dev"
 source = "git+https://github.com/iced-rs/iced.git?branch=master#ea614387f4d94960911b0a7d8ce25c02edb470c5"

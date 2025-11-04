@@ -1,0 +1,22 @@
+[package]
+name = "iced_nodegraph_demo_interaction"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "interaction"
+path = "src/main.rs"
+
+[dependencies]
+iced_nodegraph.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies.iced]
+workspace = true
+features = ["advanced", "wgpu", "tokio"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies.iced]
+workspace = true
+features = ["advanced", "wgpu", "webgl"]

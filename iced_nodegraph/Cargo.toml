@@ -1,0 +1,77 @@
+[package]
+name = "iced_nodegraph"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "High-performance node graph editor widget for Iced with WebGPU shaders"
+repository.workspace = true
+license.workspace = true
+readme = "README.md"
+keywords = ["iced", "gui", "node-graph", "webgpu", "wasm"]
+categories = ["gui", "graphics", "wasm", "visualization"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
+[features]
+default = []
+wasm = [
+    "wasm-bindgen", 
+    "web-sys", 
+    "console_error_panic_hook",
+    "wasm-bindgen-futures",
+    "serde",
+    "serde_json"
+]
+
+[dependencies]
+euclid.workspace = true
+bytemuck.workspace = true
+glam.workspace = true
+iced_wgpu.workspace = true
+iced_widget.workspace = true
+
+# WGPU with WebGPU backend for WASM
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wgpu = { workspace = true, features = ["webgpu", "webgl"] }
+
+# Force newer versions to reduce duplicates where possible
+# Note: Some duplicates remain due to external dependencies (winit fork, WGPU stack)
+bitflags.workspace = true
+thiserror.workspace = true
+rustc-hash.workspace = true
+
+# WASM-specific dependencies (optional)
+wasm-bindgen = { workspace = true, optional = true }
+web-sys = { workspace = true, features = [
+    "Window", 
+    "Document", 
+    "HtmlCanvasElement", 
+    "WebGl2RenderingContext", 
+    "Gpu", 
+    "GpuAdapter", 
+    "GpuDevice",
+    "MouseEvent",
+    "KeyboardEvent",
+    "WheelEvent",
+    "PointerEvent",
+    "TouchEvent",
+    "EventTarget",
+    "Element"
+], optional = true }
+wasm-bindgen-futures = { workspace = true, optional = true }
+console_error_panic_hook = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+
+# Platform-specific iced configuration
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies.iced]
+workspace = true
+features = ["advanced", "wgpu", "tokio"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies.iced]
+workspace = true
+features = ["advanced", "wgpu", "webgl", "fira-sans"]

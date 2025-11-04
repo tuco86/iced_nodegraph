@@ -1,79 +1,53 @@
-[package]
-name = "iced_nodegraph"
+[workspace]
+members = [
+    "iced_nodegraph",
+    "demos/hello_world",
+    "demos/styling",
+    "demos/interaction",
+]
+resolver = "2"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 authors = ["tuco86"]
-description = "High-performance node graph editor widget for Iced with WebGPU shaders"
-repository = "https://github.com/tuco86/iced_nodegraph"
 license = "MIT"
-readme = "README.md"
-keywords = ["iced", "gui", "node-graph", "webgpu", "wasm"]
-categories = ["gui", "graphics", "wasm", "visualization"]
+repository = "https://github.com/tuco86/iced_nodegraph"
 
-[lib]
-crate-type = ["cdylib", "rlib"]
+[workspace.dependencies]
+# Core library
+iced_nodegraph = { path = "iced_nodegraph" }
 
-[package.metadata.wasm-pack.profile.release]
-wasm-opt = false
-
-[features]
-default = []
-wasm = [
-    "wasm-bindgen", 
-    "web-sys", 
-    "console_error_panic_hook",
-    "wasm-bindgen-futures",
-    "serde",
-    "serde_json"
-]
-
-[dependencies]
-euclid = { version = "0.22.11", features = [ "bytemuck" ] }
-bytemuck = { version = "1.24.0", features = ["derive"] }
-glam = { version = "0.25.0", features = ["bytemuck"] }
+# Iced framework (master branch for 0.14 features)
+iced = { git = "https://github.com/iced-rs/iced.git", branch = "master" }
 iced_wgpu = { git = "https://github.com/iced-rs/iced.git", branch = "master" }
 iced_widget = { git = "https://github.com/iced-rs/iced.git", branch = "master" }
 
-# WGPU with WebGPU backend for WASM
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-wgpu = { version = "27.0", features = ["webgpu", "webgl"] }
+# Coordinate transformations and math
+euclid = { version = "0.22.11", features = ["bytemuck"] }
+bytemuck = { version = "1.24.0", features = ["derive"] }
+glam = { version = "0.25.0", features = ["bytemuck"] }
 
-# Force newer versions to reduce duplicates where possible
-# Note: Some duplicates remain due to external dependencies (winit fork, WGPU stack)
+# Graphics and GPU
+wgpu = "27.0"
+
+# Utilities
 bitflags = "2.10"
 thiserror = "2.0"
 rustc-hash = "2.1"
 
-# WASM-specific dependencies (optional)
-wasm-bindgen = { version = "0.2", optional = true }
-web-sys = { version = "0.3", features = [
-    "Window", 
-    "Document", 
-    "HtmlCanvasElement", 
-    "WebGl2RenderingContext", 
-    "Gpu", 
-    "GpuAdapter", 
-    "GpuDevice",
-    "MouseEvent",
-    "KeyboardEvent",
-    "WheelEvent",
-    "PointerEvent",
-    "TouchEvent",
-    "EventTarget",
-    "Element"
-], optional = true }
-wasm-bindgen-futures = { version = "0.4", optional = true }
-console_error_panic_hook = { version = "0.1", optional = true }
-serde = { version = "1.0", features = ["derive"], optional = true }
-serde_json = { version = "1.0", optional = true }
+# WASM support
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = "0.3"
+console_error_panic_hook = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
-# Platform-specific iced configuration
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies.iced]
-git = "https://github.com/iced-rs/iced.git"
-branch = "master"
-features = ["advanced", "wgpu", "tokio"]
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
 
-[target.'cfg(target_arch = "wasm32")'.dependencies.iced]
-git = "https://github.com/iced-rs/iced.git"
-branch = "master"
-features = ["advanced", "wgpu", "webgl", "fira-sans"]
+[profile.dev]
+opt-level = 1

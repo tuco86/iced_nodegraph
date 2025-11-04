@@ -9,11 +9,19 @@ A high-performance node graph editor widget for the [Iced](https://github.com/ic
 **Smooth animations restored (droppable pins pulsing)**  
 **Cross-platform support (Windows, macOS, Linux)**  
 
-**[Live Demo](https://tuco86.github.io/iced_nodegraph/iced_nodegraph/) | [Documentation](https://github.com/tuco86/iced_nodegraph/tree/main/examples) | [Examples](https://github.com/tuco86/iced_nodegraph/tree/main/examples)**
+**[Live Demo](https://tuco86.github.io/iced_nodegraph/iced_nodegraph/) | [Documentation](https://github.com/tuco86/iced_nodegraph/tree/main/docs) | [Demos](https://github.com/tuco86/iced_nodegraph/tree/main/demos)**
 
-### Rendering Modes
+## Project Structure
 
-- **Native**: Full WGPU with custom shaders → `cargo run --example hello_world`
+This is a **Cargo workspace** containing:
+
+- **`iced_nodegraph/`** - Core library (the node graph widget)
+- **`demos/`** - Demonstration projects showcasing features
+  - [`hello_world`](demos/hello_world/) - Basic usage and command palette
+  - [`styling`](demos/styling/) - Theming and visual customization
+  - [`interaction`](demos/interaction/) - Pin rules and connection validation
+
+See [`docs/architecture.md`](docs/architecture.md) for detailed workspace documentation.
 
 ## Development Status
 
@@ -36,78 +44,113 @@ A high-performance node graph editor widget for the [Iced](https://github.com/ic
 
 **Note:** Requires Iced from master branch (targeting 0.14 release)
 
+### As a Library User
+
 Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-iced_nodegraph = { path = "../iced_nodegraph" }
+iced_nodegraph = { git = "https://github.com/tuco86/iced_nodegraph" }
 iced = { git = "https://github.com/iced-rs/iced", features = ["advanced", "wgpu"] }
 ```
 
 Basic example:
 
 ```rust
-use iced_nodegraph::NodeGraph;
-use iced::{Element, Point};
+use iced_nodegraph::{node_graph, node_pin, PinSide, PinDirection};
+use iced::{Color, Element, Point};
 
-let mut node_graph = NodeGraph::new();
+fn view(&self) -> Element<Message> {
+    let mut ng = node_graph()
+        .on_connect(|from_node, from_pin, to_node, to_pin| {
+            Message::EdgeConnected { from_node, from_pin, to_node, to_pin }
+        });
 
-// Add nodes at world coordinates
-node_graph.push(Point::new(200.0, 150.0), my_node_widget);
-node_graph.push(Point::new(525.0, 175.0), another_node);
+    // Add nodes with pins
+    ng.push_node(Point::new(200.0, 150.0), my_node_widget());
+    ng.push_node(Point::new(525.0, 175.0), another_node());
+    
+    // Add edges between nodes
+    ng.push_edge(0, 0, 1, 0);  // Connect node 0 pin 0 to node 1 pin 0
 
-// Create edges between pins
-node_graph.on_connect(|from_node, from_pin, to_node, to_pin| {
-    println!("Connected: node {} pin {} -> node {} pin {}", 
-             from_node, from_pin, to_node, to_pin);
-});
-
-// Convert to Iced Element
-let element: Element<Message> = node_graph.into();
+    ng.into()
+}
 ```
 
-See [`examples/hello_world.rs`](examples/hello_world.rs) for a complete working example.
+See [`demos/hello_world/`](demos/hello_world/) for a complete working example.
+
+### Running Demos
+
+```bash
+# Clone and navigate to workspace
+git clone https://github.com/tuco86/iced_nodegraph
+cd iced_nodegraph
+
+# Run hello_world demo
+cargo run -p iced_nodegraph_demo_hello_world
+
+# Run styling demo
+cargo run -p iced_nodegraph_demo_styling
+
+# Run interaction demo  
+cargo run -p iced_nodegraph_demo_interaction
+```
 
 ## Building
 
-### Native Build
+### Workspace Build
 
 ```bash
-# Build the library
-cargo build
+# Build entire workspace (library + all demos)
+cargo build --workspace
 
-# Run the example
-cargo run --example hello_world
+# Build only the core library
+cargo build -p iced_nodegraph
+
+# Build specific demo
+cargo build -p iced_nodegraph_demo_hello_world
 
 # Run tests
-cargo test
+cargo test -p iced_nodegraph
 ```
 
-### WASM Build
+### Demo-Specific Commands
 
-The hello_world example can be compiled to WebAssembly with full WebGPU acceleration:
+```bash
+# Run from workspace root
+cargo run -p iced_nodegraph_demo_hello_world
 
-```sh
-# Build documentation
-cargo doc --no-deps
-
-# Build WASM bundle with wasm-pack
-wasm-pack build --target web --out-dir target/doc/iced_nodegraph/pkg --out-name iced_nodegraph --features wasm
-
-# Serve locally (WASM requires HTTP server, file:// doesn't work)
-cd target/doc
-python -m http.server 8080
+# Or navigate to demo directory
+cd demos/hello_world
+cargo run
 ```
-
-Then open http://localhost:8080/iced_nodegraph/hello_world.html
-
-**Important Notes:**
-- WASM requires an HTTP server - ES6 modules don't work with `file://` protocol
-- `wasm-pack` cannot be called from `build.rs` (Cargo global file locks cause deadlocks)
-- Animations use `performance.now()` in WASM vs `std::time::Instant` in native
-- See `src/node_grapgh/widget.rs` for platform-specific time tracking implementation
 
 ## Architecture
+
+### Workspace Structure
+
+```
+iced_nodegraph/                    # Workspace root
+├── Cargo.toml                     # Workspace manifest
+├── iced_nodegraph/                # Core library
+│   ├── Cargo.toml
+│   └── src/
+│       ├── node_grapgh/           # Main widget
+│       │   ├── camera.rs          # Coordinate transformations (15 tests)
+│       │   ├── widget.rs          # Widget implementation
+│       │   ├── state.rs           # Interaction state
+│       │   ├── euclid.rs          # Type-safe coordinates
+│       │   └── effects/           # WGPU rendering
+│       └── node_pin/              # Pin widgets
+├── demos/                         # Demo applications
+│   ├── hello_world/               # Basic usage
+│   ├── styling/                   # Theming
+│   └── interaction/               # Pin rules
+└── docs/                          # Documentation
+    └── architecture.md            # Detailed architecture
+```
+
+See [`docs/architecture.md`](docs/architecture.md) for comprehensive workspace documentation.
 
 ### Coordinate System
 
@@ -116,22 +159,7 @@ The widget uses two distinct coordinate spaces with compile-time type safety:
 - **Screen Space** - Pixel coordinates from user input (mouse, viewport)
 - **World Space** - Virtual infinite canvas where nodes exist
 
-Transformations use mathematically consistent formulas. See [`src/node_grapgh/camera.rs`](src/node_grapgh/camera.rs) for implementation details and comprehensive test coverage.
-
-### Widget Structure
-
-```
-src/
-├── node_grapgh/          # Main node graph widget
-│   ├── camera.rs        # Camera transformations (15 tests)
-│   ├── widget.rs        # Widget trait implementation
-│   ├── state.rs         # Interaction state management
-│   ├── euclid.rs        # Type-safe coordinate conversions
-│   └── effects/         # WGPU rendering pipeline
-│       ├── pipeline/    # Shader compilation and GPU setup
-│       └── primitive/   # Render primitives (nodes, pins, edges)
-└── node_pin/            # Pin widget for node connections
-```
+Transformations use mathematically consistent formulas. See [`iced_nodegraph/src/node_grapgh/camera.rs`](iced_nodegraph/src/node_grapgh/camera.rs) for implementation details and comprehensive test coverage.
 
 ## Interaction
 
@@ -144,20 +172,41 @@ src/
 ## Testing
 
 ```bash
-# Run all tests (24 camera + interaction tests)
-cargo test
+# Run all library tests (24 camera + interaction tests)
+cargo test -p iced_nodegraph
 
 # Run specific test suite
-cargo test --lib camera
+cargo test -p iced_nodegraph --lib camera
+
+# Run all workspace tests
+cargo test --workspace
 ```
 
 Test coverage includes coordinate transformations, zoom stability, pin detection, and edge click handling.
+
+## Demos
+
+### [hello_world](demos/hello_world/)
+Basic node graph with command palette (Cmd+K) for adding nodes and changing themes. Demonstrates fundamental usage patterns.
+
+**Features:**
+- Node creation and positioning
+- Pin connections
+- Camera controls (pan/zoom)
+- Command palette with live theme preview
+
+### [styling](demos/styling/) *(Planned)*
+Visual customization and theming system. Shows how to create custom node appearances and integrate with Iced's theme system.
+
+### [interaction](demos/interaction/) *(Planned)*
+Pin rules and connection validation. Demonstrates input/output directionality, type checking, and visual feedback for valid/invalid connections.
 
 ## Known Limitations
 
 - **Edge Rendering**: Static edge rendering between nodes is not fully implemented. Edge dragging works, but persistent edge display needs completion.
 - **API Stability**: Expect breaking changes as the library evolves toward 0.14 compatibility.
 - **Documentation**: Many areas need better documentation as refactoring stabilizes.
+- **Demo Status**: Only hello_world demo is currently implemented. Others are documented and ready for implementation.
 
 ## Dependencies
 
