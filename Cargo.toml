@@ -76,4 +76,4 @@ features = ["advanced", "wgpu", "tokio"]
 [target.'cfg(target_arch = "wasm32")'.dependencies.iced]
 git = "https://github.com/iced-rs/iced.git"
 branch = "master"
-features = ["advanced", "wgpu", "fira-sans"]
+features = ["advanced", "wgpu", "webgl", "fira-sans"]

@@ -243,6 +243,13 @@ where
 
         // Draw the foreground primitive
         renderer.draw_primitive(layout.bounds(), primitive_foreground);
+        
+        // Log zoom level for debugging (visible in browser console for WASM)
+        #[cfg(target_arch = "wasm32")]
+        {
+            let zoom = state.camera.zoom();
+            web_sys::console::log_1(&format!("Zoom: {:.2}x", zoom).into());
+        }
     }
 
     fn size_hint(&self) -> Size<Length> {
@@ -331,14 +338,14 @@ where
                         mouse::ScrollDelta::Lines { y, .. } => *y * 10.0,
                     };
 
-                    let zoom_delta = scroll_amount / 100.0;
-                    let new_zoom = state.camera.zoom() + zoom_delta;
+                    // Smaller zoom steps for smoother zooming
+                    // In WASM, scroll values tend to be larger
+                    let zoom_delta = scroll_amount * 0.001 * state.camera.zoom();
 
                     #[cfg(debug_assertions)]
                     println!(
-                        "\n=== ZOOM: {:.2} -> {:.2} (delta={:.2}) at screen={:?} ===",
+                        "\n=== ZOOM: {:.2} + delta={:.2} at screen={:?} ===",
                         state.camera.zoom(),
-                        new_zoom,
                         zoom_delta,
                         cursor_pos
                     );

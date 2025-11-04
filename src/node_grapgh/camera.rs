@@ -230,7 +230,7 @@ impl Camera2D {
         //   pos2 = pos1 + screen * (1/zoom1 - 1/zoom2)
 
         let old_zoom = self.zoom.get();
-        let new_zoom = old_zoom + offset;
+        let new_zoom = (old_zoom + offset).max(0.1).min(10.0); // Clamp zoom between 0.1 and 10.0
 
         // zoom_delta = 1/new_zoom - 1/old_zoom (not the other way around!)
         let zoom_delta = 1.0 / new_zoom - 1.0 / old_zoom;
