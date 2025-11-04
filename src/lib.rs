@@ -7,16 +7,8 @@
 //!
 //! <div id="wasm-demo-container" style="margin: 2em 0;">
 //!   <style>
+//!     #wasm-demo-container canvas,
 //!     #wasm-demo-container #canvas-container {
-//!       position: relative;
-//!       width: 100%;
-//!       height: 600px;
-//!       background: #1e1e2e;
-//!       border-radius: 12px;
-//!       overflow: hidden;
-//!       box-shadow: 0 8px 32px rgba(0,0,0,0.3);
-//!     }
-//!     #wasm-demo-container canvas {
 //!       display: block !important;
 //!       position: absolute !important;
 //!       top: 0 !important;
@@ -81,11 +73,12 @@
 //!     }
 //!   </style>
 //!   
-//!   <div id="canvas-container" style="position: relative; width: 100%; height: 600px; background: #1e1e2e; border-radius: 12px; overflow: hidden; box-shadow: 0 8px 32px rgba(0,0,0,0.3);">
+//!   <div style="position: relative; width: 100%; height: 600px; background: #1e1e2e; border-radius: 12px; overflow: hidden; box-shadow: 0 8px 32px rgba(0,0,0,0.3);">
 //!     <div id="wasm-demo-loading">
 //!       <div class="wasm-spinner"></div>
 //!       <p>Loading WebGPU demo...</p>
 //!     </div>
+//!     <div id="canvas-container"></div>
 //!     <div id="wasm-demo-info">
 //!       <h4>🎯 Controls</h4>
 //!       <ul>
