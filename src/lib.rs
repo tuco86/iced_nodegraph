@@ -149,24 +149,28 @@
 //!
 //! ## Quick Start
 //!
-//! ```rust
+//! ```rust,no_run
 //! use iced_nodegraph::NodeGraph;
-//! use iced::{Element, Point};
+//! use iced::{Element, Theme, Point};
+//! use iced::widget::text;
+//! use iced_wgpu::Renderer;
 //!
-//! let mut node_graph = NodeGraph::new();
+//! // Simple message type for handling events
+//! #[derive(Debug, Clone)]
+//! enum Message {
+//!     // Handle node graph events here
+//! }
 //!
-//! // Add nodes at world coordinates
-//! node_graph.push(Point::new(200.0, 150.0), my_node_widget);
-//! node_graph.push(Point::new(525.0, 175.0), another_node);
-//!
-//! // Create edges between pins
-//! node_graph.on_connect(|from_node, from_pin, to_node, to_pin| {
-//!     println!("Connected: node {} pin {} -> node {} pin {}",
-//!              from_node, from_pin, to_node, to_pin);
-//! });
-//!
-//! // Convert to Iced Element
-//! let element: Element<Message> = node_graph.into();
+//! fn view() -> Element<'static, Message, Theme, Renderer> {
+//!     // Create the node graph widget
+//!     let mut node_graph = NodeGraph::default();
+//!     
+//!     // Add a node with text content at position (100, 100)
+//!     node_graph.push_node(Point::new(100.0, 100.0), text("Hello Node!"));
+//!     
+//!     // Convert to Iced Element
+//!     node_graph.into()
+//! }
 //! ```
 //!
 //! ## Platform Support
