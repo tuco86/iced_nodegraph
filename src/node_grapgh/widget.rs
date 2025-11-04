@@ -72,12 +72,35 @@ where
         let mut camera = state.camera;
 
         // Update time for animations
-        let now = std::time::Instant::now();
-        let time = if let Some(last_update) = state.last_update {
-            let delta = now.duration_since(last_update).as_secs_f32();
-            state.time + delta
-        } else {
-            state.time
+        #[cfg(not(target_arch = "wasm32"))]
+        let time = {
+            let now = std::time::Instant::now();
+            if let Some(last_update) = state.last_update {
+                let delta = now.duration_since(last_update).as_secs_f32();
+                state.time + delta
+            } else {
+                state.time
+            }
+        };
+        
+        // On WASM, use performance.now() for animations (in milliseconds)
+        #[cfg(target_arch = "wasm32")]
+        let time = {
+            use wasm_bindgen::prelude::*;
+            
+            #[wasm_bindgen]
+            extern "C" {
+                #[wasm_bindgen(js_namespace = performance)]
+                fn now() -> f64;
+            }
+            
+            let now_ms = now();
+            if let Some(last_update_ms) = state.last_update_ms {
+                let delta = (now_ms - last_update_ms) / 1000.0; // Convert to seconds
+                state.time + delta as f32
+            } else {
+                state.time
+            }
         };
 
         // Handle panning when dragging the graph.
@@ -270,12 +293,33 @@ where
         let state = tree.state.downcast_mut::<NodeGraphState>();
 
         // Update time for animations
-        let now = std::time::Instant::now();
-        if let Some(last_update) = state.last_update {
-            let delta = now.duration_since(last_update).as_secs_f32();
-            state.time += delta;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let now = std::time::Instant::now();
+            if let Some(last_update) = state.last_update {
+                let delta = now.duration_since(last_update).as_secs_f32();
+                state.time += delta;
+            }
+            state.last_update = Some(now);
         }
-        state.last_update = Some(now);
+        
+        #[cfg(target_arch = "wasm32")]
+        {
+            use wasm_bindgen::prelude::*;
+            
+            #[wasm_bindgen]
+            extern "C" {
+                #[wasm_bindgen(js_namespace = performance)]
+                fn now() -> f64;
+            }
+            
+            let now_ms = now();
+            if let Some(last_update) = state.last_update_ms {
+                let delta = (now_ms - last_update) / 1000.0; // Convert to seconds
+                state.time += delta as f32;
+            }
+            state.last_update_ms = Some(now_ms);
+        }
 
         match event {
             Event::Mouse(mouse::Event::WheelScrolled { delta, .. }) => {

@@ -5,9 +5,6 @@ mod node;
 mod node_grapgh;
 mod node_pin;
 
-// WASM-specific exports
-#[cfg(feature = "wasm")]
-pub mod wasm_demo;
-
-#[cfg(feature = "wasm")]
-pub use wasm_demo::*;
+// WASM hello_world demo
+#[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+pub mod hello_world_demo;

@@ -17,7 +17,10 @@ pub(super) struct NodeGraphState {
     pub(super) camera: Camera2D,
     pub(super) dragging: Dragging,
     pub(super) time: f32, // Time in seconds for animations
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) last_update: Option<std::time::Instant>,
+    #[cfg(target_arch = "wasm32")]
+    pub(super) last_update_ms: Option<f64>,
 }
 
 impl Default for NodeGraphState {
@@ -26,7 +29,10 @@ impl Default for NodeGraphState {
             camera: Camera2D::new(),
             dragging: Default::default(),
             time: 0.0,
+            #[cfg(not(target_arch = "wasm32"))]
             last_update: None,
+            #[cfg(target_arch = "wasm32")]
+            last_update_ms: None,
         }
     }
 }

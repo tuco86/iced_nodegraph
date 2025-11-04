@@ -73,6 +73,8 @@ See [`examples/hello_world.rs`](examples/hello_world.rs) for a complete working 
 
 ## Building
 
+### Native Build
+
 ```bash
 # Build the library
 cargo build
@@ -83,6 +85,33 @@ cargo run --example hello_world
 # Run tests
 cargo test
 ```
+
+### WASM Build
+
+The hello_world example can be compiled to WebAssembly with full WebGPU acceleration:
+
+```powershell
+# Build WASM bundle with wasm-pack
+wasm-pack build --target web --out-dir target/doc/iced_nodegraph/pkg --out-name iced_nodegraph --features wasm
+
+# Copy HTML launcher
+Copy-Item docs\hello_world.html target\doc\iced_nodegraph\hello_world.html
+
+# Build documentation
+cargo doc --no-deps
+
+# Serve locally (WASM requires HTTP server, file:// doesn't work)
+cd target\doc
+python -m http.server 8080
+```
+
+Then open http://localhost:8080/iced_nodegraph/hello_world.html
+
+**Important Notes:**
+- WASM requires an HTTP server - ES6 modules don't work with `file://` protocol
+- `wasm-pack` cannot be called from `build.rs` (Cargo global file locks cause deadlocks)
+- Animations use `performance.now()` in WASM vs `std::time::Instant` in native
+- See `src/node_grapgh/widget.rs` for platform-specific time tracking implementation
 
 ## Architecture
 
