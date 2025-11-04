@@ -16,9 +16,8 @@ use crate::{
     node_pin::NodePinState,
 };
 
-// Click detection thresholds (in world-space pixels)
+// Click detection threshold (in world-space pixels)
 const PIN_CLICK_THRESHOLD: f32 = 8.0;
-const EDGE_CLICK_THRESHOLD: f32 = 8.0;
 
 impl<Message, Theme, Renderer> iced_widget::core::Widget<Message, Theme, Renderer>
     for NodeGraph<'_, Message, Theme, Renderer>
@@ -694,63 +693,6 @@ where
                                 }
                             }
 
-                            // check for edge clicks (before checking nodes)
-                            for ((from_node, from_pin), (to_node, to_pin)) in &self.edges {
-                                // Get pin positions for both ends of the edge
-                                if let (Some((from_layout, from_tree)), Some((to_layout, to_tree))) = (
-                                    layout.children().zip(&tree.children).nth(*from_node),
-                                    layout.children().zip(&tree.children).nth(*to_node),
-                                ) {
-                                    let from_pins = find_pins(from_tree, from_layout);
-                                    let to_pins = find_pins(to_tree, to_layout);
-
-                                    if let (Some((_, _, from_pos)), Some((_, to_pin_state, to_pos))) = (
-                                        from_pins.get(*from_pin),
-                                        to_pins.get(*to_pin),
-                                    ) {
-                                        // Pick the correct position based on pin side
-                                        let from_point = from_pos.1; // Use right side for output
-                                        let to_point = if to_pin_state.side == PinSide::Row {
-                                            to_pos.0 // Use left side for Row pins
-                                        } else {
-                                            to_pos.0
-                                        };
-
-                                        // Calculate distance to edge segments
-                                        let mid_point = Point::new(
-                                            (from_point.x + to_point.x) / 2.0,
-                                            (from_point.y + to_point.y) / 2.0,
-                                        );
-
-                                        let dist1 = distance_to_segment(cursor_position, from_point, mid_point);
-                                        let dist2 = distance_to_segment(cursor_position, mid_point, to_point);
-                                        let min_distance = dist1.min(dist2);
-
-                                        #[cfg(debug_assertions)]
-                                        if min_distance < 10.0 {  // Log if close
-                                            println!(
-                                                "  EDGE CHECK: from_world={:?}, to_world={:?}, cursor_world={:?}, distance={:.2}",
-                                                from_point, to_point, cursor_position, min_distance
-                                            );
-                                        }
-
-                                        if min_distance < EDGE_CLICK_THRESHOLD {
-                                            #[cfg(debug_assertions)]
-                                            println!("  ✓ EDGE HIT!");
-
-                                            // Publish edge disconnected message
-                                            if let Some(handler) = self.on_disconnect_handler() {
-                                                let message = handler(*from_node, *from_pin, *to_node, *to_pin);
-                                                shell.publish(message);
-                                            }
-
-                                            shell.capture_event();
-                                            return;
-                                        }
-                                    }
-                                }
-                            }
-
                             // check bounds for nodes
                             for (node_index, node_layout) in layout.children().enumerate() {
                                 if world_cursor.is_over(node_layout.bounds()) {
@@ -811,20 +753,6 @@ where
 }
 
 //// Helper function to find all NodePin elements in the tree - OF A Node!!!
-// Calculate distance from a point to a line segment
-fn distance_to_segment(p: Point, a: Point, b: Point) -> f32 {
-    let pa = Point::new(p.x - a.x, p.y - a.y);
-    let ba = Point::new(b.x - a.x, b.y - a.y);
-
-    let h = (pa.x * ba.x + pa.y * ba.y) / (ba.x * ba.x + ba.y * ba.y);
-    let h = h.clamp(0.0, 1.0);
-
-    let closest = Point::new(a.x + h * ba.x, a.y + h * ba.y);
-    let dx = p.x - closest.x;
-    let dy = p.y - closest.y;
-    (dx * dx + dy * dy).sqrt()
-}
-
 fn find_pins<'a>(
     tree: &'a Tree,
     layout: Layout<'a>,

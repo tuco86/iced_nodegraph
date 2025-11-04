@@ -3,7 +3,7 @@
 //! A high-performance node graph editor widget for the [Iced](https://github.com/iced-rs/iced) GUI framework,
 //! featuring GPU-accelerated rendering with custom WGPU shaders and type-safe coordinate transformations.
 //!
-//! ## 🎮 Interactive WebGPU Demo
+//! ## Interactive Demo
 //!
 //! <div id="wasm-demo-container" style="margin: 2em 0;">
 //!   <style>
@@ -129,13 +129,6 @@
 //!   </script>
 //! </div>
 //!
-//! **Features:**
-//! - Interactive node dragging and positioning
-//! - Animated connection pins with pulsing effects
-//! - Real-time edge dragging with visual feedback
-//! - Smooth zoom and pan navigation
-//! - GPU-accelerated rendering via WebGPU
-//!
 //! ## Features
 //!
 //! - **Nodes** - Draggable containers for your custom widgets
@@ -183,7 +176,7 @@
 //! ### WebAssembly (Browser)
 //! ```bash
 //! # Build WASM bundle
-//! wasm-pack build --target web --out-dir pkg --features wasm
+//! wasm-pack build --target web --features wasm
 //!
 //! # Serve with HTTP server (file:// doesn't work due to CORS)
 //! python -m http.server 8080

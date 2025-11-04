@@ -9,20 +9,17 @@ A high-performance node graph editor widget for the [Iced](https://github.com/ic
 **Smooth animations restored (droppable pins pulsing)**  
 **Cross-platform support (Windows, macOS, Linux)**  
 
-**[Live Demo](https://tuco86.github.io/iced_nodegraph/) | [Documentation](https://github.com/tuco86/iced_nodegraph/tree/main/examples) | [Examples](https://github.com/tuco86/iced_nodegraph/tree/main/examples)**
+**[Live Demo](https://tuco86.github.io/iced_nodegraph/iced_nodegraph/) | [Documentation](https://github.com/tuco86/iced_nodegraph/tree/main/examples) | [Examples](https://github.com/tuco86/iced_nodegraph/tree/main/examples)**
 
 ### Rendering Modes
 
 - **Native**: Full WGPU with custom shaders → `cargo run --example hello_world`
-- **WASM**: **WebGPU rendering** (same as native!) → [Live Demo](https://tuco86.github.io/iced_nodegraph/hello-world.html)
-
-**WebGPU Now Enabled!** WASM builds use full WGPU rendering with WebGPU backend on modern browsers (76% global coverage: Chrome 113+, Edge 113+, Opera 99+). Automatic fallback to WebGL for older browsers. See [docs/RENDERING.md](docs/RENDERING.md) for details.
 
 ## Development Status
 
 **This project is actively being developed with AI assistance (Claude Sonnet 4.5) and is in a state of flux.** Many features are still being refactored and the API may change significantly. Use at your own risk.
 
-**Target**: Iced 0.14 (master branch) - This library requires features from the Iced master branch and is now fully compatible with the latest API changes.
+**Target**: Iced 0.14 - This library uses features from Iced master branch (post 0.13.1) and has an unstable API.
 
 ## Features
 
@@ -141,7 +138,7 @@ src/
 - **Pan**: Middle mouse button drag
 - **Zoom**: Mouse wheel (maintains cursor position)
 - **Connect Pins**: Left-click on source pin, drag to target pin
-- **Re-route Edges**: Click on existing edge connection point - the clicked end unplugs like a physical cable
+- **Disconnect Edges**: Click on pin connection point to unplug (cable-like interaction)
 - **Move Nodes**: Left-click and drag node header
 
 ## Testing
