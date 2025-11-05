@@ -5,10 +5,10 @@
 //!
 //! ## Interactive Demo
 //!
-//! <div id="wasm-demo-container" style="margin: 2em 0;">
+//! <div id="demo-container" style="margin: 2em 0;">
 //!   <style>
-//!     #wasm-demo-container canvas,
-//!     #wasm-demo-container #canvas-container {
+//!     #demo-container canvas,
+//!     #demo-container #demo-canvas-container {
 //!       display: block !important;
 //!       position: absolute !important;
 //!       top: 0 !important;
@@ -17,7 +17,7 @@
 //!       height: 100% !important;
 //!       pointer-events: auto !important;
 //!     }
-//!     #wasm-demo-loading {
+//!     #demo-loading {
 //!       position: absolute;
 //!       top: 50%;
 //!       left: 50%;
@@ -25,19 +25,19 @@
 //!       text-align: center;
 //!       color: #89b4fa;
 //!     }
-//!     .wasm-spinner {
+//!     .demo-spinner {
 //!       width: 40px;
 //!       height: 40px;
 //!       border: 3px solid #313244;
 //!       border-top-color: #89b4fa;
 //!       border-radius: 50%;
-//!       animation: wasm-spin 1s linear infinite;
+//!       animation: demo-spin 1s linear infinite;
 //!       margin: 0 auto 1em;
 //!     }
-//!     @keyframes wasm-spin {
+//!     @keyframes demo-spin {
 //!       to { transform: rotate(360deg); }
 //!     }
-//!     #wasm-demo-info {
+//!     #demo-info {
 //!       position: absolute;
 //!       bottom: 15px;
 //!       right: 15px;
@@ -48,22 +48,22 @@
 //!       font-size: 0.75rem;
 //!       color: #cdd6f4;
 //!     }
-//!     #wasm-demo-info h4 {
+//!     #demo-info h4 {
 //!       color: #89b4fa;
 //!       font-size: 0.875rem;
 //!       margin-bottom: 0.5rem;
 //!     }
-//!     #wasm-demo-info ul {
+//!     #demo-info ul {
 //!       list-style: none;
 //!       line-height: 1.6;
 //!       margin: 0;
 //!       padding: 0;
 //!     }
-//!     #wasm-demo-info li:before {
+//!     #demo-info li:before {
 //!       content: "▸ ";
 //!       color: #89b4fa;
 //!     }
-//!     #wasm-demo-error {
+//!     #demo-error {
 //!       display: none;
 //!       padding: 1.5rem;
 //!       background: #f38ba8;
@@ -74,16 +74,17 @@
 //!   </style>
 //!   
 //!   <div style="position: relative; width: 100%; height: 600px; background: #1e1e2e; border-radius: 12px; overflow: hidden; box-shadow: 0 8px 32px rgba(0,0,0,0.3);">
-//!     <div id="wasm-demo-loading">
-//!       <div class="wasm-spinner"></div>
-//!       <p>Loading WebGPU demo...</p>
+//!     <div id="demo-loading">
+//!       <div class="demo-spinner"></div>
+//!       <p>Loading hello_world demo...</p>
 //!     </div>
-//!     <div id="canvas-container"></div>
-//!     <div id="wasm-demo-info">
+//!     <div id="demo-canvas-container"></div>
+//!     <div id="demo-info">
 //!       <h4>Controls</h4>
 //!       <ul>
+//!         <li>Cmd/Ctrl+K: Command palette</li>
 //!         <li>Drag nodes to move</li>
-//!         <li>Drag from pins to connect</li>
+//!         <li>Drag pins to connect</li>
 //!         <li>Click edges to disconnect</li>
 //!         <li>Scroll to zoom</li>
 //!         <li>Middle-drag to pan</li>
@@ -91,27 +92,27 @@
 //!     </div>
 //!   </div>
 //!   
-//!   <div id="wasm-demo-error">
-//!     <strong>Failed to load demo.</strong> Make sure WebGPU is supported in your browser.
+//!   <div id="demo-error">
+//!     <strong>Failed to load demo.</strong> WebGPU required.
 //!   </div>
 //!   
 //!   <script type="module">
-//!     let initialized = false;
+//!     let demoInitialized = false;
 //!     
-//!     async function initWasmDemo() {
-//!       if (initialized) return;
+//!     async function initDemo() {
+//!       if (demoInitialized) return;
 //!       
 //!       try {
-//!         const wasm = await import('./pkg/iced_nodegraph.js');
-//!         await wasm.default();
+//!         const demo = await import('./demo/iced_nodegraph_demo_hello_world.js');
+//!         await demo.default();
 //!         
-//!         document.getElementById('wasm-demo-loading').style.display = 'none';
+//!         document.getElementById('demo-loading').style.display = 'none';
 //!         
-//!         initialized = true;
-//!         wasm.run();
+//!         demoInitialized = true;
+//!         demo.run_demo();
 //!         
 //!         setTimeout(() => {
-//!           const canvas = document.querySelector('#canvas-container canvas');
+//!           const canvas = document.querySelector('#demo-canvas-container canvas');
 //!           if (canvas) {
 //!             canvas.setAttribute('tabindex', '0');
 //!             canvas.focus();
@@ -119,13 +120,13 @@
 //!         }, 100);
 //!         
 //!       } catch (error) {
-//!         console.error('WASM demo error:', error);
-//!         document.getElementById('wasm-demo-loading').style.display = 'none';
-//!         document.getElementById('wasm-demo-error').style.display = 'block';
+//!         console.error('Demo error:', error);
+//!         document.getElementById('demo-loading').style.display = 'none';
+//!         document.getElementById('demo-error').style.display = 'block';
 //!       }
 //!     }
 //!     
-//!     initWasmDemo();
+//!     initDemo();
 //!   </script>
 //! </div>
 //!
@@ -166,24 +167,47 @@
 //! }
 //! ```
 //!
+//! ## Demonstration Projects
+//!
+//! This library includes comprehensive demo applications in the workspace:
+//!
+//! ### [hello_world](https://github.com/tuco86/iced_nodegraph/tree/main/demos/hello_world)
+//! Basic node graph with command palette demonstrating:
+//! - Node creation and positioning
+//! - Pin connections with type colors
+//! - Camera controls (pan/zoom)
+//! - Theme switching with live preview
+//! - Email processing workflow example
+//!
+//! ```bash
+//! cargo run -p iced_nodegraph_demo_hello_world
+//! ```
+//!
+//! ### [styling](https://github.com/tuco86/iced_nodegraph/tree/main/demos/styling) *(Planned)*
+//! Visual customization showcase:
+//! - Custom node styles (colors, borders, shadows)
+//! - Pin appearance per type
+//! - Light/dark theme integration
+//! - Edge styling variations
+//!
+//! ### [interaction](https://github.com/tuco86/iced_nodegraph/tree/main/demos/interaction) *(Planned)*
+//! Pin rules and validation:
+//! - Input/output directionality
+//! - Type-based connection validation
+//! - Single vs. multiple connections per pin
+//! - Visual feedback for valid/invalid attempts
+//!
+//! See the [demos directory](https://github.com/tuco86/iced_nodegraph/tree/main/demos)
+//! for complete source code and detailed README specifications.
+//!
 //! ## Platform Support
 //!
 //! ### Native (Windows, macOS, Linux)
-//! ```bash
-//! cargo run --example hello_world
-//! ```
+//! Full WGPU with custom shaders for high-performance rendering.
 //!
-//! ### WebAssembly (Browser)
-//! ```bash
-//! # Build WASM bundle
-//! wasm-pack build --target web --features wasm
-//!
-//! # Serve with HTTP server (file:// doesn't work due to CORS)
-//! python -m http.server 8080
-//! ```
-//!
-//! See the [examples directory](https://github.com/tuco86/iced_nodegraph/tree/main/examples)
-//! for complete working examples.
+//! ### WebAssembly (Browser)  
+//! WebGPU acceleration with fallback to WebGL where needed.
+//! See the interactive demo above for a live example.
 //!
 //! ## Architecture
 //!
@@ -237,7 +261,3 @@ pub use node_pin::{NodePin, PinDirection, PinSide, node_pin};
 mod node;
 mod node_grapgh;
 mod node_pin;
-
-// WASM hello_world demo
-#[cfg(all(feature = "wasm", target_arch = "wasm32"))]
-pub mod hello_world_demo;

@@ -1,8 +1,19 @@
+//! # Hello World Demo
+//!
+//! Basic node graph with command palette (Cmd/Ctrl+K) for adding nodes and changing themes.
+//!
+//! **Controls:**
+//! - Drag nodes to move
+//! - Drag from pins to connect  
+//! - Click edges to disconnect
+//! - Scroll to zoom, middle-drag to pan
+//! - Cmd/Ctrl+K for command palette
+
 use iced::{
     Color, Event, Length, Point, Subscription, Theme, event, keyboard, window,
-    widget::{column, container, mouse_area, row, text},
+    widget::{column, container, mouse_area, row, stack, text},
 };
-use crate::{PinDirection, PinSide, node_graph, node_pin};
+use iced_nodegraph::{PinDirection, PinSide, node_graph, node_pin};
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -11,41 +22,31 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen(start)]
 pub fn wasm_init() {
     console_error_panic_hook::set_once();
-    web_sys::console::log_1(&"NodeGraph WASM demo with WebGPU shaders initialized".into());
 }
 
 pub fn main() -> iced::Result {
     #[cfg(target_arch = "wasm32")]
-    web_sys::console::log_1(&"Starting Iced application...".into());
-    
-    // Configure window settings to attach to our container
-    #[cfg(target_arch = "wasm32")]
     let window_settings = iced::window::Settings {
         platform_specific: iced::window::settings::PlatformSpecific {
-            target: Some(String::from("canvas-container")),
+            target: Some(String::from("demo-canvas-container")),
         },
         ..Default::default()
     };
     
     #[cfg(not(target_arch = "wasm32"))]
     let window_settings = iced::window::Settings::default();
-    
     iced::application(Application::new, Application::update, Application::view)
         .subscription(Application::subscription)
-        .title("NodeGraph Demo - WebGPU Accelerated")
+        .title("Hello World - iced_nodegraph Demo")
         .theme(Application::theme)
         .window(window_settings)
         .run()
 }
 
-// Wasm-bindgen wrapper for browser
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
-pub fn run() {
-    match main() {
-        Ok(_) => web_sys::console::log_1(&"Iced application started successfully".into()),
-        Err(e) => web_sys::console::error_1(&format!("Iced application failed: {:?}", e).into()),
-    }
+pub fn run_demo() {
+    let _ = main();
 }
 
 #[derive(Debug, Clone)]
@@ -92,14 +93,14 @@ enum PaletteView {
 
 struct Application {
     edges: Vec<((usize, usize), (usize, usize))>,
-    nodes: Vec<(Point, String)>, // position and name
+    nodes: Vec<(Point, String)>,
     command_palette_open: bool,
     command_input: String,
     current_theme: Theme,
     palette_view: PaletteView,
     palette_selected_index: usize,
-    palette_preview_theme: Option<Theme>, // Theme being previewed
-    palette_original_theme: Option<Theme>, // Original theme before opening palette
+    palette_preview_theme: Option<Theme>,
+    palette_original_theme: Option<Theme>,
 }
 
 impl Default for Application {
@@ -431,115 +432,63 @@ impl Application {
             ng.push_edge(*from_node, *from_pin, *to_node, *to_pin);
         }
 
-        // On WASM, just return the graph view without overlay (overlay might block events)
-        #[cfg(target_arch = "wasm32")]
-        {
-            ng.into()
-        }
+        let graph_view = ng.into();
 
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let graph_view: iced::Element<'_, ApplicationMessage> = ng.into();
-            if self.command_palette_open {
-                stack!(
-                    graph_view,
-                    command_palette(
-                        &self.command_input,
-                        &self.palette_view,
-                        self.palette_selected_index,
-                        &self.current_theme
-                    )
+        if self.command_palette_open {
+            stack!(
+                graph_view,
+                command_palette(
+                    &self.command_input,
+                    &self.palette_view,
+                    self.palette_selected_index,
+                    &self.current_theme
                 )
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
-            } else {
-                graph_view
-            }
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+        } else {
+            graph_view
         }
     }
 
     fn subscription(&self) -> Subscription<ApplicationMessage> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let mut subscriptions = vec![event::listen().map(|event| match event {
-                Event::Keyboard(keyboard::Event::KeyPressed {
-                    key: keyboard::Key::Character(c),
-                    modifiers,
-                    ..
-                }) if modifiers.command() && c.as_ref() == "k" => {
-                    ApplicationMessage::ToggleCommandPalette
-                }
-                Event::Keyboard(keyboard::Event::KeyPressed {
-                    key: keyboard::Key::Named(keyboard::key::Named::ArrowUp),
-                    ..
-                }) => ApplicationMessage::CommandPaletteNavigateUp,
-                Event::Keyboard(keyboard::Event::KeyPressed {
-                    key: keyboard::Key::Named(keyboard::key::Named::ArrowDown),
-                    ..
-                }) => ApplicationMessage::CommandPaletteNavigateDown,
-                Event::Keyboard(keyboard::Event::KeyPressed {
-                    key: keyboard::Key::Named(keyboard::key::Named::Enter),
-                    ..
-                }) => ApplicationMessage::CommandPaletteConfirm,
-                Event::Keyboard(keyboard::Event::KeyPressed {
-                    key: keyboard::Key::Named(keyboard::key::Named::Escape),
-                    ..
-                }) => ApplicationMessage::CommandPaletteCancel,
-                _ => ApplicationMessage::Noop,
-            })];
+        let mut subscriptions = vec![event::listen().map(|event| match event {
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key: keyboard::Key::Character(c),
+                modifiers,
+                ..
+            }) if modifiers.command() && c.as_ref() == "k" => {
+                ApplicationMessage::ToggleCommandPalette
+            }
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key: keyboard::Key::Named(keyboard::key::Named::ArrowUp),
+                ..
+            }) => ApplicationMessage::CommandPaletteNavigateUp,
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key: keyboard::Key::Named(keyboard::key::Named::ArrowDown),
+                ..
+            }) => ApplicationMessage::CommandPaletteNavigateDown,
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key: keyboard::Key::Named(keyboard::key::Named::Enter),
+                ..
+            }) => ApplicationMessage::CommandPaletteConfirm,
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key: keyboard::Key::Named(keyboard::key::Named::Escape),
+                ..
+            }) => ApplicationMessage::CommandPaletteCancel,
+            _ => ApplicationMessage::Noop,
+        })];
 
-            // Enable continuous animation for:
-            // 1. Command palette (for theme preview)
-            // 2. Always enabled for NodeGraph animations (droppable pins pulsing)
-            // Using window::frames() for monitor-synchronized refresh rate
-            subscriptions.push(
-                window::frames().map(|_| ApplicationMessage::Tick)
-            );
+        // Enable continuous animation for:
+        // 1. Command palette (for theme preview)
+        // 2. Always enabled for NodeGraph animations (droppable pins pulsing)
+        // Using window::frames() for monitor-synchronized refresh rate
+        subscriptions.push(
+            window::frames().map(|_| ApplicationMessage::Tick)
+        );
 
-            Subscription::batch(subscriptions)
-        }
-        
-        #[cfg(target_arch = "wasm32")]
-        {
-            // On WASM, we use both event::listen() for keyboard input
-            // AND window::frames() for animations (droppable pins pulsing)
-            let mut subscriptions = vec![
-                event::listen().map(|event| match event {
-                    Event::Keyboard(keyboard::Event::KeyPressed {
-                        key: keyboard::Key::Character(c),
-                        modifiers,
-                        ..
-                    }) if modifiers.command() && c.as_ref() == "k" => {
-                        ApplicationMessage::ToggleCommandPalette
-                    }
-                    Event::Keyboard(keyboard::Event::KeyPressed {
-                        key: keyboard::Key::Named(keyboard::key::Named::ArrowUp),
-                        ..
-                    }) => ApplicationMessage::CommandPaletteNavigateUp,
-                    Event::Keyboard(keyboard::Event::KeyPressed {
-                        key: keyboard::Key::Named(keyboard::key::Named::ArrowDown),
-                        ..
-                    }) => ApplicationMessage::CommandPaletteNavigateDown,
-                    Event::Keyboard(keyboard::Event::KeyPressed {
-                        key: keyboard::Key::Named(keyboard::key::Named::Enter),
-                        ..
-                    }) => ApplicationMessage::CommandPaletteConfirm,
-                    Event::Keyboard(keyboard::Event::KeyPressed {
-                        key: keyboard::Key::Named(keyboard::key::Named::Escape),
-                        ..
-                    }) => ApplicationMessage::CommandPaletteCancel,
-                    _ => ApplicationMessage::Noop,
-                })
-            ];
-
-            // Enable animation for droppable pins pulsing
-            subscriptions.push(
-                window::frames().map(|_| ApplicationMessage::Tick)
-            );
-
-            Subscription::batch(subscriptions)
-        }
+        Subscription::batch(subscriptions)
     }
 }
 

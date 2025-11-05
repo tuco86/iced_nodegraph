@@ -88,7 +88,7 @@ where
             use wasm_bindgen::prelude::*;
             
             #[wasm_bindgen]
-            extern "C" {
+            unsafe extern "C" {
                 #[wasm_bindgen(js_namespace = performance)]
                 fn now() -> f64;
             }
@@ -314,7 +314,7 @@ where
             use wasm_bindgen::prelude::*;
             
             #[wasm_bindgen]
-            extern "C" {
+            unsafe extern "C" {
                 #[wasm_bindgen(js_namespace = performance)]
                 fn now() -> f64;
             }

@@ -114,6 +114,23 @@ cargo build -p iced_nodegraph_demo_hello_world
 cargo test -p iced_nodegraph
 ```
 
+### Documentation with WASM Demo
+
+```bash
+# Build WASM demo and generate docs (Windows)
+.\build_demo_wasm.ps1
+cargo doc --workspace --no-deps --open
+
+# Build WASM demo and generate docs (Linux/macOS)
+chmod +x build_demo_wasm.sh
+./build_demo_wasm.sh
+cargo doc --workspace --no-deps --open
+```
+
+**Requirements:**
+- `wasm-pack` (`cargo install wasm-pack`)
+- WebGPU-capable browser (Chrome/Edge 113+, Firefox 119+)
+
 ### Demo-Specific Commands
 
 ```bash
