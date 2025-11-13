@@ -1,5 +1,24 @@
 # AI Coding Instructions for iced_nodegraph
 
+## Git Commit Message Rules
+
+**Format**: `type(scope): summary` (Conventional Commits)
+
+**Types**: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `style`, `perf`
+
+**Rules**:
+- Single line only (no body unless explicitly requested)
+- Summary max 60 characters
+- Imperative mood: "add", "fix", "remove" (not "added", "fixed")
+- Focus on WHY, not WHAT (intention over implementation details)
+- No bullet lists, no file listings, no diff dumps
+
+**Examples**:
+- `feat(camera): add zoom-at-cursor transformation`
+- `fix(wasm): resolve time platform incompatibility`
+- `refactor: separate library from demo dependencies`
+- `docs: clarify coordinate system formulas`
+
 ## Documentation Standards
 
 **CRITICAL**: Use minimal, professional language in all documentation:
