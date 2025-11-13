@@ -661,6 +661,39 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 
 [[package]]
+name = "demo_hello_world"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "iced",
+ "iced_nodegraph",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
+name = "demo_interaction"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "iced",
+ "iced_nodegraph",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
+name = "demo_styling"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "iced",
+ "iced_nodegraph",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
 name = "dispatch"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1304,47 +1337,14 @@ version = "0.1.0"
 dependencies = [
  "bitflags 2.10.0",
  "bytemuck",
- "console_error_panic_hook",
  "euclid",
  "glam",
  "iced",
  "iced_wgpu",
  "iced_widget",
  "rustc-hash 2.1.1",
- "serde",
- "serde_json",
  "thiserror 2.0.17",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
- "wgpu",
-]
-
-[[package]]
-name = "iced_nodegraph_demo_hello_world"
-version = "0.1.0"
-dependencies = [
- "console_error_panic_hook",
- "iced",
- "iced_nodegraph",
- "wasm-bindgen",
- "web-sys",
-]
-
-[[package]]
-name = "iced_nodegraph_demo_interaction"
-version = "0.1.0"
-dependencies = [
- "iced",
- "iced_nodegraph",
-]
-
-[[package]]
-name = "iced_nodegraph_demo_styling"
-version = "0.1.0"
-dependencies = [
- "iced",
- "iced_nodegraph",
+ "web-time",
 ]
 
 [[package]]
@@ -1455,12 +1455,6 @@ dependencies = [
  "equivalent",
  "hashbrown 0.16.0",
 ]
-
-[[package]]
-name = "itoa"
-version = "1.0.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
 
 [[package]]
 name = "jni"
@@ -2509,12 +2503,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
-name = "ryu"
-version = "1.0.20"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "28d3b2b1366ec20994f1fd18c3c594f05c5dd4bc44d8bb0c1c632c8d6829481f"
-
-[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2582,19 +2570,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "serde_json"
-version = "1.0.145"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "402a6f66d8c709116cf22f558eab210f5a50187f702eb4d7e5ef38d9a7f1c79c"
-dependencies = [
- "itoa",
- "memchr",
- "ryu",
- "serde",
- "serde_core",
 ]
 
 [[package]]
@@ -3384,7 +3359,6 @@ dependencies = [
  "thiserror 2.0.17",
  "wgpu-core-deps-apple",
  "wgpu-core-deps-emscripten",
- "wgpu-core-deps-wasm",
  "wgpu-core-deps-windows-linux-android",
  "wgpu-hal",
  "wgpu-types",
@@ -3404,15 +3378,6 @@ name = "wgpu-core-deps-emscripten"
 version = "27.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b06ac3444a95b0813ecfd81ddb2774b66220b264b3e2031152a4a29fda4da6b5"
-dependencies = [
- "wgpu-hal",
-]
-
-[[package]]
-name = "wgpu-core-deps-wasm"
-version = "27.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b1027dcf3b027a877e44819df7ceb0e2e98578830f8cd34cd6c3c7c2a7a50b7"
 dependencies = [
  "wgpu-hal",
 ]

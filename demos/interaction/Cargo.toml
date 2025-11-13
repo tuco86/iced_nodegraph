@@ -1,22 +1,32 @@
 [package]
-name = "iced_nodegraph_demo_interaction"
+name = "demo_interaction"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 publish = false
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [[bin]]
-name = "interaction"
+name = "demo_interaction"
 path = "src/main.rs"
+
+[features]
+default = []
+wasm = [
+    "wasm-bindgen",
+    "web-sys",
+    "console_error_panic_hook",
+    "iced/fira-sans",
+]
 
 [dependencies]
 iced_nodegraph.workspace = true
+iced = { workspace = true, features = ["advanced", "wgpu", "tokio"] }
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies.iced]
-workspace = true
-features = ["advanced", "wgpu", "tokio"]
-
-[target.'cfg(target_arch = "wasm32")'.dependencies.iced]
-workspace = true
-features = ["advanced", "wgpu", "webgl"]
+# WASM-specific dependencies (for documentation demos only)
+wasm-bindgen = { workspace = true, optional = true }
+web-sys = { workspace = true, features = ["Window", "Document"], optional = true }
+console_error_panic_hook = { workspace = true, optional = true }

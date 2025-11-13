@@ -3,6 +3,7 @@ use iced_widget::core::{
     Clipboard, Layout, Shell, layout, mouse, renderer,
     widget::{self, Tree, tree},
 };
+use web_time::Instant;
 
 use super::{
     NodeGraph,
@@ -71,36 +72,19 @@ where
         let mut camera = state.camera;
 
         // Update time for animations
-        #[cfg(not(target_arch = "wasm32"))]
-        let time = {
-            let now = std::time::Instant::now();
-            if let Some(last_update) = state.last_update {
+        let (time, now) = {
+            let now = Instant::now();
+            let time = if let Some(last_update) = state.last_update {
                 let delta = now.duration_since(last_update).as_secs_f32();
                 state.time + delta
             } else {
                 state.time
-            }
+            };
+            (time, now)
         };
-        
-        // On WASM, use performance.now() for animations (in milliseconds)
-        #[cfg(target_arch = "wasm32")]
-        let time = {
-            use wasm_bindgen::prelude::*;
-            
-            #[wasm_bindgen]
-            unsafe extern "C" {
-                #[wasm_bindgen(js_namespace = performance)]
-                fn now() -> f64;
-            }
-            
-            let now_ms = now();
-            if let Some(last_update_ms) = state.last_update_ms {
-                let delta = (now_ms - last_update_ms) / 1000.0; // Convert to seconds
-                state.time + delta as f32
-            } else {
-                state.time
-            }
-        };
+
+        // Get fade-in opacity for smooth appearance
+        let fade_opacity = state.fade_in.interpolate(0.0, 1.0, now);
 
         // Handle panning when dragging the graph.
         if let Dragging::Graph(origin) = state.dragging {
@@ -122,26 +106,27 @@ where
         let is_dark_theme = (text_color.r + text_color.g + text_color.b) > 1.5;
 
         // Use simple color derivation that adapts to dark/light themes
+        // Apply fade_opacity to all colors
         let (bg_color, border_color, fill_color, edge_color, drag_edge_color, drag_valid_color) =
             if is_dark_theme {
                 // Dark theme: use darker backgrounds with subtle highlights
-                let bg = glam::vec4(0.08, 0.08, 0.09, 1.0);
-                let border = glam::vec4(0.20, 0.20, 0.22, 1.0);
-                let fill = glam::vec4(0.14, 0.14, 0.16, 1.0);
-                let edge = glam::vec4(text_color.r, text_color.g, text_color.b, text_color.a);
+                let bg = glam::vec4(0.08, 0.08, 0.09, fade_opacity);
+                let border = glam::vec4(0.20, 0.20, 0.22, fade_opacity);
+                let fill = glam::vec4(0.14, 0.14, 0.16, fade_opacity);
+                let edge = glam::vec4(text_color.r, text_color.g, text_color.b, text_color.a * fade_opacity);
                 // Drag colors: warning (orange-ish) and success (green-ish)
-                let drag = glam::vec4(0.9, 0.6, 0.3, 1.0); // Warm warning
-                let valid = glam::vec4(0.3, 0.8, 0.5, 1.0); // Cool success
+                let drag = glam::vec4(0.9, 0.6, 0.3, fade_opacity);
+                let valid = glam::vec4(0.3, 0.8, 0.5, fade_opacity);
                 (bg, border, fill, edge, drag, valid)
             } else {
                 // Light theme: use lighter backgrounds with more contrast
-                let bg = glam::vec4(0.92, 0.92, 0.93, 1.0);
-                let border = glam::vec4(0.70, 0.70, 0.72, 1.0);
-                let fill = glam::vec4(0.84, 0.84, 0.86, 1.0);
-                let edge = glam::vec4(text_color.r, text_color.g, text_color.b, text_color.a);
+                let bg = glam::vec4(0.92, 0.92, 0.93, fade_opacity);
+                let border = glam::vec4(0.70, 0.70, 0.72, fade_opacity);
+                let fill = glam::vec4(0.84, 0.84, 0.86, fade_opacity);
+                let edge = glam::vec4(text_color.r, text_color.g, text_color.b, text_color.a * fade_opacity);
                 // Drag colors: darker for light theme
-                let drag = glam::vec4(0.8, 0.5, 0.2, 1.0); // Warm warning
-                let valid = glam::vec4(0.2, 0.7, 0.4, 1.0); // Cool success
+                let drag = glam::vec4(0.8, 0.5, 0.2, fade_opacity);
+                let valid = glam::vec4(0.2, 0.7, 0.4, fade_opacity);
                 (bg, border, fill, edge, drag, valid)
             };
 
@@ -242,13 +227,6 @@ where
 
         // Draw the foreground primitive
         renderer.draw_primitive(layout.bounds(), primitive_foreground);
-        
-        // Log zoom level for debugging (visible in browser console for WASM)
-        #[cfg(target_arch = "wasm32")]
-        {
-            let zoom = state.camera.zoom();
-            web_sys::console::log_1(&format!("Zoom: {:.2}x", zoom).into());
-        }
     }
 
     fn size_hint(&self) -> Size<Length> {
@@ -299,32 +277,22 @@ where
         let state = tree.state.downcast_mut::<NodeGraphState>();
 
         // Update time for animations
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let now = std::time::Instant::now();
-            if let Some(last_update) = state.last_update {
-                let delta = now.duration_since(last_update).as_secs_f32();
-                state.time += delta;
-            }
-            state.last_update = Some(now);
+        let now = Instant::now();
+        
+        // Start fade-in animation on first update
+        if state.last_update.is_none() {
+            state.fade_in.go_mut(true, now);
         }
         
-        #[cfg(target_arch = "wasm32")]
-        {
-            use wasm_bindgen::prelude::*;
-            
-            #[wasm_bindgen]
-            unsafe extern "C" {
-                #[wasm_bindgen(js_namespace = performance)]
-                fn now() -> f64;
-            }
-            
-            let now_ms = now();
-            if let Some(last_update) = state.last_update_ms {
-                let delta = (now_ms - last_update) / 1000.0; // Convert to seconds
-                state.time += delta as f32;
-            }
-            state.last_update_ms = Some(now_ms);
+        if let Some(last_update) = state.last_update {
+            let delta = now.duration_since(last_update).as_secs_f32();
+            state.time += delta;
+        }
+        state.last_update = Some(now);
+        
+        // Request redraw while animating
+        if state.fade_in.is_animating(now) {
+            shell.request_redraw();
         }
 
         match event {
@@ -338,7 +306,6 @@ where
                     };
 
                     // Smaller zoom steps for smoother zooming
-                    // In WASM, scroll values tend to be larger
                     let zoom_delta = scroll_amount * 0.001 * state.camera.zoom();
 
                     #[cfg(debug_assertions)]

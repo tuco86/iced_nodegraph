@@ -1,27 +1,77 @@
 #!/usr/bin/env pwsh
-# Build hello_world demo for WASM and copy to docs
+# Build all demos for WASM and embed them in their respective documentation
+#
+# This script compiles each demo in demos/ to WebAssembly and places the output
+# in target/doc/<demo_name>/pkg/ for embedding in rustdoc documentation.
+#
+# Requirements:
+#   - wasm-pack (install: cargo install wasm-pack)
+#   - wasm32-unknown-unknown target (install: rustup target add wasm32-unknown-unknown)
+#
+# Usage:
+#   .\build_demo_wasm.ps1
+#
+# Output locations:
+#   - target/doc/demo_hello_world/pkg/
+#   - target/doc/demo_interaction/pkg/
+#   - target/doc/demo_styling/pkg/
 
-Write-Host "Building hello_world demo for WASM..." -ForegroundColor Cyan
+$ErrorActionPreference = "Stop"
 
-# Build the WASM package
-Push-Location demos/hello_world
-wasm-pack build --target web --out-dir pkg --release -- --features wasm
+# Define all demos to build
+$demos = @(
+    @{
+        Name = "demo_hello_world"
+        Path = "demos/hello_world"
+        OutName = "demo_hello_world"
+        HasWasmFeature = $true
+    },
+    @{
+        Name = "demo_interaction"
+        Path = "demos/interaction"
+        OutName = "demo_interaction"
+        HasWasmFeature = $true
+    },
+    @{
+        Name = "demo_styling"
+        Path = "demos/styling"
+        OutName = "demo_styling"
+        HasWasmFeature = $true
+    }
+)
 
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "WASM build failed!" -ForegroundColor Red
-    Pop-Location
-    exit 1
+Write-Host "Building WASM demos and embedding in documentation..." -ForegroundColor Cyan
+Write-Host ""
+
+foreach ($demo in $demos) {
+    Write-Host "Building $($demo.Name) demo..." -ForegroundColor Yellow
+    
+    # Create output directory in doc structure
+    $outDir = "target/doc/$($demo.OutName)/pkg"
+    New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+    
+    # Build command with optional wasm feature
+    $features = if ($demo.HasWasmFeature) { "--features wasm" } else { "" }
+    $buildCmd = "wasm-pack build $($demo.Path) --release --target web --out-dir ../../$outDir --out-name $($demo.OutName) $features"
+    
+    Write-Host "  Running: $buildCmd" -ForegroundColor Gray
+    
+    try {
+        Invoke-Expression $buildCmd
+        
+        if ($LASTEXITCODE -ne 0) {
+            throw "Build failed with exit code $LASTEXITCODE"
+        }
+        
+        Write-Host "  ✓ Successfully built $($demo.Name)" -ForegroundColor Green
+        Write-Host "  Output: $outDir" -ForegroundColor Gray
+    } catch {
+        Write-Host "  ✗ Failed to build $($demo.Name): $_" -ForegroundColor Red
+        exit 1
+    }
+    
+    Write-Host ""
 }
 
-Pop-Location
-
-# Create demo directory in target/doc
-$demoDir = "target/doc/demo"
-New-Item -ItemType Directory -Force -Path $demoDir | Out-Null
-
-# Copy WASM files to doc directory
-Write-Host "Copying WASM files to doc directory..." -ForegroundColor Cyan
-Copy-Item -Path "demos/hello_world/pkg/*" -Destination $demoDir -Recurse -Force
-
-Write-Host "WASM demo build complete!" -ForegroundColor Green
-Write-Host "Files copied to: $demoDir" -ForegroundColor Green
+Write-Host "All WASM demos built successfully!" -ForegroundColor Green
+Write-Host "Demos are embedded in: target/doc/demo_{hello_world,interaction,styling}/pkg/" -ForegroundColor Green
