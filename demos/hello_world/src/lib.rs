@@ -628,7 +628,7 @@ where
 {
     let palette = theme.extended_palette();
 
-    let title_bar = container(text("📧 Email Trigger").size(13).width(Length::Fill))
+    let title_bar = container(text("Email Trigger").size(13).width(Length::Fill))
         .width(Length::Fill)
         .padding([2, 8])
         .style(move |_theme: &iced::Theme| container::Style {
@@ -659,7 +659,7 @@ where
 {
     let palette = theme.extended_palette();
 
-    let title_bar = container(text("📨 Email Parser").size(13).width(Length::Fill))
+    let title_bar = container(text("Email Parser").size(13).width(Length::Fill))
         .width(Length::Fill)
         .padding([2, 8])
         .style(move |_theme: &iced::Theme| container::Style {
@@ -711,7 +711,7 @@ where
 {
     let palette = theme.extended_palette();
 
-    let title_bar = container(text("🔍 Filter").size(13).width(Length::Fill))
+    let title_bar = container(text("Filter").size(13).width(Length::Fill))
         .width(Length::Fill)
         .padding([2, 8])
         .style(move |_theme: &iced::Theme| container::Style {
@@ -749,7 +749,7 @@ where
 {
     let palette = theme.extended_palette();
 
-    let title_bar = container(text("📅 Create Event").size(13).width(Length::Fill))
+    let title_bar = container(text("Create Event").size(13).width(Length::Fill))
         .width(Length::Fill)
         .padding([2, 8])
         .style(move |_theme: &iced::Theme| container::Style {
