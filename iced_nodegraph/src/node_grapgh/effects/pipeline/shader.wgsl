@@ -143,7 +143,7 @@ fn render_edges(uv: vec2<f32>, base_color: vec3<f32>) -> vec3<f32> {
             default: { dir_to = vec2<f32>(-1.0, 0.0); }
         }
 
-        let seg_len = 80.0 / uniforms.camera_zoom;
+        let seg_len = 80.0;
         let p0 = from_pin.position;
         let p1 = from_pin.position + dir_from * seg_len;
         let p3 = to_pin.position;
@@ -474,7 +474,7 @@ fn fs_foreground(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<
             default: { dir_from = normalize(uv - from_pin.position); }
         }
 
-        let seg_len = 80.0 / uniforms.camera_zoom;  // Longer segments for curvier bezier
+        let seg_len = 80.0;  // Constant in world space for stable Bezier curves
         let p0 = from_pin.position;
         let p1 = from_pin.position + dir_from * seg_len;
         
