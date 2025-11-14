@@ -62,7 +62,7 @@ $demos = @(
         Path = "demos/styling"
         OutName = "demo_styling"
         HasWasmFeature = $true
-    )
+    }
 )
 
 Write-Host "Building WASM demos..." -ForegroundColor Yellow

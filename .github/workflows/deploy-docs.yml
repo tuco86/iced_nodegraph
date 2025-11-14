@@ -44,15 +44,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Build documentation
-        run: cargo doc --no-deps
-
-      - name: Build WASM bundle
-        run: |
-          wasm-pack build --target web \
-            --out-dir target/doc/iced_nodegraph/pkg \
-            --out-name iced_nodegraph \
-            --features wasm
+      - name: Build documentation and WASM demos
+        run: ./build_docs.sh
 
       - name: Create .nojekyll file
         run: touch target/doc/.nojekyll
