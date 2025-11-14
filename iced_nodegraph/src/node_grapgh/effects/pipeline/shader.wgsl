@@ -114,6 +114,7 @@ fn render_edges(uv: vec2<f32>, base_color: vec3<f32>) -> vec3<f32> {
     var col = base_color;
     let edge_thickness = 2.0 / uniforms.camera_zoom;
     let endpoint_radius = 4.0 / uniforms.camera_zoom;
+    let aa = 1.0 / uniforms.camera_zoom;  // Zoom-invariant antialiasing
     
     // Render static edges
     for (var i = 0u; i < uniforms.num_edges; i++) {
@@ -170,14 +171,14 @@ fn render_edges(uv: vec2<f32>, base_color: vec3<f32>) -> vec3<f32> {
         }
 
         let dist = sdCubicBezier(uv, p0, p1, p2, p3);
-        let alpha = 1.0 - smoothstep(edge_thickness, edge_thickness + 1.0, dist);
+        let alpha = 1.0 - smoothstep(edge_thickness, edge_thickness + aa, dist);
         col = mix(col, edge_color, alpha);
         
         // Add solid dots at endpoints with matching color
         let dist_start = length(uv - p0);
         let dist_end = length(uv - p3);
-        let dot_alpha_start = 1.0 - smoothstep(endpoint_radius, endpoint_radius + 1.0, dist_start);
-        let dot_alpha_end = 1.0 - smoothstep(endpoint_radius, endpoint_radius + 1.0, dist_end);
+        let dot_alpha_start = 1.0 - smoothstep(endpoint_radius, endpoint_radius + aa, dist_start);
+        let dot_alpha_end = 1.0 - smoothstep(endpoint_radius, endpoint_radius + aa, dist_end);
         col = mix(col, edge_color, max(dot_alpha_start, dot_alpha_end));
     }
     
@@ -456,6 +457,7 @@ fn fs_foreground(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<
     var color = vec4<f32>(0.0);
     let edge_thickness = 2.0 / uniforms.camera_zoom;
     let endpoint_radius = 4.0 / uniforms.camera_zoom;
+    let aa = 1.0 / uniforms.camera_zoom;  // Zoom-invariant antialiasing
 
     // Static edges are now rendered in background shader (behind nodes)
     // Only render dragging edge here (Edge or EdgeOver state)
@@ -510,14 +512,14 @@ fn fs_foreground(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<
 
         // Render entire dragging edge as cubic bezier curve
         let dist = sdCubicBezier(uv, p0, p1, p2, p3);
-        let alpha = 1.0 - smoothstep(edge_thickness, edge_thickness + 1.0, dist);
+        let alpha = 1.0 - smoothstep(edge_thickness, edge_thickness + aa, dist);
         color = mix(color, drag_color, alpha);
         
         // Add solid dots at endpoints for dragging edge
         let dist_start_drag = length(uv - p0);
         let dist_end_drag = length(uv - p3);
-        let dot_alpha_start_drag = 1.0 - smoothstep(endpoint_radius, endpoint_radius + 1.0, dist_start_drag);
-        let dot_alpha_end_drag = 1.0 - smoothstep(endpoint_radius, endpoint_radius + 1.0, dist_end_drag);
+        let dot_alpha_start_drag = 1.0 - smoothstep(endpoint_radius, endpoint_radius + aa, dist_start_drag);
+        let dot_alpha_end_drag = 1.0 - smoothstep(endpoint_radius, endpoint_radius + aa, dist_end_drag);
         color = mix(color, drag_color, max(dot_alpha_start_drag, dot_alpha_end_drag));
     }
 
