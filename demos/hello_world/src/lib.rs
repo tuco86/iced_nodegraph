@@ -179,6 +179,7 @@ pub fn run_demo() {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum ApplicationMessage {
     Noop,
     EdgeConnected {
