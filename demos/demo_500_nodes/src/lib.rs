@@ -401,7 +401,9 @@ impl Application {
 
     fn subscription(&self) -> Subscription<ApplicationMessage> {
         // Enable continuous animation for NodeGraph animations
-        window::frames().map(|_| ApplicationMessage::Tick)
+        Subscription::batch(vec![
+            window::frames().map(|_| ApplicationMessage::Tick)
+        ])
     }
 }
 
