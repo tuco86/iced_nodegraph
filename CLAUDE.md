@@ -1,4 +1,6 @@
-# AI Coding Instructions for iced_nodegraph
+# Claude Code Instructions for iced_nodegraph
+
+This document provides essential context for Claude Code when working on the iced_nodegraph project.
 
 ## Git Commit Message Rules
 
@@ -18,6 +20,8 @@
 - `fix(wasm): resolve time platform incompatibility`
 - `refactor: separate library from demo dependencies`
 - `docs: clarify coordinate system formulas`
+
+**Note**: Claude Code automatically adds co-author attribution when creating commits.
 
 ## Documentation Standards
 

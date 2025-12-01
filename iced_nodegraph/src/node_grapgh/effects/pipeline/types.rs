@@ -30,6 +30,10 @@ pub struct Uniforms {
     pub dragging_edge_from_origin: WorldPoint,
     pub dragging_edge_to_node: u32,
     pub dragging_edge_to_pin: u32,
+
+    pub viewport_size: glam::Vec2, // NEW: viewport size for clip space transform
+    pub _pad_viewport0: u32,
+    pub _pad_viewport1: u32,
 }
 
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]

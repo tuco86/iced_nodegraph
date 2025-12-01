@@ -158,16 +158,48 @@ iced_nodegraph/                    # Workspace root
 │       │   ├── state.rs           # Interaction state
 │       │   ├── euclid.rs          # Type-safe coordinates
 │       │   └── effects/           # WGPU rendering
+│       │       ├── pipeline/      # GPU rendering pipeline
+│       │       │   ├── mod.rs     # 5-pass instanced rendering
+│       │       │   ├── shader.wgsl # SDF-based vertex/fragment shaders
+│       │       │   ├── buffer.rs  # Dynamic GPU buffer management
+│       │       │   └── types.rs   # Shader uniform structures
+│       │       └── primitive/     # Rendering primitive
 │       └── node_pin/              # Pin widgets
 ├── demos/                         # Demo applications
 │   ├── hello_world/               # Basic usage
 │   ├── styling/                   # Theming
-│   └── interaction/               # Pin rules
+│   ├── interaction/               # Pin rules
+│   └── demo_500_nodes/            # Performance benchmark (500 nodes)
 └── docs/                          # Documentation
     └── architecture.md            # Detailed architecture
 ```
 
 See [`docs/architecture.md`](docs/architecture.md) for comprehensive workspace documentation.
+
+### GPU Rendering Architecture
+
+The node graph uses a **custom WGPU rendering pipeline** with **instanced rendering** for scalable performance:
+
+#### Rendering Pipeline (5 Passes)
+1. **Background Pass** - Fullscreen grid rendering
+2. **Edge Pass** - Instanced quad rendering for Bezier curve edges
+3. **Node Pass** - Instanced rounded rectangles with SDF-based pin cutouts
+4. **Pin Pass** - Instanced circles with animated pulsing effects
+5. **Dragging Pass** - Foreground layer for edge drag preview
+
+#### Key Features
+- **SDF (Signed Distance Functions)** - All shapes rendered using mathematical distance fields for crisp edges at any zoom level
+- **Instanced Rendering** - Single draw call per entity type (nodes/pins/edges), not per-pixel iteration
+- **GPU Storage Buffers** - Node/pin/edge data stored in GPU-accessible buffers
+- **Dynamic Buffer Resizing** - Automatic capacity growth as graph complexity increases
+- **Animation Support** - Time-based uniforms for smooth pin pulsing on valid drop targets
+
+#### Performance Characteristics
+- **Complexity**: O(visible_pixels × primitives_in_viewport) instead of O(screen_pixels × total_nodes)
+- **Scalability**: Tested with 500+ nodes and 600+ edges
+- **Bottleneck**: Currently all nodes/edges rendered regardless of visibility (Phase 3 frustum culling planned)
+
+**Implementation**: See [`iced_nodegraph/src/node_grapgh/effects/pipeline/`](iced_nodegraph/src/node_grapgh/effects/pipeline/) for shader code and rendering logic.
 
 ### Coordinate System
 
@@ -211,6 +243,17 @@ Basic node graph with command palette (Cmd+K) for adding nodes and changing them
 - Pin connections
 - Camera controls (pan/zoom)
 - Command palette with live theme preview
+
+### [demo_500_nodes](demos/demo_500_nodes/)
+Performance benchmark demonstrating instanced rendering with 500 nodes and 640 edges. Simulates a realistic procedural shader graph.
+
+**Features:**
+- 500-node graph with 7 processing stages (inputs → noise → vectors → math → textures → blending → outputs)
+- Real-time FPS monitoring
+- Tests rendering scalability at various zoom levels
+- Demonstrates bottleneck (zoom performance) before frustum culling implementation
+
+**Run:** `cargo run --release -p demo_500_nodes`
 
 ### [styling](demos/styling/) *(Planned)*
 Visual customization and theming system. Shows how to create custom node appearances and integrate with Iced's theme system.

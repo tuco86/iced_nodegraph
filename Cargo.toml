@@ -4,6 +4,7 @@ members = [
     "demos/hello_world",
     "demos/styling",
     "demos/interaction",
+    "demos/demo_500_nodes",
 ]
 resolver = "2"
 

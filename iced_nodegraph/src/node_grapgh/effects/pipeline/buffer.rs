@@ -56,6 +56,10 @@ impl<T> Buffer<T> {
     pub fn as_entire_binding(&self) -> BindingResource<'_> {
         self.buffer_wgpu.as_entire_binding()
     }
+
+    pub fn len(&self) -> usize {
+        self.buffer_vec.len()
+    }
 }
 
 fn create_wgpu_buffer(

@@ -305,8 +305,11 @@ where
                         mouse::ScrollDelta::Lines { y, .. } => *y * 10.0,
                     };
 
-                    // Smaller zoom steps for smoother zooming
+                    // Different zoom speeds for WASM vs native
+                    #[cfg(target_arch = "wasm32")]
                     let zoom_delta = scroll_amount * 0.001 * state.camera.zoom();
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let zoom_delta = scroll_amount * 0.01 * state.camera.zoom();
 
                     #[cfg(debug_assertions)]
                     println!(

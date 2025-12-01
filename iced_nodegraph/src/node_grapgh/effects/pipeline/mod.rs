@@ -28,8 +28,12 @@ pub struct Pipeline {
     pins: buffer::Buffer<types::Pin>,
     edges: buffer::Buffer<types::Edge>,
 
-    pipeline_foreground: RenderPipeline,
     pipeline_background: RenderPipeline,
+    pipeline_edges: RenderPipeline,
+    pipeline_nodes: RenderPipeline,
+    pipeline_pins: RenderPipeline,
+    pipeline_dragging: RenderPipeline,
+    pipeline_foreground: RenderPipeline,
 
     bind_group_layout: BindGroupLayout,
     bind_group: BindGroup,
@@ -79,22 +83,29 @@ impl Pipeline {
         });
 
         let module = device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("node fragment shader"),
+            label: Some("node shaders"),
             source: ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!("shader.wgsl"))),
         });
 
-        let pipeline_background =
-            create_render_pipeline(device, format, Layer::Background, &layout, &module);
-        let pipeline_foreground =
-            create_render_pipeline(device, format, Layer::Foreground, &layout, &module);
+        // Create all 5 pipelines
+        let pipeline_background = create_pipeline_custom(device, format, &layout, &module, "vs_background", "fs_background", "background");
+        let pipeline_edges = create_pipeline_custom(device, format, &layout, &module, "vs_edge", "fs_edge", "edges");
+        let pipeline_nodes = create_pipeline_custom(device, format, &layout, &module, "vs_node", "fs_node", "nodes");
+        let pipeline_pins = create_pipeline_custom(device, format, &layout, &module, "vs_pin", "fs_pin", "pins");
+        let pipeline_dragging = create_pipeline_custom(device, format, &layout, &module, "vs_dragging", "fs_dragging", "dragging");
+        let pipeline_foreground = create_pipeline_custom(device, format, &layout, &module, "vs_main", "fs_foreground", "foreground_legacy");
 
         Self {
             uniforms,
             nodes,
             pins,
             edges,
-            pipeline_foreground,
             pipeline_background,
+            pipeline_edges,
+            pipeline_nodes,
+            pipeline_pins,
+            pipeline_dragging,
+            pipeline_foreground,
             bind_group_layout,
             bind_group,
         }
@@ -258,6 +269,9 @@ impl Pipeline {
             dragging_edge_from_origin,
             dragging_edge_to_node,
             dragging_edge_to_pin,
+            viewport_size: glam::Vec2::new(viewport.physical_width() as f32, viewport.physical_height() as f32),
+            _pad_viewport0: 0,
+            _pad_viewport1: 0,
         };
         // println!("uniforms: {:?}", uniforms);
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
@@ -315,24 +329,53 @@ impl Pipeline {
         _viewport: Rectangle<u32>,
         layer: Layer,
     ) {
-        // Don't set scissor rect - let the parent handle clipping
-        // This avoids scissor rect validation errors
-        pass.set_pipeline(match layer {
-            Layer::Background => &self.pipeline_background,
-            Layer::Foreground => &self.pipeline_foreground,
-        });
+        let num_nodes = self.nodes.len();
+        let num_pins = self.pins.len();
+        let num_edges = self.edges.len();
+
         pass.set_bind_group(0, &self.bind_group, &[]);
-        // pass.set_vertex_buffer(0, self.vertices.slice(..));
-        pass.draw(0..6, 0..1);
+
+        match layer {
+            Layer::Background => {
+                // Pass 1: Background grid (fullscreen)
+                pass.set_pipeline(&self.pipeline_background);
+                pass.draw(0..3, 0..1);
+
+                // Pass 2: Edges (instanced - behind nodes)
+                if num_edges > 0 {
+                    pass.set_pipeline(&self.pipeline_edges);
+                    pass.draw(0..6, 0..num_edges as u32);
+                }
+
+                // Pass 3: Nodes (instanced)
+                if num_nodes > 0 {
+                    pass.set_pipeline(&self.pipeline_nodes);
+                    pass.draw(0..6, 0..num_nodes as u32);
+                }
+
+                // Pass 4: Pin indicators (instanced)
+                if num_pins > 0 {
+                    pass.set_pipeline(&self.pipeline_pins);
+                    pass.draw(0..6, 0..num_pins as u32);
+                }
+            }
+            Layer::Foreground => {
+                // Pass 5: Dragging edge (if active)
+                pass.set_pipeline(&self.pipeline_dragging);
+                pass.draw(0..6, 0..1);
+            }
+        }
     }
 }
 
-fn create_render_pipeline(
+fn create_pipeline_custom(
     device: &Device,
     format: TextureFormat,
-    layer: Layer,
     layout: &PipelineLayout,
     module: &ShaderModule,
+    vs_entry: &str,
+    fs_entry: &str,
+    label: &str,
 ) -> RenderPipeline {
     let fragment_targets = [Some(ColorTargetState {
         format,
@@ -340,15 +383,12 @@ fn create_render_pipeline(
         write_mask: ColorWrites::ALL,
     })];
     device.create_render_pipeline(&RenderPipelineDescriptor {
-        label: Some(match layer {
-            Layer::Background => "node_graph background pipeline",
-            Layer::Foreground => "node_graph foreground pipeline",
-        }),
+        label: Some(label),
         layout: Some(layout),
         vertex: VertexState {
             module: module,
-            entry_point: None, // Vertex shader entry point
-            buffers: &[],      // No vertex buffer needed
+            entry_point: Some(vs_entry),
+            buffers: &[],
             compilation_options: PipelineCompilationOptions::default(),
         },
         primitive: PrimitiveState {
@@ -368,15 +408,12 @@ fn create_render_pipeline(
         },
         fragment: Some(FragmentState {
             module: &module,
-            entry_point: Some(match layer {
-                Layer::Background => "fs_background",
-                Layer::Foreground => "fs_foreground",
-            }), // Fragment shader entry point
+            entry_point: Some(fs_entry),
             targets: &fragment_targets,
             compilation_options: PipelineCompilationOptions::default(),
         }),
         multiview: None,
-        cache: None, // Optional cache field
+        cache: None,
     })
 }
 
@@ -387,7 +424,7 @@ fn create_bind_group_layout(device: &Device) -> BindGroupLayout {
             // Binding 0: Uniforms (uniform buffer)
             BindGroupLayoutEntry {
                 binding: 0,
-                visibility: ShaderStages::FRAGMENT,
+                visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -400,7 +437,7 @@ fn create_bind_group_layout(device: &Device) -> BindGroupLayout {
             // Binding 1: Nodes (storage buffer, read-only)
             BindGroupLayoutEntry {
                 binding: 1,
-                visibility: ShaderStages::FRAGMENT,
+                visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
@@ -413,7 +450,7 @@ fn create_bind_group_layout(device: &Device) -> BindGroupLayout {
             // Binding 2: Pins (storage buffer, read-only)
             BindGroupLayoutEntry {
                 binding: 2,
-                visibility: ShaderStages::FRAGMENT,
+                visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
@@ -426,7 +463,7 @@ fn create_bind_group_layout(device: &Device) -> BindGroupLayout {
             // Binding 3: Edges (storage buffer, read-only)
             BindGroupLayoutEntry {
                 binding: 3,
-                visibility: ShaderStages::FRAGMENT,
+                visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
