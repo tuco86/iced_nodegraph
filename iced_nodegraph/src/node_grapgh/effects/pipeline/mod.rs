@@ -158,11 +158,134 @@ impl Pipeline {
         drag_edge_color: glam::Vec4,
         drag_edge_valid_color: glam::Vec4,
     ) {
+        // Calculate viewport bounds in world coordinates for frustum culling
+        // IMPORTANT: Use LOGICAL pixels, not physical pixels!
+        // camera.screen_to_world() works with logical coordinates (ignores scale_factor)
+        // Shader transforms: screen_physical = (world + position) * zoom * scale_factor
+        // But input coordinates are logical: screen_logical = screen_physical / scale_factor
+        // So: world = screen_logical / zoom - position (matches camera.rs formula!)
+        let scale_factor = viewport.scale_factor();
+        let viewport_width = viewport.physical_width() as f32 / scale_factor;
+        let viewport_height = viewport.physical_height() as f32 / scale_factor;
+
+        let inv_zoom = 1.0 / camera_zoom;
+
+        // Transform logical screen corners to world space (same formula as camera.screen_to_world)
+        let world_min_x = (0.0 * inv_zoom) - camera_position.x;
+        let world_max_x = (viewport_width * inv_zoom) - camera_position.x;
+        let world_min_y = (0.0 * inv_zoom) - camera_position.y;
+        let world_max_y = (viewport_height * inv_zoom) - camera_position.y;
+
+        // Add padding to avoid culling nodes near screen edges (in world units)
+        let padding = 100.0 / camera_zoom;
+        let world_min_x = world_min_x - padding;
+        let world_max_x = world_max_x + padding;
+        let world_min_y = world_min_y - padding;
+        let world_max_y = world_max_y + padding;
+
+        // Filter visible nodes (bounding box intersection test)
+        let visible_nodes: Vec<(usize, &Node)> = nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| {
+                let node_min_x = node.position.x;
+                let node_max_x = node.position.x + node.size.width;
+                let node_min_y = node.position.y;
+                let node_max_y = node.position.y + node.size.height;
+
+                // AABB intersection test
+                node_max_x >= world_min_x
+                    && node_min_x <= world_max_x
+                    && node_max_y >= world_min_y
+                    && node_min_y <= world_max_y
+            })
+            .collect();
+
+        // Create mapping from original node indices to new shader buffer indices
+        // This is CRITICAL: after culling, node indices change!
+        // Example: if we cull and keep nodes [5, 10, 15], they become [0, 1, 2] in shader
+        let node_index_map: std::collections::HashMap<usize, u32> = visible_nodes
+            .iter()
+            .enumerate()
+            .map(|(new_idx, (orig_idx, _))| (*orig_idx, new_idx as u32))
+            .collect();
+
+        // Filter edges: calculate bounding box for each Bezier curve and test intersection
+        // with viewport. This matches the shader's edge rendering (cubic Bezier with
+        // control points offset by seg_len in pin direction).
+        const SEG_LEN: f32 = 80.0; // Must match shader.wgsl fs_edge
+
+        let visible_edges: Vec<&((usize, usize), (usize, usize))> = edges
+            .iter()
+            .filter(|((from_node_idx, from_pin_idx), (to_node_idx, to_pin_idx))| {
+                // CRITICAL: Both nodes must be in the visible set!
+                // Otherwise the shader will reference invalid node indices
+                if !node_index_map.contains_key(from_node_idx) || !node_index_map.contains_key(to_node_idx) {
+                    return false;
+                }
+
+                let from_node = &nodes[*from_node_idx];
+                let to_node = &nodes[*to_node_idx];
+                let from_pin = &from_node.pins[*from_pin_idx];
+                let to_pin = &to_node.pins[*to_pin_idx];
+
+                // Calculate Bezier control points (same as shader)
+                let p0_x = from_node.position.x + from_pin.offset.x;
+                let p0_y = from_node.position.y + from_pin.offset.y;
+
+                let p3_x = to_node.position.x + to_pin.offset.x;
+                let p3_y = to_node.position.y + to_pin.offset.y;
+
+                // Direction vectors (0=Left, 1=Right, 2=Top, 3=Bottom)
+                let (dir_from_x, dir_from_y) = match from_pin.side {
+                    0 => (-1.0, 0.0),  // Left
+                    1 => (1.0, 0.0),   // Right
+                    2 => (0.0, -1.0),  // Top
+                    _ => (0.0, 1.0),   // Bottom
+                };
+                let (dir_to_x, dir_to_y) = match to_pin.side {
+                    0 => (-1.0, 0.0),
+                    1 => (1.0, 0.0),
+                    2 => (0.0, -1.0),
+                    _ => (0.0, 1.0),
+                };
+
+                let p1_x = p0_x + dir_from_x * SEG_LEN;
+                let p1_y = p0_y + dir_from_y * SEG_LEN;
+                let p2_x = p3_x + dir_to_x * SEG_LEN;
+                let p2_y = p3_y + dir_to_y * SEG_LEN;
+
+                // Conservative bounding box for cubic Bezier (covers all 4 control points)
+                let edge_min_x = p0_x.min(p1_x).min(p2_x).min(p3_x);
+                let edge_max_x = p0_x.max(p1_x).max(p2_x).max(p3_x);
+                let edge_min_y = p0_y.min(p1_y).min(p2_y).min(p3_y);
+                let edge_max_y = p0_y.max(p1_y).max(p2_y).max(p3_y);
+
+                // AABB intersection test with viewport
+                edge_max_x >= world_min_x
+                    && edge_min_x <= world_max_x
+                    && edge_max_y >= world_min_y
+                    && edge_min_y <= world_max_y
+            })
+            .collect();
+
+        #[cfg(debug_assertions)]
+        if nodes.len() > 100 {
+            println!(
+                "Frustum culling: {}/{} nodes, {}/{} edges visible (zoom: {:.2}x)",
+                visible_nodes.len(),
+                nodes.len(),
+                visible_edges.len(),
+                edges.len(),
+                camera_zoom
+            );
+        }
+
         let mut pin_start = 0;
         let num_nodes = self.nodes.update(
             device,
             queue,
-            nodes.iter().map(|node| {
+            visible_nodes.iter().map(|(_, node)| {
                 let (pin_start, pin_count) = {
                     let count = node.pins.len() as u32;
                     let start = pin_start;
@@ -183,7 +306,7 @@ impl Pipeline {
         let num_pins = self.pins.update(
             device,
             queue,
-            nodes.iter().flat_map(|node| node.pins.iter()).map(|pin| {
+            visible_nodes.iter().flat_map(|(_, node)| node.pins.iter()).map(|pin| {
                 use crate::node_pin::PinDirection;
                 types::Pin {
                     position: pin.offset,
@@ -205,13 +328,20 @@ impl Pipeline {
         let num_edges = self.edges.update(
             device,
             queue,
-            edges
+            visible_edges
                 .iter()
-                .map(|((from_node, from_pin), (to_node, to_pin))| types::Edge {
-                    from_node: *from_node as _,
-                    from_pin: *from_pin as _,
-                    to_node: *to_node as _,
-                    to_pin: *to_pin as _,
+                .map(|((from_node, from_pin), (to_node, to_pin))| {
+                    // CRITICAL: Remap node indices from original to new culled buffer indices!
+                    // After culling, nodes are reindexed in the shader buffer
+                    let from_node_new = *node_index_map.get(from_node).expect("from_node must be in visible set");
+                    let to_node_new = *node_index_map.get(to_node).expect("to_node must be in visible set");
+
+                    types::Edge {
+                        from_node: from_node_new,
+                        from_pin: *from_pin as _,
+                        to_node: to_node_new,
+                        to_pin: *to_pin as _,
+                    }
                 }),
         );
 
@@ -511,4 +641,199 @@ fn create_bind_group(
             },
         ],
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::node_grapgh::euclid::ScreenPoint;
+    use crate::node_grapgh::camera::Camera2D;
+
+    const EPSILON: f32 = 0.1;
+
+    fn approx_eq(a: f32, b: f32) -> bool {
+        (a - b).abs() < EPSILON
+    }
+
+    /// Test that our culling viewport calculation matches camera.screen_to_world()
+    #[test]
+    fn test_culling_viewport_matches_camera() {
+        // Simulated viewport (800x600 LOGICAL pixels)
+        let viewport_width = 800.0;
+        let viewport_height = 600.0;
+
+        // Camera state
+        let camera_zoom = 1.0;
+        let camera_position = WorldPoint::new(0.0, 0.0);
+
+        // Create camera for comparison
+        let camera = Camera2D::with_zoom_and_position(camera_zoom, camera_position);
+
+        // Culling calculation (what we do in update_new) - uses LOGICAL pixels
+        let inv_zoom = 1.0 / camera_zoom;
+        let world_min_x = (0.0 * inv_zoom) - camera_position.x;
+        let world_max_x = (viewport_width * inv_zoom) - camera_position.x;
+        let world_min_y = (0.0 * inv_zoom) - camera_position.y;
+        let world_max_y = (viewport_height * inv_zoom) - camera_position.y;
+
+        // Camera calculation (what camera.screen_to_world does)
+        // camera.rs: world = screen / zoom - position
+        let camera_top_left = camera
+            .screen_to_world()
+            .transform_point(ScreenPoint::new(0.0, 0.0));
+        let camera_bottom_right = camera
+            .screen_to_world()
+            .transform_point(ScreenPoint::new(viewport_width, viewport_height));
+
+        // They should match exactly (both use logical pixels, ignore scale_factor)
+        assert!(
+            approx_eq(world_min_x, camera_top_left.x),
+            "Min X mismatch: culling={}, camera={}",
+            world_min_x,
+            camera_top_left.x
+        );
+        assert!(
+            approx_eq(world_min_y, camera_top_left.y),
+            "Min Y mismatch: culling={}, camera={}",
+            world_min_y,
+            camera_top_left.y
+        );
+        assert!(
+            approx_eq(world_max_x, camera_bottom_right.x),
+            "Max X mismatch: culling={}, camera={}",
+            world_max_x,
+            camera_bottom_right.x
+        );
+        assert!(
+            approx_eq(world_max_y, camera_bottom_right.y),
+            "Max Y mismatch: culling={}, camera={}",
+            world_max_y,
+            camera_bottom_right.y
+        );
+    }
+
+    /// Test culling with zoom > 1.0 (zoomed in)
+    #[test]
+    fn test_culling_viewport_zoomed_in() {
+        let viewport_width = 800.0;
+        let viewport_height = 600.0;
+        let camera_zoom = 2.0; // Zoomed in 2x
+        let camera_position = WorldPoint::new(0.0, 0.0);
+
+        let camera = Camera2D::with_zoom_and_position(camera_zoom, camera_position);
+
+        let inv_zoom = 1.0 / camera_zoom;
+        let world_min_x = (0.0 * inv_zoom) - camera_position.x;
+        let world_max_x = (viewport_width * inv_zoom) - camera_position.x;
+        let world_min_y = (0.0 * inv_zoom) - camera_position.y;
+        let world_max_y = (viewport_height * inv_zoom) - camera_position.y;
+
+        let camera_top_left = camera
+            .screen_to_world()
+            .transform_point(ScreenPoint::new(0.0, 0.0));
+        let camera_bottom_right = camera
+            .screen_to_world()
+            .transform_point(ScreenPoint::new(viewport_width, viewport_height));
+
+        // At zoom 2.0, we should see half the world space (400x300 instead of 800x600)
+        assert!(
+            approx_eq(world_min_x, camera_top_left.x),
+            "Zoomed: Min X mismatch: culling={}, camera={}",
+            world_min_x,
+            camera_top_left.x
+        );
+        assert!(
+            approx_eq(world_max_x, camera_bottom_right.x),
+            "Zoomed: Max X mismatch: culling={}, camera={}, expected ~400",
+            world_max_x,
+            camera_bottom_right.x
+        );
+    }
+
+    /// Test culling with camera panned away from origin
+    #[test]
+    fn test_culling_viewport_with_pan() {
+        let viewport_width = 800.0;
+        let viewport_height = 600.0;
+        let camera_zoom = 1.0;
+        let camera_position = WorldPoint::new(-200.0, -150.0);
+
+        let camera = Camera2D::with_zoom_and_position(camera_zoom, camera_position);
+
+        let inv_zoom = 1.0 / camera_zoom;
+        let world_min_x = (0.0 * inv_zoom) - camera_position.x;
+        let world_max_x = (viewport_width * inv_zoom) - camera_position.x;
+        let world_min_y = (0.0 * inv_zoom) - camera_position.y;
+        let world_max_y = (viewport_height * inv_zoom) - camera_position.y;
+
+        let camera_top_left = camera
+            .screen_to_world()
+            .transform_point(ScreenPoint::new(0.0, 0.0));
+        let camera_bottom_right = camera
+            .screen_to_world()
+            .transform_point(ScreenPoint::new(viewport_width, viewport_height));
+
+        assert!(
+            approx_eq(world_min_x, camera_top_left.x),
+            "Panned: Min X mismatch: culling={}, camera={}",
+            world_min_x,
+            camera_top_left.x
+        );
+        assert!(
+            approx_eq(world_max_x, camera_bottom_right.x),
+            "Panned: Max X mismatch: culling={}, camera={}",
+            world_max_x,
+            camera_bottom_right.x
+        );
+    }
+
+    /// Test culling with combined zoom and pan
+    #[test]
+    fn test_culling_viewport_combined() {
+        let viewport_width = 800.0;
+        let viewport_height = 600.0;
+        let camera_zoom = 1.5;
+        let camera_position = WorldPoint::new(-100.0, -75.0);
+
+        let camera = Camera2D::with_zoom_and_position(camera_zoom, camera_position);
+
+        let inv_zoom = 1.0 / camera_zoom;
+        let world_min_x = (0.0 * inv_zoom) - camera_position.x;
+        let world_max_x = (viewport_width * inv_zoom) - camera_position.x;
+        let world_min_y = (0.0 * inv_zoom) - camera_position.y;
+        let world_max_y = (viewport_height * inv_zoom) - camera_position.y;
+
+        let camera_top_left = camera
+            .screen_to_world()
+            .transform_point(ScreenPoint::new(0.0, 0.0));
+        let camera_bottom_right = camera
+            .screen_to_world()
+            .transform_point(ScreenPoint::new(viewport_width, viewport_height));
+
+        // With combined zoom and pan, culling should still match camera exactly
+        assert!(
+            approx_eq(world_min_x, camera_top_left.x),
+            "Combined: Min X mismatch: culling={}, camera={}",
+            world_min_x,
+            camera_top_left.x
+        );
+        assert!(
+            approx_eq(world_min_y, camera_top_left.y),
+            "Combined: Min Y mismatch: culling={}, camera={}",
+            world_min_y,
+            camera_top_left.y
+        );
+        assert!(
+            approx_eq(world_max_x, camera_bottom_right.x),
+            "Combined: Max X mismatch: culling={}, camera={}",
+            world_max_x,
+            camera_bottom_right.x
+        );
+        assert!(
+            approx_eq(world_max_y, camera_bottom_right.y),
+            "Combined: Max Y mismatch: culling={}, camera={}",
+            world_max_y,
+            camera_bottom_right.y
+        );
+    }
 }
