@@ -20,10 +20,13 @@ repository = "https://github.com/tuco86/iced_nodegraph"
 # Core library
 iced_nodegraph = { path = "iced_nodegraph" }
 
-# Iced framework (local checkout)
-iced = { path = "../iced" }
-iced_wgpu = { path = "../iced/wgpu" }
-iced_widget = { path = "../iced/widget" }
+# Iced framework (git for CI, patched locally for development)
+iced = { git = "https://github.com/iced-rs/iced.git", branch = "master" }
+iced_wgpu = { git = "https://github.com/iced-rs/iced.git", branch = "master" }
+iced_widget = { git = "https://github.com/iced-rs/iced.git", branch = "master" }
+
+# iced_palette (git for CI, patched locally for development)
+iced_palette = { git = "https://github.com/tuco86/iced_palette.git", branch = "main" }
 
 # Coordinate transformations and math
 euclid = { version = "0.22.11", features = ["bytemuck"] }

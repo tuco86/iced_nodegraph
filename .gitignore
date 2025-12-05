@@ -5,3 +5,6 @@
 /target/wasm-build
 
 /.setting.local.json
+
+# Local cargo config with path patches (not for CI)
+/.cargo/config.toml

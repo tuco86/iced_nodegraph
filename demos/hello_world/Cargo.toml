@@ -25,7 +25,7 @@ wasm = [
 [dependencies]
 iced_nodegraph.workspace = true
 iced = { workspace = true, features = ["advanced", "wgpu", "tokio"] }
-iced_palette = { path = "../../../iced_palette" }
+iced_palette.workspace = true
 
 # WASM-specific dependencies (for documentation demos only)
 wasm-bindgen = { workspace = true, optional = true }
