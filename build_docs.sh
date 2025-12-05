@@ -18,6 +18,8 @@
 #   - target/doc/demo_hello_world/pkg/ (WASM demo)
 #   - target/doc/demo_interaction/pkg/ (WASM demo)
 #   - target/doc/demo_styling/pkg/ (WASM demo)
+#   - target/doc/demo_500_nodes/pkg/ (WASM demo)
+#   - target/doc/demo_shader_editor/pkg/ (WASM demo)
 
 set -e
 
@@ -50,6 +52,8 @@ declare -a DEMOS=(
     "demo_hello_world:demos/hello_world:demo_hello_world:wasm"
     "demo_interaction:demos/interaction:demo_interaction:wasm"
     "demo_styling:demos/styling:demo_styling:wasm"
+    "demo_500_nodes:demos/500_nodes:demo_500_nodes:wasm"
+    "demo_shader_editor:demos/shader_editor:demo_shader_editor:wasm"
 )
 
 echo -e "${YELLOW}Building WASM demos...${NC}"
@@ -88,4 +92,4 @@ done
 
 echo -e "${GREEN}Build complete!${NC}"
 echo -e "${GREEN}Documentation: target/doc/index.html${NC}"
-echo -e "${GREEN}WASM demos: target/doc/demo_{hello_world,interaction,styling}/pkg/${NC}"
+echo -e "${GREEN}WASM demos: target/doc/demo_{hello_world,interaction,styling,500_nodes,shader_editor}/pkg/${NC}"
