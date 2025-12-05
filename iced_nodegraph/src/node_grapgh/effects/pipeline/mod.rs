@@ -14,6 +14,7 @@ use iced::{
     },
 };
 use iced_wgpu::graphics::Viewport;
+use iced_wgpu::primitive::Pipeline as PipelineTrait;
 
 use crate::node_grapgh::{effects::Node, euclid::WorldPoint, state::Dragging};
 
@@ -33,17 +34,24 @@ pub struct Pipeline {
     pipeline_nodes: RenderPipeline,
     pipeline_pins: RenderPipeline,
     pipeline_dragging: RenderPipeline,
+    #[allow(dead_code)]
     pipeline_foreground: RenderPipeline,
 
     bind_group_layout: BindGroupLayout,
     bind_group: BindGroup,
 }
 
-impl Pipeline {
-    pub fn new(device: &Device, format: TextureFormat) -> Self {
+impl PipelineTrait for Pipeline {
+    fn new(
+        device: &iced::wgpu::Device,
+        _queue: &iced::wgpu::Queue,
+        format: iced::wgpu::TextureFormat,
+    ) -> Self {
         Self::new_with_shader(device, format, None)
     }
+}
 
+impl Pipeline {
     pub fn new_with_shader(
         device: &Device,
         format: TextureFormat,

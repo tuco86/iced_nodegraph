@@ -67,7 +67,7 @@ pub fn create_default_graph() -> ShaderGraph {
     // Edge0 = 0.0, Edge1 = 1.0 (defaults)
 
     // Create color: combine R, G, B channels at (900, 100)
-    let color_r = graph.add_node(ShaderNodeType::VecCombine3, Point::new(900.0, 50.0));
+    let _color_r = graph.add_node(ShaderNodeType::VecCombine3, Point::new(900.0, 50.0));
     // Would connect RGB values here
 
     // Alpha from smoothstep

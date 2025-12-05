@@ -1,6 +1,7 @@
 use super::sockets::{Socket, SocketType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(non_camel_case_types)]
 pub enum ShaderNodeType {
     // Inputs (10 nodes)
     UV,

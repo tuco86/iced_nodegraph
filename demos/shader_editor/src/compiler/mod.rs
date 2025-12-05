@@ -8,6 +8,7 @@ use validation::{ValidationError, Validator};
 pub struct ShaderCompiler;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum CompileError {
     Validation(ValidationError),
     CodeGeneration(String),

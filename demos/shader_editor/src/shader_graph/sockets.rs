@@ -1,6 +1,7 @@
 use iced::Color;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(dead_code)]
 pub enum SocketType {
     Float,
     Vec2,
@@ -10,6 +11,7 @@ pub enum SocketType {
     Int,
 }
 
+#[allow(dead_code)]
 impl SocketType {
     pub fn wgsl_type(&self) -> &'static str {
         match self {

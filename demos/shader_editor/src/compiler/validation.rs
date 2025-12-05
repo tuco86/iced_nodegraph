@@ -1,17 +1,12 @@
-use crate::shader_graph::{ShaderGraph, SocketType};
-use std::collections::{HashMap, HashSet, VecDeque};
+use crate::shader_graph::ShaderGraph;
+use std::collections::{HashMap, VecDeque};
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum ValidationError {
     CyclicDependency,
-    TypeMismatch {
-        from_type: SocketType,
-        to_type: SocketType,
-    },
-    InvalidConnection {
-        node_id: usize,
-        socket_index: usize,
-    },
+    TypeMismatch,
+    InvalidConnection,
     MissingOutputNode,
 }
 
@@ -73,39 +68,26 @@ impl Validator {
 
     fn check_types(graph: &ShaderGraph) -> Result<(), ValidationError> {
         for conn in &graph.connections {
-            let from_node = graph.get_node(conn.from_node).ok_or(
-                ValidationError::InvalidConnection {
-                    node_id: conn.from_node,
-                    socket_index: conn.from_socket,
-                },
-            )?;
+            let from_node = graph
+                .get_node(conn.from_node)
+                .ok_or(ValidationError::InvalidConnection)?;
 
-            let to_node = graph.get_node(conn.to_node).ok_or(
-                ValidationError::InvalidConnection {
-                    node_id: conn.to_node,
-                    socket_index: conn.to_socket,
-                },
-            )?;
+            let to_node = graph
+                .get_node(conn.to_node)
+                .ok_or(ValidationError::InvalidConnection)?;
 
-            let from_socket = from_node.outputs.get(conn.from_socket).ok_or(
-                ValidationError::InvalidConnection {
-                    node_id: conn.from_node,
-                    socket_index: conn.from_socket,
-                },
-            )?;
+            let from_socket = from_node
+                .outputs
+                .get(conn.from_socket)
+                .ok_or(ValidationError::InvalidConnection)?;
 
-            let to_socket = to_node.inputs.get(conn.to_socket).ok_or(
-                ValidationError::InvalidConnection {
-                    node_id: conn.to_node,
-                    socket_index: conn.to_socket,
-                },
-            )?;
+            let to_socket = to_node
+                .inputs
+                .get(conn.to_socket)
+                .ok_or(ValidationError::InvalidConnection)?;
 
             if !from_socket.socket_type.can_connect_to(&to_socket.socket_type) {
-                return Err(ValidationError::TypeMismatch {
-                    from_type: from_socket.socket_type,
-                    to_type: to_socket.socket_type,
-                });
+                return Err(ValidationError::TypeMismatch);
             }
         }
 

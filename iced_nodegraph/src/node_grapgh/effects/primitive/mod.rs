@@ -36,26 +36,17 @@ pub struct NodeGraphPrimitive {
 }
 
 impl Primitive for NodeGraphPrimitive {
-    type Renderer = Pipeline;
-
-    fn initialize(
-        &self,
-        device: &wgpu::Device,
-        _queue: &wgpu::Queue,
-        format: wgpu::TextureFormat,
-    ) -> Self::Renderer {
-        Pipeline::new(device, format)
-    }
+    type Pipeline = Pipeline;
 
     fn prepare(
         &self,
-        renderer: &mut Self::Renderer,
+        pipeline: &mut Self::Pipeline,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         _bounds: &Rectangle,
         viewport: &Viewport,
     ) {
-        renderer.update_new(
+        pipeline.update_new(
             device,
             queue,
             viewport,
@@ -77,7 +68,7 @@ impl Primitive for NodeGraphPrimitive {
 
     fn draw(
         &self,
-        renderer: &Self::Renderer,
+        pipeline: &Self::Pipeline,
         render_pass: &mut iced::wgpu::RenderPass<'_>,
     ) -> bool {
         // Use default viewport - this should come from the bounds in practice
@@ -87,7 +78,7 @@ impl Primitive for NodeGraphPrimitive {
             width: 800,
             height: 600,
         };
-        renderer.render_pass(render_pass, viewport, self.layer);
+        pipeline.render_pass(render_pass, viewport, self.layer);
         true // We handle the drawing ourselves
     }
 }

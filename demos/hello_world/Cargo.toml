@@ -10,7 +10,7 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]
-name = "demo_hello_world"
+name = "hello_world"
 path = "src/main.rs"
 
 [features]

@@ -10,7 +10,7 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]
-name = "demo_shader_editor"
+name = "shader_editor"
 path = "src/main.rs"
 
 [dependencies]

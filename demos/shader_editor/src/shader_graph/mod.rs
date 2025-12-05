@@ -3,7 +3,7 @@ pub mod sockets;
 
 use iced::Point;
 pub use nodes::ShaderNodeType;
-pub use sockets::{Connection, Socket, SocketType};
+pub use sockets::{Connection, Socket};
 
 #[derive(Debug, Clone)]
 pub struct ShaderNode {
@@ -43,6 +43,7 @@ impl Default for ShaderGraph {
     }
 }
 
+#[allow(dead_code)]
 impl ShaderGraph {
     pub fn new() -> Self {
         Self::default()

@@ -10,7 +10,7 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]
-name = "demo_500_nodes"
+name = "500_nodes"
 path = "src/main.rs"
 
 [dependencies]

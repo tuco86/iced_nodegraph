@@ -271,7 +271,7 @@ impl Application {
         Task::none()
     }
 
-    fn view(&self) -> Element<Message> {
+    fn view(&self) -> Element<'_, Message> {
         // Build node graph
         let mut graph = node_graph()
             .on_connect(|from_node, from_pin, to_node, to_pin| Message::EdgeConnected {
