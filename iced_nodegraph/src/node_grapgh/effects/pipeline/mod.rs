@@ -41,6 +41,14 @@ pub struct Pipeline {
 
 impl Pipeline {
     pub fn new(device: &Device, format: TextureFormat) -> Self {
+        Self::new_with_shader(device, format, None)
+    }
+
+    pub fn new_with_shader(
+        device: &Device,
+        format: TextureFormat,
+        custom_shader_wgsl: Option<&str>,
+    ) -> Self {
         let uniforms = device.create_buffer(&BufferDescriptor {
             label: Some("uniform buffer"),
             size: std::mem::size_of::<types::Uniforms>() as u64,
@@ -82,9 +90,11 @@ impl Pipeline {
             ..Default::default()
         });
 
+        // Use custom shader if provided, otherwise use default
+        let shader_source = custom_shader_wgsl.unwrap_or(include_str!("shader.wgsl"));
         let module = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("node shaders"),
-            source: ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!("shader.wgsl"))),
+            source: ShaderSource::Wgsl(std::borrow::Cow::Borrowed(shader_source)),
         });
 
         // Create all 5 pipelines

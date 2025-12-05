@@ -1,0 +1,19 @@
+[package]
+name = "demo_shader_editor"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "demo_shader_editor"
+path = "src/main.rs"
+
+[dependencies]
+iced_nodegraph.workspace = true
+iced = { workspace = true, features = ["advanced", "wgpu", "tokio"] }
+iced_palette = { path = "../../../iced_palette" }
