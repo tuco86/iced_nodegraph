@@ -191,9 +191,25 @@ impl Pipeline {
                     position: node.position,
                     size: node.size,
                     corner_radius: node.corner_radius,
+                    border_width: node.border_width,
+                    opacity: node.opacity,
                     pin_start,
                     pin_count,
-                    _padding: 0,
+                    _pad0: 0,
+                    _pad1: 0,
+                    _pad2: 0,
+                    fill_color: glam::Vec4::new(
+                        node.fill_color.r,
+                        node.fill_color.g,
+                        node.fill_color.b,
+                        node.fill_color.a,
+                    ),
+                    border_color: glam::Vec4::new(
+                        node.border_color.r,
+                        node.border_color.g,
+                        node.border_color.b,
+                        node.border_color.a,
+                    ),
                 }
             }),
         );
@@ -230,6 +246,12 @@ impl Pipeline {
                     from_pin: *from_pin as _,
                     to_node: *to_node as _,
                     to_pin: *to_pin as _,
+                    // Use edge_color from uniforms as default (will be overridden by per-edge color if set)
+                    color: edge_color,
+                    thickness: 2.0,
+                    _pad0: 0.0,
+                    _pad1: 0.0,
+                    _pad2: 0.0,
                 }),
         );
 

@@ -130,7 +130,14 @@
 
 pub use node_grapgh::{NodeGraph, widget::node_graph};
 pub use node_pin::{NodePin, PinDirection, PinSide, node_pin};
+pub use style::{NodeStyle, EdgeStyle, GraphStyle, relative_luminance, is_dark_theme};
+pub use content::{
+    NodeContentStyle, node_title_bar, node_label, node_separator, simple_node,
+    get_text_color, is_theme_dark,
+};
 
 mod node;
 mod node_grapgh;
 mod node_pin;
+pub mod style;
+pub mod content;

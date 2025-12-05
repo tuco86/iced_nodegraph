@@ -1,8 +1,6 @@
-// Styling Demo - Visual Customization and Theming
-// See README.md for implementation requirements
+// Styling Demo - Interactive Visual Customization
+// Demonstrates per-node styling and live controls
 
-fn main() {
-    println!("Styling Demo - Not yet implemented");
-    println!("See demos/styling/README.md for specifications");
-    println!("Use Copilot to initialize this demo based on the README");
+fn main() -> iced::Result {
+    demo_styling::main()
 }

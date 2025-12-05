@@ -38,9 +38,15 @@ struct Node {
     position: vec2<f32>,
     size: vec2<f32>,
     corner_radius: f32,
+    border_width: f32,
+    opacity: f32,
     pin_start: u32,
     pin_count: u32,
-    _padding: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+    fill_color: vec4<f32>,
+    border_color: vec4<f32>,
 };
 
 struct Pin {
@@ -59,6 +65,11 @@ struct Edge {
     from_pin: u32,
     to_node: u32,
     to_pin: u32,
+    color: vec4<f32>,
+    thickness: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 }
 
 @group(0) @binding(0)
@@ -342,9 +353,10 @@ fn vs_node(@builtin(instance_index) instance: u32,
            @builtin(vertex_index) vertex: u32) -> NodeVertexOutput {
     let node = nodes[instance];
 
-    let border_width = 2.0 / uniforms.camera_zoom;
-    let bbox_min = node.position - vec2(border_width);
-    let bbox_max = node.position + node.size + vec2(border_width);
+    // Use per-node border_width for bounding box padding
+    let border_padding = max(node.border_width, 2.0) / uniforms.camera_zoom;
+    let bbox_min = node.position - vec2(border_padding);
+    let bbox_max = node.position + node.size + vec2(border_padding);
 
     let corners = array<vec2<f32>, 4>(
         bbox_min,
@@ -378,21 +390,24 @@ fn fs_node(in: NodeVertexOutput) -> @location(0) vec4<f32> {
     }
 
     let aa = 0.5 / uniforms.camera_zoom;
-    let border_width = 1.0 / uniforms.camera_zoom;
-    let node_opacity = 0.75;
+    // Use per-node border_width and opacity
+    let border_width = node.border_width / uniforms.camera_zoom;
+    let node_opacity = node.opacity;
 
     var col = vec3(0.0);
     var alpha = 0.0;
 
     if (d < 0.0) {
         if (d > -border_width) {
-            col = uniforms.border_color.xyz;
+            // Use per-node border_color
+            col = node.border_color.xyz;
         } else {
-            col = uniforms.fill_color.xyz;
+            // Use per-node fill_color
+            col = node.fill_color.xyz;
         }
         alpha = node_opacity;
     } else if (d < aa) {
-        col = uniforms.border_color.xyz;
+        col = node.border_color.xyz;
         alpha = (1.0 - smoothstep(0.0, aa, d)) * node_opacity;
     }
 

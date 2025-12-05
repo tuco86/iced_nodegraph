@@ -142,7 +142,7 @@ use iced::{
     Color, Event, Length, Point, Subscription, Task, Theme, event, keyboard, window,
     widget::{column, container, stack, text},
 };
-use iced_nodegraph::{PinDirection, PinSide, node_graph, node_pin};
+use iced_nodegraph::{PinDirection, PinSide, node_graph, node_pin, NodeContentStyle, node_title_bar};
 use iced_palette::{command_palette, command, get_filtered_command_index, get_filtered_count, is_toggle_shortcut, find_matching_shortcut, navigate_up, navigate_down, focus_input, Command, Shortcut};
 
 #[cfg(target_arch = "wasm32")]
@@ -747,16 +747,7 @@ fn email_trigger_node<'a, Message>(theme: &'a Theme) -> iced::Element<'a, Messag
 where
     Message: Clone + 'a,
 {
-    let palette = theme.extended_palette();
-
-    let title_bar = container(text("Email Trigger").size(13).width(Length::Fill))
-        .width(Length::Fill)
-        .padding([2, 8])
-        .style(move |_theme: &iced::Theme| container::Style {
-            background: None,
-            text_color: Some(palette.background.base.text),
-            ..container::Style::default()
-        });
+    let style = NodeContentStyle::input(theme);
 
     let pin_list = column![
         node_pin(
@@ -770,7 +761,9 @@ where
     .spacing(2);
 
     let pin_section = container(pin_list).padding([6, 0]);
-    column![title_bar, pin_section].width(160.0).into()
+    column![node_title_bar("Email Trigger", style), pin_section]
+        .width(160.0)
+        .into()
 }
 
 // Email Parser Node - Input + multiple outputs
@@ -778,16 +771,7 @@ fn email_parser_node<'a, Message>(theme: &'a Theme) -> iced::Element<'a, Message
 where
     Message: Clone + 'a,
 {
-    let palette = theme.extended_palette();
-
-    let title_bar = container(text("Email Parser").size(13).width(Length::Fill))
-        .width(Length::Fill)
-        .padding([2, 8])
-        .style(move |_theme: &iced::Theme| container::Style {
-            background: None,
-            text_color: Some(palette.background.base.text),
-            ..container::Style::default()
-        });
+    let style = NodeContentStyle::process(theme);
 
     let pin_list = column![
         node_pin(
@@ -822,7 +806,9 @@ where
     .spacing(2);
 
     let pin_section = container(pin_list).padding([6, 0]);
-    column![title_bar, pin_section].width(160.0).into()
+    column![node_title_bar("Email Parser", style), pin_section]
+        .width(160.0)
+        .into()
 }
 
 // Filter Node - Input + output
@@ -830,16 +816,7 @@ fn filter_node<'a, Message>(theme: &'a Theme) -> iced::Element<'a, Message>
 where
     Message: Clone + 'a,
 {
-    let palette = theme.extended_palette();
-
-    let title_bar = container(text("Filter").size(13).width(Length::Fill))
-        .width(Length::Fill)
-        .padding([2, 8])
-        .style(move |_theme: &iced::Theme| container::Style {
-            background: None,
-            text_color: Some(palette.background.base.text),
-            ..container::Style::default()
-        });
+    let style = NodeContentStyle::process(theme);
 
     let pin_list = column![
         node_pin(
@@ -860,7 +837,9 @@ where
     .spacing(2);
 
     let pin_section = container(pin_list).padding([6, 0]);
-    column![title_bar, pin_section].width(140.0).into()
+    column![node_title_bar("Filter", style), pin_section]
+        .width(140.0)
+        .into()
 }
 
 // Calendar Node - Only inputs
@@ -868,16 +847,7 @@ fn calendar_node<'a, Message>(theme: &'a Theme) -> iced::Element<'a, Message>
 where
     Message: Clone + 'a,
 {
-    let palette = theme.extended_palette();
-
-    let title_bar = container(text("Create Event").size(13).width(Length::Fill))
-        .width(Length::Fill)
-        .padding([2, 8])
-        .style(move |_theme: &iced::Theme| container::Style {
-            background: None,
-            text_color: Some(palette.background.base.text),
-            ..container::Style::default()
-        });
+    let style = NodeContentStyle::output(theme);
 
     let pin_list = column![
         node_pin(
@@ -905,7 +875,9 @@ where
     .spacing(2);
 
     let pin_section = container(pin_list).padding([6, 0]);
-    column![title_bar, pin_section].width(160.0).into()
+    column![node_title_bar("Create Event", style), pin_section]
+        .width(160.0)
+        .into()
 }
 
 fn node<'a, Message>(node_type: &str, theme: &'a Theme) -> iced::Element<'a, Message>

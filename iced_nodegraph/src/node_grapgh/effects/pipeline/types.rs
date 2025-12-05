@@ -39,12 +39,18 @@ pub struct Uniforms {
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct Node {
-    pub position: WorldVector,
-    pub size: WorldSize,
-    pub corner_radius: f32,
-    pub pin_start: u32,
-    pub pin_count: u32,
-    pub _padding: u32, // <- für 16-Byte-Alignment
+    pub position: WorldVector,    // 8 bytes @ 0
+    pub size: WorldSize,          // 8 bytes @ 8 (total 16)
+    pub corner_radius: f32,       // 4 bytes @ 16
+    pub border_width: f32,        // 4 bytes @ 20
+    pub opacity: f32,             // 4 bytes @ 24
+    pub pin_start: u32,           // 4 bytes @ 28 (total 32)
+    pub pin_count: u32,           // 4 bytes @ 32
+    pub _pad0: u32,               // 4 bytes @ 36
+    pub _pad1: u32,               // 4 bytes @ 40
+    pub _pad2: u32,               // 4 bytes @ 44 (total 48)
+    pub fill_color: glam::Vec4,   // 16 bytes @ 48 (16-byte aligned)
+    pub border_color: glam::Vec4, // 16 bytes @ 64 (total 80)
 }
 
 #[repr(C)]
@@ -63,8 +69,13 @@ pub struct Pin {
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct Edge {
-    pub from_node: u32,
-    pub from_pin: u32,
-    pub to_node: u32,
-    pub to_pin: u32,
+    pub from_node: u32,           // 4 bytes @ 0
+    pub from_pin: u32,            // 4 bytes @ 4
+    pub to_node: u32,             // 4 bytes @ 8
+    pub to_pin: u32,              // 4 bytes @ 12 (total 16)
+    pub color: glam::Vec4,        // 16 bytes @ 16 (16-byte aligned)
+    pub thickness: f32,           // 4 bytes @ 32
+    pub _pad0: f32,               // 4 bytes @ 36
+    pub _pad1: f32,               // 4 bytes @ 40
+    pub _pad2: f32,               // 4 bytes @ 44 (total 48)
 }

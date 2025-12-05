@@ -15,6 +15,7 @@ use crate::{
     PinSide,
     node_grapgh::euclid::{IntoEuclid, ScreenPoint, WorldPoint},
     node_pin::NodePinState,
+    style::is_dark_theme,
 };
 
 // Click detection threshold (in world-space pixels)
@@ -45,13 +46,16 @@ where
     ) -> layout::Node {
         let limits = limits.width(self.size.width).height(self.size.height);
         let size = limits.resolve(self.size.width, self.size.height, Size::ZERO);
+        // Use loose limits for nodes so they can shrink-to-fit their content
+        // This prevents Length::Fill children from expanding to full graph size
+        let node_limits = layout::Limits::new(Size::ZERO, Size::INFINITE);
         let nodes = self
             .elements_iter_mut()
             .zip(&mut tree.children)
-            .map(|((position, element), node_tree)| {
+            .map(|((position, element, _style), node_tree)| {
                 element
                     .as_widget_mut()
-                    .layout(node_tree, renderer, &limits)
+                    .layout(node_tree, renderer, &node_limits)
                     .move_to(position)
             })
             .collect();
@@ -101,14 +105,31 @@ where
         // Theme-aware colors from extended palette
         let text_color = style.text_color;
 
-        // Try to get extended palette if we have iced::Theme
-        // If not available, derive from text_color
-        let is_dark_theme = (text_color.r + text_color.g + text_color.b) > 1.5;
+        // Use proper relative luminance for theme detection
+        // Light text (high luminance) indicates dark background theme
+        let is_dark = is_dark_theme(text_color);
 
-        // Use simple color derivation that adapts to dark/light themes
+        // Check for user-provided graph style
+        let graph_style = self.get_graph_style();
+
+        // Derive colors from theme or use graph style if provided
         // Apply fade_opacity to all colors
         let (bg_color, border_color, fill_color, edge_color, drag_edge_color, drag_valid_color) =
-            if is_dark_theme {
+            if let Some(gs) = graph_style {
+                // User provided graph style - use their colors
+                let bg = glam::vec4(gs.background_color.r, gs.background_color.g, gs.background_color.b, gs.background_color.a * fade_opacity);
+                let border = glam::vec4(gs.grid_color.r, gs.grid_color.g, gs.grid_color.b, gs.grid_color.a * fade_opacity);
+                // Derive fill from background (slightly lighter/darker)
+                let fill = if is_dark {
+                    glam::vec4(gs.background_color.r + 0.06, gs.background_color.g + 0.06, gs.background_color.b + 0.07, fade_opacity * 0.75)
+                } else {
+                    glam::vec4(gs.background_color.r - 0.08, gs.background_color.g - 0.08, gs.background_color.b - 0.07, fade_opacity * 0.75)
+                };
+                let edge = glam::vec4(text_color.r, text_color.g, text_color.b, text_color.a * fade_opacity);
+                let drag = glam::vec4(gs.drag_edge_color.r, gs.drag_edge_color.g, gs.drag_edge_color.b, gs.drag_edge_color.a * fade_opacity);
+                let valid = glam::vec4(gs.drag_edge_valid_color.r, gs.drag_edge_valid_color.g, gs.drag_edge_valid_color.b, gs.drag_edge_valid_color.a * fade_opacity);
+                (bg, border, fill, edge, drag, valid)
+            } else if is_dark {
                 // Dark theme: use darker backgrounds with subtle highlights
                 let bg = glam::vec4(0.08, 0.08, 0.09, fade_opacity);
                 let border = glam::vec4(0.20, 0.20, 0.22, fade_opacity);
@@ -149,7 +170,7 @@ where
                 .zip(layout.children())
                 .enumerate()
                 .map(
-                    |(node_index, (((_position, _element), node_tree), node_layout))| {
+                    |(node_index, (((_position, _element, node_style), node_tree), node_layout))| {
                         let mut offset = WorldVector::zero();
                         if let (Dragging::Node(drag_node_index, origin), Some(cursor_position)) =
                             (state.dragging.clone(), cursor.position())
@@ -161,11 +182,35 @@ where
                                 offset = cursor_position - origin
                             }
                         }
+
+                        // Use per-node style if provided, otherwise use theme defaults
+                        let (node_fill, node_border, corner_rad, border_w, opacity) = if let Some(style) = node_style {
+                            (
+                                style.fill_color,
+                                style.border_color,
+                                style.corner_radius,
+                                style.border_width,
+                                style.opacity * fade_opacity,
+                            )
+                        } else {
+                            (
+                                iced::Color::from_rgba(fill_color.x, fill_color.y, fill_color.z, fill_color.w),
+                                iced::Color::from_rgba(border_color.x, border_color.y, border_color.z, border_color.w),
+                                5.0,
+                                1.0,
+                                fade_opacity * 0.75,
+                            )
+                        };
+
                         effects::Node {
                             position: node_layout.bounds().position().into_euclid().to_vector()
                                 + offset,
                             size: node_layout.bounds().size().into_euclid(),
-                            corner_radius: 5.0,
+                            corner_radius: corner_rad,
+                            border_width: border_w,
+                            opacity,
+                            fill_color: node_fill,
+                            border_color: node_border,
                             pins: find_pins(node_tree, node_layout)
                                 .iter()
                                 .map(|(_pin_index, pin_state, (a, _b))| effects::Pin {
@@ -180,7 +225,8 @@ where
                     },
                 )
                 .collect(),
-            edges: self.edges.clone(),
+            // Extract edge connectivity without style for GPU primitive (style used separately)
+            edges: self.edges.iter().map(|(conn, _style)| *conn).collect(),
             edge_color,
             background_color: bg_color,
             border_color,
@@ -200,7 +246,7 @@ where
             viewport,
             cursor,
             |renderer, viewport, cursor| {
-                for (node_index, (((_position, element), tree), layout)) in self
+                for (node_index, (((_position, element, _style), tree), layout)) in self
                     .elements_iter()
                     .zip(&tree.children)
                     .zip(layout.children())
@@ -235,13 +281,13 @@ where
 
     fn children(&self) -> Vec<Tree> {
         self.elements_iter()
-            .map(|(_, element)| Tree::new(element))
+            .map(|(_, element, _)| Tree::new(element))
             .collect()
     }
 
     fn diff(&self, tree: &mut Tree) {
         let children: Vec<&Element<'_, Message, Theme, Renderer>> =
-            self.elements_iter().map(|(_, e)| e).collect();
+            self.elements_iter().map(|(_, e, _)| e).collect();
         tree.diff_children(&children);
     }
 
@@ -252,7 +298,7 @@ where
         renderer: &Renderer,
         operation: &mut dyn widget::Operation,
     ) {
-        for (((_, element), node_tree), node_layout) in self
+        for (((_, element, _style), node_tree), node_layout) in self
             .elements_iter_mut()
             .zip(&mut tree.children)
             .zip(layout.children())
@@ -508,7 +554,7 @@ where
                     },
                 }
 
-                for (((_, element), tree), layout) in self
+                for (((_, element, _style), tree), layout) in self
                     .elements_iter_mut()
                     .zip(&mut tree.children)
                     .zip(layout.children())
@@ -526,6 +572,11 @@ where
                 }
 
                 if shell.is_event_captured() {
+                    return;
+                }
+
+                // Only process mouse events if cursor is within our bounds
+                if !screen_cursor.is_over(layout.bounds()) {
                     return;
                 }
 
@@ -595,7 +646,7 @@ where
 
                                         // Check if this pin has existing connections
                                         // If it does, "unplug" the clicked end (like pulling a cable)
-                                        for ((from_node, from_pin), (to_node, to_pin)) in &self.edges {
+                                        for (((from_node, from_pin), (to_node, to_pin)), _style) in &self.edges {
                                             // If we clicked the "from" pin, unplug FROM and drag it
                                             // Keep TO pin connected, drag away from it
                                             if *from_node == node_index && *from_pin == pin_index {
