@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 [[bin]]
 name = "demo_styling"
 path = "src/main.rs"
+doc = false
 
 [features]
 default = []

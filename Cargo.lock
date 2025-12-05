@@ -649,8 +649,11 @@ checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 name = "demo_500_nodes"
 version = "0.1.0"
 dependencies = [
+ "console_error_panic_hook",
  "iced",
  "iced_nodegraph",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -680,9 +683,12 @@ dependencies = [
 name = "demo_shader_editor"
 version = "0.1.0"
 dependencies = [
+ "console_error_panic_hook",
  "iced",
  "iced_nodegraph",
  "iced_palette",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]

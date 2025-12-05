@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 [[bin]]
 name = "interaction"
 path = "src/main.rs"
+doc = false
 
 [features]
 default = []

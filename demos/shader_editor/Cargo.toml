@@ -12,8 +12,23 @@ crate-type = ["cdylib", "rlib"]
 [[bin]]
 name = "shader_editor"
 path = "src/main.rs"
+doc = false
+
+[features]
+default = []
+wasm = [
+    "wasm-bindgen",
+    "web-sys",
+    "console_error_panic_hook",
+    "iced/fira-sans",
+]
 
 [dependencies]
 iced_nodegraph.workspace = true
 iced = { workspace = true, features = ["advanced", "wgpu", "tokio"] }
 iced_palette.workspace = true
+
+# WASM-specific dependencies (for documentation demos only)
+wasm-bindgen = { workspace = true, optional = true }
+web-sys = { workspace = true, features = ["Window", "Document"], optional = true }
+console_error_panic_hook = { workspace = true, optional = true }

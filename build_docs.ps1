@@ -62,6 +62,18 @@ $demos = @(
         Path = "demos/styling"
         OutName = "demo_styling"
         HasWasmFeature = $true
+    },
+    @{
+        Name = "demo_500_nodes"
+        Path = "demos/500_nodes"
+        OutName = "demo_500_nodes"
+        HasWasmFeature = $true
+    },
+    @{
+        Name = "demo_shader_editor"
+        Path = "demos/shader_editor"
+        OutName = "demo_shader_editor"
+        HasWasmFeature = $true
     }
 )
 
@@ -100,4 +112,4 @@ foreach ($demo in $demos) {
 
 Write-Host "Build complete!" -ForegroundColor Green
 Write-Host "Documentation: target/doc/index.html" -ForegroundColor Green
-Write-Host "WASM demos: target/doc/demo_{hello_world,interaction,styling}/pkg/" -ForegroundColor Green
+Write-Host "WASM demos: target/doc/demo_{hello_world,interaction,styling,500_nodes,shader_editor}/pkg/" -ForegroundColor Green
