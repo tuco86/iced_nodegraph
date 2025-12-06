@@ -10,130 +10,27 @@
 //!
 //! ## Interactive Demo
 //!
-//! <div id="demo-container" style="margin: 2em 0;">
-//!   <style>
-//!     #demo-container canvas,
-//!     #demo-container #demo-canvas-container {
-//!       display: block !important;
-//!       position: absolute !important;
-//!       top: 0 !important;
-//!       left: 0 !important;
-//!       width: 100% !important;
-//!       height: 100% !important;
-//!       pointer-events: auto !important;
-//!     }
-//!     #demo-loading {
-//!       position: absolute;
-//!       top: 50%;
-//!       left: 50%;
-//!       transform: translate(-50%, -50%);
-//!       text-align: center;
-//!       color: #89b4fa;
-//!     }
-//!     .demo-spinner {
-//!       width: 40px;
-//!       height: 40px;
-//!       border: 3px solid #313244;
-//!       border-top-color: #89b4fa;
-//!       border-radius: 50%;
-//!       animation: demo-spin 1s linear infinite;
-//!       margin: 0 auto 1em;
-//!     }
-//!     @keyframes demo-spin {
-//!       to { transform: rotate(360deg); }
-//!     }
-//!     #demo-info {
-//!       position: absolute;
-//!       bottom: 15px;
-//!       right: 15px;
-//!       background: rgba(30, 30, 46, 0.95);
-//!       border: 1px solid #45475a;
-//!       border-radius: 8px;
-//!       padding: 0.75rem 1rem;
-//!       font-size: 0.75rem;
-//!       color: #cdd6f4;
-//!     }
-//!     #demo-info h4 {
-//!       color: #89b4fa;
-//!       font-size: 0.875rem;
-//!       margin-bottom: 0.5rem;
-//!     }
-//!     #demo-info ul {
-//!       list-style: none;
-//!       line-height: 1.6;
-//!       margin: 0;
-//!       padding: 0;
-//!     }
-//!     #demo-info li:before {
-//!       content: "▸ ";
-//!       color: #89b4fa;
-//!     }
-//!     #demo-error {
-//!       display: none;
-//!       padding: 1.5rem;
-//!       background: #f38ba8;
-//!       color: #1e1e2e;
-//!       border-radius: 8px;
-//!       margin: 1em 0;
-//!     }
-//!   </style>
-//!
-//!   <div style="position: relative; width: 100%; height: 600px; background: #1e1e2e; border-radius: 12px; overflow: hidden; box-shadow: 0 8px 32px rgba(0,0,0,0.3);">
-//!     <div id="demo-loading">
-//!       <div class="demo-spinner"></div>
-//!       <p>Loading demo...</p>
-//!     </div>
-//!     <div id="demo-canvas-container"></div>
-//!     <div id="demo-info">
-//!       <h4>Controls</h4>
-//!       <ul>
-//!         <li>Select nodes in panel</li>
-//!         <li>Adjust style sliders</li>
-//!         <li>Apply presets</li>
-//!         <li>Change themes</li>
-//!         <li>Scroll to zoom</li>
-//!         <li>Middle-drag to pan</li>
-//!       </ul>
-//!     </div>
+//! <link rel="stylesheet" href="pkg/demo.css">
+//! <div id="demo-container">
+//!   <div id="demo-loading">
+//!     <div class="demo-spinner"></div>
+//!     <p>Loading demo...</p>
 //!   </div>
-//!
+//!   <div id="demo-canvas-container"></div>
 //!   <div id="demo-error">
 //!     <strong>Failed to load demo.</strong> WebGPU required.
 //!   </div>
-//!
-//!   <script type="module">
-//!     let demoInitialized = false;
-//!
-//!     async function initDemo() {
-//!       if (demoInitialized) return;
-//!
-//!       try {
-//!         const demo = await import('./pkg/demo_styling.js');
-//!         await demo.default();
-//!
-//!         document.getElementById('demo-loading').style.display = 'none';
-//!
-//!         demoInitialized = true;
-//!         demo.run_demo();
-//!
-//!         setTimeout(() => {
-//!           const canvas = document.querySelector('#demo-canvas-container canvas');
-//!           if (canvas) {
-//!             canvas.setAttribute('tabindex', '0');
-//!             canvas.focus();
-//!           }
-//!         }, 100);
-//!
-//!       } catch (error) {
-//!         console.error('Demo error:', error);
-//!         document.getElementById('demo-loading').style.display = 'none';
-//!         document.getElementById('demo-error').style.display = 'block';
-//!       }
-//!     }
-//!
-//!     initDemo();
-//!   </script>
 //! </div>
+//! <script type="module" src="pkg/demo-loader.js"></script>
+//!
+//! ## Controls
+//!
+//! - **Select nodes** - Click nodes in the right panel to select
+//! - **Style sliders** - Adjust corner radius, opacity, border width
+//! - **Presets** - Apply Input/Process/Output/Comment presets
+//! - **Theme picker** - Switch between color themes
+//! - **Scroll** - Zoom in/out
+//! - **Middle-drag** - Pan the canvas
 
 use iced::{
     Color, Element, Length, Point, Subscription, Task, Theme,

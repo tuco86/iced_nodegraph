@@ -3,8 +3,9 @@
 #
 # This script:
 # 1. Generates rustdoc documentation for the workspace
-# 2. Compiles each demo in demos/ to WebAssembly
-# 3. Places WASM output in target/doc/<demo_name>/pkg/ for embedding
+# 2. Copies shared static assets (CSS/JS) to each demo's doc folder
+# 3. Compiles each demo in demos/ to WebAssembly
+# 4. Places WASM output in target/doc/<demo_name>/pkg/ for embedding
 #
 # Requirements:
 #   - wasm-pack (install: cargo install wasm-pack)
@@ -15,9 +16,7 @@
 #
 # Output locations:
 #   - target/doc/ (rustdoc documentation)
-#   - target/doc/demo_hello_world/pkg/ (WASM demo)
-#   - target/doc/demo_interaction/pkg/ (WASM demo)
-#   - target/doc/demo_styling/pkg/ (WASM demo)
+#   - target/doc/demo_*/pkg/ (WASM binaries + static assets)
 
 $ErrorActionPreference = "Stop"
 
@@ -27,23 +26,22 @@ Write-Host ""
 
 try {
     cargo doc --workspace --no-deps
-    
+
     if ($LASTEXITCODE -ne 0) {
         throw "Documentation build failed with exit code $LASTEXITCODE"
     }
-    
-    Write-Host "✓ Documentation built successfully" -ForegroundColor Green
+
+    Write-Host "Documentation built successfully" -ForegroundColor Green
     Write-Host ""
 } catch {
-    Write-Host "✗ Failed to build documentation: $_" -ForegroundColor Red
+    Write-Host "Failed to build documentation: $_" -ForegroundColor Red
     exit 1
 }
 
 # Step 2: Build WASM demos
-Write-Host "Building WASM demos and embedding in documentation..." -ForegroundColor Cyan
+Write-Host "Building WASM demos..." -ForegroundColor Cyan
 Write-Host ""
 
-# Define all demos to build
 $demos = @(
     @{
         Name = "demo_hello_world"
@@ -77,39 +75,40 @@ $demos = @(
     }
 )
 
-Write-Host "Building WASM demos..." -ForegroundColor Yellow
-Write-Host ""
-
 foreach ($demo in $demos) {
-    Write-Host "Building $($demo.Name) demo..." -ForegroundColor Yellow
-    
+    Write-Host "Building $($demo.Name)..." -ForegroundColor Yellow
+
     # Create output directory in doc structure
     $outDir = "target/doc/$($demo.OutName)/pkg"
     New-Item -ItemType Directory -Force -Path $outDir | Out-Null
-    
+
     # Build command with optional wasm feature
     $features = if ($demo.HasWasmFeature) { "--features wasm" } else { "" }
     $buildCmd = "wasm-pack build $($demo.Path) --release --target web --out-dir ../../$outDir --out-name $($demo.OutName) $features"
-    
-    Write-Host "  Running: $buildCmd" -ForegroundColor Gray
-    
+
+    Write-Host "  $buildCmd" -ForegroundColor Gray
+
     try {
         Invoke-Expression $buildCmd
-        
+
         if ($LASTEXITCODE -ne 0) {
             throw "Build failed with exit code $LASTEXITCODE"
         }
-        
-        Write-Host "  ✓ Successfully built $($demo.Name)" -ForegroundColor Green
-        Write-Host "  Output: $outDir" -ForegroundColor Gray
+
+        # Copy static assets into pkg folder alongside WASM files
+        Copy-Item "demos/static/demo.css" -Destination $outDir
+        Copy-Item "demos/static/demo-loader.js" -Destination $outDir
+
+        Write-Host "  Built $($demo.Name)" -ForegroundColor Green
     } catch {
-        Write-Host "  ✗ Failed to build $($demo.Name): $_" -ForegroundColor Red
+        Write-Host "  Failed to build $($demo.Name): $_" -ForegroundColor Red
         exit 1
     }
-    
+
     Write-Host ""
 }
 
 Write-Host "Build complete!" -ForegroundColor Green
-Write-Host "Documentation: target/doc/index.html" -ForegroundColor Green
-Write-Host "WASM demos: target/doc/demo_{hello_world,interaction,styling,500_nodes,shader_editor}/pkg/" -ForegroundColor Green
+Write-Host ""
+Write-Host "Documentation: target/doc/index.html"
+Write-Host "WASM demos:    target/doc/demo_*/pkg/"

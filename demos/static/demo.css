@@ -1,0 +1,84 @@
+/**
+ * Shared Demo Styles for iced_nodegraph WASM Demos
+ *
+ * These styles are used by all embedded demos in the rustdoc documentation.
+ * The demos render WebGPU content into a canvas element.
+ */
+
+/* Demo container - provides the frame for the WASM canvas */
+#demo-container {
+  position: relative;
+  width: 100%;
+  height: 600px;
+  background: #1e1e2e;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  margin: 2em 0;
+}
+
+/* Canvas positioning - ensures WASM canvas fills the container */
+#demo-container canvas,
+#demo-container #demo-canvas-container {
+  display: block !important;
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  pointer-events: auto !important;
+}
+
+/* Loading overlay - shown while WASM initializes */
+#demo-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  color: #89b4fa;
+  z-index: 10;
+}
+
+#demo-loading p {
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+/* Loading spinner animation */
+.demo-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #313244;
+  border-top-color: #89b4fa;
+  border-radius: 50%;
+  animation: demo-spin 1s linear infinite;
+  margin: 0 auto 1em;
+}
+
+@keyframes demo-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Error panel - shown when WebGPU is unavailable */
+#demo-error {
+  display: none;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 1.5rem 2rem;
+  background: #f38ba8;
+  color: #1e1e2e;
+  border-radius: 8px;
+  text-align: center;
+  font-weight: 500;
+  z-index: 10;
+}
+
+#demo-error strong {
+  display: block;
+  margin-bottom: 0.5rem;
+}
