@@ -4,7 +4,9 @@
 /pkg
 /target/wasm-build
 
-/.setting.local.json
+/.claude/settings.local.json
 
 # Local cargo config with path patches (not for CI)
 /.cargo/config.toml
+
+/nul
