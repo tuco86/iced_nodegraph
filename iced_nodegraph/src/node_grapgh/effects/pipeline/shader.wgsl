@@ -503,15 +503,17 @@ fn fs_pin(in: PinVertexOutput) -> @location(0) vec4<f32> {
 }
 
 // ============================================================================
-// DRAGGING EDGE SHADER (Foreground - reuses edge shader logic)
+// DRAGGING SHADER (Edge dragging, Box Selection, Edge Cutting)
+// Dragging types: 3=Edge, 4=EdgeOver, 5=BoxSelect, 7=EdgeCutting
 // ============================================================================
 
 @vertex
 fn vs_dragging(@builtin(vertex_index) vertex: u32) -> EdgeVertexOutput {
-    // Build a bounding box for the dragging edge
+    // Build a bounding box for the dragging operation
     var p0 = vec2(0.0);
     var p3 = vec2(0.0);
 
+    // Edge dragging (3, 4)
     if (uniforms.dragging == 3u || uniforms.dragging == 4u) {
         let from_node = nodes[uniforms.dragging_edge_from_node];
         let from_pin = pins[from_node.pin_start + uniforms.dragging_edge_from_pin];
@@ -524,6 +526,11 @@ fn vs_dragging(@builtin(vertex_index) vertex: u32) -> EdgeVertexOutput {
         } else {
             p3 = uniforms.cursor_position;
         }
+    }
+    // BoxSelect (5) or EdgeCutting (7): from_origin to cursor
+    else if (uniforms.dragging == 5u || uniforms.dragging == 7u) {
+        p0 = uniforms.dragging_edge_from_origin;
+        p3 = uniforms.cursor_position;
     }
 
     let bbox_min = min(p0, p3) - vec2(100.0 / uniforms.camera_zoom);
@@ -547,6 +554,63 @@ fn vs_dragging(@builtin(vertex_index) vertex: u32) -> EdgeVertexOutput {
 
 @fragment
 fn fs_dragging(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
+    let aa = 1.0 / uniforms.camera_zoom;
+
+    // === BoxSelect (5): Draw selection rectangle ===
+    if (uniforms.dragging == 5u) {
+        let box_min = min(uniforms.dragging_edge_from_origin, uniforms.cursor_position);
+        let box_max = max(uniforms.dragging_edge_from_origin, uniforms.cursor_position);
+
+        let p = in.world_uv;
+
+        // Distance to rectangle edges
+        let dx = max(box_min.x - p.x, p.x - box_max.x);
+        let dy = max(box_min.y - p.y, p.y - box_max.y);
+        let dist_outside = length(max(vec2(dx, dy), vec2(0.0)));
+        let dist_inside = min(max(dx, dy), 0.0);
+        let dist = dist_outside + dist_inside;
+
+        // Border
+        let border_width = 1.5 / uniforms.camera_zoom;
+        let border_alpha = 1.0 - smoothstep(-border_width, -border_width + aa, dist);
+        let border_color = vec4(0.3, 0.6, 1.0, 0.8);
+
+        // Fill (inside the rectangle)
+        let fill_alpha = 1.0 - smoothstep(-aa, 0.0, dist);
+        let fill_color = vec4(0.3, 0.6, 1.0, 0.15);
+
+        // Combine: fill inside, border on edge
+        if (dist < 0.0) {
+            // Inside: show fill + border near edge
+            let edge_dist = -dist;
+            if (edge_dist < border_width + aa) {
+                return vec4(border_color.rgb, border_alpha * border_color.a);
+            }
+            return vec4(fill_color.rgb, fill_alpha * fill_color.a);
+        }
+        return vec4(0.0);
+    }
+
+    // === EdgeCutting (7): Draw cutting line ===
+    if (uniforms.dragging == 7u) {
+        let p0 = uniforms.dragging_edge_from_origin;
+        let p1 = uniforms.cursor_position;
+        let p = in.world_uv;
+
+        // Distance to line segment
+        let pa = p - p0;
+        let ba = p1 - p0;
+        let h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+        let dist = length(pa - ba * h);
+
+        let line_width = 2.0 / uniforms.camera_zoom;
+        let alpha = 1.0 - smoothstep(line_width, line_width + aa, dist);
+
+        // Red cutting line
+        return vec4(1.0, 0.3, 0.3, alpha * 0.8);
+    }
+
+    // === Edge dragging (3, 4) ===
     if (uniforms.dragging != 3u && uniforms.dragging != 4u) {
         return vec4(0.0);
     }
@@ -580,7 +644,6 @@ fn fs_dragging(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
 
     let dist = sdCubicBezier(in.world_uv, p0, p1, p2, p3);
     let edge_thickness = 2.0 / uniforms.camera_zoom;
-    let aa = 1.0 / uniforms.camera_zoom;
 
     let alpha = 1.0 - smoothstep(edge_thickness, edge_thickness + aa, dist);
 

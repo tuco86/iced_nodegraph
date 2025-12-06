@@ -203,7 +203,7 @@ impl Camera2D {
         Transform2D::scale(inv_zoom, inv_zoom).then_translate(-self.position.to_vector())
     }
 
-    #[cfg(test)]
+    #[allow(dead_code)]
     pub fn world_to_screen(&self) -> Transform2D<f32, World, Screen> {
         // Converts world coordinates to screen coordinates.
         self.screen_to_world().inverse().unwrap()

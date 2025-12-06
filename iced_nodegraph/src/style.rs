@@ -167,6 +167,8 @@ pub struct GraphStyle {
     pub drag_edge_color: Color,
     /// Drag edge color when connection is valid
     pub drag_edge_valid_color: Color,
+    /// Selection style for node highlighting and box selection
+    pub selection_style: SelectionStyle,
 }
 
 impl Default for GraphStyle {
@@ -176,6 +178,7 @@ impl Default for GraphStyle {
             grid_color: Color::from_rgb(0.20, 0.20, 0.22),
             drag_edge_color: Color::from_rgb(0.9, 0.6, 0.3),
             drag_edge_valid_color: Color::from_rgb(0.3, 0.8, 0.5),
+            selection_style: SelectionStyle::default(),
         }
     }
 }
@@ -210,6 +213,12 @@ impl GraphStyle {
         self
     }
 
+    /// Sets the selection style.
+    pub fn selection_style(mut self, style: SelectionStyle) -> Self {
+        self.selection_style = style;
+        self
+    }
+
     /// Creates a dark theme graph style.
     pub fn dark() -> Self {
         Self {
@@ -217,6 +226,7 @@ impl GraphStyle {
             grid_color: Color::from_rgb(0.20, 0.20, 0.22),
             drag_edge_color: Color::from_rgb(0.9, 0.6, 0.3),
             drag_edge_valid_color: Color::from_rgb(0.3, 0.8, 0.5),
+            selection_style: SelectionStyle::default(),
         }
     }
 
@@ -227,7 +237,65 @@ impl GraphStyle {
             grid_color: Color::from_rgb(0.70, 0.70, 0.72),
             drag_edge_color: Color::from_rgb(0.8, 0.5, 0.2),
             drag_edge_valid_color: Color::from_rgb(0.2, 0.7, 0.4),
+            selection_style: SelectionStyle::default(),
         }
+    }
+}
+
+/// Style configuration for node selection highlighting.
+///
+/// Controls the visual appearance of selected nodes and the box selection rectangle.
+#[derive(Debug, Clone)]
+pub struct SelectionStyle {
+    /// Border color for selected nodes
+    pub selected_border_color: Color,
+    /// Border width for selected nodes (typically thicker than normal)
+    pub selected_border_width: f32,
+    /// Fill color for the box selection rectangle (semi-transparent)
+    pub box_select_fill: Color,
+    /// Border color for the box selection rectangle
+    pub box_select_border: Color,
+}
+
+impl Default for SelectionStyle {
+    fn default() -> Self {
+        Self {
+            selected_border_color: Color::from_rgb(0.3, 0.6, 1.0),
+            selected_border_width: 2.5,
+            box_select_fill: Color::from_rgba(0.3, 0.6, 1.0, 0.15),
+            box_select_border: Color::from_rgba(0.3, 0.6, 1.0, 0.6),
+        }
+    }
+}
+
+impl SelectionStyle {
+    /// Creates a new SelectionStyle with default values.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the selected border color.
+    pub fn selected_border_color(mut self, color: Color) -> Self {
+        self.selected_border_color = color;
+        self
+    }
+
+    /// Sets the selected border width.
+    pub fn selected_border_width(mut self, width: f32) -> Self {
+        self.selected_border_width = width;
+        self
+    }
+
+    /// Sets the box selection fill color.
+    pub fn box_select_fill(mut self, color: Color) -> Self {
+        self.box_select_fill = color;
+        self
+    }
+
+    /// Sets the box selection border color.
+    pub fn box_select_border(mut self, color: Color) -> Self {
+        self.box_select_border = color;
+        self
     }
 }
 

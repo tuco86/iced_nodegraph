@@ -1,6 +1,8 @@
 mod node;
 mod pin;
 
+use std::collections::HashSet;
+
 use iced::{Rectangle, wgpu};
 use iced_wgpu::graphics::Viewport;
 use iced_wgpu::primitive::Primitive;
@@ -33,6 +35,10 @@ pub struct NodeGraphPrimitive {
     pub fill_color: glam::Vec4,
     pub drag_edge_color: glam::Vec4,
     pub drag_edge_valid_color: glam::Vec4,
+    /// Currently selected nodes (for edge highlighting)
+    pub selected_nodes: HashSet<usize>,
+    /// Color for edges between selected nodes
+    pub selected_edge_color: glam::Vec4,
 }
 
 impl Primitive for NodeGraphPrimitive {
@@ -63,6 +69,8 @@ impl Primitive for NodeGraphPrimitive {
             self.fill_color,
             self.drag_edge_color,
             self.drag_edge_valid_color,
+            &self.selected_nodes,
+            self.selected_edge_color,
         );
     }
 

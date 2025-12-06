@@ -154,6 +154,8 @@ impl Pipeline {
             primitive.fill_color,
             primitive.drag_edge_color,
             primitive.drag_edge_valid_color,
+            &primitive.selected_nodes,
+            primitive.selected_edge_color,
         );
     }
 
@@ -175,6 +177,8 @@ impl Pipeline {
         fill_color: glam::Vec4,
         drag_edge_color: glam::Vec4,
         drag_edge_valid_color: glam::Vec4,
+        selected_nodes: &std::collections::HashSet<usize>,
+        selected_edge_color: glam::Vec4,
     ) {
         let mut pin_start = 0;
         let num_nodes = self.nodes.update(
@@ -241,17 +245,27 @@ impl Pipeline {
             queue,
             edges
                 .iter()
-                .map(|((from_node, from_pin), (to_node, to_pin))| types::Edge {
-                    from_node: *from_node as _,
-                    from_pin: *from_pin as _,
-                    to_node: *to_node as _,
-                    to_pin: *to_pin as _,
-                    // Use edge_color from uniforms as default (will be overridden by per-edge color if set)
-                    color: edge_color,
-                    thickness: 2.0,
-                    _pad0: 0.0,
-                    _pad1: 0.0,
-                    _pad2: 0.0,
+                .map(|((from_node, from_pin), (to_node, to_pin))| {
+                    // Highlight edges where both ends are selected
+                    let is_highlighted = selected_nodes.contains(from_node)
+                        && selected_nodes.contains(to_node);
+                    let color = if is_highlighted {
+                        selected_edge_color
+                    } else {
+                        edge_color
+                    };
+
+                    types::Edge {
+                        from_node: *from_node as _,
+                        from_pin: *from_pin as _,
+                        to_node: *to_node as _,
+                        to_pin: *to_pin as _,
+                        color,
+                        thickness: 2.0,
+                        _pad0: 0.0,
+                        _pad1: 0.0,
+                        _pad2: 0.0,
+                    }
                 }),
         );
 
@@ -261,6 +275,9 @@ impl Pipeline {
             Dragging::Node(_, _) => 2,
             Dragging::Edge(_, _, _) => 3,
             Dragging::EdgeOver(_, _, _, _) => 4,
+            Dragging::BoxSelect(_, _) => 5,
+            Dragging::GroupMove(_) => 6,
+            Dragging::EdgeCutting(_) => 7,
         };
 
         let (
@@ -281,6 +298,13 @@ impl Pipeline {
                     *to_node as _,
                     *to_pin as _,
                 ),
+                // BoxSelect: start point in from_origin, end point is cursor_position
+                Dragging::BoxSelect(start, _end) => (0, 0, *start, 0, 0),
+                // EdgeCutting: first trail point in from_origin
+                Dragging::EdgeCutting(trail) => {
+                    let origin = trail.first().copied().unwrap_or(WorldPoint::zero());
+                    (0, 0, origin, 0, 0)
+                }
                 _ => (0, 0, WorldPoint::zero(), 0, 0),
             }
         };

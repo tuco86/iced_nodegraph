@@ -1,4 +1,6 @@
-use iced::{Length, Point, Size};
+use std::collections::HashSet;
+
+use iced::{Length, Point, Size, Vector};
 
 use crate::style::{EdgeStyle, GraphStyle, NodeStyle};
 
@@ -26,6 +28,16 @@ pub struct NodeGraph<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer
     on_connect: Option<Box<dyn Fn(usize, usize, usize, usize) -> Message + 'a>>,
     on_disconnect: Option<Box<dyn Fn(usize, usize, usize, usize) -> Message + 'a>>,
     on_move: Option<Box<dyn Fn(usize, Point) -> Message + 'a>>,
+    /// Callback for selection changes
+    on_select: Option<Box<dyn Fn(Vec<usize>) -> Message + 'a>>,
+    /// Callback for clone operation (Ctrl+D)
+    on_clone: Option<Box<dyn Fn(Vec<usize>) -> Message + 'a>>,
+    /// Callback for delete operation
+    on_delete: Option<Box<dyn Fn(Vec<usize>) -> Message + 'a>>,
+    /// Callback for group movement
+    on_group_move: Option<Box<dyn Fn(Vec<usize>, Vector) -> Message + 'a>>,
+    /// External selection state (overrides internal state when set)
+    external_selection: Option<&'a HashSet<usize>>,
 }
 
 impl<Message, Theme, Renderer> Default for NodeGraph<'_, Message, Theme, Renderer>
@@ -41,6 +53,11 @@ where
             on_connect: None,
             on_disconnect: None,
             on_move: None,
+            on_select: None,
+            on_clone: None,
+            on_delete: None,
+            on_group_move: None,
+            external_selection: None,
         }
     }
 }
@@ -115,6 +132,48 @@ where
         self
     }
 
+    /// Sets the message that will be produced when the selection changes.
+    ///
+    /// The closure receives a vector of currently selected node indices.
+    pub fn on_select(mut self, f: impl Fn(Vec<usize>) -> Message + 'a) -> Self {
+        self.on_select = Some(Box::new(f));
+        self
+    }
+
+    /// Sets the message that will be produced when Ctrl+D clone is triggered.
+    ///
+    /// The closure receives indices of nodes to clone.
+    pub fn on_clone(mut self, f: impl Fn(Vec<usize>) -> Message + 'a) -> Self {
+        self.on_clone = Some(Box::new(f));
+        self
+    }
+
+    /// Sets the message that will be produced when Delete is triggered.
+    ///
+    /// The closure receives indices of nodes to delete.
+    pub fn on_delete(mut self, f: impl Fn(Vec<usize>) -> Message + 'a) -> Self {
+        self.on_delete = Some(Box::new(f));
+        self
+    }
+
+    /// Sets the message that will be produced when a group of nodes is moved.
+    ///
+    /// The closure receives (selected_indices, movement_delta).
+    pub fn on_group_move(mut self, f: impl Fn(Vec<usize>, Vector) -> Message + 'a) -> Self {
+        self.on_group_move = Some(Box::new(f));
+        self
+    }
+
+    /// Sets the external selection state.
+    ///
+    /// When set, this overrides the internal widget selection state.
+    /// Use this to synchronize selection with your application state,
+    /// especially after operations like clone that create new nodes.
+    pub fn selection(mut self, selection: &'a HashSet<usize>) -> Self {
+        self.external_selection = Some(selection);
+        self
+    }
+
     /// Sets the width of the [`NodeGraph`].
     pub fn width(mut self, width: impl Into<Length>) -> Self {
         self.size.width = width.into();
@@ -164,6 +223,26 @@ where
 
     pub(super) fn on_move_handler(&self) -> Option<&Box<dyn Fn(usize, Point) -> Message + 'a>> {
         self.on_move.as_ref()
+    }
+
+    pub(super) fn on_select_handler(&self) -> Option<&Box<dyn Fn(Vec<usize>) -> Message + 'a>> {
+        self.on_select.as_ref()
+    }
+
+    pub(super) fn on_clone_handler(&self) -> Option<&Box<dyn Fn(Vec<usize>) -> Message + 'a>> {
+        self.on_clone.as_ref()
+    }
+
+    pub(super) fn on_delete_handler(&self) -> Option<&Box<dyn Fn(Vec<usize>) -> Message + 'a>> {
+        self.on_delete.as_ref()
+    }
+
+    pub(super) fn on_group_move_handler(&self) -> Option<&Box<dyn Fn(Vec<usize>, Vector) -> Message + 'a>> {
+        self.on_group_move.as_ref()
+    }
+
+    pub(super) fn get_external_selection(&self) -> Option<&HashSet<usize>> {
+        self.external_selection
     }
 
     /// Checks if the NodeGraph currently needs continuous animation updates

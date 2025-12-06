@@ -1,4 +1,4 @@
-use iced::{Background, Color, Element, Event, Length, Point, Rectangle, Size, Vector, border};
+use iced::{Background, Color, Element, Event, Length, Point, Rectangle, Size, Vector, border, keyboard};
 use iced_widget::core::{
     Clipboard, Layout, Shell, layout, mouse, renderer,
     widget::{self, Tree, tree},
@@ -151,6 +151,14 @@ where
                 (bg, border, fill, edge, drag, valid)
             };
 
+        // Get selection style from graph_style or use defaults
+        let default_selection_style = crate::style::SelectionStyle::default();
+        let selection_style = graph_style
+            .map(|gs| &gs.selection_style)
+            .unwrap_or(&default_selection_style);
+        let selection_border_color = selection_style.selected_border_color;
+        let selection_border_width = selection_style.selected_border_width;
+
         let primitive_background = effects::NodeGraphPrimitive {
             layer: Layer::Background,
             camera_zoom: camera.zoom(),
@@ -163,68 +171,92 @@ where
             ),
             time,
             dragging: state.dragging.clone(),
-            nodes: self
-                .nodes
-                .iter()
-                .zip(&tree.children)
-                .zip(layout.children())
-                .enumerate()
-                .map(
-                    |(node_index, (((_position, _element, node_style), node_tree), node_layout))| {
-                        let mut offset = WorldVector::zero();
-                        if let (Dragging::Node(drag_node_index, origin), Some(cursor_position)) =
-                            (state.dragging.clone(), cursor.position())
-                        {
-                            if drag_node_index == node_index {
-                                let cursor_position: ScreenPoint = cursor_position.into_euclid();
-                                let cursor_position: WorldPoint =
-                                    camera.screen_to_world().transform_point(cursor_position);
-                                offset = cursor_position - origin
+            nodes: {
+
+                self
+                    .nodes
+                    .iter()
+                    .zip(&tree.children)
+                    .zip(layout.children())
+                    .enumerate()
+                    .map(
+                        |(node_index, (((_position, _element, node_style), node_tree), node_layout))| {
+                            let is_selected = state.selected_nodes.contains(&node_index);
+                            let mut offset = WorldVector::zero();
+
+                            // Handle single node drag offset
+                            if let (Dragging::Node(drag_node_index, origin), Some(cursor_position)) =
+                                (state.dragging.clone(), cursor.position())
+                            {
+                                if drag_node_index == node_index {
+                                    let cursor_position: ScreenPoint = cursor_position.into_euclid();
+                                    let cursor_position: WorldPoint =
+                                        camera.screen_to_world().transform_point(cursor_position);
+                                    offset = cursor_position - origin
+                                }
                             }
-                        }
 
-                        // Use per-node style if provided, otherwise use theme defaults
-                        let (node_fill, node_border, corner_rad, border_w, opacity) = if let Some(style) = node_style {
-                            (
-                                style.fill_color,
-                                style.border_color,
-                                style.corner_radius,
-                                style.border_width,
-                                style.opacity * fade_opacity,
-                            )
-                        } else {
-                            (
-                                iced::Color::from_rgba(fill_color.x, fill_color.y, fill_color.z, fill_color.w),
-                                iced::Color::from_rgba(border_color.x, border_color.y, border_color.z, border_color.w),
-                                5.0,
-                                1.0,
-                                fade_opacity * 0.75,
-                            )
-                        };
+                            // Handle group move offset for all selected nodes
+                            if let (Dragging::GroupMove(origin), Some(cursor_position)) =
+                                (state.dragging.clone(), cursor.position())
+                            {
+                                if is_selected {
+                                    let cursor_position: ScreenPoint = cursor_position.into_euclid();
+                                    let cursor_position: WorldPoint =
+                                        camera.screen_to_world().transform_point(cursor_position);
+                                    offset = cursor_position - origin
+                                }
+                            }
 
-                        effects::Node {
-                            position: node_layout.bounds().position().into_euclid().to_vector()
-                                + offset,
-                            size: node_layout.bounds().size().into_euclid(),
-                            corner_radius: corner_rad,
-                            border_width: border_w,
-                            opacity,
-                            fill_color: node_fill,
-                            border_color: node_border,
-                            pins: find_pins(node_tree, node_layout)
-                                .iter()
-                                .map(|(_pin_index, pin_state, (a, _b))| effects::Pin {
-                                    side: pin_state.side.into(),
-                                    offset: a.into_euclid().to_vector() + offset,
-                                    radius: 5.0,
-                                    color: pin_state.color,
-                                    direction: pin_state.direction,
-                                })
-                                .collect(),
-                        }
-                    },
-                )
-                .collect(),
+                            // Use per-node style if provided, otherwise use theme defaults
+                            let (node_fill, mut node_border, corner_rad, mut border_w, opacity) = if let Some(style) = node_style {
+                                (
+                                    style.fill_color,
+                                    style.border_color,
+                                    style.corner_radius,
+                                    style.border_width,
+                                    style.opacity * fade_opacity,
+                                )
+                            } else {
+                                (
+                                    iced::Color::from_rgba(fill_color.x, fill_color.y, fill_color.z, fill_color.w),
+                                    iced::Color::from_rgba(border_color.x, border_color.y, border_color.z, border_color.w),
+                                    5.0,
+                                    1.0,
+                                    fade_opacity * 0.75,
+                                )
+                            };
+
+                            // Apply selection highlighting
+                            if is_selected {
+                                node_border = selection_border_color;
+                                border_w = selection_border_width;
+                            }
+
+                            effects::Node {
+                                position: node_layout.bounds().position().into_euclid().to_vector()
+                                    + offset,
+                                size: node_layout.bounds().size().into_euclid(),
+                                corner_radius: corner_rad,
+                                border_width: border_w,
+                                opacity,
+                                fill_color: node_fill,
+                                border_color: node_border,
+                                pins: find_pins(node_tree, node_layout)
+                                    .iter()
+                                    .map(|(_pin_index, pin_state, (a, _b))| effects::Pin {
+                                        side: pin_state.side.into(),
+                                        offset: a.into_euclid().to_vector() + offset,
+                                        radius: 5.0,
+                                        color: pin_state.color,
+                                        direction: pin_state.direction,
+                                    })
+                                    .collect(),
+                            }
+                        },
+                    )
+                    .collect()
+            },
             // Extract edge connectivity without style for GPU primitive (style used separately)
             edges: self.edges.iter().map(|(conn, _style)| *conn).collect(),
             edge_color,
@@ -233,6 +265,13 @@ where
             fill_color,
             drag_edge_color,
             drag_edge_valid_color: drag_valid_color,
+            selected_nodes: state.selected_nodes.clone(),
+            selected_edge_color: glam::vec4(
+                selection_border_color.r,
+                selection_border_color.g,
+                selection_border_color.b,
+                selection_border_color.a * fade_opacity,
+            ),
         };
         let mut primitive_foreground = primitive_background.clone();
         primitive_foreground.layer = Layer::Foreground;
@@ -252,7 +291,10 @@ where
                     .zip(layout.children())
                     .enumerate()
                 {
-                    let node_move_offset =
+                    let is_selected = state.selected_nodes.contains(&node_index);
+
+                    // Calculate offset for single node drag
+                    let single_node_offset =
                         if let Dragging::Node(dragging_node_index, origin) = state.dragging {
                             cursor
                                 .position()
@@ -260,8 +302,26 @@ where
                                 .map(|cursor_position| cursor_position - origin.into_iced())
                         } else {
                             None
-                        }
+                        };
+
+                    // Calculate offset for group move (all selected nodes)
+                    let group_move_offset =
+                        if let Dragging::GroupMove(origin) = state.dragging {
+                            if is_selected {
+                                cursor
+                                    .position()
+                                    .map(|cursor_position| cursor_position - origin.into_iced())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+
+                    let node_move_offset = single_node_offset
+                        .or(group_move_offset)
                         .unwrap_or(Vector::ZERO);
+
                     renderer.with_translation(node_move_offset, |renderer| {
                         element
                             .as_widget()
@@ -271,7 +331,7 @@ where
             },
         );
 
-        // Draw the foreground primitive
+        // Draw the foreground primitive (includes BoxSelect and EdgeCutting via shader)
         renderer.draw_primitive(layout.bounds(), primitive_foreground);
     }
 
@@ -322,6 +382,13 @@ where
     ) {
         let state = tree.state.downcast_mut::<NodeGraphState>();
 
+        // Synchronize external selection with internal state
+        if let Some(external) = self.get_external_selection() {
+            if state.selected_nodes != *external {
+                state.selected_nodes = external.clone();
+            }
+        }
+
         // Update time for animations
         let now = Instant::now();
         
@@ -339,6 +406,71 @@ where
         // Request redraw while animating
         if state.fade_in.is_animating(now) {
             shell.request_redraw();
+        }
+
+        // Track keyboard modifiers for Shift/Ctrl selection
+        if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
+            state.modifiers = *modifiers;
+        }
+
+        // Handle keyboard shortcuts
+        if let Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event {
+            match key {
+                // Ctrl+D: Clone selected nodes
+                keyboard::Key::Character(c) if c.as_str() == "d" && modifiers.command() => {
+                    if !state.selected_nodes.is_empty() {
+                        if let Some(handler) = self.on_clone_handler() {
+                            let selected: Vec<usize> = state.selected_nodes.iter().copied().collect();
+                            shell.publish(handler(selected));
+                        }
+                        shell.capture_event();
+                    }
+                }
+                // Ctrl+A: Select all nodes
+                keyboard::Key::Character(c) if c.as_str() == "a" && modifiers.command() => {
+                    let count = self.nodes.len();
+                    state.selected_nodes = (0..count).collect();
+                    if let Some(handler) = self.on_select_handler() {
+                        let selected: Vec<usize> = state.selected_nodes.iter().copied().collect();
+                        shell.publish(handler(selected));
+                    }
+                    shell.capture_event();
+                    shell.request_redraw();
+                }
+                // Escape: Clear selection
+                keyboard::Key::Named(keyboard::key::Named::Escape) => {
+                    if !state.selected_nodes.is_empty() {
+                        state.selected_nodes.clear();
+                        if let Some(handler) = self.on_select_handler() {
+                            shell.publish(handler(vec![]));
+                        }
+                        shell.capture_event();
+                        shell.request_redraw();
+                    }
+                }
+                // Delete/Backspace: Delete selected nodes
+                keyboard::Key::Named(keyboard::key::Named::Delete)
+                | keyboard::Key::Named(keyboard::key::Named::Backspace) => {
+                    if !state.selected_nodes.is_empty() {
+                        if let Some(handler) = self.on_delete_handler() {
+                            let selected: Vec<usize> = state.selected_nodes.iter().copied().collect();
+                            shell.publish(handler(selected));
+                        }
+                        state.selected_nodes.clear();
+                        shell.capture_event();
+                        shell.request_redraw();
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Track left mouse button state globally (for Fruit Ninja edge cutting)
+        match event {
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                state.left_mouse_down = false;
+            }
+            _ => {}
         }
 
         match event {
@@ -409,10 +541,61 @@ where
                     }
                 }
 
-                match state.dragging {
+                match state.dragging.clone() {
                     Dragging::None => {}
-                    Dragging::Graph(origin) => match event {
+                    Dragging::EdgeCutting(_) => match event {
+                        Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                            if let Some(cursor_position) = world_cursor.position() {
+                                let cursor_position: WorldPoint = cursor_position.into_euclid();
+
+                                // Add point to trail
+                                if let Dragging::EdgeCutting(ref mut trail) = state.dragging {
+                                    trail.push(cursor_position);
+                                }
+
+                                // Check each edge for intersection with the cutting line
+                                for (((from_node, from_pin), (to_node, to_pin)), _style) in &self.edges {
+                                    let from_pin_pos = layout.children().nth(*from_node).and_then(|node_layout| {
+                                        tree.children.get(*from_node).and_then(|node_tree| {
+                                            find_pins(node_tree, node_layout).get(*from_pin).map(|(_, _, (a, _))| *a)
+                                        })
+                                    });
+                                    let to_pin_pos = layout.children().nth(*to_node).and_then(|node_layout| {
+                                        tree.children.get(*to_node).and_then(|node_tree| {
+                                            find_pins(node_tree, node_layout).get(*to_pin).map(|(_, _, (a, _))| *a)
+                                        })
+                                    });
+
+                                    if let (Some(from_pos), Some(to_pos)) = (from_pin_pos, to_pin_pos) {
+                                        let distance = point_to_line_distance(cursor_position.into_iced(), from_pos, to_pos);
+                                        const EDGE_CUT_THRESHOLD: f32 = 10.0;
+
+                                        if distance < EDGE_CUT_THRESHOLD {
+                                            #[cfg(debug_assertions)]
+                                            println!("Edge cut: {} pin {} -> {} pin {}", from_node, from_pin, to_node, to_pin);
+
+                                            if let Some(handler) = self.on_disconnect_handler() {
+                                                shell.publish(handler(*from_node, *from_pin, *to_node, *to_pin));
+                                            }
+                                            // Only cut one edge per frame
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            shell.request_redraw();
+                        }
                         Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                            #[cfg(debug_assertions)]
+                            println!("Edge cutting complete");
+                            state.dragging = Dragging::None;
+                            shell.capture_event();
+                            shell.request_redraw();
+                        }
+                        _ => {}
+                    },
+                    Dragging::Graph(origin) => match event {
+                        Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)) => {
                             if let Some(cursor_position) = screen_cursor.position() {
                                 let screen_to_world = state.camera.screen_to_world();
                                 let cursor_position: ScreenPoint = cursor_position.into_euclid();
@@ -552,6 +735,73 @@ where
                         }
                         _ => {}
                     },
+                    Dragging::BoxSelect(start, _current) => match event {
+                        Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                            // Update the box selection end point
+                            if let Some(cursor_position) = world_cursor.position() {
+                                state.dragging = Dragging::BoxSelect(start, cursor_position.into_euclid());
+                            }
+                            shell.request_redraw();
+                        }
+                        Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                            // Complete box selection - find nodes that intersect the selection rectangle
+                            if let Some(cursor_position) = world_cursor.position() {
+                                let end: WorldPoint = cursor_position.into_euclid();
+                                let selection_rect = selection_rect_from_points(start, end);
+
+                                // Without Shift: replace selection. With Shift: add to selection.
+                                if !state.modifiers.shift() {
+                                    state.selected_nodes.clear();
+                                }
+
+                                // Find all nodes that intersect the selection rectangle
+                                for (node_index, node_layout) in layout.children().enumerate() {
+                                    if rects_intersect(&selection_rect, &node_layout.bounds()) {
+                                        state.selected_nodes.insert(node_index);
+                                    }
+                                }
+
+                                #[cfg(debug_assertions)]
+                                println!("Box selection complete: {} nodes selected", state.selected_nodes.len());
+
+                                // Notify selection change
+                                if let Some(handler) = self.on_select_handler() {
+                                    let selected: Vec<usize> = state.selected_nodes.iter().copied().collect();
+                                    shell.publish(handler(selected));
+                                }
+                            }
+                            state.dragging = Dragging::None;
+                            shell.capture_event();
+                            shell.request_redraw();
+                        }
+                        _ => {}
+                    },
+                    Dragging::GroupMove(origin) => match event {
+                        Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                            shell.request_redraw();
+                        }
+                        Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                            // Complete group move - notify all selected nodes moved
+                            if let Some(cursor_position) = world_cursor.position() {
+                                let cursor_position: WorldPoint = cursor_position.into_euclid();
+                                let offset = cursor_position - origin;
+
+                                #[cfg(debug_assertions)]
+                                println!("Group move complete: offset={:?}", offset);
+
+                                // Call on_group_move handler with selected nodes and offset
+                                if let Some(handler) = self.on_group_move_handler() {
+                                    let selected: Vec<usize> = state.selected_nodes.iter().copied().collect();
+                                    shell.publish(handler(selected, offset.into_iced()));
+                                }
+                            }
+                            state.dragging = Dragging::None;
+                            shell.capture_event();
+                            shell.invalidate_layout();
+                            shell.request_redraw();
+                        }
+                        _ => {}
+                    },
                 }
 
                 for (((_, element, _style), tree), layout) in self
@@ -598,6 +848,9 @@ where
                         shell.request_redraw();
                     }
                     Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                        // Track left mouse button state for Fruit Ninja edge cutting
+                        state.left_mouse_down = true;
+
                         // === MEASUREMENT POINT: Mouse Click ===
                         #[cfg(debug_assertions)]
                         {
@@ -608,6 +861,44 @@ where
                                     "\n=== CLICK: screen={:?}, world={:?}, zoom={:.2}, cam_pos={:?} ===",
                                     screen_pos, world_pos, state.camera.zoom(), state.camera.position()
                                 );
+                            }
+                        }
+
+                        // Ctrl+Click: Edge cut tool
+                        if state.modifiers.command() {
+                            if let Some(cursor_position) = world_cursor.position() {
+                                // Check if click is near any edge
+                                for (((from_node, from_pin), (to_node, to_pin)), _style) in &self.edges {
+                                    // Get pin positions for both ends of the edge
+                                    let from_pin_pos = layout.children().nth(*from_node).and_then(|node_layout| {
+                                        tree.children.get(*from_node).and_then(|node_tree| {
+                                            find_pins(node_tree, node_layout).get(*from_pin).map(|(_, _, (a, _))| *a)
+                                        })
+                                    });
+                                    let to_pin_pos = layout.children().nth(*to_node).and_then(|node_layout| {
+                                        tree.children.get(*to_node).and_then(|node_tree| {
+                                            find_pins(node_tree, node_layout).get(*to_pin).map(|(_, _, (a, _))| *a)
+                                        })
+                                    });
+
+                                    if let (Some(from_pos), Some(to_pos)) = (from_pin_pos, to_pin_pos) {
+                                        // Check if cursor is near the edge line (using simple distance to line segment)
+                                        let distance = point_to_line_distance(cursor_position, from_pos, to_pos);
+                                        const EDGE_CUT_THRESHOLD: f32 = 10.0;
+
+                                        if distance < EDGE_CUT_THRESHOLD {
+                                            #[cfg(debug_assertions)]
+                                            println!("Edge cut: disconnecting {} pin {} -> {} pin {}", from_node, from_pin, to_node, to_pin);
+
+                                            if let Some(handler) = self.on_disconnect_handler() {
+                                                shell.publish(handler(*from_node, *from_pin, *to_node, *to_pin));
+                                            }
+                                            shell.capture_event();
+                                            shell.request_redraw();
+                                            return;
+                                        }
+                                    }
+                                }
                             }
                         }
 
@@ -717,19 +1008,90 @@ where
                             // check bounds for nodes
                             for (node_index, node_layout) in layout.children().enumerate() {
                                 if world_cursor.is_over(node_layout.bounds()) {
-                                    println!("dragging node {:?}", node_index);
                                     let state = tree.state.downcast_mut::<NodeGraphState>();
-                                    state.dragging =
-                                        Dragging::Node(node_index, cursor_position.into_euclid());
+                                    let already_selected = state.selected_nodes.contains(&node_index);
+                                    let modifiers = state.modifiers;
+                                    let selection_changed;
+
+                                    // Handle selection based on modifiers
+                                    if modifiers.shift() {
+                                        // Shift+Click: Toggle selection
+                                        if already_selected {
+                                            state.selected_nodes.remove(&node_index);
+                                        } else {
+                                            state.selected_nodes.insert(node_index);
+                                        }
+                                        selection_changed = true;
+                                    } else if !already_selected {
+                                        // Regular click on unselected node: clear and select only this one
+                                        state.selected_nodes.clear();
+                                        state.selected_nodes.insert(node_index);
+                                        selection_changed = true;
+                                    } else {
+                                        // Clicking on already-selected node without modifier, keep selection (for group drag)
+                                        selection_changed = false;
+                                    }
+
+                                    // Get the new selection for callback
+                                    let new_selection: Vec<usize> = state.selected_nodes.iter().copied().collect();
+
+                                    #[cfg(debug_assertions)]
+                                    println!("node {:?} clicked, selected: {:?}", node_index, state.selected_nodes);
+
+                                    // Decide between single node drag or group move
+                                    if state.selected_nodes.len() > 1 && state.selected_nodes.contains(&node_index) {
+                                        // Multiple nodes selected, start group move
+                                        state.dragging = Dragging::GroupMove(cursor_position.into_euclid());
+                                    } else {
+                                        // Single node drag
+                                        state.dragging = Dragging::Node(node_index, cursor_position.into_euclid());
+                                    }
+
+                                    // Notify selection change
+                                    if selection_changed {
+                                        if let Some(handler) = self.on_select_handler() {
+                                            shell.publish(handler(new_selection));
+                                        }
+                                    }
+
                                     shell.capture_event();
                                     return;
                                 }
                             }
                         }
+                        // Nothing hit - start box selection on empty space
+                        // But NOT when Ctrl is held (reserved for Fruit Ninja edge cutting)
+                        if let Some(cursor_position) = world_cursor.position() {
+                            let cursor_position: WorldPoint = cursor_position.into_euclid();
+                            let state = tree.state.downcast_mut::<NodeGraphState>();
+
+                            // Ctrl+Left: Start edge cutting mode instead of box selection
+                            if state.modifiers.command() {
+                                #[cfg(debug_assertions)]
+                                println!("Starting edge cutting from {:?}", cursor_position);
+                                state.dragging = Dragging::EdgeCutting(vec![cursor_position]);
+                                shell.capture_event();
+                                return;
+                            }
+
+                            // Clear selection unless Shift is held
+                            if !state.modifiers.shift() {
+                                state.selected_nodes.clear();
+                            }
+
+                            #[cfg(debug_assertions)]
+                            println!("starting box selection from {:?}", cursor_position);
+                            state.dragging = Dragging::BoxSelect(cursor_position, cursor_position);
+                            shell.capture_event();
+                            return;
+                        }
+                    }
+                    Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
+                        // Right-click: start graph panning
                         if let Some(cursor_position) = screen_cursor.position() {
-                            // else drag the whole graph
                             let cursor_position: ScreenPoint = cursor_position.into_euclid();
                             let cursor_position: WorldPoint = state.camera.screen_to_world().transform_point(cursor_position);
+                            #[cfg(debug_assertions)]
                             println!("dragging graph from {:?}", cursor_position);
                             let state = tree.state.downcast_mut::<NodeGraphState>();
                             state.dragging = Dragging::Graph(cursor_position.into_euclid());
@@ -886,4 +1248,49 @@ where
             Background::Color(color),
         );
     }
+}
+
+/// Creates a selection rectangle from two corner points (handles any corner order)
+fn selection_rect_from_points(a: WorldPoint, b: WorldPoint) -> Rectangle {
+    let min_x = a.x.min(b.x);
+    let min_y = a.y.min(b.y);
+    let max_x = a.x.max(b.x);
+    let max_y = a.y.max(b.y);
+    Rectangle {
+        x: min_x,
+        y: min_y,
+        width: max_x - min_x,
+        height: max_y - min_y,
+    }
+}
+
+/// Checks if two rectangles intersect (have any overlapping area)
+fn rects_intersect(a: &Rectangle, b: &Rectangle) -> bool {
+    a.x < b.x + b.width
+        && a.x + a.width > b.x
+        && a.y < b.y + b.height
+        && a.y + a.height > b.y
+}
+
+/// Calculates the distance from a point to a line segment
+fn point_to_line_distance(point: Point, line_start: Point, line_end: Point) -> f32 {
+    let dx = line_end.x - line_start.x;
+    let dy = line_end.y - line_start.y;
+    let line_length_sq = dx * dx + dy * dy;
+
+    if line_length_sq < 0.001 {
+        // Line segment is essentially a point
+        return ((point.x - line_start.x).powi(2) + (point.y - line_start.y).powi(2)).sqrt();
+    }
+
+    // Calculate projection of point onto line
+    let t = ((point.x - line_start.x) * dx + (point.y - line_start.y) * dy) / line_length_sq;
+    let t = t.clamp(0.0, 1.0);
+
+    // Find closest point on line segment
+    let closest_x = line_start.x + t * dx;
+    let closest_y = line_start.y + t * dy;
+
+    // Return distance from point to closest point on line
+    ((point.x - closest_x).powi(2) + (point.y - closest_y).powi(2)).sqrt()
 }

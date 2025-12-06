@@ -27,10 +27,11 @@
 //! - **Middle-drag** - Pan the canvas
 
 use iced::{
-    Color, Event, Length, Point, Subscription, Task, Theme, event, keyboard, window,
+    Color, Event, Length, Point, Subscription, Task, Theme, Vector, event, keyboard, window,
     widget::{column, container, stack, text},
 };
 use iced_nodegraph::{PinDirection, PinSide, node_graph, node_pin, NodeContentStyle, node_title_bar};
+use std::collections::{HashMap, HashSet};
 use iced_palette::{command_palette, command, get_filtered_command_index, get_filtered_count, is_toggle_shortcut, find_matching_shortcut, navigate_up, navigate_down, focus_input, Command, Shortcut};
 
 #[cfg(target_arch = "wasm32")]
@@ -105,6 +106,14 @@ enum ApplicationMessage {
     NavigateToSubmenu(String),
     NavigateBack,
     Tick,
+    // New selection-related messages
+    SelectionChanged(Vec<usize>),
+    CloneNodes(Vec<usize>),
+    DeleteNodes(Vec<usize>),
+    GroupMoved {
+        indices: Vec<usize>,
+        delta: Vector,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -116,6 +125,7 @@ enum PaletteView {
 struct Application {
     edges: Vec<((usize, usize), (usize, usize))>,
     nodes: Vec<(Point, String)>,
+    selected_nodes: HashSet<usize>,
     command_palette_open: bool,
     command_input: String,
     current_theme: Theme,
@@ -140,6 +150,7 @@ impl Default for Application {
                 (Point::new(350.0, 350.0), "filter".to_string()),
                 (Point::new(650.0, 250.0), "calendar".to_string()),
             ],
+            selected_nodes: HashSet::new(),
             command_palette_open: false,
             command_input: String::new(),
             current_theme: Theme::CatppuccinFrappe,
@@ -325,7 +336,9 @@ impl Application {
                                 focus_input() // Re-focus input after navigating to submenu
                             }
                             ApplicationMessage::SpawnNode { x, y, name } => {
+                                let new_idx = self.nodes.len();
                                 self.nodes.push((Point::new(x, y), name));
+                                self.selected_nodes = HashSet::from([new_idx]);
                                 self.command_palette_open = false;
                                 self.palette_view = PaletteView::Main;
                                 Task::none()
@@ -361,7 +374,9 @@ impl Application {
             }
             ApplicationMessage::SpawnNode { x, y, name } => {
                 // Use node type directly
+                let new_idx = self.nodes.len();
                 self.nodes.push((Point::new(x, y), name));
+                self.selected_nodes = HashSet::from([new_idx]);
                 self.command_palette_open = false;
                 self.command_input.clear();
                 self.palette_view = PaletteView::Main;
@@ -386,6 +401,79 @@ impl Application {
             }
             ApplicationMessage::Tick => {
                 // Just trigger a redraw for animations
+                Task::none()
+            }
+            ApplicationMessage::SelectionChanged(indices) => {
+                self.selected_nodes = indices.into_iter().collect();
+                Task::none()
+            }
+            ApplicationMessage::CloneNodes(indices) => {
+                let offset = Vector::new(50.0, 50.0);
+
+                // Build index mapping: old index -> new index
+                let mut index_map: HashMap<usize, usize> = HashMap::new();
+                let mut new_indices = Vec::new();
+
+                for &idx in &indices {
+                    if let Some((pos, name)) = self.nodes.get(idx) {
+                        let new_pos = Point::new(pos.x + offset.x, pos.y + offset.y);
+                        let new_idx = self.nodes.len();
+                        self.nodes.push((new_pos, name.clone()));
+                        index_map.insert(idx, new_idx);
+                        new_indices.push(new_idx);
+                    }
+                }
+
+                // Clone edges between selected nodes
+                let edges_to_clone: Vec<_> = self.edges
+                    .iter()
+                    .filter(|((from, _), (to, _))| {
+                        indices.contains(from) && indices.contains(to)
+                    })
+                    .cloned()
+                    .collect();
+
+                for ((from, fp), (to, tp)) in edges_to_clone {
+                    if let (Some(&new_from), Some(&new_to)) = (index_map.get(&from), index_map.get(&to)) {
+                        self.edges.push(((new_from, fp), (new_to, tp)));
+                    }
+                }
+
+                // Select cloned nodes
+                self.selected_nodes = new_indices.into_iter().collect();
+                Task::none()
+            }
+            ApplicationMessage::DeleteNodes(indices) => {
+                // Sort indices descending to remove from end first (index stability)
+                let mut sorted_indices: Vec<_> = indices.into_iter().collect();
+                sorted_indices.sort_by(|a, b| b.cmp(a));
+
+                for idx in sorted_indices {
+                    // Remove edges referencing this node
+                    self.edges.retain(|((from, _), (to, _))| *from != idx && *to != idx);
+
+                    // Adjust edge indices for nodes that will shift down
+                    for ((from, _), (to, _)) in &mut self.edges {
+                        if *from > idx { *from -= 1; }
+                        if *to > idx { *to -= 1; }
+                    }
+
+                    // Remove the node
+                    if idx < self.nodes.len() {
+                        self.nodes.remove(idx);
+                    }
+                }
+
+                self.selected_nodes.clear();
+                Task::none()
+            }
+            ApplicationMessage::GroupMoved { indices, delta } => {
+                for idx in indices {
+                    if let Some((pos, _)) = self.nodes.get_mut(idx) {
+                        pos.x += delta.x;
+                        pos.y += delta.y;
+                    }
+                }
                 Task::none()
             }
         }
@@ -494,7 +582,12 @@ impl Application {
             .on_move(|node_index, new_position| ApplicationMessage::NodeMoved {
                 node_index,
                 new_position,
-            });
+            })
+            .on_select(ApplicationMessage::SelectionChanged)
+            .on_clone(ApplicationMessage::CloneNodes)
+            .on_delete(ApplicationMessage::DeleteNodes)
+            .on_group_move(|indices, delta| ApplicationMessage::GroupMoved { indices, delta })
+            .selection(&self.selected_nodes);
 
         // Add all nodes from state
         for (position, name) in &self.nodes {
