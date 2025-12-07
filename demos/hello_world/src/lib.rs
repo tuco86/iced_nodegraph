@@ -30,7 +30,7 @@ use iced::{
     Color, Event, Length, Point, Subscription, Task, Theme, Vector, event, keyboard, window,
     widget::{column, container, stack, text},
 };
-use iced_nodegraph::{PinDirection, PinSide, node_graph, node_pin, NodeContentStyle, node_title_bar};
+use iced_nodegraph::{PinDirection, PinSide, PinReference, node_graph, node_pin, NodeContentStyle, node_title_bar};
 use std::collections::{HashMap, HashSet};
 use iced_palette::{command_palette, command, get_filtered_command_index, get_filtered_count, is_toggle_shortcut, find_matching_shortcut, navigate_up, navigate_down, focus_input, Command, Shortcut};
 
@@ -123,7 +123,7 @@ enum PaletteView {
 }
 
 struct Application {
-    edges: Vec<((usize, usize), (usize, usize))>,
+    edges: Vec<(PinReference, PinReference)>,
     nodes: Vec<(Point, String)>,
     selected_nodes: HashSet<usize>,
     command_palette_open: bool,
@@ -139,10 +139,10 @@ impl Default for Application {
     fn default() -> Self {
         Self {
             edges: vec![
-                ((0, 0), (1, 0)), // Email Trigger -> Email Parser
-                ((1, 0), (2, 0)), // Email Parser subject -> Filter
-                ((1, 1), (3, 0)), // Email Parser datetime -> Calendar
-                ((2, 0), (3, 1)), // Filter -> Calendar title
+                (PinReference::new(0, 0), PinReference::new(1, 0)), // Email Trigger -> Email Parser
+                (PinReference::new(1, 0), PinReference::new(2, 0)), // Email Parser subject -> Filter
+                (PinReference::new(1, 1), PinReference::new(3, 0)), // Email Parser datetime -> Calendar
+                (PinReference::new(2, 0), PinReference::new(3, 1)), // Filter -> Calendar title
             ],
             nodes: vec![
                 (Point::new(100.0, 150.0), "email_trigger".to_string()),
@@ -180,7 +180,7 @@ impl Application {
                     "Edge connected: node {} pin {} -> node {} pin {}",
                     from_node, from_pin, to_node, to_pin
                 );
-                self.edges.push(((from_node, from_pin), (to_node, to_pin)));
+                self.edges.push((PinReference::new(from_node, from_pin), PinReference::new(to_node, to_pin)));
                 Task::none()
             }
             ApplicationMessage::NodeMoved {
@@ -200,7 +200,7 @@ impl Application {
                 to_pin,
             } => {
                 self.edges
-                    .retain(|edge| *edge != ((from_node, from_pin), (to_node, to_pin)));
+                    .retain(|(from, to)| !(from.node_id == from_node && from.pin_id == from_pin && to.node_id == to_node && to.pin_id == to_pin));
                 println!(
                     "Edge disconnected: node {} pin {} -> node {} pin {}",
                     from_node, from_pin, to_node, to_pin
@@ -427,15 +427,15 @@ impl Application {
                 // Clone edges between selected nodes
                 let edges_to_clone: Vec<_> = self.edges
                     .iter()
-                    .filter(|((from, _), (to, _))| {
-                        indices.contains(from) && indices.contains(to)
+                    .filter(|(from, to)| {
+                        indices.contains(&from.node_id) && indices.contains(&to.node_id)
                     })
                     .cloned()
                     .collect();
 
-                for ((from, fp), (to, tp)) in edges_to_clone {
-                    if let (Some(&new_from), Some(&new_to)) = (index_map.get(&from), index_map.get(&to)) {
-                        self.edges.push(((new_from, fp), (new_to, tp)));
+                for (from, to) in edges_to_clone {
+                    if let (Some(&new_from), Some(&new_to)) = (index_map.get(&from.node_id), index_map.get(&to.node_id)) {
+                        self.edges.push((PinReference::new(new_from, from.pin_id), PinReference::new(new_to, to.pin_id)));
                     }
                 }
 
@@ -450,12 +450,12 @@ impl Application {
 
                 for idx in sorted_indices {
                     // Remove edges referencing this node
-                    self.edges.retain(|((from, _), (to, _))| *from != idx && *to != idx);
+                    self.edges.retain(|(from, to)| from.node_id != idx && to.node_id != idx);
 
                     // Adjust edge indices for nodes that will shift down
-                    for ((from, _), (to, _)) in &mut self.edges {
-                        if *from > idx { *from -= 1; }
-                        if *to > idx { *to -= 1; }
+                    for (from, to) in &mut self.edges {
+                        if from.node_id > idx { from.node_id -= 1; }
+                        if to.node_id > idx { to.node_id -= 1; }
                     }
 
                     // Remove the node
@@ -595,8 +595,8 @@ impl Application {
         }
 
         // Add stored edges
-        for ((from_node, from_pin), (to_node, to_pin)) in &self.edges {
-            ng.push_edge(*from_node, *from_pin, *to_node, *to_pin);
+        for (from, to) in &self.edges {
+            ng.push_edge(*from, *to);
         }
 
         let graph_view = ng.into();

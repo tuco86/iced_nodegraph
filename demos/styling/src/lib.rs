@@ -32,12 +32,13 @@
 //! - **Scroll** - Zoom in/out
 //! - **Middle-drag** - Pan the canvas
 
+use std::collections::HashSet;
 use iced::{
-    Color, Element, Length, Point, Subscription, Task, Theme,
+    Color, Element, Length, Point, Subscription, Task, Theme, Vector, window,
     widget::{button, column, container, row, slider, stack, text, pick_list},
 };
 use iced_nodegraph::{
-    NodeStyle, NodeContentStyle, PinDirection, PinSide,
+    NodeStyle, NodeContentStyle, PinDirection, PinSide, PinReference,
     node_graph, node_pin, node_title_bar,
 };
 
@@ -95,6 +96,11 @@ enum Message {
         node_index: usize,
         new_position: Point,
     },
+    SelectionChanged(Vec<usize>),
+    GroupMoved {
+        indices: Vec<usize>,
+        delta: Vector,
+    },
 
     // Style controls
     CornerRadiusChanged(f32),
@@ -135,10 +141,11 @@ impl NodePreset {
 }
 
 struct Application {
-    edges: Vec<((usize, usize), (usize, usize))>,
+    edges: Vec<(PinReference, PinReference)>,
     nodes: Vec<(Point, String, NodeStyle)>,
     current_theme: Theme,
     selected_node: Option<usize>,
+    graph_selection: HashSet<usize>,
 
     // Control panel state
     corner_radius: f32,
@@ -150,8 +157,8 @@ impl Default for Application {
     fn default() -> Self {
         Self {
             edges: vec![
-                ((0, 0), (1, 0)), // Input -> Process
-                ((1, 0), (2, 0)), // Process -> Output
+                (PinReference::new(0, 0), PinReference::new(1, 0)), // Input -> Process
+                (PinReference::new(1, 0), PinReference::new(2, 0)), // Process -> Output
             ],
             nodes: vec![
                 (
@@ -177,6 +184,7 @@ impl Default for Application {
             ],
             current_theme: Theme::CatppuccinFrappe,
             selected_node: Some(0),
+            graph_selection: HashSet::new(),
             corner_radius: 5.0,
             opacity: 0.75,
             border_width: 1.5,
@@ -190,7 +198,7 @@ impl Application {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        iced::time::every(std::time::Duration::from_millis(16)).map(|_| Message::Tick)
+        window::frames().map(|_| Message::Tick)
     }
 
     fn theme(&self) -> Theme {
@@ -205,7 +213,7 @@ impl Application {
                 to_node,
                 to_pin,
             } => {
-                self.edges.push(((from_node, from_pin), (to_node, to_pin)));
+                self.edges.push((PinReference::new(from_node, from_pin), PinReference::new(to_node, to_pin)));
             }
             Message::EdgeDisconnected {
                 from_node,
@@ -214,7 +222,7 @@ impl Application {
                 to_pin,
             } => {
                 self.edges
-                    .retain(|edge| *edge != ((from_node, from_pin), (to_node, to_pin)));
+                    .retain(|(from, to)| !(from.node_id == from_node && from.pin_id == from_pin && to.node_id == to_node && to.pin_id == to_pin));
             }
             Message::NodeMoved {
                 node_index,
@@ -222,6 +230,17 @@ impl Application {
             } => {
                 if let Some((pos, _, _)) = self.nodes.get_mut(node_index) {
                     *pos = new_position;
+                }
+            }
+            Message::SelectionChanged(indices) => {
+                self.graph_selection = indices.into_iter().collect();
+            }
+            Message::GroupMoved { indices, delta } => {
+                for idx in indices {
+                    if let Some((pos, _, _)) = self.nodes.get_mut(idx) {
+                        pos.x += delta.x;
+                        pos.y += delta.y;
+                    }
                 }
             }
             Message::CornerRadiusChanged(value) => {
@@ -461,7 +480,10 @@ impl Application {
             .on_move(|node_index, new_position| Message::NodeMoved {
                 node_index,
                 new_position,
-            });
+            })
+            .on_select(Message::SelectionChanged)
+            .on_group_move(|indices, delta| Message::GroupMoved { indices, delta })
+            .selection(&self.graph_selection);
 
         for (position, name, style) in &self.nodes {
             let content_style = if style.fill_color.b > style.fill_color.r && style.fill_color.b > style.fill_color.g {
@@ -502,8 +524,8 @@ impl Application {
             ng.push_node_styled(*position, node_content, style.clone());
         }
 
-        for ((from_node, from_pin), (to_node, to_pin)) in &self.edges {
-            ng.push_edge(*from_node, *from_pin, *to_node, *to_pin);
+        for (from, to) in &self.edges {
+            ng.push_edge(*from, *to);
         }
 
         ng.into()

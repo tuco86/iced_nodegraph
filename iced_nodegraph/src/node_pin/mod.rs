@@ -4,15 +4,41 @@ use iced_widget::core::{
     widget::{Tree, tree},
 };
 
+/// A reference to a specific pin on a specific node.
+///
+/// This provides type-safe identification of pins for edge connections,
+/// replacing error-prone `(usize, usize)` tuples.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PinReference {
+    /// The index of the node containing this pin
+    pub node_id: usize,
+    /// The index of the pin within the node
+    pub pin_id: usize,
+}
+
+impl PinReference {
+    /// Creates a new pin reference.
+    pub fn new(node_id: usize, pin_id: usize) -> Self {
+        Self { node_id, pin_id }
+    }
+}
+
 /// An edge to attach a `NodePinWidget` to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u32)]
 pub enum PinSide {
     #[default]
-    Left,
-    Right,
-    Top,
-    Bottom,
-    Row,
+    Left = 0,
+    Right = 1,
+    Top = 2,
+    Bottom = 3,
+    Row = 4,
+}
+
+impl From<PinSide> for u32 {
+    fn from(side: PinSide) -> u32 {
+        side as u32
+    }
 }
 
 /// Direction of data flow for a pin.
@@ -22,18 +48,6 @@ pub enum PinDirection {
     Output,
     #[default]
     Both,
-}
-
-impl Into<u32> for PinSide {
-    fn into(self) -> u32 {
-        match self {
-            PinSide::Left => 0,
-            PinSide::Right => 1,
-            PinSide::Top => 2,
-            PinSide::Bottom => 3,
-            PinSide::Row => 4,
-        }
-    }
 }
 
 /// A transparent wrapper used as a marker within `NodeGraph`.
@@ -220,25 +234,6 @@ where
             tree.children.push(Tree::new(&self.content));
         }
     }
-
-    // fn operate(
-    //     &self,
-    //     _state: &mut Tree,
-    //     _layout: Layout<'_>,
-    //     _renderer: &Renderer,
-    //     _operation: &mut dyn Operation,
-    // ) {
-    // }
-
-    // fn overlay<'a>(
-    //     &'a mut self,
-    //     _state: &'a mut Tree,
-    //     _layout: Layout<'_>,
-    //     _renderer: &Renderer,
-    //     _translation: Vector,
-    // ) -> Option<overlay::Element<'a, Message, Theme, Renderer>> {
-    //     None
-    // }
 }
 
 impl<'a, Message, Theme, Renderer> From<NodePin<'a, Message, Theme, Renderer>>

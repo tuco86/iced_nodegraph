@@ -40,7 +40,7 @@ This workspace contains **4 interdependent Rust projects** forming a node graph 
 - **`iced_aw`** - Additional widgets library extending Iced's capabilities
 - **`ngwa-rs`** - SpacetimeDB module for backend data persistence
 
-**Current Status**: Core functionality is working - node/pin interaction, edge dragging, and coordinate transformations are fully functional. **Edge rendering between nodes is incomplete** (static edge rendering needs implementation).
+**Current Status**: Core functionality is complete - node/pin interaction, edge connections, and coordinate transformations are fully functional with type-safe API.
 
 ## Core Architecture Patterns
 
@@ -58,13 +58,15 @@ The project uses **euclid** crate for type-safe coordinate transformations:
 - **Zoom at Cursor**: `new_pos = old_pos + cursor_screen * (1/new_zoom - 1/old_zoom)`
   - Maintains visual stability when zooming
 
-**Test Coverage**: 15 comprehensive tests in `src/node_grapgh/camera.rs` validate all transformations.
+**Test Coverage**: 44 unit tests across camera, state, interaction, and API modules validate all core functionality.
 
 **See `src/node_grapgh/camera.rs` module documentation for complete mathematical derivations and usage patterns.**
 
 ### Widget Architecture
 - **NodeGraph** (`src/node_grapgh/mod.rs`) - Main container widget managing nodes and edges
 - **NodePin** (`src/node_pin/mod.rs`) - Connection points with `PinSide` enum (Left/Right/Top/Bottom/Row)
+- **PinReference** (`src/node_pin/mod.rs`) - Type-safe identifier for pin connections (`node_id`, `pin_id`)
+- **NodeGraphEvent** (`src/node_grapgh/mod.rs`) - Unified event enum for all graph interactions
 - **State Management** (`src/node_grapgh/state.rs`) - Handles dragging states and camera state
 
 ### Custom Rendering Pipeline
@@ -74,24 +76,26 @@ Uses **WGPU shaders** for high-performance node graph rendering:
 - Background/Foreground layers for proper rendering order
 - GPU-accelerated with custom vertex/fragment shaders
 
-**WARNING - Known Issue**: Edge rendering is partially implemented but incomplete:
-- Edge dragging works (temporary edge while connecting pins)
-- Static edge rendering is missing - `edges: vec![]` hardcoded in widget.rs:122
-- Missing API: No `push_edge()` method in NodeGraph struct
-- Shader has edge rendering logic but it's only used during drag operations
+**Edge System**: Fully functional with type-safe API:
+- `push_edge(PinReference, PinReference)` adds connections between pins
+- Edge dragging and static edge rendering both work
+- Shader renders edges in foreground layer with proper bezier curves
 
 ## Development Workflows
 
 ### Building & Testing
 ```bash
 # Build node graph widget
-cd iced_nodegraph && cargo build
+cargo build -p iced_nodegraph
 
-# Run example
-cargo run --example hello_world
+# Run demos
+cargo run -p demo_hello_world
+cargo run -p demo_styling
+cargo run -p demo_500_nodes
+cargo run -p demo_shader_editor
 
-# Test with different rendering backends
-ICED_TEST_BACKEND=tiny-skia cargo test
+# Run tests
+cargo test -p iced_nodegraph
 ```
 
 ### SpacetimeDB Integration
@@ -162,12 +166,50 @@ src/
 └── node_pin/               # Connection point widgets
 ```
 
-## Critical Implementation Gaps
+## Public API Reference
 
-**Edge Rendering System Needs Completion**:
-1. **Missing API**: Add `push_edge()` method to NodeGraph in `src/node_grapgh/mod.rs`
-2. **Widget Integration**: Replace `edges: vec![]` with `self.edges.clone()` in `src/node_grapgh/widget.rs:122`
-3. **Shader Extension**: Extend `fs_foreground()` in `shader.wgsl` to render static edges (currently only renders dragging edges)
-4. **Edge Management**: Implement edge creation/deletion logic in user interaction handlers
+### Core Types
+```rust
+// Type-safe pin reference
+pub struct PinReference {
+    pub node_id: usize,
+    pub pin_id: usize,
+}
+
+// Unified event enum
+pub enum NodeGraphEvent {
+    EdgeConnected { from: PinReference, to: PinReference },
+    EdgeDisconnected { from: PinReference, to: PinReference },
+    NodeMoved { node_id: usize, position: Point },
+    GroupMoved { node_ids: Vec<usize>, delta: Vector },
+    SelectionChanged { selected: Vec<usize> },
+    CloneRequested { node_ids: Vec<usize> },
+    DeleteRequested { node_ids: Vec<usize> },
+}
+```
+
+### NodeGraph Methods
+```rust
+// Adding content
+ng.push_node(position, element);
+ng.push_node_styled(position, element, NodeStyle);
+ng.push_edge(PinReference::new(0, 0), PinReference::new(1, 0));
+ng.push_edge_styled(from, to, EdgeStyle);
+
+// Event handlers
+ng.on_connect(|from_node, from_pin, to_node, to_pin| Message)
+ng.on_disconnect(|from_node, from_pin, to_node, to_pin| Message)
+ng.on_move(|node_id, position| Message)
+ng.on_select(|selected_ids| Message)
+ng.on_clone(|node_ids| Message)
+ng.on_delete(|node_ids| Message)
+ng.on_group_move(|node_ids, delta| Message)
+
+// State queries
+ng.node_count() -> usize
+ng.edge_count() -> usize
+ng.node_position(node_id) -> Option<Point>
+ng.edges() -> Iterator<Item = (PinReference, PinReference, Option<&EdgeStyle>)>
+```
 
 When adding features, maintain the coordinate system abstractions and follow the effects pipeline pattern for any custom rendering.

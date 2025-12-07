@@ -44,13 +44,14 @@ pub fn wasm_init() {
     console_error_panic_hook::set_once();
 }
 
+use std::collections::HashSet;
 use compiler::ShaderCompiler;
 use iced::{
     widget::{column, container, stack, text},
-    keyboard, event,
-    Color, Element, Event, Length, Point, Subscription, Task, Theme,
+    keyboard, event, window,
+    Color, Element, Event, Length, Point, Subscription, Task, Theme, Vector,
 };
-use iced_nodegraph::{node_graph, PinDirection, PinSide};
+use iced_nodegraph::{node_graph, PinDirection, PinSide, PinReference};
 use iced_palette::{
     command_palette, command, get_filtered_command_index, get_filtered_count,
     navigate_up, navigate_down, focus_input, Command,
@@ -102,6 +103,11 @@ enum Message {
         to_node: usize,
         to_pin: usize,
     },
+    SelectionChanged(Vec<usize>),
+    GroupMoved {
+        indices: Vec<usize>,
+        delta: Vector,
+    },
     // Command palette messages
     ToggleCommandPalette,
     CommandPaletteInput(String),
@@ -114,14 +120,17 @@ enum Message {
     SpawnNode(ShaderNodeType),
     // Theme
     ChangeTheme(Theme),
+    // Animation
+    Tick,
 }
 
 struct Application {
     shader_graph: ShaderGraph,
     compiled_shader: Option<String>,
     compilation_error: Option<String>,
-    visual_edges: Vec<((usize, usize), (usize, usize))>,
+    visual_edges: Vec<(PinReference, PinReference)>,
     current_theme: Theme,
+    graph_selection: HashSet<usize>,
     // Command palette state
     command_palette_open: bool,
     command_input: String,
@@ -135,7 +144,7 @@ impl Application {
         // Convert shader graph connections to visual edges
         // NodeGraph widget uses flat pin indices: [input0, input1, ..., output0, output1, ...]
         // ShaderGraph uses separate indices: from_socket = output index, to_socket = input index
-        let visual_edges: Vec<((usize, usize), (usize, usize))> = shader_graph
+        let visual_edges: Vec<(PinReference, PinReference)> = shader_graph
             .connections
             .iter()
             .filter_map(|conn| {
@@ -159,7 +168,7 @@ impl Application {
                     to_node.node_type.name(), to_visual_pin, conn.to_socket
                 );
 
-                Some(((from_node_idx, from_visual_pin), (to_node_idx, to_visual_pin)))
+                Some((PinReference::new(from_node_idx, from_visual_pin), PinReference::new(to_node_idx, to_visual_pin)))
             })
             .collect();
 
@@ -169,6 +178,7 @@ impl Application {
             compilation_error: None,
             visual_edges,
             current_theme: Theme::CatppuccinMocha,
+            graph_selection: HashSet::new(),
             command_palette_open: false,
             command_input: String::new(),
             palette_selected_index: 0,
@@ -188,7 +198,7 @@ impl Application {
                 to_pin,
             } => {
                 // Store visual edge as-is
-                self.visual_edges.push(((from_node, from_pin), (to_node, to_pin)));
+                self.visual_edges.push((PinReference::new(from_node, from_pin), PinReference::new(to_node, to_pin)));
 
                 // Convert visual pin indices to shader socket indices
                 // First, gather the info we need
@@ -247,8 +257,8 @@ impl Application {
                 to_node,
                 to_pin,
             } => {
-                self.visual_edges.retain(|e| {
-                    !(e.0.0 == from_node && e.0.1 == from_pin && e.1.0 == to_node && e.1.1 == to_pin)
+                self.visual_edges.retain(|(from, to)| {
+                    !(from.node_id == from_node && from.pin_id == from_pin && to.node_id == to_node && to.pin_id == to_pin)
                 });
                 self.shader_graph.connections.retain(|c| {
                     !(c.from_node == from_node
@@ -258,6 +268,17 @@ impl Application {
                 });
                 self.recompile();
                 return Task::none();
+            }
+            Message::SelectionChanged(indices) => {
+                self.graph_selection = indices.into_iter().collect();
+            }
+            Message::GroupMoved { indices, delta } => {
+                for idx in indices {
+                    if let Some(node) = self.shader_graph.get_node_by_index_mut(idx) {
+                        node.position.x += delta.x;
+                        node.position.y += delta.y;
+                    }
+                }
             }
             // Command palette
             Message::ToggleCommandPalette => {
@@ -326,6 +347,9 @@ impl Application {
             Message::ChangeTheme(theme) => {
                 self.current_theme = theme;
             }
+            Message::Tick => {
+                // Animation frame - handled by the widget
+            }
         }
 
         Task::none()
@@ -349,7 +373,10 @@ impl Application {
                 from_pin,
                 to_node,
                 to_pin,
-            });
+            })
+            .on_select(Message::SelectionChanged)
+            .on_group_move(|indices, delta| Message::GroupMoved { indices, delta })
+            .selection(&self.graph_selection);
 
         // Add all shader graph nodes
         for node in &self.shader_graph.nodes {
@@ -358,8 +385,8 @@ impl Application {
         }
 
         // Add all edges
-        for ((from_node, from_pin), (to_node, to_pin)) in &self.visual_edges {
-            graph.push_edge(*from_node, *from_pin, *to_node, *to_pin);
+        for (from, to) in &self.visual_edges {
+            graph.push_edge(*from, *to);
         }
 
         let graph_element: Element<Message> = graph.into();
@@ -391,36 +418,41 @@ impl Application {
     fn subscription(&self) -> Subscription<Message> {
         use iced::keyboard::key::Named;
 
-        event::listen_with(|event, _status, _id| {
-            if let Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event {
-                // Ctrl+Space or Ctrl+K to toggle palette
-                if modifiers.command() {
-                    if key == keyboard::Key::Named(Named::Space)
-                        || key == keyboard::Key::Character("k".into())
-                    {
-                        return Some(Message::ToggleCommandPalette);
+        Subscription::batch(vec![
+            // Keyboard events for command palette
+            event::listen_with(|event, _status, _id| {
+                if let Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event {
+                    // Ctrl+Space or Ctrl+K to toggle palette
+                    if modifiers.command() {
+                        if key == keyboard::Key::Named(Named::Space)
+                            || key == keyboard::Key::Character("k".into())
+                        {
+                            return Some(Message::ToggleCommandPalette);
+                        }
                     }
-                }
 
-                // When palette is open, handle navigation
-                match key {
-                    keyboard::Key::Named(Named::ArrowUp) => {
-                        return Some(Message::CommandPaletteNavigateUp);
+                    // When palette is open, handle navigation
+                    match key {
+                        keyboard::Key::Named(Named::ArrowUp) => {
+                            return Some(Message::CommandPaletteNavigateUp);
+                        }
+                        keyboard::Key::Named(Named::ArrowDown) => {
+                            return Some(Message::CommandPaletteNavigateDown);
+                        }
+                        keyboard::Key::Named(Named::Enter) => {
+                            return Some(Message::CommandPaletteConfirm);
+                        }
+                        keyboard::Key::Named(Named::Escape) => {
+                            return Some(Message::CommandPaletteCancel);
+                        }
+                        _ => {}
                     }
-                    keyboard::Key::Named(Named::ArrowDown) => {
-                        return Some(Message::CommandPaletteNavigateDown);
-                    }
-                    keyboard::Key::Named(Named::Enter) => {
-                        return Some(Message::CommandPaletteConfirm);
-                    }
-                    keyboard::Key::Named(Named::Escape) => {
-                        return Some(Message::CommandPaletteCancel);
-                    }
-                    _ => {}
                 }
-            }
-            None
-        })
+                None
+            }),
+            // Animation frames for NodeGraph
+            window::frames().map(|_| Message::Tick),
+        ])
     }
 
     fn build_palette_commands(&self) -> Vec<Command<Message>> {

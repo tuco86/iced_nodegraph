@@ -39,11 +39,12 @@ pub fn wasm_init() {
     console_error_panic_hook::set_once();
 }
 
+use std::collections::HashSet;
 use iced::{
-    Color, Length, Point, Subscription, Theme, window,
+    Color, Length, Point, Subscription, Theme, Vector, window,
     widget::{column, container, stack, text},
 };
-use iced_nodegraph::{PinDirection, PinSide, node_graph, node_pin};
+use iced_nodegraph::{PinDirection, PinSide, PinReference, node_graph, node_pin};
 
 pub fn main() -> iced::Result {
     #[cfg(target_arch = "wasm32")]
@@ -91,13 +92,19 @@ enum ApplicationMessage {
         to_node: usize,
         to_pin: usize,
     },
+    SelectionChanged(Vec<usize>),
+    GroupMoved {
+        indices: Vec<usize>,
+        delta: Vector,
+    },
     Tick,
 }
 
 struct Application {
-    edges: Vec<((usize, usize), (usize, usize))>,
+    edges: Vec<(PinReference, PinReference)>,
     nodes: Vec<(Point, NodeType)>,
     current_theme: Theme,
+    selected_nodes: HashSet<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -147,12 +154,13 @@ impl Default for Application {
             edges,
             nodes,
             current_theme: Theme::CatppuccinMocha,
+            selected_nodes: HashSet::new(),
         }
     }
 }
 
 /// Generates a realistic procedural shader graph with ~500 nodes
-fn generate_procedural_graph() -> (Vec<(Point, NodeType)>, Vec<((usize, usize), (usize, usize))>) {
+fn generate_procedural_graph() -> (Vec<(Point, NodeType)>, Vec<(PinReference, PinReference)>) {
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
     let mut node_idx = 0;
@@ -193,7 +201,7 @@ fn generate_procedural_graph() -> (Vec<(Point, NodeType)>, Vec<((usize, usize), 
 
             // Connect to random input
             let input_node = input_nodes[row % input_nodes.len()];
-            edges.push(((input_node, 0), (node_idx, 0)));
+            edges.push((PinReference::new(input_node, 0), PinReference::new(node_idx, 0)));
 
             noise_nodes.push(node_idx);
             node_idx += 1;
@@ -217,7 +225,7 @@ fn generate_procedural_graph() -> (Vec<(Point, NodeType)>, Vec<((usize, usize), 
 
             // Connect to noise nodes
             let noise_node = noise_nodes[row % noise_nodes.len()];
-            edges.push(((noise_node, 0), (node_idx, 0)));
+            edges.push((PinReference::new(noise_node, 0), PinReference::new(node_idx, 0)));
 
             vector_nodes.push(node_idx);
             node_idx += 1;
@@ -241,12 +249,12 @@ fn generate_procedural_graph() -> (Vec<(Point, NodeType)>, Vec<((usize, usize), 
 
             // Connect to vector operations
             let vector_node = vector_nodes[row % vector_nodes.len()];
-            edges.push(((vector_node, 0), (node_idx, 0)));
+            edges.push((PinReference::new(vector_node, 0), PinReference::new(node_idx, 0)));
 
             // Some math nodes also connect to other math nodes in previous column
             if col > 0 {
                 let prev_math = math_nodes[row % math_nodes.len().max(1)];
-                edges.push(((prev_math, 0), (node_idx, 1)));
+                edges.push((PinReference::new(prev_math, 0), PinReference::new(node_idx, 1)));
             }
 
             math_nodes.push(node_idx);
@@ -269,7 +277,7 @@ fn generate_procedural_graph() -> (Vec<(Point, NodeType)>, Vec<((usize, usize), 
 
             // Connect to math operations
             let math_node = math_nodes[row % math_nodes.len()];
-            edges.push(((math_node, 0), (node_idx, 0)));
+            edges.push((PinReference::new(math_node, 0), PinReference::new(node_idx, 0)));
 
             texture_nodes.push(node_idx);
             node_idx += 1;
@@ -290,11 +298,11 @@ fn generate_procedural_graph() -> (Vec<(Point, NodeType)>, Vec<((usize, usize), 
 
         // Connect to texture operations
         let tex_node = texture_nodes[row % texture_nodes.len()];
-        edges.push(((tex_node, 0), (node_idx, 0)));
+        edges.push((PinReference::new(tex_node, 0), PinReference::new(node_idx, 0)));
 
         // Also connect to another texture node for blending
         let tex_node2 = texture_nodes[(row + 1) % texture_nodes.len()];
-        edges.push(((tex_node2, 0), (node_idx, 1)));
+        edges.push((PinReference::new(tex_node2, 0), PinReference::new(node_idx, 1)));
 
         blend_nodes.push(node_idx);
         node_idx += 1;
@@ -321,7 +329,7 @@ fn generate_procedural_graph() -> (Vec<(Point, NodeType)>, Vec<((usize, usize), 
 
         // Connect to blend nodes
         let blend_node = blend_nodes[i * 5 % blend_nodes.len()];
-        edges.push(((blend_node, 0), (node_idx, 0)));
+        edges.push((PinReference::new(blend_node, 0), PinReference::new(node_idx, 0)));
 
         node_idx += 1;
     }
@@ -345,7 +353,7 @@ impl Application {
                 to_node,
                 to_pin,
             } => {
-                self.edges.push(((from_node, from_pin), (to_node, to_pin)));
+                self.edges.push((PinReference::new(from_node, from_pin), PinReference::new(to_node, to_pin)));
             }
             ApplicationMessage::NodeMoved {
                 node_index,
@@ -362,7 +370,18 @@ impl Application {
                 to_pin,
             } => {
                 self.edges
-                    .retain(|edge| *edge != ((from_node, from_pin), (to_node, to_pin)));
+                    .retain(|(from, to)| !(from.node_id == from_node && from.pin_id == from_pin && to.node_id == to_node && to.pin_id == to_pin));
+            }
+            ApplicationMessage::SelectionChanged(indices) => {
+                self.selected_nodes = indices.into_iter().collect();
+            }
+            ApplicationMessage::GroupMoved { indices, delta } => {
+                for idx in indices {
+                    if let Some((pos, _)) = self.nodes.get_mut(idx) {
+                        pos.x += delta.x;
+                        pos.y += delta.y;
+                    }
+                }
             }
             ApplicationMessage::Tick => {
                 // Trigger redraw for animations
@@ -395,7 +414,10 @@ impl Application {
             .on_move(|node_index, new_position| ApplicationMessage::NodeMoved {
                 node_index,
                 new_position,
-            });
+            })
+            .on_select(ApplicationMessage::SelectionChanged)
+            .on_group_move(|indices, delta| ApplicationMessage::GroupMoved { indices, delta })
+            .selection(&self.selected_nodes);
 
         // Add all nodes
         for (position, node_type) in &self.nodes {
@@ -403,8 +425,8 @@ impl Application {
         }
 
         // Add all edges
-        for ((from_node, from_pin), (to_node, to_pin)) in &self.edges {
-            ng.push_edge(*from_node, *from_pin, *to_node, *to_pin);
+        for (from, to) in &self.edges {
+            ng.push_edge(*from, *to);
         }
 
         // Add stats overlay

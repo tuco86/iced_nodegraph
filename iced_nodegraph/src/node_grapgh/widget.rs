@@ -258,7 +258,7 @@ where
                     .collect()
             },
             // Extract edge connectivity without style for GPU primitive (style used separately)
-            edges: self.edges.iter().map(|(conn, _style)| *conn).collect(),
+            edges: self.edges.iter().map(|(from, to, _style)| ((from.node_id, from.pin_id), (to.node_id, to.pin_id))).collect(),
             edge_color,
             background_color: bg_color,
             border_color,
@@ -554,15 +554,17 @@ where
                                 }
 
                                 // Check each edge for intersection with the cutting line
-                                for (((from_node, from_pin), (to_node, to_pin)), _style) in &self.edges {
-                                    let from_pin_pos = layout.children().nth(*from_node).and_then(|node_layout| {
-                                        tree.children.get(*from_node).and_then(|node_tree| {
-                                            find_pins(node_tree, node_layout).get(*from_pin).map(|(_, _, (a, _))| *a)
+                                for (from_ref, to_ref, _style) in &self.edges {
+                                    let (from_node, from_pin) = (from_ref.node_id, from_ref.pin_id);
+                                    let (to_node, to_pin) = (to_ref.node_id, to_ref.pin_id);
+                                    let from_pin_pos = layout.children().nth(from_node).and_then(|node_layout| {
+                                        tree.children.get(from_node).and_then(|node_tree| {
+                                            find_pins(node_tree, node_layout).get(from_pin).map(|(_, _, (a, _))| *a)
                                         })
                                     });
-                                    let to_pin_pos = layout.children().nth(*to_node).and_then(|node_layout| {
-                                        tree.children.get(*to_node).and_then(|node_tree| {
-                                            find_pins(node_tree, node_layout).get(*to_pin).map(|(_, _, (a, _))| *a)
+                                    let to_pin_pos = layout.children().nth(to_node).and_then(|node_layout| {
+                                        tree.children.get(to_node).and_then(|node_tree| {
+                                            find_pins(node_tree, node_layout).get(to_pin).map(|(_, _, (a, _))| *a)
                                         })
                                     });
 
@@ -575,7 +577,7 @@ where
                                             println!("Edge cut: {} pin {} -> {} pin {}", from_node, from_pin, to_node, to_pin);
 
                                             if let Some(handler) = self.on_disconnect_handler() {
-                                                shell.publish(handler(*from_node, *from_pin, *to_node, *to_pin));
+                                                shell.publish(handler(from_node, from_pin, to_node, to_pin));
                                             }
                                             // Only cut one edge per frame
                                             break;
@@ -868,16 +870,18 @@ where
                         if state.modifiers.command() {
                             if let Some(cursor_position) = world_cursor.position() {
                                 // Check if click is near any edge
-                                for (((from_node, from_pin), (to_node, to_pin)), _style) in &self.edges {
+                                for (from_ref, to_ref, _style) in &self.edges {
+                                    let (from_node, from_pin) = (from_ref.node_id, from_ref.pin_id);
+                                    let (to_node, to_pin) = (to_ref.node_id, to_ref.pin_id);
                                     // Get pin positions for both ends of the edge
-                                    let from_pin_pos = layout.children().nth(*from_node).and_then(|node_layout| {
-                                        tree.children.get(*from_node).and_then(|node_tree| {
-                                            find_pins(node_tree, node_layout).get(*from_pin).map(|(_, _, (a, _))| *a)
+                                    let from_pin_pos = layout.children().nth(from_node).and_then(|node_layout| {
+                                        tree.children.get(from_node).and_then(|node_tree| {
+                                            find_pins(node_tree, node_layout).get(from_pin).map(|(_, _, (a, _))| *a)
                                         })
                                     });
-                                    let to_pin_pos = layout.children().nth(*to_node).and_then(|node_layout| {
-                                        tree.children.get(*to_node).and_then(|node_tree| {
-                                            find_pins(node_tree, node_layout).get(*to_pin).map(|(_, _, (a, _))| *a)
+                                    let to_pin_pos = layout.children().nth(to_node).and_then(|node_layout| {
+                                        tree.children.get(to_node).and_then(|node_tree| {
+                                            find_pins(node_tree, node_layout).get(to_pin).map(|(_, _, (a, _))| *a)
                                         })
                                     });
 
@@ -891,7 +895,7 @@ where
                                             println!("Edge cut: disconnecting {} pin {} -> {} pin {}", from_node, from_pin, to_node, to_pin);
 
                                             if let Some(handler) = self.on_disconnect_handler() {
-                                                shell.publish(handler(*from_node, *from_pin, *to_node, *to_pin));
+                                                shell.publish(handler(from_node, from_pin, to_node, to_pin));
                                             }
                                             shell.capture_event();
                                             shell.request_redraw();
@@ -937,10 +941,12 @@ where
 
                                         // Check if this pin has existing connections
                                         // If it does, "unplug" the clicked end (like pulling a cable)
-                                        for (((from_node, from_pin), (to_node, to_pin)), _style) in &self.edges {
+                                        for (from_ref, to_ref, _style) in &self.edges {
+                                    let (from_node, from_pin) = (from_ref.node_id, from_ref.pin_id);
+                                    let (to_node, to_pin) = (to_ref.node_id, to_ref.pin_id);
                                             // If we clicked the "from" pin, unplug FROM and drag it
                                             // Keep TO pin connected, drag away from it
-                                            if *from_node == node_index && *from_pin == pin_index {
+                                            if from_node == node_index && from_pin == pin_index {
                                                 #[cfg(debug_assertions)]
                                                 println!(
                                                     "  Unplugging FROM pin - keep TO pin at node {} pin {}, drag FROM end",
@@ -949,7 +955,7 @@ where
 
                                                 // Disconnect the edge
                                                 if let Some(handler) = self.on_disconnect_handler() {
-                                                    let message = handler(*from_node, *from_pin, *to_node, *to_pin);
+                                                    let message = handler(from_node, from_pin, to_node, to_pin);
                                                     shell.publish(message);
                                                 }
 
@@ -957,8 +963,8 @@ where
                                                 // We're now dragging back towards the TO pin
                                                 let state = tree.state.downcast_mut::<NodeGraphState>();
                                                 state.dragging = Dragging::Edge(
-                                                    *to_node,
-                                                    *to_pin,
+                                                    to_node,
+                                                    to_pin,
                                                     cursor_position.into_euclid(),
                                                 );
                                                 shell.capture_event();
@@ -966,7 +972,7 @@ where
                                             }
                                             // If we clicked the "to" pin, unplug TO and drag it
                                             // Keep FROM pin connected, drag away from it
-                                            else if *to_node == node_index && *to_pin == pin_index {
+                                            else if to_node == node_index && to_pin == pin_index {
                                                 #[cfg(debug_assertions)]
                                                 println!(
                                                     "  Unplugging TO pin - keep FROM pin at node {} pin {}, drag TO end",
@@ -975,7 +981,7 @@ where
 
                                                 // Disconnect the edge
                                                 if let Some(handler) = self.on_disconnect_handler() {
-                                                    let message = handler(*from_node, *from_pin, *to_node, *to_pin);
+                                                    let message = handler(from_node, from_pin, to_node, to_pin);
                                                     shell.publish(message);
                                                 }
 
@@ -983,8 +989,8 @@ where
                                                 // We're now dragging away from the FROM pin
                                                 let state = tree.state.downcast_mut::<NodeGraphState>();
                                                 state.dragging = Dragging::Edge(
-                                                    *from_node,
-                                                    *from_pin,
+                                                    from_node,
+                                                    from_pin,
                                                     cursor_position.into_euclid(),
                                                 );
                                                 shell.capture_event();

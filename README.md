@@ -57,21 +57,22 @@ iced = { git = "https://github.com/iced-rs/iced", features = ["advanced", "wgpu"
 Basic example:
 
 ```rust
-use iced_nodegraph::{node_graph, node_pin, PinSide, PinDirection};
+use iced_nodegraph::{node_graph, node_pin, PinSide, PinDirection, PinReference};
 use iced::{Color, Element, Point};
 
 fn view(&self) -> Element<Message> {
     let mut ng = node_graph()
         .on_connect(|from_node, from_pin, to_node, to_pin| {
             Message::EdgeConnected { from_node, from_pin, to_node, to_pin }
-        });
+        })
+        .on_move(|node_id, position| Message::NodeMoved { node_id, position });
 
     // Add nodes with pins
     ng.push_node(Point::new(200.0, 150.0), my_node_widget());
     ng.push_node(Point::new(525.0, 175.0), another_node());
-    
-    // Add edges between nodes
-    ng.push_edge(0, 0, 1, 0);  // Connect node 0 pin 0 to node 1 pin 0
+
+    // Add edges using type-safe PinReference
+    ng.push_edge(PinReference::new(0, 0), PinReference::new(1, 0));
 
     ng.into()
 }
@@ -86,14 +87,11 @@ See [`demos/hello_world/`](demos/hello_world/) for a complete working example.
 git clone https://github.com/tuco86/iced_nodegraph
 cd iced_nodegraph
 
-# Run hello_world demo
-cargo run -p iced_nodegraph_demo_hello_world
-
-# Run styling demo
-cargo run -p iced_nodegraph_demo_styling
-
-# Run interaction demo  
-cargo run -p iced_nodegraph_demo_interaction
+# Run demos
+cargo run -p demo_hello_world
+cargo run -p demo_styling
+cargo run -p demo_500_nodes
+cargo run -p demo_shader_editor
 ```
 
 ## Building
@@ -108,9 +106,9 @@ cargo build --workspace
 cargo build -p iced_nodegraph
 
 # Build specific demo
-cargo build -p iced_nodegraph_demo_hello_world
+cargo build -p demo_hello_world
 
-# Run tests
+# Run tests (44 tests)
 cargo test -p iced_nodegraph
 ```
 
@@ -135,7 +133,7 @@ cargo doc --workspace --no-deps --open
 
 ```bash
 # Run from workspace root
-cargo run -p iced_nodegraph_demo_hello_world
+cargo run -p demo_hello_world
 
 # Or navigate to demo directory
 cd demos/hello_world
@@ -221,7 +219,7 @@ Transformations use mathematically consistent formulas. See [`iced_nodegraph/src
 ## Testing
 
 ```bash
-# Run all library tests (24 camera + interaction tests)
+# Run all library tests (44 tests)
 cargo test -p iced_nodegraph
 
 # Run specific test suite
@@ -231,42 +229,65 @@ cargo test -p iced_nodegraph --lib camera
 cargo test --workspace
 ```
 
-Test coverage includes coordinate transformations, zoom stability, pin detection, and edge click handling.
+Test coverage includes:
+- Coordinate transformations and camera operations (15 tests)
+- Interaction handling - pin detection, edge clicks (9 tests)
+- State management - dragging states, selection (10 tests)
+- API types - NodeGraphEvent, PinReference (6 tests)
+- Style utilities (4 tests)
 
 ## Demos
 
 ### [hello_world](demos/hello_world/)
-Basic node graph with command palette (Cmd+K) for adding nodes and changing themes. Demonstrates fundamental usage patterns.
+Basic node graph with command palette (Cmd+K) for adding nodes and changing themes.
 
 **Features:**
-- Node creation and positioning
-- Pin connections
+- Node creation, cloning (Ctrl+D), and deletion (Delete)
+- Pin connections with type-safe PinReference
+- Box selection and multi-node operations
 - Camera controls (pan/zoom)
 - Command palette with live theme preview
 
-### [demo_500_nodes](demos/demo_500_nodes/)
-Performance benchmark demonstrating instanced rendering with 500 nodes and 640 edges. Simulates a realistic procedural shader graph.
+**Run:** `cargo run -p demo_hello_world`
+
+### [styling](demos/styling/)
+Visual customization and theming system with live controls.
 
 **Features:**
-- 500-node graph with 7 processing stages (inputs → noise → vectors → math → textures → blending → outputs)
-- Real-time FPS monitoring
+- Per-node styling (corner radius, opacity, border width)
+- Preset styles (Input, Process, Output, Comment)
+- Live style sliders
+- Theme switching
+
+**Run:** `cargo run -p demo_styling`
+
+### [500_nodes](demos/500_nodes/)
+Performance benchmark demonstrating instanced rendering with 500 nodes and 640 edges.
+
+**Features:**
+- Procedural shader graph generation (7 processing stages)
 - Tests rendering scalability at various zoom levels
-- Demonstrates bottleneck (zoom performance) before frustum culling implementation
+- Stats overlay showing node/edge counts
 
 **Run:** `cargo run --release -p demo_500_nodes`
 
-### [styling](demos/styling/) *(Planned)*
-Visual customization and theming system. Shows how to create custom node appearances and integrate with Iced's theme system.
+### [shader_editor](demos/shader_editor/)
+Visual WGSL shader editor with real-time compilation.
+
+**Features:**
+- Math, Vector, Color, Texture, Input, Output nodes
+- Command palette for node spawning
+- Shader compilation feedback
+
+**Run:** `cargo run -p demo_shader_editor`
 
 ### [interaction](demos/interaction/) *(Planned)*
-Pin rules and connection validation. Demonstrates input/output directionality, type checking, and visual feedback for valid/invalid connections.
+Pin rules and connection validation. Will demonstrate input/output directionality, type checking, and visual feedback for valid/invalid connections.
 
 ## Known Limitations
 
-- **Edge Rendering**: Static edge rendering between nodes is not fully implemented. Edge dragging works, but persistent edge display needs completion.
 - **API Stability**: Expect breaking changes as the library evolves toward 0.14 compatibility.
-- **Documentation**: Many areas need better documentation as refactoring stabilizes.
-- **Demo Status**: Only hello_world demo is currently implemented. Others are documented and ready for implementation.
+- **Frustum Culling**: All nodes/edges are rendered regardless of visibility. Phase 3 optimization planned.
 
 ## Dependencies
 
