@@ -32,7 +32,10 @@ impl Validator {
 
         for conn in &graph.connections {
             *in_degree.get_mut(&conn.to_node).unwrap() += 1;
-            adj_list.get_mut(&conn.from_node).unwrap().push(conn.to_node);
+            adj_list
+                .get_mut(&conn.from_node)
+                .unwrap()
+                .push(conn.to_node);
         }
 
         // Kahn's algorithm for topological sort
@@ -86,7 +89,10 @@ impl Validator {
                 .get(conn.to_socket)
                 .ok_or(ValidationError::InvalidConnection)?;
 
-            if !from_socket.socket_type.can_connect_to(&to_socket.socket_type) {
+            if !from_socket
+                .socket_type
+                .can_connect_to(&to_socket.socket_type)
+            {
                 return Err(ValidationError::TypeMismatch);
             }
         }
@@ -126,7 +132,10 @@ impl Validator {
 
         for conn in &graph.connections {
             *in_degree.get_mut(&conn.to_node).unwrap() += 1;
-            adj_list.get_mut(&conn.from_node).unwrap().push(conn.to_node);
+            adj_list
+                .get_mut(&conn.from_node)
+                .unwrap()
+                .push(conn.to_node);
         }
 
         let mut queue: VecDeque<usize> = in_degree

@@ -179,16 +179,18 @@
 //! }
 //! ```
 
-pub use node_grapgh::{NodeGraph, NodeGraphEvent, widget::node_graph, camera::Camera2D};
-pub use node_pin::{NodePin, PinDirection, PinSide, PinReference, node_pin};
-pub use style::{NodeStyle, EdgeStyle, GraphStyle, SelectionStyle, relative_luminance, is_dark_theme};
 pub use content::{
-    NodeContentStyle, node_title_bar, node_label, node_separator, simple_node,
-    get_text_color, is_theme_dark,
+    NodeContentStyle, get_text_color, is_theme_dark, node_label, node_separator, node_title_bar,
+    simple_node,
+};
+pub use node_grapgh::{NodeGraph, NodeGraphEvent, camera::Camera2D, widget::node_graph};
+pub use node_pin::{NodePin, PinDirection, PinReference, PinSide, node_pin};
+pub use style::{
+    EdgeStyle, GraphStyle, NodeStyle, SelectionStyle, is_dark_theme, relative_luminance,
 };
 
+pub mod content;
 mod node;
 mod node_grapgh;
 mod node_pin;
 pub mod style;
-pub mod content;

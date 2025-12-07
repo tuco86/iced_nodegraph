@@ -69,13 +69,13 @@ pub struct Pin {
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct Edge {
-    pub from_node: u32,           // 4 bytes @ 0
-    pub from_pin: u32,            // 4 bytes @ 4
-    pub to_node: u32,             // 4 bytes @ 8
-    pub to_pin: u32,              // 4 bytes @ 12 (total 16)
-    pub color: glam::Vec4,        // 16 bytes @ 16 (16-byte aligned)
-    pub thickness: f32,           // 4 bytes @ 32
-    pub _pad0: f32,               // 4 bytes @ 36
-    pub _pad1: f32,               // 4 bytes @ 40
-    pub _pad2: f32,               // 4 bytes @ 44 (total 48)
+    pub from_node: u32,    // 4 bytes @ 0
+    pub from_pin: u32,     // 4 bytes @ 4
+    pub to_node: u32,      // 4 bytes @ 8
+    pub to_pin: u32,       // 4 bytes @ 12 (total 16)
+    pub color: glam::Vec4, // 16 bytes @ 16 (16-byte aligned)
+    pub thickness: f32,    // 4 bytes @ 32
+    pub _pad0: f32,        // 4 bytes @ 36
+    pub _pad1: f32,        // 4 bytes @ 40
+    pub _pad2: f32,        // 4 bytes @ 44 (total 48)
 }

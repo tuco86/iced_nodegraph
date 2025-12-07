@@ -32,15 +32,16 @@
 //! - **Scroll** - Zoom in/out
 //! - **Middle-drag** - Pan the canvas
 
-use std::collections::HashSet;
 use iced::{
-    Color, Element, Length, Point, Subscription, Task, Theme, Vector, window,
-    widget::{button, column, container, row, slider, stack, text, pick_list},
+    Color, Element, Length, Point, Subscription, Task, Theme, Vector,
+    widget::{button, column, container, pick_list, row, slider, stack, text},
+    window,
 };
 use iced_nodegraph::{
-    NodeStyle, NodeContentStyle, PinDirection, PinSide, PinReference,
-    node_graph, node_pin, node_title_bar,
+    NodeContentStyle, NodeStyle, PinDirection, PinReference, PinSide, node_graph, node_pin,
+    node_title_bar,
 };
+use std::collections::HashSet;
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -213,7 +214,10 @@ impl Application {
                 to_node,
                 to_pin,
             } => {
-                self.edges.push((PinReference::new(from_node, from_pin), PinReference::new(to_node, to_pin)));
+                self.edges.push((
+                    PinReference::new(from_node, from_pin),
+                    PinReference::new(to_node, to_pin),
+                ));
             }
             Message::EdgeDisconnected {
                 from_node,
@@ -221,8 +225,12 @@ impl Application {
                 to_node,
                 to_pin,
             } => {
-                self.edges
-                    .retain(|(from, to)| !(from.node_id == from_node && from.pin_id == from_pin && to.node_id == to_node && to.pin_id == to_pin));
+                self.edges.retain(|(from, to)| {
+                    !(from.node_id == from_node
+                        && from.pin_id == from_pin
+                        && to.node_id == to_node
+                        && to.pin_id == to_pin)
+                });
             }
             Message::NodeMoved {
                 node_index,
@@ -333,13 +341,13 @@ impl Application {
         let palette = theme.extended_palette();
         let text_color = palette.background.base.text;
 
-        let title = text("Style Controls")
-            .size(18)
-            .color(text_color);
+        let title = text("Style Controls").size(18).color(text_color);
 
         let selected_label = if let Some(index) = self.selected_node {
             let name = &self.nodes[index].1;
-            text(format!("Selected: {}", name)).size(14).color(text_color)
+            text(format!("Selected: {}", name))
+                .size(14)
+                .color(text_color)
         } else {
             text("No node selected").size(14).color(text_color)
         };
@@ -373,7 +381,9 @@ impl Application {
             text("Corner Radius").size(12).color(text_color),
             row![
                 slider(0.0..=20.0, self.corner_radius, Message::CornerRadiusChanged),
-                text(format!("{:.1}", self.corner_radius)).size(12).color(text_color),
+                text(format!("{:.1}", self.corner_radius))
+                    .size(12)
+                    .color(text_color),
             ]
             .spacing(10),
         ]
@@ -383,7 +393,9 @@ impl Application {
             text("Opacity").size(12).color(text_color),
             row![
                 slider(0.1..=1.0, self.opacity, Message::OpacityChanged).step(0.05),
-                text(format!("{:.2}", self.opacity)).size(12).color(text_color),
+                text(format!("{:.2}", self.opacity))
+                    .size(12)
+                    .color(text_color),
             ]
             .spacing(10),
         ]
@@ -393,7 +405,9 @@ impl Application {
             text("Border Width").size(12).color(text_color),
             row![
                 slider(0.5..=5.0, self.border_width, Message::BorderWidthChanged).step(0.5),
-                text(format!("{:.1}", self.border_width)).size(12).color(text_color),
+                text(format!("{:.1}", self.border_width))
+                    .size(12)
+                    .color(text_color),
             ]
             .spacing(10),
         ]
@@ -401,17 +415,15 @@ impl Application {
 
         // Preset buttons
         let preset_label = text("Apply Preset").size(12).color(text_color);
-        let preset_buttons: Element<'_, Message> = row(
-            NodePreset::ALL
-                .iter()
-                .map(|preset| {
-                    button(text(preset.to_string()).size(11))
-                        .on_press(Message::ApplyPreset(*preset))
-                        .padding([4, 8])
-                        .into()
-                })
-                .collect::<Vec<_>>(),
-        )
+        let preset_buttons: Element<'_, Message> = row(NodePreset::ALL
+            .iter()
+            .map(|preset| {
+                button(text(preset.to_string()).size(11))
+                    .on_press(Message::ApplyPreset(*preset))
+                    .padding([4, 8])
+                    .into()
+            })
+            .collect::<Vec<_>>())
         .spacing(5)
         .wrap()
         .into();
@@ -465,18 +477,22 @@ impl Application {
         let theme = &self.current_theme;
 
         let mut ng = node_graph()
-            .on_connect(|from_node, from_pin, to_node, to_pin| Message::EdgeConnected {
-                from_node,
-                from_pin,
-                to_node,
-                to_pin,
-            })
-            .on_disconnect(|from_node, from_pin, to_node, to_pin| Message::EdgeDisconnected {
-                from_node,
-                from_pin,
-                to_node,
-                to_pin,
-            })
+            .on_connect(
+                |from_node, from_pin, to_node, to_pin| Message::EdgeConnected {
+                    from_node,
+                    from_pin,
+                    to_node,
+                    to_pin,
+                },
+            )
+            .on_disconnect(
+                |from_node, from_pin, to_node, to_pin| Message::EdgeDisconnected {
+                    from_node,
+                    from_pin,
+                    to_node,
+                    to_pin,
+                },
+            )
             .on_move(|node_index, new_position| Message::NodeMoved {
                 node_index,
                 new_position,
@@ -486,9 +502,13 @@ impl Application {
             .selection(&self.graph_selection);
 
         for (position, name, style) in &self.nodes {
-            let content_style = if style.fill_color.b > style.fill_color.r && style.fill_color.b > style.fill_color.g {
+            let content_style = if style.fill_color.b > style.fill_color.r
+                && style.fill_color.b > style.fill_color.g
+            {
                 NodeContentStyle::input(theme)
-            } else if style.fill_color.g > style.fill_color.r && style.fill_color.g > style.fill_color.b {
+            } else if style.fill_color.g > style.fill_color.r
+                && style.fill_color.g > style.fill_color.b
+            {
                 NodeContentStyle::process(theme)
             } else if style.fill_color.r > style.fill_color.g {
                 NodeContentStyle::output(theme)

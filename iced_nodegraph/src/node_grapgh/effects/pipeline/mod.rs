@@ -106,12 +106,41 @@ impl Pipeline {
         });
 
         // Create all 5 pipelines
-        let pipeline_background = create_pipeline_custom(device, format, &layout, &module, "vs_background", "fs_background", "background");
-        let pipeline_edges = create_pipeline_custom(device, format, &layout, &module, "vs_edge", "fs_edge", "edges");
-        let pipeline_nodes = create_pipeline_custom(device, format, &layout, &module, "vs_node", "fs_node", "nodes");
-        let pipeline_pins = create_pipeline_custom(device, format, &layout, &module, "vs_pin", "fs_pin", "pins");
-        let pipeline_dragging = create_pipeline_custom(device, format, &layout, &module, "vs_dragging", "fs_dragging", "dragging");
-        let pipeline_foreground = create_pipeline_custom(device, format, &layout, &module, "vs_main", "fs_foreground", "foreground_legacy");
+        let pipeline_background = create_pipeline_custom(
+            device,
+            format,
+            &layout,
+            &module,
+            "vs_background",
+            "fs_background",
+            "background",
+        );
+        let pipeline_edges = create_pipeline_custom(
+            device, format, &layout, &module, "vs_edge", "fs_edge", "edges",
+        );
+        let pipeline_nodes = create_pipeline_custom(
+            device, format, &layout, &module, "vs_node", "fs_node", "nodes",
+        );
+        let pipeline_pins =
+            create_pipeline_custom(device, format, &layout, &module, "vs_pin", "fs_pin", "pins");
+        let pipeline_dragging = create_pipeline_custom(
+            device,
+            format,
+            &layout,
+            &module,
+            "vs_dragging",
+            "fs_dragging",
+            "dragging",
+        );
+        let pipeline_foreground = create_pipeline_custom(
+            device,
+            format,
+            &layout,
+            &module,
+            "vs_main",
+            "fs_foreground",
+            "foreground_legacy",
+        );
 
         Self {
             uniforms,
@@ -247,8 +276,8 @@ impl Pipeline {
                 .iter()
                 .map(|((from_node, from_pin), (to_node, to_pin))| {
                     // Highlight edges where both ends are selected
-                    let is_highlighted = selected_nodes.contains(from_node)
-                        && selected_nodes.contains(to_node);
+                    let is_highlighted =
+                        selected_nodes.contains(from_node) && selected_nodes.contains(to_node);
                     let color = if is_highlighted {
                         selected_edge_color
                     } else {
@@ -333,7 +362,10 @@ impl Pipeline {
             dragging_edge_from_origin,
             dragging_edge_to_node,
             dragging_edge_to_pin,
-            viewport_size: glam::Vec2::new(viewport.physical_width() as f32, viewport.physical_height() as f32),
+            viewport_size: glam::Vec2::new(
+                viewport.physical_width() as f32,
+                viewport.physical_height() as f32,
+            ),
             _pad_viewport0: 0,
             _pad_viewport1: 0,
         };

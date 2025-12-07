@@ -273,72 +273,169 @@ impl ShaderNodeType {
 
     pub fn category(&self) -> &'static str {
         match self {
-            Self::UV | Self::Time | Self::MousePos | Self::Resolution
-            | Self::CameraZoom | Self::CameraPosition | Self::NodePosition
-            | Self::NodeSize | Self::PinPosition | Self::EdgeData => "Input",
+            Self::UV
+            | Self::Time
+            | Self::MousePos
+            | Self::Resolution
+            | Self::CameraZoom
+            | Self::CameraPosition
+            | Self::NodePosition
+            | Self::NodeSize
+            | Self::PinPosition
+            | Self::EdgeData => "Input",
 
-            Self::Add | Self::Sub | Self::Mul | Self::Div | Self::Pow
-            | Self::Sqrt | Self::Abs | Self::Min | Self::Max | Self::Clamp
-            | Self::Sin | Self::Cos | Self::Tan | Self::Asin | Self::Acos
-            | Self::Atan | Self::Atan2 | Self::Floor | Self::Ceil
-            | Self::Fract | Self::Mod | Self::Sign | Self::Step => "Math",
+            Self::Add
+            | Self::Sub
+            | Self::Mul
+            | Self::Div
+            | Self::Pow
+            | Self::Sqrt
+            | Self::Abs
+            | Self::Min
+            | Self::Max
+            | Self::Clamp
+            | Self::Sin
+            | Self::Cos
+            | Self::Tan
+            | Self::Asin
+            | Self::Acos
+            | Self::Atan
+            | Self::Atan2
+            | Self::Floor
+            | Self::Ceil
+            | Self::Fract
+            | Self::Mod
+            | Self::Sign
+            | Self::Step => "Math",
 
-            Self::VecSplit2 | Self::VecSplit3 | Self::VecSplit4
-            | Self::VecCombine2 | Self::VecCombine3 | Self::VecCombine4
-            | Self::Dot | Self::Cross | Self::Length | Self::Distance
-            | Self::Normalize | Self::Reflect | Self::Refract
-            | Self::Mix | Self::Smoothstep => "Vector",
+            Self::VecSplit2
+            | Self::VecSplit3
+            | Self::VecSplit4
+            | Self::VecCombine2
+            | Self::VecCombine3
+            | Self::VecCombine4
+            | Self::Dot
+            | Self::Cross
+            | Self::Length
+            | Self::Distance
+            | Self::Normalize
+            | Self::Reflect
+            | Self::Refract
+            | Self::Mix
+            | Self::Smoothstep => "Vector",
 
-            Self::RGBtoHSV | Self::HSVtoRGB | Self::ColorMix
-            | Self::Desaturate | Self::Invert | Self::Gamma
-            | Self::ColorRamp | Self::Palette => "Color",
+            Self::RGBtoHSV
+            | Self::HSVtoRGB
+            | Self::ColorMix
+            | Self::Desaturate
+            | Self::Invert
+            | Self::Gamma
+            | Self::ColorRamp
+            | Self::Palette => "Color",
 
-            Self::SDF_Circle | Self::SDF_Box | Self::SDF_RoundedBox
-            | Self::SDF_OrientedBox | Self::SDF_Segment | Self::SDF_Rhombus
-            | Self::SDF_Trapezoid | Self::SDF_Parallelogram
-            | Self::SDF_EquilateralTriangle | Self::SDF_IsoscelesTriangle
-            | Self::SDF_Triangle | Self::SDF_UnevenCapsule | Self::SDF_Pentagon
-            | Self::SDF_Hexagon | Self::SDF_Octogon | Self::SDF_Hexagram
-            | Self::SDF_Star5 | Self::SDF_Star | Self::SDF_Pie
-            | Self::SDF_CutDisk | Self::SDF_Arc | Self::SDF_Ring
-            | Self::SDF_Horseshoe | Self::SDF_Vesica | Self::SDF_Moon
-            | Self::SDF_RoundedCross | Self::SDF_Egg | Self::SDF_Heart
-            | Self::SDF_Cross | Self::SDF_RoundedX | Self::SDF_Polygon
-            | Self::SDF_Ellipse | Self::SDF_Parabola | Self::SDF_ParabolaSegment => "SDF",
+            Self::SDF_Circle
+            | Self::SDF_Box
+            | Self::SDF_RoundedBox
+            | Self::SDF_OrientedBox
+            | Self::SDF_Segment
+            | Self::SDF_Rhombus
+            | Self::SDF_Trapezoid
+            | Self::SDF_Parallelogram
+            | Self::SDF_EquilateralTriangle
+            | Self::SDF_IsoscelesTriangle
+            | Self::SDF_Triangle
+            | Self::SDF_UnevenCapsule
+            | Self::SDF_Pentagon
+            | Self::SDF_Hexagon
+            | Self::SDF_Octogon
+            | Self::SDF_Hexagram
+            | Self::SDF_Star5
+            | Self::SDF_Star
+            | Self::SDF_Pie
+            | Self::SDF_CutDisk
+            | Self::SDF_Arc
+            | Self::SDF_Ring
+            | Self::SDF_Horseshoe
+            | Self::SDF_Vesica
+            | Self::SDF_Moon
+            | Self::SDF_RoundedCross
+            | Self::SDF_Egg
+            | Self::SDF_Heart
+            | Self::SDF_Cross
+            | Self::SDF_RoundedX
+            | Self::SDF_Polygon
+            | Self::SDF_Ellipse
+            | Self::SDF_Parabola
+            | Self::SDF_ParabolaSegment => "SDF",
 
-            Self::SDF_Union | Self::SDF_Subtraction | Self::SDF_Intersection
-            | Self::SDF_SmoothUnion | Self::SDF_SmoothSubtraction
-            | Self::SDF_SmoothIntersection | Self::SDF_Onion | Self::SDF_Round
-            | Self::SDF_Annular | Self::SDF_Extrusion | Self::SDF_Revolution
+            Self::SDF_Union
+            | Self::SDF_Subtraction
+            | Self::SDF_Intersection
+            | Self::SDF_SmoothUnion
+            | Self::SDF_SmoothSubtraction
+            | Self::SDF_SmoothIntersection
+            | Self::SDF_Onion
+            | Self::SDF_Round
+            | Self::SDF_Annular
+            | Self::SDF_Extrusion
+            | Self::SDF_Revolution
             | Self::SDF_Elongation => "SDF Ops",
 
-            Self::Equal | Self::NotEqual | Self::Less | Self::Greater
-            | Self::LessEqual | Self::GreaterEqual | Self::And | Self::Or => "Logic",
+            Self::Equal
+            | Self::NotEqual
+            | Self::Less
+            | Self::Greater
+            | Self::LessEqual
+            | Self::GreaterEqual
+            | Self::And
+            | Self::Or => "Logic",
 
-            Self::OutputBackground | Self::OutputNode | Self::OutputPin
-            | Self::OutputEdge | Self::OutputFinal => "Output",
+            Self::OutputBackground
+            | Self::OutputNode
+            | Self::OutputPin
+            | Self::OutputEdge
+            | Self::OutputFinal => "Output",
         }
     }
 
     pub fn inputs(&self) -> Vec<Socket> {
         match self {
             // Input nodes have no inputs
-            Self::UV | Self::Time | Self::MousePos | Self::Resolution
-            | Self::CameraZoom | Self::CameraPosition => vec![],
+            Self::UV
+            | Self::Time
+            | Self::MousePos
+            | Self::Resolution
+            | Self::CameraZoom
+            | Self::CameraPosition => vec![],
 
             // Math - binary operations
-            Self::Add | Self::Sub | Self::Mul | Self::Div | Self::Pow
-            | Self::Min | Self::Max | Self::Atan2 | Self::Mod | Self::Step => vec![
+            Self::Add
+            | Self::Sub
+            | Self::Mul
+            | Self::Div
+            | Self::Pow
+            | Self::Min
+            | Self::Max
+            | Self::Atan2
+            | Self::Mod
+            | Self::Step => vec![
                 Socket::new("A", SocketType::Float),
                 Socket::new("B", SocketType::Float),
             ],
 
             // Math - unary operations
-            Self::Sqrt | Self::Abs | Self::Sin | Self::Cos | Self::Tan
-            | Self::Asin | Self::Acos | Self::Atan | Self::Floor
-            | Self::Ceil | Self::Fract | Self::Sign => vec![
-                Socket::new("Value", SocketType::Float),
-            ],
+            Self::Sqrt
+            | Self::Abs
+            | Self::Sin
+            | Self::Cos
+            | Self::Tan
+            | Self::Asin
+            | Self::Acos
+            | Self::Atan
+            | Self::Floor
+            | Self::Ceil
+            | Self::Fract
+            | Self::Sign => vec![Socket::new("Value", SocketType::Float)],
 
             // Clamp
             Self::Clamp => vec![
@@ -374,9 +471,7 @@ impl ShaderNodeType {
                 Socket::new("A", SocketType::Vec2),
                 Socket::new("B", SocketType::Vec2),
             ],
-            Self::Length | Self::Normalize => vec![
-                Socket::new("Vector", SocketType::Vec2),
-            ],
+            Self::Length | Self::Normalize => vec![Socket::new("Vector", SocketType::Vec2)],
             Self::Distance => vec![
                 Socket::new("A", SocketType::Vec2),
                 Socket::new("B", SocketType::Vec2),
@@ -410,16 +505,16 @@ impl ShaderNodeType {
                 Socket::new("D2", SocketType::Float),
             ],
 
-            Self::SDF_SmoothUnion | Self::SDF_SmoothSubtraction | Self::SDF_SmoothIntersection => vec![
-                Socket::new("D1", SocketType::Float),
-                Socket::new("D2", SocketType::Float),
-                Socket::new("K", SocketType::Float).with_default("0.1"),
-            ],
+            Self::SDF_SmoothUnion | Self::SDF_SmoothSubtraction | Self::SDF_SmoothIntersection => {
+                vec![
+                    Socket::new("D1", SocketType::Float),
+                    Socket::new("D2", SocketType::Float),
+                    Socket::new("K", SocketType::Float).with_default("0.1"),
+                ]
+            }
 
             // Outputs
-            Self::OutputEdge => vec![
-                Socket::new("Color", SocketType::Vec4),
-            ],
+            Self::OutputEdge => vec![Socket::new("Color", SocketType::Vec4)],
 
             // Default
             _ => vec![],
@@ -437,13 +532,29 @@ impl ShaderNodeType {
             Self::CameraPosition => vec![Socket::new("Position", SocketType::Vec2)],
 
             // Math operations
-            Self::Add | Self::Sub | Self::Mul | Self::Div | Self::Pow
-            | Self::Min | Self::Max | Self::Atan2 | Self::Mod | Self::Step
-            | Self::Sqrt | Self::Abs | Self::Sin | Self::Cos | Self::Tan
-            | Self::Asin | Self::Acos | Self::Atan | Self::Floor
-            | Self::Ceil | Self::Fract | Self::Sign | Self::Clamp => vec![
-                Socket::new("Result", SocketType::Float),
-            ],
+            Self::Add
+            | Self::Sub
+            | Self::Mul
+            | Self::Div
+            | Self::Pow
+            | Self::Min
+            | Self::Max
+            | Self::Atan2
+            | Self::Mod
+            | Self::Step
+            | Self::Sqrt
+            | Self::Abs
+            | Self::Sin
+            | Self::Cos
+            | Self::Tan
+            | Self::Asin
+            | Self::Acos
+            | Self::Atan
+            | Self::Floor
+            | Self::Ceil
+            | Self::Fract
+            | Self::Sign
+            | Self::Clamp => vec![Socket::new("Result", SocketType::Float)],
 
             // Vector split
             Self::VecSplit2 => vec![
@@ -475,32 +586,58 @@ impl ShaderNodeType {
             Self::Smoothstep => vec![Socket::new("Result", SocketType::Float)],
 
             // All SDF primitives output distance
-            Self::SDF_Circle | Self::SDF_Box | Self::SDF_RoundedBox
-            | Self::SDF_OrientedBox | Self::SDF_Segment | Self::SDF_Rhombus
-            | Self::SDF_Trapezoid | Self::SDF_Parallelogram
-            | Self::SDF_EquilateralTriangle | Self::SDF_IsoscelesTriangle
-            | Self::SDF_Triangle | Self::SDF_UnevenCapsule | Self::SDF_Pentagon
-            | Self::SDF_Hexagon | Self::SDF_Octogon | Self::SDF_Hexagram
-            | Self::SDF_Star5 | Self::SDF_Star | Self::SDF_Pie
-            | Self::SDF_CutDisk | Self::SDF_Arc | Self::SDF_Ring
-            | Self::SDF_Horseshoe | Self::SDF_Vesica | Self::SDF_Moon
-            | Self::SDF_RoundedCross | Self::SDF_Egg | Self::SDF_Heart
-            | Self::SDF_Cross | Self::SDF_RoundedX | Self::SDF_Polygon
-            | Self::SDF_Ellipse | Self::SDF_Parabola | Self::SDF_ParabolaSegment => vec![
-                Socket::new("Distance", SocketType::Float),
-            ],
+            Self::SDF_Circle
+            | Self::SDF_Box
+            | Self::SDF_RoundedBox
+            | Self::SDF_OrientedBox
+            | Self::SDF_Segment
+            | Self::SDF_Rhombus
+            | Self::SDF_Trapezoid
+            | Self::SDF_Parallelogram
+            | Self::SDF_EquilateralTriangle
+            | Self::SDF_IsoscelesTriangle
+            | Self::SDF_Triangle
+            | Self::SDF_UnevenCapsule
+            | Self::SDF_Pentagon
+            | Self::SDF_Hexagon
+            | Self::SDF_Octogon
+            | Self::SDF_Hexagram
+            | Self::SDF_Star5
+            | Self::SDF_Star
+            | Self::SDF_Pie
+            | Self::SDF_CutDisk
+            | Self::SDF_Arc
+            | Self::SDF_Ring
+            | Self::SDF_Horseshoe
+            | Self::SDF_Vesica
+            | Self::SDF_Moon
+            | Self::SDF_RoundedCross
+            | Self::SDF_Egg
+            | Self::SDF_Heart
+            | Self::SDF_Cross
+            | Self::SDF_RoundedX
+            | Self::SDF_Polygon
+            | Self::SDF_Ellipse
+            | Self::SDF_Parabola
+            | Self::SDF_ParabolaSegment => vec![Socket::new("Distance", SocketType::Float)],
 
             // SDF operations output distance
-            Self::SDF_Union | Self::SDF_Subtraction | Self::SDF_Intersection
-            | Self::SDF_SmoothUnion | Self::SDF_SmoothSubtraction
-            | Self::SDF_SmoothIntersection | Self::SDF_Onion | Self::SDF_Round
-            | Self::SDF_Annular => vec![
-                Socket::new("Distance", SocketType::Float),
-            ],
+            Self::SDF_Union
+            | Self::SDF_Subtraction
+            | Self::SDF_Intersection
+            | Self::SDF_SmoothUnion
+            | Self::SDF_SmoothSubtraction
+            | Self::SDF_SmoothIntersection
+            | Self::SDF_Onion
+            | Self::SDF_Round
+            | Self::SDF_Annular => vec![Socket::new("Distance", SocketType::Float)],
 
             // Output nodes have no outputs
-            Self::OutputBackground | Self::OutputNode | Self::OutputPin
-            | Self::OutputEdge | Self::OutputFinal => vec![],
+            Self::OutputBackground
+            | Self::OutputNode
+            | Self::OutputPin
+            | Self::OutputEdge
+            | Self::OutputFinal => vec![],
 
             // Default
             _ => vec![],
@@ -511,47 +648,128 @@ impl ShaderNodeType {
     pub fn all() -> &'static [ShaderNodeType] {
         &[
             // Inputs
-            Self::UV, Self::Time, Self::MousePos, Self::Resolution,
-            Self::CameraZoom, Self::CameraPosition, Self::NodePosition,
-            Self::NodeSize, Self::PinPosition, Self::EdgeData,
+            Self::UV,
+            Self::Time,
+            Self::MousePos,
+            Self::Resolution,
+            Self::CameraZoom,
+            Self::CameraPosition,
+            Self::NodePosition,
+            Self::NodeSize,
+            Self::PinPosition,
+            Self::EdgeData,
             // Math
-            Self::Add, Self::Sub, Self::Mul, Self::Div, Self::Pow,
-            Self::Sqrt, Self::Abs, Self::Min, Self::Max, Self::Clamp,
-            Self::Sin, Self::Cos, Self::Tan, Self::Asin, Self::Acos,
-            Self::Atan, Self::Atan2, Self::Floor, Self::Ceil,
-            Self::Fract, Self::Mod, Self::Sign, Self::Step,
+            Self::Add,
+            Self::Sub,
+            Self::Mul,
+            Self::Div,
+            Self::Pow,
+            Self::Sqrt,
+            Self::Abs,
+            Self::Min,
+            Self::Max,
+            Self::Clamp,
+            Self::Sin,
+            Self::Cos,
+            Self::Tan,
+            Self::Asin,
+            Self::Acos,
+            Self::Atan,
+            Self::Atan2,
+            Self::Floor,
+            Self::Ceil,
+            Self::Fract,
+            Self::Mod,
+            Self::Sign,
+            Self::Step,
             // Vector
-            Self::VecSplit2, Self::VecSplit3, Self::VecSplit4,
-            Self::VecCombine2, Self::VecCombine3, Self::VecCombine4,
-            Self::Dot, Self::Cross, Self::Length, Self::Distance,
-            Self::Normalize, Self::Reflect, Self::Refract, Self::Mix, Self::Smoothstep,
+            Self::VecSplit2,
+            Self::VecSplit3,
+            Self::VecSplit4,
+            Self::VecCombine2,
+            Self::VecCombine3,
+            Self::VecCombine4,
+            Self::Dot,
+            Self::Cross,
+            Self::Length,
+            Self::Distance,
+            Self::Normalize,
+            Self::Reflect,
+            Self::Refract,
+            Self::Mix,
+            Self::Smoothstep,
             // Color
-            Self::RGBtoHSV, Self::HSVtoRGB, Self::ColorMix,
-            Self::Desaturate, Self::Invert, Self::Gamma, Self::ColorRamp, Self::Palette,
+            Self::RGBtoHSV,
+            Self::HSVtoRGB,
+            Self::ColorMix,
+            Self::Desaturate,
+            Self::Invert,
+            Self::Gamma,
+            Self::ColorRamp,
+            Self::Palette,
             // SDF Primitives
-            Self::SDF_Circle, Self::SDF_Box, Self::SDF_RoundedBox,
-            Self::SDF_OrientedBox, Self::SDF_Segment, Self::SDF_Rhombus,
-            Self::SDF_Trapezoid, Self::SDF_Parallelogram,
-            Self::SDF_EquilateralTriangle, Self::SDF_IsoscelesTriangle,
-            Self::SDF_Triangle, Self::SDF_UnevenCapsule, Self::SDF_Pentagon,
-            Self::SDF_Hexagon, Self::SDF_Octogon, Self::SDF_Hexagram,
-            Self::SDF_Star5, Self::SDF_Star, Self::SDF_Pie,
-            Self::SDF_CutDisk, Self::SDF_Arc, Self::SDF_Ring,
-            Self::SDF_Horseshoe, Self::SDF_Vesica, Self::SDF_Moon,
-            Self::SDF_RoundedCross, Self::SDF_Egg, Self::SDF_Heart,
-            Self::SDF_Cross, Self::SDF_RoundedX, Self::SDF_Polygon,
-            Self::SDF_Ellipse, Self::SDF_Parabola, Self::SDF_ParabolaSegment,
+            Self::SDF_Circle,
+            Self::SDF_Box,
+            Self::SDF_RoundedBox,
+            Self::SDF_OrientedBox,
+            Self::SDF_Segment,
+            Self::SDF_Rhombus,
+            Self::SDF_Trapezoid,
+            Self::SDF_Parallelogram,
+            Self::SDF_EquilateralTriangle,
+            Self::SDF_IsoscelesTriangle,
+            Self::SDF_Triangle,
+            Self::SDF_UnevenCapsule,
+            Self::SDF_Pentagon,
+            Self::SDF_Hexagon,
+            Self::SDF_Octogon,
+            Self::SDF_Hexagram,
+            Self::SDF_Star5,
+            Self::SDF_Star,
+            Self::SDF_Pie,
+            Self::SDF_CutDisk,
+            Self::SDF_Arc,
+            Self::SDF_Ring,
+            Self::SDF_Horseshoe,
+            Self::SDF_Vesica,
+            Self::SDF_Moon,
+            Self::SDF_RoundedCross,
+            Self::SDF_Egg,
+            Self::SDF_Heart,
+            Self::SDF_Cross,
+            Self::SDF_RoundedX,
+            Self::SDF_Polygon,
+            Self::SDF_Ellipse,
+            Self::SDF_Parabola,
+            Self::SDF_ParabolaSegment,
             // SDF Ops
-            Self::SDF_Union, Self::SDF_Subtraction, Self::SDF_Intersection,
-            Self::SDF_SmoothUnion, Self::SDF_SmoothSubtraction,
-            Self::SDF_SmoothIntersection, Self::SDF_Onion, Self::SDF_Round,
-            Self::SDF_Annular, Self::SDF_Extrusion, Self::SDF_Revolution, Self::SDF_Elongation,
+            Self::SDF_Union,
+            Self::SDF_Subtraction,
+            Self::SDF_Intersection,
+            Self::SDF_SmoothUnion,
+            Self::SDF_SmoothSubtraction,
+            Self::SDF_SmoothIntersection,
+            Self::SDF_Onion,
+            Self::SDF_Round,
+            Self::SDF_Annular,
+            Self::SDF_Extrusion,
+            Self::SDF_Revolution,
+            Self::SDF_Elongation,
             // Logic
-            Self::Equal, Self::NotEqual, Self::Less, Self::Greater,
-            Self::LessEqual, Self::GreaterEqual, Self::And, Self::Or,
+            Self::Equal,
+            Self::NotEqual,
+            Self::Less,
+            Self::Greater,
+            Self::LessEqual,
+            Self::GreaterEqual,
+            Self::And,
+            Self::Or,
             // Outputs
-            Self::OutputBackground, Self::OutputNode, Self::OutputPin,
-            Self::OutputEdge, Self::OutputFinal,
+            Self::OutputBackground,
+            Self::OutputNode,
+            Self::OutputPin,
+            Self::OutputEdge,
+            Self::OutputFinal,
         ]
     }
 }

@@ -1,9 +1,9 @@
-use super::euclid::WorldPoint;
 use super::camera::Camera2D;
-use web_time::Instant;
+use super::euclid::WorldPoint;
 use iced::animation::Animation;
 use iced::keyboard;
 use std::collections::HashSet;
+use web_time::Instant;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) enum Dragging {

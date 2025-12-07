@@ -44,20 +44,20 @@ pub fn wasm_init() {
     console_error_panic_hook::set_once();
 }
 
-use std::collections::HashSet;
 use compiler::ShaderCompiler;
 use iced::{
+    Color, Element, Event, Length, Point, Subscription, Task, Theme, Vector, event, keyboard,
     widget::{column, container, stack, text},
-    keyboard, event, window,
-    Color, Element, Event, Length, Point, Subscription, Task, Theme, Vector,
+    window,
 };
-use iced_nodegraph::{node_graph, PinDirection, PinSide, PinReference};
+use iced_nodegraph::{PinDirection, PinReference, PinSide, node_graph};
 use iced_palette::{
-    command_palette, command, get_filtered_command_index, get_filtered_count,
-    navigate_up, navigate_down, focus_input, Command,
+    Command, command, command_palette, focus_input, get_filtered_command_index, get_filtered_count,
+    navigate_down, navigate_up,
 };
 use shader_graph::ShaderGraph;
 use shader_graph::nodes::ShaderNodeType;
+use std::collections::HashSet;
 
 pub fn main() -> iced::Result {
     #[cfg(target_arch = "wasm32")]
@@ -153,8 +153,14 @@ impl Application {
                 let to_node = shader_graph.nodes.iter().find(|n| n.id == conn.to_node)?;
 
                 // Find node indices (position in nodes vec)
-                let from_node_idx = shader_graph.nodes.iter().position(|n| n.id == conn.from_node)?;
-                let to_node_idx = shader_graph.nodes.iter().position(|n| n.id == conn.to_node)?;
+                let from_node_idx = shader_graph
+                    .nodes
+                    .iter()
+                    .position(|n| n.id == conn.from_node)?;
+                let to_node_idx = shader_graph
+                    .nodes
+                    .iter()
+                    .position(|n| n.id == conn.to_node)?;
 
                 // from_socket is an output index -> visual pin = num_inputs + output_index
                 let from_visual_pin = from_node.inputs.len() + conn.from_socket;
@@ -164,11 +170,18 @@ impl Application {
 
                 println!(
                     "Edge: {}:{} (out {}) -> {}:{} (in {})",
-                    from_node.node_type.name(), from_visual_pin, conn.from_socket,
-                    to_node.node_type.name(), to_visual_pin, conn.to_socket
+                    from_node.node_type.name(),
+                    from_visual_pin,
+                    conn.from_socket,
+                    to_node.node_type.name(),
+                    to_visual_pin,
+                    conn.to_socket
                 );
 
-                Some((PinReference::new(from_node_idx, from_visual_pin), PinReference::new(to_node_idx, to_visual_pin)))
+                Some((
+                    PinReference::new(from_node_idx, from_visual_pin),
+                    PinReference::new(to_node_idx, to_visual_pin),
+                ))
             })
             .collect();
 
@@ -198,7 +211,10 @@ impl Application {
                 to_pin,
             } => {
                 // Store visual edge as-is
-                self.visual_edges.push((PinReference::new(from_node, from_pin), PinReference::new(to_node, to_pin)));
+                self.visual_edges.push((
+                    PinReference::new(from_node, from_pin),
+                    PinReference::new(to_node, to_pin),
+                ));
 
                 // Convert visual pin indices to shader socket indices
                 // First, gather the info we need
@@ -213,13 +229,21 @@ impl Application {
                         let to_socket = to_pin;
 
                         if from_socket < from.outputs.len() && to_socket < to.inputs.len() {
-                            Some((from.id, from_socket, to.id, to_socket,
-                                  from.node_type.name().to_string(),
-                                  to.node_type.name().to_string()))
+                            Some((
+                                from.id,
+                                from_socket,
+                                to.id,
+                                to_socket,
+                                from.node_type.name().to_string(),
+                                to.node_type.name().to_string(),
+                            ))
                         } else {
                             println!(
                                 "Invalid connection: pin {} (outputs: {}) -> pin {} (inputs: {})",
-                                from_pin, from.outputs.len(), to_pin, to.inputs.len()
+                                from_pin,
+                                from.outputs.len(),
+                                to_pin,
+                                to.inputs.len()
                             );
                             None
                         }
@@ -229,7 +253,9 @@ impl Application {
                 };
 
                 // Now apply the connection
-                if let Some((from_id, from_socket, to_id, to_socket, from_name, to_name)) = connection_info {
+                if let Some((from_id, from_socket, to_id, to_socket, from_name, to_name)) =
+                    connection_info
+                {
                     self.shader_graph.add_connection(shader_graph::Connection {
                         from_node: from_id,
                         from_socket,
@@ -258,7 +284,10 @@ impl Application {
                 to_pin,
             } => {
                 self.visual_edges.retain(|(from, to)| {
-                    !(from.node_id == from_node && from.pin_id == from_pin && to.node_id == to_node && to.pin_id == to_pin)
+                    !(from.node_id == from_node
+                        && from.pin_id == from_pin
+                        && to.node_id == to_node
+                        && to.pin_id == to_pin)
                 });
                 self.shader_graph.connections.retain(|c| {
                     !(c.from_node == from_node
@@ -358,22 +387,26 @@ impl Application {
     fn view(&self) -> Element<'_, Message> {
         // Build node graph
         let mut graph = node_graph()
-            .on_connect(|from_node, from_pin, to_node, to_pin| Message::EdgeConnected {
-                from_node,
-                from_pin,
-                to_node,
-                to_pin,
-            })
+            .on_connect(
+                |from_node, from_pin, to_node, to_pin| Message::EdgeConnected {
+                    from_node,
+                    from_pin,
+                    to_node,
+                    to_pin,
+                },
+            )
             .on_move(|node_index, new_position| Message::NodeMoved {
                 node_index,
                 new_position,
             })
-            .on_disconnect(|from_node, from_pin, to_node, to_pin| Message::EdgeDisconnected {
-                from_node,
-                from_pin,
-                to_node,
-                to_pin,
-            })
+            .on_disconnect(
+                |from_node, from_pin, to_node, to_pin| Message::EdgeDisconnected {
+                    from_node,
+                    from_pin,
+                    to_node,
+                    to_pin,
+                },
+            )
             .on_select(Message::SelectionChanged)
             .on_group_move(|indices, delta| Message::GroupMoved { indices, delta })
             .selection(&self.graph_selection);
@@ -583,10 +616,7 @@ fn create_node_widget<'a>(
             );
         }
 
-        container(
-            iced::widget::Column::with_children(pin_elements).spacing(2),
-        )
-        .padding([6, 0])
+        container(iced::widget::Column::with_children(pin_elements).spacing(2)).padding([6, 0])
     };
 
     column![title_bar, pin_section].width(160.0).into()
@@ -595,11 +625,11 @@ fn create_node_widget<'a>(
 fn get_socket_color(socket_type: &shader_graph::sockets::SocketType) -> Color {
     use shader_graph::sockets::SocketType;
     match socket_type {
-        SocketType::Float => Color::from_rgb(0.6, 0.8, 0.6),  // Light green
-        SocketType::Vec2 => Color::from_rgb(0.6, 0.8, 0.9),   // Light cyan
-        SocketType::Vec3 => Color::from_rgb(0.9, 0.8, 0.5),   // Light yellow
-        SocketType::Vec4 => Color::from_rgb(0.9, 0.6, 0.7),   // Light pink
-        SocketType::Bool => Color::from_rgb(0.9, 0.5, 0.5),   // Light red
-        SocketType::Int => Color::from_rgb(0.7, 0.7, 0.9),    // Light purple
+        SocketType::Float => Color::from_rgb(0.6, 0.8, 0.6), // Light green
+        SocketType::Vec2 => Color::from_rgb(0.6, 0.8, 0.9),  // Light cyan
+        SocketType::Vec3 => Color::from_rgb(0.9, 0.8, 0.5),  // Light yellow
+        SocketType::Vec4 => Color::from_rgb(0.9, 0.6, 0.7),  // Light pink
+        SocketType::Bool => Color::from_rgb(0.9, 0.5, 0.5),  // Light red
+        SocketType::Int => Color::from_rgb(0.7, 0.7, 0.9),   // Light purple
     }
 }

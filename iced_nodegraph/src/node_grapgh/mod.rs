@@ -17,19 +17,41 @@ mod interaction_tests;
 /// Events emitted by the NodeGraph widget.
 #[derive(Debug, Clone)]
 pub enum NodeGraphEvent {
-    EdgeConnected { from: PinReference, to: PinReference },
-    EdgeDisconnected { from: PinReference, to: PinReference },
-    NodeMoved { node_id: usize, position: Point },
-    GroupMoved { node_ids: Vec<usize>, delta: Vector },
-    SelectionChanged { selected: Vec<usize> },
-    CloneRequested { node_ids: Vec<usize> },
-    DeleteRequested { node_ids: Vec<usize> },
+    EdgeConnected {
+        from: PinReference,
+        to: PinReference,
+    },
+    EdgeDisconnected {
+        from: PinReference,
+        to: PinReference,
+    },
+    NodeMoved {
+        node_id: usize,
+        position: Point,
+    },
+    GroupMoved {
+        node_ids: Vec<usize>,
+        delta: Vector,
+    },
+    SelectionChanged {
+        selected: Vec<usize>,
+    },
+    CloneRequested {
+        node_ids: Vec<usize>,
+    },
+    DeleteRequested {
+        node_ids: Vec<usize>,
+    },
 }
 
 #[allow(missing_debug_implementations)]
 pub struct NodeGraph<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer> {
     pub(super) size: Size<Length>,
-    pub(super) nodes: Vec<(Point, iced::Element<'a, Message, Theme, Renderer>, Option<NodeStyle>)>,
+    pub(super) nodes: Vec<(
+        Point,
+        iced::Element<'a, Message, Theme, Renderer>,
+        Option<NodeStyle>,
+    )>,
     pub(super) edges: Vec<(PinReference, PinReference, Option<EdgeStyle>)>,
     graph_style: Option<GraphStyle>,
     on_connect: Option<Box<dyn Fn(usize, usize, usize, usize) -> Message + 'a>>,
@@ -68,11 +90,20 @@ impl<'a, Message, Theme, Renderer> NodeGraph<'a, Message, Theme, Renderer>
 where
     Renderer: iced_widget::core::renderer::Renderer,
 {
-    pub fn push_node(&mut self, position: Point, element: impl Into<iced::Element<'a, Message, Theme, Renderer>>) {
+    pub fn push_node(
+        &mut self,
+        position: Point,
+        element: impl Into<iced::Element<'a, Message, Theme, Renderer>>,
+    ) {
         self.nodes.push((position, element.into(), None));
     }
 
-    pub fn push_node_styled(&mut self, position: Point, element: impl Into<iced::Element<'a, Message, Theme, Renderer>>, style: NodeStyle) {
+    pub fn push_node_styled(
+        &mut self,
+        position: Point,
+        element: impl Into<iced::Element<'a, Message, Theme, Renderer>>,
+        style: NodeStyle,
+    ) {
         self.nodes.push((position, element.into(), Some(style)));
     }
 
@@ -139,42 +170,94 @@ where
         self
     }
 
-    pub fn node_count(&self) -> usize { self.nodes.len() }
-    pub fn edge_count(&self) -> usize { self.edges.len() }
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+    pub fn edge_count(&self) -> usize {
+        self.edges.len()
+    }
 
     pub fn edges(&self) -> impl Iterator<Item = (PinReference, PinReference, Option<&EdgeStyle>)> {
-        self.edges.iter().map(|(from, to, style)| (*from, *to, style.as_ref()))
+        self.edges
+            .iter()
+            .map(|(from, to, style)| (*from, *to, style.as_ref()))
     }
 
     pub fn node_position(&self, node_id: usize) -> Option<Point> {
         self.nodes.get(node_id).map(|(pos, _, _)| *pos)
     }
 
-    pub(super) fn elements_iter(&self) -> impl Iterator<Item = (Point, &iced::Element<'a, Message, Theme, Renderer>, Option<&NodeStyle>)> {
+    pub(super) fn elements_iter(
+        &self,
+    ) -> impl Iterator<
+        Item = (
+            Point,
+            &iced::Element<'a, Message, Theme, Renderer>,
+            Option<&NodeStyle>,
+        ),
+    > {
         self.nodes.iter().map(|(p, e, s)| (*p, e, s.as_ref()))
     }
 
-    pub(super) fn elements_iter_mut(&mut self) -> impl Iterator<Item = (Point, &mut iced::Element<'a, Message, Theme, Renderer>, Option<&NodeStyle>)> {
+    pub(super) fn elements_iter_mut(
+        &mut self,
+    ) -> impl Iterator<
+        Item = (
+            Point,
+            &mut iced::Element<'a, Message, Theme, Renderer>,
+            Option<&NodeStyle>,
+        ),
+    > {
         self.nodes.iter_mut().map(|(p, e, s)| (*p, e, s.as_ref()))
     }
 
-    pub(super) fn get_graph_style(&self) -> Option<&GraphStyle> { self.graph_style.as_ref() }
-
-    #[allow(dead_code)]
-    pub(super) fn edges_iter(&self) -> impl Iterator<Item = (PinReference, PinReference, Option<&EdgeStyle>)> {
-        self.edges.iter().map(|(from, to, style)| (*from, *to, style.as_ref()))
+    pub(super) fn get_graph_style(&self) -> Option<&GraphStyle> {
+        self.graph_style.as_ref()
     }
 
-    pub(super) fn on_connect_handler(&self) -> Option<&Box<dyn Fn(usize, usize, usize, usize) -> Message + 'a>> { self.on_connect.as_ref() }
-    pub(super) fn on_disconnect_handler(&self) -> Option<&Box<dyn Fn(usize, usize, usize, usize) -> Message + 'a>> { self.on_disconnect.as_ref() }
-    pub(super) fn on_move_handler(&self) -> Option<&Box<dyn Fn(usize, Point) -> Message + 'a>> { self.on_move.as_ref() }
-    pub(super) fn on_select_handler(&self) -> Option<&Box<dyn Fn(Vec<usize>) -> Message + 'a>> { self.on_select.as_ref() }
-    pub(super) fn on_clone_handler(&self) -> Option<&Box<dyn Fn(Vec<usize>) -> Message + 'a>> { self.on_clone.as_ref() }
-    pub(super) fn on_delete_handler(&self) -> Option<&Box<dyn Fn(Vec<usize>) -> Message + 'a>> { self.on_delete.as_ref() }
-    pub(super) fn on_group_move_handler(&self) -> Option<&Box<dyn Fn(Vec<usize>, Vector) -> Message + 'a>> { self.on_group_move.as_ref() }
-    pub(super) fn get_external_selection(&self) -> Option<&HashSet<usize>> { self.external_selection }
+    #[allow(dead_code)]
+    pub(super) fn edges_iter(
+        &self,
+    ) -> impl Iterator<Item = (PinReference, PinReference, Option<&EdgeStyle>)> {
+        self.edges
+            .iter()
+            .map(|(from, to, style)| (*from, *to, style.as_ref()))
+    }
 
-    pub fn needs_animation(&self) -> bool { false }
+    pub(super) fn on_connect_handler(
+        &self,
+    ) -> Option<&Box<dyn Fn(usize, usize, usize, usize) -> Message + 'a>> {
+        self.on_connect.as_ref()
+    }
+    pub(super) fn on_disconnect_handler(
+        &self,
+    ) -> Option<&Box<dyn Fn(usize, usize, usize, usize) -> Message + 'a>> {
+        self.on_disconnect.as_ref()
+    }
+    pub(super) fn on_move_handler(&self) -> Option<&Box<dyn Fn(usize, Point) -> Message + 'a>> {
+        self.on_move.as_ref()
+    }
+    pub(super) fn on_select_handler(&self) -> Option<&Box<dyn Fn(Vec<usize>) -> Message + 'a>> {
+        self.on_select.as_ref()
+    }
+    pub(super) fn on_clone_handler(&self) -> Option<&Box<dyn Fn(Vec<usize>) -> Message + 'a>> {
+        self.on_clone.as_ref()
+    }
+    pub(super) fn on_delete_handler(&self) -> Option<&Box<dyn Fn(Vec<usize>) -> Message + 'a>> {
+        self.on_delete.as_ref()
+    }
+    pub(super) fn on_group_move_handler(
+        &self,
+    ) -> Option<&Box<dyn Fn(Vec<usize>, Vector) -> Message + 'a>> {
+        self.on_group_move.as_ref()
+    }
+    pub(super) fn get_external_selection(&self) -> Option<&HashSet<usize>> {
+        self.external_selection
+    }
+
+    pub fn needs_animation(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]
@@ -229,9 +312,7 @@ mod tests {
         let _ = NodeGraphEvent::SelectionChanged {
             selected: vec![0, 1],
         };
-        let _ = NodeGraphEvent::CloneRequested {
-            node_ids: vec![0],
-        };
+        let _ = NodeGraphEvent::CloneRequested { node_ids: vec![0] };
         let _ = NodeGraphEvent::DeleteRequested {
             node_ids: vec![0, 1, 2],
         };

@@ -39,12 +39,13 @@ pub fn wasm_init() {
     console_error_panic_hook::set_once();
 }
 
-use std::collections::HashSet;
 use iced::{
-    Color, Length, Point, Subscription, Theme, Vector, window,
+    Color, Length, Point, Subscription, Theme, Vector,
     widget::{column, container, stack, text},
+    window,
 };
-use iced_nodegraph::{PinDirection, PinSide, PinReference, node_graph, node_pin};
+use iced_nodegraph::{PinDirection, PinReference, PinSide, node_graph, node_pin};
+use std::collections::HashSet;
 
 pub fn main() -> iced::Result {
     #[cfg(target_arch = "wasm32")]
@@ -201,7 +202,10 @@ fn generate_procedural_graph() -> (Vec<(Point, NodeType)>, Vec<(PinReference, Pi
 
             // Connect to random input
             let input_node = input_nodes[row % input_nodes.len()];
-            edges.push((PinReference::new(input_node, 0), PinReference::new(node_idx, 0)));
+            edges.push((
+                PinReference::new(input_node, 0),
+                PinReference::new(node_idx, 0),
+            ));
 
             noise_nodes.push(node_idx);
             node_idx += 1;
@@ -225,7 +229,10 @@ fn generate_procedural_graph() -> (Vec<(Point, NodeType)>, Vec<(PinReference, Pi
 
             // Connect to noise nodes
             let noise_node = noise_nodes[row % noise_nodes.len()];
-            edges.push((PinReference::new(noise_node, 0), PinReference::new(node_idx, 0)));
+            edges.push((
+                PinReference::new(noise_node, 0),
+                PinReference::new(node_idx, 0),
+            ));
 
             vector_nodes.push(node_idx);
             node_idx += 1;
@@ -249,12 +256,18 @@ fn generate_procedural_graph() -> (Vec<(Point, NodeType)>, Vec<(PinReference, Pi
 
             // Connect to vector operations
             let vector_node = vector_nodes[row % vector_nodes.len()];
-            edges.push((PinReference::new(vector_node, 0), PinReference::new(node_idx, 0)));
+            edges.push((
+                PinReference::new(vector_node, 0),
+                PinReference::new(node_idx, 0),
+            ));
 
             // Some math nodes also connect to other math nodes in previous column
             if col > 0 {
                 let prev_math = math_nodes[row % math_nodes.len().max(1)];
-                edges.push((PinReference::new(prev_math, 0), PinReference::new(node_idx, 1)));
+                edges.push((
+                    PinReference::new(prev_math, 0),
+                    PinReference::new(node_idx, 1),
+                ));
             }
 
             math_nodes.push(node_idx);
@@ -277,7 +290,10 @@ fn generate_procedural_graph() -> (Vec<(Point, NodeType)>, Vec<(PinReference, Pi
 
             // Connect to math operations
             let math_node = math_nodes[row % math_nodes.len()];
-            edges.push((PinReference::new(math_node, 0), PinReference::new(node_idx, 0)));
+            edges.push((
+                PinReference::new(math_node, 0),
+                PinReference::new(node_idx, 0),
+            ));
 
             texture_nodes.push(node_idx);
             node_idx += 1;
@@ -298,11 +314,17 @@ fn generate_procedural_graph() -> (Vec<(Point, NodeType)>, Vec<(PinReference, Pi
 
         // Connect to texture operations
         let tex_node = texture_nodes[row % texture_nodes.len()];
-        edges.push((PinReference::new(tex_node, 0), PinReference::new(node_idx, 0)));
+        edges.push((
+            PinReference::new(tex_node, 0),
+            PinReference::new(node_idx, 0),
+        ));
 
         // Also connect to another texture node for blending
         let tex_node2 = texture_nodes[(row + 1) % texture_nodes.len()];
-        edges.push((PinReference::new(tex_node2, 0), PinReference::new(node_idx, 1)));
+        edges.push((
+            PinReference::new(tex_node2, 0),
+            PinReference::new(node_idx, 1),
+        ));
 
         blend_nodes.push(node_idx);
         node_idx += 1;
@@ -329,7 +351,10 @@ fn generate_procedural_graph() -> (Vec<(Point, NodeType)>, Vec<(PinReference, Pi
 
         // Connect to blend nodes
         let blend_node = blend_nodes[i * 5 % blend_nodes.len()];
-        edges.push((PinReference::new(blend_node, 0), PinReference::new(node_idx, 0)));
+        edges.push((
+            PinReference::new(blend_node, 0),
+            PinReference::new(node_idx, 0),
+        ));
 
         node_idx += 1;
     }
@@ -353,7 +378,10 @@ impl Application {
                 to_node,
                 to_pin,
             } => {
-                self.edges.push((PinReference::new(from_node, from_pin), PinReference::new(to_node, to_pin)));
+                self.edges.push((
+                    PinReference::new(from_node, from_pin),
+                    PinReference::new(to_node, to_pin),
+                ));
             }
             ApplicationMessage::NodeMoved {
                 node_index,
@@ -369,8 +397,12 @@ impl Application {
                 to_node,
                 to_pin,
             } => {
-                self.edges
-                    .retain(|(from, to)| !(from.node_id == from_node && from.pin_id == from_pin && to.node_id == to_node && to.pin_id == to_pin));
+                self.edges.retain(|(from, to)| {
+                    !(from.node_id == from_node
+                        && from.pin_id == from_pin
+                        && to.node_id == to_node
+                        && to.pin_id == to_pin)
+                });
             }
             ApplicationMessage::SelectionChanged(indices) => {
                 self.selected_nodes = indices.into_iter().collect();
@@ -437,19 +469,17 @@ impl Application {
                 text("Scroll: Zoom | Middle-drag: Pan").size(12),
             ]
             .spacing(4)
-            .padding(10)
+            .padding(10),
         )
         .style(|theme: &Theme| {
             let palette = theme.extended_palette();
             container::Style {
-                background: Some(iced::Background::Color(
-                    Color::from_rgba(
-                        palette.background.base.color.r,
-                        palette.background.base.color.g,
-                        palette.background.base.color.b,
-                        0.9
-                    )
-                )),
+                background: Some(iced::Background::Color(Color::from_rgba(
+                    palette.background.base.color.r,
+                    palette.background.base.color.g,
+                    palette.background.base.color.b,
+                    0.9,
+                ))),
                 border: iced::Border {
                     color: palette.background.strong.color,
                     width: 1.0,
@@ -477,16 +507,11 @@ impl Application {
 
     fn subscription(&self) -> Subscription<ApplicationMessage> {
         // Enable continuous animation for NodeGraph animations
-        Subscription::batch(vec![
-            window::frames().map(|_| ApplicationMessage::Tick)
-        ])
+        Subscription::batch(vec![window::frames().map(|_| ApplicationMessage::Tick)])
     }
 }
 
-fn create_node<'a, Message>(
-    node_type: NodeType,
-    theme: &'a Theme,
-) -> iced::Element<'a, Message>
+fn create_node<'a, Message>(node_type: NodeType, theme: &'a Theme) -> iced::Element<'a, Message>
 where
     Message: Clone + 'a,
 {
@@ -495,187 +520,452 @@ where
     let (title, pins, width) = match node_type {
         NodeType::TimeInput => (
             "Time",
-            vec![("t", PinSide::Right, PinDirection::Output, Color::from_rgb(0.9, 0.5, 0.2))],
+            vec![(
+                "t",
+                PinSide::Right,
+                PinDirection::Output,
+                Color::from_rgb(0.9, 0.5, 0.2),
+            )],
             100.0,
         ),
         NodeType::UVInput => (
             "UV",
-            vec![("uv", PinSide::Right, PinDirection::Output, Color::from_rgb(0.9, 0.7, 0.3))],
+            vec![(
+                "uv",
+                PinSide::Right,
+                PinDirection::Output,
+                Color::from_rgb(0.9, 0.7, 0.3),
+            )],
             100.0,
         ),
         NodeType::NormalInput => (
             "Normal",
-            vec![("N", PinSide::Right, PinDirection::Output, Color::from_rgb(0.5, 0.7, 0.9))],
+            vec![(
+                "N",
+                PinSide::Right,
+                PinDirection::Output,
+                Color::from_rgb(0.5, 0.7, 0.9),
+            )],
             100.0,
         ),
         NodeType::PositionInput => (
             "Position",
-            vec![("P", PinSide::Right, PinDirection::Output, Color::from_rgb(0.3, 0.9, 0.5))],
+            vec![(
+                "P",
+                PinSide::Right,
+                PinDirection::Output,
+                Color::from_rgb(0.3, 0.9, 0.5),
+            )],
             100.0,
         ),
         NodeType::Add => (
             "Add",
             vec![
-                ("A", PinSide::Left, PinDirection::Input, Color::from_rgb(0.8, 0.8, 0.8)),
-                ("B", PinSide::Left, PinDirection::Input, Color::from_rgb(0.8, 0.8, 0.8)),
-                ("out", PinSide::Right, PinDirection::Output, Color::from_rgb(0.9, 0.9, 0.9)),
+                (
+                    "A",
+                    PinSide::Left,
+                    PinDirection::Input,
+                    Color::from_rgb(0.8, 0.8, 0.8),
+                ),
+                (
+                    "B",
+                    PinSide::Left,
+                    PinDirection::Input,
+                    Color::from_rgb(0.8, 0.8, 0.8),
+                ),
+                (
+                    "out",
+                    PinSide::Right,
+                    PinDirection::Output,
+                    Color::from_rgb(0.9, 0.9, 0.9),
+                ),
             ],
             120.0,
         ),
         NodeType::Multiply => (
             "Multiply",
             vec![
-                ("A", PinSide::Left, PinDirection::Input, Color::from_rgb(0.8, 0.8, 0.8)),
-                ("B", PinSide::Left, PinDirection::Input, Color::from_rgb(0.8, 0.8, 0.8)),
-                ("out", PinSide::Right, PinDirection::Output, Color::from_rgb(0.9, 0.9, 0.9)),
+                (
+                    "A",
+                    PinSide::Left,
+                    PinDirection::Input,
+                    Color::from_rgb(0.8, 0.8, 0.8),
+                ),
+                (
+                    "B",
+                    PinSide::Left,
+                    PinDirection::Input,
+                    Color::from_rgb(0.8, 0.8, 0.8),
+                ),
+                (
+                    "out",
+                    PinSide::Right,
+                    PinDirection::Output,
+                    Color::from_rgb(0.9, 0.9, 0.9),
+                ),
             ],
             120.0,
         ),
         NodeType::Divide => (
             "Divide",
             vec![
-                ("A", PinSide::Left, PinDirection::Input, Color::from_rgb(0.8, 0.8, 0.8)),
-                ("B", PinSide::Left, PinDirection::Input, Color::from_rgb(0.8, 0.8, 0.8)),
-                ("out", PinSide::Right, PinDirection::Output, Color::from_rgb(0.9, 0.9, 0.9)),
+                (
+                    "A",
+                    PinSide::Left,
+                    PinDirection::Input,
+                    Color::from_rgb(0.8, 0.8, 0.8),
+                ),
+                (
+                    "B",
+                    PinSide::Left,
+                    PinDirection::Input,
+                    Color::from_rgb(0.8, 0.8, 0.8),
+                ),
+                (
+                    "out",
+                    PinSide::Right,
+                    PinDirection::Output,
+                    Color::from_rgb(0.9, 0.9, 0.9),
+                ),
             ],
             120.0,
         ),
         NodeType::Subtract => (
             "Subtract",
             vec![
-                ("A", PinSide::Left, PinDirection::Input, Color::from_rgb(0.8, 0.8, 0.8)),
-                ("B", PinSide::Left, PinDirection::Input, Color::from_rgb(0.8, 0.8, 0.8)),
-                ("out", PinSide::Right, PinDirection::Output, Color::from_rgb(0.9, 0.9, 0.9)),
+                (
+                    "A",
+                    PinSide::Left,
+                    PinDirection::Input,
+                    Color::from_rgb(0.8, 0.8, 0.8),
+                ),
+                (
+                    "B",
+                    PinSide::Left,
+                    PinDirection::Input,
+                    Color::from_rgb(0.8, 0.8, 0.8),
+                ),
+                (
+                    "out",
+                    PinSide::Right,
+                    PinDirection::Output,
+                    Color::from_rgb(0.9, 0.9, 0.9),
+                ),
             ],
             120.0,
         ),
         NodeType::Power => (
             "Power",
             vec![
-                ("val", PinSide::Left, PinDirection::Input, Color::from_rgb(0.8, 0.8, 0.8)),
-                ("exp", PinSide::Left, PinDirection::Input, Color::from_rgb(0.8, 0.8, 0.8)),
-                ("out", PinSide::Right, PinDirection::Output, Color::from_rgb(0.9, 0.9, 0.9)),
+                (
+                    "val",
+                    PinSide::Left,
+                    PinDirection::Input,
+                    Color::from_rgb(0.8, 0.8, 0.8),
+                ),
+                (
+                    "exp",
+                    PinSide::Left,
+                    PinDirection::Input,
+                    Color::from_rgb(0.8, 0.8, 0.8),
+                ),
+                (
+                    "out",
+                    PinSide::Right,
+                    PinDirection::Output,
+                    Color::from_rgb(0.9, 0.9, 0.9),
+                ),
             ],
             120.0,
         ),
         NodeType::PerlinNoise => (
             "Perlin",
             vec![
-                ("in", PinSide::Left, PinDirection::Input, Color::from_rgb(0.9, 0.7, 0.3)),
-                ("out", PinSide::Right, PinDirection::Output, Color::from_rgb(0.7, 0.9, 0.7)),
+                (
+                    "in",
+                    PinSide::Left,
+                    PinDirection::Input,
+                    Color::from_rgb(0.9, 0.7, 0.3),
+                ),
+                (
+                    "out",
+                    PinSide::Right,
+                    PinDirection::Output,
+                    Color::from_rgb(0.7, 0.9, 0.7),
+                ),
             ],
             120.0,
         ),
         NodeType::VoronoiNoise => (
             "Voronoi",
             vec![
-                ("in", PinSide::Left, PinDirection::Input, Color::from_rgb(0.9, 0.7, 0.3)),
-                ("out", PinSide::Right, PinDirection::Output, Color::from_rgb(0.7, 0.9, 0.7)),
+                (
+                    "in",
+                    PinSide::Left,
+                    PinDirection::Input,
+                    Color::from_rgb(0.9, 0.7, 0.3),
+                ),
+                (
+                    "out",
+                    PinSide::Right,
+                    PinDirection::Output,
+                    Color::from_rgb(0.7, 0.9, 0.7),
+                ),
             ],
             120.0,
         ),
         NodeType::SimplexNoise => (
             "Simplex",
             vec![
-                ("in", PinSide::Left, PinDirection::Input, Color::from_rgb(0.9, 0.7, 0.3)),
-                ("out", PinSide::Right, PinDirection::Output, Color::from_rgb(0.7, 0.9, 0.7)),
+                (
+                    "in",
+                    PinSide::Left,
+                    PinDirection::Input,
+                    Color::from_rgb(0.9, 0.7, 0.3),
+                ),
+                (
+                    "out",
+                    PinSide::Right,
+                    PinDirection::Output,
+                    Color::from_rgb(0.7, 0.9, 0.7),
+                ),
             ],
             120.0,
         ),
         NodeType::Sampler2D => (
             "Texture",
             vec![
-                ("uv", PinSide::Left, PinDirection::Input, Color::from_rgb(0.9, 0.7, 0.3)),
-                ("rgba", PinSide::Right, PinDirection::Output, Color::from_rgb(0.9, 0.5, 0.9)),
+                (
+                    "uv",
+                    PinSide::Left,
+                    PinDirection::Input,
+                    Color::from_rgb(0.9, 0.7, 0.3),
+                ),
+                (
+                    "rgba",
+                    PinSide::Right,
+                    PinDirection::Output,
+                    Color::from_rgb(0.9, 0.5, 0.9),
+                ),
             ],
             120.0,
         ),
         NodeType::ColorMix => (
             "Mix",
             vec![
-                ("A", PinSide::Left, PinDirection::Input, Color::from_rgb(0.9, 0.5, 0.9)),
-                ("B", PinSide::Left, PinDirection::Input, Color::from_rgb(0.9, 0.5, 0.9)),
-                ("out", PinSide::Right, PinDirection::Output, Color::from_rgb(0.9, 0.5, 0.9)),
+                (
+                    "A",
+                    PinSide::Left,
+                    PinDirection::Input,
+                    Color::from_rgb(0.9, 0.5, 0.9),
+                ),
+                (
+                    "B",
+                    PinSide::Left,
+                    PinDirection::Input,
+                    Color::from_rgb(0.9, 0.5, 0.9),
+                ),
+                (
+                    "out",
+                    PinSide::Right,
+                    PinDirection::Output,
+                    Color::from_rgb(0.9, 0.5, 0.9),
+                ),
             ],
             120.0,
         ),
         NodeType::Gradient => (
             "Gradient",
             vec![
-                ("t", PinSide::Left, PinDirection::Input, Color::from_rgb(0.9, 0.5, 0.2)),
-                ("col", PinSide::Right, PinDirection::Output, Color::from_rgb(0.9, 0.5, 0.9)),
+                (
+                    "t",
+                    PinSide::Left,
+                    PinDirection::Input,
+                    Color::from_rgb(0.9, 0.5, 0.2),
+                ),
+                (
+                    "col",
+                    PinSide::Right,
+                    PinDirection::Output,
+                    Color::from_rgb(0.9, 0.5, 0.9),
+                ),
             ],
             120.0,
         ),
         NodeType::VectorSplit => (
             "Split",
             vec![
-                ("vec", PinSide::Left, PinDirection::Input, Color::from_rgb(0.5, 0.9, 0.9)),
-                ("x", PinSide::Right, PinDirection::Output, Color::from_rgb(0.9, 0.3, 0.3)),
-                ("y", PinSide::Right, PinDirection::Output, Color::from_rgb(0.3, 0.9, 0.3)),
-                ("z", PinSide::Right, PinDirection::Output, Color::from_rgb(0.3, 0.3, 0.9)),
+                (
+                    "vec",
+                    PinSide::Left,
+                    PinDirection::Input,
+                    Color::from_rgb(0.5, 0.9, 0.9),
+                ),
+                (
+                    "x",
+                    PinSide::Right,
+                    PinDirection::Output,
+                    Color::from_rgb(0.9, 0.3, 0.3),
+                ),
+                (
+                    "y",
+                    PinSide::Right,
+                    PinDirection::Output,
+                    Color::from_rgb(0.3, 0.9, 0.3),
+                ),
+                (
+                    "z",
+                    PinSide::Right,
+                    PinDirection::Output,
+                    Color::from_rgb(0.3, 0.3, 0.9),
+                ),
             ],
             120.0,
         ),
         NodeType::VectorCombine => (
             "Combine",
             vec![
-                ("x", PinSide::Left, PinDirection::Input, Color::from_rgb(0.9, 0.3, 0.3)),
-                ("y", PinSide::Left, PinDirection::Input, Color::from_rgb(0.3, 0.9, 0.3)),
-                ("z", PinSide::Left, PinDirection::Input, Color::from_rgb(0.3, 0.3, 0.9)),
-                ("vec", PinSide::Right, PinDirection::Output, Color::from_rgb(0.5, 0.9, 0.9)),
+                (
+                    "x",
+                    PinSide::Left,
+                    PinDirection::Input,
+                    Color::from_rgb(0.9, 0.3, 0.3),
+                ),
+                (
+                    "y",
+                    PinSide::Left,
+                    PinDirection::Input,
+                    Color::from_rgb(0.3, 0.9, 0.3),
+                ),
+                (
+                    "z",
+                    PinSide::Left,
+                    PinDirection::Input,
+                    Color::from_rgb(0.3, 0.3, 0.9),
+                ),
+                (
+                    "vec",
+                    PinSide::Right,
+                    PinDirection::Output,
+                    Color::from_rgb(0.5, 0.9, 0.9),
+                ),
             ],
             120.0,
         ),
         NodeType::Normalize => (
             "Normalize",
             vec![
-                ("in", PinSide::Left, PinDirection::Input, Color::from_rgb(0.5, 0.9, 0.9)),
-                ("out", PinSide::Right, PinDirection::Output, Color::from_rgb(0.5, 0.9, 0.9)),
+                (
+                    "in",
+                    PinSide::Left,
+                    PinDirection::Input,
+                    Color::from_rgb(0.5, 0.9, 0.9),
+                ),
+                (
+                    "out",
+                    PinSide::Right,
+                    PinDirection::Output,
+                    Color::from_rgb(0.5, 0.9, 0.9),
+                ),
             ],
             120.0,
         ),
         NodeType::DotProduct => (
             "Dot",
             vec![
-                ("A", PinSide::Left, PinDirection::Input, Color::from_rgb(0.5, 0.9, 0.9)),
-                ("B", PinSide::Left, PinDirection::Input, Color::from_rgb(0.5, 0.9, 0.9)),
-                ("out", PinSide::Right, PinDirection::Output, Color::from_rgb(0.9, 0.9, 0.9)),
+                (
+                    "A",
+                    PinSide::Left,
+                    PinDirection::Input,
+                    Color::from_rgb(0.5, 0.9, 0.9),
+                ),
+                (
+                    "B",
+                    PinSide::Left,
+                    PinDirection::Input,
+                    Color::from_rgb(0.5, 0.9, 0.9),
+                ),
+                (
+                    "out",
+                    PinSide::Right,
+                    PinDirection::Output,
+                    Color::from_rgb(0.9, 0.9, 0.9),
+                ),
             ],
             120.0,
         ),
         NodeType::CrossProduct => (
             "Cross",
             vec![
-                ("A", PinSide::Left, PinDirection::Input, Color::from_rgb(0.5, 0.9, 0.9)),
-                ("B", PinSide::Left, PinDirection::Input, Color::from_rgb(0.5, 0.9, 0.9)),
-                ("out", PinSide::Right, PinDirection::Output, Color::from_rgb(0.5, 0.9, 0.9)),
+                (
+                    "A",
+                    PinSide::Left,
+                    PinDirection::Input,
+                    Color::from_rgb(0.5, 0.9, 0.9),
+                ),
+                (
+                    "B",
+                    PinSide::Left,
+                    PinDirection::Input,
+                    Color::from_rgb(0.5, 0.9, 0.9),
+                ),
+                (
+                    "out",
+                    PinSide::Right,
+                    PinDirection::Output,
+                    Color::from_rgb(0.5, 0.9, 0.9),
+                ),
             ],
             120.0,
         ),
         NodeType::BaseColor => (
             "Base Color",
-            vec![("col", PinSide::Left, PinDirection::Input, Color::from_rgb(0.9, 0.5, 0.9))],
+            vec![(
+                "col",
+                PinSide::Left,
+                PinDirection::Input,
+                Color::from_rgb(0.9, 0.5, 0.9),
+            )],
             140.0,
         ),
         NodeType::Roughness => (
             "Roughness",
-            vec![("val", PinSide::Left, PinDirection::Input, Color::from_rgb(0.9, 0.9, 0.9))],
+            vec![(
+                "val",
+                PinSide::Left,
+                PinDirection::Input,
+                Color::from_rgb(0.9, 0.9, 0.9),
+            )],
             140.0,
         ),
         NodeType::Metallic => (
             "Metallic",
-            vec![("val", PinSide::Left, PinDirection::Input, Color::from_rgb(0.9, 0.9, 0.9))],
+            vec![(
+                "val",
+                PinSide::Left,
+                PinDirection::Input,
+                Color::from_rgb(0.9, 0.9, 0.9),
+            )],
             140.0,
         ),
         NodeType::Emission => (
             "Emission",
-            vec![("col", PinSide::Left, PinDirection::Input, Color::from_rgb(0.9, 0.9, 0.3))],
+            vec![(
+                "col",
+                PinSide::Left,
+                PinDirection::Input,
+                Color::from_rgb(0.9, 0.9, 0.3),
+            )],
             140.0,
         ),
         NodeType::Normal => (
             "Normal",
-            vec![("N", PinSide::Left, PinDirection::Input, Color::from_rgb(0.5, 0.7, 0.9))],
+            vec![(
+                "N",
+                PinSide::Left,
+                PinDirection::Input,
+                Color::from_rgb(0.5, 0.7, 0.9),
+            )],
             140.0,
         ),
     };
@@ -693,14 +983,11 @@ where
         column![].spacing(1),
         |col, (label, side, direction, color)| {
             col.push(
-                node_pin(
-                    side,
-                    container(text(label).size(10)).padding([0, 6])
-                )
-                .direction(direction)
-                .color(color)
+                node_pin(side, container(text(label).size(10)).padding([0, 6]))
+                    .direction(direction)
+                    .color(color),
             )
-        }
+        },
     );
 
     let pin_section = container(pin_list).padding([4, 0]);

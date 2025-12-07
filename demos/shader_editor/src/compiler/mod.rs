@@ -57,13 +57,12 @@ impl ShaderCompiler {
 
         if let Some(output) = output_node {
             // Get connected color input
-            let color_input = if let Some((from_node, _from_socket)) =
-                graph.get_connected_input(output.id, 0)
-            {
-                format!("node_{}()", from_node)
-            } else {
-                "vec4(1.0, 0.0, 1.0, 1.0)".to_string() // Magenta default
-            };
+            let color_input =
+                if let Some((from_node, _from_socket)) = graph.get_connected_input(output.id, 0) {
+                    format!("node_{}()", from_node)
+                } else {
+                    "vec4(1.0, 0.0, 1.0, 1.0)".to_string() // Magenta default
+                };
 
             Ok(format!(
                 r#"
@@ -102,7 +101,8 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
 
     return vec4(edge_color, alpha);
 }
-"#.to_string())
+"#
+            .to_string())
         }
     }
 }

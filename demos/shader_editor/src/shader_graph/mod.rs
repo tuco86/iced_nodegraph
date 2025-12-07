@@ -62,7 +62,8 @@ impl ShaderGraph {
 
     pub fn remove_node(&mut self, id: usize) {
         self.nodes.retain(|n| n.id != id);
-        self.connections.retain(|c| c.from_node != id && c.to_node != id);
+        self.connections
+            .retain(|c| c.from_node != id && c.to_node != id);
     }
 
     pub fn get_node(&self, id: usize) -> Option<&ShaderNode> {
@@ -81,7 +82,11 @@ impl ShaderGraph {
         self.nodes.get_mut(index)
     }
 
-    pub fn get_connected_input(&self, node_id: usize, socket_index: usize) -> Option<(usize, usize)> {
+    pub fn get_connected_input(
+        &self,
+        node_id: usize,
+        socket_index: usize,
+    ) -> Option<(usize, usize)> {
         self.connections
             .iter()
             .find(|c| c.to_node == node_id && c.to_socket == socket_index)

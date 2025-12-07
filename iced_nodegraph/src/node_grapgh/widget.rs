@@ -1,4 +1,6 @@
-use iced::{Background, Color, Element, Event, Length, Point, Rectangle, Size, Vector, border, keyboard};
+use iced::{
+    Background, Color, Element, Event, Length, Point, Rectangle, Size, Vector, border, keyboard,
+};
 use iced_widget::core::{
     Clipboard, Layout, Shell, layout, mouse, renderer,
     widget::{self, Tree, tree},
@@ -117,24 +119,64 @@ where
         let (bg_color, border_color, fill_color, edge_color, drag_edge_color, drag_valid_color) =
             if let Some(gs) = graph_style {
                 // User provided graph style - use their colors
-                let bg = glam::vec4(gs.background_color.r, gs.background_color.g, gs.background_color.b, gs.background_color.a * fade_opacity);
-                let border = glam::vec4(gs.grid_color.r, gs.grid_color.g, gs.grid_color.b, gs.grid_color.a * fade_opacity);
+                let bg = glam::vec4(
+                    gs.background_color.r,
+                    gs.background_color.g,
+                    gs.background_color.b,
+                    gs.background_color.a * fade_opacity,
+                );
+                let border = glam::vec4(
+                    gs.grid_color.r,
+                    gs.grid_color.g,
+                    gs.grid_color.b,
+                    gs.grid_color.a * fade_opacity,
+                );
                 // Derive fill from background (slightly lighter/darker)
                 let fill = if is_dark {
-                    glam::vec4(gs.background_color.r + 0.06, gs.background_color.g + 0.06, gs.background_color.b + 0.07, fade_opacity * 0.75)
+                    glam::vec4(
+                        gs.background_color.r + 0.06,
+                        gs.background_color.g + 0.06,
+                        gs.background_color.b + 0.07,
+                        fade_opacity * 0.75,
+                    )
                 } else {
-                    glam::vec4(gs.background_color.r - 0.08, gs.background_color.g - 0.08, gs.background_color.b - 0.07, fade_opacity * 0.75)
+                    glam::vec4(
+                        gs.background_color.r - 0.08,
+                        gs.background_color.g - 0.08,
+                        gs.background_color.b - 0.07,
+                        fade_opacity * 0.75,
+                    )
                 };
-                let edge = glam::vec4(text_color.r, text_color.g, text_color.b, text_color.a * fade_opacity);
-                let drag = glam::vec4(gs.drag_edge_color.r, gs.drag_edge_color.g, gs.drag_edge_color.b, gs.drag_edge_color.a * fade_opacity);
-                let valid = glam::vec4(gs.drag_edge_valid_color.r, gs.drag_edge_valid_color.g, gs.drag_edge_valid_color.b, gs.drag_edge_valid_color.a * fade_opacity);
+                let edge = glam::vec4(
+                    text_color.r,
+                    text_color.g,
+                    text_color.b,
+                    text_color.a * fade_opacity,
+                );
+                let drag = glam::vec4(
+                    gs.drag_edge_color.r,
+                    gs.drag_edge_color.g,
+                    gs.drag_edge_color.b,
+                    gs.drag_edge_color.a * fade_opacity,
+                );
+                let valid = glam::vec4(
+                    gs.drag_edge_valid_color.r,
+                    gs.drag_edge_valid_color.g,
+                    gs.drag_edge_valid_color.b,
+                    gs.drag_edge_valid_color.a * fade_opacity,
+                );
                 (bg, border, fill, edge, drag, valid)
             } else if is_dark {
                 // Dark theme: use darker backgrounds with subtle highlights
                 let bg = glam::vec4(0.08, 0.08, 0.09, fade_opacity);
                 let border = glam::vec4(0.20, 0.20, 0.22, fade_opacity);
                 let fill = glam::vec4(0.14, 0.14, 0.16, fade_opacity);
-                let edge = glam::vec4(text_color.r, text_color.g, text_color.b, text_color.a * fade_opacity);
+                let edge = glam::vec4(
+                    text_color.r,
+                    text_color.g,
+                    text_color.b,
+                    text_color.a * fade_opacity,
+                );
                 // Drag colors: warning (orange-ish) and success (green-ish)
                 let drag = glam::vec4(0.9, 0.6, 0.3, fade_opacity);
                 let valid = glam::vec4(0.3, 0.8, 0.5, fade_opacity);
@@ -144,7 +186,12 @@ where
                 let bg = glam::vec4(0.92, 0.92, 0.93, fade_opacity);
                 let border = glam::vec4(0.70, 0.70, 0.72, fade_opacity);
                 let fill = glam::vec4(0.84, 0.84, 0.86, fade_opacity);
-                let edge = glam::vec4(text_color.r, text_color.g, text_color.b, text_color.a * fade_opacity);
+                let edge = glam::vec4(
+                    text_color.r,
+                    text_color.g,
+                    text_color.b,
+                    text_color.a * fade_opacity,
+                );
                 // Drag colors: darker for light theme
                 let drag = glam::vec4(0.8, 0.5, 0.2, fade_opacity);
                 let valid = glam::vec4(0.2, 0.7, 0.4, fade_opacity);
@@ -172,24 +219,28 @@ where
             time,
             dragging: state.dragging.clone(),
             nodes: {
-
-                self
-                    .nodes
+                self.nodes
                     .iter()
                     .zip(&tree.children)
                     .zip(layout.children())
                     .enumerate()
                     .map(
-                        |(node_index, (((_position, _element, node_style), node_tree), node_layout))| {
+                        |(
+                            node_index,
+                            (((_position, _element, node_style), node_tree), node_layout),
+                        )| {
                             let is_selected = state.selected_nodes.contains(&node_index);
                             let mut offset = WorldVector::zero();
 
                             // Handle single node drag offset
-                            if let (Dragging::Node(drag_node_index, origin), Some(cursor_position)) =
-                                (state.dragging.clone(), cursor.position())
+                            if let (
+                                Dragging::Node(drag_node_index, origin),
+                                Some(cursor_position),
+                            ) = (state.dragging.clone(), cursor.position())
                             {
                                 if drag_node_index == node_index {
-                                    let cursor_position: ScreenPoint = cursor_position.into_euclid();
+                                    let cursor_position: ScreenPoint =
+                                        cursor_position.into_euclid();
                                     let cursor_position: WorldPoint =
                                         camera.screen_to_world().transform_point(cursor_position);
                                     offset = cursor_position - origin
@@ -201,7 +252,8 @@ where
                                 (state.dragging.clone(), cursor.position())
                             {
                                 if is_selected {
-                                    let cursor_position: ScreenPoint = cursor_position.into_euclid();
+                                    let cursor_position: ScreenPoint =
+                                        cursor_position.into_euclid();
                                     let cursor_position: WorldPoint =
                                         camera.screen_to_world().transform_point(cursor_position);
                                     offset = cursor_position - origin
@@ -209,23 +261,34 @@ where
                             }
 
                             // Use per-node style if provided, otherwise use theme defaults
-                            let (node_fill, mut node_border, corner_rad, mut border_w, opacity) = if let Some(style) = node_style {
-                                (
-                                    style.fill_color,
-                                    style.border_color,
-                                    style.corner_radius,
-                                    style.border_width,
-                                    style.opacity * fade_opacity,
-                                )
-                            } else {
-                                (
-                                    iced::Color::from_rgba(fill_color.x, fill_color.y, fill_color.z, fill_color.w),
-                                    iced::Color::from_rgba(border_color.x, border_color.y, border_color.z, border_color.w),
-                                    5.0,
-                                    1.0,
-                                    fade_opacity * 0.75,
-                                )
-                            };
+                            let (node_fill, mut node_border, corner_rad, mut border_w, opacity) =
+                                if let Some(style) = node_style {
+                                    (
+                                        style.fill_color,
+                                        style.border_color,
+                                        style.corner_radius,
+                                        style.border_width,
+                                        style.opacity * fade_opacity,
+                                    )
+                                } else {
+                                    (
+                                        iced::Color::from_rgba(
+                                            fill_color.x,
+                                            fill_color.y,
+                                            fill_color.z,
+                                            fill_color.w,
+                                        ),
+                                        iced::Color::from_rgba(
+                                            border_color.x,
+                                            border_color.y,
+                                            border_color.z,
+                                            border_color.w,
+                                        ),
+                                        5.0,
+                                        1.0,
+                                        fade_opacity * 0.75,
+                                    )
+                                };
 
                             // Apply selection highlighting
                             if is_selected {
@@ -258,7 +321,11 @@ where
                     .collect()
             },
             // Extract edge connectivity without style for GPU primitive (style used separately)
-            edges: self.edges.iter().map(|(from, to, _style)| ((from.node_id, from.pin_id), (to.node_id, to.pin_id))).collect(),
+            edges: self
+                .edges
+                .iter()
+                .map(|(from, to, _style)| ((from.node_id, from.pin_id), (to.node_id, to.pin_id)))
+                .collect(),
             edge_color,
             background_color: bg_color,
             border_color,
@@ -305,18 +372,17 @@ where
                         };
 
                     // Calculate offset for group move (all selected nodes)
-                    let group_move_offset =
-                        if let Dragging::GroupMove(origin) = state.dragging {
-                            if is_selected {
-                                cursor
-                                    .position()
-                                    .map(|cursor_position| cursor_position - origin.into_iced())
-                            } else {
-                                None
-                            }
+                    let group_move_offset = if let Dragging::GroupMove(origin) = state.dragging {
+                        if is_selected {
+                            cursor
+                                .position()
+                                .map(|cursor_position| cursor_position - origin.into_iced())
                         } else {
                             None
-                        };
+                        }
+                    } else {
+                        None
+                    };
 
                     let node_move_offset = single_node_offset
                         .or(group_move_offset)
@@ -391,18 +457,18 @@ where
 
         // Update time for animations
         let now = Instant::now();
-        
+
         // Start fade-in animation on first update
         if state.last_update.is_none() {
             state.fade_in.go_mut(true, now);
         }
-        
+
         if let Some(last_update) = state.last_update {
             let delta = now.duration_since(last_update).as_secs_f32();
             state.time += delta;
         }
         state.last_update = Some(now);
-        
+
         // Request redraw while animating
         if state.fade_in.is_animating(now) {
             shell.request_redraw();
@@ -420,7 +486,8 @@ where
                 keyboard::Key::Character(c) if c.as_str() == "d" && modifiers.command() => {
                     if !state.selected_nodes.is_empty() {
                         if let Some(handler) = self.on_clone_handler() {
-                            let selected: Vec<usize> = state.selected_nodes.iter().copied().collect();
+                            let selected: Vec<usize> =
+                                state.selected_nodes.iter().copied().collect();
                             shell.publish(handler(selected));
                         }
                         shell.capture_event();
@@ -453,7 +520,8 @@ where
                 | keyboard::Key::Named(keyboard::key::Named::Backspace) => {
                     if !state.selected_nodes.is_empty() {
                         if let Some(handler) = self.on_delete_handler() {
-                            let selected: Vec<usize> = state.selected_nodes.iter().copied().collect();
+                            let selected: Vec<usize> =
+                                state.selected_nodes.iter().copied().collect();
                             shell.publish(handler(selected));
                         }
                         state.selected_nodes.clear();
@@ -1272,10 +1340,7 @@ fn selection_rect_from_points(a: WorldPoint, b: WorldPoint) -> Rectangle {
 
 /// Checks if two rectangles intersect (have any overlapping area)
 fn rects_intersect(a: &Rectangle, b: &Rectangle) -> bool {
-    a.x < b.x + b.width
-        && a.x + a.width > b.x
-        && a.y < b.y + b.height
-        && a.y + a.height > b.y
+    a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y
 }
 
 /// Calculates the distance from a point to a line segment

@@ -27,12 +27,18 @@
 //! - **Middle-drag** - Pan the canvas
 
 use iced::{
-    Color, Event, Length, Point, Subscription, Task, Theme, Vector, event, keyboard, window,
+    Color, Event, Length, Point, Subscription, Task, Theme, Vector, event, keyboard,
     widget::{column, container, stack, text},
+    window,
 };
-use iced_nodegraph::{PinDirection, PinSide, PinReference, node_graph, node_pin, NodeContentStyle, node_title_bar};
+use iced_nodegraph::{
+    NodeContentStyle, PinDirection, PinReference, PinSide, node_graph, node_pin, node_title_bar,
+};
+use iced_palette::{
+    Command, Shortcut, command, command_palette, find_matching_shortcut, focus_input,
+    get_filtered_command_index, get_filtered_count, is_toggle_shortcut, navigate_down, navigate_up,
+};
 use std::collections::{HashMap, HashSet};
-use iced_palette::{command_palette, command, get_filtered_command_index, get_filtered_count, is_toggle_shortcut, find_matching_shortcut, navigate_up, navigate_down, focus_input, Command, Shortcut};
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -51,7 +57,7 @@ pub fn main() -> iced::Result {
         },
         ..Default::default()
     };
-    
+
     #[cfg(not(target_arch = "wasm32"))]
     let window_settings = iced::window::Settings::default();
     iced::application(Application::new, Application::update, Application::view)
@@ -180,7 +186,10 @@ impl Application {
                     "Edge connected: node {} pin {} -> node {} pin {}",
                     from_node, from_pin, to_node, to_pin
                 );
-                self.edges.push((PinReference::new(from_node, from_pin), PinReference::new(to_node, to_pin)));
+                self.edges.push((
+                    PinReference::new(from_node, from_pin),
+                    PinReference::new(to_node, to_pin),
+                ));
                 Task::none()
             }
             ApplicationMessage::NodeMoved {
@@ -199,8 +208,12 @@ impl Application {
                 to_node,
                 to_pin,
             } => {
-                self.edges
-                    .retain(|(from, to)| !(from.node_id == from_node && from.pin_id == from_pin && to.node_id == to_node && to.pin_id == to_pin));
+                self.edges.retain(|(from, to)| {
+                    !(from.node_id == from_node
+                        && from.pin_id == from_pin
+                        && to.node_id == to_node
+                        && to.pin_id == to_pin)
+                });
                 println!(
                     "Edge disconnected: node {} pin {} -> node {} pin {}",
                     from_node, from_pin, to_node, to_pin
@@ -272,8 +285,7 @@ impl Application {
                         ) {
                             let themes = Self::get_available_themes();
                             if original_idx < themes.len() {
-                                self.palette_preview_theme =
-                                    Some(themes[original_idx].clone());
+                                self.palette_preview_theme = Some(themes[original_idx].clone());
                             }
                         }
                     }
@@ -425,7 +437,8 @@ impl Application {
                 }
 
                 // Clone edges between selected nodes
-                let edges_to_clone: Vec<_> = self.edges
+                let edges_to_clone: Vec<_> = self
+                    .edges
                     .iter()
                     .filter(|(from, to)| {
                         indices.contains(&from.node_id) && indices.contains(&to.node_id)
@@ -434,8 +447,13 @@ impl Application {
                     .collect();
 
                 for (from, to) in edges_to_clone {
-                    if let (Some(&new_from), Some(&new_to)) = (index_map.get(&from.node_id), index_map.get(&to.node_id)) {
-                        self.edges.push((PinReference::new(new_from, from.pin_id), PinReference::new(new_to, to.pin_id)));
+                    if let (Some(&new_from), Some(&new_to)) =
+                        (index_map.get(&from.node_id), index_map.get(&to.node_id))
+                    {
+                        self.edges.push((
+                            PinReference::new(new_from, from.pin_id),
+                            PinReference::new(new_to, to.pin_id),
+                        ));
                     }
                 }
 
@@ -450,12 +468,17 @@ impl Application {
 
                 for idx in sorted_indices {
                     // Remove edges referencing this node
-                    self.edges.retain(|(from, to)| from.node_id != idx && to.node_id != idx);
+                    self.edges
+                        .retain(|(from, to)| from.node_id != idx && to.node_id != idx);
 
                     // Adjust edge indices for nodes that will shift down
                     for (from, to) in &mut self.edges {
-                        if from.node_id > idx { from.node_id -= 1; }
-                        if to.node_id > idx { to.node_id -= 1; }
+                        if from.node_id > idx {
+                            from.node_id -= 1;
+                        }
+                        if to.node_id > idx {
+                            to.node_id -= 1;
+                        }
                     }
 
                     // Remove the node
@@ -498,7 +521,9 @@ impl Application {
             command("change_theme", "Change Theme")
                 .description("Switch to a different color theme")
                 .shortcut(Shortcut::cmd('t'))
-                .action(ApplicationMessage::ExecuteShortcut("change_theme".to_string())),
+                .action(ApplicationMessage::ExecuteShortcut(
+                    "change_theme".to_string(),
+                )),
         ]
     }
 
@@ -643,12 +668,11 @@ impl Application {
                 let commands = Self::get_node_types()
                     .iter()
                     .map(|name| {
-                        command(*name, *name)
-                            .action(ApplicationMessage::SpawnNode {
-                                x: 400.0,
-                                y: 300.0,
-                                name: name.to_string(),
-                            })
+                        command(*name, *name).action(ApplicationMessage::SpawnNode {
+                            x: 400.0,
+                            y: 300.0,
+                            name: name.to_string(),
+                        })
                     })
                     .collect();
                 ("Add Node", commands)
@@ -658,8 +682,7 @@ impl Application {
                     .iter()
                     .map(|theme| {
                         let name = Self::get_theme_name(theme);
-                        command(name, name)
-                            .action(ApplicationMessage::ChangeTheme(theme.clone()))
+                        command(name, name).action(ApplicationMessage::ChangeTheme(theme.clone()))
                     })
                     .collect();
                 ("Choose Theme", commands)
@@ -873,4 +896,3 @@ where
         _ => email_trigger_node(theme), // fallback
     }
 }
-

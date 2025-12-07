@@ -6,7 +6,7 @@
 
 use iced::{
     Color, Element, Length, Theme,
-    widget::{column, container, text, Container},
+    widget::{Container, column, container, text},
 };
 
 /// Style presets for different node categories.
@@ -172,9 +172,7 @@ pub fn node_title_bar<'a, Message: 'a>(
 where
     Message: Clone,
 {
-    let title_text = text(title.into())
-        .size(13)
-        .color(style.title_text);
+    let title_text = text(title.into()).size(13).color(style.title_text);
 
     container(title_text)
         .padding([4, 8])
@@ -199,10 +197,7 @@ pub fn node_label<'a, Message: 'a>(
 where
     Message: Clone,
 {
-    text(label.into())
-        .size(12)
-        .color(style.body_text)
-        .into()
+    text(label.into()).size(12).color(style.body_text).into()
 }
 
 /// Creates a themed horizontal separator for nodes.
