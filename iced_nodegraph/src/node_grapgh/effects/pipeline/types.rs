@@ -31,9 +31,11 @@ pub struct Uniforms {
     pub dragging_edge_to_node: u32,
     pub dragging_edge_to_pin: u32,
 
-    pub viewport_size: glam::Vec2, // NEW: viewport size for clip space transform
-    pub _pad_viewport0: u32,
-    pub _pad_viewport1: u32,
+    pub viewport_size: glam::Vec2, // viewport size for clip space transform
+    pub bounds_origin: glam::Vec2, // widget bounds origin in physical pixels
+    pub bounds_size: glam::Vec2,   // widget bounds size in physical pixels
+    pub _pad_end0: u32,            // padding for 16-byte alignment
+    pub _pad_end1: u32,
 }
 
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]

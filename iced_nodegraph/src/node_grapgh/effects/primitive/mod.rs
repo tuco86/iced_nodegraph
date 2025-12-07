@@ -49,12 +49,13 @@ impl Primitive for NodeGraphPrimitive {
         pipeline: &mut Self::Pipeline,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        _bounds: &Rectangle,
+        bounds: &Rectangle,
         viewport: &Viewport,
     ) {
         pipeline.update_new(
             device,
             queue,
+            bounds,
             viewport,
             self.camera_zoom,
             self.camera_position,

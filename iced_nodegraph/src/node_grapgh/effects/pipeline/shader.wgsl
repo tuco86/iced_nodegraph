@@ -32,6 +32,8 @@ struct Uniforms {
     dragging_edge_to_pin: u32,
 
     viewport_size: vec2<f32>,
+    bounds_origin: vec2<f32>,  // widget bounds origin in physical pixels
+    bounds_size: vec2<f32>,    // widget bounds size in physical pixels
 };
 
 struct Node {
@@ -226,6 +228,14 @@ fn check_valid_drop_target(node_id: u32, pin_index: u32) -> bool {
     return direction_valid && type_valid && !is_source;
 }
 
+// Convert world position to clip space, accounting for widget bounds offset
+fn world_to_clip(world_pos: vec2<f32>) -> vec4<f32> {
+    let screen = (world_pos + uniforms.camera_position) * uniforms.camera_zoom * uniforms.os_scale_factor;
+    // Transform relative to widget bounds, not full viewport
+    let ndc = (screen - uniforms.bounds_origin) / uniforms.bounds_size * 2.0 - 1.0;
+    return vec4(ndc.x, -ndc.y, 0.0, 1.0);
+}
+
 fn grid_pattern(uv: vec2<f32>, minor_spacing: f32, major_spacing: f32, zoom: f32) -> f32 {
     let coord_minor = abs(uv % minor_spacing);
     let dist_minor_x = min(coord_minor.x, minor_spacing - coord_minor.x);
@@ -256,6 +266,7 @@ fn grid_pattern(uv: vec2<f32>, minor_spacing: f32, major_spacing: f32, zoom: f32
 
 @vertex
 fn vs_background(@builtin(vertex_index) vertex_index: u32) -> @builtin(position) vec4<f32> {
+    // Fullscreen triangle in NDC space relative to widget bounds
     var positions = array<vec2<f32>, 3>(
         vec2<f32>(-1.0, -1.0),
         vec2<f32>(3.0, -1.0),
@@ -266,7 +277,9 @@ fn vs_background(@builtin(vertex_index) vertex_index: u32) -> @builtin(position)
 
 @fragment
 fn fs_background(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<f32> {
-    let uv = (frag_coord.xy / (uniforms.os_scale_factor * uniforms.camera_zoom)) - uniforms.camera_position;
+    // Offset frag_coord by bounds origin to get position relative to widget
+    let local_coord = frag_coord.xy - uniforms.bounds_origin;
+    let uv = (local_coord / (uniforms.os_scale_factor * uniforms.camera_zoom)) - uniforms.camera_position;
 
     let grid_intensity = grid_pattern(uv, 100.0, 1000.0, uniforms.camera_zoom);
     let grid_color = uniforms.border_color.xyz * 1.3;
@@ -310,9 +323,7 @@ fn vs_edge(@builtin(instance_index) instance: u32,
     let indices = array<u32, 6>(0, 1, 2, 1, 3, 2);
     let world_pos = corners[indices[vertex]];
 
-    let screen = (world_pos + uniforms.camera_position) * uniforms.camera_zoom * uniforms.os_scale_factor;
-    let ndc = screen / uniforms.viewport_size * 2.0 - 1.0;
-    let clip = vec4(ndc.x, -ndc.y, 0.0, 1.0);
+    let clip = world_to_clip(world_pos);
 
     return EdgeVertexOutput(clip, world_pos, instance);
 }
@@ -367,9 +378,7 @@ fn vs_node(@builtin(instance_index) instance: u32,
     let indices = array<u32, 6>(0, 1, 2, 1, 3, 2);
     let world_pos = corners[indices[vertex]];
 
-    let screen = (world_pos + uniforms.camera_position) * uniforms.camera_zoom * uniforms.os_scale_factor;
-    let ndc = screen / uniforms.viewport_size * 2.0 - 1.0;
-    let clip = vec4(ndc.x, -ndc.y, 0.0, 1.0);
+    let clip = world_to_clip(world_pos);
 
     return NodeVertexOutput(clip, world_pos, instance);
 }
@@ -461,9 +470,7 @@ fn vs_pin(@builtin(instance_index) instance: u32,
     let indices = array<u32, 6>(0, 1, 2, 1, 3, 2);
     let world_pos = corners[indices[vertex]];
 
-    let screen = (world_pos + uniforms.camera_position) * uniforms.camera_zoom * uniforms.os_scale_factor;
-    let ndc = screen / uniforms.viewport_size * 2.0 - 1.0;
-    let clip = vec4(ndc.x, -ndc.y, 0.0, 1.0);
+    let clip = world_to_clip(world_pos);
 
     return PinVertexOutput(clip, world_pos, instance, node_id, pin_index);
 }
@@ -545,9 +552,7 @@ fn vs_dragging(@builtin(vertex_index) vertex: u32) -> EdgeVertexOutput {
     let indices = array<u32, 6>(0, 1, 2, 1, 3, 2);
     let world_pos = corners[indices[vertex]];
 
-    let screen = (world_pos + uniforms.camera_position) * uniforms.camera_zoom * uniforms.os_scale_factor;
-    let ndc = screen / uniforms.viewport_size * 2.0 - 1.0;
-    let clip = vec4(ndc.x, -ndc.y, 0.0, 1.0);
+    let clip = world_to_clip(world_pos);
 
     return EdgeVertexOutput(clip, world_pos, 0u);
 }

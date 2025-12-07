@@ -163,12 +163,14 @@ impl Pipeline {
         &mut self,
         device: &Device,
         queue: &Queue,
+        bounds: &Rectangle<f32>,
         viewport: &Viewport,
         primitive: &NodeGraphPrimitive,
     ) {
         self.update_new(
             device,
             queue,
+            bounds,
             viewport,
             primitive.camera_zoom,
             primitive.camera_position,
@@ -192,6 +194,7 @@ impl Pipeline {
         &mut self,
         device: &Device,
         queue: &Queue,
+        bounds: &Rectangle<f32>,
         viewport: &Viewport,
         camera_zoom: f32,
         camera_position: WorldPoint,
@@ -338,8 +341,9 @@ impl Pipeline {
             }
         };
 
+        let scale = viewport.scale_factor() as f32;
         let uniforms = types::Uniforms {
-            os_scale_factor: viewport.scale_factor() as _,
+            os_scale_factor: scale,
             camera_zoom,
             camera_position,
             border_color,
@@ -366,8 +370,10 @@ impl Pipeline {
                 viewport.physical_width() as f32,
                 viewport.physical_height() as f32,
             ),
-            _pad_viewport0: 0,
-            _pad_viewport1: 0,
+            bounds_origin: glam::Vec2::new(bounds.x * scale, bounds.y * scale),
+            bounds_size: glam::Vec2::new(bounds.width * scale, bounds.height * scale),
+            _pad_end0: 0,
+            _pad_end1: 0,
         };
         // println!("uniforms: {:?}", uniforms);
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
