@@ -1308,7 +1308,6 @@ dependencies = [
 [[package]]
 name = "iced_palette"
 version = "0.1.0"
-source = "git+https://github.com/tuco86/iced_palette.git?branch=main#3f89888f3822e27e04b654423aa1114ab737ac30"
 dependencies = [
  "iced",
  "iced_widget",
