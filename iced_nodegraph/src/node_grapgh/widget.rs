@@ -8,7 +8,7 @@ use iced_widget::core::{
 use web_time::Instant;
 
 use super::{
-    NodeGraph,
+    DragInfo, NodeGraph,
     effects::{self, Layer},
     euclid::{IntoIced, WorldVector},
     state::{Dragging, NodeGraphState},
@@ -602,6 +602,12 @@ where
                 if state.dragging != Dragging::None {
                     match event {
                         Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                            // Emit drag update event with current cursor position
+                            if let Some(cursor_position) = world_cursor.position() {
+                                if let Some(handler) = self.on_drag_update_handler() {
+                                    shell.publish(handler(cursor_position.x, cursor_position.y));
+                                }
+                            }
                             shell.capture_event();
                             shell.request_redraw();
                         }
@@ -693,6 +699,10 @@ where
                                 }
                             }
                             state.dragging = Dragging::None;
+                            // Emit drag end event
+                            if let Some(handler) = self.on_drag_end_handler() {
+                                shell.publish(handler());
+                            }
                             shell.capture_event();
                             shell.invalidate_layout();
                             shell.request_redraw();
@@ -752,6 +762,10 @@ where
                         }
                         Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                             state.dragging = Dragging::None;
+                            // Emit drag end event
+                            if let Some(handler) = self.on_drag_end_handler() {
+                                shell.publish(handler());
+                            }
                             shell.capture_event();
                             shell.request_redraw();
                         }
@@ -800,6 +814,10 @@ where
                                 shell.publish(message);
                             }
                             state.dragging = Dragging::None;
+                            // Emit drag end event
+                            if let Some(handler) = self.on_drag_end_handler() {
+                                shell.publish(handler());
+                            }
                             shell.capture_event();
                             shell.request_redraw();
                         }
@@ -841,6 +859,10 @@ where
                                 }
                             }
                             state.dragging = Dragging::None;
+                            // Emit drag end event
+                            if let Some(handler) = self.on_drag_end_handler() {
+                                shell.publish(handler());
+                            }
                             shell.capture_event();
                             shell.request_redraw();
                         }
@@ -866,6 +888,10 @@ where
                                 }
                             }
                             state.dragging = Dragging::None;
+                            // Emit drag end event
+                            if let Some(handler) = self.on_drag_end_handler() {
+                                shell.publish(handler());
+                            }
                             shell.capture_event();
                             shell.invalidate_layout();
                             shell.request_redraw();
@@ -1073,6 +1099,13 @@ where
                                             pin_index,
                                             cursor_position.into_euclid(),
                                         );
+                                        // Emit drag start event
+                                        if let Some(handler) = self.on_drag_start_handler() {
+                                            shell.publish(handler(DragInfo::Edge {
+                                                from_node: node_index,
+                                                from_pin: pin_index,
+                                            }));
+                                        }
                                         shell.capture_event();
                                         return;
                                     }
@@ -1115,10 +1148,19 @@ where
                                     // Decide between single node drag or group move
                                     if state.selected_nodes.len() > 1 && state.selected_nodes.contains(&node_index) {
                                         // Multiple nodes selected, start group move
+                                        let selected: Vec<usize> = state.selected_nodes.iter().copied().collect();
                                         state.dragging = Dragging::GroupMove(cursor_position.into_euclid());
+                                        // Emit drag start event for group
+                                        if let Some(handler) = self.on_drag_start_handler() {
+                                            shell.publish(handler(DragInfo::Group { node_ids: selected }));
+                                        }
                                     } else {
                                         // Single node drag
                                         state.dragging = Dragging::Node(node_index, cursor_position.into_euclid());
+                                        // Emit drag start event for single node
+                                        if let Some(handler) = self.on_drag_start_handler() {
+                                            shell.publish(handler(DragInfo::Node { node_id: node_index }));
+                                        }
                                     }
 
                                     // Notify selection change
@@ -1156,6 +1198,13 @@ where
                             #[cfg(debug_assertions)]
                             println!("starting box selection from {:?}", cursor_position);
                             state.dragging = Dragging::BoxSelect(cursor_position, cursor_position);
+                            // Emit drag start event for box select
+                            if let Some(handler) = self.on_drag_start_handler() {
+                                shell.publish(handler(DragInfo::BoxSelect {
+                                    start_x: cursor_position.x,
+                                    start_y: cursor_position.y,
+                                }));
+                            }
                             shell.capture_event();
                             return;
                         }

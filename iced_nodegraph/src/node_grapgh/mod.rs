@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use iced::{Length, Point, Size, Vector};
+use iced::{Color, Length, Point, Size, Vector};
 
 use crate::node_pin::PinReference;
 use crate::style::{EdgeStyle, GraphStyle, NodeStyle};
@@ -13,6 +13,51 @@ pub(crate) mod widget;
 
 #[cfg(test)]
 mod interaction_tests;
+
+/// Information about a drag operation, used for real-time collaboration.
+#[derive(Debug, Clone)]
+pub enum DragInfo {
+    /// Dragging a single node
+    Node { node_id: usize },
+    /// Dragging a group of selected nodes
+    Group { node_ids: Vec<usize> },
+    /// Dragging an edge from a pin
+    Edge { from_node: usize, from_pin: usize },
+    /// Box selection drag
+    BoxSelect { start_x: f32, start_y: f32 },
+}
+
+/// State of a remote user for collaborative editing.
+#[derive(Debug, Clone)]
+pub struct RemoteUserState {
+    /// Display nickname
+    pub nickname: String,
+    /// User's assigned color
+    pub color: Color,
+    /// Current cursor position in world space (None if not visible)
+    pub cursor: Option<Point>,
+    /// Node IDs this user has selected
+    pub selected_nodes: Vec<usize>,
+    /// Current drag operation (if any)
+    pub drag: Option<RemoteDrag>,
+}
+
+/// Remote user's current drag operation.
+#[derive(Debug, Clone)]
+pub enum RemoteDrag {
+    /// Dragging a single node
+    Node { node_id: usize, current: Point },
+    /// Dragging a group of nodes
+    Group { node_ids: Vec<usize>, delta: Vector },
+    /// Dragging an edge from a pin
+    Edge {
+        from_node: usize,
+        from_pin: usize,
+        current: Point,
+    },
+    /// Box selection in progress
+    BoxSelect { start: Point, current: Point },
+}
 
 /// Events emitted by the NodeGraph widget.
 #[derive(Debug, Clone)]
@@ -62,6 +107,12 @@ pub struct NodeGraph<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer
     on_delete: Option<Box<dyn Fn(Vec<usize>) -> Message + 'a>>,
     on_group_move: Option<Box<dyn Fn(Vec<usize>, Vector) -> Message + 'a>>,
     external_selection: Option<&'a HashSet<usize>>,
+    // Drag event callbacks for real-time collaboration
+    on_drag_start: Option<Box<dyn Fn(DragInfo) -> Message + 'a>>,
+    on_drag_update: Option<Box<dyn Fn(f32, f32) -> Message + 'a>>,
+    on_drag_end: Option<Box<dyn Fn() -> Message + 'a>>,
+    // Remote users for collaborative rendering
+    remote_users: Option<&'a [RemoteUserState]>,
 }
 
 impl<Message, Theme, Renderer> Default for NodeGraph<'_, Message, Theme, Renderer>
@@ -82,6 +133,10 @@ where
             on_delete: None,
             on_group_move: None,
             external_selection: None,
+            on_drag_start: None,
+            on_drag_update: None,
+            on_drag_end: None,
+            remote_users: None,
         }
     }
 }
@@ -152,6 +207,33 @@ where
 
     pub fn on_group_move(mut self, f: impl Fn(Vec<usize>, Vector) -> Message + 'a) -> Self {
         self.on_group_move = Some(Box::new(f));
+        self
+    }
+
+    /// Sets a callback for when a drag operation starts.
+    /// Used for real-time collaboration to broadcast drag state to other users.
+    pub fn on_drag_start(mut self, f: impl Fn(DragInfo) -> Message + 'a) -> Self {
+        self.on_drag_start = Some(Box::new(f));
+        self
+    }
+
+    /// Sets a callback for drag position updates.
+    /// Called frequently during drag operations with current cursor position (world coordinates).
+    pub fn on_drag_update(mut self, f: impl Fn(f32, f32) -> Message + 'a) -> Self {
+        self.on_drag_update = Some(Box::new(f));
+        self
+    }
+
+    /// Sets a callback for when a drag operation ends.
+    pub fn on_drag_end(mut self, f: impl Fn() -> Message + 'a) -> Self {
+        self.on_drag_end = Some(Box::new(f));
+        self
+    }
+
+    /// Sets remote user states for collaborative rendering.
+    /// Remote users' cursors, selections, and drags will be rendered on the canvas.
+    pub fn remote_users(mut self, users: &'a [RemoteUserState]) -> Self {
+        self.remote_users = Some(users);
         self
     }
 
@@ -251,8 +333,24 @@ where
     ) -> Option<&Box<dyn Fn(Vec<usize>, Vector) -> Message + 'a>> {
         self.on_group_move.as_ref()
     }
+    pub(super) fn on_drag_start_handler(
+        &self,
+    ) -> Option<&Box<dyn Fn(DragInfo) -> Message + 'a>> {
+        self.on_drag_start.as_ref()
+    }
+    pub(super) fn on_drag_update_handler(
+        &self,
+    ) -> Option<&Box<dyn Fn(f32, f32) -> Message + 'a>> {
+        self.on_drag_update.as_ref()
+    }
+    pub(super) fn on_drag_end_handler(&self) -> Option<&Box<dyn Fn() -> Message + 'a>> {
+        self.on_drag_end.as_ref()
+    }
     pub(super) fn get_external_selection(&self) -> Option<&HashSet<usize>> {
         self.external_selection
+    }
+    pub(super) fn get_remote_users(&self) -> Option<&[RemoteUserState]> {
+        self.remote_users
     }
 
     pub fn needs_animation(&self) -> bool {

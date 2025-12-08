@@ -183,7 +183,10 @@ pub use content::{
     NodeContentStyle, get_text_color, is_theme_dark, node_label, node_separator, node_title_bar,
     simple_node,
 };
-pub use node_grapgh::{NodeGraph, NodeGraphEvent, camera::Camera2D, widget::node_graph};
+pub use node_grapgh::{
+    DragInfo, NodeGraph, NodeGraphEvent, RemoteDrag, RemoteUserState, camera::Camera2D,
+    widget::node_graph,
+};
 pub use node_pin::{NodePin, PinDirection, PinReference, PinSide, node_pin};
 pub use style::{
     EdgeStyle, GraphStyle, NodeStyle, SelectionStyle, is_dark_theme, relative_luminance,
