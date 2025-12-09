@@ -32,15 +32,15 @@
 //! - **Scroll** - Zoom in/out
 //! - **Middle-drag** - Pan the canvas
 
+mod nodes;
+
 use iced::{
-    Color, Element, Length, Point, Subscription, Task, Theme, Vector,
+    Element, Length, Point, Subscription, Task, Theme, Vector,
     widget::{button, column, container, pick_list, row, slider, stack, text},
     window,
 };
-use iced_nodegraph::{
-    NodeContentStyle, NodeStyle, PinDirection, PinReference, PinSide, node_graph, node_pin,
-    node_title_bar,
-};
+use iced_nodegraph::{NodeStyle, PinReference, node_graph};
+use nodes::styled_node;
 use std::collections::HashSet;
 
 #[cfg(target_arch = "wasm32")]
@@ -502,46 +502,7 @@ impl Application {
             .selection(&self.graph_selection);
 
         for (position, name, style) in &self.nodes {
-            let content_style = if style.fill_color.b > style.fill_color.r
-                && style.fill_color.b > style.fill_color.g
-            {
-                NodeContentStyle::input(theme)
-            } else if style.fill_color.g > style.fill_color.r
-                && style.fill_color.g > style.fill_color.b
-            {
-                NodeContentStyle::process(theme)
-            } else if style.fill_color.r > style.fill_color.g {
-                NodeContentStyle::output(theme)
-            } else {
-                NodeContentStyle::comment(theme)
-            };
-
-            let node_content = column![
-                node_title_bar(name.clone(), content_style),
-                container(
-                    column![
-                        container(
-                            node_pin(PinSide::Left, text!("input").size(11))
-                                .direction(PinDirection::Input)
-                                .color(Color::from_rgb(0.5, 0.7, 0.9))
-                        )
-                        .width(Length::Fill)
-                        .align_x(iced::alignment::Horizontal::Left),
-                        container(
-                            node_pin(PinSide::Right, text!("output").size(11))
-                                .direction(PinDirection::Output)
-                                .color(Color::from_rgb(0.9, 0.7, 0.5))
-                        )
-                        .width(Length::Fill)
-                        .align_x(iced::alignment::Horizontal::Right),
-                    ]
-                    .spacing(8)
-                )
-                .padding([8, 10]),
-            ]
-            .width(160.0);
-
-            ng.push_node_styled(*position, node_content, style.clone());
+            ng.push_node_styled(*position, styled_node(name, style, theme), style.clone());
         }
 
         for (from, to) in &self.edges {

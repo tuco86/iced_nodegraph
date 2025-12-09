@@ -1308,6 +1308,7 @@ dependencies = [
 [[package]]
 name = "iced_palette"
 version = "0.1.0"
+source = "git+https://github.com/tuco86/iced_palette.git?branch=main#8b2ffdfe14a1d37a89aedd18bbdd2ec644aefd21"
 dependencies = [
  "iced",
  "iced_widget",
@@ -1388,9 +1389,9 @@ dependencies = [
 
 [[package]]
 name = "iced_widget"
-version = "0.14.0"
+version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b698f173f370d959cac589c2000268b44862543d6995cf8f2934cf07afad2e54"
+checksum = "f86f6948998a5e031849afae1bb852f3b100c71572befa0be70b19075dcb2163"
 dependencies = [
  "iced_renderer",
  "log",
