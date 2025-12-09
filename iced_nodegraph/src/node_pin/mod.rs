@@ -257,3 +257,52 @@ where
 {
     NodePin::new(side, content)
 }
+
+/// Macro for creating pins with concise syntax.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use iced_nodegraph::pin;
+/// use iced::Color;
+///
+/// // Full syntax: side, label, direction, pin_type, color
+/// pin!(Right, "output", Output, "email", Color::from_rgb(0.3, 0.7, 0.9))
+///
+/// // Without color (uses default gray)
+/// pin!(Left, "input", Input, "string")
+///
+/// // Minimal (side + label only, defaults: Both direction, "any" type)
+/// pin!(Right, "data")
+/// ```
+#[macro_export]
+macro_rules! pin {
+    // Full: side, label, direction, type, color
+    ($side:ident, $label:expr, $dir:ident, $pin_type:expr, $color:expr) => {
+        $crate::node_pin(
+            $crate::PinSide::$side,
+            ::iced::widget::container(::iced::widget::text!($label).size(11)).padding([0, 8]),
+        )
+        .direction($crate::PinDirection::$dir)
+        .pin_type($pin_type)
+        .color($color)
+    };
+
+    // Without color: side, label, direction, type
+    ($side:ident, $label:expr, $dir:ident, $pin_type:expr) => {
+        $crate::node_pin(
+            $crate::PinSide::$side,
+            ::iced::widget::container(::iced::widget::text!($label).size(11)).padding([0, 8]),
+        )
+        .direction($crate::PinDirection::$dir)
+        .pin_type($pin_type)
+    };
+
+    // Minimal: side, label only
+    ($side:ident, $label:expr) => {
+        $crate::node_pin(
+            $crate::PinSide::$side,
+            ::iced::widget::container(::iced::widget::text!($label).size(11)).padding([0, 8]),
+        )
+    };
+}

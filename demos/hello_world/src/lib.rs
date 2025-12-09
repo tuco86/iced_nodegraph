@@ -26,14 +26,15 @@
 //! - **Scroll** - Zoom in/out
 //! - **Middle-drag** - Pan the canvas
 
+mod nodes;
+
 use iced::{
-    Color, Event, Length, Point, Subscription, Task, Theme, Vector, event, keyboard,
-    widget::{column, container, stack, text},
+    Event, Length, Point, Subscription, Task, Theme, Vector, event, keyboard,
+    widget::{stack},
     window,
 };
-use iced_nodegraph::{
-    NodeContentStyle, PinDirection, PinReference, PinSide, node_graph, node_pin, node_title_bar,
-};
+use iced_nodegraph::{PinReference, node_graph};
+use nodes::node;
 use iced_palette::{
     Command, Shortcut, command, command_palette, find_matching_shortcut, focus_input,
     get_filtered_command_index, get_filtered_count, is_toggle_shortcut, navigate_down, navigate_up,
@@ -746,153 +747,3 @@ fn handle_keyboard_event(
     }
 }
 
-// Email Trigger Node - Only outputs
-fn email_trigger_node<'a, Message>(theme: &'a Theme) -> iced::Element<'a, Message>
-where
-    Message: Clone + 'a,
-{
-    let style = NodeContentStyle::input(theme);
-
-    let pin_list = column![
-        node_pin(
-            PinSide::Right,
-            container(text!("on email").size(11)).padding([0, 8])
-        )
-        .direction(PinDirection::Output)
-        .pin_type("email")
-        .color(Color::from_rgb(0.3, 0.7, 0.9)), // Blue for email data
-    ]
-    .spacing(2);
-
-    let pin_section = container(pin_list).padding([6, 0]);
-    column![node_title_bar("Email Trigger", style), pin_section]
-        .width(160.0)
-        .into()
-}
-
-// Email Parser Node - Input + multiple outputs
-fn email_parser_node<'a, Message>(theme: &'a Theme) -> iced::Element<'a, Message>
-where
-    Message: Clone + 'a,
-{
-    let style = NodeContentStyle::process(theme);
-
-    let pin_list = column![
-        node_pin(
-            PinSide::Left,
-            container(text!("email").size(11)).padding([0, 8])
-        )
-        .direction(PinDirection::Input)
-        .pin_type("email")
-        .color(Color::from_rgb(0.3, 0.7, 0.9)), // Blue for email data
-        node_pin(
-            PinSide::Right,
-            container(text!("subject").size(11)).padding([0, 8])
-        )
-        .direction(PinDirection::Output)
-        .pin_type("string")
-        .color(Color::from_rgb(0.9, 0.7, 0.3)), // Orange for strings
-        node_pin(
-            PinSide::Right,
-            container(text!("datetime").size(11)).padding([0, 8])
-        )
-        .direction(PinDirection::Output)
-        .pin_type("datetime")
-        .color(Color::from_rgb(0.7, 0.3, 0.9)), // Purple for datetime
-        node_pin(
-            PinSide::Right,
-            container(text!("body").size(11)).padding([0, 8])
-        )
-        .direction(PinDirection::Output)
-        .pin_type("string")
-        .color(Color::from_rgb(0.9, 0.7, 0.3)), // Orange for strings
-    ]
-    .spacing(2);
-
-    let pin_section = container(pin_list).padding([6, 0]);
-    column![node_title_bar("Email Parser", style), pin_section]
-        .width(160.0)
-        .into()
-}
-
-// Filter Node - Input + output
-fn filter_node<'a, Message>(theme: &'a Theme) -> iced::Element<'a, Message>
-where
-    Message: Clone + 'a,
-{
-    let style = NodeContentStyle::process(theme);
-
-    let pin_list = column![
-        node_pin(
-            PinSide::Left,
-            container(text!("input").size(11)).padding([0, 8])
-        )
-        .direction(PinDirection::Input)
-        .pin_type("string")
-        .color(Color::from_rgb(0.9, 0.7, 0.3)), // Orange for strings
-        node_pin(
-            PinSide::Right,
-            container(text!("matches").size(11)).padding([0, 8])
-        )
-        .direction(PinDirection::Output)
-        .pin_type("string")
-        .color(Color::from_rgb(0.9, 0.7, 0.3)), // Orange for strings
-    ]
-    .spacing(2);
-
-    let pin_section = container(pin_list).padding([6, 0]);
-    column![node_title_bar("Filter", style), pin_section]
-        .width(140.0)
-        .into()
-}
-
-// Calendar Node - Only inputs
-fn calendar_node<'a, Message>(theme: &'a Theme) -> iced::Element<'a, Message>
-where
-    Message: Clone + 'a,
-{
-    let style = NodeContentStyle::output(theme);
-
-    let pin_list = column![
-        node_pin(
-            PinSide::Left,
-            container(text!("datetime").size(11)).padding([0, 8])
-        )
-        .direction(PinDirection::Input)
-        .pin_type("datetime")
-        .color(Color::from_rgb(0.7, 0.3, 0.9)), // Purple for datetime
-        node_pin(
-            PinSide::Left,
-            container(text!("title").size(11)).padding([0, 8])
-        )
-        .direction(PinDirection::Input)
-        .pin_type("string")
-        .color(Color::from_rgb(0.9, 0.7, 0.3)), // Orange for strings
-        node_pin(
-            PinSide::Left,
-            container(text!("description").size(11)).padding([0, 8])
-        )
-        .direction(PinDirection::Input)
-        .pin_type("string")
-        .color(Color::from_rgb(0.9, 0.7, 0.3)), // Orange for strings
-    ]
-    .spacing(2);
-
-    let pin_section = container(pin_list).padding([6, 0]);
-    column![node_title_bar("Create Event", style), pin_section]
-        .width(160.0)
-        .into()
-}
-
-fn node<'a, Message>(node_type: &str, theme: &'a Theme) -> iced::Element<'a, Message>
-where
-    Message: Clone + 'a,
-{
-    match node_type {
-        "email_trigger" => email_trigger_node(theme),
-        "email_parser" => email_parser_node(theme),
-        "filter" => filter_node(theme),
-        "calendar" => calendar_node(theme),
-        _ => email_trigger_node(theme), // fallback
-    }
-}

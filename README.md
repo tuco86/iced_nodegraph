@@ -27,7 +27,7 @@ See [`docs/architecture.md`](docs/architecture.md) for detailed workspace docume
 
 **This project is actively being developed with AI assistance (Claude Sonnet 4.5) and is in a state of flux.** Many features are still being refactored and the API may change significantly. Use at your own risk.
 
-**Target**: Iced 0.14 - This library uses features from Iced master branch (post 0.13.1) and has an unstable API.
+**Target**: Iced 0.14
 
 ## Features
 
@@ -42,16 +42,14 @@ See [`docs/architecture.md`](docs/architecture.md) for detailed workspace docume
 
 ## Quick Start
 
-**Note:** Requires Iced from master branch (targeting 0.14 release)
-
 ### As a Library User
 
 Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-iced_nodegraph = { git = "https://github.com/tuco86/iced_nodegraph" }
-iced = { git = "https://github.com/iced-rs/iced", features = ["advanced", "wgpu"] }
+iced_nodegraph = "0.1"
+iced = { version = "0.14", features = ["advanced", "wgpu"] }
 ```
 
 Basic example:
@@ -286,12 +284,12 @@ Pin rules and connection validation. Will demonstrate input/output directionalit
 
 ## Known Limitations
 
-- **API Stability**: Expect breaking changes as the library evolves toward 0.14 compatibility.
-- **Frustum Culling**: All nodes/edges are rendered regardless of visibility. Phase 3 optimization planned.
+- **API Stability**: The API may change in future versions.
+- **Frustum Culling**: All nodes/edges are rendered regardless of visibility. Optimization planned.
 
 ## Dependencies
 
-- **iced** (master branch) - Core GUI framework, requires unreleased 0.14 features
+- **iced** (0.14) - Core GUI framework
 - **euclid** - Type-safe 2D coordinate transformations
 - **wgpu** - Cross-platform GPU API for custom shaders
 
