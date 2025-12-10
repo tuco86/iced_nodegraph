@@ -5,12 +5,13 @@ use iced::{
     wgpu::{
         BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
         BindGroupLayoutEntry, BindingResource, BindingType, BlendState, Buffer, BufferBindingType,
-        BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites, CommandEncoder, Device,
-        FragmentState, FrontFace, LoadOp, MultisampleState, Operations, PipelineCompilationOptions,
-        PipelineLayout, PipelineLayoutDescriptor, PolygonMode, PrimitiveState, PrimitiveTopology,
-        Queue, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
-        RenderPipelineDescriptor, ShaderModule, ShaderModuleDescriptor, ShaderSource, ShaderStages,
-        StoreOp, TextureFormat, TextureView, VertexState,
+        BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites, CommandEncoder,
+        CommandEncoderDescriptor, ComputePassDescriptor, ComputePipeline, ComputePipelineDescriptor,
+        Device, FragmentState, FrontFace, LoadOp, MultisampleState, Operations,
+        PipelineCompilationOptions, PipelineLayout, PipelineLayoutDescriptor, PolygonMode,
+        PrimitiveState, PrimitiveTopology, Queue, RenderPassColorAttachment, RenderPassDescriptor,
+        RenderPipeline, RenderPipelineDescriptor, ShaderModule, ShaderModuleDescriptor,
+        ShaderSource, ShaderStages, StoreOp, TextureFormat, TextureView, VertexState,
     },
 };
 use iced_wgpu::graphics::Viewport;
@@ -22,7 +23,7 @@ use super::{Layer, primitive::NodeGraphPrimitive};
 
 mod buffer;
 pub mod cache;
-mod types;
+pub mod types;
 
 pub struct Pipeline {
     uniforms: Buffer,
@@ -47,6 +48,56 @@ pub struct Pipeline {
     /// Only recreate bind group when buffer generations change.
     /// Format: (nodes_gen, pins_gen, edges_gen, vertices_gen)
     bind_group_generation: (u64, u64, u64, u64),
+
+    // ============================================================================
+    // PHYSICS COMPUTE RESOURCES
+    // ============================================================================
+
+    /// Compute pipeline for physics simulation.
+    compute_pipeline: ComputePipeline,
+
+    /// Physics uniforms buffer (spring stiffness, damping, etc.).
+    physics_uniforms: Buffer,
+
+    /// Edge metadata buffer for physics (vertex ranges, anchor positions).
+    physics_edges_meta: buffer::Buffer<types::PhysicsEdgeMeta>,
+
+    /// Ping-pong vertex buffers for physics simulation.
+    /// Buffer A: current state (read), Buffer B: next state (write), then swap.
+    vertices_a: buffer::Buffer<types::PhysicsVertex>,
+    vertices_b: buffer::Buffer<types::PhysicsVertex>,
+
+    /// Compute bind group layout for group 0 (uniforms, nodes, edges_meta).
+    compute_bind_group_layout_0: BindGroupLayout,
+
+    /// Compute bind group layout for group 1 (vertices_in, vertices_out).
+    compute_bind_group_layout_1: BindGroupLayout,
+
+    /// Compute bind group 0: uniforms, nodes, edges_meta.
+    compute_bind_group_0: Option<BindGroup>,
+
+    /// Compute bind group for A->B direction (read A, write B).
+    compute_bind_group_a_to_b: Option<BindGroup>,
+
+    /// Compute bind group for B->A direction (read B, write A).
+    compute_bind_group_b_to_a: Option<BindGroup>,
+
+    /// Which buffer has the current physics state.
+    /// false = A is current, true = B is current.
+    current_buffer_is_b: bool,
+
+    /// Whether GPU physics buffers have been initialized with vertex data.
+    /// Only re-initialize when structure changes or on first use.
+    gpu_physics_initialized: bool,
+
+    /// Number of vertices in the GPU physics buffers.
+    gpu_physics_vertex_count: usize,
+
+    /// Generation counter for compute bind group 0.
+    compute_bind_group_0_generation: (u64, u64),
+
+    /// Generation counter for compute bind group 1.
+    compute_bind_group_1_generation: (u64, u64),
 }
 
 impl PipelineTrait for Pipeline {
@@ -157,6 +208,67 @@ impl Pipeline {
             "foreground_legacy",
         );
 
+        // ====================================================================
+        // PHYSICS COMPUTE PIPELINE SETUP
+        // ====================================================================
+
+        // Load physics compute shader
+        let physics_module = device.create_shader_module(ShaderModuleDescriptor {
+            label: Some("physics compute shader"),
+            source: ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!("physics.wgsl"))),
+        });
+
+        // Physics uniforms buffer
+        let physics_uniforms = device.create_buffer(&BufferDescriptor {
+            label: Some("physics uniforms buffer"),
+            size: std::mem::size_of::<types::PhysicsUniforms>() as u64,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Physics edge metadata buffer
+        let physics_edges_meta = buffer::Buffer::new(
+            device,
+            Some("physics edges meta buffer"),
+            BufferUsages::STORAGE | BufferUsages::COPY_DST,
+        );
+
+        // Ping-pong vertex buffers (need read_write for compute shader output)
+        // COPY_SRC needed for copying physics results to render buffer
+        let vertices_a = buffer::Buffer::new(
+            device,
+            Some("physics vertices A buffer"),
+            BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
+        );
+        let vertices_b = buffer::Buffer::new(
+            device,
+            Some("physics vertices B buffer"),
+            BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
+        );
+
+        // Compute bind group layout 0: uniforms, nodes (reuse existing), edges_meta
+        let compute_bind_group_layout_0 = create_compute_bind_group_layout_0(device);
+
+        // Compute bind group layout 1: vertices_in (read), vertices_out (read_write)
+        let compute_bind_group_layout_1 = create_compute_bind_group_layout_1(device);
+
+        // Create compute pipeline layout
+        let compute_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: Some("Physics Compute Pipeline Layout"),
+            bind_group_layouts: &[&compute_bind_group_layout_0, &compute_bind_group_layout_1],
+            ..Default::default()
+        });
+
+        // Create compute pipeline
+        let compute_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
+            label: Some("physics compute pipeline"),
+            layout: Some(&compute_layout),
+            module: &physics_module,
+            entry_point: Some("physics_step"),
+            compilation_options: PipelineCompilationOptions::default(),
+            cache: None,
+        });
+
         Self {
             uniforms,
             nodes,
@@ -172,6 +284,22 @@ impl Pipeline {
             bind_group_layout,
             bind_group,
             bind_group_generation: (0, 0, 0, 0),
+            // Physics compute resources
+            compute_pipeline,
+            physics_uniforms,
+            physics_edges_meta,
+            vertices_a,
+            vertices_b,
+            compute_bind_group_layout_0,
+            compute_bind_group_layout_1,
+            compute_bind_group_0: None,
+            compute_bind_group_a_to_b: None,
+            compute_bind_group_b_to_a: None,
+            current_buffer_is_b: false,
+            gpu_physics_initialized: false,
+            gpu_physics_vertex_count: 0,
+            compute_bind_group_0_generation: (0, 0),
+            compute_bind_group_1_generation: (0, 0),
         }
     }
 
@@ -450,6 +578,336 @@ impl Pipeline {
         // );
     }
 
+    // ========================================================================
+    // PHYSICS COMPUTE METHODS
+    // ========================================================================
+
+    /// Check if GPU physics needs initialization.
+    /// Returns true if buffers haven't been initialized or structure changed.
+    pub fn needs_physics_init(&self, vertex_count: usize) -> bool {
+        !self.gpu_physics_initialized || self.gpu_physics_vertex_count != vertex_count
+    }
+
+    /// Update only the anchor vertex positions (first and last vertex of each edge).
+    /// Call this every frame to ensure anchors track node movement.
+    pub fn update_anchor_positions(
+        &mut self,
+        queue: &Queue,
+        anchor_updates: impl Iterator<Item = (usize, WorldPoint)>, // (vertex_index, new_position)
+    ) {
+        for (idx, pos) in anchor_updates {
+            // Write position directly to the current read buffer
+            // Position is first 8 bytes of PhysicsVertex struct
+            let offset = idx * std::mem::size_of::<types::PhysicsVertex>();
+            let pos_array: [f32; 2] = [pos.x, pos.y];
+            let pos_bytes = bytemuck::bytes_of(&pos_array);
+
+            if self.current_buffer_is_b {
+                queue.write_buffer(self.vertices_b.wgpu_buffer(), offset as u64, pos_bytes);
+            } else {
+                queue.write_buffer(self.vertices_a.wgpu_buffer(), offset as u64, pos_bytes);
+            }
+        }
+    }
+
+    /// Update physics buffers with vertex and edge metadata.
+    /// Call this before dispatch_physics() to upload the latest state.
+    /// Only call when needs_physics_init() returns true.
+    pub fn update_physics_buffers(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        vertices: impl Iterator<Item = types::PhysicsVertex>,
+        edges_meta: impl Iterator<Item = types::PhysicsEdgeMeta>,
+    ) {
+        // Update vertices into the current read buffer
+        let vertices_vec: Vec<_> = vertices.collect();
+
+        // Track vertex count for structure change detection
+        self.gpu_physics_vertex_count = vertices_vec.len();
+
+        if self.current_buffer_is_b {
+            let _ = self.vertices_b.update(device, queue, vertices_vec.iter().copied());
+        } else {
+            let _ = self.vertices_a.update(device, queue, vertices_vec.iter().copied());
+        }
+
+        // Also update the other buffer with same data (initial state for ping-pong)
+        if self.current_buffer_is_b {
+            let _ = self.vertices_a.update(device, queue, vertices_vec.iter().copied());
+        } else {
+            let _ = self.vertices_b.update(device, queue, vertices_vec.iter().copied());
+        }
+
+        // Update edge metadata
+        let _ = self.physics_edges_meta.update(device, queue, edges_meta);
+
+        // Recreate compute bind groups if buffer generations changed
+        self.update_compute_bind_groups(device);
+
+        // Mark as initialized
+        self.gpu_physics_initialized = true;
+    }
+
+    /// Recreate compute bind groups if needed.
+    fn update_compute_bind_groups(&mut self, device: &Device) {
+        // Check if group 0 needs recreation (nodes, edges_meta changed)
+        let gen_0 = (self.nodes.generation(), self.physics_edges_meta.generation());
+        if self.compute_bind_group_0.is_none() || gen_0 != self.compute_bind_group_0_generation {
+            self.compute_bind_group_0 = Some(device.create_bind_group(&BindGroupDescriptor {
+                label: Some("Compute Bind Group 0"),
+                layout: &self.compute_bind_group_layout_0,
+                entries: &[
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: self.physics_uniforms.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 1,
+                        resource: self.nodes.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 2,
+                        resource: self.physics_edges_meta.as_entire_binding(),
+                    },
+                ],
+            }));
+            self.compute_bind_group_0_generation = gen_0;
+        }
+
+        // Check if group 1 needs recreation (vertices_a, vertices_b changed)
+        let gen_1 = (self.vertices_a.generation(), self.vertices_b.generation());
+        if self.compute_bind_group_a_to_b.is_none()
+            || self.compute_bind_group_b_to_a.is_none()
+            || gen_1 != self.compute_bind_group_1_generation
+        {
+            // A -> B bind group (read A, write B)
+            self.compute_bind_group_a_to_b = Some(device.create_bind_group(&BindGroupDescriptor {
+                label: Some("Compute Bind Group A->B"),
+                layout: &self.compute_bind_group_layout_1,
+                entries: &[
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: self.vertices_a.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 1,
+                        resource: self.vertices_b.as_entire_binding(),
+                    },
+                ],
+            }));
+
+            // B -> A bind group (read B, write A)
+            self.compute_bind_group_b_to_a = Some(device.create_bind_group(&BindGroupDescriptor {
+                label: Some("Compute Bind Group B->A"),
+                layout: &self.compute_bind_group_layout_1,
+                entries: &[
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: self.vertices_b.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 1,
+                        resource: self.vertices_a.as_entire_binding(),
+                    },
+                ],
+            }));
+
+            self.compute_bind_group_1_generation = gen_1;
+        }
+    }
+
+    /// Dispatch physics compute shader for the specified number of steps.
+    /// Returns the buffer that contains the final physics state.
+    pub fn dispatch_physics(
+        &mut self,
+        encoder: &mut CommandEncoder,
+        queue: &Queue,
+        config: &crate::node_grapgh::physics::PhysicsConfig,
+        steps: u32,
+        num_nodes: u32,
+    ) {
+        if steps == 0 {
+            return;
+        }
+
+        let num_vertices = if self.current_buffer_is_b {
+            self.vertices_b.len()
+        } else {
+            self.vertices_a.len()
+        } as u32;
+
+        let num_edges = self.physics_edges_meta.len() as u32;
+
+        if num_vertices == 0 || num_edges == 0 {
+            return;
+        }
+
+        // Upload physics uniforms
+        let uniforms = types::PhysicsUniforms {
+            spring_stiffness: config.spring_stiffness,
+            damping: config.damping,
+            rest_length: config.rest_length * config.tension_factor,
+            node_repulsion: config.node_repulsion,
+            edge_repulsion: config.edge_repulsion,
+            repulsion_radius: config.max_interaction_range,
+            max_velocity: config.max_velocity,
+            dt: config.fixed_dt,
+            num_vertices,
+            num_edges,
+            num_nodes,
+            gravity: config.gravity,
+            bending_stiffness: config.bending_stiffness,
+            pin_suction: config.pin_suction,
+            path_attraction: config.path_attraction,
+            // Improved segment model
+            contraction_strength: config.contraction_strength,
+            curvature_contraction: config.curvature_contraction,
+            node_wrap_distance: config.node_wrap_distance,
+            edge_bundle_distance: config.edge_bundle_distance,
+            edge_attraction_range: config.max_interaction_range,
+            min_segment_length: config.min_segment_length,
+            edge_attraction: config.edge_attraction,
+            _pad0: 0,
+            _pad1: 0,
+        };
+        queue.write_buffer(&self.physics_uniforms, 0, bytemuck::bytes_of(&uniforms));
+
+        let workgroup_count = (num_vertices + 63) / 64;
+
+        // Run physics steps
+        for _ in 0..steps {
+            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
+                label: Some("physics compute pass"),
+                timestamp_writes: None,
+            });
+
+            pass.set_pipeline(&self.compute_pipeline);
+            pass.set_bind_group(0, self.compute_bind_group_0.as_ref().unwrap(), &[]);
+
+            // Select bind group based on current buffer direction
+            if self.current_buffer_is_b {
+                // Current is B, so read B -> write A
+                pass.set_bind_group(1, self.compute_bind_group_b_to_a.as_ref().unwrap(), &[]);
+            } else {
+                // Current is A, so read A -> write B
+                pass.set_bind_group(1, self.compute_bind_group_a_to_b.as_ref().unwrap(), &[]);
+            }
+
+            pass.dispatch_workgroups(workgroup_count, 1, 1);
+            drop(pass);
+
+            // Swap buffers for next iteration
+            self.current_buffer_is_b = !self.current_buffer_is_b;
+        }
+
+        // After physics, update render bind group to use the output buffer
+        self.update_render_bind_group_for_physics();
+    }
+
+    /// Dispatch physics compute shader immediately with own encoder.
+    /// This creates a CommandEncoder, runs physics steps, and submits.
+    /// Call this during prepare() before update_new().
+    ///
+    /// NOTE: Before calling this, the physics buffers should be populated
+    /// via update_physics_buffers() at least once (when structure changes).
+    /// This method assumes buffers are already filled with vertex data.
+    pub fn dispatch_physics_immediate(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        config: &crate::node_grapgh::physics::PhysicsConfig,
+        steps: u32,
+        num_nodes: u32,
+    ) {
+        if steps == 0 {
+            return;
+        }
+
+        // Check if we have any vertices to simulate
+        let num_verts = if self.current_buffer_is_b {
+            self.vertices_b.len()
+        } else {
+            self.vertices_a.len()
+        };
+
+        if num_verts == 0 {
+            // No vertices loaded yet - skip dispatch
+            return;
+        }
+
+        // Create encoder for compute pass
+        let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
+            label: Some("physics compute encoder"),
+        });
+
+        // Dispatch physics
+        self.dispatch_physics(&mut encoder, queue, config, steps, num_nodes);
+
+        // Copy physics output to render vertices buffer
+        // After dispatch, the output is in the current buffer (swapped during dispatch)
+        let (source_buffer, source_len) = if self.current_buffer_is_b {
+            (self.vertices_b.wgpu_buffer(), self.vertices_b.len())
+        } else {
+            (self.vertices_a.wgpu_buffer(), self.vertices_a.len())
+        };
+
+        // Ensure render buffer has capacity and copy from physics buffer
+        let copy_size = source_len * std::mem::size_of::<types::PhysicsVertex>();
+        if copy_size > 0 {
+            // The vertices buffer might be smaller - resize if needed via the update method
+            // For now, we ensure it's large enough by checking capacity
+            let render_buffer = self.vertices.wgpu_buffer();
+            let render_capacity = self.vertices.capacity() * std::mem::size_of::<types::PhysicsVertex>();
+
+            if render_capacity >= copy_size {
+                encoder.copy_buffer_to_buffer(
+                    source_buffer,
+                    0,
+                    render_buffer,
+                    0,
+                    copy_size as u64,
+                );
+            }
+        }
+
+        // Submit compute work and buffer copy
+        queue.submit(std::iter::once(encoder.finish()));
+
+        // Update render bind group to use the physics output buffer
+        self.update_render_bind_group_for_physics();
+    }
+
+    /// Update render bind group to use the current physics output buffer.
+    fn update_render_bind_group_for_physics(&mut self) {
+        // The render pipeline's vertices buffer should now point to the
+        // current physics output. We need to copy the data or use the
+        // physics buffer directly for rendering.
+        //
+        // For now, we update the `vertices` buffer reference in the bind group
+        // by pointing to whichever ping-pong buffer is current.
+        //
+        // Note: This requires the render bind group to be recreated with the
+        // correct buffer. For simplicity, we force regeneration by changing
+        // the bind_group_generation tracker.
+        //
+        // A more efficient approach would be to have two render bind groups
+        // and swap between them, but this works for initial implementation.
+
+        // Force bind group regeneration on next update_new() call
+        // by invalidating the generation counter
+        self.bind_group_generation = (u64::MAX, u64::MAX, u64::MAX, u64::MAX);
+    }
+
+    /// Get a reference to the current physics vertices buffer for rendering.
+    pub fn current_physics_vertices(&self) -> &buffer::Buffer<types::PhysicsVertex> {
+        if self.current_buffer_is_b {
+            &self.vertices_b
+        } else {
+            &self.vertices_a
+        }
+    }
+
     #[allow(dead_code)]
     pub fn render(
         &self,
@@ -682,6 +1140,99 @@ fn create_bind_group(
             BindGroupEntry {
                 binding: 4,
                 resource: vertices,
+            },
+        ],
+    })
+}
+
+// ============================================================================
+// COMPUTE SHADER BIND GROUP LAYOUTS
+// ============================================================================
+
+/// Create compute bind group layout 0: uniforms, nodes, edges_meta.
+/// Matches @group(0) in physics.wgsl.
+fn create_compute_bind_group_layout_0(device: &Device) -> BindGroupLayout {
+    device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+        label: Some("Compute Bind Group Layout 0"),
+        entries: &[
+            // Binding 0: PhysicsUniforms (uniform buffer)
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(
+                        NonZeroU64::new(std::mem::size_of::<types::PhysicsUniforms>() as u64)
+                            .unwrap(),
+                    ),
+                },
+                count: None,
+            },
+            // Binding 1: Nodes (storage buffer, read-only)
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(
+                        NonZeroU64::new(std::mem::size_of::<types::Node>() as u64 * 10).unwrap(),
+                    ),
+                },
+                count: None,
+            },
+            // Binding 2: PhysicsEdgeMeta (storage buffer, read-only)
+            BindGroupLayoutEntry {
+                binding: 2,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(
+                        NonZeroU64::new(std::mem::size_of::<types::PhysicsEdgeMeta>() as u64 * 10)
+                            .unwrap(),
+                    ),
+                },
+                count: None,
+            },
+        ],
+    })
+}
+
+/// Create compute bind group layout 1: vertices_in (read), vertices_out (read_write).
+/// Matches @group(1) in physics.wgsl.
+fn create_compute_bind_group_layout_1(device: &Device) -> BindGroupLayout {
+    device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+        label: Some("Compute Bind Group Layout 1"),
+        entries: &[
+            // Binding 0: vertices_in (storage buffer, read-only)
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(
+                        NonZeroU64::new(std::mem::size_of::<types::PhysicsVertex>() as u64 * 10)
+                            .unwrap(),
+                    ),
+                },
+                count: None,
+            },
+            // Binding 1: vertices_out (storage buffer, read_write)
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(
+                        NonZeroU64::new(std::mem::size_of::<types::PhysicsVertex>() as u64 * 10)
+                            .unwrap(),
+                    ),
+                },
+                count: None,
             },
         ],
     })

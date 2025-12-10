@@ -87,30 +87,69 @@ pub struct PhysicsConfig {
     /// Edge-edge equilibrium distance: transition point between repulsion and attraction.
     /// Below this distance: repulsion. Above: attraction (up to max_interaction_range).
     pub edge_equilibrium_distance: f32,
+
+    // === NEW: Improved segment model ===
+
+    /// Number of segments per edge (constant, not length-dependent).
+    /// More segments = smoother curves but more computation.
+    /// Default: 32
+    pub segments_per_edge: u32,
+
+    /// Minimum segment length to prevent collapse.
+    /// Segments won't contract below this length.
+    /// Default: 2.0 pixels
+    pub min_segment_length: f32,
+
+    /// Contraction strength - how strongly segments try to become shorter.
+    /// Higher values = tighter cables.
+    /// Default: 50.0
+    pub contraction_strength: f32,
+
+    /// Extra contraction in curved regions.
+    /// Creates more detail in curves, less in straight sections.
+    /// Default: 30.0
+    pub curvature_contraction: f32,
+
+    /// Hard collision distance from node surface.
+    /// Vertices cannot get closer than this to any node.
+    /// Default: 10.0 pixels
+    pub node_wrap_distance: f32,
+
+    /// Target distance between parallel edges (bundling).
+    /// Edges will repel if closer, attract if further (up to edge_attraction_range).
+    /// Default: 5.0 pixels
+    pub edge_bundle_distance: f32,
 }
 
 impl Default for PhysicsConfig {
     fn default() -> Self {
         Self {
-            spring_stiffness: 800.0,  // Very stiff springs - taut cables
-            damping: 0.92,            // Higher damping for stability
+            spring_stiffness: 1500.0, // Very stiff springs - snappy response
+            damping: 0.75,            // Lower damping - more responsive
             rest_length: 10.0,        // Short segments = many vertices
-            node_repulsion: 600.0,    // Moderate repulsion at close range
-            edge_repulsion: 300.0,    // Edge-edge repulsion
-            max_velocity: 200.0,      // Lower max velocity for stability
-            substeps: 4,
-            fixed_dt: 1.0 / 120.0,    // 120 Hz physics
-            tension_factor: 0.75,     // Edges want to be 75% of natural length (very taut)
-            path_attraction: 2.0,     // Very weak path attraction
-            inside_node_force: 3000.0, // Strong push when inside nodes
-            edge_attraction: 10.0,    // Weak attraction between edges (10-100px range)
-            gravity: 8.0,             // Very light gravity - mostly horizontal tension
-            bending_stiffness: 100.0, // High bending stiffness - smooth curves
-            pin_suction: 150.0,       // Strong pin suction - "slurping spaghetti"
+            node_repulsion: 3000.0,   // Strong repulsion near node surface
+            edge_repulsion: 400.0,    // Edge-edge repulsion
+            max_velocity: 2000.0,     // Much higher max velocity for snappy feel
+            substeps: 8,              // More substeps for stability at higher speeds
+            fixed_dt: 1.0 / 60.0,     // 60 Hz physics - larger timesteps
+            tension_factor: 0.6,      // Edges want to be 60% of natural length (very taut)
+            path_attraction: 5.0,     // Moderate path attraction
+            inside_node_force: 20000.0, // Extreme push when inside nodes
+            edge_attraction: 15.0,    // Moderate attraction between edges
+            gravity: 15.0,            // Noticeable gravity for cable droop
+            bending_stiffness: 150.0, // High bending stiffness - smooth curves
+            pin_suction: 250.0,       // Strong pin suction - "slurping spaghetti"
             // SDF-based force model
             max_interaction_range: 100.0,    // No forces beyond 100px
-            node_repulsion_radius: 15.0,     // Repel edges up to 15px from node surface
+            node_repulsion_radius: 20.0,     // Repel edges up to 20px from node surface
             edge_equilibrium_distance: 10.0, // <10px repel, >10px attract
+            // Improved segment model
+            segments_per_edge: 32,           // Constant 32 segments per edge
+            min_segment_length: 2.0,         // Minimum 2px per segment
+            contraction_strength: 300.0,     // HIGH contraction - snappy cable snap-back
+            curvature_contraction: 100.0,    // Strong extra contraction in curves
+            node_wrap_distance: 10.0,        // 10px hard collision boundary
+            edge_bundle_distance: 5.0,       // 5px between bundled edges
         }
     }
 }
@@ -166,6 +205,15 @@ pub struct EdgePhysicsState {
 
     /// Whether GPU buffers need to be updated.
     pub gpu_dirty: bool,
+
+    /// Whether to use GPU compute shader for physics (much faster).
+    /// If false, falls back to CPU simulation.
+    pub use_gpu: bool,
+
+    /// Number of physics steps pending for GPU dispatch.
+    /// Accumulated in tick_physics(), consumed in prepare().
+    /// Uses Cell for interior mutability (draw() has immutable ref).
+    pub pending_steps: std::cell::Cell<u32>,
 }
 
 impl EdgePhysicsState {
@@ -176,6 +224,8 @@ impl EdgePhysicsState {
             config: PhysicsConfig::default(),
             accumulated_time: 0.0,
             gpu_dirty: true,
+            use_gpu: true, // Default to GPU physics for performance
+            pending_steps: std::cell::Cell::new(0),
         }
     }
 
@@ -186,6 +236,8 @@ impl EdgePhysicsState {
             config,
             accumulated_time: 0.0,
             gpu_dirty: true,
+            use_gpu: true,
+            pending_steps: std::cell::Cell::new(0),
         }
     }
 
@@ -296,9 +348,14 @@ pub fn node_sdf_force(
     let gradient = sd_rounded_box_gradient(vertex, center, half_size, corner_radius);
 
     if dist < 0.0 {
-        // Inside node: strong exponential push outward
-        // Force increases as vertex goes deeper inside
-        let force_magnitude = inside_force * (-dist / 10.0).min(3.0);
+        // Inside node: extremely strong push outward
+        // Force scales quadratically with depth - edges MUST escape
+        let depth = -dist;
+        // Quadratic scaling: deeper = much stronger force
+        // At 10px deep: 1 + 10 = 11x
+        // At 50px deep: 1 + 250 = 251x
+        let scale = 1.0 + (depth * depth) / 10.0;
+        let force_magnitude = inside_force * scale;
         WorldVector::new(gradient.x * force_magnitude, gradient.y * force_magnitude)
     } else if dist < repulsion_radius {
         // 0 to repulsion_radius: quadratic falloff to zero
@@ -501,6 +558,143 @@ pub fn repulsion_force(
     let force_magnitude = strength / (distance_sq + 1.0);
 
     WorldVector::new(direction_x * force_magnitude, direction_y * force_magnitude)
+}
+
+// ============================================================================
+// IMPROVED SEGMENT MODEL FORCES
+// ============================================================================
+
+/// Contraction force - segments try to become shorter.
+/// Force is proportional to current segment length (longer = stronger pull).
+pub fn contraction_force(
+    current: WorldPoint,
+    neighbor: WorldPoint,
+    contraction_strength: f32,
+    rest_length: f32,
+    min_segment_length: f32,
+) -> WorldVector {
+    let dx = neighbor.x - current.x;
+    let dy = neighbor.y - current.y;
+    let dist = (dx * dx + dy * dy).sqrt();
+
+    if dist < min_segment_length || dist < 0.001 {
+        return WorldVector::zero();
+    }
+
+    let direction_x = dx / dist;
+    let direction_y = dy / dist;
+
+    // Force proportional to length (longer segments pull harder)
+    let length_factor = dist / rest_length;
+    let force_magnitude = contraction_strength * length_factor;
+
+    WorldVector::new(direction_x * force_magnitude, direction_y * force_magnitude)
+}
+
+/// Calculate curvature at a vertex (how bent the edge is here).
+/// Returns 0.0 for straight, 1.0 for 90 degree bend, 2.0 for hairpin.
+fn calculate_curvature(prev: WorldPoint, current: WorldPoint, next: WorldPoint) -> f32 {
+    let v1_x = current.x - prev.x;
+    let v1_y = current.y - prev.y;
+    let v2_x = next.x - current.x;
+    let v2_y = next.y - current.y;
+
+    let len1 = (v1_x * v1_x + v1_y * v1_y).sqrt();
+    let len2 = (v2_x * v2_x + v2_y * v2_y).sqrt();
+
+    if len1 < 0.001 || len2 < 0.001 {
+        return 0.0;
+    }
+
+    // Normalize and compute dot product
+    let d = (v1_x / len1) * (v2_x / len2) + (v1_y / len1) * (v2_y / len2);
+
+    // curvature = 1 - cos(angle)
+    1.0 - d
+}
+
+/// Extra contraction force in curved regions.
+/// Creates more detail in curves, less vertices in straight sections.
+pub fn curvature_contraction_force(
+    prev: WorldPoint,
+    current: WorldPoint,
+    next: WorldPoint,
+    curvature_contraction: f32,
+) -> WorldVector {
+    let curvature = calculate_curvature(prev, current, next);
+    let midpoint_x = (prev.x + next.x) * 0.5;
+    let midpoint_y = (prev.y + next.y) * 0.5;
+    let to_midpoint_x = midpoint_x - current.x;
+    let to_midpoint_y = midpoint_y - current.y;
+    let dist = (to_midpoint_x * to_midpoint_x + to_midpoint_y * to_midpoint_y).sqrt();
+
+    if dist < 0.001 {
+        return WorldVector::zero();
+    }
+
+    // Stronger pull toward midpoint at curves
+    let force_magnitude = curvature_contraction * curvature;
+    WorldVector::new(
+        (to_midpoint_x / dist) * force_magnitude,
+        (to_midpoint_y / dist) * force_magnitude,
+    )
+}
+
+/// Apply hard node collision constraint.
+/// Returns corrected position that maintains minimum distance from a node.
+pub fn apply_node_collision(
+    pos: WorldPoint,
+    node_position: WorldPoint,
+    node_size: WorldVector,
+    corner_radius: f32,
+    wrap_distance: f32,
+) -> WorldPoint {
+    let node_center_x = node_position.x + node_size.x * 0.5;
+    let node_center_y = node_position.y + node_size.y * 0.5;
+    let local_x = pos.x - node_center_x;
+    let local_y = pos.y - node_center_y;
+    let half_w = node_size.x * 0.5 - corner_radius;
+    let half_h = node_size.y * 0.5 - corner_radius;
+
+    // SDF calculation
+    let q_x = local_x.abs() - half_w;
+    let q_y = local_y.abs() - half_h;
+
+    let outside_dist = (q_x.max(0.0) * q_x.max(0.0) + q_y.max(0.0) * q_y.max(0.0)).sqrt();
+    let inside_dist = q_x.max(q_y).min(0.0);
+    let sdf = outside_dist + inside_dist - corner_radius;
+
+    if sdf >= wrap_distance {
+        return pos; // Far enough away
+    }
+
+    // Calculate gradient (direction pointing outward)
+    let gradient_x;
+    let gradient_y;
+
+    if q_x > 0.0 && q_y > 0.0 {
+        // Corner region
+        let corner_dist = (q_x * q_x + q_y * q_y).sqrt();
+        if corner_dist < 0.001 {
+            gradient_x = local_x.signum();
+            gradient_y = local_y.signum();
+        } else {
+            gradient_x = (local_x.signum() * q_x) / corner_dist;
+            gradient_y = (local_y.signum() * q_y) / corner_dist;
+        }
+    } else if q_x > q_y {
+        // Left/right edge
+        gradient_x = local_x.signum();
+        gradient_y = 0.0;
+    } else {
+        // Top/bottom edge
+        gradient_x = 0.0;
+        gradient_y = local_y.signum();
+    }
+
+    // Push out by the penetration amount
+    let penetration = wrap_distance - sdf;
+    WorldPoint::new(pos.x + gradient_x * penetration, pos.y + gradient_y * penetration)
 }
 
 /// Apply physics step to a vertex.

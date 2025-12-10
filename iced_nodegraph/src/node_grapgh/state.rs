@@ -123,10 +123,13 @@ impl NodeGraphState {
 
     /// Step the physics simulation by the given delta time.
     ///
-    /// This performs CPU-side physics integration for edge vertices.
+    /// This performs physics integration for edge vertices.
     /// Call this each frame with the time delta.
     ///
-    /// Returns the number of physics steps that were executed.
+    /// If `use_gpu` is true, only counts steps for later GPU dispatch.
+    /// If `use_gpu` is false, runs CPU-side simulation (slower but compatible).
+    ///
+    /// Returns the number of physics steps that were executed/queued.
     pub fn tick_physics(&mut self, dt: f32) -> u32 {
         let steps = self.physics.accumulate_time(dt);
 
@@ -134,6 +137,15 @@ impl NodeGraphState {
             return 0;
         }
 
+        // GPU mode: just accumulate steps, dispatch happens in prepare()
+        if self.physics.use_gpu {
+            let current = self.physics.pending_steps.get();
+            self.physics.pending_steps.set(current + steps);
+            self.physics.gpu_dirty = true;
+            return steps;
+        }
+
+        // CPU fallback mode: run simulation on CPU
         let config = self.physics.config.clone();
         let tension_rest_length = config.rest_length * config.tension_factor;
 
@@ -154,41 +166,60 @@ impl NodeGraphState {
 
                 let mut force = WorldVector::zero();
 
-                // === Spring forces with tension ===
-                // Force from previous vertex
-                if local_idx > 0 {
-                    let prev = &self.canonical.vertices[vertex_range.start + local_idx - 1];
+                // === Get neighbor positions ===
+                let prev_pos = if local_idx > 0 {
+                    Some(self.canonical.vertices[vertex_range.start + local_idx - 1].position)
+                } else {
+                    None
+                };
+
+                let next_pos = if local_idx < vertex_count - 1 {
+                    Some(self.canonical.vertices[vertex_range.start + local_idx + 1].position)
+                } else {
+                    None
+                };
+
+                // === Contraction forces (segments try to become shorter) ===
+                if let Some(prev) = prev_pos {
                     force = force
-                        + physics::spring_force(
+                        + physics::contraction_force(
                             vertex.position,
-                            prev.position,
-                            config.spring_stiffness,
-                            tension_rest_length, // Use tensioned rest length
+                            prev,
+                            config.contraction_strength,
+                            tension_rest_length,
+                            config.min_segment_length,
+                        );
+                }
+                if let Some(next) = next_pos {
+                    force = force
+                        + physics::contraction_force(
+                            vertex.position,
+                            next,
+                            config.contraction_strength,
+                            tension_rest_length,
+                            config.min_segment_length,
                         );
                 }
 
-                // Force from next vertex
-                if local_idx < vertex_count - 1 {
-                    let next = &self.canonical.vertices[vertex_range.start + local_idx + 1];
+                // === Curvature-dependent contraction (more detail in curves) ===
+                if let (Some(prev), Some(next)) = (prev_pos, next_pos) {
                     force = force
-                        + physics::spring_force(
+                        + physics::curvature_contraction_force(
+                            prev,
                             vertex.position,
-                            next.position,
-                            config.spring_stiffness,
-                            tension_rest_length, // Use tensioned rest length
+                            next,
+                            config.curvature_contraction,
                         );
                 }
 
                 // === Bending stiffness ===
                 // Smooths out sharp corners by pulling toward midpoint of neighbors
-                if local_idx > 0 && local_idx < vertex_count - 1 {
-                    let prev = &self.canonical.vertices[vertex_range.start + local_idx - 1];
-                    let next = &self.canonical.vertices[vertex_range.start + local_idx + 1];
+                if let (Some(prev), Some(next)) = (prev_pos, next_pos) {
                     force = force
                         + physics::bending_force(
-                            prev.position,
+                            prev,
                             vertex.position,
-                            next.position,
+                            next,
                             config.bending_stiffness,
                         );
                 }
@@ -298,6 +329,19 @@ impl NodeGraphState {
                     config.damping,
                     config.max_velocity,
                 );
+
+                // === Apply hard node collision constraint (AFTER integration) ===
+                // Vertices cannot penetrate nodes - this is a constraint, not a force
+                for node in &self.canonical.nodes {
+                    let vertex = &mut self.canonical.vertices[v_idx];
+                    vertex.position = physics::apply_node_collision(
+                        vertex.position,
+                        WorldPoint::new(node.position.x, node.position.y),
+                        WorldVector::new(node.size.width, node.size.height),
+                        5.0, // corner radius
+                        config.node_wrap_distance,
+                    );
+                }
 
                 // Mark as dirty
                 self.dirty.mark_edge_vertex(v_idx);

@@ -170,6 +170,16 @@ impl<T> Buffer<T> {
         self.buffer_vec.len()
     }
 
+    /// Returns the capacity of the GPU buffer in elements.
+    pub fn capacity(&self) -> usize {
+        self.buffer_wgpu.size() as usize / std::mem::size_of::<T>()
+    }
+
+    /// Returns a reference to the underlying wgpu::Buffer.
+    pub fn wgpu_buffer(&self) -> &wgpu::Buffer {
+        &self.buffer_wgpu
+    }
+
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.buffer_vec.is_empty()

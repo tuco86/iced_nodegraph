@@ -119,35 +119,52 @@ impl PhysicsVertex {
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct PhysicsEdgeMeta {
-    pub vertex_start: u32, // 4 bytes @ 0
-    pub vertex_count: u32, // 4 bytes @ 4
-    pub from_node: u32,    // 4 bytes @ 8
-    pub from_pin: u32,     // 4 bytes @ 12
-    pub to_node: u32,      // 4 bytes @ 16
-    pub to_pin: u32,       // 4 bytes @ 20
-    pub _pad0: u32,        // 4 bytes @ 24
-    pub _pad1: u32,        // 4 bytes @ 28 (total 32)
-    pub color: glam::Vec4, // 16 bytes @ 32
-    pub thickness: f32,    // 4 bytes @ 48
-    pub _pad2: f32,        // 4 bytes @ 52
-    pub _pad3: f32,        // 4 bytes @ 56
-    pub _pad4: f32,        // 4 bytes @ 60 (total 64)
+    pub vertex_start: u32,       // 4 bytes @ 0
+    pub vertex_count: u32,       // 4 bytes @ 4
+    pub from_node: u32,          // 4 bytes @ 8
+    pub from_pin: u32,           // 4 bytes @ 12
+    pub to_node: u32,            // 4 bytes @ 16
+    pub to_pin: u32,             // 4 bytes @ 20
+    pub _pad0: u32,              // 4 bytes @ 24
+    pub _pad1: u32,              // 4 bytes @ 28 (total 32)
+    pub color: glam::Vec4,       // 16 bytes @ 32
+    pub thickness: f32,          // 4 bytes @ 48
+    pub _pad2: f32,              // 4 bytes @ 52
+    // Anchor positions for pin suction and path attraction
+    pub start_anchor: glam::Vec2, // 8 bytes @ 56
+    pub end_anchor: glam::Vec2,   // 8 bytes @ 64 (total 72)
+    pub _pad3: f32,              // 4 bytes @ 72
+    pub _pad4: f32,              // 4 bytes @ 76 (total 80, 16-byte aligned)
 }
 
 /// Uniforms for physics compute shader.
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct PhysicsUniforms {
-    pub spring_stiffness: f32, // 4 bytes @ 0
-    pub damping: f32,          // 4 bytes @ 4
-    pub rest_length: f32,      // 4 bytes @ 8
-    pub node_repulsion: f32,   // 4 bytes @ 12
-    pub edge_repulsion: f32,   // 4 bytes @ 16
-    pub repulsion_radius: f32, // 4 bytes @ 20
-    pub max_velocity: f32,     // 4 bytes @ 24
-    pub dt: f32,               // 4 bytes @ 28
-    pub num_vertices: u32,     // 4 bytes @ 32
-    pub num_edges: u32,        // 4 bytes @ 36
-    pub num_nodes: u32,        // 4 bytes @ 40
-    pub _pad0: u32,            // 4 bytes @ 44 (total 48)
+    pub spring_stiffness: f32,      // 4 bytes @ 0
+    pub damping: f32,               // 4 bytes @ 4
+    pub rest_length: f32,           // 4 bytes @ 8
+    pub node_repulsion: f32,        // 4 bytes @ 12
+    pub edge_repulsion: f32,        // 4 bytes @ 16
+    pub repulsion_radius: f32,      // 4 bytes @ 20
+    pub max_velocity: f32,          // 4 bytes @ 24
+    pub dt: f32,                    // 4 bytes @ 28
+    pub num_vertices: u32,          // 4 bytes @ 32
+    pub num_edges: u32,             // 4 bytes @ 36
+    pub num_nodes: u32,             // 4 bytes @ 40
+    // Force parameters
+    pub gravity: f32,               // 4 bytes @ 44
+    pub bending_stiffness: f32,     // 4 bytes @ 48
+    pub pin_suction: f32,           // 4 bytes @ 52
+    pub path_attraction: f32,       // 4 bytes @ 56
+    // Improved segment model parameters
+    pub contraction_strength: f32,  // 4 bytes @ 60
+    pub curvature_contraction: f32, // 4 bytes @ 64
+    pub node_wrap_distance: f32,    // 4 bytes @ 68
+    pub edge_bundle_distance: f32,  // 4 bytes @ 72
+    pub edge_attraction_range: f32, // 4 bytes @ 76
+    pub min_segment_length: f32,    // 4 bytes @ 80
+    pub edge_attraction: f32,       // 4 bytes @ 84
+    pub _pad0: u32,                 // 4 bytes @ 88
+    pub _pad1: u32,                 // 4 bytes @ 92 (total 96, 16-byte aligned)
 }

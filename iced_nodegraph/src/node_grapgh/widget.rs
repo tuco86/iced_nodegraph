@@ -364,6 +364,17 @@ where
                     vertex_count: e.vertex_range.len(),
                 })
                 .collect(),
+            // GPU physics dispatch request
+            gpu_physics: if state.physics.use_gpu && state.physics.pending_steps.get() > 0 {
+                let steps = state.physics.pending_steps.get();
+                state.physics.pending_steps.set(0); // Consume the pending steps
+                Some(effects::GpuPhysicsRequest {
+                    steps,
+                    config: state.physics.config.clone(),
+                })
+            } else {
+                None
+            },
         };
         let mut primitive_foreground = primitive_background.clone();
         primitive_foreground.layer = Layer::Foreground;
