@@ -134,69 +134,11 @@ impl NodeGraphState {
             return 0;
         }
 
-        let config = &self.physics.config;
+        let config = self.physics.config.clone();
+        let tension_rest_length = config.rest_length * config.tension_factor;
 
         // Run physics steps
         for _ in 0..steps {
-            // Collect forces for each edge
-            for edge_idx in 0..self.canonical.edges.len() {
-                let edge = &self.canonical.edges[edge_idx];
-                let vertex_range = edge.vertex_range.clone();
-
-                // Process each vertex in this edge
-                for v_idx in vertex_range.clone() {
-                    let vertex = &self.canonical.vertices[v_idx];
-
-                    // Skip anchored vertices
-                    if vertex.is_anchored {
-                        continue;
-                    }
-
-                    let mut force = WorldVector::zero();
-
-                    // Spring forces from neighbors
-                    let local_idx = vertex.vertex_index;
-                    let vertex_count = vertex_range.len();
-
-                    // Force from previous vertex
-                    if local_idx > 0 {
-                        let prev = &self.canonical.vertices[vertex_range.start + local_idx - 1];
-                        force = force + physics::spring_force(
-                            vertex.position,
-                            prev.position,
-                            config.spring_stiffness,
-                            config.rest_length,
-                        );
-                    }
-
-                    // Force from next vertex
-                    if local_idx < vertex_count - 1 {
-                        let next = &self.canonical.vertices[vertex_range.start + local_idx + 1];
-                        force = force + physics::spring_force(
-                            vertex.position,
-                            next.position,
-                            config.spring_stiffness,
-                            config.rest_length,
-                        );
-                    }
-
-                    // Node repulsion - simplified version (uses canonical node centers)
-                    for node in &self.canonical.nodes {
-                        let node_center = node.center();
-                        force = force + physics::repulsion_force(
-                            vertex.position,
-                            node_center,
-                            config.node_repulsion,
-                            config.repulsion_radius,
-                        );
-                    }
-
-                    // Integrate (update position and velocity)
-                    // We need to do this in a second pass to avoid borrow issues
-                    // For now, store the force and integrate after
-                }
-            }
-
             // Second pass: integrate all non-anchored vertices
             for v_idx in 0..self.canonical.vertices.len() {
                 let vertex = &self.canonical.vertices[v_idx];
@@ -205,7 +147,6 @@ impl NodeGraphState {
                     continue;
                 }
 
-                // Recalculate force (simplified - in production, cache forces)
                 let edge = &self.canonical.edges[vertex.edge_id];
                 let vertex_range = edge.vertex_range.clone();
                 let local_idx = vertex.vertex_index;
@@ -213,6 +154,7 @@ impl NodeGraphState {
 
                 let mut force = WorldVector::zero();
 
+                // === Spring forces with tension ===
                 // Force from previous vertex
                 if local_idx > 0 {
                     let prev = &self.canonical.vertices[vertex_range.start + local_idx - 1];
@@ -220,7 +162,7 @@ impl NodeGraphState {
                         vertex.position,
                         prev.position,
                         config.spring_stiffness,
-                        config.rest_length,
+                        tension_rest_length, // Use tensioned rest length
                     );
                 }
 
@@ -231,19 +173,88 @@ impl NodeGraphState {
                         vertex.position,
                         next.position,
                         config.spring_stiffness,
-                        config.rest_length,
+                        tension_rest_length, // Use tensioned rest length
                     );
                 }
 
-                // Node repulsion
-                for node in &self.canonical.nodes {
-                    let node_center = node.center();
-                    force = force + physics::repulsion_force(
+                // === Bending stiffness ===
+                // Smooths out sharp corners by pulling toward midpoint of neighbors
+                if local_idx > 0 && local_idx < vertex_count - 1 {
+                    let prev = &self.canonical.vertices[vertex_range.start + local_idx - 1];
+                    let next = &self.canonical.vertices[vertex_range.start + local_idx + 1];
+                    force = force + physics::bending_force(
+                        prev.position,
                         vertex.position,
-                        node_center,
+                        next.position,
+                        config.bending_stiffness,
+                    );
+                }
+
+                // === Gravity (natural cable sag) ===
+                force = force + physics::gravity_force(config.gravity);
+
+                // === Node SDF-based repulsion/attraction ===
+                for node in &self.canonical.nodes {
+                    force = force + physics::node_sdf_force(
+                        vertex.position,
+                        node.position,
+                        WorldVector::new(node.size.width, node.size.height),
+                        5.0, // corner radius
+                        config.node_padding,
+                        config.inside_node_force,
                         config.node_repulsion,
                         config.repulsion_radius,
+                        config.node_attraction,
+                        config.node_attraction_range,
                     );
+                }
+
+                // === Path attraction ===
+                // Get start and end pin positions from edge anchors
+                if vertex_range.len() >= 2 {
+                    let start_vertex = &self.canonical.vertices[vertex_range.start];
+                    let end_vertex = &self.canonical.vertices[vertex_range.end - 1];
+                    force = force + physics::path_attraction_force(
+                        vertex.position,
+                        start_vertex.position,
+                        end_vertex.position,
+                        config.path_attraction,
+                    );
+
+                    // === Pin suction ("slurping spaghetti") ===
+                    // Pins pull the edge toward themselves, keeping it taut
+                    let vertex_t = local_idx as f32 / (vertex_count - 1).max(1) as f32;
+                    force = force + physics::pin_suction_force(
+                        vertex.position,
+                        start_vertex.position,
+                        end_vertex.position,
+                        vertex_t,
+                        config.pin_suction,
+                    );
+                }
+
+                // === Edge-edge interaction ===
+                // Check against vertices from other edges
+                for other_edge_idx in 0..self.canonical.edges.len() {
+                    if other_edge_idx == vertex.edge_id {
+                        continue; // Skip same edge
+                    }
+
+                    let other_edge = &self.canonical.edges[other_edge_idx];
+                    let other_range = other_edge.vertex_range.clone();
+
+                    // Sample other edge (check every other vertex for performance)
+                    for other_v_idx in (other_range.start..other_range.end).step_by(2) {
+                        let other_vertex = &self.canonical.vertices[other_v_idx];
+                        force = force + physics::edge_interaction_force(
+                            vertex.position,
+                            other_vertex.position,
+                            config.edge_repulsion,
+                            config.repulsion_radius,
+                            config.edge_attraction,
+                            config.edge_attraction_range,
+                        );
+                    }
                 }
 
                 // Integrate

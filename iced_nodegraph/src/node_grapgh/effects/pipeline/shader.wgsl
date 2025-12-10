@@ -86,6 +86,19 @@ var<storage, read> pins: array<Pin>;
 @group(0) @binding(3)
 var<storage, read> edges: array<Edge>;
 
+// Physics vertex structure for polyline edge rendering
+struct PhysicsVertexStorage {
+    position: vec2<f32>,
+    velocity: vec2<f32>,
+    mass: f32,
+    flags: u32,
+    edge_index: u32,
+    vertex_index: u32,
+}
+
+@group(0) @binding(4)
+var<storage, read> physics_vertices: array<PhysicsVertexStorage>;
+
 // ============================================================================
 // VERTEX OUTPUT STRUCTS
 // ============================================================================
@@ -309,8 +322,20 @@ fn vs_edge(@builtin(instance_index) instance: u32,
     let p3 = to_pin.position;
     let p2 = p3 + dir_to * seg_len;
 
-    let bbox_min = min(min(p0, p1), min(p2, p3));
-    let bbox_max = max(max(p0, p1), max(p2, p3));
+    // Start with bezier-based bounding box
+    var bbox_min = min(min(p0, p1), min(p2, p3));
+    var bbox_max = max(max(p0, p1), max(p2, p3));
+
+    // Expand bounding box to include all physics vertices for this edge
+    let num_physics_vertices = arrayLength(&physics_vertices);
+    for (var i = 0u; i < num_physics_vertices; i++) {
+        let v = physics_vertices[i];
+        if (v.edge_index == instance) {
+            bbox_min = min(bbox_min, v.position);
+            bbox_max = max(bbox_max, v.position);
+        }
+    }
+
     let edge_thickness = 4.0 / uniforms.camera_zoom;
     let bbox = vec4(bbox_min - vec2(edge_thickness), bbox_max + vec2(edge_thickness));
 
@@ -328,6 +353,14 @@ fn vs_edge(@builtin(instance_index) instance: u32,
     return EdgeVertexOutput(clip, world_pos, instance);
 }
 
+/// Signed distance to a line segment (used for physics polylines)
+fn sd_line_segment(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
+    let pa = p - a;
+    let ba = b - a;
+    let h = clamp(dot(pa, ba) / max(dot(ba, ba), 0.0001), 0.0, 1.0);
+    return length(pa - ba * h);
+}
+
 @fragment
 fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
     let edge = edges[in.instance_id];
@@ -336,6 +369,49 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
     let to_node = nodes[edge.to_node];
     let to_pin = pins[to_node.pin_start + edge.to_pin];
 
+    let edge_color = select_edge_color(from_pin, to_pin);
+    let edge_thickness = 2.0 / uniforms.camera_zoom;
+    let aa = 1.0 / uniforms.camera_zoom;
+
+    // Try to find physics vertices for this edge
+    // Scan through physics_vertices to find those belonging to this edge
+    var vertex_count = 0u;
+    var vertex_start = 0u;
+    var found_edge = false;
+
+    // Find the first vertex of this edge and count them
+    let num_physics_vertices = arrayLength(&physics_vertices);
+    if (num_physics_vertices > 0u) {
+        for (var i = 0u; i < num_physics_vertices; i++) {
+            let v = physics_vertices[i];
+            if (v.edge_index == in.instance_id) {
+                if (!found_edge) {
+                    vertex_start = i;
+                    found_edge = true;
+                }
+                vertex_count += 1u;
+            } else if (found_edge) {
+                // We've passed all vertices for this edge
+                break;
+            }
+        }
+    }
+
+    // If we have physics vertices, render as polyline
+    if (vertex_count >= 2u) {
+        var min_dist = 1e10;
+        for (var i = 0u; i < vertex_count - 1u; i++) {
+            let p0 = physics_vertices[vertex_start + i].position;
+            let p1 = physics_vertices[vertex_start + i + 1u].position;
+            let seg_dist = sd_line_segment(in.world_uv, p0, p1);
+            min_dist = min(min_dist, seg_dist);
+        }
+
+        let alpha = 1.0 - smoothstep(edge_thickness, edge_thickness + aa, min_dist);
+        return vec4(edge_color, alpha);
+    }
+
+    // Fallback: render as bezier curve
     let dir_from = get_pin_direction(from_pin.side);
     let dir_to = get_pin_direction(to_pin.side);
     let seg_len = 80.0;
@@ -344,12 +420,7 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
     let p3 = to_pin.position;
     let p2 = p3 + dir_to * seg_len;
 
-    let edge_color = select_edge_color(from_pin, to_pin);
-
     let dist = sdCubicBezier(in.world_uv, p0, p1, p2, p3);
-    let edge_thickness = 2.0 / uniforms.camera_zoom;
-    let aa = 1.0 / uniforms.camera_zoom;
-
     let alpha = 1.0 - smoothstep(edge_thickness, edge_thickness + aa, dist);
 
     return vec4(edge_color, alpha);

@@ -29,6 +29,8 @@ pub struct Pipeline {
     nodes: buffer::Buffer<types::Node>,
     pins: buffer::Buffer<types::Pin>,
     edges: buffer::Buffer<types::Edge>,
+    /// Physics vertices buffer for polyline edge rendering.
+    vertices: buffer::Buffer<types::PhysicsVertex>,
 
     pipeline_background: RenderPipeline,
     pipeline_edges: RenderPipeline,
@@ -43,8 +45,8 @@ pub struct Pipeline {
 
     /// Generation counters for bind group caching.
     /// Only recreate bind group when buffer generations change.
-    /// Format: (nodes_gen, pins_gen, edges_gen)
-    bind_group_generation: (u64, u64, u64),
+    /// Format: (nodes_gen, pins_gen, edges_gen, vertices_gen)
+    bind_group_generation: (u64, u64, u64, u64),
 }
 
 impl PipelineTrait for Pipeline {
@@ -88,6 +90,12 @@ impl Pipeline {
             BufferUsages::STORAGE | BufferUsages::COPY_DST,
         );
 
+        let vertices = buffer::Buffer::new(
+            device,
+            Some("physics vertices buffer"),
+            BufferUsages::STORAGE | BufferUsages::COPY_DST,
+        );
+
         let bind_group_layout = create_bind_group_layout(device);
         let bind_group = create_bind_group(
             device,
@@ -96,6 +104,7 @@ impl Pipeline {
             nodes.as_entire_binding(),
             pins.as_entire_binding(),
             edges.as_entire_binding(),
+            vertices.as_entire_binding(),
         );
 
         let layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
@@ -153,6 +162,7 @@ impl Pipeline {
             nodes,
             pins,
             edges,
+            vertices,
             pipeline_background,
             pipeline_edges,
             pipeline_nodes,
@@ -161,7 +171,7 @@ impl Pipeline {
             pipeline_foreground,
             bind_group_layout,
             bind_group,
-            bind_group_generation: (0, 0, 0),
+            bind_group_generation: (0, 0, 0, 0),
         }
     }
 
@@ -194,6 +204,8 @@ impl Pipeline {
             primitive.drag_edge_valid_color,
             &primitive.selected_nodes,
             primitive.selected_edge_color,
+            &primitive.physics_vertices,
+            &primitive.physics_edges,
         );
     }
 
@@ -218,6 +230,8 @@ impl Pipeline {
         drag_edge_valid_color: glam::Vec4,
         selected_nodes: &std::collections::HashSet<usize>,
         selected_edge_color: glam::Vec4,
+        physics_vertices: &[super::primitive::PhysicsVertexData],
+        physics_edges: &[super::primitive::PhysicsEdgeData],
     ) {
         let mut pin_start = 0;
         let num_nodes = self.nodes.update(
@@ -308,6 +322,25 @@ impl Pipeline {
                 }),
         );
 
+        // Upload physics vertices (for polyline edge rendering)
+        let _num_vertices = self.vertices.update(
+            device,
+            queue,
+            physics_vertices.iter().map(|v| {
+                types::PhysicsVertex {
+                    position: v.position,
+                    velocity: crate::node_grapgh::euclid::WorldVector::zero(),
+                    mass: 1.0,
+                    flags: 0, // Not used for rendering
+                    edge_index: v.edge_index as u32,
+                    vertex_index: v.vertex_index as u32,
+                }
+            }),
+        );
+
+        // Unused for now but available for future use
+        let _ = physics_edges;
+
         let dragging_type: u32 = match dragging {
             Dragging::None => 0,
             Dragging::Graph(_) => 1,
@@ -391,6 +424,7 @@ impl Pipeline {
             self.nodes.generation(),
             self.pins.generation(),
             self.edges.generation(),
+            self.vertices.generation(),
         );
         if current_gen != self.bind_group_generation {
             self.bind_group = create_bind_group(
@@ -400,6 +434,7 @@ impl Pipeline {
                 self.nodes.as_entire_binding(),
                 self.pins.as_entire_binding(),
                 self.edges.as_entire_binding(),
+                self.vertices.as_entire_binding(),
             );
             self.bind_group_generation = current_gen;
         }
@@ -592,6 +627,19 @@ fn create_bind_group_layout(device: &Device) -> BindGroupLayout {
                 },
                 count: None,
             },
+            // Binding 4: Physics vertices (storage buffer, read-only)
+            BindGroupLayoutEntry {
+                binding: 4,
+                visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(
+                        NonZeroU64::new(std::mem::size_of::<types::PhysicsVertex>() as u64 * 10).unwrap(),
+                    ),
+                },
+                count: None,
+            },
         ],
     })
 }
@@ -603,6 +651,7 @@ fn create_bind_group(
     nodes: BindingResource,
     pins: BindingResource,
     edges: BindingResource,
+    vertices: BindingResource,
 ) -> BindGroup {
     device.create_bind_group(&BindGroupDescriptor {
         label: Some("Node Pipeline Bind Group"),
@@ -627,6 +676,11 @@ fn create_bind_group(
             BindGroupEntry {
                 binding: 3,
                 resource: edges,
+            },
+            // Entry 4: Physics vertices
+            BindGroupEntry {
+                binding: 4,
+                resource: vertices,
             },
         ],
     })

@@ -49,20 +49,73 @@ pub struct PhysicsConfig {
 
     /// Fixed timestep for physics integration (seconds).
     pub fixed_dt: f32,
+
+    // === New parameters for enhanced physics ===
+
+    /// Tension factor: multiplier on rest length to create constant tension.
+    /// < 1.0 means edges are under compression (want to be shorter).
+    /// Default 0.8 means edges try to be 80% of their natural length.
+    pub tension_factor: f32,
+
+    /// Strength of force pushing vertices toward the direct path between pins.
+    pub path_attraction: f32,
+
+    /// Node padding: minimum distance from node edges.
+    pub node_padding: f32,
+
+    /// Force strength when inside a node (very strong push out).
+    pub inside_node_force: f32,
+
+    /// Long-range attraction between edges (weak).
+    pub edge_attraction: f32,
+
+    /// Distance beyond which edge attraction starts.
+    pub edge_attraction_range: f32,
+
+    /// Gravity strength (positive = downward sag).
+    /// Creates natural cable droop.
+    pub gravity: f32,
+
+    /// Bending stiffness - resistance to sharp bends.
+    /// Higher values make the cable smoother/stiffer.
+    pub bending_stiffness: f32,
+
+    /// Long-range attraction strength toward nodes.
+    /// Pulls distant edges gently toward nearby nodes.
+    pub node_attraction: f32,
+
+    /// Distance beyond which node attraction starts.
+    pub node_attraction_range: f32,
+
+    /// Pin suction strength - how strongly pins "slurp up" the edge.
+    /// Higher values keep edges taut and prevent vertices from leaking past pins.
+    pub pin_suction: f32,
 }
 
 impl Default for PhysicsConfig {
     fn default() -> Self {
         Self {
-            spring_stiffness: 500.0,
-            damping: 0.95,
-            rest_length: 30.0,
-            node_repulsion: 1000.0,
-            edge_repulsion: 200.0,
-            repulsion_radius: 50.0,
-            max_velocity: 500.0,
+            spring_stiffness: 800.0,     // Very stiff springs - taut cables
+            damping: 0.92,               // Higher damping for stability
+            rest_length: 10.0,           // Short segments = many vertices
+            node_repulsion: 600.0,       // Moderate repulsion at close range
+            edge_repulsion: 300.0,       // Edge-edge repulsion
+            repulsion_radius: 15.0,      // Small repulsion radius (15 pixels)
+            max_velocity: 200.0,         // Lower max velocity for stability
             substeps: 4,
-            fixed_dt: 1.0 / 120.0, // 120 Hz physics
+            fixed_dt: 1.0 / 120.0,       // 120 Hz physics
+            // Enhanced parameters
+            tension_factor: 0.75,        // Edges want to be 75% of natural length (very taut)
+            path_attraction: 2.0,        // Very weak path attraction
+            node_padding: 15.0,          // Keep 15 units from node edges
+            inside_node_force: 3000.0,   // Strong push when inside nodes
+            edge_attraction: 10.0,       // Weak long-range attraction between edges
+            edge_attraction_range: 80.0, // Start edge attraction beyond 80 units
+            gravity: 8.0,                // Very light gravity - mostly horizontal tension
+            bending_stiffness: 100.0,    // High bending stiffness - smooth curves
+            node_attraction: 8.0,        // Weak long-range attraction toward nodes
+            node_attraction_range: 100.0, // Start node attraction beyond 100 units
+            pin_suction: 150.0,          // Strong pin suction - "slurping spaghetti"
         }
     }
 }
@@ -165,6 +218,151 @@ impl EdgePhysicsState {
     }
 }
 
+/// Signed distance to a rounded box (node shape).
+/// Returns negative when inside, positive when outside.
+fn sd_rounded_box(point: WorldPoint, center: WorldPoint, half_size: WorldVector, radius: f32) -> f32 {
+    let p = WorldVector::new(
+        (point.x - center.x).abs() - half_size.x + radius,
+        (point.y - center.y).abs() - half_size.y + radius,
+    );
+    let outside = (p.x.max(0.0) * p.x.max(0.0) + p.y.max(0.0) * p.y.max(0.0)).sqrt();
+    let inside = p.x.max(p.y).min(0.0);
+    outside + inside - radius
+}
+
+/// Calculate gradient of SDF at a point (normalized direction away from surface).
+fn sd_rounded_box_gradient(point: WorldPoint, center: WorldPoint, half_size: WorldVector, radius: f32) -> WorldVector {
+    let epsilon = 0.01;
+    let dx = sd_rounded_box(WorldPoint::new(point.x + epsilon, point.y), center, half_size, radius)
+           - sd_rounded_box(WorldPoint::new(point.x - epsilon, point.y), center, half_size, radius);
+    let dy = sd_rounded_box(WorldPoint::new(point.x, point.y + epsilon), center, half_size, radius)
+           - sd_rounded_box(WorldPoint::new(point.x, point.y - epsilon), center, half_size, radius);
+    let len = (dx * dx + dy * dy).sqrt();
+    if len < 0.001 {
+        WorldVector::zero()
+    } else {
+        WorldVector::new(dx / len, dy / len)
+    }
+}
+
+/// Calculate force from node SDF.
+/// Strong push when inside, medium push when close outside,
+/// weak attraction when far (to guide edges around nodes nicely).
+pub fn node_sdf_force(
+    vertex: WorldPoint,
+    node_pos: WorldVector,
+    node_size: WorldVector,
+    corner_radius: f32,
+    padding: f32,
+    inside_force: f32,
+    outside_repulsion: f32,
+    repulsion_radius: f32,
+    attraction_strength: f32,
+    attraction_range: f32,
+) -> WorldVector {
+    let center = WorldPoint::new(
+        node_pos.x + node_size.x * 0.5,
+        node_pos.y + node_size.y * 0.5,
+    );
+    let half_size = WorldVector::new(node_size.x * 0.5, node_size.y * 0.5);
+
+    let dist = sd_rounded_box(vertex, center, half_size, corner_radius);
+    let gradient = sd_rounded_box_gradient(vertex, center, half_size, corner_radius);
+
+    if dist < 0.0 {
+        // Inside node: strong push outward
+        let force_magnitude = inside_force * (-dist / 10.0).min(1.0);
+        WorldVector::new(gradient.x * force_magnitude, gradient.y * force_magnitude)
+    } else if dist < padding + repulsion_radius {
+        // Near node (within padding + repulsion_radius): push outward with falloff
+        let t = dist / (padding + repulsion_radius);
+        let force_magnitude = outside_repulsion * (1.0 - t) * (1.0 - t); // Quadratic falloff
+        WorldVector::new(gradient.x * force_magnitude, gradient.y * force_magnitude)
+    } else if dist > attraction_range {
+        // Far from node: weak attraction (pull toward node)
+        let t = ((dist - attraction_range) / attraction_range).min(1.0);
+        let force_magnitude = -attraction_strength * t; // Negative = toward node
+        WorldVector::new(gradient.x * force_magnitude, gradient.y * force_magnitude)
+    } else {
+        WorldVector::zero()
+    }
+}
+
+/// Calculate force pulling vertex toward the direct line between two pins.
+/// This creates a tendency for edges to take the shortest path.
+pub fn path_attraction_force(
+    vertex: WorldPoint,
+    start_pin: WorldPoint,
+    end_pin: WorldPoint,
+    strength: f32,
+) -> WorldVector {
+    // Project vertex onto line segment
+    let line = WorldVector::new(end_pin.x - start_pin.x, end_pin.y - start_pin.y);
+    let line_len_sq = line.x * line.x + line.y * line.y;
+
+    if line_len_sq < 0.001 {
+        return WorldVector::zero();
+    }
+
+    let t = ((vertex.x - start_pin.x) * line.x + (vertex.y - start_pin.y) * line.y) / line_len_sq;
+    let t = t.clamp(0.0, 1.0);
+
+    // Closest point on line
+    let closest = WorldPoint::new(
+        start_pin.x + t * line.x,
+        start_pin.y + t * line.y,
+    );
+
+    // Force toward closest point
+    let dx = closest.x - vertex.x;
+    let dy = closest.y - vertex.y;
+    let dist = (dx * dx + dy * dy).sqrt();
+
+    if dist < 0.001 {
+        WorldVector::zero()
+    } else {
+        // Quadratic falloff - stronger when far from path
+        let force_magnitude = strength * (dist / 100.0).min(1.0);
+        WorldVector::new(dx / dist * force_magnitude, dy / dist * force_magnitude)
+    }
+}
+
+/// Calculate edge-edge interaction force.
+/// Short range: repulsion. Long range: weak attraction.
+pub fn edge_interaction_force(
+    vertex: WorldPoint,
+    other_vertex: WorldPoint,
+    repulsion_strength: f32,
+    repulsion_radius: f32,
+    attraction_strength: f32,
+    attraction_range: f32,
+) -> WorldVector {
+    let dx = vertex.x - other_vertex.x;
+    let dy = vertex.y - other_vertex.y;
+    let dist = (dx * dx + dy * dy).sqrt();
+
+    if dist < 0.001 {
+        return WorldVector::zero();
+    }
+
+    let dir_x = dx / dist;
+    let dir_y = dy / dist;
+
+    if dist < repulsion_radius {
+        // Short range repulsion
+        let t = 1.0 - dist / repulsion_radius;
+        let force_magnitude = repulsion_strength * t * t;
+        WorldVector::new(dir_x * force_magnitude, dir_y * force_magnitude)
+    } else if dist > attraction_range {
+        // Long range attraction (pull toward other)
+        let t = ((dist - attraction_range) / attraction_range).min(1.0);
+        let force_magnitude = -attraction_strength * t;
+        WorldVector::new(dir_x * force_magnitude, dir_y * force_magnitude)
+    } else {
+        WorldVector::zero()
+    }
+}
+
 /// Calculate spring force between two positions.
 ///
 /// Returns force vector applied to `from` position.
@@ -183,6 +381,65 @@ pub fn spring_force(from: WorldPoint, to: WorldPoint, stiffness: f32, rest_lengt
     let force_magnitude = stiffness * displacement;
 
     WorldVector::new(direction_x * force_magnitude, direction_y * force_magnitude)
+}
+
+/// Calculate bending stiffness force.
+///
+/// This force resists sharp bends by pulling the middle vertex toward
+/// the line between prev and next vertices. Creates smooth cable curves.
+pub fn bending_force(
+    prev: WorldPoint,
+    current: WorldPoint,
+    next: WorldPoint,
+    stiffness: f32,
+) -> WorldVector {
+    // Target position is midpoint between prev and next
+    let target_x = (prev.x + next.x) * 0.5;
+    let target_y = (prev.y + next.y) * 0.5;
+
+    // Force toward the midpoint (straightening force)
+    let dx = target_x - current.x;
+    let dy = target_y - current.y;
+
+    WorldVector::new(dx * stiffness, dy * stiffness)
+}
+
+/// Calculate gravity force (downward).
+pub fn gravity_force(strength: f32) -> WorldVector {
+    WorldVector::new(0.0, strength)
+}
+
+/// Calculate pin suction force.
+/// Pulls vertex toward the nearest anchor point (start or end pin).
+/// This simulates the pin "slurping up" the edge like spaghetti.
+/// The force is stronger for vertices closer to the anchor.
+pub fn pin_suction_force(
+    vertex: WorldPoint,
+    start_anchor: WorldPoint,
+    end_anchor: WorldPoint,
+    vertex_t: f32, // 0.0 = at start, 1.0 = at end
+    strength: f32,
+) -> WorldVector {
+    // Determine which anchor to pull toward based on position along edge
+    let (target, pull_strength) = if vertex_t < 0.5 {
+        // Closer to start - pull toward start with strength based on proximity
+        let t = 1.0 - vertex_t * 2.0; // 1.0 at start, 0.0 at middle
+        (start_anchor, strength * t * t)
+    } else {
+        // Closer to end - pull toward end
+        let t = (vertex_t - 0.5) * 2.0; // 0.0 at middle, 1.0 at end
+        (end_anchor, strength * t * t)
+    };
+
+    let dx = target.x - vertex.x;
+    let dy = target.y - vertex.y;
+    let dist = (dx * dx + dy * dy).sqrt();
+
+    if dist < 0.001 {
+        WorldVector::zero()
+    } else {
+        WorldVector::new(dx / dist * pull_strength, dy / dist * pull_strength)
+    }
 }
 
 /// Calculate repulsion force from a point.
@@ -251,9 +508,10 @@ mod tests {
     #[test]
     fn test_physics_config_default() {
         let config = PhysicsConfig::default();
-        assert_eq!(config.spring_stiffness, 500.0);
-        assert_eq!(config.damping, 0.95);
-        assert_eq!(config.rest_length, 30.0);
+        assert_eq!(config.spring_stiffness, 800.0);
+        assert_eq!(config.damping, 0.92);
+        assert_eq!(config.rest_length, 10.0);
+        assert_eq!(config.pin_suction, 150.0);
     }
 
     #[test]

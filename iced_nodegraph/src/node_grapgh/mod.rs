@@ -27,6 +27,8 @@ pub enum DragInfo {
     Edge { from_node: usize, from_pin: usize },
     /// Box selection drag
     BoxSelect { start_x: f32, start_y: f32 },
+    /// Dragging an edge vertex (physics wire simulation)
+    EdgeVertex { edge_index: usize, vertex_index: usize },
 }
 
 /// State of a remote user for collaborative editing.

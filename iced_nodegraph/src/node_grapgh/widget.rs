@@ -339,6 +339,25 @@ where
                 selection_border_color.b,
                 selection_border_color.a * fade_opacity,
             ),
+            // Physics vertices for polyline rendering
+            physics_vertices: state.canonical.vertices.iter().map(|v| {
+                effects::PhysicsVertexData {
+                    position: v.position,
+                    edge_index: v.edge_id,
+                    vertex_index: v.vertex_index,
+                }
+            }).collect(),
+            // Physics edge metadata with vertex ranges
+            physics_edges: state.canonical.edges.iter().map(|e| {
+                effects::PhysicsEdgeData {
+                    from_node: e.from.node_id,
+                    from_pin: e.from.pin_id,
+                    to_node: e.to.node_id,
+                    to_pin: e.to.pin_id,
+                    vertex_start: e.vertex_range.start,
+                    vertex_count: e.vertex_range.len(),
+                }
+            }).collect(),
         };
         let mut primitive_foreground = primitive_background.clone();
         primitive_foreground.layer = Layer::Foreground;
@@ -446,6 +465,47 @@ where
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
+        // === PHYSICS: Collect pin positions first (before mutable state borrow) ===
+        // First, read the drag state to compute offsets for dragged nodes
+        let (dragging, selected_nodes, camera) = {
+            let state = tree.state.downcast_ref::<NodeGraphState>();
+            (state.dragging.clone(), state.selected_nodes.clone(), state.camera)
+        };
+
+        // Compute drag offset based on current cursor position
+        let drag_offset_for_node = |node_id: usize| -> WorldVector {
+            if let Some(cursor_pos) = screen_cursor.position() {
+                let cursor_screen: ScreenPoint = cursor_pos.into_euclid();
+                let cursor_world: WorldPoint = camera.screen_to_world().transform_point(cursor_screen);
+
+                match &dragging {
+                    Dragging::Node(drag_node_id, origin) if *drag_node_id == node_id => {
+                        WorldVector::new(cursor_world.x - origin.x, cursor_world.y - origin.y)
+                    }
+                    Dragging::GroupMove(origin) if selected_nodes.contains(&node_id) => {
+                        WorldVector::new(cursor_world.x - origin.x, cursor_world.y - origin.y)
+                    }
+                    _ => WorldVector::zero(),
+                }
+            } else {
+                WorldVector::zero()
+            }
+        };
+
+        let edge_pin_positions: Vec<(WorldPoint, WorldPoint)> = self.edges.iter()
+            .map(|(from_ref, to_ref, _)| {
+                let from_pos = get_pin_world_position(tree, layout, from_ref.node_id, from_ref.pin_id);
+                let to_pos = get_pin_world_position(tree, layout, to_ref.node_id, to_ref.pin_id);
+                // Apply drag offset to pin positions
+                let from_offset = drag_offset_for_node(from_ref.node_id);
+                let to_offset = drag_offset_for_node(to_ref.node_id);
+                (
+                    WorldPoint::new(from_pos.x + from_offset.x, from_pos.y + from_offset.y),
+                    WorldPoint::new(to_pos.x + to_offset.x, to_pos.y + to_offset.y),
+                )
+            })
+            .collect();
+
         let state = tree.state.downcast_mut::<NodeGraphState>();
 
         // Synchronize external selection with internal state
@@ -463,14 +523,128 @@ where
             state.fade_in.go_mut(true, now);
         }
 
-        if let Some(last_update) = state.last_update {
+        let delta_time = if let Some(last_update) = state.last_update {
             let delta = now.duration_since(last_update).as_secs_f32();
             state.time += delta;
-        }
+            delta
+        } else {
+            0.0
+        };
         state.last_update = Some(now);
 
         // Request redraw while animating
         if state.fade_in.is_animating(now) {
+            shell.request_redraw();
+        }
+
+        // === PHYSICS INTEGRATION ===
+
+        // Sync nodes from NodeGraph to canonical state (every frame, with drag offsets)
+        // This is needed for node SDF repulsion in physics simulation
+        let node_count = self.nodes.len();
+        if state.canonical.nodes.len() != node_count {
+            state.canonical.nodes.resize_with(node_count, || {
+                super::canonical::CanonicalNode::new(
+                    WorldVector::new(0.0, 0.0),
+                    super::euclid::WorldSize::new(100.0, 50.0),
+                    Default::default(),
+                    0..0,
+                )
+            });
+        }
+
+        // Update node positions with drag offsets
+        for (node_idx, (position, _element, _style)) in self.nodes.iter().enumerate() {
+            let offset = drag_offset_for_node(node_idx);
+            let pos = WorldVector::new(position.x + offset.x, position.y + offset.y);
+
+            if let Some(node) = state.canonical.nodes.get_mut(node_idx) {
+                node.position = pos;
+            }
+        }
+
+        // Update node sizes from layout
+        for (node_idx, node_layout) in layout.children().enumerate() {
+            if let Some(node) = state.canonical.nodes.get_mut(node_idx) {
+                let bounds = node_layout.bounds();
+                node.size = super::euclid::WorldSize::new(bounds.width, bounds.height);
+            }
+        }
+
+        // Sync edges from NodeGraph to canonical state if needed
+        let edges_changed = state.canonical.edges.len() != self.edges.len();
+        if edges_changed {
+            // Clear and rebuild canonical edges and vertices
+            state.canonical.edges.clear();
+            state.canonical.vertices.clear();
+            state.dirty.mark_structure_changed();
+
+            let rest_length = state.physics.config.rest_length;
+
+            for (edge_idx, ((from_ref, to_ref, style), (from_pin_world, to_pin_world))) in
+                self.edges.iter().zip(edge_pin_positions.iter()).enumerate()
+            {
+                // Create canonical edge
+                let canonical_edge = super::canonical::CanonicalEdge::new(
+                    *from_ref,
+                    *to_ref,
+                    0..0, // Will be updated after vertices are added
+                );
+                let canonical_edge = if let Some(s) = style {
+                    canonical_edge.with_style(s.clone())
+                } else {
+                    canonical_edge
+                };
+                state.canonical.edges.push(canonical_edge);
+
+                // Initialize vertices for this edge
+                state.canonical.init_edge_vertices(
+                    edge_idx,
+                    *from_pin_world,
+                    *to_pin_world,
+                    rest_length,
+                );
+            }
+        }
+
+        // Update anchored vertices to follow pin positions (every frame)
+        for (edge_idx, (from_pos, to_pos)) in edge_pin_positions.iter().enumerate() {
+            if let Some(edge) = state.canonical.edges.get(edge_idx) {
+                let vertex_range = edge.vertex_range.clone();
+                if !vertex_range.is_empty() {
+                    // Update start anchor
+                    if let Some(v) = state.canonical.vertices.get_mut(vertex_range.start) {
+                        if v.is_anchored && (v.position.x != from_pos.x || v.position.y != from_pos.y) {
+                            v.position = *from_pos;
+                            state.dirty.mark_edge_vertex(vertex_range.start);
+                        }
+                    }
+
+                    // Update end anchor
+                    if vertex_range.len() > 1 {
+                        let end_idx = vertex_range.end - 1;
+                        if let Some(v) = state.canonical.vertices.get_mut(end_idx) {
+                            if v.is_anchored && (v.position.x != to_pos.x || v.position.y != to_pos.y) {
+                                v.position = *to_pos;
+                                state.dirty.mark_edge_vertex(end_idx);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Tick physics simulation
+        if state.physics.enabled && delta_time > 0.0 {
+            let steps = state.tick_physics(delta_time);
+            if steps > 0 {
+                // Physics updated vertices, request redraw
+                shell.request_redraw();
+            }
+        }
+
+        // Request continuous redraw while physics is enabled
+        if state.physics.enabled && !state.canonical.vertices.is_empty() {
             shell.request_redraw();
         }
 
@@ -1218,8 +1392,7 @@ where
                                 }
                             }
                         }
-                        // Nothing hit - start box selection on empty space
-                        // But NOT when Ctrl is held (reserved for Fruit Ninja edge cutting)
+                        // Nothing hit - check for edge vertex click first
                         if let Some(cursor_position) = world_cursor.position() {
                             let cursor_position: WorldPoint = cursor_position.into_euclid();
                             let state = tree.state.downcast_mut::<NodeGraphState>();
@@ -1229,6 +1402,52 @@ where
                                 #[cfg(debug_assertions)]
                                 println!("Starting edge cutting from {:?}", cursor_position);
                                 state.dragging = Dragging::EdgeCutting(vec![cursor_position]);
+                                shell.capture_event();
+                                return;
+                            }
+
+                            // Check for edge vertex hit (for physics wire dragging)
+                            const VERTEX_CLICK_THRESHOLD: f32 = 12.0;
+                            let mut found_vertex: Option<(usize, usize)> = None;
+
+                            for (edge_idx, edge) in state.canonical.edges.iter().enumerate() {
+                                let vertex_range = edge.vertex_range.clone();
+                                for (local_idx, global_idx) in vertex_range.clone().enumerate() {
+                                    if let Some(vertex) = state.canonical.vertices.get(global_idx) {
+                                        // Don't allow dragging anchored vertices (start/end)
+                                        if vertex.is_anchored {
+                                            continue;
+                                        }
+
+                                        let dx = vertex.position.x - cursor_position.x;
+                                        let dy = vertex.position.y - cursor_position.y;
+                                        let dist = (dx * dx + dy * dy).sqrt();
+
+                                        if dist < VERTEX_CLICK_THRESHOLD {
+                                            found_vertex = Some((edge_idx, local_idx));
+                                            break;
+                                        }
+                                    }
+                                }
+                                if found_vertex.is_some() {
+                                    break;
+                                }
+                            }
+
+                            if let Some((edge_idx, vertex_idx)) = found_vertex {
+                                #[cfg(debug_assertions)]
+                                println!("Starting edge vertex drag: edge={}, vertex={}", edge_idx, vertex_idx);
+                                state.dragging = Dragging::EdgeVertex {
+                                    edge_index: edge_idx,
+                                    vertex_index: vertex_idx,
+                                    origin: cursor_position,
+                                };
+                                if let Some(handler) = self.on_drag_start_handler() {
+                                    shell.publish(handler(DragInfo::EdgeVertex {
+                                        edge_index: edge_idx,
+                                        vertex_index: vertex_idx,
+                                    }));
+                                }
                                 shell.capture_event();
                                 return;
                             }
@@ -1433,6 +1652,25 @@ fn selection_rect_from_points(a: WorldPoint, b: WorldPoint) -> Rectangle {
 /// Checks if two rectangles intersect (have any overlapping area)
 fn rects_intersect(a: &Rectangle, b: &Rectangle) -> bool {
     a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y
+}
+
+/// Gets the world position of a pin given node and pin indices.
+/// Returns the first position (left/top side for Row pins).
+fn get_pin_world_position(
+    tree: &Tree,
+    layout: Layout<'_>,
+    node_id: usize,
+    pin_id: usize,
+) -> WorldPoint {
+    layout.children().nth(node_id)
+        .and_then(|node_layout| {
+            tree.children.get(node_id).and_then(|node_tree| {
+                find_pins(node_tree, node_layout)
+                    .get(pin_id)
+                    .map(|(_, _, (a, _))| a.into_euclid())
+            })
+        })
+        .unwrap_or_else(|| WorldPoint::new(0.0, 0.0))
 }
 
 /// Calculates the distance from a point to a line segment

@@ -204,12 +204,13 @@ impl CanonicalState {
     pub fn calculate_vertex_count(start: WorldPoint, end: WorldPoint, rest_length: f32) -> usize {
         let length = ((end.x - start.x).powi(2) + (end.y - start.y).powi(2)).sqrt();
         let count = (length / rest_length).ceil() as usize;
-        count.clamp(2, 32) // Minimum 2 (start/end), maximum 32
+        count.clamp(4, 64) // Minimum 4 for smooth curves, maximum 64
     }
 
     /// Initialize vertices for an edge with physics-based positions.
     ///
-    /// Creates vertices evenly distributed between start and end pins.
+    /// Creates vertices evenly distributed between start and end pins,
+    /// with a natural sag curve to simulate cable hanging.
     pub fn init_edge_vertices(
         &mut self,
         edge_id: usize,
@@ -220,11 +221,22 @@ impl CanonicalState {
         let vertex_count = Self::calculate_vertex_count(start_pos, end_pos, rest_length);
         let vertex_start = self.vertices.len();
 
+        // Calculate sag amount based on edge length
+        let dx = end_pos.x - start_pos.x;
+        let dy = end_pos.y - start_pos.y;
+        let length = (dx * dx + dy * dy).sqrt();
+        let sag_amount = length * 0.03; // 3% of length - very taut cables
+
         for i in 0..vertex_count {
             let t = i as f32 / (vertex_count - 1).max(1) as f32;
+
+            // Catenary-like sag: parabola with maximum at center
+            // sag = 4 * sag_amount * t * (1 - t)
+            let sag = 4.0 * sag_amount * t * (1.0 - t);
+
             let pos = WorldPoint::new(
-                start_pos.x + (end_pos.x - start_pos.x) * t,
-                start_pos.y + (end_pos.y - start_pos.y) * t,
+                start_pos.x + dx * t,
+                start_pos.y + dy * t + sag, // Add vertical sag
             );
 
             let is_anchored = i == 0 || i == vertex_count - 1;
@@ -261,7 +273,7 @@ mod tests {
         let start = WorldPoint::new(0.0, 0.0);
         let end = WorldPoint::new(30.0, 0.0);
         let count = CanonicalState::calculate_vertex_count(start, end, 30.0);
-        assert_eq!(count, 2); // Minimum is 2
+        assert_eq!(count, 4); // Minimum is 4 for smooth curves
     }
 
     #[test]
@@ -277,7 +289,7 @@ mod tests {
         let start = WorldPoint::new(0.0, 0.0);
         let end = WorldPoint::new(10000.0, 0.0);
         let count = CanonicalState::calculate_vertex_count(start, end, 30.0);
-        assert_eq!(count, 32); // Clamped to max
+        assert_eq!(count, 64); // Clamped to max
     }
 
     #[test]
@@ -306,16 +318,18 @@ mod tests {
         ));
 
         let start = WorldPoint::new(0.0, 0.0);
-        let end = WorldPoint::new(90.0, 0.0);
+        let end = WorldPoint::new(150.0, 0.0);
         state.init_edge_vertices(0, start, end, 30.0);
 
-        // 90/30 = 3, ceil = 3 -> 3 vertices (start, middle, end)
-        assert_eq!(state.vertices.len(), 3);
+        // 150/30 = 5, ceil = 5 -> 5 vertices
+        assert_eq!(state.vertices.len(), 5);
         assert!(state.vertices[0].is_anchored); // start
         assert!(!state.vertices[1].is_anchored); // middle
-        assert!(state.vertices[2].is_anchored); // end
+        assert!(!state.vertices[2].is_anchored); // middle
+        assert!(!state.vertices[3].is_anchored); // middle
+        assert!(state.vertices[4].is_anchored); // end
 
         // Check edge vertex range was updated
-        assert_eq!(state.edges[0].vertex_range, 0..3);
+        assert_eq!(state.edges[0].vertex_range, 0..5);
     }
 }

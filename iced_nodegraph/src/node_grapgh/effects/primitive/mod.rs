@@ -19,6 +19,25 @@ pub enum Layer {
     Foreground,
 }
 
+/// A physics vertex for rendering edge polylines.
+#[derive(Debug, Clone, Copy)]
+pub struct PhysicsVertexData {
+    pub position: WorldPoint,
+    pub edge_index: usize,
+    pub vertex_index: usize,
+}
+
+/// Edge data that includes physics vertex range.
+#[derive(Debug, Clone)]
+pub struct PhysicsEdgeData {
+    pub from_node: usize,
+    pub from_pin: usize,
+    pub to_node: usize,
+    pub to_pin: usize,
+    pub vertex_start: usize,
+    pub vertex_count: usize,
+}
+
 #[derive(Debug, Clone)]
 pub struct NodeGraphPrimitive {
     pub layer: Layer,
@@ -39,6 +58,10 @@ pub struct NodeGraphPrimitive {
     pub selected_nodes: HashSet<usize>,
     /// Color for edges between selected nodes
     pub selected_edge_color: glam::Vec4,
+    /// Physics vertices for edge polyline rendering (optional).
+    pub physics_vertices: Vec<PhysicsVertexData>,
+    /// Physics edge metadata with vertex ranges (optional).
+    pub physics_edges: Vec<PhysicsEdgeData>,
 }
 
 impl Primitive for NodeGraphPrimitive {
@@ -72,6 +95,8 @@ impl Primitive for NodeGraphPrimitive {
             self.drag_edge_valid_color,
             &self.selected_nodes,
             self.selected_edge_color,
+            &self.physics_vertices,
+            &self.physics_edges,
         );
     }
 
