@@ -1,7 +1,8 @@
 use super::camera::Camera2D;
 use super::canonical::CanonicalState;
 use super::effects::pipeline::cache::DirtyFlags;
-use super::euclid::WorldPoint;
+use super::euclid::{WorldPoint, WorldVector};
+use super::physics::{self, EdgePhysicsState, PhysicsConfig};
 use iced::animation::Animation;
 use iced::keyboard;
 use std::collections::HashSet;
@@ -46,6 +47,10 @@ pub(super) struct NodeGraphState {
     pub(super) dirty: DirtyFlags,
     /// Generation counter for structural changes.
     pub(super) generation: u64,
+
+    // Physics simulation
+    /// Physics state for edge wire simulation.
+    pub(super) physics: EdgePhysicsState,
 }
 
 impl Default for NodeGraphState {
@@ -64,6 +69,7 @@ impl Default for NodeGraphState {
             canonical: CanonicalState::new(),
             dirty: DirtyFlags::default(),
             generation: 0,
+            physics: EdgePhysicsState::new(),
         }
     }
 }
@@ -98,6 +104,169 @@ impl NodeGraphState {
     /// Check if any changes need to be synced to GPU.
     pub fn needs_sync(&self) -> bool {
         !self.dirty.is_clean()
+    }
+
+    /// Enable or disable physics simulation.
+    pub fn set_physics_enabled(&mut self, enabled: bool) {
+        self.physics.set_enabled(enabled);
+    }
+
+    /// Check if physics is enabled.
+    pub fn physics_enabled(&self) -> bool {
+        self.physics.enabled
+    }
+
+    /// Get mutable access to physics configuration.
+    pub fn physics_config_mut(&mut self) -> &mut PhysicsConfig {
+        &mut self.physics.config
+    }
+
+    /// Step the physics simulation by the given delta time.
+    ///
+    /// This performs CPU-side physics integration for edge vertices.
+    /// Call this each frame with the time delta.
+    ///
+    /// Returns the number of physics steps that were executed.
+    pub fn tick_physics(&mut self, dt: f32) -> u32 {
+        let steps = self.physics.accumulate_time(dt);
+
+        if steps == 0 {
+            return 0;
+        }
+
+        let config = &self.physics.config;
+
+        // Run physics steps
+        for _ in 0..steps {
+            // Collect forces for each edge
+            for edge_idx in 0..self.canonical.edges.len() {
+                let edge = &self.canonical.edges[edge_idx];
+                let vertex_range = edge.vertex_range.clone();
+
+                // Process each vertex in this edge
+                for v_idx in vertex_range.clone() {
+                    let vertex = &self.canonical.vertices[v_idx];
+
+                    // Skip anchored vertices
+                    if vertex.is_anchored {
+                        continue;
+                    }
+
+                    let mut force = WorldVector::zero();
+
+                    // Spring forces from neighbors
+                    let local_idx = vertex.vertex_index;
+                    let vertex_count = vertex_range.len();
+
+                    // Force from previous vertex
+                    if local_idx > 0 {
+                        let prev = &self.canonical.vertices[vertex_range.start + local_idx - 1];
+                        force = force + physics::spring_force(
+                            vertex.position,
+                            prev.position,
+                            config.spring_stiffness,
+                            config.rest_length,
+                        );
+                    }
+
+                    // Force from next vertex
+                    if local_idx < vertex_count - 1 {
+                        let next = &self.canonical.vertices[vertex_range.start + local_idx + 1];
+                        force = force + physics::spring_force(
+                            vertex.position,
+                            next.position,
+                            config.spring_stiffness,
+                            config.rest_length,
+                        );
+                    }
+
+                    // Node repulsion - simplified version (uses canonical node centers)
+                    for node in &self.canonical.nodes {
+                        let node_center = node.center();
+                        force = force + physics::repulsion_force(
+                            vertex.position,
+                            node_center,
+                            config.node_repulsion,
+                            config.repulsion_radius,
+                        );
+                    }
+
+                    // Integrate (update position and velocity)
+                    // We need to do this in a second pass to avoid borrow issues
+                    // For now, store the force and integrate after
+                }
+            }
+
+            // Second pass: integrate all non-anchored vertices
+            for v_idx in 0..self.canonical.vertices.len() {
+                let vertex = &self.canonical.vertices[v_idx];
+
+                if vertex.is_anchored {
+                    continue;
+                }
+
+                // Recalculate force (simplified - in production, cache forces)
+                let edge = &self.canonical.edges[vertex.edge_id];
+                let vertex_range = edge.vertex_range.clone();
+                let local_idx = vertex.vertex_index;
+                let vertex_count = vertex_range.len();
+
+                let mut force = WorldVector::zero();
+
+                // Force from previous vertex
+                if local_idx > 0 {
+                    let prev = &self.canonical.vertices[vertex_range.start + local_idx - 1];
+                    force = force + physics::spring_force(
+                        vertex.position,
+                        prev.position,
+                        config.spring_stiffness,
+                        config.rest_length,
+                    );
+                }
+
+                // Force from next vertex
+                if local_idx < vertex_count - 1 {
+                    let next = &self.canonical.vertices[vertex_range.start + local_idx + 1];
+                    force = force + physics::spring_force(
+                        vertex.position,
+                        next.position,
+                        config.spring_stiffness,
+                        config.rest_length,
+                    );
+                }
+
+                // Node repulsion
+                for node in &self.canonical.nodes {
+                    let node_center = node.center();
+                    force = force + physics::repulsion_force(
+                        vertex.position,
+                        node_center,
+                        config.node_repulsion,
+                        config.repulsion_radius,
+                    );
+                }
+
+                // Integrate
+                let vertex = &mut self.canonical.vertices[v_idx];
+                physics::integrate_vertex(
+                    vertex,
+                    force,
+                    config.fixed_dt,
+                    config.damping,
+                    config.max_velocity,
+                );
+
+                // Mark as dirty
+                self.dirty.mark_edge_vertex(v_idx);
+            }
+        }
+
+        // Mark GPU dirty if we did any physics
+        if steps > 0 {
+            self.physics.gpu_dirty = true;
+        }
+
+        steps
     }
 }
 

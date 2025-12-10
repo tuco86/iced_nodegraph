@@ -40,6 +40,11 @@ pub struct Pipeline {
 
     bind_group_layout: BindGroupLayout,
     bind_group: BindGroup,
+
+    /// Generation counters for bind group caching.
+    /// Only recreate bind group when buffer generations change.
+    /// Format: (nodes_gen, pins_gen, edges_gen)
+    bind_group_generation: (u64, u64, u64),
 }
 
 impl PipelineTrait for Pipeline {
@@ -156,6 +161,7 @@ impl Pipeline {
             pipeline_foreground,
             bind_group_layout,
             bind_group,
+            bind_group_generation: (0, 0, 0),
         }
     }
 
@@ -380,14 +386,23 @@ impl Pipeline {
         // println!("uniforms: {:?}", uniforms);
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
 
-        self.bind_group = create_bind_group(
-            device,
-            &self.bind_group_layout,
-            self.uniforms.as_entire_binding(),
-            self.nodes.as_entire_binding(),
-            self.pins.as_entire_binding(),
-            self.edges.as_entire_binding(),
+        // Only recreate bind group if buffer generations changed
+        let current_gen = (
+            self.nodes.generation(),
+            self.pins.generation(),
+            self.edges.generation(),
         );
+        if current_gen != self.bind_group_generation {
+            self.bind_group = create_bind_group(
+                device,
+                &self.bind_group_layout,
+                self.uniforms.as_entire_binding(),
+                self.nodes.as_entire_binding(),
+                self.pins.as_entire_binding(),
+                self.edges.as_entire_binding(),
+            );
+            self.bind_group_generation = current_gen;
+        }
 
         // println!(
         //     "nodes: {:?} ({:?}), pins: {:?} ({:?}), edges: {:?} ({:?})",

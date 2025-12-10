@@ -9,6 +9,7 @@ pub mod camera;
 pub(crate) mod canonical;
 pub(crate) mod effects;
 pub(crate) mod euclid;
+pub(crate) mod physics;
 pub(crate) mod state;
 pub(crate) mod widget;
 

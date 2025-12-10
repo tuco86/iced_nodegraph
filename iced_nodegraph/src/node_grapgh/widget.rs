@@ -901,9 +901,34 @@ where
                     // Edge vertex dragging (for physics wire simulation)
                     Dragging::EdgeVertex { edge_index, vertex_index, origin } => match event {
                         Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                            // TODO: Implement vertex drag with physics impulse
-                            // For now, just mark the edge as dirty
-                            let _ = (edge_index, vertex_index, origin);
+                            if let Some(cursor_pos) = screen_cursor.position() {
+                                let cursor_world: WorldPoint = state
+                                    .camera
+                                    .screen_to_world()
+                                    .transform_point(cursor_pos.into_euclid());
+
+                                // Calculate drag delta
+                                let delta = WorldVector::new(
+                                    cursor_world.x - origin.x,
+                                    cursor_world.y - origin.y,
+                                );
+
+                                // Update the canonical vertex position
+                                if let Some(edge) = state.canonical.edges.get(edge_index) {
+                                    let global_vertex_idx = edge.vertex_range.start + vertex_index;
+                                    if let Some(vertex) = state.canonical.vertices.get_mut(global_vertex_idx) {
+                                        // Only move if not anchored
+                                        if !vertex.is_anchored {
+                                            vertex.position = cursor_world;
+                                            // Apply velocity impulse based on drag speed
+                                            vertex.velocity = WorldVector::new(delta.x * 10.0, delta.y * 10.0);
+
+                                            // Mark as dirty
+                                            state.dirty.mark_edge_vertex(global_vertex_idx);
+                                        }
+                                    }
+                                }
+                            }
                             shell.request_redraw();
                         }
                         Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {

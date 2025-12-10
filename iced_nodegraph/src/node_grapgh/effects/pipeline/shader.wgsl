@@ -656,6 +656,92 @@ fn fs_dragging(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
 }
 
 // ============================================================================
+// PHYSICS EDGE STRUCTS (for polyline rendering)
+// ============================================================================
+
+struct PhysicsVertex {
+    position: vec2<f32>,
+    velocity: vec2<f32>,
+    mass: f32,
+    flags: u32,
+    edge_index: u32,
+    vertex_index: u32,
+}
+
+struct PhysicsEdgeMeta {
+    vertex_start: u32,
+    vertex_count: u32,
+    from_node: u32,
+    from_pin: u32,
+    to_node: u32,
+    to_pin: u32,
+    _pad0: u32,
+    _pad1: u32,
+    color: vec4<f32>,
+    thickness: f32,
+    _pad2: f32,
+    _pad3: f32,
+    _pad4: f32,
+}
+
+// Physics storage buffers (optional, bound when physics is enabled)
+// These are in bind group 1
+// @group(1) @binding(0) var<storage, read> physics_vertices: array<PhysicsVertex>;
+// @group(1) @binding(1) var<storage, read> physics_edges: array<PhysicsEdgeMeta>;
+
+// ============================================================================
+// SDF HELPER FOR POLYLINE EDGES
+// ============================================================================
+
+/// Signed distance to a line segment
+fn sd_segment(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
+    let pa = p - a;
+    let ba = b - a;
+    let h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+    return length(pa - ba * h);
+}
+
+// ============================================================================
+// PHYSICS EDGE SHADER (Polyline rendering)
+// These shaders render edges as polylines through physics vertex positions.
+// Requires physics bind group to be set up in the pipeline.
+// ============================================================================
+
+struct PhysicsEdgeVertexOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) world_uv: vec2<f32>,
+    @location(1) @interpolate(flat) edge_id: u32,
+    @location(2) @interpolate(flat) vertex_start: u32,
+    @location(3) @interpolate(flat) vertex_count: u32,
+}
+
+// NOTE: These shaders are designed for a future physics pipeline that will have
+// physics_vertices and physics_edges bound. For now, they serve as the template.
+// The actual pipeline integration will require:
+// 1. A separate render pipeline with physics bind group layout
+// 2. Double-buffered vertex storage for compute shader output
+// 3. Physics bind group with vertices and edge metadata
+
+// The fragment shader implements polyline SDF rendering:
+// - For each fragment, compute minimum distance to all line segments
+// - Use Catmull-Rom spline for smoother curves (optional)
+// - Apply anti-aliasing based on zoom level
+
+// Example fragment shader logic (pseudo-code):
+// fn fs_physics_edge(in: PhysicsEdgeVertexOutput) -> vec4<f32> {
+//     var min_dist = 1e10;
+//     for (var i = 0u; i < in.vertex_count - 1u; i++) {
+//         let p0 = physics_vertices[in.vertex_start + i].position;
+//         let p1 = physics_vertices[in.vertex_start + i + 1u].position;
+//         min_dist = min(min_dist, sd_segment(in.world_uv, p0, p1));
+//     }
+//     let thickness = 2.0 / uniforms.camera_zoom;
+//     let aa = 1.0 / uniforms.camera_zoom;
+//     let alpha = 1.0 - smoothstep(thickness, thickness + aa, min_dist);
+//     return vec4(edge_color, alpha);
+// }
+
+// ============================================================================
 // LEGACY SHADERS (Keep for compatibility, but won't be used)
 // ============================================================================
 

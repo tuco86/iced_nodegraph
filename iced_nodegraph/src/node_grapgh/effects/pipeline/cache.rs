@@ -182,6 +182,11 @@ impl DirtyFlags {
         self.edges.insert(edge_id);
     }
 
+    /// Mark a single edge vertex as dirty.
+    pub fn mark_edge_vertex(&mut self, vertex_id: usize) {
+        self.edge_vertices.insert(vertex_id);
+    }
+
     /// Mark edge vertices as dirty (range of vertex indices).
     pub fn mark_edge_vertices(&mut self, start: usize, count: usize) {
         for i in start..start + count {
