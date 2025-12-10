@@ -652,6 +652,9 @@ where
             }
         }
 
+        // Sync physics enabled state from widget configuration
+        state.physics.enabled = self.physics_enabled;
+
         // Tick physics simulation
         if state.physics.enabled && delta_time > 0.0 {
             let steps = state.tick_physics(delta_time);

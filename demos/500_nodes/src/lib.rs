@@ -188,6 +188,7 @@ impl Application {
 
     fn view(&self) -> iced::Element<'_, ApplicationMessage> {
         let mut ng = node_graph()
+            .physics_enabled(false) // Disable physics for performance with 500+ nodes
             .on_connect(
                 |from_node, from_pin, to_node, to_pin| ApplicationMessage::EdgeConnected {
                     from_node,

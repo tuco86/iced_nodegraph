@@ -36,9 +36,6 @@ pub struct PhysicsConfig {
     /// Prevents wires from overlapping each other.
     pub edge_repulsion: f32,
 
-    /// Radius within which repulsion forces apply.
-    pub repulsion_radius: f32,
-
     /// Maximum velocity for any vertex.
     /// Prevents simulation explosion.
     pub max_velocity: f32,
@@ -50,7 +47,6 @@ pub struct PhysicsConfig {
     /// Fixed timestep for physics integration (seconds).
     pub fixed_dt: f32,
 
-    // === New parameters for enhanced physics ===
     /// Tension factor: multiplier on rest length to create constant tension.
     /// < 1.0 means edges are under compression (want to be shorter).
     /// Default 0.8 means edges try to be 80% of their natural length.
@@ -59,17 +55,12 @@ pub struct PhysicsConfig {
     /// Strength of force pushing vertices toward the direct path between pins.
     pub path_attraction: f32,
 
-    /// Node padding: minimum distance from node edges.
-    pub node_padding: f32,
-
     /// Force strength when inside a node (very strong push out).
     pub inside_node_force: f32,
 
-    /// Long-range attraction between edges (weak).
+    /// Attraction strength between edges in the medium range (10-100px).
+    /// Causes edges to bundle together naturally.
     pub edge_attraction: f32,
-
-    /// Distance beyond which edge attraction starts.
-    pub edge_attraction_range: f32,
 
     /// Gravity strength (positive = downward sag).
     /// Creates natural cable droop.
@@ -79,42 +70,47 @@ pub struct PhysicsConfig {
     /// Higher values make the cable smoother/stiffer.
     pub bending_stiffness: f32,
 
-    /// Long-range attraction strength toward nodes.
-    /// Pulls distant edges gently toward nearby nodes.
-    pub node_attraction: f32,
-
-    /// Distance beyond which node attraction starts.
-    pub node_attraction_range: f32,
-
     /// Pin suction strength - how strongly pins "slurp up" the edge.
     /// Higher values keep edges taut and prevent vertices from leaking past pins.
     pub pin_suction: f32,
+
+    // === SDF-based force model parameters ===
+
+    /// Maximum range for any force interaction (optimization cutoff).
+    /// Beyond this distance, no forces are calculated.
+    pub max_interaction_range: f32,
+
+    /// Node repulsion zone: distance from node surface where repulsion applies.
+    /// Inside this zone, edges are pushed away. Beyond, no node force.
+    pub node_repulsion_radius: f32,
+
+    /// Edge-edge equilibrium distance: transition point between repulsion and attraction.
+    /// Below this distance: repulsion. Above: attraction (up to max_interaction_range).
+    pub edge_equilibrium_distance: f32,
 }
 
 impl Default for PhysicsConfig {
     fn default() -> Self {
         Self {
-            spring_stiffness: 800.0, // Very stiff springs - taut cables
-            damping: 0.92,           // Higher damping for stability
-            rest_length: 10.0,       // Short segments = many vertices
-            node_repulsion: 600.0,   // Moderate repulsion at close range
-            edge_repulsion: 300.0,   // Edge-edge repulsion
-            repulsion_radius: 15.0,  // Small repulsion radius (15 pixels)
-            max_velocity: 200.0,     // Lower max velocity for stability
+            spring_stiffness: 800.0,  // Very stiff springs - taut cables
+            damping: 0.92,            // Higher damping for stability
+            rest_length: 10.0,        // Short segments = many vertices
+            node_repulsion: 600.0,    // Moderate repulsion at close range
+            edge_repulsion: 300.0,    // Edge-edge repulsion
+            max_velocity: 200.0,      // Lower max velocity for stability
             substeps: 4,
-            fixed_dt: 1.0 / 120.0, // 120 Hz physics
-            // Enhanced parameters
-            tension_factor: 0.75, // Edges want to be 75% of natural length (very taut)
-            path_attraction: 2.0, // Very weak path attraction
-            node_padding: 15.0,   // Keep 15 units from node edges
+            fixed_dt: 1.0 / 120.0,    // 120 Hz physics
+            tension_factor: 0.75,     // Edges want to be 75% of natural length (very taut)
+            path_attraction: 2.0,     // Very weak path attraction
             inside_node_force: 3000.0, // Strong push when inside nodes
-            edge_attraction: 10.0, // Weak long-range attraction between edges
-            edge_attraction_range: 80.0, // Start edge attraction beyond 80 units
-            gravity: 8.0,         // Very light gravity - mostly horizontal tension
+            edge_attraction: 10.0,    // Weak attraction between edges (10-100px range)
+            gravity: 8.0,             // Very light gravity - mostly horizontal tension
             bending_stiffness: 100.0, // High bending stiffness - smooth curves
-            node_attraction: 8.0, // Weak long-range attraction toward nodes
-            node_attraction_range: 100.0, // Start node attraction beyond 100 units
-            pin_suction: 150.0,   // Strong pin suction - "slurping spaghetti"
+            pin_suction: 150.0,       // Strong pin suction - "slurping spaghetti"
+            // SDF-based force model
+            max_interaction_range: 100.0,    // No forces beyond 100px
+            node_repulsion_radius: 15.0,     // Repel edges up to 15px from node surface
+            edge_equilibrium_distance: 10.0, // <10px repel, >10px attract
         }
     }
 }
@@ -272,20 +268,23 @@ fn sd_rounded_box_gradient(
     }
 }
 
-/// Calculate force from node SDF.
-/// Strong push when inside, medium push when close outside,
-/// weak attraction when far (to guide edges around nodes nicely).
+/// Calculate repulsion force from node using SDF.
+///
+/// Force profile:
+/// - Inside node (dist < 0): Strong exponential repulsion outward
+/// - 0 to repulsion_radius: Quadratic falloff to zero
+/// - Beyond repulsion_radius: No force
+///
+/// This simplified model only pushes edges away from nodes,
+/// with no attraction component.
 pub fn node_sdf_force(
     vertex: WorldPoint,
     node_pos: WorldVector,
     node_size: WorldVector,
     corner_radius: f32,
-    padding: f32,
     inside_force: f32,
     outside_repulsion: f32,
     repulsion_radius: f32,
-    attraction_strength: f32,
-    attraction_range: f32,
 ) -> WorldVector {
     let center = WorldPoint::new(
         node_pos.x + node_size.x * 0.5,
@@ -297,20 +296,17 @@ pub fn node_sdf_force(
     let gradient = sd_rounded_box_gradient(vertex, center, half_size, corner_radius);
 
     if dist < 0.0 {
-        // Inside node: strong push outward
-        let force_magnitude = inside_force * (-dist / 10.0).min(1.0);
+        // Inside node: strong exponential push outward
+        // Force increases as vertex goes deeper inside
+        let force_magnitude = inside_force * (-dist / 10.0).min(3.0);
         WorldVector::new(gradient.x * force_magnitude, gradient.y * force_magnitude)
-    } else if dist < padding + repulsion_radius {
-        // Near node (within padding + repulsion_radius): push outward with falloff
-        let t = dist / (padding + repulsion_radius);
-        let force_magnitude = outside_repulsion * (1.0 - t) * (1.0 - t); // Quadratic falloff
-        WorldVector::new(gradient.x * force_magnitude, gradient.y * force_magnitude)
-    } else if dist > attraction_range {
-        // Far from node: weak attraction (pull toward node)
-        let t = ((dist - attraction_range) / attraction_range).min(1.0);
-        let force_magnitude = -attraction_strength * t; // Negative = toward node
+    } else if dist < repulsion_radius {
+        // 0 to repulsion_radius: quadratic falloff to zero
+        let t = dist / repulsion_radius;
+        let force_magnitude = outside_repulsion * (1.0 - t) * (1.0 - t);
         WorldVector::new(gradient.x * force_magnitude, gradient.y * force_magnitude)
     } else {
+        // Beyond repulsion_radius: no force
         WorldVector::zero()
     }
 }
@@ -351,15 +347,23 @@ pub fn path_attraction_force(
     }
 }
 
-/// Calculate edge-edge interaction force.
-/// Short range: repulsion. Long range: weak attraction.
+/// Calculate edge-edge interaction force using SDF-like model.
+///
+/// Force profile:
+/// - 0 to equilibrium_distance: Quadratic repulsion (prevents overlap)
+/// - equilibrium_distance: Force = 0 (transition point)
+/// - equilibrium_distance to max_range: Quadratic attraction falloff to zero (bundling)
+/// - Beyond max_range: No force (optimization cutoff)
+///
+/// This creates natural edge bundling behavior where edges
+/// maintain minimum spacing but are gently attracted together.
 pub fn edge_interaction_force(
     vertex: WorldPoint,
     other_vertex: WorldPoint,
     repulsion_strength: f32,
-    repulsion_radius: f32,
+    equilibrium_distance: f32,
     attraction_strength: f32,
-    attraction_range: f32,
+    max_range: f32,
 ) -> WorldVector {
     let dx = vertex.x - other_vertex.x;
     let dy = vertex.y - other_vertex.y;
@@ -372,17 +376,20 @@ pub fn edge_interaction_force(
     let dir_x = dx / dist;
     let dir_y = dy / dist;
 
-    if dist < repulsion_radius {
-        // Short range repulsion
-        let t = 1.0 - dist / repulsion_radius;
+    if dist < equilibrium_distance {
+        // Short range repulsion (quadratic falloff toward equilibrium)
+        let t = 1.0 - dist / equilibrium_distance;
         let force_magnitude = repulsion_strength * t * t;
         WorldVector::new(dir_x * force_magnitude, dir_y * force_magnitude)
-    } else if dist > attraction_range {
-        // Long range attraction (pull toward other)
-        let t = ((dist - attraction_range) / attraction_range).min(1.0);
-        let force_magnitude = -attraction_strength * t;
+    } else if dist < max_range {
+        // Medium range attraction (quadratic falloff toward max_range)
+        // At equilibrium_distance: force = attraction_strength
+        // At max_range: force = 0
+        let t = (dist - equilibrium_distance) / (max_range - equilibrium_distance);
+        let force_magnitude = -attraction_strength * (1.0 - t) * (1.0 - t);
         WorldVector::new(dir_x * force_magnitude, dir_y * force_magnitude)
     } else {
+        // Beyond max_range: no force
         WorldVector::zero()
     }
 }
@@ -542,6 +549,10 @@ mod tests {
         assert_eq!(config.damping, 0.92);
         assert_eq!(config.rest_length, 10.0);
         assert_eq!(config.pin_suction, 150.0);
+        // New SDF-based force model parameters
+        assert_eq!(config.max_interaction_range, 100.0);
+        assert_eq!(config.node_repulsion_radius, 15.0);
+        assert_eq!(config.edge_equilibrium_distance, 10.0);
     }
 
     #[test]
@@ -554,6 +565,155 @@ mod tests {
         assert_eq!(config.spring_stiffness, 1000.0);
         assert_eq!(config.damping, 0.9);
         assert_eq!(config.rest_length, 50.0);
+    }
+
+    // === Node SDF Force Tests ===
+
+    #[test]
+    fn test_node_sdf_force_inside() {
+        // Vertex inside node should have strong repulsion outward
+        // Note: Use off-center position, as gradient is zero at exact center
+        let vertex = WorldPoint::new(70.0, 50.0); // Inside a 100x100 node at (0,0), off-center
+        let node_pos = WorldVector::new(0.0, 0.0);
+        let node_size = WorldVector::new(100.0, 100.0);
+
+        let force = node_sdf_force(
+            vertex,
+            node_pos,
+            node_size,
+            5.0,     // corner radius
+            3000.0,  // inside_force
+            600.0,   // outside_repulsion
+            15.0,    // repulsion_radius
+        );
+
+        // Should have non-zero force pushing outward (toward positive x since vertex is right of center)
+        let magnitude = (force.x * force.x + force.y * force.y).sqrt();
+        assert!(magnitude > 0.0, "Inside node should have repulsion force");
+        assert!(force.x > 0.0, "Force should push toward nearest edge (right)");
+    }
+
+    #[test]
+    fn test_node_sdf_force_near_surface() {
+        // Vertex just outside node surface (within repulsion_radius)
+        let vertex = WorldPoint::new(55.0, 50.0); // 5px outside right edge of 100x100 node
+        let node_pos = WorldVector::new(0.0, 0.0);
+        let node_size = WorldVector::new(100.0, 100.0);
+
+        let force = node_sdf_force(
+            vertex,
+            node_pos,
+            node_size,
+            5.0,     // corner radius
+            3000.0,  // inside_force
+            600.0,   // outside_repulsion
+            15.0,    // repulsion_radius
+        );
+
+        // Should have repulsion pushing away (positive x)
+        assert!(force.x > 0.0, "Near node surface should push away");
+    }
+
+    #[test]
+    fn test_node_sdf_force_beyond_range() {
+        // Vertex far from node (beyond repulsion_radius) should have no force
+        let vertex = WorldPoint::new(200.0, 50.0); // Far from node
+        let node_pos = WorldVector::new(0.0, 0.0);
+        let node_size = WorldVector::new(100.0, 100.0);
+
+        let force = node_sdf_force(
+            vertex,
+            node_pos,
+            node_size,
+            5.0,     // corner radius
+            3000.0,  // inside_force
+            600.0,   // outside_repulsion
+            15.0,    // repulsion_radius
+        );
+
+        // Should be zero
+        assert!(force.x.abs() < 0.001, "Beyond range should have no force");
+        assert!(force.y.abs() < 0.001, "Beyond range should have no force");
+    }
+
+    // === Edge-Edge Interaction Force Tests ===
+
+    #[test]
+    fn test_edge_interaction_close_repulsion() {
+        // Vertices closer than equilibrium distance should repel
+        let v1 = WorldPoint::new(0.0, 0.0);
+        let v2 = WorldPoint::new(5.0, 0.0); // 5px apart (< 10px equilibrium)
+
+        let force = edge_interaction_force(
+            v1,
+            v2,
+            300.0,  // repulsion_strength
+            10.0,   // equilibrium_distance
+            10.0,   // attraction_strength
+            100.0,  // max_range
+        );
+
+        // Should repel (negative x, pushing v1 away from v2)
+        assert!(force.x < 0.0, "Close edges should repel");
+    }
+
+    #[test]
+    fn test_edge_interaction_at_equilibrium() {
+        // At exactly equilibrium distance, force should be ~0
+        let v1 = WorldPoint::new(0.0, 0.0);
+        let v2 = WorldPoint::new(10.0, 0.0); // Exactly at equilibrium
+
+        let force = edge_interaction_force(
+            v1,
+            v2,
+            300.0,  // repulsion_strength
+            10.0,   // equilibrium_distance
+            10.0,   // attraction_strength
+            100.0,  // max_range
+        );
+
+        // Force should be very small (transitioning from repel to attract)
+        let magnitude = (force.x * force.x + force.y * force.y).sqrt();
+        assert!(magnitude < 11.0, "At equilibrium force should be small");
+    }
+
+    #[test]
+    fn test_edge_interaction_medium_attraction() {
+        // Vertices between equilibrium and max_range should attract
+        let v1 = WorldPoint::new(0.0, 0.0);
+        let v2 = WorldPoint::new(50.0, 0.0); // 50px apart (10-100px range)
+
+        let force = edge_interaction_force(
+            v1,
+            v2,
+            300.0,  // repulsion_strength
+            10.0,   // equilibrium_distance
+            10.0,   // attraction_strength
+            100.0,  // max_range
+        );
+
+        // Should attract (positive x, pulling v1 toward v2)
+        assert!(force.x > 0.0, "Medium range edges should attract");
+    }
+
+    #[test]
+    fn test_edge_interaction_far_no_force() {
+        // Vertices beyond max_range should have no interaction
+        let v1 = WorldPoint::new(0.0, 0.0);
+        let v2 = WorldPoint::new(150.0, 0.0); // 150px apart (> 100px max_range)
+
+        let force = edge_interaction_force(
+            v1,
+            v2,
+            300.0,  // repulsion_strength
+            10.0,   // equilibrium_distance
+            10.0,   // attraction_strength
+            100.0,  // max_range
+        );
+
+        // Should be zero
+        assert!(force.x.abs() < 0.001, "Beyond max_range should have no force");
+        assert!(force.y.abs() < 0.001, "Beyond max_range should have no force");
     }
 
     #[test]

@@ -196,20 +196,34 @@ impl NodeGraphState {
                 // === Gravity (natural cable sag) ===
                 force = force + physics::gravity_force(config.gravity);
 
-                // === Node SDF-based repulsion/attraction ===
+                // === Node SDF-based repulsion (only) ===
+                // Uses spatial culling: skip nodes beyond repulsion range
                 for node in &self.canonical.nodes {
+                    // Broad-phase culling: skip if vertex is too far from node
+                    let node_center_x = node.position.x + node.size.width * 0.5;
+                    let node_center_y = node.position.y + node.size.height * 0.5;
+                    let dx = vertex.position.x - node_center_x;
+                    let dy = vertex.position.y - node_center_y;
+                    let dist_sq = dx * dx + dy * dy;
+                    // Node half-diagonal + repulsion radius as cutoff
+                    let half_diag = (node.size.width * node.size.width
+                        + node.size.height * node.size.height)
+                        .sqrt()
+                        * 0.5;
+                    let cutoff = half_diag + config.node_repulsion_radius;
+                    if dist_sq > cutoff * cutoff {
+                        continue; // Too far - skip
+                    }
+
                     force = force
                         + physics::node_sdf_force(
                             vertex.position,
                             node.position,
                             WorldVector::new(node.size.width, node.size.height),
                             5.0, // corner radius
-                            config.node_padding,
                             config.inside_node_force,
                             config.node_repulsion,
-                            config.repulsion_radius,
-                            config.node_attraction,
-                            config.node_attraction_range,
+                            config.node_repulsion_radius,
                         );
                 }
 
@@ -240,7 +254,10 @@ impl NodeGraphState {
                 }
 
                 // === Edge-edge interaction ===
-                // Check against vertices from other edges
+                // Check against vertices from other edges with spatial culling
+                let max_range_sq =
+                    config.max_interaction_range * config.max_interaction_range;
+
                 for other_edge_idx in 0..self.canonical.edges.len() {
                     if other_edge_idx == vertex.edge_id {
                         continue; // Skip same edge
@@ -252,14 +269,22 @@ impl NodeGraphState {
                     // Sample other edge (check every other vertex for performance)
                     for other_v_idx in (other_range.start..other_range.end).step_by(2) {
                         let other_vertex = &self.canonical.vertices[other_v_idx];
+
+                        // Spatial culling: skip if beyond max interaction range
+                        let dx = vertex.position.x - other_vertex.position.x;
+                        let dy = vertex.position.y - other_vertex.position.y;
+                        if dx * dx + dy * dy > max_range_sq {
+                            continue; // Too far - skip
+                        }
+
                         force = force
                             + physics::edge_interaction_force(
                                 vertex.position,
                                 other_vertex.position,
                                 config.edge_repulsion,
-                                config.repulsion_radius,
+                                config.edge_equilibrium_distance,
                                 config.edge_attraction,
-                                config.edge_attraction_range,
+                                config.max_interaction_range,
                             );
                     }
                 }

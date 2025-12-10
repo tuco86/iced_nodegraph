@@ -120,6 +120,8 @@ pub struct NodeGraph<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer
     on_drag_end: Option<Box<dyn Fn() -> Message + 'a>>,
     // Remote users for collaborative rendering
     remote_users: Option<&'a [RemoteUserState]>,
+    // Physics simulation toggle
+    pub(super) physics_enabled: bool,
 }
 
 impl<Message, Theme, Renderer> Default for NodeGraph<'_, Message, Theme, Renderer>
@@ -144,6 +146,7 @@ where
             on_drag_update: None,
             on_drag_end: None,
             remote_users: None,
+            physics_enabled: true,
         }
     }
 }
@@ -246,6 +249,14 @@ where
 
     pub fn selection(mut self, selection: &'a HashSet<usize>) -> Self {
         self.external_selection = Some(selection);
+        self
+    }
+
+    /// Enable or disable physics simulation for edge wires.
+    /// When disabled, edges render as simple bezier curves.
+    /// Default is enabled.
+    pub fn physics_enabled(mut self, enabled: bool) -> Self {
+        self.physics_enabled = enabled;
         self
     }
 
