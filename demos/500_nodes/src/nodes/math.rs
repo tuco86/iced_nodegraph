@@ -1,5 +1,6 @@
 use iced::{
-    widget::{column, container, text},
+    alignment::Horizontal,
+    widget::{column, container, row, text},
     Color, Length, Theme,
 };
 use iced_nodegraph::pin;
@@ -24,14 +25,23 @@ where
     Message: Clone + 'a,
 {
     let pins = column![
-        pin!(Left, "A", Input, "float", Color::from_rgb(0.8, 0.8, 0.8)),
-        pin!(Left, "B", Input, "float", Color::from_rgb(0.8, 0.8, 0.8)),
-        pin!(Right, "out", Output, "float", Color::from_rgb(0.9, 0.9, 0.9)),
+        row![
+            container(pin!(Left, "A", Input, "float", Color::from_rgb(0.8, 0.8, 0.8)))
+                .width(Length::FillPortion(1))
+                .align_x(Horizontal::Left),
+            container(pin!(Right, "out", Output, "float", Color::from_rgb(0.9, 0.9, 0.9)))
+                .width(Length::FillPortion(1))
+                .align_x(Horizontal::Right),
+        ]
+        .width(Length::Fill),
+        container(pin!(Left, "B", Input, "float", Color::from_rgb(0.8, 0.8, 0.8)))
+            .width(Length::Fill)
+            .align_x(Horizontal::Left),
     ]
     .spacing(1);
 
     column![title_bar("Add", theme), container(pins).padding([4, 0])]
-        .width(120.0)
+        .width(130.0)
         .into()
 }
 
@@ -40,14 +50,23 @@ where
     Message: Clone + 'a,
 {
     let pins = column![
-        pin!(Left, "A", Input, "float", Color::from_rgb(0.8, 0.8, 0.8)),
-        pin!(Left, "B", Input, "float", Color::from_rgb(0.8, 0.8, 0.8)),
-        pin!(Right, "out", Output, "float", Color::from_rgb(0.9, 0.9, 0.9)),
+        row![
+            container(pin!(Left, "A", Input, "float", Color::from_rgb(0.8, 0.8, 0.8)))
+                .width(Length::FillPortion(1))
+                .align_x(Horizontal::Left),
+            container(pin!(Right, "out", Output, "float", Color::from_rgb(0.9, 0.9, 0.9)))
+                .width(Length::FillPortion(1))
+                .align_x(Horizontal::Right),
+        ]
+        .width(Length::Fill),
+        container(pin!(Left, "B", Input, "float", Color::from_rgb(0.8, 0.8, 0.8)))
+            .width(Length::Fill)
+            .align_x(Horizontal::Left),
     ]
     .spacing(1);
 
     column![title_bar("Multiply", theme), container(pins).padding([4, 0])]
-        .width(120.0)
+        .width(130.0)
         .into()
 }
 
@@ -56,14 +75,23 @@ where
     Message: Clone + 'a,
 {
     let pins = column![
-        pin!(Left, "A", Input, "float", Color::from_rgb(0.8, 0.8, 0.8)),
-        pin!(Left, "B", Input, "float", Color::from_rgb(0.8, 0.8, 0.8)),
-        pin!(Right, "out", Output, "float", Color::from_rgb(0.9, 0.9, 0.9)),
+        row![
+            container(pin!(Left, "A", Input, "float", Color::from_rgb(0.8, 0.8, 0.8)))
+                .width(Length::FillPortion(1))
+                .align_x(Horizontal::Left),
+            container(pin!(Right, "out", Output, "float", Color::from_rgb(0.9, 0.9, 0.9)))
+                .width(Length::FillPortion(1))
+                .align_x(Horizontal::Right),
+        ]
+        .width(Length::Fill),
+        container(pin!(Left, "B", Input, "float", Color::from_rgb(0.8, 0.8, 0.8)))
+            .width(Length::Fill)
+            .align_x(Horizontal::Left),
     ]
     .spacing(1);
 
     column![title_bar("Divide", theme), container(pins).padding([4, 0])]
-        .width(120.0)
+        .width(130.0)
         .into()
 }
 
@@ -72,14 +100,23 @@ where
     Message: Clone + 'a,
 {
     let pins = column![
-        pin!(Left, "A", Input, "float", Color::from_rgb(0.8, 0.8, 0.8)),
-        pin!(Left, "B", Input, "float", Color::from_rgb(0.8, 0.8, 0.8)),
-        pin!(Right, "out", Output, "float", Color::from_rgb(0.9, 0.9, 0.9)),
+        row![
+            container(pin!(Left, "A", Input, "float", Color::from_rgb(0.8, 0.8, 0.8)))
+                .width(Length::FillPortion(1))
+                .align_x(Horizontal::Left),
+            container(pin!(Right, "out", Output, "float", Color::from_rgb(0.9, 0.9, 0.9)))
+                .width(Length::FillPortion(1))
+                .align_x(Horizontal::Right),
+        ]
+        .width(Length::Fill),
+        container(pin!(Left, "B", Input, "float", Color::from_rgb(0.8, 0.8, 0.8)))
+            .width(Length::Fill)
+            .align_x(Horizontal::Left),
     ]
     .spacing(1);
 
     column![title_bar("Subtract", theme), container(pins).padding([4, 0])]
-        .width(120.0)
+        .width(130.0)
         .into()
 }
 
@@ -88,13 +125,22 @@ where
     Message: Clone + 'a,
 {
     let pins = column![
-        pin!(Left, "val", Input, "float", Color::from_rgb(0.8, 0.8, 0.8)),
-        pin!(Left, "exp", Input, "float", Color::from_rgb(0.8, 0.8, 0.8)),
-        pin!(Right, "out", Output, "float", Color::from_rgb(0.9, 0.9, 0.9)),
+        row![
+            container(pin!(Left, "val", Input, "float", Color::from_rgb(0.8, 0.8, 0.8)))
+                .width(Length::FillPortion(1))
+                .align_x(Horizontal::Left),
+            container(pin!(Right, "out", Output, "float", Color::from_rgb(0.9, 0.9, 0.9)))
+                .width(Length::FillPortion(1))
+                .align_x(Horizontal::Right),
+        ]
+        .width(Length::Fill),
+        container(pin!(Left, "exp", Input, "float", Color::from_rgb(0.8, 0.8, 0.8)))
+            .width(Length::Fill)
+            .align_x(Horizontal::Left),
     ]
     .spacing(1);
 
     column![title_bar("Power", theme), container(pins).padding([4, 0])]
-        .width(120.0)
+        .width(130.0)
         .into()
 }

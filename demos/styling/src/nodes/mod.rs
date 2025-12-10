@@ -1,5 +1,6 @@
 use iced::{
-    widget::{column, container},
+    widget::{column, container, row},
+    alignment::Horizontal,
     Color, Length,
 };
 use iced_nodegraph::{pin, node_title_bar, NodeContentStyle, NodeStyle};
@@ -21,15 +22,15 @@ where
     column![
         node_title_bar(name.to_string(), content_style),
         container(
-            column![
+            row![
                 container(pin!(Left, "input", Input, "data", Color::from_rgb(0.5, 0.7, 0.9)))
-                    .width(Length::Fill)
-                    .align_x(iced::alignment::Horizontal::Left),
+                    .width(Length::FillPortion(1))
+                    .align_x(Horizontal::Left),
                 container(pin!(Right, "output", Output, "data", Color::from_rgb(0.9, 0.7, 0.5)))
-                    .width(Length::Fill)
-                    .align_x(iced::alignment::Horizontal::Right),
+                    .width(Length::FillPortion(1))
+                    .align_x(Horizontal::Right),
             ]
-            .spacing(8)
+            .width(Length::Fill)
         )
         .padding([8, 10]),
     ]

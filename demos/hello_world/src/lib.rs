@@ -146,10 +146,10 @@ impl Default for Application {
     fn default() -> Self {
         Self {
             edges: vec![
-                (PinReference::new(0, 0), PinReference::new(1, 0)), // Email Trigger -> Email Parser
-                (PinReference::new(1, 0), PinReference::new(2, 0)), // Email Parser subject -> Filter
-                (PinReference::new(1, 1), PinReference::new(3, 0)), // Email Parser datetime -> Calendar
-                (PinReference::new(2, 0), PinReference::new(3, 1)), // Filter -> Calendar title
+                (PinReference::new(0, 0), PinReference::new(1, 0)), // trigger.output -> parser.email
+                (PinReference::new(1, 1), PinReference::new(2, 0)), // parser.subject -> filter.input
+                (PinReference::new(1, 2), PinReference::new(3, 0)), // parser.datetime -> calendar.datetime
+                (PinReference::new(2, 1), PinReference::new(3, 1)), // filter.matches -> calendar.title
             ],
             nodes: vec![
                 (Point::new(100.0, 150.0), "email_trigger".to_string()),

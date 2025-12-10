@@ -1,6 +1,7 @@
 use iced::{
-    widget::{column, container},
-    Color,
+    widget::{column, container, row},
+    alignment::Horizontal,
+    Color, Length,
 };
 use iced_nodegraph::{pin, node_title_bar, NodeContentStyle};
 
@@ -12,10 +13,24 @@ where
     let style = NodeContentStyle::process(theme);
 
     let pin_list = column![
-        pin!(Left, "email", Input, "email", Color::from_rgb(0.3, 0.7, 0.9)),
-        pin!(Right, "subject", Output, "string", Color::from_rgb(0.9, 0.7, 0.3)),
-        pin!(Right, "datetime", Output, "datetime", Color::from_rgb(0.7, 0.3, 0.9)),
-        pin!(Right, "body", Output, "string", Color::from_rgb(0.9, 0.7, 0.3)),
+        // Row 1: email input + subject output
+        row![
+            container(pin!(Left, "email", Input, "email", Color::from_rgb(0.3, 0.7, 0.9)))
+                .width(Length::FillPortion(1))
+                .align_x(Horizontal::Left),
+            container(pin!(Right, "subject", Output, "string", Color::from_rgb(0.9, 0.7, 0.3)))
+                .width(Length::FillPortion(1))
+                .align_x(Horizontal::Right),
+        ]
+        .width(Length::Fill),
+        // Row 2: datetime output
+        container(pin!(Right, "datetime", Output, "datetime", Color::from_rgb(0.7, 0.3, 0.9)))
+            .width(Length::Fill)
+            .align_x(Horizontal::Right),
+        // Row 3: body output
+        container(pin!(Right, "body", Output, "string", Color::from_rgb(0.9, 0.7, 0.3)))
+            .width(Length::Fill)
+            .align_x(Horizontal::Right),
     ]
     .spacing(2);
 
@@ -23,6 +38,6 @@ where
         node_title_bar("Email Parser", style),
         container(pin_list).padding([6, 0])
     ]
-    .width(160.0)
+    .width(180.0)
     .into()
 }

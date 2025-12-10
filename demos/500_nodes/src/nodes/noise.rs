@@ -1,5 +1,6 @@
 use iced::{
-    widget::{column, container, text},
+    alignment::Horizontal,
+    widget::{column, container, row, text},
     Color, Length, Theme,
 };
 use iced_nodegraph::pin;
@@ -23,14 +24,18 @@ pub fn perlin_noise_node<'a, Message>(theme: &'a Theme) -> iced::Element<'a, Mes
 where
     Message: Clone + 'a,
 {
-    let pins = column![
-        pin!(Left, "in", Input, "vec2", Color::from_rgb(0.9, 0.7, 0.3)),
-        pin!(Right, "out", Output, "float", Color::from_rgb(0.7, 0.9, 0.7)),
+    let pins = row![
+        container(pin!(Left, "in", Input, "vec2", Color::from_rgb(0.9, 0.7, 0.3)))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Left),
+        container(pin!(Right, "out", Output, "float", Color::from_rgb(0.7, 0.9, 0.7)))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Right),
     ]
-    .spacing(1);
+    .width(Length::Fill);
 
     column![title_bar("Perlin", theme), container(pins).padding([4, 0])]
-        .width(120.0)
+        .width(130.0)
         .into()
 }
 
@@ -38,14 +43,18 @@ pub fn voronoi_noise_node<'a, Message>(theme: &'a Theme) -> iced::Element<'a, Me
 where
     Message: Clone + 'a,
 {
-    let pins = column![
-        pin!(Left, "in", Input, "vec2", Color::from_rgb(0.9, 0.7, 0.3)),
-        pin!(Right, "out", Output, "float", Color::from_rgb(0.7, 0.9, 0.7)),
+    let pins = row![
+        container(pin!(Left, "in", Input, "vec2", Color::from_rgb(0.9, 0.7, 0.3)))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Left),
+        container(pin!(Right, "out", Output, "float", Color::from_rgb(0.7, 0.9, 0.7)))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Right),
     ]
-    .spacing(1);
+    .width(Length::Fill);
 
     column![title_bar("Voronoi", theme), container(pins).padding([4, 0])]
-        .width(120.0)
+        .width(130.0)
         .into()
 }
 
@@ -53,13 +62,17 @@ pub fn simplex_noise_node<'a, Message>(theme: &'a Theme) -> iced::Element<'a, Me
 where
     Message: Clone + 'a,
 {
-    let pins = column![
-        pin!(Left, "in", Input, "vec2", Color::from_rgb(0.9, 0.7, 0.3)),
-        pin!(Right, "out", Output, "float", Color::from_rgb(0.7, 0.9, 0.7)),
+    let pins = row![
+        container(pin!(Left, "in", Input, "vec2", Color::from_rgb(0.9, 0.7, 0.3)))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Left),
+        container(pin!(Right, "out", Output, "float", Color::from_rgb(0.7, 0.9, 0.7)))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Right),
     ]
-    .spacing(1);
+    .width(Length::Fill);
 
     column![title_bar("Simplex", theme), container(pins).padding([4, 0])]
-        .width(120.0)
+        .width(130.0)
         .into()
 }

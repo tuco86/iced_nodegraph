@@ -1,3 +1,4 @@
+use super::layout::ForceDirectedLayout;
 use crate::nodes::NodeType;
 use iced::Point;
 use iced_nodegraph::PinReference;
@@ -212,5 +213,17 @@ pub fn generate_procedural_graph() -> (Vec<(Point, NodeType)>, Vec<(PinReference
 
     println!("Generated {} nodes and {} edges", nodes.len(), edges.len());
 
-    (nodes, edges)
+    // Apply force-directed layout
+    let positions: Vec<Point> = nodes.iter().map(|(pos, _)| *pos).collect();
+    let node_types: Vec<NodeType> = nodes.iter().map(|(_, t)| *t).collect();
+
+    let mut layout = ForceDirectedLayout::new(positions, &edges);
+    let optimized_positions = layout.simulate();
+
+    let optimized_nodes: Vec<(Point, NodeType)> = optimized_positions
+        .into_iter()
+        .zip(node_types)
+        .collect();
+
+    (optimized_nodes, edges)
 }

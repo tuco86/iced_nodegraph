@@ -1,5 +1,6 @@
 use iced::{
-    widget::{column, container, text},
+    alignment::Horizontal,
+    widget::{column, container, row, text},
     Color, Length, Theme,
 };
 use iced_nodegraph::pin;
@@ -24,15 +25,26 @@ where
     Message: Clone + 'a,
 {
     let pins = column![
-        pin!(Left, "vec", Input, "vec3", Color::from_rgb(0.5, 0.9, 0.9)),
-        pin!(Right, "x", Output, "float", Color::from_rgb(0.9, 0.3, 0.3)),
-        pin!(Right, "y", Output, "float", Color::from_rgb(0.3, 0.9, 0.3)),
-        pin!(Right, "z", Output, "float", Color::from_rgb(0.3, 0.3, 0.9)),
+        row![
+            container(pin!(Left, "vec", Input, "vec3", Color::from_rgb(0.5, 0.9, 0.9)))
+                .width(Length::FillPortion(1))
+                .align_x(Horizontal::Left),
+            container(pin!(Right, "x", Output, "float", Color::from_rgb(0.9, 0.3, 0.3)))
+                .width(Length::FillPortion(1))
+                .align_x(Horizontal::Right),
+        ]
+        .width(Length::Fill),
+        container(pin!(Right, "y", Output, "float", Color::from_rgb(0.3, 0.9, 0.3)))
+            .width(Length::Fill)
+            .align_x(Horizontal::Right),
+        container(pin!(Right, "z", Output, "float", Color::from_rgb(0.3, 0.3, 0.9)))
+            .width(Length::Fill)
+            .align_x(Horizontal::Right),
     ]
     .spacing(1);
 
     column![title_bar("Split", theme), container(pins).padding([4, 0])]
-        .width(120.0)
+        .width(130.0)
         .into()
 }
 
@@ -41,15 +53,26 @@ where
     Message: Clone + 'a,
 {
     let pins = column![
-        pin!(Left, "x", Input, "float", Color::from_rgb(0.9, 0.3, 0.3)),
-        pin!(Left, "y", Input, "float", Color::from_rgb(0.3, 0.9, 0.3)),
-        pin!(Left, "z", Input, "float", Color::from_rgb(0.3, 0.3, 0.9)),
-        pin!(Right, "vec", Output, "vec3", Color::from_rgb(0.5, 0.9, 0.9)),
+        row![
+            container(pin!(Left, "x", Input, "float", Color::from_rgb(0.9, 0.3, 0.3)))
+                .width(Length::FillPortion(1))
+                .align_x(Horizontal::Left),
+            container(pin!(Right, "vec", Output, "vec3", Color::from_rgb(0.5, 0.9, 0.9)))
+                .width(Length::FillPortion(1))
+                .align_x(Horizontal::Right),
+        ]
+        .width(Length::Fill),
+        container(pin!(Left, "y", Input, "float", Color::from_rgb(0.3, 0.9, 0.3)))
+            .width(Length::Fill)
+            .align_x(Horizontal::Left),
+        container(pin!(Left, "z", Input, "float", Color::from_rgb(0.3, 0.3, 0.9)))
+            .width(Length::Fill)
+            .align_x(Horizontal::Left),
     ]
     .spacing(1);
 
     column![title_bar("Combine", theme), container(pins).padding([4, 0])]
-        .width(120.0)
+        .width(130.0)
         .into()
 }
 
@@ -57,14 +80,18 @@ pub fn normalize_node<'a, Message>(theme: &'a Theme) -> iced::Element<'a, Messag
 where
     Message: Clone + 'a,
 {
-    let pins = column![
-        pin!(Left, "in", Input, "vec3", Color::from_rgb(0.5, 0.9, 0.9)),
-        pin!(Right, "out", Output, "vec3", Color::from_rgb(0.5, 0.9, 0.9)),
+    let pins = row![
+        container(pin!(Left, "in", Input, "vec3", Color::from_rgb(0.5, 0.9, 0.9)))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Left),
+        container(pin!(Right, "out", Output, "vec3", Color::from_rgb(0.5, 0.9, 0.9)))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Right),
     ]
-    .spacing(1);
+    .width(Length::Fill);
 
     column![title_bar("Normalize", theme), container(pins).padding([4, 0])]
-        .width(120.0)
+        .width(130.0)
         .into()
 }
 
@@ -73,14 +100,23 @@ where
     Message: Clone + 'a,
 {
     let pins = column![
-        pin!(Left, "A", Input, "vec3", Color::from_rgb(0.5, 0.9, 0.9)),
-        pin!(Left, "B", Input, "vec3", Color::from_rgb(0.5, 0.9, 0.9)),
-        pin!(Right, "out", Output, "float", Color::from_rgb(0.9, 0.9, 0.9)),
+        row![
+            container(pin!(Left, "A", Input, "vec3", Color::from_rgb(0.5, 0.9, 0.9)))
+                .width(Length::FillPortion(1))
+                .align_x(Horizontal::Left),
+            container(pin!(Right, "out", Output, "float", Color::from_rgb(0.9, 0.9, 0.9)))
+                .width(Length::FillPortion(1))
+                .align_x(Horizontal::Right),
+        ]
+        .width(Length::Fill),
+        container(pin!(Left, "B", Input, "vec3", Color::from_rgb(0.5, 0.9, 0.9)))
+            .width(Length::Fill)
+            .align_x(Horizontal::Left),
     ]
     .spacing(1);
 
     column![title_bar("Dot", theme), container(pins).padding([4, 0])]
-        .width(120.0)
+        .width(130.0)
         .into()
 }
 
@@ -89,13 +125,22 @@ where
     Message: Clone + 'a,
 {
     let pins = column![
-        pin!(Left, "A", Input, "vec3", Color::from_rgb(0.5, 0.9, 0.9)),
-        pin!(Left, "B", Input, "vec3", Color::from_rgb(0.5, 0.9, 0.9)),
-        pin!(Right, "out", Output, "vec3", Color::from_rgb(0.5, 0.9, 0.9)),
+        row![
+            container(pin!(Left, "A", Input, "vec3", Color::from_rgb(0.5, 0.9, 0.9)))
+                .width(Length::FillPortion(1))
+                .align_x(Horizontal::Left),
+            container(pin!(Right, "out", Output, "vec3", Color::from_rgb(0.5, 0.9, 0.9)))
+                .width(Length::FillPortion(1))
+                .align_x(Horizontal::Right),
+        ]
+        .width(Length::Fill),
+        container(pin!(Left, "B", Input, "vec3", Color::from_rgb(0.5, 0.9, 0.9)))
+            .width(Length::Fill)
+            .align_x(Horizontal::Left),
     ]
     .spacing(1);
 
     column![title_bar("Cross", theme), container(pins).padding([4, 0])]
-        .width(120.0)
+        .width(130.0)
         .into()
 }
