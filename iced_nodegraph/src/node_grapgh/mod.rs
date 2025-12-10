@@ -28,7 +28,10 @@ pub enum DragInfo {
     /// Box selection drag
     BoxSelect { start_x: f32, start_y: f32 },
     /// Dragging an edge vertex (physics wire simulation)
-    EdgeVertex { edge_index: usize, vertex_index: usize },
+    EdgeVertex {
+        edge_index: usize,
+        vertex_index: usize,
+    },
 }
 
 /// State of a remote user for collaborative editing.
@@ -337,14 +340,10 @@ where
     ) -> Option<&Box<dyn Fn(Vec<usize>, Vector) -> Message + 'a>> {
         self.on_group_move.as_ref()
     }
-    pub(super) fn on_drag_start_handler(
-        &self,
-    ) -> Option<&Box<dyn Fn(DragInfo) -> Message + 'a>> {
+    pub(super) fn on_drag_start_handler(&self) -> Option<&Box<dyn Fn(DragInfo) -> Message + 'a>> {
         self.on_drag_start.as_ref()
     }
-    pub(super) fn on_drag_update_handler(
-        &self,
-    ) -> Option<&Box<dyn Fn(f32, f32) -> Message + 'a>> {
+    pub(super) fn on_drag_update_handler(&self) -> Option<&Box<dyn Fn(f32, f32) -> Message + 'a>> {
         self.on_drag_update.as_ref()
     }
     pub(super) fn on_drag_end_handler(&self) -> Option<&Box<dyn Fn() -> Message + 'a>> {

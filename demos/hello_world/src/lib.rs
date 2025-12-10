@@ -29,16 +29,14 @@
 mod nodes;
 
 use iced::{
-    Event, Length, Point, Subscription, Task, Theme, Vector, event, keyboard,
-    widget::{stack},
-    window,
+    Event, Length, Point, Subscription, Task, Theme, Vector, event, keyboard, widget::stack, window,
 };
 use iced_nodegraph::{PinReference, node_graph};
-use nodes::node;
 use iced_palette::{
     Command, Shortcut, command, command_palette, find_matching_shortcut, focus_input,
     get_filtered_command_index, get_filtered_count, is_toggle_shortcut, navigate_down, navigate_up,
 };
+use nodes::node;
 use std::collections::{HashMap, HashSet};
 
 #[cfg(target_arch = "wasm32")]
@@ -746,4 +744,3 @@ fn handle_keyboard_event(
         _ => None,
     }
 }
-

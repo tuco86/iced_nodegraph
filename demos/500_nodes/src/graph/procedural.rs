@@ -220,10 +220,8 @@ pub fn generate_procedural_graph() -> (Vec<(Point, NodeType)>, Vec<(PinReference
     let mut layout = ForceDirectedLayout::new(positions, &edges);
     let optimized_positions = layout.simulate();
 
-    let optimized_nodes: Vec<(Point, NodeType)> = optimized_positions
-        .into_iter()
-        .zip(node_types)
-        .collect();
+    let optimized_nodes: Vec<(Point, NodeType)> =
+        optimized_positions.into_iter().zip(node_types).collect();
 
     (optimized_nodes, edges)
 }

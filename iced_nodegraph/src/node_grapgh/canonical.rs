@@ -4,8 +4,8 @@
 //! GPU buffers are views into this state, updated incrementally via dirty tracking.
 
 use super::euclid::{WorldPoint, WorldSize, WorldVector};
-use crate::style::{EdgeStyle, NodeStyle};
 use crate::PinReference;
+use crate::style::{EdgeStyle, NodeStyle};
 use iced::Color;
 use std::ops::Range;
 
@@ -29,7 +29,12 @@ pub struct CanonicalNode {
 
 impl CanonicalNode {
     /// Create a new canonical node.
-    pub fn new(position: WorldVector, size: WorldSize, style: NodeStyle, pin_range: Range<usize>) -> Self {
+    pub fn new(
+        position: WorldVector,
+        size: WorldSize,
+        style: NodeStyle,
+        pin_range: Range<usize>,
+    ) -> Self {
         Self {
             position,
             size,

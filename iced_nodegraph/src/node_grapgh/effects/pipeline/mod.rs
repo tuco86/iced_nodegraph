@@ -635,7 +635,8 @@ fn create_bind_group_layout(device: &Device) -> BindGroupLayout {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
                     min_binding_size: Some(
-                        NonZeroU64::new(std::mem::size_of::<types::PhysicsVertex>() as u64 * 10).unwrap(),
+                        NonZeroU64::new(std::mem::size_of::<types::PhysicsVertex>() as u64 * 10)
+                            .unwrap(),
                     ),
                 },
                 count: None,

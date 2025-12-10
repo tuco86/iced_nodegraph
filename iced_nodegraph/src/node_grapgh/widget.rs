@@ -340,24 +340,30 @@ where
                 selection_border_color.a * fade_opacity,
             ),
             // Physics vertices for polyline rendering
-            physics_vertices: state.canonical.vertices.iter().map(|v| {
-                effects::PhysicsVertexData {
+            physics_vertices: state
+                .canonical
+                .vertices
+                .iter()
+                .map(|v| effects::PhysicsVertexData {
                     position: v.position,
                     edge_index: v.edge_id,
                     vertex_index: v.vertex_index,
-                }
-            }).collect(),
+                })
+                .collect(),
             // Physics edge metadata with vertex ranges
-            physics_edges: state.canonical.edges.iter().map(|e| {
-                effects::PhysicsEdgeData {
+            physics_edges: state
+                .canonical
+                .edges
+                .iter()
+                .map(|e| effects::PhysicsEdgeData {
                     from_node: e.from.node_id,
                     from_pin: e.from.pin_id,
                     to_node: e.to.node_id,
                     to_pin: e.to.pin_id,
                     vertex_start: e.vertex_range.start,
                     vertex_count: e.vertex_range.len(),
-                }
-            }).collect(),
+                })
+                .collect(),
         };
         let mut primitive_foreground = primitive_background.clone();
         primitive_foreground.layer = Layer::Foreground;
@@ -469,14 +475,19 @@ where
         // First, read the drag state to compute offsets for dragged nodes
         let (dragging, selected_nodes, camera) = {
             let state = tree.state.downcast_ref::<NodeGraphState>();
-            (state.dragging.clone(), state.selected_nodes.clone(), state.camera)
+            (
+                state.dragging.clone(),
+                state.selected_nodes.clone(),
+                state.camera,
+            )
         };
 
         // Compute drag offset based on current cursor position
         let drag_offset_for_node = |node_id: usize| -> WorldVector {
             if let Some(cursor_pos) = screen_cursor.position() {
                 let cursor_screen: ScreenPoint = cursor_pos.into_euclid();
-                let cursor_world: WorldPoint = camera.screen_to_world().transform_point(cursor_screen);
+                let cursor_world: WorldPoint =
+                    camera.screen_to_world().transform_point(cursor_screen);
 
                 match &dragging {
                     Dragging::Node(drag_node_id, origin) if *drag_node_id == node_id => {
@@ -492,9 +503,12 @@ where
             }
         };
 
-        let edge_pin_positions: Vec<(WorldPoint, WorldPoint)> = self.edges.iter()
+        let edge_pin_positions: Vec<(WorldPoint, WorldPoint)> = self
+            .edges
+            .iter()
             .map(|(from_ref, to_ref, _)| {
-                let from_pos = get_pin_world_position(tree, layout, from_ref.node_id, from_ref.pin_id);
+                let from_pos =
+                    get_pin_world_position(tree, layout, from_ref.node_id, from_ref.pin_id);
                 let to_pos = get_pin_world_position(tree, layout, to_ref.node_id, to_ref.pin_id);
                 // Apply drag offset to pin positions
                 let from_offset = drag_offset_for_node(from_ref.node_id);
@@ -614,7 +628,9 @@ where
                 if !vertex_range.is_empty() {
                     // Update start anchor
                     if let Some(v) = state.canonical.vertices.get_mut(vertex_range.start) {
-                        if v.is_anchored && (v.position.x != from_pos.x || v.position.y != from_pos.y) {
+                        if v.is_anchored
+                            && (v.position.x != from_pos.x || v.position.y != from_pos.y)
+                        {
                             v.position = *from_pos;
                             state.dirty.mark_edge_vertex(vertex_range.start);
                         }
@@ -624,7 +640,9 @@ where
                     if vertex_range.len() > 1 {
                         let end_idx = vertex_range.end - 1;
                         if let Some(v) = state.canonical.vertices.get_mut(end_idx) {
-                            if v.is_anchored && (v.position.x != to_pos.x || v.position.y != to_pos.y) {
+                            if v.is_anchored
+                                && (v.position.x != to_pos.x || v.position.y != to_pos.y)
+                            {
                                 v.position = *to_pos;
                                 state.dirty.mark_edge_vertex(end_idx);
                             }
@@ -1662,7 +1680,9 @@ fn get_pin_world_position(
     node_id: usize,
     pin_id: usize,
 ) -> WorldPoint {
-    layout.children().nth(node_id)
+    layout
+        .children()
+        .nth(node_id)
         .and_then(|node_layout| {
             tree.children.get(node_id).and_then(|node_tree| {
                 find_pins(node_tree, node_layout)

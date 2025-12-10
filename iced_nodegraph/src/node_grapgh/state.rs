@@ -158,23 +158,25 @@ impl NodeGraphState {
                 // Force from previous vertex
                 if local_idx > 0 {
                     let prev = &self.canonical.vertices[vertex_range.start + local_idx - 1];
-                    force = force + physics::spring_force(
-                        vertex.position,
-                        prev.position,
-                        config.spring_stiffness,
-                        tension_rest_length, // Use tensioned rest length
-                    );
+                    force = force
+                        + physics::spring_force(
+                            vertex.position,
+                            prev.position,
+                            config.spring_stiffness,
+                            tension_rest_length, // Use tensioned rest length
+                        );
                 }
 
                 // Force from next vertex
                 if local_idx < vertex_count - 1 {
                     let next = &self.canonical.vertices[vertex_range.start + local_idx + 1];
-                    force = force + physics::spring_force(
-                        vertex.position,
-                        next.position,
-                        config.spring_stiffness,
-                        tension_rest_length, // Use tensioned rest length
-                    );
+                    force = force
+                        + physics::spring_force(
+                            vertex.position,
+                            next.position,
+                            config.spring_stiffness,
+                            tension_rest_length, // Use tensioned rest length
+                        );
                 }
 
                 // === Bending stiffness ===
@@ -182,12 +184,13 @@ impl NodeGraphState {
                 if local_idx > 0 && local_idx < vertex_count - 1 {
                     let prev = &self.canonical.vertices[vertex_range.start + local_idx - 1];
                     let next = &self.canonical.vertices[vertex_range.start + local_idx + 1];
-                    force = force + physics::bending_force(
-                        prev.position,
-                        vertex.position,
-                        next.position,
-                        config.bending_stiffness,
-                    );
+                    force = force
+                        + physics::bending_force(
+                            prev.position,
+                            vertex.position,
+                            next.position,
+                            config.bending_stiffness,
+                        );
                 }
 
                 // === Gravity (natural cable sag) ===
@@ -195,18 +198,19 @@ impl NodeGraphState {
 
                 // === Node SDF-based repulsion/attraction ===
                 for node in &self.canonical.nodes {
-                    force = force + physics::node_sdf_force(
-                        vertex.position,
-                        node.position,
-                        WorldVector::new(node.size.width, node.size.height),
-                        5.0, // corner radius
-                        config.node_padding,
-                        config.inside_node_force,
-                        config.node_repulsion,
-                        config.repulsion_radius,
-                        config.node_attraction,
-                        config.node_attraction_range,
-                    );
+                    force = force
+                        + physics::node_sdf_force(
+                            vertex.position,
+                            node.position,
+                            WorldVector::new(node.size.width, node.size.height),
+                            5.0, // corner radius
+                            config.node_padding,
+                            config.inside_node_force,
+                            config.node_repulsion,
+                            config.repulsion_radius,
+                            config.node_attraction,
+                            config.node_attraction_range,
+                        );
                 }
 
                 // === Path attraction ===
@@ -214,23 +218,25 @@ impl NodeGraphState {
                 if vertex_range.len() >= 2 {
                     let start_vertex = &self.canonical.vertices[vertex_range.start];
                     let end_vertex = &self.canonical.vertices[vertex_range.end - 1];
-                    force = force + physics::path_attraction_force(
-                        vertex.position,
-                        start_vertex.position,
-                        end_vertex.position,
-                        config.path_attraction,
-                    );
+                    force = force
+                        + physics::path_attraction_force(
+                            vertex.position,
+                            start_vertex.position,
+                            end_vertex.position,
+                            config.path_attraction,
+                        );
 
                     // === Pin suction ("slurping spaghetti") ===
                     // Pins pull the edge toward themselves, keeping it taut
                     let vertex_t = local_idx as f32 / (vertex_count - 1).max(1) as f32;
-                    force = force + physics::pin_suction_force(
-                        vertex.position,
-                        start_vertex.position,
-                        end_vertex.position,
-                        vertex_t,
-                        config.pin_suction,
-                    );
+                    force = force
+                        + physics::pin_suction_force(
+                            vertex.position,
+                            start_vertex.position,
+                            end_vertex.position,
+                            vertex_t,
+                            config.pin_suction,
+                        );
                 }
 
                 // === Edge-edge interaction ===
@@ -246,14 +252,15 @@ impl NodeGraphState {
                     // Sample other edge (check every other vertex for performance)
                     for other_v_idx in (other_range.start..other_range.end).step_by(2) {
                         let other_vertex = &self.canonical.vertices[other_v_idx];
-                        force = force + physics::edge_interaction_force(
-                            vertex.position,
-                            other_vertex.position,
-                            config.edge_repulsion,
-                            config.repulsion_radius,
-                            config.edge_attraction,
-                            config.edge_attraction_range,
-                        );
+                        force = force
+                            + physics::edge_interaction_force(
+                                vertex.position,
+                                other_vertex.position,
+                                config.edge_repulsion,
+                                config.repulsion_radius,
+                                config.edge_attraction,
+                                config.edge_attraction_range,
+                            );
                     }
                 }
 
