@@ -6,6 +6,7 @@ use crate::node_pin::PinReference;
 use crate::style::{EdgeStyle, GraphStyle, NodeStyle};
 
 pub mod camera;
+pub(crate) mod canonical;
 pub(crate) mod effects;
 pub(crate) mod euclid;
 pub(crate) mod state;

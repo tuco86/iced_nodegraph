@@ -898,6 +898,24 @@ where
                         }
                         _ => {}
                     },
+                    // Edge vertex dragging (for physics wire simulation)
+                    Dragging::EdgeVertex { edge_index, vertex_index, origin } => match event {
+                        Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                            // TODO: Implement vertex drag with physics impulse
+                            // For now, just mark the edge as dirty
+                            let _ = (edge_index, vertex_index, origin);
+                            shell.request_redraw();
+                        }
+                        Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                            state.dragging = Dragging::None;
+                            if let Some(handler) = self.on_drag_end_handler() {
+                                shell.publish(handler());
+                            }
+                            shell.capture_event();
+                            shell.request_redraw();
+                        }
+                        _ => {}
+                    },
                 }
 
                 for (((_, element, _style), tree), layout) in self

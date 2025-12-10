@@ -3,5 +3,5 @@ pub use primitive::Pin;
 pub use primitive::{Layer, NodeGraphPrimitive};
 // pub use primitive::Edge;
 
-mod pipeline;
+pub(crate) mod pipeline;
 mod primitive;

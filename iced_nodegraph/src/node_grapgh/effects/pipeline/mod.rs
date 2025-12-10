@@ -21,6 +21,7 @@ use crate::node_grapgh::{effects::Node, euclid::WorldPoint, state::Dragging};
 use super::{Layer, primitive::NodeGraphPrimitive};
 
 mod buffer;
+pub mod cache;
 mod types;
 
 pub struct Pipeline {
@@ -310,6 +311,7 @@ impl Pipeline {
             Dragging::BoxSelect(_, _) => 5,
             Dragging::GroupMove(_) => 6,
             Dragging::EdgeCutting(_) => 7,
+            Dragging::EdgeVertex { .. } => 8, // Physics vertex drag
         };
 
         let (
