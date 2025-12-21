@@ -57,3 +57,6 @@ serde_json = "1.0"
 
 [profile.dev]
 opt-level = 1
+
+[patch."https://github.com/tuco86/iced_palette.git"]
+iced_palette = { path = "../iced_palette" }

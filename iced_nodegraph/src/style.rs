@@ -115,6 +115,132 @@ impl NodeStyle {
     }
 }
 
+/// Edge rendering type determining the path shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u32)]
+pub enum EdgeType {
+    /// Smooth cubic bezier curve (default)
+    #[default]
+    Bezier = 0,
+    /// Direct straight line
+    Straight = 1,
+    /// Orthogonal path with rounded corners
+    SmoothStep = 2,
+    /// Orthogonal path with sharp corners
+    Step = 3,
+}
+
+/// Dash pattern configuration for edges.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DashPattern {
+    /// Length of each dash in world-space pixels
+    pub dash_length: f32,
+    /// Length of each gap in world-space pixels
+    pub gap_length: f32,
+    /// Whether the pattern should animate (marching ants effect)
+    pub animated: bool,
+}
+
+impl Default for DashPattern {
+    fn default() -> Self {
+        Self {
+            dash_length: 8.0,
+            gap_length: 4.0,
+            animated: false,
+        }
+    }
+}
+
+impl DashPattern {
+    /// Creates a new dash pattern.
+    pub fn new(dash_length: f32, gap_length: f32) -> Self {
+        Self {
+            dash_length,
+            gap_length,
+            animated: false,
+        }
+    }
+
+    /// Sets whether the pattern animates.
+    pub fn animated(mut self, animated: bool) -> Self {
+        self.animated = animated;
+        self
+    }
+
+    /// Creates a dotted pattern (equal dash and gap).
+    pub fn dotted() -> Self {
+        Self::new(4.0, 4.0)
+    }
+
+    /// Creates a dashed pattern (longer dashes).
+    pub fn dashed() -> Self {
+        Self::new(12.0, 6.0)
+    }
+
+    /// Creates an animated marching ants pattern.
+    pub fn marching_ants() -> Self {
+        Self::new(6.0, 4.0).animated(true)
+    }
+}
+
+/// Animation configuration for edges.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EdgeAnimation {
+    /// Flow speed in pixels per second (positive = toward target)
+    pub flow_speed: f32,
+    /// Pulsing/breathing effect
+    pub pulse: bool,
+    /// Outer glow effect
+    pub glow: bool,
+}
+
+impl Default for EdgeAnimation {
+    fn default() -> Self {
+        Self {
+            flow_speed: 0.0,
+            pulse: false,
+            glow: false,
+        }
+    }
+}
+
+impl EdgeAnimation {
+    /// Creates a new animation with flow speed.
+    pub fn flow(speed: f32) -> Self {
+        Self {
+            flow_speed: speed,
+            pulse: false,
+            glow: false,
+        }
+    }
+
+    /// Enables pulse effect.
+    pub fn pulse(mut self) -> Self {
+        self.pulse = true;
+        self
+    }
+
+    /// Enables glow effect.
+    pub fn glow(mut self) -> Self {
+        self.glow = true;
+        self
+    }
+
+    /// Creates a data flow animation (moderate speed with glow).
+    pub fn data_flow() -> Self {
+        Self::flow(30.0).glow()
+    }
+
+    /// Creates an error animation (fast pulsing).
+    pub fn error() -> Self {
+        Self {
+            flow_speed: 50.0,
+            pulse: true,
+            glow: false,
+        }
+    }
+}
+
 /// Style configuration for edges/connections.
 ///
 /// Controls the rendering of connection lines between pins.
@@ -124,13 +250,23 @@ pub struct EdgeStyle {
     pub color: Color,
     /// Line thickness in world-space pixels
     pub thickness: f32,
+    /// Edge path type (bezier, straight, step, etc.)
+    pub edge_type: EdgeType,
+    /// Optional dash pattern (None = solid line)
+    pub dash_pattern: Option<DashPattern>,
+    /// Optional animation effects
+    pub animation: Option<EdgeAnimation>,
 }
 
 impl Default for EdgeStyle {
     fn default() -> Self {
         Self {
-            color: Color::WHITE,
+            // Transparent color means "use global edge color from theme"
+            color: Color::TRANSPARENT,
             thickness: 2.0,
+            edge_type: EdgeType::default(),
+            dash_pattern: None,
+            animation: None,
         }
     }
 }
@@ -151,6 +287,109 @@ impl EdgeStyle {
     pub fn thickness(mut self, thickness: f32) -> Self {
         self.thickness = thickness;
         self
+    }
+
+    /// Sets the edge type.
+    pub fn edge_type(mut self, edge_type: EdgeType) -> Self {
+        self.edge_type = edge_type;
+        self
+    }
+
+    /// Sets the dash pattern.
+    pub fn dash_pattern(mut self, pattern: DashPattern) -> Self {
+        self.dash_pattern = Some(pattern);
+        self
+    }
+
+    /// Sets the animation.
+    pub fn animation(mut self, animation: EdgeAnimation) -> Self {
+        self.animation = Some(animation);
+        self
+    }
+
+    /// Makes the edge a solid line (removes dash pattern).
+    pub fn solid(mut self) -> Self {
+        self.dash_pattern = None;
+        self
+    }
+
+    /// Creates a data flow style (blue, animated glow).
+    pub fn data_flow() -> Self {
+        Self {
+            color: Color::from_rgb(0.3, 0.6, 1.0),
+            thickness: 2.5,
+            edge_type: EdgeType::Bezier,
+            dash_pattern: None,
+            animation: Some(EdgeAnimation::data_flow()),
+        }
+    }
+
+    /// Creates a control flow style (white, straight).
+    pub fn control_flow() -> Self {
+        Self {
+            color: Color::WHITE,
+            thickness: 2.0,
+            edge_type: EdgeType::SmoothStep,
+            dash_pattern: None,
+            animation: None,
+        }
+    }
+
+    /// Creates an error style (red, animated dotted).
+    pub fn error() -> Self {
+        Self {
+            color: Color::from_rgb(0.9, 0.2, 0.2),
+            thickness: 2.0,
+            edge_type: EdgeType::Bezier,
+            dash_pattern: Some(DashPattern::marching_ants()),
+            animation: Some(EdgeAnimation::error()),
+        }
+    }
+
+    /// Creates a disabled style (gray, dashed).
+    pub fn disabled() -> Self {
+        Self {
+            color: Color::from_rgb(0.5, 0.5, 0.5),
+            thickness: 1.5,
+            edge_type: EdgeType::Bezier,
+            dash_pattern: Some(DashPattern::dashed()),
+            animation: None,
+        }
+    }
+
+    /// Creates a highlighted style (bright, glowing).
+    pub fn highlighted() -> Self {
+        Self {
+            color: Color::from_rgb(1.0, 0.8, 0.2),
+            thickness: 3.0,
+            edge_type: EdgeType::Bezier,
+            dash_pattern: None,
+            animation: Some(EdgeAnimation::flow(0.0).glow()),
+        }
+    }
+
+    /// Computes animation flags for GPU buffer.
+    pub fn animation_flags(&self) -> u32 {
+        let mut flags = 0u32;
+        if let Some(ref dash) = self.dash_pattern {
+            if dash.animated {
+                flags |= 1; // bit 0: animated dash
+            }
+        }
+        if let Some(ref anim) = self.animation {
+            if anim.glow {
+                flags |= 2; // bit 1: glow
+            }
+            if anim.pulse {
+                flags |= 4; // bit 2: pulse
+            }
+        }
+        flags
+    }
+
+    /// Gets the flow speed (0.0 if no animation).
+    pub fn flow_speed(&self) -> f32 {
+        self.animation.map(|a| a.flow_speed).unwrap_or(0.0)
     }
 }
 

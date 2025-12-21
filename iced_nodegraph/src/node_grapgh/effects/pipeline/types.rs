@@ -77,7 +77,11 @@ pub struct Edge {
     pub to_pin: u32,       // 4 bytes @ 12 (total 16)
     pub color: glam::Vec4, // 16 bytes @ 16 (16-byte aligned)
     pub thickness: f32,    // 4 bytes @ 32
-    pub _pad0: f32,        // 4 bytes @ 36
-    pub _pad1: f32,        // 4 bytes @ 40
-    pub _pad2: f32,        // 4 bytes @ 44 (total 48)
+    pub edge_type: u32,    // 4 bytes @ 36 (0=Bezier, 1=Straight, 2=SmoothStep, 3=Step)
+    pub dash_length: f32,  // 4 bytes @ 40 (0.0 = solid line)
+    pub gap_length: f32,   // 4 bytes @ 44 (total 48)
+    pub flow_speed: f32,   // 4 bytes @ 48 (pixels per second, 0.0 = no animation)
+    pub flags: u32,        // 4 bytes @ 52 (bit 0: animated dash, bit 1: glow, bit 2: pulse)
+    pub _pad0: f32,        // 4 bytes @ 56
+    pub _pad1: f32,        // 4 bytes @ 60 (total 64)
 }

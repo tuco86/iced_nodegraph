@@ -113,6 +113,7 @@ enum Message {
     CommandPaletteInput(String),
     CommandPaletteNavigateUp,
     CommandPaletteNavigateDown,
+    CommandPaletteNavigate(usize),
     CommandPaletteSelect(usize),
     CommandPaletteConfirm,
     CommandPaletteCancel,
@@ -338,6 +339,12 @@ impl Application {
                 let count = get_filtered_count(&self.command_input, &commands);
                 self.palette_selected_index = navigate_down(self.palette_selected_index, count);
             }
+            Message::CommandPaletteNavigate(index) => {
+                if !self.command_palette_open {
+                    return Task::none();
+                }
+                self.palette_selected_index = index;
+            }
             Message::CommandPaletteSelect(index) => {
                 self.palette_selected_index = index;
                 return self.update(Message::CommandPaletteConfirm);
@@ -435,6 +442,7 @@ impl Application {
                     self.palette_selected_index,
                     Message::CommandPaletteInput,
                     Message::CommandPaletteSelect,
+                    Message::CommandPaletteNavigate,
                     || Message::CommandPaletteCancel,
                 )
             ]

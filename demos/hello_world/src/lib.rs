@@ -1,6 +1,7 @@
 //! # Hello World Demo
 //!
 //! Basic node graph with command palette (Cmd/Ctrl+K) for adding nodes and changing themes.
+//! Now includes interactive style configuration nodes!
 //!
 //! ## Interactive Demo
 //!
@@ -25,19 +26,29 @@
 //! - **Click edges** - Disconnect existing connections
 //! - **Scroll** - Zoom in/out
 //! - **Middle-drag** - Pan the canvas
+//!
+//! ## Style Configuration
+//!
+//! Add input nodes (sliders, color pickers) and connect them to config nodes
+//! to dynamically adjust the graph's appearance!
 
 mod nodes;
 
 use iced::{
-    Event, Length, Point, Subscription, Task, Theme, Vector, event, keyboard,
-    widget::{stack},
+    Color, Event, Length, Point, Subscription, Task, Theme, Vector, event, keyboard,
+    widget::stack,
     window,
 };
-use iced_nodegraph::{PinReference, node_graph};
-use nodes::node;
+use iced_nodegraph::{node_graph, EdgeStyle, NodeStyle, PinReference};
 use iced_palette::{
     Command, Shortcut, command, command_palette, find_matching_shortcut, focus_input,
     get_filtered_command_index, get_filtered_count, is_toggle_shortcut, navigate_down, navigate_up,
+};
+use nodes::{
+    border_width_config_node, color_picker_node, color_preset_node, corner_radius_config_node,
+    edge_color_config_node, edge_thickness_config_node, fill_color_config_node,
+    float_slider_node, node, opacity_config_node, ConfigNodeType, FloatSliderConfig,
+    InputNodeType, NodeType, NodeValue,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -107,19 +118,28 @@ enum ApplicationMessage {
     SpawnNode {
         x: f32,
         y: f32,
-        name: String,
+        node_type: NodeType,
     },
     ChangeTheme(Theme),
     NavigateToSubmenu(String),
     NavigateBack,
     Tick,
-    // New selection-related messages
+    // Selection-related messages
     SelectionChanged(Vec<usize>),
     CloneNodes(Vec<usize>),
     DeleteNodes(Vec<usize>),
     GroupMoved {
         indices: Vec<usize>,
         delta: Vector,
+    },
+    // Input node value changes
+    SliderChanged {
+        node_index: usize,
+        value: f32,
+    },
+    ColorChanged {
+        node_index: usize,
+        color: Color,
     },
 }
 
@@ -129,9 +149,56 @@ enum PaletteView {
     Submenu(String),
 }
 
+/// Computed style values from connected config nodes
+#[derive(Debug, Clone, Default)]
+struct ComputedStyle {
+    corner_radius: Option<f32>,
+    opacity: Option<f32>,
+    border_width: Option<f32>,
+    fill_color: Option<Color>,
+    edge_thickness: Option<f32>,
+    edge_color: Option<Color>,
+}
+
+impl ComputedStyle {
+    /// Builds a NodeStyle from computed values, using defaults where not set
+    fn to_node_style(&self) -> NodeStyle {
+        let mut style = NodeStyle::default();
+        if let Some(r) = self.corner_radius {
+            style = style.corner_radius(r);
+        }
+        if let Some(o) = self.opacity {
+            style = style.opacity(o);
+        }
+        if let Some(w) = self.border_width {
+            style = style.border_width(w);
+        }
+        if let Some(c) = self.fill_color {
+            style = style.fill_color(c);
+        }
+        style
+    }
+
+    /// Builds an EdgeStyle from computed values, returns None if no edge styling is set
+    fn to_edge_style(&self) -> Option<EdgeStyle> {
+        if self.edge_color.is_none() && self.edge_thickness.is_none() {
+            return None;
+        }
+
+        let mut style = EdgeStyle::default();
+        if let Some(t) = self.edge_thickness {
+            style = style.thickness(t);
+        }
+        if let Some(c) = self.edge_color {
+            style = style.color(c);
+        }
+        Some(style)
+    }
+}
+
 struct Application {
     edges: Vec<(PinReference, PinReference)>,
-    nodes: Vec<(Point, String)>,
+    nodes: Vec<(Point, NodeType)>,
     selected_nodes: HashSet<usize>,
     command_palette_open: bool,
     command_input: String,
@@ -140,6 +207,8 @@ struct Application {
     palette_selected_index: usize,
     palette_preview_theme: Option<Theme>,
     palette_original_theme: Option<Theme>,
+    /// Computed style values from config node connections
+    computed_style: ComputedStyle,
 }
 
 impl Default for Application {
@@ -152,10 +221,22 @@ impl Default for Application {
                 (PinReference::new(2, 1), PinReference::new(3, 1)), // filter.matches -> calendar.title
             ],
             nodes: vec![
-                (Point::new(100.0, 150.0), "email_trigger".to_string()),
-                (Point::new(350.0, 150.0), "email_parser".to_string()),
-                (Point::new(350.0, 350.0), "filter".to_string()),
-                (Point::new(650.0, 250.0), "calendar".to_string()),
+                (
+                    Point::new(100.0, 150.0),
+                    NodeType::Workflow("email_trigger".to_string()),
+                ),
+                (
+                    Point::new(350.0, 150.0),
+                    NodeType::Workflow("email_parser".to_string()),
+                ),
+                (
+                    Point::new(350.0, 350.0),
+                    NodeType::Workflow("filter".to_string()),
+                ),
+                (
+                    Point::new(650.0, 250.0),
+                    NodeType::Workflow("calendar".to_string()),
+                ),
             ],
             selected_nodes: HashSet::new(),
             command_palette_open: false,
@@ -165,6 +246,7 @@ impl Default for Application {
             palette_selected_index: 0,
             palette_preview_theme: None,
             palette_original_theme: None,
+            computed_style: ComputedStyle::default(),
         }
     }
 }
@@ -172,6 +254,72 @@ impl Default for Application {
 impl Application {
     fn new() -> Self {
         Self::default()
+    }
+
+    /// Propagates values from input nodes to connected config nodes
+    fn propagate_values(&mut self) {
+        let mut new_computed = ComputedStyle::default();
+
+        // For each edge, check if it connects an input to a config node
+        for (from, to) in &self.edges {
+            let from_node = self.nodes.get(from.node_id);
+            let to_node = self.nodes.get(to.node_id);
+
+            if let (Some((_, from_type)), Some((_, to_type))) = (from_node, to_node) {
+                // Check if from is an input node and to is a config node
+                if let (NodeType::Input(input), NodeType::Config(config)) = (from_type, to_type) {
+                    let value = input.output_value();
+
+                    match config {
+                        ConfigNodeType::CornerRadius => {
+                            if let Some(v) = value.as_float() {
+                                new_computed.corner_radius = Some(v);
+                            }
+                        }
+                        ConfigNodeType::Opacity => {
+                            if let Some(v) = value.as_float() {
+                                new_computed.opacity = Some(v);
+                            }
+                        }
+                        ConfigNodeType::BorderWidth => {
+                            if let Some(v) = value.as_float() {
+                                new_computed.border_width = Some(v);
+                            }
+                        }
+                        ConfigNodeType::FillColor => {
+                            if let Some(c) = value.as_color() {
+                                new_computed.fill_color = Some(c);
+                            }
+                        }
+                        ConfigNodeType::EdgeThickness => {
+                            if let Some(v) = value.as_float() {
+                                new_computed.edge_thickness = Some(v);
+                            }
+                        }
+                        ConfigNodeType::EdgeColor => {
+                            if let Some(c) = value.as_color() {
+                                new_computed.edge_color = Some(c);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        self.computed_style = new_computed;
+    }
+
+    /// Gets the value connected to a config node (if any)
+    fn get_config_input_value(&self, node_index: usize) -> Option<NodeValue> {
+        // Find edges where this node is the target
+        for (from, to) in &self.edges {
+            if to.node_id == node_index {
+                if let Some((_, NodeType::Input(input))) = self.nodes.get(from.node_id) {
+                    return Some(input.output_value());
+                }
+            }
+        }
+        None
     }
 
     fn update(&mut self, message: ApplicationMessage) -> Task<ApplicationMessage> {
@@ -183,14 +331,11 @@ impl Application {
                 to_node,
                 to_pin,
             } => {
-                println!(
-                    "Edge connected: node {} pin {} -> node {} pin {}",
-                    from_node, from_pin, to_node, to_pin
-                );
                 self.edges.push((
                     PinReference::new(from_node, from_pin),
                     PinReference::new(to_node, to_pin),
                 ));
+                self.propagate_values();
                 Task::none()
             }
             ApplicationMessage::NodeMoved {
@@ -199,7 +344,6 @@ impl Application {
             } => {
                 if let Some((position, _)) = self.nodes.get_mut(node_index) {
                     *position = new_position;
-                    println!("Node {} moved to {:?}", node_index, new_position);
                 }
                 Task::none()
             }
@@ -215,16 +359,12 @@ impl Application {
                         && to.node_id == to_node
                         && to.pin_id == to_pin)
                 });
-                println!(
-                    "Edge disconnected: node {} pin {} -> node {} pin {}",
-                    from_node, from_pin, to_node, to_pin
-                );
+                self.propagate_values();
                 Task::none()
             }
             ApplicationMessage::ToggleCommandPalette => {
                 self.command_palette_open = !self.command_palette_open;
                 if !self.command_palette_open {
-                    // Closing - restore original theme if cancelled
                     if let Some(original) = self.palette_original_theme.take() {
                         self.current_theme = original;
                     }
@@ -234,7 +374,6 @@ impl Application {
                     self.palette_selected_index = 0;
                     Task::none()
                 } else {
-                    // Opening - save original theme and focus input
                     self.palette_original_theme = Some(self.current_theme.clone());
                     self.palette_view = PaletteView::Main;
                     self.palette_selected_index = 0;
@@ -242,40 +381,35 @@ impl Application {
                 }
             }
             ApplicationMessage::CommandPaletteInput(input) => {
-                // Full replacement from text_input widget
                 self.command_input = input;
-                self.palette_selected_index = 0; // Reset selection on input change
+                self.palette_selected_index = 0;
                 Task::none()
             }
-            ApplicationMessage::ExecuteShortcut(cmd_id) => {
-                // Execute command by shortcut ID - opens palette and focuses input
-                match cmd_id.as_str() {
-                    "add_node" => {
-                        self.command_palette_open = true;
-                        self.palette_original_theme = Some(self.current_theme.clone());
-                        self.palette_view = PaletteView::Submenu("nodes".to_string());
-                        self.palette_selected_index = 0;
-                        self.command_input.clear();
-                        focus_input()
-                    }
-                    "change_theme" => {
-                        self.command_palette_open = true;
-                        self.palette_original_theme = Some(self.current_theme.clone());
-                        self.palette_view = PaletteView::Submenu("themes".to_string());
-                        self.palette_selected_index = 0;
-                        self.command_input.clear();
-                        focus_input()
-                    }
-                    _ => Task::none(),
+            ApplicationMessage::ExecuteShortcut(cmd_id) => match cmd_id.as_str() {
+                "add_node" => {
+                    self.command_palette_open = true;
+                    self.palette_original_theme = Some(self.current_theme.clone());
+                    self.palette_view = PaletteView::Submenu("nodes".to_string());
+                    self.palette_selected_index = 0;
+                    self.command_input.clear();
+                    focus_input()
                 }
-            }
+                "change_theme" => {
+                    self.command_palette_open = true;
+                    self.palette_original_theme = Some(self.current_theme.clone());
+                    self.palette_view = PaletteView::Submenu("themes".to_string());
+                    self.palette_selected_index = 0;
+                    self.command_input.clear();
+                    focus_input()
+                }
+                _ => Task::none(),
+            },
             ApplicationMessage::CommandPaletteNavigate(new_index) => {
                 if !self.command_palette_open {
                     return Task::none();
                 }
                 self.palette_selected_index = new_index;
 
-                // Apply live preview for theme submenu
                 if let PaletteView::Submenu(ref submenu) = self.palette_view {
                     if submenu == "themes" {
                         let (_, commands) = self.build_palette_commands();
@@ -316,12 +450,11 @@ impl Application {
                     return Task::none();
                 }
                 self.palette_selected_index = index;
-                // Immediately confirm
                 self.update(ApplicationMessage::CommandPaletteConfirm)
             }
             ApplicationMessage::CommandPaletteConfirm => {
                 if !self.command_palette_open {
-                    return Task::none(); // Ignore if palette is closed
+                    return Task::none();
                 }
                 let (_, commands) = self.build_palette_commands();
                 let Some(original_idx) = get_filtered_command_index(
@@ -332,25 +465,21 @@ impl Application {
                     return Task::none();
                 };
 
-                // Get the action from the command and execute it
                 use iced_palette::CommandAction;
                 let cmd = &commands[original_idx];
                 match &cmd.action {
                     CommandAction::Message(msg) => {
-                        // Clone the message and process it
                         let msg = msg.clone();
-                        // Reset palette state
                         self.command_input.clear();
                         self.palette_selected_index = 0;
-                        // Execute the command's message
                         match msg {
                             ApplicationMessage::NavigateToSubmenu(submenu) => {
                                 self.palette_view = PaletteView::Submenu(submenu);
-                                focus_input() // Re-focus input after navigating to submenu
+                                focus_input()
                             }
-                            ApplicationMessage::SpawnNode { x, y, name } => {
+                            ApplicationMessage::SpawnNode { x, y, node_type } => {
                                 let new_idx = self.nodes.len();
-                                self.nodes.push((Point::new(x, y), name));
+                                self.nodes.push((Point::new(x, y), node_type));
                                 self.selected_nodes = HashSet::from([new_idx]);
                                 self.command_palette_open = false;
                                 self.palette_view = PaletteView::Main;
@@ -372,9 +501,8 @@ impl Application {
             }
             ApplicationMessage::CommandPaletteCancel => {
                 if !self.command_palette_open {
-                    return Task::none(); // Ignore if palette is closed
+                    return Task::none();
                 }
-                // Restore original theme
                 if let Some(original) = self.palette_original_theme.take() {
                     self.current_theme = original;
                 }
@@ -385,10 +513,9 @@ impl Application {
                 self.palette_selected_index = 0;
                 Task::none()
             }
-            ApplicationMessage::SpawnNode { x, y, name } => {
-                // Use node type directly
+            ApplicationMessage::SpawnNode { x, y, node_type } => {
                 let new_idx = self.nodes.len();
-                self.nodes.push((Point::new(x, y), name));
+                self.nodes.push((Point::new(x, y), node_type));
                 self.selected_nodes = HashSet::from([new_idx]);
                 self.command_palette_open = false;
                 self.command_input.clear();
@@ -405,39 +532,33 @@ impl Application {
             ApplicationMessage::NavigateToSubmenu(submenu) => {
                 self.palette_view = PaletteView::Submenu(submenu);
                 self.command_input.clear();
-                focus_input() // Focus input when navigating to submenu
+                focus_input()
             }
             ApplicationMessage::NavigateBack => {
                 self.palette_view = PaletteView::Main;
                 self.command_input.clear();
-                focus_input() // Focus input when going back
+                focus_input()
             }
-            ApplicationMessage::Tick => {
-                // Just trigger a redraw for animations
-                Task::none()
-            }
+            ApplicationMessage::Tick => Task::none(),
             ApplicationMessage::SelectionChanged(indices) => {
                 self.selected_nodes = indices.into_iter().collect();
                 Task::none()
             }
             ApplicationMessage::CloneNodes(indices) => {
                 let offset = Vector::new(50.0, 50.0);
-
-                // Build index mapping: old index -> new index
                 let mut index_map: HashMap<usize, usize> = HashMap::new();
                 let mut new_indices = Vec::new();
 
                 for &idx in &indices {
-                    if let Some((pos, name)) = self.nodes.get(idx) {
+                    if let Some((pos, node_type)) = self.nodes.get(idx) {
                         let new_pos = Point::new(pos.x + offset.x, pos.y + offset.y);
                         let new_idx = self.nodes.len();
-                        self.nodes.push((new_pos, name.clone()));
+                        self.nodes.push((new_pos, node_type.clone()));
                         index_map.insert(idx, new_idx);
                         new_indices.push(new_idx);
                     }
                 }
 
-                // Clone edges between selected nodes
                 let edges_to_clone: Vec<_> = self
                     .edges
                     .iter()
@@ -458,21 +579,18 @@ impl Application {
                     }
                 }
 
-                // Select cloned nodes
                 self.selected_nodes = new_indices.into_iter().collect();
+                self.propagate_values();
                 Task::none()
             }
             ApplicationMessage::DeleteNodes(indices) => {
-                // Sort indices descending to remove from end first (index stability)
                 let mut sorted_indices: Vec<_> = indices.into_iter().collect();
                 sorted_indices.sort_by(|a, b| b.cmp(a));
 
                 for idx in sorted_indices {
-                    // Remove edges referencing this node
                     self.edges
                         .retain(|(from, to)| from.node_id != idx && to.node_id != idx);
 
-                    // Adjust edge indices for nodes that will shift down
                     for (from, to) in &mut self.edges {
                         if from.node_id > idx {
                             from.node_id -= 1;
@@ -482,13 +600,13 @@ impl Application {
                         }
                     }
 
-                    // Remove the node
                     if idx < self.nodes.len() {
                         self.nodes.remove(idx);
                     }
                 }
 
                 self.selected_nodes.clear();
+                self.propagate_values();
                 Task::none()
             }
             ApplicationMessage::GroupMoved { indices, delta } => {
@@ -500,19 +618,41 @@ impl Application {
                 }
                 Task::none()
             }
+            ApplicationMessage::SliderChanged { node_index, value } => {
+                if let Some((_, NodeType::Input(InputNodeType::FloatSlider { value: v, .. }))) =
+                    self.nodes.get_mut(node_index)
+                {
+                    *v = value;
+                    self.propagate_values();
+                }
+                Task::none()
+            }
+            ApplicationMessage::ColorChanged { node_index, color } => {
+                if let Some((_, node_type)) = self.nodes.get_mut(node_index) {
+                    match node_type {
+                        NodeType::Input(InputNodeType::ColorPicker { color: c }) => {
+                            *c = color;
+                            self.propagate_values();
+                        }
+                        NodeType::Input(InputNodeType::ColorPreset { color: c }) => {
+                            *c = color;
+                            self.propagate_values();
+                        }
+                        _ => {}
+                    }
+                }
+                Task::none()
+            }
         }
     }
 
     fn theme(&self) -> Theme {
-        // Use preview theme if available (live preview)
         self.palette_preview_theme
             .as_ref()
             .unwrap_or(&self.current_theme)
             .clone()
     }
 
-    /// Returns all commands with shortcuts for subscription handling.
-    /// This includes main commands and any nested submenu commands with shortcuts.
     fn get_main_commands_with_shortcuts() -> Vec<Command<ApplicationMessage>> {
         vec![
             command("add_node", "Add Node")
@@ -526,10 +666,6 @@ impl Application {
                     "change_theme".to_string(),
                 )),
         ]
-    }
-
-    fn get_node_types() -> Vec<&'static str> {
-        vec!["email_trigger", "email_parser", "filter", "calendar"]
     }
 
     fn get_available_themes() -> Vec<Theme> {
@@ -588,6 +724,8 @@ impl Application {
     }
 
     fn view(&self) -> iced::Element<'_, ApplicationMessage> {
+        let computed_style = self.computed_style.to_node_style();
+
         let mut ng = node_graph()
             .on_connect(
                 |from_node, from_pin, to_node, to_pin| ApplicationMessage::EdgeConnected {
@@ -616,19 +754,105 @@ impl Application {
             .selection(&self.selected_nodes);
 
         // Add all nodes from state
-        for (position, name) in &self.nodes {
-            ng.push_node(*position, node(name.as_str(), &self.current_theme));
+        for (idx, (position, node_type)) in self.nodes.iter().enumerate() {
+            let element: iced::Element<'_, ApplicationMessage> = match node_type {
+                NodeType::Workflow(name) => node(name.as_str(), &self.current_theme),
+                NodeType::Input(input) => match input {
+                    InputNodeType::FloatSlider { config, value } => {
+                        let idx = idx;
+                        float_slider_node(
+                            &self.current_theme,
+                            *value,
+                            config,
+                            move |v| ApplicationMessage::SliderChanged {
+                                node_index: idx,
+                                value: v,
+                            },
+                        )
+                    }
+                    InputNodeType::ColorPicker { color } => {
+                        let idx = idx;
+                        color_picker_node(&self.current_theme, *color, move |c| {
+                            ApplicationMessage::ColorChanged {
+                                node_index: idx,
+                                color: c,
+                            }
+                        })
+                    }
+                    InputNodeType::ColorPreset { color } => {
+                        let idx = idx;
+                        color_preset_node(&self.current_theme, *color, move |c| {
+                            ApplicationMessage::ColorChanged {
+                                node_index: idx,
+                                color: c,
+                            }
+                        })
+                    }
+                },
+                NodeType::Config(config) => {
+                    let input_value = self.get_config_input_value(idx);
+                    match config {
+                        ConfigNodeType::CornerRadius => {
+                            corner_radius_config_node(
+                                &self.current_theme,
+                                input_value.and_then(|v| v.as_float()),
+                            )
+                        }
+                        ConfigNodeType::Opacity => {
+                            opacity_config_node(
+                                &self.current_theme,
+                                input_value.and_then(|v| v.as_float()),
+                            )
+                        }
+                        ConfigNodeType::BorderWidth => {
+                            border_width_config_node(
+                                &self.current_theme,
+                                input_value.and_then(|v| v.as_float()),
+                            )
+                        }
+                        ConfigNodeType::FillColor => {
+                            fill_color_config_node(
+                                &self.current_theme,
+                                input_value.and_then(|v| v.as_color()),
+                            )
+                        }
+                        ConfigNodeType::EdgeThickness => {
+                            edge_thickness_config_node(
+                                &self.current_theme,
+                                input_value.and_then(|v| v.as_float()),
+                            )
+                        }
+                        ConfigNodeType::EdgeColor => {
+                            edge_color_config_node(
+                                &self.current_theme,
+                                input_value.and_then(|v| v.as_color()),
+                            )
+                        }
+                    }
+                }
+            };
+
+            // Apply computed style to workflow nodes only (not to input/config nodes)
+            if matches!(node_type, NodeType::Workflow(_)) {
+                ng.push_node_styled(*position, element, computed_style.clone());
+            } else {
+                ng.push_node(*position, element);
+            }
         }
 
-        // Add stored edges
+        // Add stored edges with optional computed style
+        let edge_style = self.computed_style.to_edge_style();
         for (from, to) in &self.edges {
-            ng.push_edge(*from, *to);
+            if let Some(ref style) = edge_style {
+                ng.push_edge_styled(*from, *to, style.clone());
+            } else {
+                ng.push_edge(*from, *to);
+            }
         }
 
         let graph_view = ng.into();
 
         if self.command_palette_open {
-            // Build commands based on current palette view
             let (_, commands) = self.build_palette_commands();
 
             stack!(
@@ -639,6 +863,7 @@ impl Application {
                     self.palette_selected_index,
                     ApplicationMessage::CommandPaletteInput,
                     ApplicationMessage::CommandPaletteSelect,
+                    ApplicationMessage::CommandPaletteNavigate,
                     || ApplicationMessage::CommandPaletteCancel
                 )
             )
@@ -666,17 +891,149 @@ impl Application {
                 ("Command Palette", commands)
             }
             PaletteView::Submenu(submenu) if submenu == "nodes" => {
-                let commands = Self::get_node_types()
-                    .iter()
+                let commands = vec![
+                    // Workflow nodes
+                    command("workflow", "Workflow Nodes")
+                        .description("Original demo nodes")
+                        .action(ApplicationMessage::NavigateToSubmenu(
+                            "workflow_nodes".to_string(),
+                        )),
+                    // Input nodes
+                    command("inputs", "Input Nodes")
+                        .description("Sliders, color pickers, etc.")
+                        .action(ApplicationMessage::NavigateToSubmenu("input_nodes".to_string())),
+                    // Config nodes
+                    command("config", "Style Config Nodes")
+                        .description("Configure node and edge styling")
+                        .action(ApplicationMessage::NavigateToSubmenu(
+                            "config_nodes".to_string(),
+                        )),
+                ];
+                ("Add Node", commands)
+            }
+            PaletteView::Submenu(submenu) if submenu == "workflow_nodes" => {
+                let workflow_nodes = vec!["email_trigger", "email_parser", "filter", "calendar"];
+                let commands = workflow_nodes
+                    .into_iter()
                     .map(|name| {
-                        command(*name, *name).action(ApplicationMessage::SpawnNode {
+                        command(name, name).action(ApplicationMessage::SpawnNode {
                             x: 400.0,
                             y: 300.0,
-                            name: name.to_string(),
+                            node_type: NodeType::Workflow(name.to_string()),
                         })
                     })
                     .collect();
-                ("Add Node", commands)
+                ("Workflow Nodes", commands)
+            }
+            PaletteView::Submenu(submenu) if submenu == "input_nodes" => {
+                let commands = vec![
+                    command("corner_radius_slider", "Corner Radius Slider")
+                        .description("Float slider for corner radius (0-20)")
+                        .action(ApplicationMessage::SpawnNode {
+                            x: 100.0,
+                            y: 100.0,
+                            node_type: NodeType::Input(InputNodeType::FloatSlider {
+                                config: FloatSliderConfig::corner_radius(),
+                                value: 5.0,
+                            }),
+                        }),
+                    command("opacity_slider", "Opacity Slider")
+                        .description("Float slider for opacity (0.1-1.0)")
+                        .action(ApplicationMessage::SpawnNode {
+                            x: 100.0,
+                            y: 200.0,
+                            node_type: NodeType::Input(InputNodeType::FloatSlider {
+                                config: FloatSliderConfig::opacity(),
+                                value: 0.75,
+                            }),
+                        }),
+                    command("border_width_slider", "Border Width Slider")
+                        .description("Float slider for border width (0.5-5)")
+                        .action(ApplicationMessage::SpawnNode {
+                            x: 100.0,
+                            y: 300.0,
+                            node_type: NodeType::Input(InputNodeType::FloatSlider {
+                                config: FloatSliderConfig::border_width(),
+                                value: 1.0,
+                            }),
+                        }),
+                    command("thickness_slider", "Edge Thickness Slider")
+                        .description("Float slider for edge thickness (0.5-8)")
+                        .action(ApplicationMessage::SpawnNode {
+                            x: 100.0,
+                            y: 400.0,
+                            node_type: NodeType::Input(InputNodeType::FloatSlider {
+                                config: FloatSliderConfig::thickness(),
+                                value: 2.0,
+                            }),
+                        }),
+                    command("color_picker", "Color Picker (RGB)")
+                        .description("Full RGB color picker with sliders")
+                        .action(ApplicationMessage::SpawnNode {
+                            x: 100.0,
+                            y: 500.0,
+                            node_type: NodeType::Input(InputNodeType::ColorPicker {
+                                color: Color::from_rgb(0.5, 0.5, 0.5),
+                            }),
+                        }),
+                    command("color_preset", "Color Presets")
+                        .description("Quick color selection from presets")
+                        .action(ApplicationMessage::SpawnNode {
+                            x: 100.0,
+                            y: 600.0,
+                            node_type: NodeType::Input(InputNodeType::ColorPreset {
+                                color: Color::from_rgb(0.5, 0.5, 0.5),
+                            }),
+                        }),
+                ];
+                ("Input Nodes", commands)
+            }
+            PaletteView::Submenu(submenu) if submenu == "config_nodes" => {
+                let commands = vec![
+                    command("cfg_corner_radius", "Node Corner Radius")
+                        .description("Apply corner radius to all workflow nodes")
+                        .action(ApplicationMessage::SpawnNode {
+                            x: 400.0,
+                            y: 100.0,
+                            node_type: NodeType::Config(ConfigNodeType::CornerRadius),
+                        }),
+                    command("cfg_opacity", "Node Opacity")
+                        .description("Apply opacity to all workflow nodes")
+                        .action(ApplicationMessage::SpawnNode {
+                            x: 400.0,
+                            y: 200.0,
+                            node_type: NodeType::Config(ConfigNodeType::Opacity),
+                        }),
+                    command("cfg_border_width", "Node Border Width")
+                        .description("Apply border width to all workflow nodes")
+                        .action(ApplicationMessage::SpawnNode {
+                            x: 400.0,
+                            y: 300.0,
+                            node_type: NodeType::Config(ConfigNodeType::BorderWidth),
+                        }),
+                    command("cfg_fill_color", "Node Fill Color")
+                        .description("Apply fill color to all workflow nodes")
+                        .action(ApplicationMessage::SpawnNode {
+                            x: 400.0,
+                            y: 400.0,
+                            node_type: NodeType::Config(ConfigNodeType::FillColor),
+                        }),
+                    command("cfg_edge_thickness", "Edge Thickness")
+                        .description("Apply thickness to all edges")
+                        .action(ApplicationMessage::SpawnNode {
+                            x: 400.0,
+                            y: 500.0,
+                            node_type: NodeType::Config(ConfigNodeType::EdgeThickness),
+                        }),
+                    command("cfg_edge_color", "Edge Color")
+                        .description("Apply color to all edges")
+                        .action(ApplicationMessage::SpawnNode {
+                            x: 400.0,
+                            y: 600.0,
+                            node_type: NodeType::Config(ConfigNodeType::EdgeColor),
+                        }),
+                ];
+                ("Style Config Nodes", commands)
             }
             PaletteView::Submenu(submenu) if submenu == "themes" => {
                 let commands = Self::get_available_themes()
@@ -694,17 +1051,12 @@ impl Application {
 
     fn subscription(&self) -> Subscription<ApplicationMessage> {
         Subscription::batch(vec![
-            // Global keyboard events - using listen_with to filter properly
             event::listen_with(handle_keyboard_event),
-            // Animation frames for NodeGraph and theme preview
             window::frames().map(|_| ApplicationMessage::Tick),
         ])
     }
 }
 
-/// Keyboard event handler for subscriptions.
-/// Returns Some(message) only for events we want to handle, None otherwise.
-/// This allows text_input to receive character events normally.
 fn handle_keyboard_event(
     event: Event,
     _status: iced::event::Status,
@@ -712,12 +1064,10 @@ fn handle_keyboard_event(
 ) -> Option<ApplicationMessage> {
     match event {
         Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
-            // Ctrl+Space: Toggle palette
             if is_toggle_shortcut(&key, modifiers) {
                 return Some(ApplicationMessage::ToggleCommandPalette);
             }
 
-            // Global shortcuts with Ctrl/Cmd (Ctrl+N, Ctrl+T, etc.)
             if modifiers.command() {
                 let main_commands = Application::get_main_commands_with_shortcuts();
                 if let Some(cmd_id) = find_matching_shortcut(&main_commands, &key, modifiers) {
@@ -725,7 +1075,6 @@ fn handle_keyboard_event(
                 }
             }
 
-            // Navigation keys - only handle these, let text_input handle characters
             match key {
                 keyboard::Key::Named(keyboard::key::Named::ArrowUp) => {
                     Some(ApplicationMessage::CommandPaletteNavigateUp)
@@ -739,11 +1088,9 @@ fn handle_keyboard_event(
                 keyboard::Key::Named(keyboard::key::Named::Escape) => {
                     Some(ApplicationMessage::CommandPaletteCancel)
                 }
-                // Don't handle character keys - let text_input widget handle them
                 _ => None,
             }
         }
         _ => None,
     }
 }
-

@@ -69,9 +69,13 @@ struct Edge {
     to_pin: u32,
     color: vec4<f32>,
     thickness: f32,
+    edge_type: u32,    // 0=Bezier, 1=Straight, 2=SmoothStep, 3=Step
+    dash_length: f32,  // 0.0 = solid line
+    gap_length: f32,
+    flow_speed: f32,   // pixels per second
+    flags: u32,        // bit 0: animated dash, bit 1: glow, bit 2: pulse
     _pad0: f32,
     _pad1: f32,
-    _pad2: f32,
 }
 
 @group(0) @binding(0)
@@ -132,6 +136,12 @@ fn dot2(v: vec2<f32>) -> f32 {
 }
 
 fn sdCubicBezier(pos: vec2<f32>, p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>) -> f32 {
+    let result = sdCubicBezierWithT(pos, p0, p1, p2, p3);
+    return result.x;
+}
+
+// Returns vec2(distance, t) where t is the parameter along the curve [0,1]
+fn sdCubicBezierWithT(pos: vec2<f32>, p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>) -> vec2<f32> {
     let A = -p0 + 3.0 * p1 - 3.0 * p2 + p3;
     let B = 3.0 * p0 - 6.0 * p1 + 3.0 * p2;
     let C = -3.0 * p0 + 3.0 * p1;
@@ -173,9 +183,30 @@ fn sdCubicBezier(pos: vec2<f32>, p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3
         }
     }
 
-    min_dist = min(min_dist, dot2(pos - p3));
+    // Check endpoint
+    let end_dist = dot2(pos - p3);
+    if (end_dist < min_dist) {
+        min_dist = end_dist;
+        best_t = 1.0;
+    }
 
-    return sqrt(min_dist);
+    return vec2<f32>(sqrt(min_dist), best_t);
+}
+
+// Approximate bezier curve length using chord + control polygon method
+fn estimateBezierLength(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>) -> f32 {
+    let chord = length(p3 - p0);
+    let control_net = length(p1 - p0) + length(p2 - p1) + length(p3 - p2);
+    return (chord + control_net) * 0.5;
+}
+
+// Straight line SDF with t parameter
+fn sdStraightLine(pos: vec2<f32>, p0: vec2<f32>, p1: vec2<f32>) -> vec2<f32> {
+    let pa = pos - p0;
+    let ba = p1 - p0;
+    let h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+    let dist = length(pa - ba * h);
+    return vec2<f32>(dist, h);
 }
 
 // ============================================================================
@@ -311,8 +342,9 @@ fn vs_edge(@builtin(instance_index) instance: u32,
 
     let bbox_min = min(min(p0, p1), min(p2, p3));
     let bbox_max = max(max(p0, p1), max(p2, p3));
-    let edge_thickness = 4.0 / uniforms.camera_zoom;
-    let bbox = vec4(bbox_min - vec2(edge_thickness), bbox_max + vec2(edge_thickness));
+    // Use actual edge thickness (world space) plus AA padding (screen space converted to world)
+    let edge_padding = edge.thickness + 2.0 / uniforms.camera_zoom;
+    let bbox = vec4(bbox_min - vec2(edge_padding), bbox_max + vec2(edge_padding));
 
     let corners = array<vec2<f32>, 4>(
         bbox.xy,
@@ -344,13 +376,72 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
     let p3 = to_pin.position;
     let p2 = p3 + dir_to * seg_len;
 
-    let edge_color = select_edge_color(from_pin, to_pin);
+    // Use edge color if set, otherwise use pin-based color selection
+    var edge_color = edge.color.rgb;
+    if (edge.color.a < 0.01) {
+        edge_color = select_edge_color(from_pin, to_pin);
+    }
 
-    let dist = sdCubicBezier(in.world_uv, p0, p1, p2, p3);
-    let edge_thickness = 2.0 / uniforms.camera_zoom;
+    // Calculate distance and t parameter based on edge type
+    var dist_and_t: vec2<f32>;
+    var curve_length: f32;
+
+    switch (edge.edge_type) {
+        case 1u: {  // Straight
+            dist_and_t = sdStraightLine(in.world_uv, p0, p3);
+            curve_length = length(p3 - p0);
+        }
+        // TODO: case 2u (SmoothStep) and case 3u (Step) can be added later
+        default: {  // Bezier (0) or fallback
+            dist_and_t = sdCubicBezierWithT(in.world_uv, p0, p1, p2, p3);
+            curve_length = estimateBezierLength(p0, p1, p2, p3);
+        }
+    }
+
+    let dist = dist_and_t.x;
+    let t = dist_and_t.y;
+
+    let edge_thickness = edge.thickness;
     let aa = 1.0 / uniforms.camera_zoom;
 
-    let alpha = 1.0 - smoothstep(edge_thickness, edge_thickness + aa, dist);
+    // Base alpha from distance
+    var alpha = 1.0 - smoothstep(edge_thickness, edge_thickness + aa, dist);
+
+    // === DASH PATTERN ===
+    if (edge.dash_length > 0.0) {
+        let pattern_size = edge.dash_length + edge.gap_length;
+
+        // Position along curve in world units
+        var curve_pos = t * curve_length;
+
+        // Animation: shift pattern with time (bit 0 = animated dash)
+        if ((edge.flags & 1u) != 0u) {
+            curve_pos = curve_pos + uniforms.time * edge.flow_speed;
+        }
+
+        // Dash or gap?
+        let pattern_t = fract(curve_pos / pattern_size);
+        let dash_ratio = edge.dash_length / pattern_size;
+
+        if (pattern_t > dash_ratio) {
+            // In gap - transparent
+            alpha = 0.0;
+        }
+    }
+
+    // === GLOW EFFECT (bit 1) ===
+    if ((edge.flags & 2u) != 0u) {
+        let flow_t = fract(t - uniforms.time * 0.5);
+        let glow = smoothstep(0.0, 0.2, flow_t) * smoothstep(0.5, 0.3, flow_t);
+        // Additive glow
+        return vec4(edge_color + vec3(glow * 0.3), alpha);
+    }
+
+    // === PULSE EFFECT (bit 2) ===
+    if ((edge.flags & 4u) != 0u) {
+        let pulse = sin(uniforms.time * 3.0) * 0.5 + 0.5;
+        alpha = alpha * (0.5 + pulse * 0.5);
+    }
 
     return vec4(edge_color, alpha);
 }
@@ -648,7 +739,7 @@ fn fs_dragging(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
     }
 
     let dist = sdCubicBezier(in.world_uv, p0, p1, p2, p3);
-    let edge_thickness = 2.0 / uniforms.camera_zoom;
+    let edge_thickness = 2.0;  // World-space thickness, scales with zoom
 
     let alpha = 1.0 - smoothstep(edge_thickness, edge_thickness + aa, dist);
 

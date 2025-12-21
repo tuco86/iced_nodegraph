@@ -9,7 +9,7 @@ use web_time::Instant;
 
 use super::{
     DragInfo, NodeGraph,
-    effects::{self, Layer},
+    effects::{self, EdgeData, Layer},
     euclid::{IntoIced, WorldVector},
     state::{Dragging, NodeGraphState},
 };
@@ -320,11 +320,17 @@ where
                     )
                     .collect()
             },
-            // Extract edge connectivity without style for GPU primitive (style used separately)
+            // Extract edge connectivity with style for GPU primitive
             edges: self
                 .edges
                 .iter()
-                .map(|(from, to, _style)| ((from.node_id, from.pin_id), (to.node_id, to.pin_id)))
+                .map(|(from, to, style)| EdgeData {
+                    from_node: from.node_id,
+                    from_pin: from.pin_id,
+                    to_node: to.node_id,
+                    to_pin: to.pin_id,
+                    style: style.clone().unwrap_or_default(),
+                })
                 .collect(),
             edge_color,
             background_color: bg_color,

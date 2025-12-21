@@ -189,7 +189,8 @@ pub use node_grapgh::{
 };
 pub use node_pin::{NodePin, PinDirection, PinReference, PinSide, node_pin};
 pub use style::{
-    EdgeStyle, GraphStyle, NodeStyle, SelectionStyle, is_dark_theme, relative_luminance,
+    DashPattern, EdgeAnimation, EdgeStyle, EdgeType, GraphStyle, NodeStyle, SelectionStyle,
+    is_dark_theme, relative_luminance,
 };
 
 pub mod content;

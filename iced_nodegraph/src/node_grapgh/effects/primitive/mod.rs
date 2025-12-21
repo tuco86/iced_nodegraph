@@ -10,6 +10,7 @@ pub use node::Node;
 pub use pin::Pin;
 
 use crate::node_grapgh::{euclid::WorldPoint, state::Dragging};
+use crate::style::EdgeStyle;
 
 use super::pipeline::Pipeline;
 
@@ -17,6 +18,16 @@ use super::pipeline::Pipeline;
 pub enum Layer {
     Background,
     Foreground,
+}
+
+/// Edge data for GPU rendering, including style information.
+#[derive(Debug, Clone)]
+pub struct EdgeData {
+    pub from_node: usize,
+    pub from_pin: usize,
+    pub to_node: usize,
+    pub to_pin: usize,
+    pub style: EdgeStyle,
 }
 
 #[derive(Debug, Clone)]
@@ -28,7 +39,7 @@ pub struct NodeGraphPrimitive {
     pub time: f32, // Time in seconds for animations
     pub dragging: Dragging,
     pub nodes: Vec<Node>,
-    pub edges: Vec<((usize, usize), (usize, usize))>, // (from_node, from_pin) -> (to_node, to_pin)
+    pub edges: Vec<EdgeData>,
     pub edge_color: glam::Vec4,
     pub background_color: glam::Vec4,
     pub border_color: glam::Vec4,

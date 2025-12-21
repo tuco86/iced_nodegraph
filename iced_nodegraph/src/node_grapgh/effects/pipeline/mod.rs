@@ -18,7 +18,7 @@ use iced_wgpu::primitive::Pipeline as PipelineTrait;
 
 use crate::node_grapgh::{effects::Node, euclid::WorldPoint, state::Dragging};
 
-use super::{Layer, primitive::NodeGraphPrimitive};
+use super::{EdgeData, Layer, primitive::NodeGraphPrimitive};
 
 mod buffer;
 pub mod cache;
@@ -203,7 +203,7 @@ impl Pipeline {
         time: f32,
         dragging: &Dragging,
         nodes: &[Node],
-        edges: &[((usize, usize), (usize, usize))],
+        edges: &[EdgeData],
         edge_color: glam::Vec4,
         background_color: glam::Vec4,
         border_color: glam::Vec4,
@@ -276,30 +276,52 @@ impl Pipeline {
         let num_edges = self.edges.update(
             device,
             queue,
-            edges
-                .iter()
-                .map(|((from_node, from_pin), (to_node, to_pin))| {
-                    // Highlight edges where both ends are selected
-                    let is_highlighted =
-                        selected_nodes.contains(from_node) && selected_nodes.contains(to_node);
-                    let color = if is_highlighted {
-                        selected_edge_color
-                    } else {
-                        edge_color
-                    };
+            edges.iter().map(|edge_data| {
+                // Highlight edges where both ends are selected
+                let is_highlighted = selected_nodes.contains(&edge_data.from_node)
+                    && selected_nodes.contains(&edge_data.to_node);
 
-                    types::Edge {
-                        from_node: *from_node as _,
-                        from_pin: *from_pin as _,
-                        to_node: *to_node as _,
-                        to_pin: *to_pin as _,
-                        color,
-                        thickness: 2.0,
-                        _pad0: 0.0,
-                        _pad1: 0.0,
-                        _pad2: 0.0,
-                    }
-                }),
+                // Use per-edge style color if alpha > 0, otherwise use global/selection color
+                let style = &edge_data.style;
+                let style_color = glam::Vec4::new(
+                    style.color.r,
+                    style.color.g,
+                    style.color.b,
+                    style.color.a,
+                );
+
+                let color = if is_highlighted {
+                    selected_edge_color
+                } else if style_color.w > 0.01 {
+                    // Per-edge color takes precedence
+                    style_color
+                } else {
+                    // Fallback to global edge color
+                    edge_color
+                };
+
+                // Extract dash pattern values
+                let (dash_length, gap_length) = style
+                    .dash_pattern
+                    .map(|d| (d.dash_length, d.gap_length))
+                    .unwrap_or((0.0, 0.0));
+
+                types::Edge {
+                    from_node: edge_data.from_node as _,
+                    from_pin: edge_data.from_pin as _,
+                    to_node: edge_data.to_node as _,
+                    to_pin: edge_data.to_pin as _,
+                    color,
+                    thickness: style.thickness,
+                    edge_type: style.edge_type as u32,
+                    dash_length,
+                    gap_length,
+                    flow_speed: style.flow_speed(),
+                    flags: style.animation_flags(),
+                    _pad0: 0.0,
+                    _pad1: 0.0,
+                }
+            }),
         );
 
         let dragging_type: u32 = match dragging {
