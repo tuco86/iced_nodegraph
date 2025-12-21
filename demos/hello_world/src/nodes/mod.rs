@@ -7,11 +7,11 @@ mod float_slider;
 mod style_config;
 
 pub use calendar::calendar_node;
-pub use color_picker::{color_picker_node, color_preset_node, ColorPreset};
+pub use color_picker::{ColorPreset, color_picker_node, color_preset_node};
 pub use email_parser::email_parser_node;
 pub use email_trigger::email_trigger_node;
 pub use filter::filter_node;
-pub use float_slider::{float_slider_node, FloatSliderConfig};
+pub use float_slider::{FloatSliderConfig, float_slider_node};
 pub use style_config::{
     border_width_config_node, corner_radius_config_node, edge_color_config_node,
     edge_thickness_config_node, fill_color_config_node, opacity_config_node,
@@ -67,9 +67,16 @@ impl ConfigNodeType {
 /// Input node types that produce values
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputNodeType {
-    FloatSlider { config: FloatSliderConfig, value: f32 },
-    ColorPicker { color: Color },
-    ColorPreset { color: Color },
+    FloatSlider {
+        config: FloatSliderConfig,
+        value: f32,
+    },
+    ColorPicker {
+        color: Color,
+    },
+    ColorPreset {
+        color: Color,
+    },
 }
 
 impl InputNodeType {

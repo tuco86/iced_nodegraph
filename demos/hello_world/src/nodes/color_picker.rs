@@ -3,11 +3,11 @@
 //! Outputs a configurable color value via RGB sliders or presets.
 
 use iced::{
-    widget::{column, container, row, slider, text, button},
-    alignment::Horizontal,
     Color, Length,
+    alignment::Horizontal,
+    widget::{button, column, container, row, slider, text},
 };
-use iced_nodegraph::{pin, node_title_bar, NodeContentStyle};
+use iced_nodegraph::{NodeContentStyle, node_title_bar, pin};
 
 /// Predefined color presets
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -65,16 +65,14 @@ where
     let preview = container(text(""))
         .width(30)
         .height(20)
-        .style(move |_theme| {
-            container::Style {
-                background: Some(iced::Background::Color(color)),
-                border: iced::Border {
-                    color: Color::from_rgb(0.4, 0.4, 0.4),
-                    width: 1.0,
-                    radius: 3.0.into(),
-                },
-                ..Default::default()
-            }
+        .style(move |_theme| container::Style {
+            background: Some(iced::Background::Color(color)),
+            border: iced::Border {
+                color: Color::from_rgb(0.4, 0.4, 0.4),
+                width: 1.0,
+                radius: 3.0.into(),
+            },
+            ..Default::default()
         });
 
     // RGB value display
@@ -132,7 +130,9 @@ where
         node_title_bar("Color", style),
         container(
             column![
-                row![preview, rgb_display].spacing(8).align_y(iced::Alignment::Center),
+                row![preview, rgb_display]
+                    .spacing(8)
+                    .align_y(iced::Alignment::Center),
                 r_slider,
                 g_slider,
                 b_slider,
@@ -161,16 +161,14 @@ where
     let preview = container(text(""))
         .width(Length::Fill)
         .height(20)
-        .style(move |_theme| {
-            container::Style {
-                background: Some(iced::Background::Color(current)),
-                border: iced::Border {
-                    color: Color::from_rgb(0.4, 0.4, 0.4),
-                    width: 1.0,
-                    radius: 3.0.into(),
-                },
-                ..Default::default()
-            }
+        .style(move |_theme| container::Style {
+            background: Some(iced::Background::Color(current)),
+            border: iced::Border {
+                color: Color::from_rgb(0.4, 0.4, 0.4),
+                width: 1.0,
+                radius: 3.0.into(),
+            },
+            ..Default::default()
         });
 
     // Color preset buttons (2 rows of 4)
@@ -183,16 +181,14 @@ where
             button(text(""))
                 .width(20)
                 .height(20)
-                .style(move |_theme, _status| {
-                    button::Style {
-                        background: Some(iced::Background::Color(color)),
-                        border: iced::Border {
-                            color: Color::from_rgb(0.3, 0.3, 0.3),
-                            width: 1.0,
-                            radius: 2.0.into(),
-                        },
-                        ..Default::default()
-                    }
+                .style(move |_theme, _status| button::Style {
+                    background: Some(iced::Background::Color(color)),
+                    border: iced::Border {
+                        color: Color::from_rgb(0.3, 0.3, 0.3),
+                        width: 1.0,
+                        radius: 2.0.into(),
+                    },
+                    ..Default::default()
                 })
                 .on_press(on_select(color))
                 .into()
@@ -207,16 +203,14 @@ where
             button(text(""))
                 .width(20)
                 .height(20)
-                .style(move |_theme, _status| {
-                    button::Style {
-                        background: Some(iced::Background::Color(color)),
-                        border: iced::Border {
-                            color: Color::from_rgb(0.3, 0.3, 0.3),
-                            width: 1.0,
-                            radius: 2.0.into(),
-                        },
-                        ..Default::default()
-                    }
+                .style(move |_theme, _status| button::Style {
+                    background: Some(iced::Background::Color(color)),
+                    border: iced::Border {
+                        color: Color::from_rgb(0.3, 0.3, 0.3),
+                        width: 1.0,
+                        radius: 2.0.into(),
+                    },
+                    ..Default::default()
                 })
                 .on_press(on_select(color))
                 .into()

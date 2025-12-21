@@ -261,45 +261,54 @@ where
                             }
 
                             // Use per-node style if provided, otherwise use theme defaults
-                            let (node_fill, mut node_border, corner_rad, mut border_w, opacity, shadow_offset, shadow_blur, shadow_color) =
-                                if let Some(style) = node_style {
-                                    let (s_offset, s_blur, s_color) = if let Some(shadow) = &style.shadow {
+                            let (
+                                node_fill,
+                                mut node_border,
+                                corner_rad,
+                                mut border_w,
+                                opacity,
+                                shadow_offset,
+                                shadow_blur,
+                                shadow_color,
+                            ) = if let Some(style) = node_style {
+                                let (s_offset, s_blur, s_color) =
+                                    if let Some(shadow) = &style.shadow {
                                         (shadow.offset, shadow.blur_radius, shadow.color)
                                     } else {
                                         ((0.0, 0.0), 0.0, iced::Color::TRANSPARENT)
                                     };
-                                    (
-                                        style.fill_color,
-                                        style.border_color,
-                                        style.corner_radius,
-                                        style.border_width,
-                                        style.opacity * fade_opacity,
-                                        s_offset,
-                                        s_blur,
-                                        s_color,
-                                    )
-                                } else {
-                                    (
-                                        iced::Color::from_rgba(
-                                            fill_color.x,
-                                            fill_color.y,
-                                            fill_color.z,
-                                            fill_color.w,
-                                        ),
-                                        iced::Color::from_rgba(
-                                            border_color.x,
-                                            border_color.y,
-                                            border_color.z,
-                                            border_color.w,
-                                        ),
-                                        5.0,
-                                        1.0,
-                                        fade_opacity * 0.75,
-                                        (2.0, 2.0), // Default subtle shadow offset
-                                        4.0,        // Default subtle shadow blur
-                                        iced::Color::from_rgba(0.0, 0.0, 0.0, 0.15),
-                                    )
-                                };
+                                (
+                                    style.fill_color,
+                                    style.border_color,
+                                    style.corner_radius,
+                                    style.border_width,
+                                    style.opacity * fade_opacity,
+                                    s_offset,
+                                    s_blur,
+                                    s_color,
+                                )
+                            } else {
+                                (
+                                    iced::Color::from_rgba(
+                                        fill_color.x,
+                                        fill_color.y,
+                                        fill_color.z,
+                                        fill_color.w,
+                                    ),
+                                    iced::Color::from_rgba(
+                                        border_color.x,
+                                        border_color.y,
+                                        border_color.z,
+                                        border_color.w,
+                                    ),
+                                    5.0,
+                                    1.0,
+                                    fade_opacity * 0.75,
+                                    (2.0, 2.0), // Default subtle shadow offset
+                                    4.0,        // Default subtle shadow blur
+                                    iced::Color::from_rgba(0.0, 0.0, 0.0, 0.15),
+                                )
+                            };
 
                             // Apply selection highlighting
                             if is_selected {
@@ -519,8 +528,7 @@ where
                 // Ctrl+D: Clone selected nodes
                 keyboard::Key::Character(c) if c.as_str() == "d" && modifiers.command() => {
                     if !state.selected_nodes.is_empty() {
-                        let node_ids: Vec<usize> =
-                            state.selected_nodes.iter().copied().collect();
+                        let node_ids: Vec<usize> = state.selected_nodes.iter().copied().collect();
                         if let Some(handler) = self.on_clone_handler() {
                             shell.publish(handler(node_ids.clone()));
                         }
@@ -552,7 +560,9 @@ where
                             shell.publish(handler(vec![]));
                         }
                         if let Some(handler) = self.get_on_event() {
-                            shell.publish(handler(NodeGraphEvent::SelectionChanged { selected: vec![] }));
+                            shell.publish(handler(NodeGraphEvent::SelectionChanged {
+                                selected: vec![],
+                            }));
                         }
                         shell.capture_event();
                         shell.request_redraw();
@@ -562,8 +572,7 @@ where
                 keyboard::Key::Named(keyboard::key::Named::Delete)
                 | keyboard::Key::Named(keyboard::key::Named::Backspace) => {
                     if !state.selected_nodes.is_empty() {
-                        let node_ids: Vec<usize> =
-                            state.selected_nodes.iter().copied().collect();
+                        let node_ids: Vec<usize> = state.selected_nodes.iter().copied().collect();
                         if let Some(handler) = self.on_delete_handler() {
                             shell.publish(handler(node_ids.clone()));
                         }

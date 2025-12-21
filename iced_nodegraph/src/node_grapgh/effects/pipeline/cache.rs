@@ -100,16 +100,19 @@ impl BitSet {
     /// Iterate over all dirty indices.
     pub fn iter(&self) -> impl Iterator<Item = usize> + '_ {
         let len = self.len;
-        self.bits.iter().enumerate().flat_map(move |(word_idx, &word)| {
-            (0..64).filter_map(move |bit| {
-                let idx = word_idx * 64 + bit;
-                if idx < len && (word & (1 << bit)) != 0 {
-                    Some(idx)
-                } else {
-                    None
-                }
+        self.bits
+            .iter()
+            .enumerate()
+            .flat_map(move |(word_idx, &word)| {
+                (0..64).filter_map(move |bit| {
+                    let idx = word_idx * 64 + bit;
+                    if idx < len && (word & (1 << bit)) != 0 {
+                        Some(idx)
+                    } else {
+                        None
+                    }
+                })
             })
-        })
     }
 
     /// Get the capacity of the BitSet.
@@ -211,9 +214,7 @@ impl DirtyFlags {
 
     /// Check if any node-related data is dirty.
     pub fn has_node_changes(&self) -> bool {
-        self.structure_changed
-            || !self.node_positions.is_empty()
-            || !self.node_styles.is_empty()
+        self.structure_changed || !self.node_positions.is_empty() || !self.node_styles.is_empty()
     }
 
     /// Check if any edge-related data is dirty.

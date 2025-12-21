@@ -3,11 +3,11 @@
 //! These nodes receive values from input nodes and apply them to graph styling.
 
 use iced::{
-    widget::{column, container, row, text},
-    alignment::Horizontal,
     Color, Length,
+    alignment::Horizontal,
+    widget::{column, container, row, text},
 };
-use iced_nodegraph::{pin, node_title_bar, NodeContentStyle};
+use iced_nodegraph::{NodeContentStyle, node_title_bar, pin};
 
 /// Node that configures corner radius for all nodes
 pub fn corner_radius_config_node<'a, Message>(
@@ -24,9 +24,15 @@ where
         None => text("--").size(11),
     };
 
-    let input_pin = container(pin!(Left, "radius", Input, "float", Color::from_rgb(0.5, 0.8, 0.5)))
-        .width(Length::FillPortion(1))
-        .align_x(Horizontal::Left);
+    let input_pin = container(pin!(
+        Left,
+        "radius",
+        Input,
+        "float",
+        Color::from_rgb(0.5, 0.8, 0.5)
+    ))
+    .width(Length::FillPortion(1))
+    .align_x(Horizontal::Left);
 
     let label = container(text("Corner Radius").size(11))
         .width(Length::FillPortion(2))
@@ -64,9 +70,15 @@ where
         None => text("--").size(11),
     };
 
-    let input_pin = container(pin!(Left, "opacity", Input, "float", Color::from_rgb(0.5, 0.8, 0.5)))
-        .width(Length::FillPortion(1))
-        .align_x(Horizontal::Left);
+    let input_pin = container(pin!(
+        Left,
+        "opacity",
+        Input,
+        "float",
+        Color::from_rgb(0.5, 0.8, 0.5)
+    ))
+    .width(Length::FillPortion(1))
+    .align_x(Horizontal::Left);
 
     let label = container(text("Opacity").size(11))
         .width(Length::FillPortion(2))
@@ -104,9 +116,15 @@ where
         None => text("--").size(11),
     };
 
-    let input_pin = container(pin!(Left, "width", Input, "float", Color::from_rgb(0.5, 0.8, 0.5)))
-        .width(Length::FillPortion(1))
-        .align_x(Horizontal::Left);
+    let input_pin = container(pin!(
+        Left,
+        "width",
+        Input,
+        "float",
+        Color::from_rgb(0.5, 0.8, 0.5)
+    ))
+    .width(Length::FillPortion(1))
+    .align_x(Horizontal::Left);
 
     let label = container(text("Border Width").size(11))
         .width(Length::FillPortion(2))
@@ -143,25 +161,27 @@ where
         Some(c) => container(text(""))
             .width(40)
             .height(16)
-            .style(move |_theme| {
-                container::Style {
-                    background: Some(iced::Background::Color(c)),
-                    border: iced::Border {
-                        color: Color::from_rgb(0.4, 0.4, 0.4),
-                        width: 1.0,
-                        radius: 2.0.into(),
-                    },
-                    ..Default::default()
-                }
+            .style(move |_theme| container::Style {
+                background: Some(iced::Background::Color(c)),
+                border: iced::Border {
+                    color: Color::from_rgb(0.4, 0.4, 0.4),
+                    width: 1.0,
+                    radius: 2.0.into(),
+                },
+                ..Default::default()
             }),
-        None => container(text("--").size(10))
-            .width(40)
-            .height(16),
+        None => container(text("--").size(10)).width(40).height(16),
     };
 
-    let input_pin = container(pin!(Left, "color", Input, "color", Color::from_rgb(0.8, 0.5, 0.8)))
-        .width(Length::FillPortion(1))
-        .align_x(Horizontal::Left);
+    let input_pin = container(pin!(
+        Left,
+        "color",
+        Input,
+        "color",
+        Color::from_rgb(0.8, 0.5, 0.8)
+    ))
+    .width(Length::FillPortion(1))
+    .align_x(Horizontal::Left);
 
     let label = container(text("Fill Color").size(11))
         .width(Length::FillPortion(2))
@@ -199,9 +219,15 @@ where
         None => text("--").size(11),
     };
 
-    let input_pin = container(pin!(Left, "thickness", Input, "float", Color::from_rgb(0.5, 0.8, 0.5)))
-        .width(Length::FillPortion(1))
-        .align_x(Horizontal::Left);
+    let input_pin = container(pin!(
+        Left,
+        "thickness",
+        Input,
+        "float",
+        Color::from_rgb(0.5, 0.8, 0.5)
+    ))
+    .width(Length::FillPortion(1))
+    .align_x(Horizontal::Left);
 
     let label = container(text("Thickness").size(11))
         .width(Length::FillPortion(2))
@@ -238,25 +264,27 @@ where
         Some(c) => container(text(""))
             .width(40)
             .height(16)
-            .style(move |_theme| {
-                container::Style {
-                    background: Some(iced::Background::Color(c)),
-                    border: iced::Border {
-                        color: Color::from_rgb(0.4, 0.4, 0.4),
-                        width: 1.0,
-                        radius: 2.0.into(),
-                    },
-                    ..Default::default()
-                }
+            .style(move |_theme| container::Style {
+                background: Some(iced::Background::Color(c)),
+                border: iced::Border {
+                    color: Color::from_rgb(0.4, 0.4, 0.4),
+                    width: 1.0,
+                    radius: 2.0.into(),
+                },
+                ..Default::default()
             }),
-        None => container(text("--").size(10))
-            .width(40)
-            .height(16),
+        None => container(text("--").size(10)).width(40).height(16),
     };
 
-    let input_pin = container(pin!(Left, "color", Input, "color", Color::from_rgb(0.8, 0.5, 0.8)))
-        .width(Length::FillPortion(1))
-        .align_x(Horizontal::Left);
+    let input_pin = container(pin!(
+        Left,
+        "color",
+        Input,
+        "color",
+        Color::from_rgb(0.8, 0.5, 0.8)
+    ))
+    .width(Length::FillPortion(1))
+    .align_x(Horizontal::Left);
 
     let label = container(text("Edge Color").size(11))
         .width(Length::FillPortion(2))

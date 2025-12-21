@@ -112,7 +112,8 @@ impl ForceDirectedLayout {
             node.velocity.1 = (node.velocity.1 + forces[i].1) * DAMPING;
 
             // Clamp velocity
-            let speed = (node.velocity.0 * node.velocity.0 + node.velocity.1 * node.velocity.1).sqrt();
+            let speed =
+                (node.velocity.0 * node.velocity.0 + node.velocity.1 * node.velocity.1).sqrt();
             if speed > MAX_VELOCITY {
                 node.velocity.0 *= MAX_VELOCITY / speed;
                 node.velocity.1 *= MAX_VELOCITY / speed;
@@ -123,7 +124,8 @@ impl ForceDirectedLayout {
             node.position.y += node.velocity.1;
 
             // Track max displacement
-            let displacement = (node.velocity.0 * node.velocity.0 + node.velocity.1 * node.velocity.1).sqrt();
+            let displacement =
+                (node.velocity.0 * node.velocity.0 + node.velocity.1 * node.velocity.1).sqrt();
             max_displacement = max_displacement.max(displacement);
         }
 

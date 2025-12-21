@@ -28,7 +28,8 @@ impl<T> Buffer<T> {
         usage: wgpu::BufferUsages,
     ) -> Self {
         let capacity = BUFFER_MIN_CAPACITY;
-        let size = capacity as wgpu::BufferAddress * std::mem::size_of::<T>() as wgpu::BufferAddress;
+        let size =
+            capacity as wgpu::BufferAddress * std::mem::size_of::<T>() as wgpu::BufferAddress;
         let buffer_wgpu = create_wgpu_buffer(device, label, size, usage);
         let buffer_vec = Vec::with_capacity(capacity);
         Self {
@@ -111,7 +112,11 @@ impl<T> Buffer<T> {
 
                 // Write to GPU at specific offset
                 let offset = (idx * item_size) as wgpu::BufferAddress;
-                queue.write_buffer(&self.buffer_wgpu, offset, bytemuck::bytes_of(&new_data[idx]));
+                queue.write_buffer(
+                    &self.buffer_wgpu,
+                    offset,
+                    bytemuck::bytes_of(&new_data[idx]),
+                );
                 any_written = true;
             }
         }
@@ -136,10 +141,11 @@ impl<T> Buffer<T> {
 
         let recreated = if self.buffer_wgpu.size() < required_size {
             // Need larger buffer - grow with headroom
-            let new_capacity = ((self.buffer_vec.capacity() as f32 * BUFFER_GROWTH_FACTOR) as usize)
+            let new_capacity = ((self.buffer_vec.capacity() as f32 * BUFFER_GROWTH_FACTOR)
+                as usize)
                 .max(BUFFER_MIN_CAPACITY);
-            let new_size =
-                new_capacity as wgpu::BufferAddress * std::mem::size_of::<T>() as wgpu::BufferAddress;
+            let new_size = new_capacity as wgpu::BufferAddress
+                * std::mem::size_of::<T>() as wgpu::BufferAddress;
 
             self.buffer_wgpu = create_wgpu_buffer(device, self.label, new_size, self.usage);
             self.generation += 1;

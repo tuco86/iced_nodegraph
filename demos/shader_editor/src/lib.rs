@@ -211,13 +211,17 @@ impl Application {
                     let from_node_data = self.shader_graph.nodes.get(from.node_id);
                     let to_node_data = self.shader_graph.nodes.get(to.node_id);
 
-                    if let (Some(from_node_data), Some(to_node_data)) = (from_node_data, to_node_data) {
+                    if let (Some(from_node_data), Some(to_node_data)) =
+                        (from_node_data, to_node_data)
+                    {
                         // from.pin_id is visual index, output starts after inputs
                         let from_socket = from.pin_id.saturating_sub(from_node_data.inputs.len());
                         // to.pin_id is visual index, inputs come first so it's direct
                         let to_socket = to.pin_id;
 
-                        if from_socket < from_node_data.outputs.len() && to_socket < to_node_data.inputs.len() {
+                        if from_socket < from_node_data.outputs.len()
+                            && to_socket < to_node_data.inputs.len()
+                        {
                             Some((
                                 from_node_data.id,
                                 from_socket,

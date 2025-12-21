@@ -213,7 +213,11 @@ mod tests {
             pending_cuts: pending_cuts.clone(),
         };
 
-        if let Dragging::EdgeCutting { trail: stored, pending_cuts: cuts } = dragging {
+        if let Dragging::EdgeCutting {
+            trail: stored,
+            pending_cuts: cuts,
+        } = dragging
+        {
             assert_eq!(stored.len(), 3);
             assert_eq!(stored[0].x, 0.0);
             assert_eq!(stored[2].x, 20.0);

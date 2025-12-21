@@ -181,19 +181,13 @@ where
     }
 
     /// Sets a callback for when an edge is connected between two pins.
-    pub fn on_connect(
-        mut self,
-        f: impl Fn(PinReference, PinReference) -> Message + 'a,
-    ) -> Self {
+    pub fn on_connect(mut self, f: impl Fn(PinReference, PinReference) -> Message + 'a) -> Self {
         self.on_connect = Some(Box::new(f));
         self
     }
 
     /// Sets a callback for when an edge is disconnected between two pins.
-    pub fn on_disconnect(
-        mut self,
-        f: impl Fn(PinReference, PinReference) -> Message + 'a,
-    ) -> Self {
+    pub fn on_disconnect(mut self, f: impl Fn(PinReference, PinReference) -> Message + 'a) -> Self {
         self.on_disconnect = Some(Box::new(f));
         self
     }
@@ -367,14 +361,10 @@ where
     ) -> Option<&Box<dyn Fn(Vec<usize>, Vector) -> Message + 'a>> {
         self.on_group_move.as_ref()
     }
-    pub(super) fn on_drag_start_handler(
-        &self,
-    ) -> Option<&Box<dyn Fn(DragInfo) -> Message + 'a>> {
+    pub(super) fn on_drag_start_handler(&self) -> Option<&Box<dyn Fn(DragInfo) -> Message + 'a>> {
         self.on_drag_start.as_ref()
     }
-    pub(super) fn on_drag_update_handler(
-        &self,
-    ) -> Option<&Box<dyn Fn(f32, f32) -> Message + 'a>> {
+    pub(super) fn on_drag_update_handler(&self) -> Option<&Box<dyn Fn(f32, f32) -> Message + 'a>> {
         self.on_drag_update.as_ref()
     }
     pub(super) fn on_drag_end_handler(&self) -> Option<&Box<dyn Fn() -> Message + 'a>> {

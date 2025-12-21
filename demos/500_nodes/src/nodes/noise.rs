@@ -1,11 +1,14 @@
 use iced::{
+    Color, Length, Theme,
     alignment::Horizontal,
     widget::{column, container, row, text},
-    Color, Length, Theme,
 };
 use iced_nodegraph::pin;
 
-fn title_bar<'a, Message>(title: &'a str, theme: &'a Theme) -> iced::widget::Container<'a, Message, Theme, iced::Renderer>
+fn title_bar<'a, Message>(
+    title: &'a str,
+    theme: &'a Theme,
+) -> iced::widget::Container<'a, Message, Theme, iced::Renderer>
 where
     Message: 'a,
 {
@@ -25,12 +28,24 @@ where
     Message: Clone + 'a,
 {
     let pins = row![
-        container(pin!(Left, "in", Input, "vec2", Color::from_rgb(0.9, 0.7, 0.3)))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Left),
-        container(pin!(Right, "out", Output, "float", Color::from_rgb(0.7, 0.9, 0.7)))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Right),
+        container(pin!(
+            Left,
+            "in",
+            Input,
+            "vec2",
+            Color::from_rgb(0.9, 0.7, 0.3)
+        ))
+        .width(Length::FillPortion(1))
+        .align_x(Horizontal::Left),
+        container(pin!(
+            Right,
+            "out",
+            Output,
+            "float",
+            Color::from_rgb(0.7, 0.9, 0.7)
+        ))
+        .width(Length::FillPortion(1))
+        .align_x(Horizontal::Right),
     ]
     .width(Length::Fill);
 
@@ -44,12 +59,24 @@ where
     Message: Clone + 'a,
 {
     let pins = row![
-        container(pin!(Left, "in", Input, "vec2", Color::from_rgb(0.9, 0.7, 0.3)))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Left),
-        container(pin!(Right, "out", Output, "float", Color::from_rgb(0.7, 0.9, 0.7)))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Right),
+        container(pin!(
+            Left,
+            "in",
+            Input,
+            "vec2",
+            Color::from_rgb(0.9, 0.7, 0.3)
+        ))
+        .width(Length::FillPortion(1))
+        .align_x(Horizontal::Left),
+        container(pin!(
+            Right,
+            "out",
+            Output,
+            "float",
+            Color::from_rgb(0.7, 0.9, 0.7)
+        ))
+        .width(Length::FillPortion(1))
+        .align_x(Horizontal::Right),
     ]
     .width(Length::Fill);
 
@@ -63,12 +90,24 @@ where
     Message: Clone + 'a,
 {
     let pins = row![
-        container(pin!(Left, "in", Input, "vec2", Color::from_rgb(0.9, 0.7, 0.3)))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Left),
-        container(pin!(Right, "out", Output, "float", Color::from_rgb(0.7, 0.9, 0.7)))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Right),
+        container(pin!(
+            Left,
+            "in",
+            Input,
+            "vec2",
+            Color::from_rgb(0.9, 0.7, 0.3)
+        ))
+        .width(Length::FillPortion(1))
+        .align_x(Horizontal::Left),
+        container(pin!(
+            Right,
+            "out",
+            Output,
+            "float",
+            Color::from_rgb(0.7, 0.9, 0.7)
+        ))
+        .width(Length::FillPortion(1))
+        .align_x(Horizontal::Right),
     ]
     .width(Length::Fill);
 

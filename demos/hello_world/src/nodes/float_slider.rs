@@ -3,11 +3,11 @@
 //! Outputs a configurable float value via slider.
 
 use iced::{
-    widget::{column, container, row, slider, text},
-    alignment::Horizontal,
     Color, Length,
+    alignment::Horizontal,
+    widget::{column, container, row, slider, text},
 };
-use iced_nodegraph::{pin, node_title_bar, NodeContentStyle};
+use iced_nodegraph::{NodeContentStyle, node_title_bar, pin};
 
 /// Float slider node message for internal value changes
 #[derive(Debug, Clone, PartialEq)]
@@ -79,27 +79,29 @@ where
 {
     let style = NodeContentStyle::input(theme);
 
-    let value_display = text(format!("{:.1}", value))
-        .size(12);
+    let value_display = text(format!("{:.1}", value)).size(12);
 
     let slider_widget = slider(config.min..=config.max, value, on_change)
         .step(config.step)
         .width(Length::Fill);
 
-    let output_pin = container(pin!(Right, "value", Output, "float", Color::from_rgb(0.5, 0.8, 0.5)))
-        .width(Length::Fill)
-        .align_x(Horizontal::Right);
+    let output_pin = container(pin!(
+        Right,
+        "value",
+        Output,
+        "float",
+        Color::from_rgb(0.5, 0.8, 0.5)
+    ))
+    .width(Length::Fill)
+    .align_x(Horizontal::Right);
 
     column![
         node_title_bar(&config.label, style),
         container(
             column![
-                row![
-                    slider_widget,
-                    value_display,
-                ]
-                .spacing(8)
-                .align_y(iced::Alignment::Center),
+                row![slider_widget, value_display,]
+                    .spacing(8)
+                    .align_y(iced::Alignment::Center),
                 output_pin,
             ]
             .spacing(4)

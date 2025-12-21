@@ -35,20 +35,19 @@
 mod nodes;
 
 use iced::{
-    Color, Event, Length, Point, Subscription, Task, Theme, Vector, event, keyboard,
-    widget::stack,
+    Color, Event, Length, Point, Subscription, Task, Theme, Vector, event, keyboard, widget::stack,
     window,
 };
-use iced_nodegraph::{node_graph, EdgeStyle, NodeStyle, PinReference};
+use iced_nodegraph::{EdgeStyle, NodeStyle, PinReference, node_graph};
 use iced_palette::{
     Command, Shortcut, command, command_palette, find_matching_shortcut, focus_input,
     get_filtered_command_index, get_filtered_count, is_toggle_shortcut, navigate_down, navigate_up,
 };
 use nodes::{
+    ConfigNodeType, FloatSliderConfig, InputNodeType, NodeType, NodeValue,
     border_width_config_node, color_picker_node, color_preset_node, corner_radius_config_node,
-    edge_color_config_node, edge_thickness_config_node, fill_color_config_node,
-    float_slider_node, node, opacity_config_node, ConfigNodeType, FloatSliderConfig,
-    InputNodeType, NodeType, NodeValue,
+    edge_color_config_node, edge_thickness_config_node, fill_color_config_node, float_slider_node,
+    node, opacity_config_node,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -724,15 +723,12 @@ impl Application {
                 NodeType::Input(input) => match input {
                     InputNodeType::FloatSlider { config, value } => {
                         let idx = idx;
-                        float_slider_node(
-                            &self.current_theme,
-                            *value,
-                            config,
-                            move |v| ApplicationMessage::SliderChanged {
+                        float_slider_node(&self.current_theme, *value, config, move |v| {
+                            ApplicationMessage::SliderChanged {
                                 node_index: idx,
                                 value: v,
-                            },
-                        )
+                            }
+                        })
                     }
                     InputNodeType::ColorPicker { color } => {
                         let idx = idx;
@@ -756,42 +752,30 @@ impl Application {
                 NodeType::Config(config) => {
                     let input_value = self.get_config_input_value(idx);
                     match config {
-                        ConfigNodeType::CornerRadius => {
-                            corner_radius_config_node(
-                                &self.current_theme,
-                                input_value.and_then(|v| v.as_float()),
-                            )
-                        }
-                        ConfigNodeType::Opacity => {
-                            opacity_config_node(
-                                &self.current_theme,
-                                input_value.and_then(|v| v.as_float()),
-                            )
-                        }
-                        ConfigNodeType::BorderWidth => {
-                            border_width_config_node(
-                                &self.current_theme,
-                                input_value.and_then(|v| v.as_float()),
-                            )
-                        }
-                        ConfigNodeType::FillColor => {
-                            fill_color_config_node(
-                                &self.current_theme,
-                                input_value.and_then(|v| v.as_color()),
-                            )
-                        }
-                        ConfigNodeType::EdgeThickness => {
-                            edge_thickness_config_node(
-                                &self.current_theme,
-                                input_value.and_then(|v| v.as_float()),
-                            )
-                        }
-                        ConfigNodeType::EdgeColor => {
-                            edge_color_config_node(
-                                &self.current_theme,
-                                input_value.and_then(|v| v.as_color()),
-                            )
-                        }
+                        ConfigNodeType::CornerRadius => corner_radius_config_node(
+                            &self.current_theme,
+                            input_value.and_then(|v| v.as_float()),
+                        ),
+                        ConfigNodeType::Opacity => opacity_config_node(
+                            &self.current_theme,
+                            input_value.and_then(|v| v.as_float()),
+                        ),
+                        ConfigNodeType::BorderWidth => border_width_config_node(
+                            &self.current_theme,
+                            input_value.and_then(|v| v.as_float()),
+                        ),
+                        ConfigNodeType::FillColor => fill_color_config_node(
+                            &self.current_theme,
+                            input_value.and_then(|v| v.as_color()),
+                        ),
+                        ConfigNodeType::EdgeThickness => edge_thickness_config_node(
+                            &self.current_theme,
+                            input_value.and_then(|v| v.as_float()),
+                        ),
+                        ConfigNodeType::EdgeColor => edge_color_config_node(
+                            &self.current_theme,
+                            input_value.and_then(|v| v.as_color()),
+                        ),
                     }
                 }
             };
@@ -865,7 +849,9 @@ impl Application {
                     // Input nodes
                     command("inputs", "Input Nodes")
                         .description("Sliders, color pickers, etc.")
-                        .action(ApplicationMessage::NavigateToSubmenu("input_nodes".to_string())),
+                        .action(ApplicationMessage::NavigateToSubmenu(
+                            "input_nodes".to_string(),
+                        )),
                     // Config nodes
                     command("config", "Style Config Nodes")
                         .description("Configure node and edge styling")

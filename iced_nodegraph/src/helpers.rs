@@ -92,18 +92,10 @@ where
     let source_set: HashSet<_> = source_indices.iter().copied().collect();
     let internal_edges: Vec<_> = edges
         .iter()
-        .filter(|(from, to)| {
-            source_set.contains(&from.node_id) && source_set.contains(&to.node_id)
-        })
+        .filter(|(from, to)| source_set.contains(&from.node_id) && source_set.contains(&to.node_id))
         .map(|(from, to)| {
-            let new_from = PinReference::new(
-                *index_map.get(&from.node_id).unwrap(),
-                from.pin_id,
-            );
-            let new_to = PinReference::new(
-                *index_map.get(&to.node_id).unwrap(),
-                to.pin_id,
-            );
+            let new_from = PinReference::new(*index_map.get(&from.node_id).unwrap(), from.pin_id);
+            let new_to = PinReference::new(*index_map.get(&to.node_id).unwrap(), to.pin_id);
             (new_from, new_to)
         })
         .collect();

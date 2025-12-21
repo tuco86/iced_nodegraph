@@ -1,9 +1,9 @@
 use iced::{
-    widget::{column, container, row},
-    alignment::Horizontal,
     Color, Length,
+    alignment::Horizontal,
+    widget::{column, container, row},
 };
-use iced_nodegraph::{pin, node_title_bar, NodeContentStyle, NodeStyle};
+use iced_nodegraph::{NodeContentStyle, NodeStyle, node_title_bar, pin};
 
 /// Creates a styled node with input and output pins.
 ///
@@ -23,12 +23,24 @@ where
         node_title_bar(name.to_string(), content_style),
         container(
             row![
-                container(pin!(Left, "input", Input, "data", Color::from_rgb(0.5, 0.7, 0.9)))
-                    .width(Length::FillPortion(1))
-                    .align_x(Horizontal::Left),
-                container(pin!(Right, "output", Output, "data", Color::from_rgb(0.9, 0.7, 0.5)))
-                    .width(Length::FillPortion(1))
-                    .align_x(Horizontal::Right),
+                container(pin!(
+                    Left,
+                    "input",
+                    Input,
+                    "data",
+                    Color::from_rgb(0.5, 0.7, 0.9)
+                ))
+                .width(Length::FillPortion(1))
+                .align_x(Horizontal::Left),
+                container(pin!(
+                    Right,
+                    "output",
+                    Output,
+                    "data",
+                    Color::from_rgb(0.9, 0.7, 0.5)
+                ))
+                .width(Length::FillPortion(1))
+                .align_x(Horizontal::Right),
             ]
             .width(Length::Fill)
         )

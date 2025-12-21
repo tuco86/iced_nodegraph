@@ -74,11 +74,9 @@ impl NodeType {
             | Self::VectorSplit => Some(1),
 
             // Output nodes: no output
-            Self::BaseColor
-            | Self::Roughness
-            | Self::Metallic
-            | Self::Emission
-            | Self::Normal => None,
+            Self::BaseColor | Self::Roughness | Self::Metallic | Self::Emission | Self::Normal => {
+                None
+            }
         }
     }
 
@@ -126,11 +124,7 @@ impl NodeType {
             },
 
             // Output nodes: single input at pin 0
-            Self::BaseColor
-            | Self::Roughness
-            | Self::Metallic
-            | Self::Emission
-            | Self::Normal => {
+            Self::BaseColor | Self::Roughness | Self::Metallic | Self::Emission | Self::Normal => {
                 if slot == 0 {
                     Some(0)
                 } else {

@@ -1,9 +1,9 @@
 use iced::{
-    widget::{column, container, row},
-    alignment::Horizontal,
     Color, Length,
+    alignment::Horizontal,
+    widget::{column, container, row},
 };
-use iced_nodegraph::{pin, node_title_bar, NodeContentStyle};
+use iced_nodegraph::{NodeContentStyle, node_title_bar, pin};
 
 /// Filter Node - Input + output
 pub fn filter_node<'a, Message>(theme: &'a iced::Theme) -> iced::Element<'a, Message>
@@ -13,12 +13,24 @@ where
     let style = NodeContentStyle::process(theme);
 
     let pin_list = row![
-        container(pin!(Left, "input", Input, "string", Color::from_rgb(0.9, 0.7, 0.3)))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Left),
-        container(pin!(Right, "matches", Output, "string", Color::from_rgb(0.9, 0.7, 0.3)))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Right),
+        container(pin!(
+            Left,
+            "input",
+            Input,
+            "string",
+            Color::from_rgb(0.9, 0.7, 0.3)
+        ))
+        .width(Length::FillPortion(1))
+        .align_x(Horizontal::Left),
+        container(pin!(
+            Right,
+            "matches",
+            Output,
+            "string",
+            Color::from_rgb(0.9, 0.7, 0.3)
+        ))
+        .width(Length::FillPortion(1))
+        .align_x(Horizontal::Right),
     ]
     .width(Length::Fill);
 

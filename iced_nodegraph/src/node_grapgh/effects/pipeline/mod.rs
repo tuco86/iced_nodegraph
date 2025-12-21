@@ -317,12 +317,8 @@ impl Pipeline {
 
                 // Use per-edge style color if alpha > 0, otherwise use global/selection color
                 let style = &edge_data.style;
-                let style_color = glam::Vec4::new(
-                    style.color.r,
-                    style.color.g,
-                    style.color.b,
-                    style.color.a,
-                );
+                let style_color =
+                    glam::Vec4::new(style.color.r, style.color.g, style.color.b, style.color.a);
 
                 let color = if is_highlighted {
                     selected_edge_color

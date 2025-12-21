@@ -62,15 +62,15 @@ pub struct Node {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Pin {
-    pub position: WorldVector,     // vec2<f32> = 8 bytes @ 0
-    pub side: u32,                 // 4 bytes @ 8
-    pub radius: f32,               // 4 bytes @ 12 (total 16 bytes)
-    pub color: glam::Vec4,         // vec4<f32> = 16 bytes @ 16 (total 32 bytes)
-    pub border_color: glam::Vec4,  // vec4<f32> = 16 bytes @ 32 (total 48 bytes)
-    pub direction: u32,            // 4 bytes @ 48
-    pub shape: u32,                // 4 bytes @ 52 (0=Circle, 1=Square, 2=Diamond, 3=Triangle)
-    pub border_width: f32,         // 4 bytes @ 56
-    pub flags: u32,                // 4 bytes @ 60 (total 64 bytes - aligned to 16)
+    pub position: WorldVector,    // vec2<f32> = 8 bytes @ 0
+    pub side: u32,                // 4 bytes @ 8
+    pub radius: f32,              // 4 bytes @ 12 (total 16 bytes)
+    pub color: glam::Vec4,        // vec4<f32> = 16 bytes @ 16 (total 32 bytes)
+    pub border_color: glam::Vec4, // vec4<f32> = 16 bytes @ 32 (total 48 bytes)
+    pub direction: u32,           // 4 bytes @ 48
+    pub shape: u32,               // 4 bytes @ 52 (0=Circle, 1=Square, 2=Diamond, 3=Triangle)
+    pub border_width: f32,        // 4 bytes @ 56
+    pub flags: u32,               // 4 bytes @ 60 (total 64 bytes - aligned to 16)
 }
 
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]

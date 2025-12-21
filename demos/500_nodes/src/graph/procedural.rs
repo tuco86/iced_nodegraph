@@ -220,10 +220,8 @@ pub fn generate_procedural_graph() -> (Vec<(Point, NodeType)>, Vec<(PinReference
     let mut layout = ForceDirectedLayout::new(positions, &edges);
     let optimized_positions = layout.simulate();
 
-    let optimized_nodes: Vec<(Point, NodeType)> = optimized_positions
-        .into_iter()
-        .zip(node_types)
-        .collect();
+    let optimized_nodes: Vec<(Point, NodeType)> =
+        optimized_positions.into_iter().zip(node_types).collect();
 
     // Validate edges in debug builds
     #[cfg(debug_assertions)]
@@ -246,7 +244,11 @@ fn validate_edges(nodes: &[(Point, NodeType)], edges: &[(PinReference, PinRefere
         if !valid_out {
             eprintln!(
                 "INVALID OUTPUT: {:?} -> {:?} (node {:?} has output at {:?}, not {})",
-                from, to, from_type, from_type.output_pin(), from.pin_id
+                from,
+                to,
+                from_type,
+                from_type.output_pin(),
+                from.pin_id
             );
             error_count += 1;
         }
@@ -261,6 +263,9 @@ fn validate_edges(nodes: &[(Point, NodeType)], edges: &[(PinReference, PinRefere
     if error_count > 0 {
         eprintln!("Edge validation found {} errors", error_count);
     } else {
-        println!("Edge validation passed: all {} edges are valid", edges.len());
+        println!(
+            "Edge validation passed: all {} edges are valid",
+            edges.len()
+        );
     }
 }

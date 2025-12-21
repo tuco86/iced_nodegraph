@@ -181,6 +181,7 @@ pub use content::{
     NodeContentStyle, get_text_color, is_theme_dark, node_label, node_separator, node_title_bar,
     simple_node,
 };
+pub use helpers::{CloneResult, DeleteResult, SelectionHelper, clone_nodes, delete_nodes};
 pub use node_grapgh::{
     DragInfo, NodeGraph, NodeGraphEvent, RemoteDrag, RemoteUserState, camera::Camera2D,
     widget::node_graph,
@@ -188,9 +189,8 @@ pub use node_grapgh::{
 pub use node_pin::{NodePin, PinDirection, PinReference, PinSide, node_pin};
 pub use style::{
     DashPattern, EdgeAnimation, EdgeStyle, EdgeType, GraphStyle, NodeStyle, PinShape, PinStyle,
-    SelectionStyle, ShadowStyle, STANDARD_THEMES, is_dark_theme, relative_luminance, theme_name,
+    STANDARD_THEMES, SelectionStyle, ShadowStyle, is_dark_theme, relative_luminance, theme_name,
 };
-pub use helpers::{CloneResult, DeleteResult, SelectionHelper, clone_nodes, delete_nodes};
 
 pub mod content;
 pub mod helpers;
