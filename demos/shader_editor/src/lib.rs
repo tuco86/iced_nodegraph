@@ -88,20 +88,16 @@ pub fn run_demo() {
 #[derive(Debug, Clone)]
 enum Message {
     EdgeConnected {
-        from_node: usize,
-        from_pin: usize,
-        to_node: usize,
-        to_pin: usize,
+        from: PinReference,
+        to: PinReference,
     },
     NodeMoved {
         node_index: usize,
         new_position: Point,
     },
     EdgeDisconnected {
-        from_node: usize,
-        from_pin: usize,
-        to_node: usize,
-        to_pin: usize,
+        from: PinReference,
+        to: PinReference,
     },
     SelectionChanged(Vec<usize>),
     GroupMoved {
@@ -205,46 +201,38 @@ impl Application {
 
     fn update(&mut self, message: Message) -> iced::Task<Message> {
         match message {
-            Message::EdgeConnected {
-                from_node,
-                from_pin,
-                to_node,
-                to_pin,
-            } => {
+            Message::EdgeConnected { from, to } => {
                 // Store visual edge as-is
-                self.visual_edges.push((
-                    PinReference::new(from_node, from_pin),
-                    PinReference::new(to_node, to_pin),
-                ));
+                self.visual_edges.push((from, to));
 
                 // Convert visual pin indices to shader socket indices
                 // First, gather the info we need
                 let connection_info = {
-                    let from = self.shader_graph.nodes.get(from_node);
-                    let to = self.shader_graph.nodes.get(to_node);
+                    let from_node_data = self.shader_graph.nodes.get(from.node_id);
+                    let to_node_data = self.shader_graph.nodes.get(to.node_id);
 
-                    if let (Some(from), Some(to)) = (from, to) {
-                        // from_pin is visual index, output starts after inputs
-                        let from_socket = from_pin.saturating_sub(from.inputs.len());
-                        // to_pin is visual index, inputs come first so it's direct
-                        let to_socket = to_pin;
+                    if let (Some(from_node_data), Some(to_node_data)) = (from_node_data, to_node_data) {
+                        // from.pin_id is visual index, output starts after inputs
+                        let from_socket = from.pin_id.saturating_sub(from_node_data.inputs.len());
+                        // to.pin_id is visual index, inputs come first so it's direct
+                        let to_socket = to.pin_id;
 
-                        if from_socket < from.outputs.len() && to_socket < to.inputs.len() {
+                        if from_socket < from_node_data.outputs.len() && to_socket < to_node_data.inputs.len() {
                             Some((
-                                from.id,
+                                from_node_data.id,
                                 from_socket,
-                                to.id,
+                                to_node_data.id,
                                 to_socket,
-                                from.node_type.name().to_string(),
-                                to.node_type.name().to_string(),
+                                from_node_data.node_type.name().to_string(),
+                                to_node_data.node_type.name().to_string(),
                             ))
                         } else {
                             println!(
                                 "Invalid connection: pin {} (outputs: {}) -> pin {} (inputs: {})",
-                                from_pin,
-                                from.outputs.len(),
-                                to_pin,
-                                to.inputs.len()
+                                from.pin_id,
+                                from_node_data.outputs.len(),
+                                to.pin_id,
+                                to_node_data.inputs.len()
                             );
                             None
                         }
@@ -278,23 +266,13 @@ impl Application {
                     node.position = new_position;
                 }
             }
-            Message::EdgeDisconnected {
-                from_node,
-                from_pin,
-                to_node,
-                to_pin,
-            } => {
-                self.visual_edges.retain(|(from, to)| {
-                    !(from.node_id == from_node
-                        && from.pin_id == from_pin
-                        && to.node_id == to_node
-                        && to.pin_id == to_pin)
-                });
+            Message::EdgeDisconnected { from, to } => {
+                self.visual_edges.retain(|(f, t)| !(f == &from && t == &to));
                 self.shader_graph.connections.retain(|c| {
-                    !(c.from_node == from_node
-                        && c.from_socket == from_pin
-                        && c.to_node == to_node
-                        && c.to_socket == to_pin)
+                    !(c.from_node == from.node_id
+                        && c.from_socket == from.pin_id
+                        && c.to_node == to.node_id
+                        && c.to_socket == to.pin_id)
                 });
                 self.recompile();
                 return Task::none();
@@ -394,26 +372,12 @@ impl Application {
     fn view(&self) -> Element<'_, Message> {
         // Build node graph
         let mut graph = node_graph()
-            .on_connect(
-                |from_node, from_pin, to_node, to_pin| Message::EdgeConnected {
-                    from_node,
-                    from_pin,
-                    to_node,
-                    to_pin,
-                },
-            )
+            .on_connect(|from, to| Message::EdgeConnected { from, to })
             .on_move(|node_index, new_position| Message::NodeMoved {
                 node_index,
                 new_position,
             })
-            .on_disconnect(
-                |from_node, from_pin, to_node, to_pin| Message::EdgeDisconnected {
-                    from_node,
-                    from_pin,
-                    to_node,
-                    to_pin,
-                },
-            )
+            .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })
             .on_select(Message::SelectionChanged)
             .on_group_move(|indices, delta| Message::GroupMoved { indices, delta })
             .selection(&self.graph_selection);

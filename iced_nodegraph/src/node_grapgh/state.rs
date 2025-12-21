@@ -17,8 +17,11 @@ pub(crate) enum Dragging {
     EdgeOver(usize, usize, usize, usize), // from_node, from_pin, to_node and to_pin
     BoxSelect(WorldPoint, WorldPoint),    // start point, current point (left mouse on empty space)
     GroupMove(WorldPoint),                // origin point (when dragging a selected node, all move)
-    /// Fruit Ninja edge cutting: trail of cursor positions for visualization
-    EdgeCutting(Vec<WorldPoint>),
+    /// Fruit Ninja edge cutting: trail of cursor positions and pending edges to cut
+    EdgeCutting {
+        trail: Vec<WorldPoint>,
+        pending_cuts: HashSet<usize>,
+    },
     /// Dragging an edge vertex (for physics wire simulation)
     EdgeVertex {
         edge_index: usize,
@@ -38,6 +41,8 @@ pub(super) struct NodeGraphState {
     pub(super) modifiers: keyboard::Modifiers,
     /// Tracks if left mouse button is pressed (for Fruit Ninja edge cutting)
     pub(super) left_mouse_down: bool,
+    /// Currently hovered node index (for hover effects)
+    pub(super) hovered_node: Option<usize>,
 
     // Caching and incremental update support
     /// Canonical state storage (authoritative data).
@@ -61,6 +66,7 @@ impl Default for NodeGraphState {
             selected_nodes: HashSet::new(),
             modifiers: keyboard::Modifiers::default(),
             left_mouse_down: false,
+            hovered_node: None,
             canonical: CanonicalState::new(),
             dirty: DirtyFlags::default(),
             generation: 0,
@@ -199,12 +205,21 @@ mod tests {
             Point2D::new(10.0, 10.0),
             Point2D::new(20.0, 20.0),
         ];
-        let dragging = Dragging::EdgeCutting(trail.clone());
+        let mut pending_cuts = HashSet::new();
+        pending_cuts.insert(1);
+        pending_cuts.insert(3);
+        let dragging = Dragging::EdgeCutting {
+            trail: trail.clone(),
+            pending_cuts: pending_cuts.clone(),
+        };
 
-        if let Dragging::EdgeCutting(stored) = dragging {
+        if let Dragging::EdgeCutting { trail: stored, pending_cuts: cuts } = dragging {
             assert_eq!(stored.len(), 3);
             assert_eq!(stored[0].x, 0.0);
             assert_eq!(stored[2].x, 20.0);
+            assert!(cuts.contains(&1));
+            assert!(cuts.contains(&3));
+            assert!(!cuts.contains(&2));
         } else {
             panic!("Expected Dragging::EdgeCutting");
         }

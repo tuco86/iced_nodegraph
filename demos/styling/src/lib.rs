@@ -82,16 +82,12 @@ pub fn run_demo() {
 enum Message {
     // Graph events
     EdgeConnected {
-        from_node: usize,
-        from_pin: usize,
-        to_node: usize,
-        to_pin: usize,
+        from: PinReference,
+        to: PinReference,
     },
     EdgeDisconnected {
-        from_node: usize,
-        from_pin: usize,
-        to_node: usize,
-        to_pin: usize,
+        from: PinReference,
+        to: PinReference,
     },
     NodeMoved {
         node_index: usize,
@@ -208,29 +204,11 @@ impl Application {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::EdgeConnected {
-                from_node,
-                from_pin,
-                to_node,
-                to_pin,
-            } => {
-                self.edges.push((
-                    PinReference::new(from_node, from_pin),
-                    PinReference::new(to_node, to_pin),
-                ));
+            Message::EdgeConnected { from, to } => {
+                self.edges.push((from, to));
             }
-            Message::EdgeDisconnected {
-                from_node,
-                from_pin,
-                to_node,
-                to_pin,
-            } => {
-                self.edges.retain(|(from, to)| {
-                    !(from.node_id == from_node
-                        && from.pin_id == from_pin
-                        && to.node_id == to_node
-                        && to.pin_id == to_pin)
-                });
+            Message::EdgeDisconnected { from, to } => {
+                self.edges.retain(|(f, t)| !(f == &from && t == &to));
             }
             Message::NodeMoved {
                 node_index,
@@ -477,22 +455,8 @@ impl Application {
         let theme = &self.current_theme;
 
         let mut ng = node_graph()
-            .on_connect(
-                |from_node, from_pin, to_node, to_pin| Message::EdgeConnected {
-                    from_node,
-                    from_pin,
-                    to_node,
-                    to_pin,
-                },
-            )
-            .on_disconnect(
-                |from_node, from_pin, to_node, to_pin| Message::EdgeDisconnected {
-                    from_node,
-                    from_pin,
-                    to_node,
-                    to_pin,
-                },
-            )
+            .on_connect(|from, to| Message::EdgeConnected { from, to })
+            .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })
             .on_move(|node_index, new_position| Message::NodeMoved {
                 node_index,
                 new_position,

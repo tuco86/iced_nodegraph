@@ -232,9 +232,8 @@ impl Pipeline {
                     opacity: node.opacity,
                     pin_start,
                     pin_count,
-                    _pad0: 0,
-                    _pad1: 0,
-                    _pad2: 0,
+                    shadow_blur: node.shadow_blur,
+                    shadow_offset: glam::Vec2::new(node.shadow_offset.0, node.shadow_offset.1),
                     fill_color: glam::Vec4::new(
                         node.fill_color.r,
                         node.fill_color.g,
@@ -247,6 +246,16 @@ impl Pipeline {
                         node.border_color.b,
                         node.border_color.a,
                     ),
+                    shadow_color: glam::Vec4::new(
+                        node.shadow_color.r,
+                        node.shadow_color.g,
+                        node.shadow_color.b,
+                        node.shadow_color.a,
+                    ),
+                    flags: node.flags,
+                    _pad_flags0: 0,
+                    _pad_flags1: 0,
+                    _pad_flags2: 0,
                 }
             }),
         );
@@ -256,9 +265,16 @@ impl Pipeline {
             queue,
             nodes.iter().flat_map(|node| node.pins.iter()).map(|pin| {
                 use crate::node_pin::PinDirection;
+                use crate::style::PinShape;
                 types::Pin {
                     position: pin.offset,
                     color: glam::Vec4::new(pin.color.r, pin.color.g, pin.color.b, pin.color.a),
+                    border_color: glam::Vec4::new(
+                        pin.border_color.r,
+                        pin.border_color.g,
+                        pin.border_color.b,
+                        pin.border_color.a,
+                    ),
                     side: pin.side,
                     radius: pin.radius,
                     direction: match pin.direction {
@@ -266,20 +282,38 @@ impl Pipeline {
                         PinDirection::Output => 1,
                         PinDirection::Both => 2,
                     },
+                    shape: match pin.shape {
+                        PinShape::Circle => 0,
+                        PinShape::Square => 1,
+                        PinShape::Diamond => 2,
+                        PinShape::Triangle => 3,
+                    },
+                    border_width: pin.border_width,
                     flags: 0,
-                    _pad0: 0,
-                    _pad1: 0,
                 }
             }),
         );
 
+        // Extract pending cuts for edge cutting highlight
+        let pending_cuts = if let Dragging::EdgeCutting { pending_cuts, .. } = dragging {
+            Some(pending_cuts)
+        } else {
+            None
+        };
+
         let num_edges = self.edges.update(
             device,
             queue,
-            edges.iter().map(|edge_data| {
+            edges.iter().enumerate().map(|(edge_idx, edge_data)| {
                 // Highlight edges where both ends are selected
                 let is_highlighted = selected_nodes.contains(&edge_data.from_node)
                     && selected_nodes.contains(&edge_data.to_node);
+
+                // Check if edge is pending cut
+                let is_pending_cut = pending_cuts
+                    .as_ref()
+                    .map(|cuts| cuts.contains(&edge_idx))
+                    .unwrap_or(false);
 
                 // Use per-edge style color if alpha > 0, otherwise use global/selection color
                 let style = &edge_data.style;
@@ -306,6 +340,9 @@ impl Pipeline {
                     .map(|d| (d.dash_length, d.gap_length))
                     .unwrap_or((0.0, 0.0));
 
+                // Set bit 3 (value 8) for pending cut highlight
+                let flags = style.animation_flags() | if is_pending_cut { 8 } else { 0 };
+
                 types::Edge {
                     from_node: edge_data.from_node as _,
                     from_pin: edge_data.from_pin as _,
@@ -317,7 +354,7 @@ impl Pipeline {
                     dash_length,
                     gap_length,
                     flow_speed: style.flow_speed(),
-                    flags: style.animation_flags(),
+                    flags,
                     _pad0: 0.0,
                     _pad1: 0.0,
                 }
@@ -332,7 +369,7 @@ impl Pipeline {
             Dragging::EdgeOver(_, _, _, _) => 4,
             Dragging::BoxSelect(_, _) => 5,
             Dragging::GroupMove(_) => 6,
-            Dragging::EdgeCutting(_) => 7,
+            Dragging::EdgeCutting { .. } => 7,
             Dragging::EdgeVertex { .. } => 8, // Physics vertex drag
         };
 
@@ -357,7 +394,7 @@ impl Pipeline {
                 // BoxSelect: start point in from_origin, end point is cursor_position
                 Dragging::BoxSelect(start, _end) => (0, 0, *start, 0, 0),
                 // EdgeCutting: first trail point in from_origin
-                Dragging::EdgeCutting(trail) => {
+                Dragging::EdgeCutting { trail, .. } => {
                     let origin = trail.first().copied().unwrap_or(WorldPoint::zero());
                     (0, 0, origin, 0, 0)
                 }

@@ -41,31 +41,36 @@ pub struct Uniforms {
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct Node {
-    pub position: WorldVector,    // 8 bytes @ 0
-    pub size: WorldSize,          // 8 bytes @ 8 (total 16)
-    pub corner_radius: f32,       // 4 bytes @ 16
-    pub border_width: f32,        // 4 bytes @ 20
-    pub opacity: f32,             // 4 bytes @ 24
-    pub pin_start: u32,           // 4 bytes @ 28 (total 32)
-    pub pin_count: u32,           // 4 bytes @ 32
-    pub _pad0: u32,               // 4 bytes @ 36
-    pub _pad1: u32,               // 4 bytes @ 40
-    pub _pad2: u32,               // 4 bytes @ 44 (total 48)
-    pub fill_color: glam::Vec4,   // 16 bytes @ 48 (16-byte aligned)
-    pub border_color: glam::Vec4, // 16 bytes @ 64 (total 80)
+    pub position: WorldVector,     // 8 bytes @ 0
+    pub size: WorldSize,           // 8 bytes @ 8 (total 16)
+    pub corner_radius: f32,        // 4 bytes @ 16
+    pub border_width: f32,         // 4 bytes @ 20
+    pub opacity: f32,              // 4 bytes @ 24
+    pub pin_start: u32,            // 4 bytes @ 28 (total 32)
+    pub pin_count: u32,            // 4 bytes @ 32
+    pub shadow_blur: f32,          // 4 bytes @ 36
+    pub shadow_offset: glam::Vec2, // 8 bytes @ 40 (total 48)
+    pub fill_color: glam::Vec4,    // 16 bytes @ 48 (16-byte aligned)
+    pub border_color: glam::Vec4,  // 16 bytes @ 64 (total 80)
+    pub shadow_color: glam::Vec4,  // 16 bytes @ 80 (total 96)
+    pub flags: u32,                // 4 bytes @ 96 (bit 0: hovered, bit 1: selected)
+    pub _pad_flags0: u32,          // 4 bytes @ 100
+    pub _pad_flags1: u32,          // 4 bytes @ 104
+    pub _pad_flags2: u32,          // 4 bytes @ 108 (total 112, aligned to 16)
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Pin {
-    pub position: WorldVector, // vec2<f32> = 8 bytes
-    pub side: u32,             // 4 bytes
-    pub radius: f32,           // 4 bytes (total 16 bytes - aligned)
-    pub color: glam::Vec4,     // vec4<f32> = 16 bytes (total 32 bytes - aligned)
-    pub direction: u32,        // 4 bytes
-    pub flags: u32,            // 4 bytes
-    pub _pad0: u32,            // 4 bytes
-    pub _pad1: u32,            // 4 bytes (total 48 bytes - aligned to 16)
+    pub position: WorldVector,     // vec2<f32> = 8 bytes @ 0
+    pub side: u32,                 // 4 bytes @ 8
+    pub radius: f32,               // 4 bytes @ 12 (total 16 bytes)
+    pub color: glam::Vec4,         // vec4<f32> = 16 bytes @ 16 (total 32 bytes)
+    pub border_color: glam::Vec4,  // vec4<f32> = 16 bytes @ 32 (total 48 bytes)
+    pub direction: u32,            // 4 bytes @ 48
+    pub shape: u32,                // 4 bytes @ 52 (0=Circle, 1=Square, 2=Diamond, 3=Triangle)
+    pub border_width: f32,         // 4 bytes @ 56
+    pub flags: u32,                // 4 bytes @ 60 (total 64 bytes - aligned to 16)
 }
 
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]

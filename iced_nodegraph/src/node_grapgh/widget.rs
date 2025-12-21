@@ -8,13 +8,13 @@ use iced_widget::core::{
 use web_time::Instant;
 
 use super::{
-    DragInfo, NodeGraph,
+    DragInfo, NodeGraph, NodeGraphEvent,
     effects::{self, EdgeData, Layer},
     euclid::{IntoIced, WorldVector},
     state::{Dragging, NodeGraphState},
 };
 use crate::{
-    PinSide,
+    PinReference, PinSide,
     node_grapgh::euclid::{IntoEuclid, ScreenPoint, WorldPoint},
     node_pin::NodePinState,
     style::is_dark_theme,
@@ -261,14 +261,22 @@ where
                             }
 
                             // Use per-node style if provided, otherwise use theme defaults
-                            let (node_fill, mut node_border, corner_rad, mut border_w, opacity) =
+                            let (node_fill, mut node_border, corner_rad, mut border_w, opacity, shadow_offset, shadow_blur, shadow_color) =
                                 if let Some(style) = node_style {
+                                    let (s_offset, s_blur, s_color) = if let Some(shadow) = &style.shadow {
+                                        (shadow.offset, shadow.blur_radius, shadow.color)
+                                    } else {
+                                        ((0.0, 0.0), 0.0, iced::Color::TRANSPARENT)
+                                    };
                                     (
                                         style.fill_color,
                                         style.border_color,
                                         style.corner_radius,
                                         style.border_width,
                                         style.opacity * fade_opacity,
+                                        s_offset,
+                                        s_blur,
+                                        s_color,
                                     )
                                 } else {
                                     (
@@ -287,6 +295,9 @@ where
                                         5.0,
                                         1.0,
                                         fade_opacity * 0.75,
+                                        (2.0, 2.0), // Default subtle shadow offset
+                                        4.0,        // Default subtle shadow blur
+                                        iced::Color::from_rgba(0.0, 0.0, 0.0, 0.15),
                                     )
                                 };
 
@@ -294,6 +305,16 @@ where
                             if is_selected {
                                 node_border = selection_border_color;
                                 border_w = selection_border_width;
+                            }
+
+                            // Compute state flags
+                            let is_hovered = state.hovered_node == Some(node_index);
+                            let mut flags = 0u32;
+                            if is_hovered {
+                                flags |= effects::NodeFlags::HOVERED;
+                            }
+                            if is_selected {
+                                flags |= effects::NodeFlags::SELECTED;
                             }
 
                             effects::Node {
@@ -313,8 +334,15 @@ where
                                         radius: 5.0,
                                         color: pin_state.color,
                                         direction: pin_state.direction,
+                                        shape: crate::style::PinShape::Circle,
+                                        border_color: iced::Color::TRANSPARENT,
+                                        border_width: 1.0,
                                     })
                                     .collect(),
+                                shadow_offset,
+                                shadow_blur,
+                                shadow_color,
+                                flags,
                             }
                         },
                     )
@@ -491,10 +519,13 @@ where
                 // Ctrl+D: Clone selected nodes
                 keyboard::Key::Character(c) if c.as_str() == "d" && modifiers.command() => {
                     if !state.selected_nodes.is_empty() {
+                        let node_ids: Vec<usize> =
+                            state.selected_nodes.iter().copied().collect();
                         if let Some(handler) = self.on_clone_handler() {
-                            let selected: Vec<usize> =
-                                state.selected_nodes.iter().copied().collect();
-                            shell.publish(handler(selected));
+                            shell.publish(handler(node_ids.clone()));
+                        }
+                        if let Some(handler) = self.get_on_event() {
+                            shell.publish(handler(NodeGraphEvent::CloneRequested { node_ids }));
                         }
                         shell.capture_event();
                     }
@@ -503,9 +534,12 @@ where
                 keyboard::Key::Character(c) if c.as_str() == "a" && modifiers.command() => {
                     let count = self.nodes.len();
                     state.selected_nodes = (0..count).collect();
+                    let selected: Vec<usize> = state.selected_nodes.iter().copied().collect();
                     if let Some(handler) = self.on_select_handler() {
-                        let selected: Vec<usize> = state.selected_nodes.iter().copied().collect();
-                        shell.publish(handler(selected));
+                        shell.publish(handler(selected.clone()));
+                    }
+                    if let Some(handler) = self.get_on_event() {
+                        shell.publish(handler(NodeGraphEvent::SelectionChanged { selected }));
                     }
                     shell.capture_event();
                     shell.request_redraw();
@@ -517,6 +551,9 @@ where
                         if let Some(handler) = self.on_select_handler() {
                             shell.publish(handler(vec![]));
                         }
+                        if let Some(handler) = self.get_on_event() {
+                            shell.publish(handler(NodeGraphEvent::SelectionChanged { selected: vec![] }));
+                        }
                         shell.capture_event();
                         shell.request_redraw();
                     }
@@ -525,10 +562,13 @@ where
                 keyboard::Key::Named(keyboard::key::Named::Delete)
                 | keyboard::Key::Named(keyboard::key::Named::Backspace) => {
                     if !state.selected_nodes.is_empty() {
+                        let node_ids: Vec<usize> =
+                            state.selected_nodes.iter().copied().collect();
                         if let Some(handler) = self.on_delete_handler() {
-                            let selected: Vec<usize> =
-                                state.selected_nodes.iter().copied().collect();
-                            shell.publish(handler(selected));
+                            shell.publish(handler(node_ids.clone()));
+                        }
+                        if let Some(handler) = self.get_on_event() {
+                            shell.publish(handler(NodeGraphEvent::DeleteRequested { node_ids }));
                         }
                         state.selected_nodes.clear();
                         shell.capture_event();
@@ -621,46 +661,83 @@ where
                     }
                 }
 
+                // Update hover state when cursor moves
+                if let Some(cursor_point) = world_cursor.position() {
+                    let mut found_hover = None;
+
+                    // Check nodes in reverse order (top-most first)
+                    for (node_index, node_layout) in layout.children().enumerate().rev() {
+                        let bounds = node_layout.bounds();
+                        if bounds.contains(cursor_point) {
+                            found_hover = Some(node_index);
+                            break;
+                        }
+                    }
+
+                    // Update hover state if changed
+                    if state.hovered_node != found_hover {
+                        state.hovered_node = found_hover;
+                        shell.request_redraw();
+                    }
+                } else {
+                    // Cursor left the widget, clear hover
+                    if state.hovered_node.is_some() {
+                        state.hovered_node = None;
+                        shell.request_redraw();
+                    }
+                }
+
                 match state.dragging.clone() {
                     Dragging::None => {}
-                    Dragging::EdgeCutting(_) => match event {
+                    Dragging::EdgeCutting { .. } => match event {
                         Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                             if let Some(cursor_position) = world_cursor.position() {
                                 let cursor_position: WorldPoint = cursor_position.into_euclid();
 
-                                // Add point to trail
-                                if let Dragging::EdgeCutting(ref mut trail) = state.dragging {
+                                // Update trail and check which edges intersect with cutting line
+                                if let Dragging::EdgeCutting { ref mut trail, ref mut pending_cuts } = state.dragging {
                                     trail.push(cursor_position);
-                                }
 
-                                // Check each edge for intersection with the cutting line
-                                for (from_ref, to_ref, _style) in &self.edges {
-                                    let (from_node, from_pin) = (from_ref.node_id, from_ref.pin_id);
-                                    let (to_node, to_pin) = (to_ref.node_id, to_ref.pin_id);
-                                    let from_pin_pos = layout.children().nth(from_node).and_then(|node_layout| {
-                                        tree.children.get(from_node).and_then(|node_tree| {
-                                            find_pins(node_tree, node_layout).get(from_pin).map(|(_, _, (a, _))| *a)
-                                        })
-                                    });
-                                    let to_pin_pos = layout.children().nth(to_node).and_then(|node_layout| {
-                                        tree.children.get(to_node).and_then(|node_tree| {
-                                            find_pins(node_tree, node_layout).get(to_pin).map(|(_, _, (a, _))| *a)
-                                        })
-                                    });
+                                    // Get cutting line: from start point to current cursor
+                                    let cut_start = trail.first().copied().unwrap_or(cursor_position);
+                                    let cut_end = cursor_position;
 
-                                    if let (Some(from_pos), Some(to_pos)) = (from_pin_pos, to_pin_pos) {
-                                        let distance = point_to_line_distance(cursor_position.into_iced(), from_pos, to_pos);
-                                        const EDGE_CUT_THRESHOLD: f32 = 10.0;
+                                    // Clear and recalculate - only edges intersecting cutting line are highlighted
+                                    pending_cuts.clear();
 
-                                        if distance < EDGE_CUT_THRESHOLD {
-                                            #[cfg(debug_assertions)]
-                                            println!("Edge cut: {} pin {} -> {} pin {}", from_node, from_pin, to_node, to_pin);
+                                    // Check each edge for intersection with the cutting line
+                                    for (edge_idx, (from_ref, to_ref, _style)) in self.edges.iter().enumerate() {
+                                        let (from_node, from_pin) = (from_ref.node_id, from_ref.pin_id);
+                                        let (to_node, to_pin) = (to_ref.node_id, to_ref.pin_id);
 
-                                            if let Some(handler) = self.on_disconnect_handler() {
-                                                shell.publish(handler(from_node, from_pin, to_node, to_pin));
+                                        // Get pin positions and sides for bezier calculation
+                                        let from_pin_data = layout.children().nth(from_node).and_then(|node_layout| {
+                                            tree.children.get(from_node).and_then(|node_tree| {
+                                                find_pins(node_tree, node_layout).get(from_pin).map(|(_, state, (pos, _))| (*pos, state.side))
+                                            })
+                                        });
+                                        let to_pin_data = layout.children().nth(to_node).and_then(|node_layout| {
+                                            tree.children.get(to_node).and_then(|node_tree| {
+                                                find_pins(node_tree, node_layout).get(to_pin).map(|(_, state, (pos, _))| (*pos, state.side))
+                                            })
+                                        });
+
+                                        if let (Some((p0, from_side)), Some((p3, to_side))) = (from_pin_data, to_pin_data) {
+                                            // Calculate bezier control points (same as shader)
+                                            let seg_len = 80.0;
+                                            let dir_from = pin_side_to_direction(from_side);
+                                            let dir_to = pin_side_to_direction(to_side);
+                                            let p1 = Point::new(p0.x + dir_from.0 * seg_len, p0.y + dir_from.1 * seg_len);
+                                            let p2 = Point::new(p3.x + dir_to.0 * seg_len, p3.y + dir_to.1 * seg_len);
+
+                                            // Check if cutting line intersects this bezier edge
+                                            if line_intersects_bezier(
+                                                cut_start.into_iced(),
+                                                cut_end.into_iced(),
+                                                p0, p1, p2, p3,
+                                            ) {
+                                                pending_cuts.insert(edge_idx);
                                             }
-                                            // Only cut one edge per frame
-                                            break;
                                         }
                                     }
                                 }
@@ -668,8 +745,25 @@ where
                             shell.request_redraw();
                         }
                         Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                            #[cfg(debug_assertions)]
-                            println!("Edge cutting complete");
+                            // Delete all pending edges on release
+                            if let Dragging::EdgeCutting { pending_cuts, .. } = &state.dragging {
+                                #[cfg(debug_assertions)]
+                                println!("Edge cutting complete: {} edges cut", pending_cuts.len());
+
+                                for &edge_idx in pending_cuts.iter() {
+                                    if let Some((from_ref, to_ref, _)) = self.edges.get(edge_idx) {
+                                        if let Some(handler) = self.on_disconnect_handler() {
+                                            shell.publish(handler(*from_ref, *to_ref));
+                                        }
+                                        if let Some(handler) = self.get_on_event() {
+                                            shell.publish(handler(NodeGraphEvent::EdgeDisconnected {
+                                                from: *from_ref,
+                                                to: *to_ref,
+                                            }));
+                                        }
+                                    }
+                                }
+                            }
                             state.dragging = Dragging::None;
                             shell.capture_event();
                             shell.request_redraw();
@@ -702,6 +796,12 @@ where
                                 if let Some(handler) = self.on_move_handler() {
                                     let message = handler(node_index, new_position);
                                     shell.publish(message);
+                                }
+                                if let Some(handler) = self.get_on_event() {
+                                    shell.publish(handler(NodeGraphEvent::NodeMoved {
+                                        node_id: node_index,
+                                        position: new_position,
+                                    }));
                                 }
                             }
                             state.dragging = Dragging::None;
@@ -815,9 +915,16 @@ where
                             #[cfg(debug_assertions)]
                             println!("  ✓ CONNECTION COMPLETE: node {} pin {} -> node {} pin {}\n", from_node, from_pin, to_node, to_pin);
 
+                            let from_ref = PinReference::new(from_node, from_pin);
+                            let to_ref = PinReference::new(to_node, to_pin);
                             if let Some(handler) = self.on_connect_handler() {
-                                let message = handler(from_node, from_pin, to_node, to_pin);
-                                shell.publish(message);
+                                shell.publish(handler(from_ref, to_ref));
+                            }
+                            if let Some(handler) = self.get_on_event() {
+                                shell.publish(handler(NodeGraphEvent::EdgeConnected {
+                                    from: from_ref,
+                                    to: to_ref,
+                                }));
                             }
                             state.dragging = Dragging::None;
                             // Emit drag end event
@@ -859,9 +966,12 @@ where
                                 println!("Box selection complete: {} nodes selected", state.selected_nodes.len());
 
                                 // Notify selection change
+                                let selected: Vec<usize> = state.selected_nodes.iter().copied().collect();
                                 if let Some(handler) = self.on_select_handler() {
-                                    let selected: Vec<usize> = state.selected_nodes.iter().copied().collect();
-                                    shell.publish(handler(selected));
+                                    shell.publish(handler(selected.clone()));
+                                }
+                                if let Some(handler) = self.get_on_event() {
+                                    shell.publish(handler(NodeGraphEvent::SelectionChanged { selected }));
                                 }
                             }
                             state.dragging = Dragging::None;
@@ -888,9 +998,13 @@ where
                                 println!("Group move complete: offset={:?}", offset);
 
                                 // Call on_group_move handler with selected nodes and offset
+                                let node_ids: Vec<usize> = state.selected_nodes.iter().copied().collect();
+                                let delta = offset.into_iced();
                                 if let Some(handler) = self.on_group_move_handler() {
-                                    let selected: Vec<usize> = state.selected_nodes.iter().copied().collect();
-                                    shell.publish(handler(selected, offset.into_iced()));
+                                    shell.publish(handler(node_ids.clone(), delta));
+                                }
+                                if let Some(handler) = self.get_on_event() {
+                                    shell.publish(handler(NodeGraphEvent::GroupMoved { node_ids, delta }));
                                 }
                             }
                             state.dragging = Dragging::None;
@@ -1013,7 +1127,13 @@ where
                                             println!("Edge cut: disconnecting {} pin {} -> {} pin {}", from_node, from_pin, to_node, to_pin);
 
                                             if let Some(handler) = self.on_disconnect_handler() {
-                                                shell.publish(handler(from_node, from_pin, to_node, to_pin));
+                                                shell.publish(handler(*from_ref, *to_ref));
+                                            }
+                                            if let Some(handler) = self.get_on_event() {
+                                                shell.publish(handler(NodeGraphEvent::EdgeDisconnected {
+                                                    from: *from_ref,
+                                                    to: *to_ref,
+                                                }));
                                             }
                                             shell.capture_event();
                                             shell.request_redraw();
@@ -1073,8 +1193,13 @@ where
 
                                                 // Disconnect the edge
                                                 if let Some(handler) = self.on_disconnect_handler() {
-                                                    let message = handler(from_node, from_pin, to_node, to_pin);
-                                                    shell.publish(message);
+                                                    shell.publish(handler(*from_ref, *to_ref));
+                                                }
+                                                if let Some(handler) = self.get_on_event() {
+                                                    shell.publish(handler(NodeGraphEvent::EdgeDisconnected {
+                                                        from: *from_ref,
+                                                        to: *to_ref,
+                                                    }));
                                                 }
 
                                                 // Start dragging FROM the TO pin (the end that stays connected)
@@ -1099,8 +1224,13 @@ where
 
                                                 // Disconnect the edge
                                                 if let Some(handler) = self.on_disconnect_handler() {
-                                                    let message = handler(from_node, from_pin, to_node, to_pin);
-                                                    shell.publish(message);
+                                                    shell.publish(handler(*from_ref, *to_ref));
+                                                }
+                                                if let Some(handler) = self.get_on_event() {
+                                                    shell.publish(handler(NodeGraphEvent::EdgeDisconnected {
+                                                        from: *from_ref,
+                                                        to: *to_ref,
+                                                    }));
                                                 }
 
                                                 // Start dragging FROM the FROM pin (the end that stays connected)
@@ -1190,7 +1320,10 @@ where
                                     // Notify selection change
                                     if selection_changed {
                                         if let Some(handler) = self.on_select_handler() {
-                                            shell.publish(handler(new_selection));
+                                            shell.publish(handler(new_selection.clone()));
+                                        }
+                                        if let Some(handler) = self.get_on_event() {
+                                            shell.publish(handler(NodeGraphEvent::SelectionChanged { selected: new_selection }));
                                         }
                                     }
 
@@ -1209,7 +1342,10 @@ where
                             if state.modifiers.command() {
                                 #[cfg(debug_assertions)]
                                 println!("Starting edge cutting from {:?}", cursor_position);
-                                state.dragging = Dragging::EdgeCutting(vec![cursor_position]);
+                                state.dragging = Dragging::EdgeCutting {
+                                    trail: vec![cursor_position],
+                                    pending_cuts: std::collections::HashSet::new(),
+                                };
                                 shell.capture_event();
                                 return;
                             }
@@ -1437,4 +1573,180 @@ fn point_to_line_distance(point: Point, line_start: Point, line_end: Point) -> f
 
     // Return distance from point to closest point on line
     ((point.x - closest_x).powi(2) + (point.y - closest_y).powi(2)).sqrt()
+}
+
+/// Checks if two line segments intersect.
+/// Returns true if segments (a1,a2) and (b1,b2) cross each other.
+fn line_segments_intersect(a1: Point, a2: Point, b1: Point, b2: Point) -> bool {
+    // Using cross product method for line segment intersection
+    fn cross(o: Point, a: Point, b: Point) -> f32 {
+        (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+    }
+
+    let d1 = cross(b1, b2, a1);
+    let d2 = cross(b1, b2, a2);
+    let d3 = cross(a1, a2, b1);
+    let d4 = cross(a1, a2, b2);
+
+    // Check if segments straddle each other
+    if ((d1 > 0.0 && d2 < 0.0) || (d1 < 0.0 && d2 > 0.0))
+        && ((d3 > 0.0 && d4 < 0.0) || (d3 < 0.0 && d4 > 0.0))
+    {
+        return true;
+    }
+
+    // Check for collinear cases (endpoint on segment)
+    fn on_segment(p: Point, q: Point, r: Point) -> bool {
+        q.x <= p.x.max(r.x) && q.x >= p.x.min(r.x) && q.y <= p.y.max(r.y) && q.y >= p.y.min(r.y)
+    }
+
+    if d1.abs() < 0.0001 && on_segment(b1, a1, b2) {
+        return true;
+    }
+    if d2.abs() < 0.0001 && on_segment(b1, a2, b2) {
+        return true;
+    }
+    if d3.abs() < 0.0001 && on_segment(a1, b1, a2) {
+        return true;
+    }
+    if d4.abs() < 0.0001 && on_segment(a1, b2, a2) {
+        return true;
+    }
+
+    false
+}
+
+/// Checks if a line segment intersects a cubic bezier curve.
+/// Uses analytical solution by substituting bezier into line equation.
+fn line_intersects_bezier(
+    line_start: Point,
+    line_end: Point,
+    p0: Point,
+    p1: Point,
+    p2: Point,
+    p3: Point,
+) -> bool {
+    // Line in implicit form: ax + by + c = 0
+    let a = line_end.y - line_start.y;
+    let b = line_start.x - line_end.x;
+    let c = line_end.x * line_start.y - line_start.x * line_end.y;
+
+    // Evaluate line equation at bezier control points
+    let d0 = a * p0.x + b * p0.y + c;
+    let d1 = a * p1.x + b * p1.y + c;
+    let d2 = a * p2.x + b * p2.y + c;
+    let d3 = a * p3.x + b * p3.y + c;
+
+    // Coefficients of cubic polynomial: at³ + bt² + ct + d = 0
+    // Derived from substituting bezier B(t) into line equation
+    let coef_a = -d0 + 3.0 * d1 - 3.0 * d2 + d3;
+    let coef_b = 3.0 * d0 - 6.0 * d1 + 3.0 * d2;
+    let coef_c = -3.0 * d0 + 3.0 * d1;
+    let coef_d = d0;
+
+    // Find roots of the cubic polynomial
+    let roots = solve_cubic(coef_a, coef_b, coef_c, coef_d);
+
+    // Check if any root in [0, 1] produces a point within the line segment
+    let line_len_sq = (line_end.x - line_start.x).powi(2) + (line_end.y - line_start.y).powi(2);
+
+    for t in roots {
+        if t >= 0.0 && t <= 1.0 {
+            // Evaluate bezier at this t
+            let mt = 1.0 - t;
+            let mt2 = mt * mt;
+            let mt3 = mt2 * mt;
+            let t2 = t * t;
+            let t3 = t2 * t;
+
+            let bx = mt3 * p0.x + 3.0 * mt2 * t * p1.x + 3.0 * mt * t2 * p2.x + t3 * p3.x;
+            let by = mt3 * p0.y + 3.0 * mt2 * t * p1.y + 3.0 * mt * t2 * p2.y + t3 * p3.y;
+
+            // Check if this point is within the line segment bounds
+            let dx = bx - line_start.x;
+            let dy = by - line_start.y;
+            let proj = dx * (line_end.x - line_start.x) + dy * (line_end.y - line_start.y);
+
+            if proj >= 0.0 && proj <= line_len_sq {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Solves cubic equation ax³ + bx² + cx + d = 0.
+/// Returns up to 3 real roots.
+fn solve_cubic(a: f32, b: f32, c: f32, d: f32) -> Vec<f32> {
+    const EPSILON: f32 = 1e-6;
+
+    // Handle degenerate cases
+    if a.abs() < EPSILON {
+        // Quadratic: bx² + cx + d = 0
+        if b.abs() < EPSILON {
+            // Linear: cx + d = 0
+            if c.abs() < EPSILON {
+                return vec![];
+            }
+            return vec![-d / c];
+        }
+        let disc = c * c - 4.0 * b * d;
+        if disc < 0.0 {
+            return vec![];
+        }
+        let sqrt_disc = disc.sqrt();
+        return vec![(-c + sqrt_disc) / (2.0 * b), (-c - sqrt_disc) / (2.0 * b)];
+    }
+
+    // Normalize: x³ + px² + qx + r = 0
+    let p = b / a;
+    let q = c / a;
+    let r = d / a;
+
+    // Substitute x = t - p/3 to get depressed cubic: t³ + pt + q = 0
+    let p_new = q - p * p / 3.0;
+    let q_new = 2.0 * p * p * p / 27.0 - p * q / 3.0 + r;
+
+    // Cardano's formula
+    let disc = q_new * q_new / 4.0 + p_new * p_new * p_new / 27.0;
+
+    let offset = -p / 3.0;
+
+    if disc > EPSILON {
+        // One real root
+        let sqrt_disc = disc.sqrt();
+        let u = (-q_new / 2.0 + sqrt_disc).cbrt();
+        let v = (-q_new / 2.0 - sqrt_disc).cbrt();
+        vec![u + v + offset]
+    } else if disc < -EPSILON {
+        // Three real roots (casus irreducibilis)
+        let m = (-p_new / 3.0).sqrt();
+        let theta = (-q_new / (2.0 * m * m * m)).acos() / 3.0;
+        let pi = std::f32::consts::PI;
+        vec![
+            2.0 * m * theta.cos() + offset,
+            2.0 * m * (theta + 2.0 * pi / 3.0).cos() + offset,
+            2.0 * m * (theta + 4.0 * pi / 3.0).cos() + offset,
+        ]
+    } else {
+        // Double or triple root
+        if q_new.abs() < EPSILON {
+            vec![offset]
+        } else {
+            let u = (-q_new / 2.0).cbrt();
+            vec![2.0 * u + offset, -u + offset]
+        }
+    }
+}
+
+/// Converts a PinSide to a direction vector (matches shader get_pin_direction).
+fn pin_side_to_direction(side: crate::node_pin::PinSide) -> (f32, f32) {
+    use crate::node_pin::PinSide;
+    match side {
+        PinSide::Left => (-1.0, 0.0),
+        PinSide::Right => (1.0, 0.0),
+        PinSide::Top => (0.0, -1.0),
+        PinSide::Bottom => (0.0, 1.0),
+        PinSide::Row => (1.0, 0.0), // Default to right
+    }
 }

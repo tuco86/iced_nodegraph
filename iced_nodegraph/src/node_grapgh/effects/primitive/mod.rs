@@ -7,6 +7,7 @@ use iced::{Rectangle, wgpu};
 use iced_wgpu::graphics::Viewport;
 use iced_wgpu::primitive::Primitive;
 pub use node::Node;
+pub use node::NodeFlags;
 pub use pin::Pin;
 
 use crate::node_grapgh::{euclid::WorldPoint, state::Dragging};

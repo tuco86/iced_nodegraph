@@ -100,8 +100,8 @@ pub struct NodeGraph<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer
     )>,
     pub(super) edges: Vec<(PinReference, PinReference, Option<EdgeStyle>)>,
     graph_style: Option<GraphStyle>,
-    on_connect: Option<Box<dyn Fn(usize, usize, usize, usize) -> Message + 'a>>,
-    on_disconnect: Option<Box<dyn Fn(usize, usize, usize, usize) -> Message + 'a>>,
+    on_connect: Option<Box<dyn Fn(PinReference, PinReference) -> Message + 'a>>,
+    on_disconnect: Option<Box<dyn Fn(PinReference, PinReference) -> Message + 'a>>,
     on_move: Option<Box<dyn Fn(usize, Point) -> Message + 'a>>,
     on_select: Option<Box<dyn Fn(Vec<usize>) -> Message + 'a>>,
     on_clone: Option<Box<dyn Fn(Vec<usize>) -> Message + 'a>>,
@@ -114,6 +114,9 @@ pub struct NodeGraph<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer
     on_drag_end: Option<Box<dyn Fn() -> Message + 'a>>,
     // Remote users for collaborative rendering
     remote_users: Option<&'a [RemoteUserState]>,
+    /// Unified event callback for all graph interactions.
+    /// Alternative to individual callbacks (on_connect, on_move, etc.)
+    on_event: Option<Box<dyn Fn(NodeGraphEvent) -> Message + 'a>>,
 }
 
 impl<Message, Theme, Renderer> Default for NodeGraph<'_, Message, Theme, Renderer>
@@ -138,6 +141,7 @@ where
             on_drag_update: None,
             on_drag_end: None,
             remote_users: None,
+            on_event: None,
         }
     }
 }
@@ -176,12 +180,20 @@ where
         self
     }
 
-    pub fn on_connect(mut self, f: impl Fn(usize, usize, usize, usize) -> Message + 'a) -> Self {
+    /// Sets a callback for when an edge is connected between two pins.
+    pub fn on_connect(
+        mut self,
+        f: impl Fn(PinReference, PinReference) -> Message + 'a,
+    ) -> Self {
         self.on_connect = Some(Box::new(f));
         self
     }
 
-    pub fn on_disconnect(mut self, f: impl Fn(usize, usize, usize, usize) -> Message + 'a) -> Self {
+    /// Sets a callback for when an edge is disconnected between two pins.
+    pub fn on_disconnect(
+        mut self,
+        f: impl Fn(PinReference, PinReference) -> Message + 'a,
+    ) -> Self {
         self.on_disconnect = Some(Box::new(f));
         self
     }
@@ -235,6 +247,27 @@ where
     /// Remote users' cursors, selections, and drags will be rendered on the canvas.
     pub fn remote_users(mut self, users: &'a [RemoteUserState]) -> Self {
         self.remote_users = Some(users);
+        self
+    }
+
+    /// Sets a unified event callback for all graph interactions.
+    ///
+    /// This is an alternative to using individual callbacks (on_connect, on_move, etc.).
+    /// When set, this callback fires for all graph events, allowing centralized event handling.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// node_graph()
+    ///     .on_event(|event| match event {
+    ///         NodeGraphEvent::EdgeConnected { from, to } => Message::Connected { from, to },
+    ///         NodeGraphEvent::NodeMoved { node_id, position } => Message::Moved { node_id, position },
+    ///         NodeGraphEvent::SelectionChanged { selected } => Message::Selected(selected),
+    ///         _ => Message::Noop,
+    ///     })
+    /// ```
+    pub fn on_event(mut self, f: impl Fn(NodeGraphEvent) -> Message + 'a) -> Self {
+        self.on_event = Some(Box::new(f));
         self
     }
 
@@ -309,12 +342,12 @@ where
 
     pub(super) fn on_connect_handler(
         &self,
-    ) -> Option<&Box<dyn Fn(usize, usize, usize, usize) -> Message + 'a>> {
+    ) -> Option<&Box<dyn Fn(PinReference, PinReference) -> Message + 'a>> {
         self.on_connect.as_ref()
     }
     pub(super) fn on_disconnect_handler(
         &self,
-    ) -> Option<&Box<dyn Fn(usize, usize, usize, usize) -> Message + 'a>> {
+    ) -> Option<&Box<dyn Fn(PinReference, PinReference) -> Message + 'a>> {
         self.on_disconnect.as_ref()
     }
     pub(super) fn on_move_handler(&self) -> Option<&Box<dyn Fn(usize, Point) -> Message + 'a>> {
@@ -352,6 +385,10 @@ where
     }
     pub(super) fn get_remote_users(&self) -> Option<&[RemoteUserState]> {
         self.remote_users
+    }
+
+    pub(super) fn get_on_event(&self) -> Option<&(dyn Fn(NodeGraphEvent) -> Message + 'a)> {
+        self.on_event.as_deref()
     }
 
     pub fn needs_animation(&self) -> bool {

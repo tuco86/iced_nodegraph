@@ -25,15 +25,13 @@
 //!
 //! #[derive(Debug, Clone)]
 //! enum Message {
-//!     EdgeConnected { from_node: usize, from_pin: usize, to_node: usize, to_pin: usize },
+//!     EdgeConnected { from: PinReference, to: PinReference },
 //!     NodeMoved { node_id: usize, position: Point },
 //! }
 //!
 //! fn view(edges: &[(PinReference, PinReference)]) -> Element<'_, Message, Theme, Renderer> {
 //!     let mut ng = node_graph()
-//!         .on_connect(|from_node, from_pin, to_node, to_pin| {
-//!             Message::EdgeConnected { from_node, from_pin, to_node, to_pin }
-//!         })
+//!         .on_connect(|from, to| Message::EdgeConnected { from, to })
 //!         .on_move(|node_id, position| Message::NodeMoved { node_id, position });
 //!
 //!     // Add nodes
@@ -189,11 +187,13 @@ pub use node_grapgh::{
 };
 pub use node_pin::{NodePin, PinDirection, PinReference, PinSide, node_pin};
 pub use style::{
-    DashPattern, EdgeAnimation, EdgeStyle, EdgeType, GraphStyle, NodeStyle, SelectionStyle,
-    is_dark_theme, relative_luminance,
+    DashPattern, EdgeAnimation, EdgeStyle, EdgeType, GraphStyle, NodeStyle, PinShape, PinStyle,
+    SelectionStyle, ShadowStyle, STANDARD_THEMES, is_dark_theme, relative_luminance, theme_name,
 };
+pub use helpers::{CloneResult, DeleteResult, SelectionHelper, clone_nodes, delete_nodes};
 
 pub mod content;
+pub mod helpers;
 mod node;
 mod node_grapgh;
 mod node_pin;

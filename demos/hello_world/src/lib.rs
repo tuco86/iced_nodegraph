@@ -91,20 +91,16 @@ pub fn run_demo() {
 enum ApplicationMessage {
     Noop,
     EdgeConnected {
-        from_node: usize,
-        from_pin: usize,
-        to_node: usize,
-        to_pin: usize,
+        from: PinReference,
+        to: PinReference,
     },
     NodeMoved {
         node_index: usize,
         new_position: Point,
     },
     EdgeDisconnected {
-        from_node: usize,
-        from_pin: usize,
-        to_node: usize,
-        to_pin: usize,
+        from: PinReference,
+        to: PinReference,
     },
     ToggleCommandPalette,
     CommandPaletteInput(String),
@@ -325,16 +321,8 @@ impl Application {
     fn update(&mut self, message: ApplicationMessage) -> Task<ApplicationMessage> {
         match message {
             ApplicationMessage::Noop => Task::none(),
-            ApplicationMessage::EdgeConnected {
-                from_node,
-                from_pin,
-                to_node,
-                to_pin,
-            } => {
-                self.edges.push((
-                    PinReference::new(from_node, from_pin),
-                    PinReference::new(to_node, to_pin),
-                ));
+            ApplicationMessage::EdgeConnected { from, to } => {
+                self.edges.push((from, to));
                 self.propagate_values();
                 Task::none()
             }
@@ -347,18 +335,8 @@ impl Application {
                 }
                 Task::none()
             }
-            ApplicationMessage::EdgeDisconnected {
-                from_node,
-                from_pin,
-                to_node,
-                to_pin,
-            } => {
-                self.edges.retain(|(from, to)| {
-                    !(from.node_id == from_node
-                        && from.pin_id == from_pin
-                        && to.node_id == to_node
-                        && to.pin_id == to_pin)
-                });
+            ApplicationMessage::EdgeDisconnected { from, to } => {
+                self.edges.retain(|(f, t)| !(f == &from && t == &to));
                 self.propagate_values();
                 Task::none()
             }
@@ -727,22 +705,8 @@ impl Application {
         let computed_style = self.computed_style.to_node_style();
 
         let mut ng = node_graph()
-            .on_connect(
-                |from_node, from_pin, to_node, to_pin| ApplicationMessage::EdgeConnected {
-                    from_node,
-                    from_pin,
-                    to_node,
-                    to_pin,
-                },
-            )
-            .on_disconnect(|from_node, from_pin, to_node, to_pin| {
-                ApplicationMessage::EdgeDisconnected {
-                    from_node,
-                    from_pin,
-                    to_node,
-                    to_pin,
-                }
-            })
+            .on_connect(|from, to| ApplicationMessage::EdgeConnected { from, to })
+            .on_disconnect(|from, to| ApplicationMessage::EdgeDisconnected { from, to })
             .on_move(|node_index, new_position| ApplicationMessage::NodeMoved {
                 node_index,
                 new_position,
