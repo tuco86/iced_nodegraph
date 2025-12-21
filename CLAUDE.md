@@ -33,14 +33,21 @@ This document provides essential context for Claude Code when working on the ice
 
 ## Architecture Overview
 
-This workspace contains **4 interdependent Rust projects** forming a node graph editor ecosystem:
+This workspace contains a node graph editor built on Iced 0.14:
 
 - **`iced_nodegraph`** - Custom node graph widget built on Iced GUI framework *(main project)*
-- **`iced`** - Fork/local version of the Iced GUI library with advanced rendering features
-- **`iced_aw`** - Additional widgets library extending Iced's capabilities
-- **`ngwa-rs`** - SpacetimeDB module for backend data persistence
+- **`ngwa-rs`** - SpacetimeDB module for backend data persistence (optional)
+
+**Dependencies**: Uses `iced = "0.14"` and `iced_wgpu = "0.14"` from crates.io (upstream).
 
 **Current Status**: Core functionality is complete - node/pin interaction, edge connections, and coordinate transformations are fully functional with type-safe API.
+
+### WASM Browser Compatibility
+- **Chrome/Chromium**: Full WebGPU support, recommended browser
+- **Firefox**: WebGPU has known buffer-mapping issues (async timing bugs), may crash
+- **Safari**: Untested
+
+For WASM demos, Chrome or Chromium-based browsers are recommended.
 
 ## Core Architecture Patterns
 
@@ -140,14 +147,12 @@ Custom effects use `shader::Primitive` trait:
 
 ## Key Integration Points
 
-### Iced Framework Coupling
-- Depends on local `../iced` and `../iced/wgpu` paths
+### Iced Framework
+- Uses **iced 0.14** from crates.io (upstream)
 - Uses advanced renderer features (`iced_wgpu::primitive::Renderer`)
 - Requires `features = ["advanced", "wgpu", "tokio"]`
 
 ### Cross-Project Dependencies
-- **Workspace file**: `examples/ngwa-rs.code-workspace` configures all 4 projects
-- Build order matters: iced → iced_aw → iced_nodegraph
 - SpacetimeDB module (`ngwa-rs`) is independent backend component
 
 ## File Organization Logic

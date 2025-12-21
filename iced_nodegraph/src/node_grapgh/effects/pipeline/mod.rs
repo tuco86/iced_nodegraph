@@ -40,6 +40,10 @@ pub struct Pipeline {
 
     bind_group_layout: BindGroupLayout,
     bind_group: BindGroup,
+
+    /// Cached buffer generations to avoid recreating bind groups unnecessarily.
+    /// This is critical for WebGPU/WASM where bind group creation can exhaust memory.
+    bind_group_generations: (u64, u64, u64),
 }
 
 impl PipelineTrait for Pipeline {
@@ -156,6 +160,7 @@ impl Pipeline {
             pipeline_foreground,
             bind_group_layout,
             bind_group,
+            bind_group_generations: (0, 0, 0),
         }
     }
 
@@ -435,14 +440,24 @@ impl Pipeline {
         // println!("uniforms: {:?}", uniforms);
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
 
-        self.bind_group = create_bind_group(
-            device,
-            &self.bind_group_layout,
-            self.uniforms.as_entire_binding(),
-            self.nodes.as_entire_binding(),
-            self.pins.as_entire_binding(),
-            self.edges.as_entire_binding(),
+        // Only recreate bind group if buffer generations changed.
+        // This is critical for WebGPU/WASM where bind group creation can exhaust GPU memory.
+        let current_generations = (
+            self.nodes.generation(),
+            self.pins.generation(),
+            self.edges.generation(),
         );
+        if current_generations != self.bind_group_generations {
+            self.bind_group = create_bind_group(
+                device,
+                &self.bind_group_layout,
+                self.uniforms.as_entire_binding(),
+                self.nodes.as_entire_binding(),
+                self.pins.as_entire_binding(),
+                self.edges.as_entire_binding(),
+            );
+            self.bind_group_generations = current_generations;
+        }
 
         // println!(
         //     "nodes: {:?} ({:?}), pins: {:?} ({:?}), edges: {:?} ({:?})",

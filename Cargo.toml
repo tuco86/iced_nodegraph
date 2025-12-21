@@ -33,7 +33,7 @@ euclid = { version = "0.22.11", features = ["bytemuck"] }
 bytemuck = { version = "1.0", features = ["derive"] }
 glam = { version = "0.25", features = ["bytemuck"] }
 
-# Graphics and GPU
+# Graphics and GPU (same version as iced 0.14)
 wgpu = "27.0"
 
 # Utilities

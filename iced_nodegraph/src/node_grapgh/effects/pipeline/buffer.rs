@@ -11,6 +11,9 @@ const BUFFER_MIN_CAPACITY: usize = 16;
 ///
 /// Tracks a generation counter that increments when the underlying GPU buffer
 /// is recreated, enabling bind group caching.
+///
+/// Also tracks content hash to skip redundant GPU writes on WebGPU/WASM where
+/// excessive staging buffer usage can cause memory exhaustion.
 pub struct Buffer<T> {
     buffer_wgpu: wgpu::Buffer,
     buffer_vec: Vec<T>,
@@ -19,6 +22,9 @@ pub struct Buffer<T> {
     /// Generation counter - increments when buffer is recreated.
     /// Used for bind group caching.
     generation: u64,
+    /// Hash of last written content to skip redundant writes.
+    /// Critical for WebGPU/WASM stability.
+    content_hash: u64,
 }
 
 impl<T> Buffer<T> {
@@ -38,6 +44,7 @@ impl<T> Buffer<T> {
             label,
             usage,
             generation: 0,
+            content_hash: 0,
         }
     }
 
@@ -149,14 +156,23 @@ impl<T> Buffer<T> {
 
             self.buffer_wgpu = create_wgpu_buffer(device, self.label, new_size, self.usage);
             self.generation += 1;
+            // Force write after buffer recreation
+            self.content_hash = 0;
             true
         } else {
             false
         };
 
-        // Write all data
+        // Compute content hash to avoid redundant writes.
+        // Critical for WebGPU/WASM where staging buffer exhaustion causes crashes.
         if !self.buffer_vec.is_empty() {
-            queue.write_buffer(&self.buffer_wgpu, 0, bytemuck::cast_slice(&self.buffer_vec));
+            let bytes = bytemuck::cast_slice::<T, u8>(&self.buffer_vec);
+            let new_hash = simple_hash(bytes);
+
+            if new_hash != self.content_hash || recreated {
+                queue.write_buffer(&self.buffer_wgpu, 0, bytes);
+                self.content_hash = new_hash;
+            }
         }
 
         recreated
@@ -174,6 +190,20 @@ impl<T> Buffer<T> {
     pub fn is_empty(&self) -> bool {
         self.buffer_vec.is_empty()
     }
+}
+
+/// Fast, simple hash function for content change detection.
+/// Uses FNV-1a algorithm for speed - we don't need cryptographic strength.
+fn simple_hash(bytes: &[u8]) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+
+    let mut hash = FNV_OFFSET;
+    for &byte in bytes {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
 }
 
 fn create_wgpu_buffer(
