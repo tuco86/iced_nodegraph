@@ -35,7 +35,8 @@
 mod nodes;
 
 use iced::{
-    Color, Event, Length, Point, Subscription, Task, Theme, Vector, event, keyboard, widget::stack,
+    Color, Event, Length, Point, Subscription, Task, Theme, Vector, event, keyboard,
+    widget::{container, stack, text},
     window,
 };
 use iced_nodegraph::{
@@ -1212,29 +1213,31 @@ impl Application {
             }
         }
 
-        let graph_view = ng.into();
+        let graph_view: iced::Element<'_, ApplicationMessage> = ng.into();
 
-        if self.command_palette_open {
+        // Always use the same widget structure to preserve NodeGraph state
+        // The command palette is conditionally shown as an overlay
+        let overlay: iced::Element<'_, ApplicationMessage> = if self.command_palette_open {
             let (_, commands) = self.build_palette_commands();
-
-            stack!(
-                graph_view,
-                command_palette(
-                    &self.command_input,
-                    &commands,
-                    self.palette_selected_index,
-                    ApplicationMessage::CommandPaletteInput,
-                    ApplicationMessage::CommandPaletteSelect,
-                    ApplicationMessage::CommandPaletteNavigate,
-                    || ApplicationMessage::CommandPaletteCancel
-                )
+            command_palette(
+                &self.command_input,
+                &commands,
+                self.palette_selected_index,
+                ApplicationMessage::CommandPaletteInput,
+                ApplicationMessage::CommandPaletteSelect,
+                ApplicationMessage::CommandPaletteNavigate,
+                || ApplicationMessage::CommandPaletteCancel,
             )
+            .into()
+        } else {
+            // Invisible placeholder to maintain widget tree structure
+            container(text("")).width(0).height(0).into()
+        };
+
+        stack!(graph_view, overlay)
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
-        } else {
-            graph_view
-        }
     }
 
     fn build_palette_commands(&self) -> (&'static str, Vec<Command<ApplicationMessage>>) {
