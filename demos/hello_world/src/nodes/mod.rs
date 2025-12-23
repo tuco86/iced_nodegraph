@@ -8,7 +8,6 @@ mod enum_selector;
 mod filter;
 mod float_slider;
 mod int_slider;
-mod style_config;
 
 pub use bool_toggle::{BoolToggleConfig, bool_toggle_node};
 pub use calendar::calendar_node;
@@ -24,11 +23,6 @@ pub use enum_selector::{edge_type_selector_node, pin_shape_selector_node};
 pub use filter::filter_node;
 pub use float_slider::{FloatSliderConfig, float_slider_node};
 pub use int_slider::{IntSliderConfig, int_slider_node};
-// Legacy style config nodes (will be replaced by new config nodes)
-pub use style_config::{
-    border_width_config_node, corner_radius_config_node, edge_color_config_node,
-    edge_thickness_config_node, fill_color_config_node, opacity_config_node,
-};
 
 use iced::{Color, Theme};
 use iced_nodegraph::{EdgeConfig, EdgeType, NodeConfig, PinConfig, PinShape, ShadowConfig};
@@ -156,14 +150,6 @@ impl NodeValue {
 /// Configuration node types that affect graph styling
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConfigNodeType {
-    // Legacy simple config nodes (single value input)
-    CornerRadius,
-    Opacity,
-    BorderWidth,
-    FillColor,
-    EdgeThickness,
-    EdgeColor,
-    // New full config nodes (multiple inputs + inheritance)
     NodeConfig(NodeConfigInputs),
     EdgeConfig(EdgeConfigInputs),
     ShadowConfig(ShadowConfigInputs),
@@ -178,18 +164,6 @@ pub enum ConfigNodeType {
         has_node_config: bool,
         target_id: Option<i32>,
     },
-}
-
-#[allow(dead_code)]
-impl ConfigNodeType {
-    /// Returns the expected input pin type for legacy config nodes
-    pub fn input_type(&self) -> &'static str {
-        match self {
-            Self::CornerRadius | Self::Opacity | Self::BorderWidth | Self::EdgeThickness => "float",
-            Self::FillColor | Self::EdgeColor => "color",
-            _ => "config",
-        }
-    }
 }
 
 /// Input node types that produce values
@@ -274,12 +248,6 @@ impl NodeType {
                 InputNodeType::ColorPreset { .. } => "Color Preset",
             },
             Self::Config(config) => match config {
-                ConfigNodeType::CornerRadius => "Corner Radius",
-                ConfigNodeType::Opacity => "Opacity",
-                ConfigNodeType::BorderWidth => "Border Width",
-                ConfigNodeType::FillColor => "Fill Color",
-                ConfigNodeType::EdgeThickness => "Edge Thickness",
-                ConfigNodeType::EdgeColor => "Edge Color",
                 ConfigNodeType::NodeConfig(_) => "Node Config",
                 ConfigNodeType::EdgeConfig(_) => "Edge Config",
                 ConfigNodeType::ShadowConfig(_) => "Shadow Config",
