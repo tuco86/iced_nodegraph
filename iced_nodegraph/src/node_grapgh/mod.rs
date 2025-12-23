@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use iced::{Color, Length, Point, Size, Vector};
 
 use crate::node_pin::PinReference;
-use crate::style::{EdgeStyle, GraphStyle, NodeStyle};
+use crate::style::{EdgeStyle, GraphDefaults, GraphStyle, NodeStyle};
 
 pub mod camera;
 pub(crate) mod canonical;
@@ -100,6 +100,9 @@ pub struct NodeGraph<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer
     )>,
     pub(super) edges: Vec<(PinReference, PinReference, Option<EdgeStyle>)>,
     graph_style: Option<GraphStyle>,
+    /// Graph-wide style defaults for the cascading style system.
+    /// Applied after theme defaults but before per-item styles.
+    pub(super) graph_defaults: Option<GraphDefaults>,
     on_connect: Option<Box<dyn Fn(PinReference, PinReference) -> Message + 'a>>,
     on_disconnect: Option<Box<dyn Fn(PinReference, PinReference) -> Message + 'a>>,
     on_move: Option<Box<dyn Fn(usize, Point) -> Message + 'a>>,
@@ -129,6 +132,7 @@ where
             nodes: Vec::new(),
             edges: Vec::new(),
             graph_style: None,
+            graph_defaults: None,
             on_connect: None,
             on_disconnect: None,
             on_move: None,
@@ -177,6 +181,33 @@ where
 
     pub fn graph_style(mut self, style: GraphStyle) -> Self {
         self.graph_style = Some(style);
+        self
+    }
+
+    /// Sets graph-wide style defaults for the cascading style system.
+    ///
+    /// These defaults are applied after theme defaults but before per-item styles.
+    /// Use this to configure consistent styling across all nodes, edges, and pins
+    /// in this graph without overriding individual item styles.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use iced_nodegraph::style::{GraphDefaults, NodeConfig, EdgeConfig};
+    ///
+    /// let defaults = GraphDefaults::new()
+    ///     .node(NodeConfig::new()
+    ///         .corner_radius(10.0)
+    ///         .opacity(0.8))
+    ///     .edge(EdgeConfig::new()
+    ///         .thickness(3.0));
+    ///
+    /// node_graph()
+    ///     .defaults(defaults)
+    ///     // nodes will inherit corner_radius=10.0 and opacity=0.8
+    /// ```
+    pub fn defaults(mut self, defaults: GraphDefaults) -> Self {
+        self.graph_defaults = Some(defaults);
         self
     }
 

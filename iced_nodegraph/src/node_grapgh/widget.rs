@@ -17,7 +17,7 @@ use crate::{
     PinReference, PinSide,
     node_grapgh::euclid::{IntoEuclid, ScreenPoint, WorldPoint},
     node_pin::NodePinState,
-    style::is_dark_theme,
+    style::{NodeConfig, StyleResolver, is_dark_theme},
 };
 
 // Click detection threshold (in world-space pixels)
@@ -111,98 +111,56 @@ where
         // Light text (high luminance) indicates dark background theme
         let is_dark = is_dark_theme(text_color);
 
-        // Check for user-provided graph style
-        let graph_style = self.get_graph_style();
+        // Create StyleResolver for cascading style system
+        // Theme Defaults -> Graph Defaults -> Item Config
+        let resolver = StyleResolver::from_is_dark(is_dark, self.graph_defaults.as_ref());
 
-        // Derive colors from theme or use graph style if provided
-        // Apply fade_opacity to all colors
-        let (bg_color, border_color, fill_color, edge_color, drag_edge_color, drag_valid_color) =
-            if let Some(gs) = graph_style {
-                // User provided graph style - use their colors
-                let bg = glam::vec4(
-                    gs.background_color.r,
-                    gs.background_color.g,
-                    gs.background_color.b,
-                    gs.background_color.a * fade_opacity,
-                );
-                let border = glam::vec4(
-                    gs.grid_color.r,
-                    gs.grid_color.g,
-                    gs.grid_color.b,
-                    gs.grid_color.a * fade_opacity,
-                );
-                // Derive fill from background (slightly lighter/darker)
-                let fill = if is_dark {
-                    glam::vec4(
-                        gs.background_color.r + 0.06,
-                        gs.background_color.g + 0.06,
-                        gs.background_color.b + 0.07,
-                        fade_opacity * 0.75,
-                    )
-                } else {
-                    glam::vec4(
-                        gs.background_color.r - 0.08,
-                        gs.background_color.g - 0.08,
-                        gs.background_color.b - 0.07,
-                        fade_opacity * 0.75,
-                    )
-                };
-                let edge = glam::vec4(
-                    text_color.r,
-                    text_color.g,
-                    text_color.b,
-                    text_color.a * fade_opacity,
-                );
-                let drag = glam::vec4(
-                    gs.drag_edge_color.r,
-                    gs.drag_edge_color.g,
-                    gs.drag_edge_color.b,
-                    gs.drag_edge_color.a * fade_opacity,
-                );
-                let valid = glam::vec4(
-                    gs.drag_edge_valid_color.r,
-                    gs.drag_edge_valid_color.g,
-                    gs.drag_edge_valid_color.b,
-                    gs.drag_edge_valid_color.a * fade_opacity,
-                );
-                (bg, border, fill, edge, drag, valid)
-            } else if is_dark {
-                // Dark theme: use darker backgrounds with subtle highlights
-                let bg = glam::vec4(0.08, 0.08, 0.09, fade_opacity);
-                let border = glam::vec4(0.20, 0.20, 0.22, fade_opacity);
-                let fill = glam::vec4(0.14, 0.14, 0.16, fade_opacity);
-                let edge = glam::vec4(
-                    text_color.r,
-                    text_color.g,
-                    text_color.b,
-                    text_color.a * fade_opacity,
-                );
-                // Drag colors: warning (orange-ish) and success (green-ish)
-                let drag = glam::vec4(0.9, 0.6, 0.3, fade_opacity);
-                let valid = glam::vec4(0.3, 0.8, 0.5, fade_opacity);
-                (bg, border, fill, edge, drag, valid)
-            } else {
-                // Light theme: use lighter backgrounds with more contrast
-                let bg = glam::vec4(0.92, 0.92, 0.93, fade_opacity);
-                let border = glam::vec4(0.70, 0.70, 0.72, fade_opacity);
-                let fill = glam::vec4(0.84, 0.84, 0.86, fade_opacity);
-                let edge = glam::vec4(
-                    text_color.r,
-                    text_color.g,
-                    text_color.b,
-                    text_color.a * fade_opacity,
-                );
-                // Drag colors: darker for light theme
-                let drag = glam::vec4(0.8, 0.5, 0.2, fade_opacity);
-                let valid = glam::vec4(0.2, 0.7, 0.4, fade_opacity);
-                (bg, border, fill, edge, drag, valid)
-            };
+        // Resolve graph-level styles through cascade
+        let resolved_graph = resolver.resolve_graph();
+        let resolved_node_defaults = resolver.resolve_node(None);
+        let resolved_edge_defaults = resolver.resolve_edge(None);
+        let resolved_pin_defaults = resolver.resolve_pin(None);
 
-        // Get selection style from graph_style or use defaults
-        let default_selection_style = crate::style::SelectionStyle::default();
-        let selection_style = graph_style
-            .map(|gs| &gs.selection_style)
-            .unwrap_or(&default_selection_style);
+        // Convert resolved styles to GPU-compatible formats with fade_opacity
+        let bg_color = glam::vec4(
+            resolved_graph.background_color.r,
+            resolved_graph.background_color.g,
+            resolved_graph.background_color.b,
+            resolved_graph.background_color.a * fade_opacity,
+        );
+        let border_color = glam::vec4(
+            resolved_graph.grid_color.r,
+            resolved_graph.grid_color.g,
+            resolved_graph.grid_color.b,
+            resolved_graph.grid_color.a * fade_opacity,
+        );
+        let fill_color = glam::vec4(
+            resolved_node_defaults.fill_color.r,
+            resolved_node_defaults.fill_color.g,
+            resolved_node_defaults.fill_color.b,
+            resolved_node_defaults.fill_color.a * fade_opacity,
+        );
+        let edge_color = glam::vec4(
+            resolved_edge_defaults.color.r,
+            resolved_edge_defaults.color.g,
+            resolved_edge_defaults.color.b,
+            resolved_edge_defaults.color.a * fade_opacity,
+        );
+        let drag_edge_color = glam::vec4(
+            resolved_graph.drag_edge_color.r,
+            resolved_graph.drag_edge_color.g,
+            resolved_graph.drag_edge_color.b,
+            resolved_graph.drag_edge_color.a * fade_opacity,
+        );
+        let drag_valid_color = glam::vec4(
+            resolved_graph.drag_edge_valid_color.r,
+            resolved_graph.drag_edge_valid_color.g,
+            resolved_graph.drag_edge_valid_color.b,
+            resolved_graph.drag_edge_valid_color.a * fade_opacity,
+        );
+
+        // Get selection style from resolved graph style
+        let selection_style = &resolved_graph.selection_style;
         let selection_border_color = selection_style.selected_border_color;
         let selection_border_width = selection_style.selected_border_width;
 
@@ -260,55 +218,24 @@ where
                                 }
                             }
 
-                            // Use per-node style if provided, otherwise use theme defaults
-                            let (
-                                node_fill,
-                                mut node_border,
-                                corner_rad,
-                                mut border_w,
-                                opacity,
-                                shadow_offset,
-                                shadow_blur,
-                                shadow_color,
-                            ) = if let Some(style) = node_style {
-                                let (s_offset, s_blur, s_color) =
-                                    if let Some(shadow) = &style.shadow {
-                                        (shadow.offset, shadow.blur_radius, shadow.color)
-                                    } else {
-                                        ((0.0, 0.0), 0.0, iced::Color::TRANSPARENT)
-                                    };
-                                (
-                                    style.fill_color,
-                                    style.border_color,
-                                    style.corner_radius,
-                                    style.border_width,
-                                    style.opacity * fade_opacity,
-                                    s_offset,
-                                    s_blur,
-                                    s_color,
-                                )
-                            } else {
-                                (
-                                    iced::Color::from_rgba(
-                                        fill_color.x,
-                                        fill_color.y,
-                                        fill_color.z,
-                                        fill_color.w,
-                                    ),
-                                    iced::Color::from_rgba(
-                                        border_color.x,
-                                        border_color.y,
-                                        border_color.z,
-                                        border_color.w,
-                                    ),
-                                    5.0,
-                                    1.0,
-                                    fade_opacity * 0.75,
-                                    (2.0, 2.0), // Default subtle shadow offset
-                                    4.0,        // Default subtle shadow blur
-                                    iced::Color::from_rgba(0.0, 0.0, 0.0, 0.15),
-                                )
-                            };
+                            // Resolve node style through cascade:
+                            // Theme Defaults -> Graph Defaults -> Per-Node Style
+                            let node_config = node_style.as_ref().map(|s| NodeConfig::from(s.clone()));
+                            let resolved = resolver.resolve_node(node_config.as_ref());
+
+                            // Extract shadow properties
+                            let (shadow_offset, shadow_blur, shadow_color) =
+                                if let Some(shadow) = &resolved.shadow {
+                                    (shadow.offset, shadow.blur_radius, shadow.color)
+                                } else {
+                                    ((0.0, 0.0), 0.0, iced::Color::TRANSPARENT)
+                                };
+
+                            let node_fill = resolved.fill_color;
+                            let mut node_border = resolved.border_color;
+                            let corner_rad = resolved.corner_radius;
+                            let mut border_w = resolved.border_width;
+                            let opacity = resolved.opacity * fade_opacity;
 
                             // Apply selection highlighting
                             if is_selected {
@@ -340,12 +267,13 @@ where
                                     .map(|(_pin_index, pin_state, (a, _b))| effects::Pin {
                                         side: pin_state.side.into(),
                                         offset: a.into_euclid().to_vector() + offset,
-                                        radius: 5.0,
+                                        // Use resolved pin defaults, but pin color comes from the pin widget
+                                        radius: resolved_pin_defaults.radius,
                                         color: pin_state.color,
                                         direction: pin_state.direction,
-                                        shape: crate::style::PinShape::Circle,
-                                        border_color: iced::Color::TRANSPARENT,
-                                        border_width: 1.0,
+                                        shape: resolved_pin_defaults.shape,
+                                        border_color: resolved_pin_defaults.border_color.unwrap_or(iced::Color::TRANSPARENT),
+                                        border_width: resolved_pin_defaults.border_width,
                                     })
                                     .collect(),
                                 shadow_offset,
@@ -357,16 +285,22 @@ where
                     )
                     .collect()
             },
-            // Extract edge connectivity with style for GPU primitive
+            // Extract edge connectivity with style resolved through cascade
             edges: self
                 .edges
                 .iter()
-                .map(|(from, to, style)| EdgeData {
-                    from_node: from.node_id,
-                    from_pin: from.pin_id,
-                    to_node: to.node_id,
-                    to_pin: to.pin_id,
-                    style: style.clone().unwrap_or_default(),
+                .map(|(from, to, edge_style)| {
+                    // Resolve edge style through cascade:
+                    // Theme Defaults -> Graph Defaults -> Per-Edge Style
+                    let edge_config = edge_style.as_ref().map(|s| crate::style::EdgeConfig::from(s.clone()));
+                    let resolved_edge = resolver.resolve_edge(edge_config.as_ref());
+                    EdgeData {
+                        from_node: from.node_id,
+                        from_pin: from.pin_id,
+                        to_node: to.node_id,
+                        to_pin: to.pin_id,
+                        style: resolved_edge,
+                    }
                 })
                 .collect(),
             edge_color,

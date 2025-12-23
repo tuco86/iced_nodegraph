@@ -2,8 +2,39 @@
 //!
 //! This module provides style types for customizing the appearance of nodes,
 //! edges, and the overall graph canvas.
+//!
+//! ## Cascading Style System
+//!
+//! The style system supports a three-layer cascade for flexible customization:
+//!
+//! 1. **Theme Defaults** - Base styles derived from `iced::Theme`
+//! 2. **Graph Defaults** - Graph-wide overrides via [`GraphDefaults`]
+//! 3. **Item Config** - Per-item overrides via [`NodeConfig`], [`EdgeConfig`], etc.
+//!
+//! ```rust
+//! use iced_nodegraph::style::{GraphDefaults, NodeConfig, EdgeConfig};
+//!
+//! let defaults = GraphDefaults::new()
+//!     .node(NodeConfig::new()
+//!         .corner_radius(10.0)
+//!         .opacity(0.8))
+//!     .edge(EdgeConfig::new()
+//!         .thickness(3.0));
+//! ```
 
 use iced::{Color, Theme};
+
+// Submodules for cascading style system
+mod cascade;
+mod config;
+mod resolver;
+mod theme_defaults;
+
+// Re-export cascading style types
+pub use cascade::Cascade;
+pub use config::{EdgeConfig, GraphConfig, NodeConfig, PinConfig, SelectionConfig, ShadowConfig};
+pub use resolver::{GraphDefaults, StyleResolver};
+pub use theme_defaults::ThemeDefaults;
 
 /// Shape of a pin indicator.
 ///
@@ -223,7 +254,7 @@ impl ShadowStyle {
 /// Style configuration for a node's visual appearance.
 ///
 /// Controls the rendering of node containers in the graph.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NodeStyle {
     /// Fill color for the node body
     pub fill_color: Color,
@@ -510,7 +541,7 @@ impl EdgeAnimation {
 /// Style configuration for edges/connections.
 ///
 /// Controls the rendering of connection lines between pins.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EdgeStyle {
     /// Edge line color
     pub color: Color,
@@ -675,7 +706,7 @@ impl EdgeStyle {
 /// Complete graph style configuration.
 ///
 /// Controls the appearance of the graph canvas background and drag feedback.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GraphStyle {
     /// Background color of the canvas
     pub background_color: Color,
@@ -763,7 +794,7 @@ impl GraphStyle {
 /// Style configuration for node selection highlighting.
 ///
 /// Controls the visual appearance of selected nodes and the box selection rectangle.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SelectionStyle {
     /// Border color for selected nodes
     pub selected_border_color: Color,
