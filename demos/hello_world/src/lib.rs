@@ -170,6 +170,7 @@ enum PaletteView {
 
 /// Output types from config nodes for propagation
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum ConfigOutput {
     Node(NodeConfig),
     Edge(EdgeConfig),

@@ -12,7 +12,7 @@ mod style_config;
 
 pub use bool_toggle::{BoolToggleConfig, bool_toggle_node};
 pub use calendar::calendar_node;
-pub use color_picker::{ColorPreset, color_picker_node, color_preset_node};
+pub use color_picker::{color_picker_node, color_preset_node};
 pub use config::{
     EdgeConfigInputs, NodeConfigInputs, PinConfigInputs, ShadowConfigInputs,
     apply_to_graph_node, apply_to_node_node, edge_config_node, node_config_node, pin_config_node,
@@ -65,6 +65,7 @@ pub mod colors {
 
 /// Node value types for data flow between nodes
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum NodeValue {
     Float(f32),
     Int(i32),
@@ -79,6 +80,7 @@ pub enum NodeValue {
     ShadowConfig(ShadowConfig),
 }
 
+#[allow(dead_code)]
 impl NodeValue {
     pub fn as_float(&self) -> Option<f32> {
         match self {
@@ -178,6 +180,7 @@ pub enum ConfigNodeType {
     },
 }
 
+#[allow(dead_code)]
 impl ConfigNodeType {
     /// Returns the expected input pin type for legacy config nodes
     pub fn input_type(&self) -> &'static str {
@@ -218,6 +221,7 @@ pub enum InputNodeType {
     },
 }
 
+#[allow(dead_code)]
 impl InputNodeType {
     /// Returns the output value for this input node
     pub fn output_value(&self) -> NodeValue {
@@ -255,6 +259,7 @@ pub enum NodeType {
     Config(ConfigNodeType),
 }
 
+#[allow(dead_code)]
 impl NodeType {
     pub fn name(&self) -> &str {
         match self {
