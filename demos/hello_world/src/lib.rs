@@ -46,11 +46,15 @@ use iced_palette::{
     Command, Shortcut, command, command_palette, find_matching_shortcut, focus_input,
     get_filtered_command_index, get_filtered_count, is_toggle_shortcut, navigate_down, navigate_up,
 };
+use iced_nodegraph::{EdgeType, PinShape};
 use nodes::{
-    ConfigNodeType, FloatSliderConfig, InputNodeType, NodeType, NodeValue,
-    border_width_config_node, color_picker_node, color_preset_node, corner_radius_config_node,
-    edge_color_config_node, edge_thickness_config_node, fill_color_config_node, float_slider_node,
-    node, opacity_config_node,
+    BoolToggleConfig, ConfigNodeType, EdgeConfigInputs, FloatSliderConfig, InputNodeType,
+    IntSliderConfig, NodeConfigInputs, NodeType, NodeValue, PinConfigInputs, ShadowConfigInputs,
+    apply_to_graph_node, apply_to_node_node, bool_toggle_node, border_width_config_node,
+    color_picker_node, color_preset_node, corner_radius_config_node, edge_color_config_node,
+    edge_config_node, edge_thickness_config_node, edge_type_selector_node, fill_color_config_node,
+    float_slider_node, int_slider_node, node, node_config_node, opacity_config_node,
+    pin_config_node, pin_shape_selector_node, shadow_config_node,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -135,6 +139,22 @@ enum ApplicationMessage {
         node_index: usize,
         value: f32,
     },
+    IntSliderChanged {
+        node_index: usize,
+        value: i32,
+    },
+    BoolChanged {
+        node_index: usize,
+        value: bool,
+    },
+    EdgeTypeChanged {
+        node_index: usize,
+        value: EdgeType,
+    },
+    PinShapeChanged {
+        node_index: usize,
+        value: PinShape,
+    },
     ColorChanged {
         node_index: usize,
         color: Color,
@@ -145,6 +165,14 @@ enum ApplicationMessage {
 enum PaletteView {
     Main,
     Submenu(String),
+}
+
+/// Output types from config nodes for propagation
+#[derive(Debug, Clone)]
+enum ConfigOutput {
+    Node(NodeConfig),
+    Edge(EdgeConfig),
+    Pin(iced_nodegraph::PinConfig),
 }
 
 /// Computed style values from connected config nodes
@@ -216,6 +244,8 @@ struct Application {
     palette_original_theme: Option<Theme>,
     /// Computed style values from config node connections
     computed_style: ComputedStyle,
+    /// Pending config outputs from config nodes to be applied by ApplyToGraph
+    pending_configs: HashMap<usize, Vec<(usize, ConfigOutput)>>,
 }
 
 impl Default for Application {
@@ -254,6 +284,7 @@ impl Default for Application {
             palette_preview_theme: None,
             palette_original_theme: None,
             computed_style: ComputedStyle::default(),
+            pending_configs: HashMap::new(),
         }
     }
 }
@@ -266,15 +297,58 @@ impl Application {
     /// Propagates values from input nodes to connected config nodes
     fn propagate_values(&mut self) {
         let mut new_computed = ComputedStyle::default();
+        self.pending_configs.clear();
 
-        // For each edge, check if it connects an input to a config node (in either direction)
-        for (from, to) in &self.edges {
-            let from_node = self.nodes.get(from.node_id);
-            let to_node = self.nodes.get(to.node_id);
+        // Phase 1: Reset all config node inputs to defaults
+        for (_, node_type) in &mut self.nodes {
+            if let NodeType::Config(config) = node_type {
+                match config {
+                    ConfigNodeType::NodeConfig(inputs) => *inputs = NodeConfigInputs::default(),
+                    ConfigNodeType::EdgeConfig(inputs) => *inputs = EdgeConfigInputs::default(),
+                    ConfigNodeType::ShadowConfig(inputs) => *inputs = ShadowConfigInputs::default(),
+                    ConfigNodeType::PinConfig(inputs) => *inputs = PinConfigInputs::default(),
+                    ConfigNodeType::ApplyToGraph {
+                        has_node_config,
+                        has_edge_config,
+                        has_pin_config,
+                    } => {
+                        *has_node_config = false;
+                        *has_edge_config = false;
+                        *has_pin_config = false;
+                    }
+                    ConfigNodeType::ApplyToNode {
+                        has_node_config,
+                        target_id,
+                    } => {
+                        *has_node_config = false;
+                        *target_id = None;
+                    }
+                    _ => {}
+                }
+            }
+        }
 
-            if let (Some((_, from_type)), Some((_, to_type))) = (from_node, to_node) {
-                // Check both directions: Input→Config or Config→Input
-                let (input, config) = match (from_type, to_type) {
+        // Phase 2: Apply Input → Config connections (in both edge directions)
+        let edges_snapshot: Vec<_> = self.edges.clone();
+
+        for (from, to) in &edges_snapshot {
+            let from_node_type = self.nodes.get(from.node_id).map(|(_, t)| t.clone());
+            let to_node_type = self.nodes.get(to.node_id).map(|(_, t)| t.clone());
+
+            if let (Some(from_type), Some(to_type)) = (from_node_type, to_node_type) {
+                // Handle Input → Config connections
+                if let (NodeType::Input(input), NodeType::Config(_)) = (&from_type, &to_type) {
+                    let value = input.output_value();
+                    self.apply_value_to_config_node(to.node_id, to.pin_id, &value);
+                }
+                // Handle Config → Input connections (reverse direction)
+                if let (NodeType::Config(_), NodeType::Input(input)) = (&from_type, &to_type) {
+                    let value = input.output_value();
+                    self.apply_value_to_config_node(from.node_id, from.pin_id, &value);
+                }
+
+                // Legacy simple config nodes (still supported)
+                let (input, config) = match (&from_type, &to_type) {
                     (NodeType::Input(input), NodeType::Config(config)) => (input, config),
                     (NodeType::Config(config), NodeType::Input(input)) => (input, config),
                     _ => continue,
@@ -313,11 +387,209 @@ impl Application {
                             new_computed.edge_color = Some(c);
                         }
                     }
+                    _ => {}
                 }
             }
         }
 
+        // Phase 3: After all inputs applied, process Config → ApplyToGraph connections
+        // Now config nodes have their updated inputs, so we can build configs
+        for (from, to) in &edges_snapshot {
+            let from_node_type = self.nodes.get(from.node_id).map(|(_, t)| t.clone());
+            let to_node_type = self.nodes.get(to.node_id).map(|(_, t)| t.clone());
+
+            if let (Some(from_type), Some(to_type)) = (from_node_type, to_node_type) {
+                // Handle Config → ApplyToGraph connections
+                if let (NodeType::Config(config), NodeType::Config(ConfigNodeType::ApplyToGraph { .. })) =
+                    (&from_type, &to_type)
+                {
+                    self.connect_config_to_apply(from.node_id, config, to.node_id, to.pin_id);
+                }
+                // Handle ApplyToGraph → Config connections (reverse)
+                if let (NodeType::Config(ConfigNodeType::ApplyToGraph { .. }), NodeType::Config(config)) =
+                    (&from_type, &to_type)
+                {
+                    self.connect_config_to_apply(to.node_id, config, from.node_id, from.pin_id);
+                }
+            }
+        }
+
+        // Phase 4: Build configs from ApplyToGraph nodes and apply to computed style
+        self.apply_graph_configs(&mut new_computed);
+
         self.computed_style = new_computed;
+    }
+
+    /// Applies an input value to a specific pin on a config node
+    fn apply_value_to_config_node(&mut self, node_id: usize, pin_id: usize, value: &NodeValue) {
+        let Some((_, node_type)) = self.nodes.get_mut(node_id) else {
+            return;
+        };
+
+        let NodeType::Config(config) = node_type else {
+            return;
+        };
+
+        match config {
+            ConfigNodeType::NodeConfig(inputs) => {
+                // NodeConfig pin layout: 0=config_in, 1=config_out, 2=fill, 3=border, 4=width, 5=radius, 6=opacity, 7=shadow
+                match pin_id {
+                    2 => inputs.fill_color = value.as_color(),
+                    3 => inputs.border_color = value.as_color(),
+                    4 => inputs.border_width = value.as_float(),
+                    5 => inputs.corner_radius = value.as_float(),
+                    6 => inputs.opacity = value.as_float(),
+                    7 => {
+                        if let Some(shadow) = value.as_shadow_config() {
+                            inputs.shadow = Some(shadow.clone());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            ConfigNodeType::EdgeConfig(inputs) => {
+                // EdgeConfig pin layout: 0=config_in, 1=config_out, 2=start_color, 3=end_color, 4=thickness, 5=edge_type
+                match pin_id {
+                    2 => inputs.start_color = value.as_color(),
+                    3 => inputs.end_color = value.as_color(),
+                    4 => inputs.thickness = value.as_float(),
+                    5 => inputs.edge_type = value.as_edge_type(),
+                    _ => {}
+                }
+            }
+            ConfigNodeType::ShadowConfig(inputs) => {
+                // ShadowConfig pin layout: 0=config_in, 1=config_out, 2=offset_x, 3=offset_y, 4=blur, 5=color, 6=enabled
+                match pin_id {
+                    2 => inputs.offset_x = value.as_float(),
+                    3 => inputs.offset_y = value.as_float(),
+                    4 => inputs.blur_radius = value.as_float(),
+                    5 => inputs.color = value.as_color(),
+                    6 => inputs.enabled = value.as_bool(),
+                    _ => {}
+                }
+            }
+            ConfigNodeType::PinConfig(inputs) => {
+                // PinConfig pin layout: 0=config_in, 1=config_out, 2=color, 3=radius, 4=shape, 5=border_color, 6=border_width
+                match pin_id {
+                    2 => inputs.color = value.as_color(),
+                    3 => inputs.radius = value.as_float(),
+                    4 => inputs.shape = value.as_pin_shape(),
+                    5 => inputs.border_color = value.as_color(),
+                    6 => inputs.border_width = value.as_float(),
+                    _ => {}
+                }
+            }
+            ConfigNodeType::ApplyToNode { target_id, .. } => {
+                // ApplyToNode pin 1 = target_id (int)
+                if pin_id == 1 {
+                    *target_id = value.as_int();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Connects a config node's output to an ApplyToGraph node
+    fn connect_config_to_apply(
+        &mut self,
+        config_node_id: usize,
+        _config_type: &ConfigNodeType, // Ignored - we read from current state
+        apply_node_id: usize,
+        apply_pin_id: usize,
+    ) {
+        // Build the config from the CURRENT state of the config node (not the snapshot)
+        let built_config = match self.nodes.get(config_node_id) {
+            Some((_, NodeType::Config(ConfigNodeType::NodeConfig(inputs)))) => {
+                Some(ConfigOutput::Node(inputs.build()))
+            }
+            Some((_, NodeType::Config(ConfigNodeType::EdgeConfig(inputs)))) => {
+                Some(ConfigOutput::Edge(inputs.build()))
+            }
+            Some((_, NodeType::Config(ConfigNodeType::PinConfig(inputs)))) => {
+                Some(ConfigOutput::Pin(inputs.build()))
+            }
+            _ => None,
+        };
+
+        let Some((_, node_type)) = self.nodes.get_mut(apply_node_id) else {
+            return;
+        };
+
+        if let NodeType::Config(ConfigNodeType::ApplyToGraph {
+            has_node_config,
+            has_edge_config,
+            has_pin_config,
+        }) = node_type
+        {
+            // ApplyToGraph pin layout: 0=node_config, 1=edge_config, 2=pin_config
+            match (apply_pin_id, &built_config) {
+                (0, Some(ConfigOutput::Node(_))) => *has_node_config = true,
+                (1, Some(ConfigOutput::Edge(_))) => *has_edge_config = true,
+                (2, Some(ConfigOutput::Pin(_))) => *has_pin_config = true,
+                _ => {}
+            }
+        }
+
+        // Store the config for later application
+        if let Some(config) = built_config {
+            self.pending_configs
+                .entry(apply_node_id)
+                .or_default()
+                .push((config_node_id, config));
+        }
+    }
+
+    /// Applies configs from ApplyToGraph nodes to the computed style
+    fn apply_graph_configs(&mut self, computed: &mut ComputedStyle) {
+        // Find ApplyToGraph nodes and apply their connected configs
+        for (node_id, (_, node_type)) in self.nodes.iter().enumerate() {
+            if let NodeType::Config(ConfigNodeType::ApplyToGraph {
+                has_node_config,
+                has_edge_config,
+                ..
+            }) = node_type
+            {
+                if let Some(configs) = self.pending_configs.get(&node_id) {
+                    for (_, config) in configs {
+                        match config {
+                            ConfigOutput::Node(node_config) => {
+                                if *has_node_config {
+                                    // Apply node config to computed style
+                                    if let Some(r) = node_config.corner_radius {
+                                        computed.corner_radius = Some(r);
+                                    }
+                                    if let Some(o) = node_config.opacity {
+                                        computed.opacity = Some(o);
+                                    }
+                                    if let Some(w) = node_config.border_width {
+                                        computed.border_width = Some(w);
+                                    }
+                                    if let Some(c) = node_config.fill_color {
+                                        computed.fill_color = Some(c);
+                                    }
+                                }
+                            }
+                            ConfigOutput::Edge(edge_config) => {
+                                if *has_edge_config {
+                                    // Apply edge config to computed style
+                                    if let Some(t) = edge_config.thickness {
+                                        computed.edge_thickness = Some(t);
+                                    }
+                                    if let Some(c) = edge_config.start_color {
+                                        computed.edge_color = Some(c);
+                                    }
+                                }
+                            }
+                            ConfigOutput::Pin(_) => {
+                                // Pin config application not yet implemented
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Clear pending configs after application
+        self.pending_configs.clear();
     }
 
     /// Gets the value connected to a config node (if any)
@@ -626,6 +898,42 @@ impl Application {
                 }
                 Task::none()
             }
+            ApplicationMessage::IntSliderChanged { node_index, value } => {
+                if let Some((_, NodeType::Input(InputNodeType::IntSlider { value: v, .. }))) =
+                    self.nodes.get_mut(node_index)
+                {
+                    *v = value;
+                    self.propagate_values();
+                }
+                Task::none()
+            }
+            ApplicationMessage::BoolChanged { node_index, value } => {
+                if let Some((_, NodeType::Input(InputNodeType::BoolToggle { value: v, .. }))) =
+                    self.nodes.get_mut(node_index)
+                {
+                    *v = value;
+                    self.propagate_values();
+                }
+                Task::none()
+            }
+            ApplicationMessage::EdgeTypeChanged { node_index, value } => {
+                if let Some((_, NodeType::Input(InputNodeType::EdgeTypeSelector { value: v }))) =
+                    self.nodes.get_mut(node_index)
+                {
+                    *v = value;
+                    self.propagate_values();
+                }
+                Task::none()
+            }
+            ApplicationMessage::PinShapeChanged { node_index, value } => {
+                if let Some((_, NodeType::Input(InputNodeType::PinShapeSelector { value: v }))) =
+                    self.nodes.get_mut(node_index)
+                {
+                    *v = value;
+                    self.propagate_values();
+                }
+                Task::none()
+            }
             ApplicationMessage::ColorChanged { node_index, color } => {
                 if let Some((_, node_type)) = self.nodes.get_mut(node_index) {
                     match node_type {
@@ -765,6 +1073,42 @@ impl Application {
                             }
                         })
                     }
+                    InputNodeType::IntSlider { config, value } => {
+                        let idx = idx;
+                        int_slider_node(&self.current_theme, *value, config, move |v| {
+                            ApplicationMessage::IntSliderChanged {
+                                node_index: idx,
+                                value: v,
+                            }
+                        })
+                    }
+                    InputNodeType::BoolToggle { config, value } => {
+                        let idx = idx;
+                        bool_toggle_node(&self.current_theme, *value, config, move |v| {
+                            ApplicationMessage::BoolChanged {
+                                node_index: idx,
+                                value: v,
+                            }
+                        })
+                    }
+                    InputNodeType::EdgeTypeSelector { value } => {
+                        let idx = idx;
+                        edge_type_selector_node(&self.current_theme, *value, move |v| {
+                            ApplicationMessage::EdgeTypeChanged {
+                                node_index: idx,
+                                value: v,
+                            }
+                        })
+                    }
+                    InputNodeType::PinShapeSelector { value } => {
+                        let idx = idx;
+                        pin_shape_selector_node(&self.current_theme, *value, move |v| {
+                            ApplicationMessage::PinShapeChanged {
+                                node_index: idx,
+                                value: v,
+                            }
+                        })
+                    }
                     InputNodeType::ColorPicker { color } => {
                         let idx = idx;
                         color_picker_node(&self.current_theme, *color, move |c| {
@@ -787,6 +1131,7 @@ impl Application {
                 NodeType::Config(config) => {
                     let input_value = self.get_config_input_value(idx);
                     match config {
+                        // Legacy simple config nodes
                         ConfigNodeType::CornerRadius => corner_radius_config_node(
                             &self.current_theme,
                             input_value.and_then(|v| v.as_float()),
@@ -810,6 +1155,38 @@ impl Application {
                         ConfigNodeType::EdgeColor => edge_color_config_node(
                             &self.current_theme,
                             input_value.and_then(|v| v.as_color()),
+                        ),
+                        // New full config nodes
+                        ConfigNodeType::NodeConfig(inputs) => {
+                            node_config_node(&self.current_theme, inputs)
+                        }
+                        ConfigNodeType::EdgeConfig(inputs) => {
+                            edge_config_node(&self.current_theme, inputs)
+                        }
+                        ConfigNodeType::ShadowConfig(inputs) => {
+                            shadow_config_node(&self.current_theme, inputs)
+                        }
+                        ConfigNodeType::PinConfig(inputs) => {
+                            pin_config_node(&self.current_theme, inputs)
+                        }
+                        // Apply nodes
+                        ConfigNodeType::ApplyToGraph {
+                            has_node_config,
+                            has_edge_config,
+                            has_pin_config,
+                        } => apply_to_graph_node(
+                            &self.current_theme,
+                            *has_node_config,
+                            *has_edge_config,
+                            *has_pin_config,
+                        ),
+                        ConfigNodeType::ApplyToNode {
+                            has_node_config,
+                            target_id,
+                        } => apply_to_node_node(
+                            &self.current_theme,
+                            *has_node_config,
+                            *target_id,
                         ),
                     }
                 }
@@ -972,6 +1349,44 @@ impl Application {
                                 color: Color::from_rgb(0.5, 0.5, 0.5),
                             }),
                         }),
+                    command("int_slider", "Integer Slider")
+                        .description("Integer slider for node index selection")
+                        .action(ApplicationMessage::SpawnNode {
+                            x: 100.0,
+                            y: 700.0,
+                            node_type: NodeType::Input(InputNodeType::IntSlider {
+                                config: IntSliderConfig::node_index(),
+                                value: 0,
+                            }),
+                        }),
+                    command("bool_toggle", "Boolean Toggle")
+                        .description("Toggle for shadow enabled and other booleans")
+                        .action(ApplicationMessage::SpawnNode {
+                            x: 100.0,
+                            y: 800.0,
+                            node_type: NodeType::Input(InputNodeType::BoolToggle {
+                                config: BoolToggleConfig::shadow_enabled(),
+                                value: true,
+                            }),
+                        }),
+                    command("edge_type", "Edge Type Selector")
+                        .description("Select edge type (Bezier, Straight, Step)")
+                        .action(ApplicationMessage::SpawnNode {
+                            x: 100.0,
+                            y: 900.0,
+                            node_type: NodeType::Input(InputNodeType::EdgeTypeSelector {
+                                value: EdgeType::Bezier,
+                            }),
+                        }),
+                    command("pin_shape", "Pin Shape Selector")
+                        .description("Select pin shape (Circle, Square, Diamond)")
+                        .action(ApplicationMessage::SpawnNode {
+                            x: 100.0,
+                            y: 1000.0,
+                            node_type: NodeType::Input(InputNodeType::PinShapeSelector {
+                                value: PinShape::Circle,
+                            }),
+                        }),
                 ];
                 ("Input Nodes", commands)
             }
@@ -1018,6 +1433,65 @@ impl Application {
                             x: 400.0,
                             y: 600.0,
                             node_type: NodeType::Config(ConfigNodeType::EdgeColor),
+                        }),
+                    // New full config nodes with inheritance
+                    command("full_node_config", "Full Node Config")
+                        .description("Complete node config with all fields and inheritance")
+                        .action(ApplicationMessage::SpawnNode {
+                            x: 600.0,
+                            y: 100.0,
+                            node_type: NodeType::Config(ConfigNodeType::NodeConfig(
+                                NodeConfigInputs::default(),
+                            )),
+                        }),
+                    command("full_edge_config", "Full Edge Config")
+                        .description("Complete edge config with colors, thickness, type")
+                        .action(ApplicationMessage::SpawnNode {
+                            x: 600.0,
+                            y: 200.0,
+                            node_type: NodeType::Config(ConfigNodeType::EdgeConfig(
+                                EdgeConfigInputs::default(),
+                            )),
+                        }),
+                    command("shadow_config", "Shadow Config")
+                        .description("Shadow configuration with offset, blur, color")
+                        .action(ApplicationMessage::SpawnNode {
+                            x: 600.0,
+                            y: 300.0,
+                            node_type: NodeType::Config(ConfigNodeType::ShadowConfig(
+                                ShadowConfigInputs::default(),
+                            )),
+                        }),
+                    command("pin_config", "Pin Config")
+                        .description("Pin configuration with shape, color, radius")
+                        .action(ApplicationMessage::SpawnNode {
+                            x: 600.0,
+                            y: 400.0,
+                            node_type: NodeType::Config(ConfigNodeType::PinConfig(
+                                PinConfigInputs::default(),
+                            )),
+                        }),
+                    // Apply nodes
+                    command("apply_to_graph", "Apply to Graph")
+                        .description("Apply configs to all nodes/edges in graph")
+                        .action(ApplicationMessage::SpawnNode {
+                            x: 800.0,
+                            y: 200.0,
+                            node_type: NodeType::Config(ConfigNodeType::ApplyToGraph {
+                                has_node_config: false,
+                                has_edge_config: false,
+                                has_pin_config: false,
+                            }),
+                        }),
+                    command("apply_to_node", "Apply to Node")
+                        .description("Apply config to a specific node by ID")
+                        .action(ApplicationMessage::SpawnNode {
+                            x: 800.0,
+                            y: 350.0,
+                            node_type: NodeType::Config(ConfigNodeType::ApplyToNode {
+                                has_node_config: false,
+                                target_id: None,
+                            }),
                         }),
                 ];
                 ("Style Config Nodes", commands)

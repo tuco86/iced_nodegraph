@@ -238,11 +238,8 @@ where
                             }
 
                             // Compute state flags
-                            let is_hovered = state.hovered_node == Some(node_index);
+                            // Note: Hover glow disabled for cleaner UX
                             let mut flags = 0u32;
-                            if is_hovered {
-                                flags |= effects::NodeFlags::HOVERED;
-                            }
                             if is_selected {
                                 flags |= effects::NodeFlags::SELECTED;
                             }
