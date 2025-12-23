@@ -1,9 +1,11 @@
 use iced::{
-    Color, Length,
+    Length,
     alignment::Horizontal,
     widget::{column, container, row},
 };
 use iced_nodegraph::{NodeContentStyle, node_title_bar, pin};
+
+use super::colors;
 
 /// Email Parser Node - Input + multiple outputs
 pub fn email_parser_node<'a, Message>(theme: &'a iced::Theme) -> iced::Element<'a, Message>
@@ -20,7 +22,7 @@ where
                 "email",
                 Input,
                 "email",
-                Color::from_rgb(0.3, 0.7, 0.9)
+                colors::PIN_EMAIL
             ))
             .width(Length::FillPortion(1))
             .align_x(Horizontal::Left),
@@ -29,7 +31,7 @@ where
                 "subject",
                 Output,
                 "string",
-                Color::from_rgb(0.9, 0.7, 0.3)
+                colors::PIN_STRING
             ))
             .width(Length::FillPortion(1))
             .align_x(Horizontal::Right),
@@ -41,7 +43,7 @@ where
             "datetime",
             Output,
             "datetime",
-            Color::from_rgb(0.7, 0.3, 0.9)
+            colors::PIN_DATETIME
         ))
         .width(Length::Fill)
         .align_x(Horizontal::Right),
@@ -51,17 +53,17 @@ where
             "body",
             Output,
             "string",
-            Color::from_rgb(0.9, 0.7, 0.3)
+            colors::PIN_STRING
         ))
         .width(Length::Fill)
         .align_x(Horizontal::Right),
     ]
-    .spacing(2);
+    .spacing(4);
 
     column![
         node_title_bar("Email Parser", style),
-        container(pin_list).padding([6, 0])
+        container(pin_list).padding([10, 12])
     ]
-    .width(180.0)
+    .width(200.0)
     .into()
 }

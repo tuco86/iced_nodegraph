@@ -31,6 +31,20 @@ pub struct Uniforms {
     pub dragging_edge_to_node: u32,
     pub dragging_edge_to_pin: u32,
 
+    // Dragging edge gradient colors (resolved in Rust from pin colors)
+    pub dragging_edge_start_color: glam::Vec4, // Color at source pin end
+    pub dragging_edge_end_color: glam::Vec4,   // Color at cursor/target end
+
+    // Theme-derived visual parameters (computed in Rust, no hardcodes in shader)
+    pub grid_color: glam::Vec4,           // Pre-computed grid line color
+    pub hover_glow_color: glam::Vec4,     // Node hover glow color
+    pub selection_box_color: glam::Vec4,  // Box selection fill/border color
+    pub edge_cutting_color: glam::Vec4,   // Edge cutting line color
+    pub hover_glow_radius: f32,           // Node hover glow radius in world units
+    pub edge_thickness: f32,              // Default edge thickness for dragging
+    pub _pad_theme1: f32,
+    pub _pad_theme2: f32,
+
     pub viewport_size: glam::Vec2, // viewport size for clip space transform
     pub bounds_origin: glam::Vec2, // widget bounds origin in physical pixels
     pub bounds_size: glam::Vec2,   // widget bounds size in physical pixels
@@ -76,17 +90,18 @@ pub struct Pin {
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct Edge {
-    pub from_node: u32,    // 4 bytes @ 0
-    pub from_pin: u32,     // 4 bytes @ 4
-    pub to_node: u32,      // 4 bytes @ 8
-    pub to_pin: u32,       // 4 bytes @ 12 (total 16)
-    pub color: glam::Vec4, // 16 bytes @ 16 (16-byte aligned)
-    pub thickness: f32,    // 4 bytes @ 32
-    pub edge_type: u32,    // 4 bytes @ 36 (0=Bezier, 1=Straight, 2=SmoothStep, 3=Step)
-    pub dash_length: f32,  // 4 bytes @ 40 (0.0 = solid line)
-    pub gap_length: f32,   // 4 bytes @ 44 (total 48)
-    pub flow_speed: f32,   // 4 bytes @ 48 (pixels per second, 0.0 = no animation)
-    pub flags: u32,        // 4 bytes @ 52 (bit 0: animated dash, bit 1: glow, bit 2: pulse)
-    pub _pad0: f32,        // 4 bytes @ 56
-    pub _pad1: f32,        // 4 bytes @ 60 (total 64)
+    pub from_node: u32,        // 4 bytes @ 0
+    pub from_pin: u32,         // 4 bytes @ 4
+    pub to_node: u32,          // 4 bytes @ 8
+    pub to_pin: u32,           // 4 bytes @ 12 (total 16)
+    pub start_color: glam::Vec4, // 16 bytes @ 16 - color at source pin (t=0)
+    pub end_color: glam::Vec4,   // 16 bytes @ 32 - color at target pin (t=1)
+    pub thickness: f32,        // 4 bytes @ 48
+    pub edge_type: u32,        // 4 bytes @ 52 (0=Bezier, 1=Straight, 2=SmoothStep, 3=Step)
+    pub dash_length: f32,      // 4 bytes @ 56 (0.0 = solid line)
+    pub gap_length: f32,       // 4 bytes @ 60 (total 64)
+    pub flow_speed: f32,       // 4 bytes @ 64 (pixels per second, 0.0 = no animation)
+    pub flags: u32,            // 4 bytes @ 68 (bit 0: animated dash, bit 1: glow, bit 2: pulse)
+    pub _pad0: f32,            // 4 bytes @ 72
+    pub _pad1: f32,            // 4 bytes @ 76 (total 80)
 }

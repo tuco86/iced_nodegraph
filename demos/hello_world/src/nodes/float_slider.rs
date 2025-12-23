@@ -3,11 +3,13 @@
 //! Outputs a configurable float value via slider.
 
 use iced::{
-    Color, Length,
+    Length,
     alignment::Horizontal,
     widget::{column, container, row, slider, text},
 };
 use iced_nodegraph::{NodeContentStyle, node_title_bar, pin};
+
+use super::colors;
 
 /// Float slider node message for internal value changes
 #[derive(Debug, Clone, PartialEq)]
@@ -61,7 +63,7 @@ impl FloatSliderConfig {
         Self {
             min: 0.5,
             max: 8.0,
-            step: 0.5,
+            step: 0.1,
             label: "Thickness".to_string(),
         }
     }
@@ -90,7 +92,7 @@ where
         "value",
         Output,
         "float",
-        Color::from_rgb(0.5, 0.8, 0.5)
+        colors::PIN_NUMBER
     ))
     .width(Length::Fill)
     .align_x(Horizontal::Right);
@@ -104,10 +106,10 @@ where
                     .align_y(iced::Alignment::Center),
                 output_pin,
             ]
-            .spacing(4)
+            .spacing(6)
         )
-        .padding([6, 8])
+        .padding([10, 12])
     ]
-    .width(180.0)
+    .width(200.0)
     .into()
 }

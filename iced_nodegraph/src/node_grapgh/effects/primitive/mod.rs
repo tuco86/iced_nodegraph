@@ -51,6 +51,8 @@ pub struct NodeGraphPrimitive {
     pub selected_nodes: HashSet<usize>,
     /// Color for edges between selected nodes
     pub selected_edge_color: glam::Vec4,
+    /// Default edge thickness (for dragging edge)
+    pub edge_thickness: f32,
 }
 
 impl Primitive for NodeGraphPrimitive {
@@ -84,6 +86,7 @@ impl Primitive for NodeGraphPrimitive {
             self.drag_edge_valid_color,
             &self.selected_nodes,
             self.selected_edge_color,
+            self.edge_thickness,
         );
     }
 

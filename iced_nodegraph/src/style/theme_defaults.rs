@@ -78,7 +78,9 @@ impl ThemeDefaults {
                 shadow: Some(ShadowStyle::subtle()),
             },
             edge: EdgeStyle {
-                color: Color::from_rgba(0.9, 0.9, 0.9, 0.7),
+                // TRANSPARENT = use pin colors for gradient
+                start_color: Color::TRANSPARENT,
+                end_color: Color::TRANSPARENT,
                 thickness: 2.0,
                 edge_type: EdgeType::Bezier,
                 dash_pattern: None,
@@ -122,7 +124,9 @@ impl ThemeDefaults {
                 }),
             },
             edge: EdgeStyle {
-                color: Color::from_rgba(0.2, 0.2, 0.2, 0.6),
+                // TRANSPARENT = use pin colors for gradient
+                start_color: Color::TRANSPARENT,
+                end_color: Color::TRANSPARENT,
                 thickness: 2.0,
                 edge_type: EdgeType::Bezier,
                 dash_pattern: None,
@@ -153,39 +157,74 @@ impl ThemeDefaults {
     /// Creates defaults for dark themes.
     fn dark_defaults(palette: &iced::theme::palette::Extended) -> Self {
         let primary = palette.primary.base.color;
-        let text = palette.background.base.text;
+        let secondary = palette.secondary.base.color;
+        let success = palette.success.base.color;
+        let _text = palette.background.base.text;
+        let bg = palette.background.base.color;
+        let bg_weak = palette.background.weak.color;
 
         // Derive selection colors from primary
         let selection_color = primary;
 
+        // Derive node fill from background (slightly lighter)
+        let node_fill = Color::from_rgba(
+            bg.r + (bg_weak.r - bg.r) * 0.3,
+            bg.g + (bg_weak.g - bg.g) * 0.3,
+            bg.b + (bg_weak.b - bg.b) * 0.3,
+            1.0,
+        );
+
+        // Derive border from weak background
+        let node_border = Color::from_rgba(
+            bg_weak.r * 1.2,
+            bg_weak.g * 1.2,
+            bg_weak.b * 1.2,
+            0.8,
+        );
+
+        // Graph background slightly darker than node background
+        let graph_bg = Color::from_rgb(
+            bg.r * 0.7,
+            bg.g * 0.7,
+            bg.b * 0.7,
+        );
+
+        // Grid lines from weak background
+        let grid_color = Color::from_rgba(bg_weak.r, bg_weak.g, bg_weak.b, 0.4);
+
         Self {
             node: NodeStyle {
-                fill_color: Color::from_rgb(0.14, 0.14, 0.16),
-                border_color: Color::from_rgb(0.20, 0.20, 0.22),
+                fill_color: node_fill,
+                border_color: node_border,
                 border_width: 1.0,
                 corner_radius: 5.0,
                 opacity: 0.75,
                 shadow: Some(ShadowStyle::subtle()),
             },
             edge: EdgeStyle {
-                color: Color::from_rgba(text.r, text.g, text.b, 0.7),
+                // TRANSPARENT = use pin colors for gradient
+                start_color: Color::TRANSPARENT,
+                end_color: Color::TRANSPARENT,
                 thickness: 2.0,
                 edge_type: EdgeType::Bezier,
                 dash_pattern: None,
                 animation: None,
             },
             pin: PinStyle {
-                color: Color::from_rgb(0.5, 0.5, 0.5),
+                // Use secondary color for default pins
+                color: Color::from_rgba(secondary.r, secondary.g, secondary.b, 0.7),
                 radius: 6.0,
                 shape: PinShape::Circle,
                 border_color: None,
                 border_width: 1.0,
             },
             graph: GraphStyle {
-                background_color: Color::from_rgb(0.08, 0.08, 0.09),
-                grid_color: Color::from_rgb(0.20, 0.20, 0.22),
-                drag_edge_color: Color::from_rgb(0.9, 0.6, 0.3),
-                drag_edge_valid_color: Color::from_rgb(0.3, 0.8, 0.5),
+                background_color: graph_bg,
+                grid_color,
+                // Drag edge uses secondary color (pending connection)
+                drag_edge_color: Color::from_rgba(secondary.r, secondary.g, secondary.b, 0.8),
+                // Valid connection uses success color
+                drag_edge_valid_color: Color::from_rgba(success.r, success.g, success.b, 0.9),
                 selection_style: SelectionStyle {
                     selected_border_color: selection_color,
                     selected_border_width: 2.5,
@@ -209,15 +248,45 @@ impl ThemeDefaults {
     /// Creates defaults for light themes.
     fn light_defaults(palette: &iced::theme::palette::Extended) -> Self {
         let primary = palette.primary.base.color;
+        let secondary = palette.secondary.base.color;
+        let success = palette.success.base.color;
         let text = palette.background.base.text;
+        let bg = palette.background.base.color;
+        let bg_weak = palette.background.weak.color;
 
         // Derive selection colors from primary
         let selection_color = primary;
 
+        // Derive node fill from background (slightly darker for contrast)
+        let node_fill = Color::from_rgba(
+            bg.r - (bg.r - bg_weak.r) * 0.15,
+            bg.g - (bg.g - bg_weak.g) * 0.15,
+            bg.b - (bg.b - bg_weak.b) * 0.15,
+            1.0,
+        );
+
+        // Derive border from weak background
+        let node_border = Color::from_rgba(
+            bg_weak.r * 0.9,
+            bg_weak.g * 0.9,
+            bg_weak.b * 0.9,
+            0.9,
+        );
+
+        // Graph background slightly lighter than node fill
+        let graph_bg = Color::from_rgb(
+            bg.r * 0.98 + 0.02,
+            bg.g * 0.98 + 0.02,
+            bg.b * 0.98 + 0.02,
+        );
+
+        // Grid lines from weak background
+        let grid_color = Color::from_rgba(bg_weak.r, bg_weak.g, bg_weak.b, 0.5);
+
         Self {
             node: NodeStyle {
-                fill_color: Color::from_rgb(0.96, 0.96, 0.97),
-                border_color: Color::from_rgb(0.80, 0.80, 0.82),
+                fill_color: node_fill,
+                border_color: node_border,
                 border_width: 1.0,
                 corner_radius: 5.0,
                 opacity: 0.85,
@@ -228,24 +297,44 @@ impl ThemeDefaults {
                 }),
             },
             edge: EdgeStyle {
-                color: Color::from_rgba(text.r, text.g, text.b, 0.6),
+                // TRANSPARENT = use pin colors for gradient
+                start_color: Color::TRANSPARENT,
+                end_color: Color::TRANSPARENT,
                 thickness: 2.0,
                 edge_type: EdgeType::Bezier,
                 dash_pattern: None,
                 animation: None,
             },
             pin: PinStyle {
-                color: Color::from_rgb(0.4, 0.4, 0.4),
+                // Use secondary color with darkening for light themes
+                color: Color::from_rgba(
+                    secondary.r * 0.7,
+                    secondary.g * 0.7,
+                    secondary.b * 0.7,
+                    0.8,
+                ),
                 radius: 6.0,
                 shape: PinShape::Circle,
-                border_color: Some(Color::from_rgb(0.3, 0.3, 0.3)),
+                border_color: Some(Color::from_rgba(text.r, text.g, text.b, 0.3)),
                 border_width: 1.0,
             },
             graph: GraphStyle {
-                background_color: Color::from_rgb(0.92, 0.92, 0.93),
-                grid_color: Color::from_rgb(0.80, 0.80, 0.82),
-                drag_edge_color: Color::from_rgb(0.8, 0.5, 0.2),
-                drag_edge_valid_color: Color::from_rgb(0.2, 0.7, 0.4),
+                background_color: graph_bg,
+                grid_color,
+                // Drag edge uses secondary color (pending connection)
+                drag_edge_color: Color::from_rgba(
+                    secondary.r * 0.8,
+                    secondary.g * 0.8,
+                    secondary.b * 0.8,
+                    0.9,
+                ),
+                // Valid connection uses success color
+                drag_edge_valid_color: Color::from_rgba(
+                    success.r * 0.8,
+                    success.g * 0.8,
+                    success.b * 0.8,
+                    0.9,
+                ),
                 selection_style: SelectionStyle {
                     selected_border_color: selection_color,
                     selected_border_width: 2.5,

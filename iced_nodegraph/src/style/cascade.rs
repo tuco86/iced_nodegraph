@@ -105,7 +105,8 @@ impl Cascade for EdgeConfig {
 
     fn apply_to(&self, base: &Self::Resolved) -> Self::Resolved {
         EdgeStyle {
-            color: self.color.unwrap_or(base.color),
+            start_color: self.start_color.unwrap_or(base.start_color),
+            end_color: self.end_color.unwrap_or(base.end_color),
             thickness: self.thickness.unwrap_or(base.thickness),
             edge_type: self.edge_type.unwrap_or(base.edge_type),
             dash_pattern: self.dash_pattern.or(base.dash_pattern),
@@ -182,7 +183,8 @@ impl From<NodeStyle> for NodeConfig {
 impl From<EdgeStyle> for EdgeConfig {
     fn from(style: EdgeStyle) -> Self {
         EdgeConfig {
-            color: Some(style.color),
+            start_color: Some(style.start_color),
+            end_color: Some(style.end_color),
             thickness: Some(style.thickness),
             edge_type: Some(style.edge_type),
             dash_pattern: style.dash_pattern,
@@ -290,12 +292,13 @@ mod tests {
     fn test_edge_config_cascade() {
         let base = EdgeStyle::default();
         let config = EdgeConfig::new()
-            .color(Color::from_rgb(0.0, 1.0, 0.0))
+            .solid_color(Color::from_rgb(0.0, 1.0, 0.0))
             .thickness(5.0);
 
         let merged = config.apply_to(&base);
 
-        assert_eq!(merged.color, Color::from_rgb(0.0, 1.0, 0.0));
+        assert_eq!(merged.start_color, Color::from_rgb(0.0, 1.0, 0.0));
+        assert_eq!(merged.end_color, Color::from_rgb(0.0, 1.0, 0.0));
         assert_eq!(merged.thickness, 5.0);
         assert_eq!(merged.edge_type, base.edge_type);
     }

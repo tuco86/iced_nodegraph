@@ -9,6 +9,8 @@ use iced::{
 };
 use iced_nodegraph::{NodeContentStyle, node_title_bar, pin};
 
+use super::colors;
+
 /// Node that configures corner radius for all nodes
 pub fn corner_radius_config_node<'a, Message>(
     theme: &'a iced::Theme,
@@ -29,7 +31,7 @@ where
         "radius",
         Input,
         "float",
-        Color::from_rgb(0.5, 0.8, 0.5)
+        colors::PIN_NUMBER
     ))
     .width(Length::FillPortion(1))
     .align_x(Horizontal::Left);
@@ -47,11 +49,11 @@ where
                     .width(Length::Fill)
                     .align_x(Horizontal::Center),
             ]
-            .spacing(4)
+            .spacing(6)
         )
-        .padding([6, 8])
+        .padding([10, 12])
     ]
-    .width(160.0)
+    .width(180.0)
     .into()
 }
 
@@ -75,7 +77,7 @@ where
         "opacity",
         Input,
         "float",
-        Color::from_rgb(0.5, 0.8, 0.5)
+        colors::PIN_NUMBER
     ))
     .width(Length::FillPortion(1))
     .align_x(Horizontal::Left);
@@ -93,11 +95,11 @@ where
                     .width(Length::Fill)
                     .align_x(Horizontal::Center),
             ]
-            .spacing(4)
+            .spacing(6)
         )
-        .padding([6, 8])
+        .padding([10, 12])
     ]
-    .width(160.0)
+    .width(180.0)
     .into()
 }
 
@@ -121,7 +123,7 @@ where
         "width",
         Input,
         "float",
-        Color::from_rgb(0.5, 0.8, 0.5)
+        colors::PIN_NUMBER
     ))
     .width(Length::FillPortion(1))
     .align_x(Horizontal::Left);
@@ -139,11 +141,11 @@ where
                     .width(Length::Fill)
                     .align_x(Horizontal::Center),
             ]
-            .spacing(4)
+            .spacing(6)
         )
-        .padding([6, 8])
+        .padding([10, 12])
     ]
-    .width(160.0)
+    .width(180.0)
     .into()
 }
 
@@ -159,18 +161,18 @@ where
 
     let color_preview = match current_value {
         Some(c) => container(text(""))
-            .width(40)
-            .height(16)
+            .width(44)
+            .height(20)
             .style(move |_theme| container::Style {
                 background: Some(iced::Background::Color(c)),
                 border: iced::Border {
-                    color: Color::from_rgb(0.4, 0.4, 0.4),
+                    color: colors::PIN_ANY,
                     width: 1.0,
-                    radius: 2.0.into(),
+                    radius: 4.0.into(),
                 },
                 ..Default::default()
             }),
-        None => container(text("--").size(10)).width(40).height(16),
+        None => container(text("--").size(10)).width(44).height(20),
     };
 
     let input_pin = container(pin!(
@@ -178,7 +180,7 @@ where
         "color",
         Input,
         "color",
-        Color::from_rgb(0.8, 0.5, 0.8)
+        colors::PIN_COLOR
     ))
     .width(Length::FillPortion(1))
     .align_x(Horizontal::Left);
@@ -196,11 +198,11 @@ where
                     .width(Length::Fill)
                     .align_x(Horizontal::Center),
             ]
-            .spacing(4)
+            .spacing(6)
         )
-        .padding([6, 8])
+        .padding([10, 12])
     ]
-    .width(160.0)
+    .width(180.0)
     .into()
 }
 
@@ -224,7 +226,7 @@ where
         "thickness",
         Input,
         "float",
-        Color::from_rgb(0.5, 0.8, 0.5)
+        colors::PIN_NUMBER
     ))
     .width(Length::FillPortion(1))
     .align_x(Horizontal::Left);
@@ -242,11 +244,11 @@ where
                     .width(Length::Fill)
                     .align_x(Horizontal::Center),
             ]
-            .spacing(4)
+            .spacing(6)
         )
-        .padding([6, 8])
+        .padding([10, 12])
     ]
-    .width(160.0)
+    .width(180.0)
     .into()
 }
 
@@ -262,18 +264,18 @@ where
 
     let color_preview = match current_value {
         Some(c) => container(text(""))
-            .width(40)
-            .height(16)
+            .width(44)
+            .height(20)
             .style(move |_theme| container::Style {
                 background: Some(iced::Background::Color(c)),
                 border: iced::Border {
-                    color: Color::from_rgb(0.4, 0.4, 0.4),
+                    color: colors::PIN_ANY,
                     width: 1.0,
-                    radius: 2.0.into(),
+                    radius: 4.0.into(),
                 },
                 ..Default::default()
             }),
-        None => container(text("--").size(10)).width(40).height(16),
+        None => container(text("--").size(10)).width(44).height(20),
     };
 
     let input_pin = container(pin!(
@@ -281,7 +283,7 @@ where
         "color",
         Input,
         "color",
-        Color::from_rgb(0.8, 0.5, 0.8)
+        colors::PIN_COLOR
     ))
     .width(Length::FillPortion(1))
     .align_x(Horizontal::Left);
@@ -299,10 +301,10 @@ where
                     .width(Length::Fill)
                     .align_x(Horizontal::Center),
             ]
-            .spacing(4)
+            .spacing(6)
         )
-        .padding([6, 8])
+        .padding([10, 12])
     ]
-    .width(160.0)
+    .width(180.0)
     .into()
 }

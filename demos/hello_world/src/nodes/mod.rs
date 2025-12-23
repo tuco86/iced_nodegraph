@@ -19,6 +19,33 @@ pub use style_config::{
 
 use iced::{Color, Theme};
 
+/// Semantic pin colors for consistent visual language across nodes.
+/// Based on "Floating Workbench" design system.
+pub mod colors {
+    use iced::Color;
+
+    /// Email/Message data - Sky Blue (#38BDF8)
+    pub const PIN_EMAIL: Color = Color::from_rgb(0.22, 0.74, 0.97);
+
+    /// String/Text data - Amber (#FBBF24)
+    pub const PIN_STRING: Color = Color::from_rgb(0.98, 0.75, 0.14);
+
+    /// Number/Float data - Emerald (#34D399)
+    pub const PIN_NUMBER: Color = Color::from_rgb(0.20, 0.83, 0.60);
+
+    /// DateTime data - Violet (#A78BFA)
+    pub const PIN_DATETIME: Color = Color::from_rgb(0.65, 0.55, 0.98);
+
+    /// Color data - Pink (#F472B6)
+    pub const PIN_COLOR: Color = Color::from_rgb(0.96, 0.45, 0.71);
+
+    /// Boolean/Logic data - Orange (#FB923C)
+    pub const PIN_BOOL: Color = Color::from_rgb(0.98, 0.57, 0.24);
+
+    /// Generic/Any data - Slate (#94A3B8)
+    pub const PIN_ANY: Color = Color::from_rgb(0.58, 0.64, 0.72);
+}
+
 /// Node value types for data flow between nodes
 #[derive(Debug, Clone)]
 pub enum NodeValue {

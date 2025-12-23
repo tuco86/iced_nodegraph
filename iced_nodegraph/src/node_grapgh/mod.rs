@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use iced::{Color, Length, Point, Size, Vector};
 
 use crate::node_pin::PinReference;
-use crate::style::{EdgeStyle, GraphDefaults, GraphStyle, NodeStyle};
+use crate::style::{EdgeStyle, GraphDefaults, GraphStyle, NodeConfig, NodeStyle};
 
 pub mod camera;
 pub(crate) mod canonical;
@@ -93,10 +93,13 @@ pub enum NodeGraphEvent {
 #[allow(missing_debug_implementations)]
 pub struct NodeGraph<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer> {
     pub(super) size: Size<Length>,
+    /// Nodes with position, element, and optional config overrides.
+    /// Using NodeConfig (partial overrides) instead of NodeStyle (complete style)
+    /// ensures theme defaults are applied for any unspecified properties.
     pub(super) nodes: Vec<(
         Point,
         iced::Element<'a, Message, Theme, Renderer>,
-        Option<NodeStyle>,
+        Option<NodeConfig>,
     )>,
     pub(super) edges: Vec<(PinReference, PinReference, Option<EdgeStyle>)>,
     graph_style: Option<GraphStyle>,
@@ -162,13 +165,33 @@ where
         self.nodes.push((position, element.into(), None));
     }
 
+    /// Pushes a node with specific style overrides.
+    ///
+    /// Only the properties set in `config` will override theme defaults.
+    /// Unset properties will use the theme-derived values.
+    pub fn push_node_config(
+        &mut self,
+        position: Point,
+        element: impl Into<iced::Element<'a, Message, Theme, Renderer>>,
+        config: NodeConfig,
+    ) {
+        self.nodes.push((position, element.into(), Some(config)));
+    }
+
+    /// Pushes a node with a complete style (backwards compatibility).
+    ///
+    /// Note: This converts the NodeStyle to NodeConfig, meaning ALL properties
+    /// from the NodeStyle will override theme defaults. Prefer `push_node_config`
+    /// for partial overrides that respect theme defaults.
     pub fn push_node_styled(
         &mut self,
         position: Point,
         element: impl Into<iced::Element<'a, Message, Theme, Renderer>>,
         style: NodeStyle,
     ) {
-        self.nodes.push((position, element.into(), Some(style)));
+        // Convert NodeStyle to NodeConfig (all properties become overrides)
+        self.nodes
+            .push((position, element.into(), Some(NodeConfig::from(style))));
     }
 
     pub fn push_edge(&mut self, from: PinReference, to: PinReference) {
@@ -334,7 +357,7 @@ where
         Item = (
             Point,
             &iced::Element<'a, Message, Theme, Renderer>,
-            Option<&NodeStyle>,
+            Option<&NodeConfig>,
         ),
     > {
         self.nodes.iter().map(|(p, e, s)| (*p, e, s.as_ref()))
@@ -346,7 +369,7 @@ where
         Item = (
             Point,
             &mut iced::Element<'a, Message, Theme, Renderer>,
-            Option<&NodeStyle>,
+            Option<&NodeConfig>,
         ),
     > {
         self.nodes.iter_mut().map(|(p, e, s)| (*p, e, s.as_ref()))

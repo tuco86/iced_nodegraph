@@ -1,8 +1,7 @@
-use iced::{
-    Color,
-    widget::{column, container},
-};
+use iced::widget::{column, container};
 use iced_nodegraph::{NodeContentStyle, node_title_bar, pin};
+
+use super::colors;
 
 /// Calendar Node - Only inputs
 pub fn calendar_node<'a, Message>(theme: &'a iced::Theme) -> iced::Element<'a, Message>
@@ -17,29 +16,29 @@ where
             "datetime",
             Input,
             "datetime",
-            Color::from_rgb(0.7, 0.3, 0.9)
+            colors::PIN_DATETIME
         ),
         pin!(
             Left,
             "title",
             Input,
             "string",
-            Color::from_rgb(0.9, 0.7, 0.3)
+            colors::PIN_STRING
         ),
         pin!(
             Left,
             "description",
             Input,
             "string",
-            Color::from_rgb(0.9, 0.7, 0.3)
+            colors::PIN_STRING
         ),
     ]
-    .spacing(2);
+    .spacing(4);
 
     column![
         node_title_bar("Create Event", style),
-        container(pin_list).padding([6, 0])
+        container(pin_list).padding([10, 12])
     ]
-    .width(160.0)
+    .width(180.0)
     .into()
 }

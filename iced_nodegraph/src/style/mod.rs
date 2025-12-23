@@ -378,6 +378,132 @@ impl NodeStyle {
             shadow: None, // Comments are subtle, no shadow
         }
     }
+
+    /// Creates an input node style derived from theme's primary color.
+    pub fn input_themed(theme: &Theme) -> Self {
+        let palette = theme.extended_palette();
+        let primary = palette.primary.base.color;
+        let bg = palette.background.base.color;
+
+        if palette.is_dark {
+            Self {
+                fill_color: Color::from_rgba(
+                    bg.r + (primary.r - bg.r) * 0.15,
+                    bg.g + (primary.g - bg.g) * 0.15,
+                    bg.b + (primary.b - bg.b) * 0.15,
+                    1.0,
+                ),
+                border_color: Color::from_rgba(primary.r, primary.g, primary.b, 0.6),
+                border_width: 1.5,
+                corner_radius: 6.0,
+                opacity: 0.85,
+                shadow: Some(ShadowStyle::medium()),
+            }
+        } else {
+            Self {
+                fill_color: Color::from_rgba(
+                    1.0 - (1.0 - primary.r) * 0.08,
+                    1.0 - (1.0 - primary.g) * 0.08,
+                    1.0 - (1.0 - primary.b) * 0.08,
+                    1.0,
+                ),
+                border_color: Color::from_rgba(primary.r, primary.g, primary.b, 0.5),
+                border_width: 1.5,
+                corner_radius: 6.0,
+                opacity: 0.90,
+                shadow: Some(ShadowStyle::subtle()),
+            }
+        }
+    }
+
+    /// Creates a process node style derived from theme's success color.
+    pub fn process_themed(theme: &Theme) -> Self {
+        let palette = theme.extended_palette();
+        let success = palette.success.base.color;
+        let bg = palette.background.base.color;
+
+        if palette.is_dark {
+            Self {
+                fill_color: Color::from_rgba(
+                    bg.r + (success.r - bg.r) * 0.12,
+                    bg.g + (success.g - bg.g) * 0.12,
+                    bg.b + (success.b - bg.b) * 0.12,
+                    1.0,
+                ),
+                border_color: Color::from_rgba(success.r, success.g, success.b, 0.5),
+                border_width: 1.5,
+                corner_radius: 4.0,
+                opacity: 0.80,
+                shadow: Some(ShadowStyle::medium()),
+            }
+        } else {
+            Self {
+                fill_color: Color::from_rgba(
+                    1.0 - (1.0 - success.r) * 0.06,
+                    1.0 - (1.0 - success.g) * 0.06,
+                    1.0 - (1.0 - success.b) * 0.06,
+                    1.0,
+                ),
+                border_color: Color::from_rgba(success.r, success.g, success.b, 0.4),
+                border_width: 1.5,
+                corner_radius: 4.0,
+                opacity: 0.88,
+                shadow: Some(ShadowStyle::subtle()),
+            }
+        }
+    }
+
+    /// Creates an output node style derived from theme's secondary color.
+    pub fn output_themed(theme: &Theme) -> Self {
+        let palette = theme.extended_palette();
+        let secondary = palette.secondary.base.color;
+        let bg = palette.background.base.color;
+
+        if palette.is_dark {
+            Self {
+                fill_color: Color::from_rgba(
+                    bg.r + (secondary.r - bg.r) * 0.15,
+                    bg.g + (secondary.g - bg.g) * 0.15,
+                    bg.b + (secondary.b - bg.b) * 0.15,
+                    1.0,
+                ),
+                border_color: Color::from_rgba(secondary.r, secondary.g, secondary.b, 0.7),
+                border_width: 2.0,
+                corner_radius: 8.0,
+                opacity: 0.85,
+                shadow: Some(ShadowStyle::strong()),
+            }
+        } else {
+            Self {
+                fill_color: Color::from_rgba(
+                    1.0 - (1.0 - secondary.r) * 0.10,
+                    1.0 - (1.0 - secondary.g) * 0.10,
+                    1.0 - (1.0 - secondary.b) * 0.10,
+                    1.0,
+                ),
+                border_color: Color::from_rgba(secondary.r, secondary.g, secondary.b, 0.6),
+                border_width: 2.0,
+                corner_radius: 8.0,
+                opacity: 0.90,
+                shadow: Some(ShadowStyle::medium()),
+            }
+        }
+    }
+
+    /// Creates a comment node style from theme's background weak color.
+    pub fn comment_themed(theme: &Theme) -> Self {
+        let palette = theme.extended_palette();
+        let weak = palette.background.weak.color;
+
+        Self {
+            fill_color: Color::from_rgba(weak.r, weak.g, weak.b, 0.5),
+            border_color: Color::from_rgba(weak.r * 1.2, weak.g * 1.2, weak.b * 1.2, 0.4),
+            border_width: 1.0,
+            corner_radius: 3.0,
+            opacity: 0.60,
+            shadow: None,
+        }
+    }
 }
 
 /// Edge rendering type determining the path shape.
@@ -541,10 +667,18 @@ impl EdgeAnimation {
 /// Style configuration for edges/connections.
 ///
 /// Controls the rendering of connection lines between pins.
+/// Supports gradient colors from source pin (start) to target pin (end).
+///
+/// # Gradient Behavior
+/// - `TRANSPARENT` colors indicate "use pin color at this end"
+/// - Explicit colors override pin colors
+/// - Mix and match: explicit start + transparent end creates gradient to target pin
 #[derive(Debug, Clone, PartialEq)]
 pub struct EdgeStyle {
-    /// Edge line color
-    pub color: Color,
+    /// Color at the source pin (t=0). TRANSPARENT = use source pin color.
+    pub start_color: Color,
+    /// Color at the target pin (t=1). TRANSPARENT = use target pin color.
+    pub end_color: Color,
     /// Line thickness in world-space pixels
     pub thickness: f32,
     /// Edge path type (bezier, straight, step, etc.)
@@ -558,8 +692,9 @@ pub struct EdgeStyle {
 impl Default for EdgeStyle {
     fn default() -> Self {
         Self {
-            // Transparent color means "use global edge color from theme"
-            color: Color::TRANSPARENT,
+            // Transparent = use pin colors for gradient
+            start_color: Color::TRANSPARENT,
+            end_color: Color::TRANSPARENT,
             thickness: 2.0,
             edge_type: EdgeType::default(),
             dash_pattern: None,
@@ -574,9 +709,36 @@ impl EdgeStyle {
         Self::default()
     }
 
-    /// Sets the edge color.
-    pub fn color(mut self, color: Color) -> Self {
-        self.color = color;
+    /// Sets the start color (at source pin, t=0).
+    pub fn start_color(mut self, color: Color) -> Self {
+        self.start_color = color;
+        self
+    }
+
+    /// Sets the end color (at target pin, t=1).
+    pub fn end_color(mut self, color: Color) -> Self {
+        self.end_color = color;
+        self
+    }
+
+    /// Sets both start and end to the same color (solid edge).
+    pub fn solid_color(mut self, color: Color) -> Self {
+        self.start_color = color;
+        self.end_color = color;
+        self
+    }
+
+    /// Creates a gradient from one color to another.
+    pub fn gradient(mut self, start: Color, end: Color) -> Self {
+        self.start_color = start;
+        self.end_color = end;
+        self
+    }
+
+    /// Uses pin colors for gradient (default behavior).
+    pub fn from_pins(mut self) -> Self {
+        self.start_color = Color::TRANSPARENT;
+        self.end_color = Color::TRANSPARENT;
         self
     }
 
@@ -612,8 +774,10 @@ impl EdgeStyle {
 
     /// Creates a data flow style (blue, animated glow).
     pub fn data_flow() -> Self {
+        let color = Color::from_rgb(0.3, 0.6, 1.0);
         Self {
-            color: Color::from_rgb(0.3, 0.6, 1.0),
+            start_color: color,
+            end_color: color,
             thickness: 2.5,
             edge_type: EdgeType::Bezier,
             dash_pattern: None,
@@ -624,7 +788,8 @@ impl EdgeStyle {
     /// Creates a control flow style (white, straight).
     pub fn control_flow() -> Self {
         Self {
-            color: Color::WHITE,
+            start_color: Color::WHITE,
+            end_color: Color::WHITE,
             thickness: 2.0,
             edge_type: EdgeType::SmoothStep,
             dash_pattern: None,
@@ -634,8 +799,10 @@ impl EdgeStyle {
 
     /// Creates an error style (red, animated dotted).
     pub fn error() -> Self {
+        let color = Color::from_rgb(0.9, 0.2, 0.2);
         Self {
-            color: Color::from_rgb(0.9, 0.2, 0.2),
+            start_color: color,
+            end_color: color,
             thickness: 2.0,
             edge_type: EdgeType::Bezier,
             dash_pattern: Some(DashPattern::marching_ants()),
@@ -645,8 +812,10 @@ impl EdgeStyle {
 
     /// Creates a disabled style (gray, dashed).
     pub fn disabled() -> Self {
+        let color = Color::from_rgb(0.5, 0.5, 0.5);
         Self {
-            color: Color::from_rgb(0.5, 0.5, 0.5),
+            start_color: color,
+            end_color: color,
             thickness: 1.5,
             edge_type: EdgeType::Bezier,
             dash_pattern: Some(DashPattern::dashed()),
@@ -656,8 +825,10 @@ impl EdgeStyle {
 
     /// Creates a highlighted style (bright, glowing).
     pub fn highlighted() -> Self {
+        let color = Color::from_rgb(1.0, 0.8, 0.2);
         Self {
-            color: Color::from_rgb(1.0, 0.8, 0.2),
+            start_color: color,
+            end_color: color,
             thickness: 3.0,
             edge_type: EdgeType::Bezier,
             dash_pattern: None,
@@ -789,6 +960,67 @@ impl GraphStyle {
             selection_style: SelectionStyle::default(),
         }
     }
+
+    /// Creates a graph style derived from an iced Theme.
+    ///
+    /// Automatically selects dark or light mode based on the theme's palette.
+    pub fn from_theme(theme: &Theme) -> Self {
+        let palette = theme.extended_palette();
+        let secondary = palette.secondary.base.color;
+        let success = palette.success.base.color;
+        let bg = palette.background.base.color;
+        let bg_weak = palette.background.weak.color;
+
+        if palette.is_dark {
+            // Dark theme: darken background
+            let graph_bg = Color::from_rgb(
+                bg.r * 0.7,
+                bg.g * 0.7,
+                bg.b * 0.7,
+            );
+            let grid_color = Color::from_rgba(bg_weak.r, bg_weak.g, bg_weak.b, 0.4);
+
+            Self {
+                background_color: graph_bg,
+                grid_color,
+                drag_edge_color: Color::from_rgb(
+                    secondary.r * 0.9 + 0.1,
+                    secondary.g * 0.6,
+                    secondary.b * 0.3,
+                ),
+                drag_edge_valid_color: Color::from_rgb(
+                    success.r * 0.6,
+                    success.g * 0.9,
+                    success.b * 0.6,
+                ),
+                selection_style: SelectionStyle::from_theme(theme),
+            }
+        } else {
+            // Light theme: lighten background
+            let graph_bg = Color::from_rgb(
+                bg.r * 0.98 + 0.02,
+                bg.g * 0.98 + 0.02,
+                bg.b * 0.98 + 0.02,
+            );
+            let grid_color = Color::from_rgba(bg_weak.r, bg_weak.g, bg_weak.b, 0.5);
+
+            Self {
+                background_color: graph_bg,
+                grid_color,
+                drag_edge_color: Color::from_rgb(
+                    secondary.r * 0.8,
+                    secondary.g * 0.5,
+                    secondary.b * 0.2,
+                ),
+                drag_edge_valid_color: Color::from_rgb(
+                    success.r * 0.5,
+                    success.g * 0.8,
+                    success.b * 0.5,
+                ),
+                selection_style: SelectionStyle::from_theme(theme),
+            }
+        }
+    }
 }
 
 /// Style configuration for node selection highlighting.
@@ -846,6 +1078,28 @@ impl SelectionStyle {
         self.box_select_border = color;
         self
     }
+
+    /// Creates a selection style derived from an iced Theme.
+    pub fn from_theme(theme: &Theme) -> Self {
+        let palette = theme.extended_palette();
+        let primary = palette.primary.base.color;
+
+        if palette.is_dark {
+            Self {
+                selected_border_color: primary,
+                selected_border_width: 2.5,
+                box_select_fill: Color::from_rgba(primary.r, primary.g, primary.b, 0.15),
+                box_select_border: Color::from_rgba(primary.r, primary.g, primary.b, 0.6),
+            }
+        } else {
+            Self {
+                selected_border_color: primary,
+                selected_border_width: 2.5,
+                box_select_fill: Color::from_rgba(primary.r, primary.g, primary.b, 0.12),
+                box_select_border: Color::from_rgba(primary.r, primary.g, primary.b, 0.5),
+            }
+        }
+    }
 }
 
 /// Calculates relative luminance of a color using WCAG 2.0 formula.
@@ -873,6 +1127,83 @@ pub fn relative_luminance(color: Color) -> f32 {
 /// Light text (high luminance) indicates a dark background theme.
 pub fn is_dark_theme(text_color: Color) -> bool {
     relative_luminance(text_color) > 0.5
+}
+
+/// Lightens a color by mixing with white.
+///
+/// `amount` ranges from 0.0 (no change) to 1.0 (full white).
+///
+/// # Example
+/// ```rust
+/// use iced_nodegraph::style::lighten;
+/// use iced::Color;
+///
+/// let blue = Color::from_rgb(0.0, 0.0, 1.0);
+/// let light_blue = lighten(blue, 0.5);
+/// // Result: RGB(0.5, 0.5, 1.0)
+/// ```
+pub fn lighten(color: Color, amount: f32) -> Color {
+    let amount = amount.clamp(0.0, 1.0);
+    Color::from_rgba(
+        color.r + (1.0 - color.r) * amount,
+        color.g + (1.0 - color.g) * amount,
+        color.b + (1.0 - color.b) * amount,
+        color.a,
+    )
+}
+
+/// Darkens a color by mixing with black.
+///
+/// `amount` ranges from 0.0 (no change) to 1.0 (full black).
+///
+/// # Example
+/// ```rust
+/// use iced_nodegraph::style::darken;
+/// use iced::Color;
+///
+/// let white = Color::WHITE;
+/// let gray = darken(white, 0.5);
+/// // Result: RGB(0.5, 0.5, 0.5)
+/// ```
+pub fn darken(color: Color, amount: f32) -> Color {
+    let amount = amount.clamp(0.0, 1.0);
+    Color::from_rgba(
+        color.r * (1.0 - amount),
+        color.g * (1.0 - amount),
+        color.b * (1.0 - amount),
+        color.a,
+    )
+}
+
+/// Creates a semi-transparent version of a color.
+///
+/// Preserves RGB values and replaces alpha.
+///
+/// # Example
+/// ```rust
+/// use iced_nodegraph::style::with_alpha;
+/// use iced::Color;
+///
+/// let blue = Color::from_rgb(0.0, 0.0, 1.0);
+/// let semi_blue = with_alpha(blue, 0.5);
+/// // Result: RGBA(0.0, 0.0, 1.0, 0.5)
+/// ```
+pub fn with_alpha(color: Color, alpha: f32) -> Color {
+    Color::from_rgba(color.r, color.g, color.b, alpha.clamp(0.0, 1.0))
+}
+
+/// Blends two colors together.
+///
+/// `ratio` controls the blend: 0.0 = full `a`, 1.0 = full `b`.
+pub fn blend(a: Color, b: Color, ratio: f32) -> Color {
+    let ratio = ratio.clamp(0.0, 1.0);
+    let inv = 1.0 - ratio;
+    Color::from_rgba(
+        a.r * inv + b.r * ratio,
+        a.g * inv + b.g * ratio,
+        a.b * inv + b.b * ratio,
+        a.a * inv + b.a * ratio,
+    )
 }
 
 /// All standard iced themes for easy enumeration in UI.
@@ -1014,5 +1345,61 @@ mod tests {
             assert!(!name.is_empty(), "Theme should have a name");
             assert_ne!(name, "Custom", "Standard themes should not be Custom");
         }
+    }
+
+    #[test]
+    fn test_edge_style_default_uses_pin_colors() {
+        let style = EdgeStyle::default();
+        // TRANSPARENT means "use pin colors"
+        assert!(style.start_color.a < 0.01);
+        assert!(style.end_color.a < 0.01);
+    }
+
+    #[test]
+    fn test_edge_style_solid_color() {
+        let red = Color::from_rgb(1.0, 0.0, 0.0);
+        let style = EdgeStyle::new().solid_color(red);
+
+        assert_eq!(style.start_color, red);
+        assert_eq!(style.end_color, red);
+    }
+
+    #[test]
+    fn test_edge_style_gradient() {
+        let red = Color::from_rgb(1.0, 0.0, 0.0);
+        let blue = Color::from_rgb(0.0, 0.0, 1.0);
+        let style = EdgeStyle::new().gradient(red, blue);
+
+        assert_eq!(style.start_color, red);
+        assert_eq!(style.end_color, blue);
+    }
+
+    #[test]
+    fn test_edge_style_from_pins() {
+        let style = EdgeStyle::new()
+            .solid_color(Color::WHITE)
+            .from_pins(); // Should reset to TRANSPARENT
+
+        assert!(style.start_color.a < 0.01);
+        assert!(style.end_color.a < 0.01);
+    }
+
+    #[test]
+    fn test_edge_style_presets_are_solid() {
+        // All presets should have explicit colors (not gradients)
+        let data_flow = EdgeStyle::data_flow();
+        assert_eq!(data_flow.start_color, data_flow.end_color);
+
+        let control_flow = EdgeStyle::control_flow();
+        assert_eq!(control_flow.start_color, control_flow.end_color);
+
+        let error = EdgeStyle::error();
+        assert_eq!(error.start_color, error.end_color);
+
+        let disabled = EdgeStyle::disabled();
+        assert_eq!(disabled.start_color, disabled.end_color);
+
+        let highlighted = EdgeStyle::highlighted();
+        assert_eq!(highlighted.start_color, highlighted.end_color);
     }
 }

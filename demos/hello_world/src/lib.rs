@@ -38,7 +38,10 @@ use iced::{
     Color, Event, Length, Point, Subscription, Task, Theme, Vector, event, keyboard, widget::stack,
     window,
 };
-use iced_nodegraph::{EdgeStyle, NodeStyle, PinReference, node_graph};
+use iced_nodegraph::{
+    EdgeConfig, EdgeStyle, GraphDefaults, NodeConfig, PinReference, ShadowConfig,
+    node_graph,
+};
 use iced_palette::{
     Command, Shortcut, command, command_palette, find_matching_shortcut, focus_input,
     get_filtered_command_index, get_filtered_count, is_toggle_shortcut, navigate_down, navigate_up,
@@ -156,22 +159,31 @@ struct ComputedStyle {
 }
 
 impl ComputedStyle {
-    /// Builds a NodeStyle from computed values, using defaults where not set
-    fn to_node_style(&self) -> NodeStyle {
-        let mut style = NodeStyle::default();
+    /// Builds a NodeConfig from computed values (partial overrides).
+    /// Only properties that are explicitly set will override theme defaults.
+    fn to_node_config(&self) -> NodeConfig {
+        let mut config = NodeConfig::new();
         if let Some(r) = self.corner_radius {
-            style = style.corner_radius(r);
+            config = config.corner_radius(r);
         }
         if let Some(o) = self.opacity {
-            style = style.opacity(o);
+            config = config.opacity(o);
         }
         if let Some(w) = self.border_width {
-            style = style.border_width(w);
+            config = config.border_width(w);
         }
         if let Some(c) = self.fill_color {
-            style = style.fill_color(c);
+            config = config.fill_color(c);
         }
-        style
+        config
+    }
+
+    /// Returns true if any node styling values are set
+    fn has_node_overrides(&self) -> bool {
+        self.corner_radius.is_some()
+            || self.opacity.is_some()
+            || self.border_width.is_some()
+            || self.fill_color.is_some()
     }
 
     /// Builds an EdgeStyle from computed values, returns None if no edge styling is set
@@ -185,7 +197,7 @@ impl ComputedStyle {
             style = style.thickness(t);
         }
         if let Some(c) = self.edge_color {
-            style = style.color(c);
+            style = style.solid_color(c);
         }
         Some(style)
     }
@@ -701,9 +713,22 @@ impl Application {
     }
 
     fn view(&self) -> iced::Element<'_, ApplicationMessage> {
-        let computed_style = self.computed_style.to_node_style();
+        // Graph-wide style defaults using the new cascading style system
+        let graph_defaults = GraphDefaults::new()
+            .node(
+                NodeConfig::new()
+                    .corner_radius(8.0)
+                    .opacity(0.88)
+                    .shadow(
+                        ShadowConfig::new()
+                            .blur_radius(24.0)
+                            .offset(0.0, 6.0),
+                    ),
+            )
+            .edge(EdgeConfig::new().thickness(1.0));
 
         let mut ng = node_graph()
+            .defaults(graph_defaults)
             .on_connect(|from, to| ApplicationMessage::EdgeConnected { from, to })
             .on_disconnect(|from, to| ApplicationMessage::EdgeDisconnected { from, to })
             .on_move(|node_index, new_position| ApplicationMessage::NodeMoved {
@@ -781,8 +806,10 @@ impl Application {
             };
 
             // Apply computed style to workflow nodes only (not to input/config nodes)
-            if matches!(node_type, NodeType::Workflow(_)) {
-                ng.push_node_styled(*position, element, computed_style.clone());
+            // Only use push_node_config if there are actual overrides
+            if matches!(node_type, NodeType::Workflow(_)) && self.computed_style.has_node_overrides()
+            {
+                ng.push_node_config(*position, element, self.computed_style.to_node_config());
             } else {
                 ng.push_node(*position, element);
             }

@@ -31,6 +31,20 @@ struct Uniforms {
     dragging_edge_to_node: u32,
     dragging_edge_to_pin: u32,
 
+    // Dragging edge gradient colors (resolved in Rust from pin colors)
+    dragging_edge_start_color: vec4<f32>,  // Color at source pin end
+    dragging_edge_end_color: vec4<f32>,    // Color at cursor/target end
+
+    // Theme-derived visual parameters (computed in Rust, no hardcodes in shader)
+    grid_color: vec4<f32>,           // Pre-computed grid line color
+    hover_glow_color: vec4<f32>,     // Node hover glow color
+    selection_box_color: vec4<f32>,  // Box selection fill/border color
+    edge_cutting_color: vec4<f32>,   // Edge cutting line color
+    hover_glow_radius: f32,          // Node hover glow radius in world units
+    edge_thickness: f32,             // Default edge thickness for dragging
+    _pad_theme1: f32,
+    _pad_theme2: f32,
+
     viewport_size: vec2<f32>,
     bounds_origin: vec2<f32>,  // widget bounds origin in physical pixels
     bounds_size: vec2<f32>,    // widget bounds size in physical pixels
@@ -76,7 +90,8 @@ struct Edge {
     from_pin: u32,
     to_node: u32,
     to_pin: u32,
-    color: vec4<f32>,
+    start_color: vec4<f32>,  // color at source pin (t=0)
+    end_color: vec4<f32>,    // color at target pin (t=1)
     thickness: f32,
     edge_type: u32,    // 0=Bezier, 1=Straight, 2=SmoothStep, 3=Step
     dash_length: f32,  // 0.0 = solid line
@@ -510,20 +525,6 @@ fn get_pin_direction(side: u32) -> vec2<f32> {
     }
 }
 
-fn select_edge_color(from_pin: Pin, to_pin: Pin) -> vec3<f32> {
-    if (from_pin.direction == 1u) {
-        return from_pin.color.xyz;
-    } else if (to_pin.direction == 1u) {
-        return to_pin.color.xyz;
-    } else if (from_pin.direction == 0u) {
-        return from_pin.color.xyz;
-    } else if (to_pin.direction == 0u) {
-        return to_pin.color.xyz;
-    } else {
-        return from_pin.color.xyz;
-    }
-}
-
 fn check_valid_drop_target(node_id: u32, pin_index: u32) -> bool {
     let from_node = nodes[uniforms.dragging_edge_from_node];
     let from_pin = pins[from_node.pin_start + uniforms.dragging_edge_from_pin];
@@ -600,8 +601,7 @@ fn fs_background(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<
     let uv = (local_coord / (uniforms.os_scale_factor * uniforms.camera_zoom)) - uniforms.camera_position;
 
     let grid_intensity = grid_pattern(uv, 100.0, 1000.0, uniforms.camera_zoom);
-    let grid_color = uniforms.border_color.xyz * 1.3;
-    let col = mix(uniforms.background_color.xyz, grid_color, grid_intensity);
+    let col = mix(uniforms.background_color.xyz, uniforms.grid_color.rgb, grid_intensity);
 
     return vec4(col, 1.0);
 }
@@ -680,12 +680,6 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
     let p3 = to_pin.position;
     let p2 = p3 + dir_to * seg_len;
 
-    // Use edge color if set, otherwise use pin-based color selection
-    var edge_color = edge.color.rgb;
-    if (edge.color.a < 0.01) {
-        edge_color = select_edge_color(from_pin, to_pin);
-    }
-
     // Calculate distance and t parameter based on edge type
     var dist_and_t: vec2<f32>;
     var curve_length: f32;
@@ -712,6 +706,9 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
 
     let dist = dist_and_t.x;
     let t = dist_and_t.y;
+
+    // Gradient from start_color to end_color based on position along edge
+    var edge_color = mix(edge.start_color.rgb, edge.end_color.rgb, t);
 
     let edge_thickness = edge.thickness;
     let aa = 1.0 / uniforms.camera_zoom;
@@ -829,11 +826,11 @@ fn vs_node(@builtin(instance_index) instance: u32,
         vec2(0.0)
     );
 
-    // Hover glow adds extra padding (6.0 world units)
+    // Hover glow adds extra padding
     let is_hovered = (node.flags & NODE_FLAG_HOVERED) != 0u;
     var glow_padding = 0.0;
     if (is_hovered) {
-        glow_padding = 6.0;
+        glow_padding = uniforms.hover_glow_radius;
     }
 
     let total_padding = border_padding + glow_padding;
@@ -883,11 +880,9 @@ fn fs_node(in: NodeVertexOutput) -> @location(0) vec4<f32> {
 
     // Render hover glow (subtle outer glow when hovered)
     if (is_hovered && d > 0.0) {
-        let glow_radius = 6.0;
-        let glow_color = vec3(0.5, 0.7, 1.0); // Soft blue glow
-        let glow_alpha = (1.0 - smoothstep(0.0, glow_radius, d)) * 0.3 * node_opacity;
+        let glow_alpha = (1.0 - smoothstep(0.0, uniforms.hover_glow_radius, d)) * 0.3 * node_opacity;
         if (glow_alpha > alpha) {
-            col = glow_color;
+            col = uniforms.hover_glow_color.rgb;
             alpha = glow_alpha;
         }
     }
@@ -1137,11 +1132,11 @@ fn fs_dragging(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
         // Border
         let border_width = 1.5 / uniforms.camera_zoom;
         let border_alpha = 1.0 - smoothstep(-border_width, -border_width + aa, dist);
-        let border_color = vec4(0.3, 0.6, 1.0, 0.8);
+        let border_color = vec4(uniforms.selection_box_color.rgb, 0.8);
 
         // Fill (inside the rectangle)
         let fill_alpha = 1.0 - smoothstep(-aa, 0.0, dist);
-        let fill_color = vec4(0.3, 0.6, 1.0, 0.15);
+        let fill_color = vec4(uniforms.selection_box_color.rgb, 0.15);
 
         // Combine: fill inside, border on edge
         if (dist < 0.0) {
@@ -1170,8 +1165,8 @@ fn fs_dragging(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
         let line_width = 3.0;  // World space - scales with zoom
         let alpha = 1.0 - smoothstep(line_width, line_width + aa, dist);
 
-        // Red cutting line
-        return vec4(1.0, 0.3, 0.3, alpha * 0.8);
+        // Edge cutting line
+        return vec4(uniforms.edge_cutting_color.rgb, alpha * 0.8);
     }
 
     // === Edge dragging (3, 4) ===
@@ -1199,19 +1194,22 @@ fn fs_dragging(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
 
     let p2 = p3 + dir_to * seg_len;
 
-    var drag_color = vec4(0.0);
-    if (uniforms.dragging == 4u) {
-        drag_color = from_pin.color;
-    } else {
-        drag_color = uniforms.drag_edge_color;
-    }
+    // Compute distance and t parameter for gradient
+    let dist_and_t = sdCubicBezierWithT(in.world_uv, p0, p1, p2, p3);
+    let dist = dist_and_t.x;
+    let t = dist_and_t.y;
 
-    let dist = sdCubicBezier(in.world_uv, p0, p1, p2, p3);
-    let edge_thickness = 2.0;  // World-space thickness, scales with zoom
+    // Gradient from start_color (pin end) to end_color (cursor/target end)
+    let edge_color = mix(
+        uniforms.dragging_edge_start_color.rgb,
+        uniforms.dragging_edge_end_color.rgb,
+        t
+    );
 
+    let edge_thickness = uniforms.edge_thickness;  // From resolved edge defaults
     let alpha = 1.0 - smoothstep(edge_thickness, edge_thickness + aa, dist);
 
-    return vec4(drag_color.xyz, alpha);
+    return vec4(edge_color, alpha);
 }
 
 // ============================================================================

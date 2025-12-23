@@ -28,98 +28,129 @@ pub struct NodeContentStyle {
 }
 
 impl NodeContentStyle {
-    /// Creates an input node style (blue tint) from the theme.
+    /// Creates an input node style derived from theme's primary color.
     pub fn input(theme: &Theme) -> Self {
         let palette = theme.extended_palette();
-        let is_dark = palette.is_dark;
+        let primary = palette.primary.base.color;
 
-        if is_dark {
+        if palette.is_dark {
             Self {
-                title_background: Color::from_rgba(0.15, 0.22, 0.35, 0.9),
+                title_background: Color::from_rgba(
+                    primary.r * 0.35,
+                    primary.g * 0.35,
+                    primary.b * 0.35,
+                    0.9,
+                ),
                 title_text: palette.background.base.text,
                 body_background: Color::TRANSPARENT,
                 body_text: palette.background.base.text,
-                accent: Color::from_rgb(0.3, 0.5, 0.8),
+                accent: primary,
             }
         } else {
             Self {
-                title_background: Color::from_rgba(0.75, 0.85, 0.95, 0.9),
+                title_background: Color::from_rgba(
+                    1.0 - (1.0 - primary.r) * 0.15,
+                    1.0 - (1.0 - primary.g) * 0.15,
+                    1.0 - (1.0 - primary.b) * 0.15,
+                    0.9,
+                ),
                 title_text: palette.background.base.text,
                 body_background: Color::TRANSPARENT,
                 body_text: palette.background.base.text,
-                accent: Color::from_rgb(0.2, 0.4, 0.7),
+                accent: primary,
             }
         }
     }
 
-    /// Creates a process node style (green tint) from the theme.
+    /// Creates a process node style derived from theme's success color.
     pub fn process(theme: &Theme) -> Self {
         let palette = theme.extended_palette();
-        let is_dark = palette.is_dark;
+        let success = palette.success.base.color;
 
-        if is_dark {
+        if palette.is_dark {
             Self {
-                title_background: Color::from_rgba(0.18, 0.30, 0.18, 0.9),
+                title_background: Color::from_rgba(
+                    success.r * 0.35,
+                    success.g * 0.35,
+                    success.b * 0.35,
+                    0.9,
+                ),
                 title_text: palette.background.base.text,
                 body_background: Color::TRANSPARENT,
                 body_text: palette.background.base.text,
-                accent: Color::from_rgb(0.4, 0.7, 0.4),
+                accent: success,
             }
         } else {
             Self {
-                title_background: Color::from_rgba(0.80, 0.92, 0.80, 0.9),
+                title_background: Color::from_rgba(
+                    1.0 - (1.0 - success.r) * 0.15,
+                    1.0 - (1.0 - success.g) * 0.15,
+                    1.0 - (1.0 - success.b) * 0.15,
+                    0.9,
+                ),
                 title_text: palette.background.base.text,
                 body_background: Color::TRANSPARENT,
                 body_text: palette.background.base.text,
-                accent: Color::from_rgb(0.3, 0.6, 0.3),
+                accent: success,
             }
         }
     }
 
-    /// Creates an output node style (orange tint) from the theme.
+    /// Creates an output node style derived from theme's secondary color.
     pub fn output(theme: &Theme) -> Self {
         let palette = theme.extended_palette();
-        let is_dark = palette.is_dark;
+        let secondary = palette.secondary.base.color;
 
-        if is_dark {
+        if palette.is_dark {
             Self {
-                title_background: Color::from_rgba(0.35, 0.25, 0.15, 0.9),
+                title_background: Color::from_rgba(
+                    secondary.r * 0.35,
+                    secondary.g * 0.35,
+                    secondary.b * 0.35,
+                    0.9,
+                ),
                 title_text: palette.background.base.text,
                 body_background: Color::TRANSPARENT,
                 body_text: palette.background.base.text,
-                accent: Color::from_rgb(0.9, 0.6, 0.3),
+                accent: secondary,
             }
         } else {
             Self {
-                title_background: Color::from_rgba(0.95, 0.88, 0.78, 0.9),
+                title_background: Color::from_rgba(
+                    1.0 - (1.0 - secondary.r) * 0.15,
+                    1.0 - (1.0 - secondary.g) * 0.15,
+                    1.0 - (1.0 - secondary.b) * 0.15,
+                    0.9,
+                ),
                 title_text: palette.background.base.text,
                 body_background: Color::TRANSPARENT,
                 body_text: palette.background.base.text,
-                accent: Color::from_rgb(0.8, 0.5, 0.2),
+                accent: secondary,
             }
         }
     }
 
-    /// Creates a comment node style (subtle gray) from the theme.
+    /// Creates a comment node style from theme's background weak color.
     pub fn comment(theme: &Theme) -> Self {
         let palette = theme.extended_palette();
-        let is_dark = palette.is_dark;
+        let weak = palette.background.weak.color;
+        let weak_text = palette.background.weak.text;
 
-        if is_dark {
+        if palette.is_dark {
             Self {
-                title_background: Color::from_rgba(0.25, 0.25, 0.28, 0.7),
-                title_text: Color::from_rgba(0.7, 0.7, 0.7, 1.0),
+                title_background: Color::from_rgba(weak.r, weak.g, weak.b, 0.7),
+                title_text: weak_text,
                 body_background: Color::TRANSPARENT,
-                body_text: Color::from_rgba(0.6, 0.6, 0.6, 1.0),
-                accent: Color::from_rgb(0.5, 0.5, 0.55),
+                body_text: Color::from_rgba(weak_text.r, weak_text.g, weak_text.b, 0.8),
+                accent: weak,
             }
         } else {
             Self {
-                title_background: Color::from_rgba(0.85, 0.85, 0.88, 0.7),
-                title_text: Color::from_rgba(0.4, 0.4, 0.4, 1.0),
+                title_background: Color::from_rgba(weak.r, weak.g, weak.b, 0.7),
+                title_text: weak_text,
                 body_background: Color::TRANSPARENT,
-                body_text: Color::from_rgba(0.5, 0.5, 0.5, 1.0),
-                accent: Color::from_rgb(0.6, 0.6, 0.65),
+                body_text: Color::from_rgba(weak_text.r, weak_text.g, weak_text.b, 0.8),
+                accent: weak,
             }
         }
     }

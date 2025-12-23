@@ -193,6 +193,7 @@ impl Pipeline {
             primitive.drag_edge_valid_color,
             &primitive.selected_nodes,
             primitive.selected_edge_color,
+            primitive.edge_thickness,
         );
     }
 
@@ -217,6 +218,7 @@ impl Pipeline {
         drag_edge_valid_color: glam::Vec4,
         selected_nodes: &std::collections::HashSet<usize>,
         selected_edge_color: glam::Vec4,
+        edge_thickness: f32,
     ) {
         let mut pin_start = 0;
         let num_nodes = self.nodes.update(
@@ -320,19 +322,55 @@ impl Pipeline {
                     .map(|cuts| cuts.contains(&edge_idx))
                     .unwrap_or(false);
 
-                // Use per-edge style color if alpha > 0, otherwise use global/selection color
                 let style = &edge_data.style;
-                let style_color =
-                    glam::Vec4::new(style.color.r, style.color.g, style.color.b, style.color.a);
 
-                let color = if is_highlighted {
-                    selected_edge_color
-                } else if style_color.w > 0.01 {
-                    // Per-edge color takes precedence
-                    style_color
+                // Resolve edge gradient colors:
+                // - TRANSPARENT (alpha < 0.01) = use pin color at that end
+                // - Explicit color = use it
+                // - Selected edges override everything with selection color
+                let (start_color, end_color) = if is_highlighted {
+                    // Selected edges use selection color (solid)
+                    (selected_edge_color, selected_edge_color)
                 } else {
-                    // Fallback to global edge color
-                    edge_color
+                    // Get pin colors for fallback
+                    let from_pin = &nodes[edge_data.from_node].pins[edge_data.from_pin];
+                    let to_pin = &nodes[edge_data.to_node].pins[edge_data.to_pin];
+
+                    // Resolve start color: explicit or pin color
+                    let start = if style.start_color.a > 0.01 {
+                        glam::Vec4::new(
+                            style.start_color.r,
+                            style.start_color.g,
+                            style.start_color.b,
+                            style.start_color.a,
+                        )
+                    } else {
+                        glam::Vec4::new(
+                            from_pin.color.r,
+                            from_pin.color.g,
+                            from_pin.color.b,
+                            from_pin.color.a,
+                        )
+                    };
+
+                    // Resolve end color: explicit or pin color
+                    let end = if style.end_color.a > 0.01 {
+                        glam::Vec4::new(
+                            style.end_color.r,
+                            style.end_color.g,
+                            style.end_color.b,
+                            style.end_color.a,
+                        )
+                    } else {
+                        glam::Vec4::new(
+                            to_pin.color.r,
+                            to_pin.color.g,
+                            to_pin.color.b,
+                            to_pin.color.a,
+                        )
+                    };
+
+                    (start, end)
                 };
 
                 // Extract dash pattern values
@@ -349,7 +387,8 @@ impl Pipeline {
                     from_pin: edge_data.from_pin as _,
                     to_node: edge_data.to_node as _,
                     to_pin: edge_data.to_pin as _,
-                    color,
+                    start_color,
+                    end_color,
                     thickness: style.thickness,
                     edge_type: style.edge_type as u32,
                     dash_length,
@@ -403,6 +442,26 @@ impl Pipeline {
             }
         };
 
+        // Compute dragging edge color (solid color from connected pin)
+        let (dragging_edge_start_color, dragging_edge_end_color) = match dragging {
+            Dragging::Edge(from_node, from_pin, _) => {
+                // Dragging from pin: use solid pin color
+                let pin_color = &nodes[*from_node].pins[*from_pin].color;
+                let color = glam::Vec4::new(pin_color.r, pin_color.g, pin_color.b, pin_color.a);
+                (color, color)
+            }
+            Dragging::EdgeOver(from_node, from_pin, _to_node, _to_pin) => {
+                // Over valid target: still use source pin color (solid)
+                let pin_color = &nodes[*from_node].pins[*from_pin].color;
+                let color = glam::Vec4::new(pin_color.r, pin_color.g, pin_color.b, 1.0);
+                (color, color)
+            }
+            _ => {
+                // Not dragging edge: use defaults (won't be rendered anyway)
+                (edge_color, edge_color)
+            }
+        };
+
         let scale = viewport.scale_factor() as f32;
         let uniforms = types::Uniforms {
             os_scale_factor: scale,
@@ -428,6 +487,22 @@ impl Pipeline {
             dragging_edge_from_origin,
             dragging_edge_to_node,
             dragging_edge_to_pin,
+            dragging_edge_start_color,
+            dragging_edge_end_color,
+            // Theme-derived visual parameters (computed in Rust, no hardcodes in shader)
+            grid_color: glam::Vec4::new(
+                border_color.x * 1.3,
+                border_color.y * 1.3,
+                border_color.z * 1.3,
+                1.0,
+            ),
+            hover_glow_color: glam::Vec4::new(0.5, 0.7, 1.0, 1.0), // Soft blue glow
+            selection_box_color: glam::Vec4::new(0.3, 0.6, 1.0, 1.0), // Selection blue
+            edge_cutting_color: glam::Vec4::new(1.0, 0.3, 0.3, 1.0), // Warning red
+            hover_glow_radius: 6.0,
+            edge_thickness,
+            _pad_theme1: 0.0,
+            _pad_theme2: 0.0,
             viewport_size: glam::Vec2::new(
                 viewport.physical_width() as f32,
                 viewport.physical_height() as f32,

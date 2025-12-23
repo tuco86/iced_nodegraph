@@ -23,6 +23,10 @@ This document provides essential context for Claude Code when working on the ice
 
 **Note**: Claude Code automatically adds co-author attribution when creating commits.
 
+## Project Status
+
+**Pre-Release**: This project has not been published to crates.io yet. No backwards compatibility is required - breaking API changes are acceptable.
+
 ## Documentation Standards
 
 **CRITICAL**: Use minimal, professional language in all documentation:

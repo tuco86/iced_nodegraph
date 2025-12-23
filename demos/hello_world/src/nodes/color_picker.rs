@@ -9,6 +9,8 @@ use iced::{
 };
 use iced_nodegraph::{NodeContentStyle, node_title_bar, pin};
 
+use super::colors;
+
 /// Predefined color presets
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ColorPreset {
@@ -61,16 +63,16 @@ where
 {
     let style = NodeContentStyle::input(theme);
 
-    // Preview box showing current color
+    // Preview box showing current color (larger for better visibility)
     let preview = container(text(""))
-        .width(30)
-        .height(20)
+        .width(44)
+        .height(32)
         .style(move |_theme| container::Style {
             background: Some(iced::Background::Color(color)),
             border: iced::Border {
-                color: Color::from_rgb(0.4, 0.4, 0.4),
+                color: colors::PIN_ANY,
                 width: 1.0,
-                radius: 3.0.into(),
+                radius: 6.0.into(),
             },
             ..Default::default()
         });
@@ -122,7 +124,7 @@ where
     .spacing(4)
     .align_y(iced::Alignment::Center);
 
-    let output_pin = container(pin!(Right, "color", Output, "color", color))
+    let output_pin = container(pin!(Right, "color", Output, "color", colors::PIN_COLOR))
         .width(Length::Fill)
         .align_x(Horizontal::Right);
 
@@ -131,18 +133,18 @@ where
         container(
             column![
                 row![preview, rgb_display]
-                    .spacing(8)
+                    .spacing(10)
                     .align_y(iced::Alignment::Center),
                 r_slider,
                 g_slider,
                 b_slider,
                 output_pin,
             ]
-            .spacing(4)
+            .spacing(6)
         )
-        .padding([6, 8])
+        .padding([10, 12])
     ]
-    .width(180.0)
+    .width(200.0)
     .into()
 }
 
@@ -157,21 +159,21 @@ where
 {
     let style = NodeContentStyle::input(theme);
 
-    // Preview box
+    // Preview box (full-width bar)
     let preview = container(text(""))
         .width(Length::Fill)
-        .height(20)
+        .height(24)
         .style(move |_theme| container::Style {
             background: Some(iced::Background::Color(current)),
             border: iced::Border {
-                color: Color::from_rgb(0.4, 0.4, 0.4),
+                color: colors::PIN_ANY,
                 width: 1.0,
-                radius: 3.0.into(),
+                radius: 4.0.into(),
             },
             ..Default::default()
         });
 
-    // Color preset buttons (2 rows of 4)
+    // Color preset buttons (2 rows of 4) - larger buttons
     let presets = ColorPreset::all();
     let row1: Vec<_> = presets[0..4]
         .iter()
@@ -179,14 +181,14 @@ where
             let color = preset.to_color();
             let on_select = on_select.clone();
             button(text(""))
-                .width(20)
-                .height(20)
+                .width(24)
+                .height(24)
                 .style(move |_theme, _status| button::Style {
                     background: Some(iced::Background::Color(color)),
                     border: iced::Border {
-                        color: Color::from_rgb(0.3, 0.3, 0.3),
+                        color: colors::PIN_ANY,
                         width: 1.0,
-                        radius: 2.0.into(),
+                        radius: 4.0.into(),
                     },
                     ..Default::default()
                 })
@@ -201,14 +203,14 @@ where
             let color = preset.to_color();
             let on_select = on_select.clone();
             button(text(""))
-                .width(20)
-                .height(20)
+                .width(24)
+                .height(24)
                 .style(move |_theme, _status| button::Style {
                     background: Some(iced::Background::Color(color)),
                     border: iced::Border {
-                        color: Color::from_rgb(0.3, 0.3, 0.3),
+                        color: colors::PIN_ANY,
                         width: 1.0,
-                        radius: 2.0.into(),
+                        radius: 4.0.into(),
                     },
                     ..Default::default()
                 })
@@ -217,7 +219,7 @@ where
         })
         .collect();
 
-    let output_pin = container(pin!(Right, "color", Output, "color", current))
+    let output_pin = container(pin!(Right, "color", Output, "color", colors::PIN_COLOR))
         .width(Length::Fill)
         .align_x(Horizontal::Right);
 
@@ -226,14 +228,14 @@ where
         container(
             column![
                 preview,
-                row(row1).spacing(4),
-                row(row2).spacing(4),
+                row(row1).spacing(6),
+                row(row2).spacing(6),
                 output_pin,
             ]
-            .spacing(4)
+            .spacing(6)
         )
-        .padding([6, 8])
+        .padding([10, 12])
     ]
-    .width(140.0)
+    .width(160.0)
     .into()
 }

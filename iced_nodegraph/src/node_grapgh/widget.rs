@@ -17,14 +17,14 @@ use crate::{
     PinReference, PinSide,
     node_grapgh::euclid::{IntoEuclid, ScreenPoint, WorldPoint},
     node_pin::NodePinState,
-    style::{NodeConfig, StyleResolver, is_dark_theme},
+    style::StyleResolver,
 };
 
 // Click detection threshold (in world-space pixels)
 const PIN_CLICK_THRESHOLD: f32 = 8.0;
 
-impl<Message, Theme, Renderer> iced_widget::core::Widget<Message, Theme, Renderer>
-    for NodeGraph<'_, Message, Theme, Renderer>
+impl<Message, Renderer> iced_widget::core::Widget<Message, iced::Theme, Renderer>
+    for NodeGraph<'_, Message, iced::Theme, Renderer>
 where
     Renderer: iced_widget::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
@@ -68,7 +68,7 @@ where
         &self,
         tree: &Tree,
         renderer: &mut Renderer,
-        theme: &Theme,
+        theme: &iced::Theme,
         style: &renderer::Style,
         layout: layout::Layout<'_>,
         cursor: iced::mouse::Cursor,
@@ -104,16 +104,10 @@ where
             }
         }
 
-        // Theme-aware colors from extended palette
-        let text_color = style.text_color;
-
-        // Use proper relative luminance for theme detection
-        // Light text (high luminance) indicates dark background theme
-        let is_dark = is_dark_theme(text_color);
-
         // Create StyleResolver for cascading style system
         // Theme Defaults -> Graph Defaults -> Item Config
-        let resolver = StyleResolver::from_is_dark(is_dark, self.graph_defaults.as_ref());
+        // Uses iced::Theme directly for proper palette access
+        let resolver = StyleResolver::new(theme, self.graph_defaults.as_ref());
 
         // Resolve graph-level styles through cascade
         let resolved_graph = resolver.resolve_graph();
@@ -141,10 +135,10 @@ where
             resolved_node_defaults.fill_color.a * fade_opacity,
         );
         let edge_color = glam::vec4(
-            resolved_edge_defaults.color.r,
-            resolved_edge_defaults.color.g,
-            resolved_edge_defaults.color.b,
-            resolved_edge_defaults.color.a * fade_opacity,
+            resolved_edge_defaults.start_color.r,
+            resolved_edge_defaults.start_color.g,
+            resolved_edge_defaults.start_color.b,
+            resolved_edge_defaults.start_color.a * fade_opacity,
         );
         let drag_edge_color = glam::vec4(
             resolved_graph.drag_edge_color.r,
@@ -219,9 +213,9 @@ where
                             }
 
                             // Resolve node style through cascade:
-                            // Theme Defaults -> Graph Defaults -> Per-Node Style
-                            let node_config = node_style.as_ref().map(|s| NodeConfig::from(s.clone()));
-                            let resolved = resolver.resolve_node(node_config.as_ref());
+                            // Theme Defaults -> Graph Defaults -> Per-Node Config
+                            // node_style is now Option<NodeConfig> (partial overrides)
+                            let resolved = resolver.resolve_node(node_style.as_ref());
 
                             // Extract shadow properties
                             let (shadow_offset, shadow_blur, shadow_color) =
@@ -316,6 +310,7 @@ where
                 selection_border_color.b,
                 selection_border_color.a * fade_opacity,
             ),
+            edge_thickness: resolved_edge_defaults.thickness,
         };
         let mut primitive_foreground = primitive_background.clone();
         primitive_foreground.layer = Layer::Foreground;
@@ -389,7 +384,7 @@ where
     }
 
     fn diff(&self, tree: &mut Tree) {
-        let children: Vec<&Element<'_, Message, Theme, Renderer>> =
+        let children: Vec<&Element<'_, Message, iced::Theme, Renderer>> =
             self.elements_iter().map(|(_, e, _)| e).collect();
         tree.diff_children(&children);
     }
@@ -1342,14 +1337,13 @@ where
     }
 }
 
-impl<'a, Message, Theme, Renderer> From<NodeGraph<'a, Message, Theme, Renderer>>
-    for Element<'a, Message, Theme, Renderer>
+impl<'a, Message, Renderer> From<NodeGraph<'a, Message, iced::Theme, Renderer>>
+    for Element<'a, Message, iced::Theme, Renderer>
 where
     Renderer: iced_widget::core::renderer::Renderer + 'a + iced_wgpu::primitive::Renderer,
     Message: 'static,
-    Theme: 'a,
 {
-    fn from(graph: NodeGraph<'a, Message, Theme, Renderer>) -> Self {
+    fn from(graph: NodeGraph<'a, Message, iced::Theme, Renderer>) -> Self {
         Element::new(graph)
     }
 }

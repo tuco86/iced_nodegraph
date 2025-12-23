@@ -154,15 +154,23 @@ impl ShadowConfig {
 /// use iced_nodegraph::style::{EdgeConfig, EdgeType};
 /// use iced::Color;
 ///
+/// // Solid color edge
 /// let config = EdgeConfig::new()
-///     .color(Color::from_rgb(0.3, 0.6, 1.0))
+///     .solid_color(Color::from_rgb(0.3, 0.6, 1.0))
 ///     .thickness(3.0)
 ///     .edge_type(EdgeType::Bezier);
+///
+/// // Gradient edge
+/// let gradient = EdgeConfig::new()
+///     .start_color(Color::from_rgb(1.0, 0.0, 0.0))
+///     .end_color(Color::from_rgb(0.0, 0.0, 1.0));
 /// ```
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct EdgeConfig {
-    /// Edge line color
-    pub color: Option<Color>,
+    /// Color at the source pin (t=0). TRANSPARENT = use source pin color.
+    pub start_color: Option<Color>,
+    /// Color at the target pin (t=1). TRANSPARENT = use target pin color.
+    pub end_color: Option<Color>,
     /// Line thickness in world-space pixels
     pub thickness: Option<f32>,
     /// Edge path type (bezier, straight, step, etc.)
@@ -179,9 +187,23 @@ impl EdgeConfig {
         Self::default()
     }
 
-    /// Sets the edge color override.
-    pub fn color(mut self, color: impl Into<Color>) -> Self {
-        self.color = Some(color.into());
+    /// Sets the start color (at source pin, t=0).
+    pub fn start_color(mut self, color: impl Into<Color>) -> Self {
+        self.start_color = Some(color.into());
+        self
+    }
+
+    /// Sets the end color (at target pin, t=1).
+    pub fn end_color(mut self, color: impl Into<Color>) -> Self {
+        self.end_color = Some(color.into());
+        self
+    }
+
+    /// Sets both start and end to the same color (solid edge).
+    pub fn solid_color(mut self, color: impl Into<Color>) -> Self {
+        let c = color.into();
+        self.start_color = Some(c);
+        self.end_color = Some(c);
         self
     }
 
@@ -211,7 +233,8 @@ impl EdgeConfig {
 
     /// Returns true if this config has any overrides set.
     pub fn has_overrides(&self) -> bool {
-        self.color.is_some()
+        self.start_color.is_some()
+            || self.end_color.is_some()
             || self.thickness.is_some()
             || self.edge_type.is_some()
             || self.dash_pattern.is_some()
@@ -432,11 +455,12 @@ mod tests {
     #[test]
     fn test_edge_config_builder() {
         let config = EdgeConfig::new()
-            .color(Color::from_rgb(0.3, 0.6, 1.0))
+            .solid_color(Color::from_rgb(0.3, 0.6, 1.0))
             .thickness(3.0)
             .edge_type(EdgeType::SmoothStep);
 
-        assert!(config.color.is_some());
+        assert!(config.start_color.is_some());
+        assert!(config.end_color.is_some());
         assert_eq!(config.thickness, Some(3.0));
         assert_eq!(config.edge_type, Some(EdgeType::SmoothStep));
     }
