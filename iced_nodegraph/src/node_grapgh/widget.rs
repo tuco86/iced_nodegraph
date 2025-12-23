@@ -78,19 +78,15 @@ where
         let mut camera = state.camera;
 
         // Update time for animations
-        let (time, now) = {
+        let time = {
             let now = Instant::now();
-            let time = if let Some(last_update) = state.last_update {
+            if let Some(last_update) = state.last_update {
                 let delta = now.duration_since(last_update).as_secs_f32();
                 state.time + delta
             } else {
                 state.time
-            };
-            (time, now)
+            }
         };
-
-        // Get fade-in opacity for smooth appearance
-        let fade_opacity = state.fade_in.interpolate(0.0, 1.0, now);
 
         // Handle panning when dragging the graph.
         if let Dragging::Graph(origin) = state.dragging {
@@ -115,42 +111,42 @@ where
         let resolved_edge_defaults = resolver.resolve_edge(None);
         let resolved_pin_defaults = resolver.resolve_pin(None);
 
-        // Convert resolved styles to GPU-compatible formats with fade_opacity
+        // Convert resolved styles to GPU-compatible formats
         let bg_color = glam::vec4(
             resolved_graph.background_color.r,
             resolved_graph.background_color.g,
             resolved_graph.background_color.b,
-            resolved_graph.background_color.a * fade_opacity,
+            resolved_graph.background_color.a,
         );
         let border_color = glam::vec4(
             resolved_graph.grid_color.r,
             resolved_graph.grid_color.g,
             resolved_graph.grid_color.b,
-            resolved_graph.grid_color.a * fade_opacity,
+            resolved_graph.grid_color.a,
         );
         let fill_color = glam::vec4(
             resolved_node_defaults.fill_color.r,
             resolved_node_defaults.fill_color.g,
             resolved_node_defaults.fill_color.b,
-            resolved_node_defaults.fill_color.a * fade_opacity,
+            resolved_node_defaults.fill_color.a,
         );
         let edge_color = glam::vec4(
             resolved_edge_defaults.start_color.r,
             resolved_edge_defaults.start_color.g,
             resolved_edge_defaults.start_color.b,
-            resolved_edge_defaults.start_color.a * fade_opacity,
+            resolved_edge_defaults.start_color.a,
         );
         let drag_edge_color = glam::vec4(
             resolved_graph.drag_edge_color.r,
             resolved_graph.drag_edge_color.g,
             resolved_graph.drag_edge_color.b,
-            resolved_graph.drag_edge_color.a * fade_opacity,
+            resolved_graph.drag_edge_color.a,
         );
         let drag_valid_color = glam::vec4(
             resolved_graph.drag_edge_valid_color.r,
             resolved_graph.drag_edge_valid_color.g,
             resolved_graph.drag_edge_valid_color.b,
-            resolved_graph.drag_edge_valid_color.a * fade_opacity,
+            resolved_graph.drag_edge_valid_color.a,
         );
 
         // Get selection style from resolved graph style
@@ -229,7 +225,7 @@ where
                             let mut node_border = resolved.border_color;
                             let corner_rad = resolved.corner_radius;
                             let mut border_w = resolved.border_width;
-                            let opacity = resolved.opacity * fade_opacity;
+                            let opacity = resolved.opacity;
 
                             // Apply selection highlighting
                             if is_selected {
@@ -305,7 +301,7 @@ where
                 selection_border_color.r,
                 selection_border_color.g,
                 selection_border_color.b,
-                selection_border_color.a * fade_opacity,
+                selection_border_color.a,
             ),
             edge_thickness: resolved_edge_defaults.thickness,
         };
@@ -427,21 +423,11 @@ where
         // Update time for animations
         let now = Instant::now();
 
-        // Start fade-in animation on first update
-        if state.last_update.is_none() {
-            state.fade_in.go_mut(true, now);
-        }
-
         if let Some(last_update) = state.last_update {
             let delta = now.duration_since(last_update).as_secs_f32();
             state.time += delta;
         }
         state.last_update = Some(now);
-
-        // Request redraw while animating
-        if state.fade_in.is_animating(now) {
-            shell.request_redraw();
-        }
 
         // Track keyboard modifiers for Shift/Ctrl selection
         if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {

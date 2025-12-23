@@ -2,7 +2,6 @@ use super::camera::Camera2D;
 use super::canonical::CanonicalState;
 use super::effects::pipeline::cache::DirtyFlags;
 use super::euclid::WorldPoint;
-use iced::animation::Animation;
 use iced::keyboard;
 use std::collections::HashSet;
 use web_time::Instant;
@@ -36,7 +35,6 @@ pub(super) struct NodeGraphState {
     pub(super) dragging: Dragging,
     pub(super) time: f32,
     pub(super) last_update: Option<Instant>,
-    pub(super) fade_in: Animation<bool>,
     pub(super) selected_nodes: HashSet<usize>,
     pub(super) modifiers: keyboard::Modifiers,
     /// Tracks if left mouse button is pressed (for Fruit Ninja edge cutting)
@@ -60,9 +58,6 @@ impl Default for NodeGraphState {
             dragging: Default::default(),
             time: 0.0,
             last_update: None,
-            fade_in: Animation::new(false)
-                .easing(iced::animation::Easing::EaseOut)
-                .slow(),
             selected_nodes: HashSet::new(),
             modifiers: keyboard::Modifiers::default(),
             left_mouse_down: false,
