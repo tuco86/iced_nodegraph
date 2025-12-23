@@ -214,6 +214,14 @@ Transformations use mathematically consistent formulas. See [`iced_nodegraph/src
 - **Disconnect Edges**: Click on pin connection point to unplug (cable-like interaction)
 - **Move Nodes**: Left-click and drag node header
 
+### Plug Behavior
+
+Edge connections behave like physical plugs - the connection is active as soon as you "plug in", not when you release:
+
+- **Snap**: When dragging an edge close to a compatible pin, it snaps and `EdgeConnected` fires immediately
+- **Unsnap**: Moving away from the snapped pin fires `EdgeDisconnected`
+- **Release**: Releasing while snapped keeps the connection; releasing while not snapped discards the drag
+
 ## Testing
 
 ```bash

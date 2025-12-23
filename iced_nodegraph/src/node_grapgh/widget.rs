@@ -792,7 +792,20 @@ where
 
                                 if let Some((to_node, to_pin)) = target_pin {
                                     #[cfg(debug_assertions)]
-                                    println!("  ✓ HOVER OVER PIN: node={}, pin={}", to_node, to_pin);
+                                    println!("  ✓ SNAP TO PIN: node={}, pin={}", to_node, to_pin);
+
+                                    // Fire EdgeConnected event immediately on snap (plug behavior)
+                                    let from_ref = PinReference::new(from_node, from_pin);
+                                    let to_ref = PinReference::new(to_node, to_pin);
+                                    if let Some(handler) = self.on_connect_handler() {
+                                        shell.publish(handler(from_ref, to_ref));
+                                    }
+                                    if let Some(handler) = self.get_on_event() {
+                                        shell.publish(handler(NodeGraphEvent::EdgeConnected {
+                                            from: from_ref,
+                                            to: to_ref,
+                                        }));
+                                    }
 
                                     state.dragging = Dragging::EdgeOver(
                                         from_node,
@@ -838,6 +851,19 @@ where
                                 }
 
                                 if !still_over_pin {
+                                    // Fire EdgeDisconnected event when leaving snap (plug behavior)
+                                    let from_ref = PinReference::new(from_node, from_pin);
+                                    let to_ref = PinReference::new(to_node, to_pin);
+                                    if let Some(handler) = self.on_disconnect_handler() {
+                                        shell.publish(handler(from_ref, to_ref));
+                                    }
+                                    if let Some(handler) = self.get_on_event() {
+                                        shell.publish(handler(NodeGraphEvent::EdgeDisconnected {
+                                            from: from_ref,
+                                            to: to_ref,
+                                        }));
+                                    }
+
                                     // Moved away from pin, go back to dragging
                                     state.dragging = Dragging::Edge(
                                         from_node,
@@ -849,21 +875,10 @@ where
                             shell.request_redraw();
                         }
                         Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                            // Connection successful! Call the on_connect handler
+                            // Edge already connected via snap event - just end the drag
                             #[cfg(debug_assertions)]
-                            println!("  ✓ CONNECTION COMPLETE: node {} pin {} -> node {} pin {}\n", from_node, from_pin, to_node, to_pin);
+                            println!("  ✓ DRAG COMPLETE (edge already connected): node {} pin {} -> node {} pin {}\n", from_node, from_pin, to_node, to_pin);
 
-                            let from_ref = PinReference::new(from_node, from_pin);
-                            let to_ref = PinReference::new(to_node, to_pin);
-                            if let Some(handler) = self.on_connect_handler() {
-                                shell.publish(handler(from_ref, to_ref));
-                            }
-                            if let Some(handler) = self.get_on_event() {
-                                shell.publish(handler(NodeGraphEvent::EdgeConnected {
-                                    from: from_ref,
-                                    to: to_ref,
-                                }));
-                            }
                             state.dragging = Dragging::None;
                             // Emit drag end event
                             if let Some(handler) = self.on_drag_end_handler() {

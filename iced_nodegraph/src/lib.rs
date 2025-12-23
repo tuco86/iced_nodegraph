@@ -161,6 +161,15 @@
 //! | Delete selection | Delete key |
 //! | Add to selection | Shift+click |
 //!
+//! ### Plug Behavior
+//!
+//! Edge connections behave like physical plugs:
+//! - **Snap**: When dragging an edge close to a compatible pin, it "snaps" and
+//!   `EdgeConnected` fires immediately (not on mouse release)
+//! - **Unsnap**: Moving away from the snapped pin fires `EdgeDisconnected`
+//! - **Release**: Releasing the mouse while snapped keeps the connection;
+//!   releasing while not snapped discards the drag
+//!
 //! ## State Query Methods
 //!
 //! ```rust,ignore

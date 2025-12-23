@@ -92,6 +92,12 @@ Uses **WGPU shaders** for high-performance node graph rendering:
 - Edge dragging and static edge rendering both work
 - Shader renders edges in foreground layer with proper bezier curves
 
+**Plug Behavior**: Edge connections behave like physical plugs:
+- `EdgeConnected` fires immediately when dragging edge snaps to a compatible pin
+- `EdgeDisconnected` fires when moving away from a snapped pin
+- Mouse release while snapped keeps the connection; release while not snapped discards the drag
+- This provides immediate tactile feedback rather than waiting for mouse release
+
 ## Development Workflows
 
 ### Building & Testing

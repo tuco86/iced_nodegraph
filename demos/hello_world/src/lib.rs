@@ -267,46 +267,50 @@ impl Application {
     fn propagate_values(&mut self) {
         let mut new_computed = ComputedStyle::default();
 
-        // For each edge, check if it connects an input to a config node
+        // For each edge, check if it connects an input to a config node (in either direction)
         for (from, to) in &self.edges {
             let from_node = self.nodes.get(from.node_id);
             let to_node = self.nodes.get(to.node_id);
 
             if let (Some((_, from_type)), Some((_, to_type))) = (from_node, to_node) {
-                // Check if from is an input node and to is a config node
-                if let (NodeType::Input(input), NodeType::Config(config)) = (from_type, to_type) {
-                    let value = input.output_value();
+                // Check both directions: Input→Config or Config→Input
+                let (input, config) = match (from_type, to_type) {
+                    (NodeType::Input(input), NodeType::Config(config)) => (input, config),
+                    (NodeType::Config(config), NodeType::Input(input)) => (input, config),
+                    _ => continue,
+                };
 
-                    match config {
-                        ConfigNodeType::CornerRadius => {
-                            if let Some(v) = value.as_float() {
-                                new_computed.corner_radius = Some(v);
-                            }
+                let value = input.output_value();
+
+                match config {
+                    ConfigNodeType::CornerRadius => {
+                        if let Some(v) = value.as_float() {
+                            new_computed.corner_radius = Some(v);
                         }
-                        ConfigNodeType::Opacity => {
-                            if let Some(v) = value.as_float() {
-                                new_computed.opacity = Some(v);
-                            }
+                    }
+                    ConfigNodeType::Opacity => {
+                        if let Some(v) = value.as_float() {
+                            new_computed.opacity = Some(v);
                         }
-                        ConfigNodeType::BorderWidth => {
-                            if let Some(v) = value.as_float() {
-                                new_computed.border_width = Some(v);
-                            }
+                    }
+                    ConfigNodeType::BorderWidth => {
+                        if let Some(v) = value.as_float() {
+                            new_computed.border_width = Some(v);
                         }
-                        ConfigNodeType::FillColor => {
-                            if let Some(c) = value.as_color() {
-                                new_computed.fill_color = Some(c);
-                            }
+                    }
+                    ConfigNodeType::FillColor => {
+                        if let Some(c) = value.as_color() {
+                            new_computed.fill_color = Some(c);
                         }
-                        ConfigNodeType::EdgeThickness => {
-                            if let Some(v) = value.as_float() {
-                                new_computed.edge_thickness = Some(v);
-                            }
+                    }
+                    ConfigNodeType::EdgeThickness => {
+                        if let Some(v) = value.as_float() {
+                            new_computed.edge_thickness = Some(v);
                         }
-                        ConfigNodeType::EdgeColor => {
-                            if let Some(c) = value.as_color() {
-                                new_computed.edge_color = Some(c);
-                            }
+                    }
+                    ConfigNodeType::EdgeColor => {
+                        if let Some(c) = value.as_color() {
+                            new_computed.edge_color = Some(c);
                         }
                     }
                 }
@@ -318,12 +322,18 @@ impl Application {
 
     /// Gets the value connected to a config node (if any)
     fn get_config_input_value(&self, node_index: usize) -> Option<NodeValue> {
-        // Find edges where this node is the target
+        // Find edges where this node is connected (either direction)
         for (from, to) in &self.edges {
-            if to.node_id == node_index {
-                if let Some((_, NodeType::Input(input))) = self.nodes.get(from.node_id) {
-                    return Some(input.output_value());
-                }
+            let other_id = if to.node_id == node_index {
+                from.node_id
+            } else if from.node_id == node_index {
+                to.node_id
+            } else {
+                continue;
+            };
+
+            if let Some((_, NodeType::Input(input))) = self.nodes.get(other_id) {
+                return Some(input.output_value());
             }
         }
         None
