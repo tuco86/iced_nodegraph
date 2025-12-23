@@ -80,6 +80,9 @@ where
     // Output pin
     let output_pin = pin!(Right, text("value").size(10), Output, "float", colors::PIN_NUMBER);
 
+    // Use border_width from style for padding
+    let border_width = style.border_width;
+
     column![
         node_title_bar(&config.label, style),
         container(
@@ -91,7 +94,7 @@ where
                     .width(Length::Fill)
                     .align_x(iced::alignment::Horizontal::Right),
             ].spacing(6)
-        ).padding([10, 12])
+        ).padding([10, 12 + border_width as u16])
     ]
     .width(180.0)
     .into()

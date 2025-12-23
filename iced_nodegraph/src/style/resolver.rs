@@ -235,6 +235,46 @@ impl<'a> StyleResolver<'a> {
     }
 }
 
+/// Resolves a node's final style using the full cascade.
+///
+/// This is a convenience function for resolving node styles when building
+/// node content that needs access to the final resolved values (e.g., for
+/// title bar corner radius that should match the node's border settings).
+///
+/// # Arguments
+/// * `theme` - The iced Theme for base styles
+/// * `graph_defaults` - Optional graph-level style overrides
+/// * `node_config` - Optional per-node style overrides
+///
+/// # Example
+/// ```rust
+/// use iced_nodegraph::style::{resolve_node_style, GraphDefaults, NodeConfig};
+/// use iced::Theme;
+///
+/// // Simple case: just theme defaults
+/// let style = resolve_node_style(&Theme::Dark, None, None);
+/// assert!(style.corner_radius > 0.0);
+///
+/// // With graph defaults
+/// let defaults = GraphDefaults::new()
+///     .node(NodeConfig::new().corner_radius(10.0));
+/// let style = resolve_node_style(&Theme::Dark, Some(&defaults), None);
+/// assert_eq!(style.corner_radius, 10.0);
+///
+/// // With per-node override
+/// let node_cfg = NodeConfig::new().border_width(2.0);
+/// let style = resolve_node_style(&Theme::Dark, Some(&defaults), Some(&node_cfg));
+/// assert_eq!(style.corner_radius, 10.0); // from graph defaults
+/// assert_eq!(style.border_width, 2.0);   // from node config
+/// ```
+pub fn resolve_node_style(
+    theme: &Theme,
+    graph_defaults: Option<&GraphDefaults>,
+    node_config: Option<&NodeConfig>,
+) -> NodeStyle {
+    StyleResolver::new(theme, graph_defaults).resolve_node(node_config)
+}
+
 #[cfg(test)]
 mod tests {
     use iced::Color;

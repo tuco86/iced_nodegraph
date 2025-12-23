@@ -317,13 +317,21 @@ where
                 viewport,
                 cursor,
                 |renderer, viewport, cursor| {
-                    for (node_index, (((_position, element, _style), tree), layout)) in self
+                    for (node_index, (((_position, element, node_style), tree), layout)) in self
                         .elements_iter()
                         .zip(&tree.children)
                         .zip(layout.children())
                         .enumerate()
                     {
                         let is_selected = state.selected_nodes.contains(&node_index);
+
+                        // Resolve node style to get border_width for clip inset
+                        let resolved = resolver.resolve_node(node_style);
+                        let border_inset = if is_selected {
+                            selection_border_width
+                        } else {
+                            resolved.border_width
+                        };
 
                         // Calculate offset for single node drag
                         let single_node_offset =
@@ -353,10 +361,21 @@ where
                             .or(group_move_offset)
                             .unwrap_or(Vector::ZERO);
 
-                        renderer.with_translation(node_move_offset, |renderer| {
-                            element
-                                .as_widget()
-                                .draw(tree, renderer, theme, style, layout, cursor, viewport);
+                        // Clip bounds: inset by border_width and follow node during drag
+                        let bounds = layout.bounds();
+                        let clip_bounds = Rectangle {
+                            x: bounds.x + node_move_offset.x + border_inset,
+                            y: bounds.y + node_move_offset.y + border_inset,
+                            width: (bounds.width - 2.0 * border_inset).max(0.0),
+                            height: (bounds.height - 2.0 * border_inset).max(0.0),
+                        };
+
+                        renderer.with_layer(clip_bounds, |renderer| {
+                            renderer.with_translation(node_move_offset, |renderer| {
+                                element
+                                    .as_widget()
+                                    .draw(tree, renderer, theme, style, layout, cursor, viewport);
+                            });
                         });
                     }
                 },

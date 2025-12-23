@@ -187,8 +187,8 @@
 //! ```
 
 pub use content::{
-    NodeContentStyle, get_text_color, is_theme_dark, node_label, node_separator, node_title_bar,
-    simple_node,
+    ContentPosition, NodeContentStyle, get_text_color, is_theme_dark, node_content_container,
+    node_label, node_separator, node_title_bar, simple_node,
 };
 pub use helpers::{CloneResult, DeleteResult, SelectionHelper, clone_nodes, delete_nodes};
 pub use node_grapgh::{
@@ -202,7 +202,7 @@ pub use style::{
     STANDARD_THEMES, SelectionStyle, ShadowStyle, is_dark_theme, relative_luminance, theme_name,
     // Cascading style system
     Cascade, EdgeConfig, GraphConfig, GraphDefaults, NodeConfig, PinConfig, SelectionConfig,
-    ShadowConfig, StyleResolver, ThemeDefaults,
+    ShadowConfig, StyleResolver, ThemeDefaults, resolve_node_style,
 };
 
 pub mod content;

@@ -5,14 +5,28 @@
 //! across all built-in themes.
 
 use iced::{
-    Color, Element, Length, Theme,
+    Border, Color, Element, Length, Padding, Theme, border,
     widget::{Container, column, container, text},
 };
+
+/// Position of content within a node, determines which corners get rounded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ContentPosition {
+    /// Top section - rounded corners at top only
+    Top,
+    /// Middle section - no rounded corners
+    #[default]
+    Middle,
+    /// Bottom section - rounded corners at bottom only
+    Bottom,
+    /// Full node - all corners rounded
+    Full,
+}
 
 /// Style presets for different node categories.
 ///
 /// Provides color palettes derived from the current theme for consistent
-/// node interior styling.
+/// node interior styling, plus geometry values for title bars and content containers.
 #[derive(Debug, Clone)]
 pub struct NodeContentStyle {
     /// Background color for the title bar area
@@ -25,9 +39,25 @@ pub struct NodeContentStyle {
     pub body_text: Color,
     /// Accent color for highlights and decorations
     pub accent: Color,
+    /// Corner radius of the node (for title bar and content container)
+    pub corner_radius: f32,
+    /// Border width of the node (for inset calculations)
+    pub border_width: f32,
 }
 
+/// Default corner radius for nodes (used when no resolved style is provided)
+const DEFAULT_CORNER_RADIUS: f32 = 5.0;
+/// Default border width for nodes (used when no resolved style is provided)
+const DEFAULT_BORDER_WIDTH: f32 = 1.0;
+
 impl NodeContentStyle {
+    /// Sets the corner radius for this style.
+    pub fn with_geometry(mut self, corner_radius: f32, border_width: f32) -> Self {
+        self.corner_radius = corner_radius;
+        self.border_width = border_width;
+        self
+    }
+
     /// Creates an input node style derived from theme's primary color.
     pub fn input(theme: &Theme) -> Self {
         let palette = theme.extended_palette();
@@ -45,6 +75,8 @@ impl NodeContentStyle {
                 body_background: Color::TRANSPARENT,
                 body_text: palette.background.base.text,
                 accent: primary,
+                corner_radius: DEFAULT_CORNER_RADIUS,
+                border_width: DEFAULT_BORDER_WIDTH,
             }
         } else {
             Self {
@@ -58,6 +90,8 @@ impl NodeContentStyle {
                 body_background: Color::TRANSPARENT,
                 body_text: palette.background.base.text,
                 accent: primary,
+                corner_radius: DEFAULT_CORNER_RADIUS,
+                border_width: DEFAULT_BORDER_WIDTH,
             }
         }
     }
@@ -79,6 +113,8 @@ impl NodeContentStyle {
                 body_background: Color::TRANSPARENT,
                 body_text: palette.background.base.text,
                 accent: success,
+                corner_radius: DEFAULT_CORNER_RADIUS,
+                border_width: DEFAULT_BORDER_WIDTH,
             }
         } else {
             Self {
@@ -92,6 +128,8 @@ impl NodeContentStyle {
                 body_background: Color::TRANSPARENT,
                 body_text: palette.background.base.text,
                 accent: success,
+                corner_radius: DEFAULT_CORNER_RADIUS,
+                border_width: DEFAULT_BORDER_WIDTH,
             }
         }
     }
@@ -113,6 +151,8 @@ impl NodeContentStyle {
                 body_background: Color::TRANSPARENT,
                 body_text: palette.background.base.text,
                 accent: secondary,
+                corner_radius: DEFAULT_CORNER_RADIUS,
+                border_width: DEFAULT_BORDER_WIDTH,
             }
         } else {
             Self {
@@ -126,6 +166,8 @@ impl NodeContentStyle {
                 body_background: Color::TRANSPARENT,
                 body_text: palette.background.base.text,
                 accent: secondary,
+                corner_radius: DEFAULT_CORNER_RADIUS,
+                border_width: DEFAULT_BORDER_WIDTH,
             }
         }
     }
@@ -142,6 +184,8 @@ impl NodeContentStyle {
             body_background: Color::TRANSPARENT,
             body_text: Color::from_rgba(weak_text.r, weak_text.g, weak_text.b, 0.8),
             accent: weak,
+            corner_radius: DEFAULT_CORNER_RADIUS,
+            border_width: DEFAULT_BORDER_WIDTH,
         }
     }
 
@@ -162,6 +206,8 @@ impl NodeContentStyle {
                 body_background: Color::TRANSPARENT,
                 body_text: palette.background.base.text,
                 accent,
+                corner_radius: DEFAULT_CORNER_RADIUS,
+                border_width: DEFAULT_BORDER_WIDTH,
             }
         } else {
             Self {
@@ -175,6 +221,8 @@ impl NodeContentStyle {
                 body_background: Color::TRANSPARENT,
                 body_text: palette.background.base.text,
                 accent,
+                corner_radius: DEFAULT_CORNER_RADIUS,
+                border_width: DEFAULT_BORDER_WIDTH,
             }
         }
     }
@@ -182,9 +230,23 @@ impl NodeContentStyle {
 
 /// Creates a themed title bar container for nodes.
 ///
+/// The title bar has rounded corners at the top, calculated from the node's
+/// corner_radius minus border_width to fit precisely within the node border.
+/// The geometry values are taken from the `style.corner_radius` and `style.border_width`
+/// fields.
+///
+/// # Arguments
+/// * `title` - The title text
+/// * `style` - Style including colors and geometry (corner_radius, border_width)
+///
 /// # Example
 /// ```ignore
+/// // Basic usage with default geometry
 /// let title = node_title_bar("My Node", NodeContentStyle::process(theme));
+///
+/// // With custom geometry from resolved node style
+/// let style = NodeContentStyle::input(theme).with_geometry(8.0, 2.0);
+/// let title = node_title_bar("Custom Node", style);
 /// ```
 pub fn node_title_bar<'a, Message>(
     title: impl Into<String>,
@@ -193,14 +255,30 @@ pub fn node_title_bar<'a, Message>(
 where
     Message: Clone + 'a,
 {
+    // Use geometry from style
+    let corner_radius = style.corner_radius;
+    let border_width = style.border_width;
+
+    // Inner radius fits inside the node border
+    let inner_radius = (corner_radius - border_width).max(0.0);
+
     let title_text = text(title.into()).size(13).color(style.title_text);
 
     container(title_text)
-        .padding([4, 8])
+        .padding(Padding {
+            top: 4.0,
+            bottom: 4.0,
+            left: 8.0 + border_width,
+            right: 8.0 + border_width,
+        })
         .width(Length::Fill)
         .style(move |_theme: &Theme| container::Style {
             background: Some(style.title_background.into()),
             text_color: Some(style.title_text),
+            border: Border {
+                radius: border::top(inner_radius),
+                ..Default::default()
+            },
             ..Default::default()
         })
 }
@@ -241,9 +319,67 @@ where
         .into()
 }
 
+/// Creates a container for node content with proper rounded corners.
+///
+/// Automatically calculates the inner radius and padding based on the node's
+/// geometry to ensure content fits precisely within the clipped area.
+///
+/// # Arguments
+/// * `content` - The content to wrap
+/// * `corner_radius` - The node's corner radius (typically 5.0)
+/// * `border_width` - The node's border width (typically 1.0)
+/// * `position` - Which corners should be rounded
+///
+/// # Example
+/// ```ignore
+/// let body = node_content_container(
+///     my_widgets,
+///     5.0,
+///     1.0,
+///     ContentPosition::Bottom,
+/// );
+/// ```
+pub fn node_content_container<'a, Message>(
+    content: impl Into<Element<'a, Message, Theme, iced::Renderer>>,
+    corner_radius: f32,
+    border_width: f32,
+    position: ContentPosition,
+) -> Container<'a, Message, Theme, iced::Renderer>
+where
+    Message: Clone + 'a,
+{
+    // Inner radius fits inside the node border
+    let inner_radius = (corner_radius - border_width).max(0.0);
+
+    // Radius based on position
+    let radius = match position {
+        ContentPosition::Top => border::top(inner_radius),
+        ContentPosition::Bottom => border::bottom(inner_radius),
+        ContentPosition::Full => border::radius(inner_radius),
+        ContentPosition::Middle => border::radius(0.0),
+    };
+
+    container(content)
+        .padding(Padding {
+            top: 0.0,
+            bottom: 0.0,
+            left: border_width,
+            right: border_width,
+        })
+        .width(Length::Fill)
+        .style(move |_theme: &Theme| container::Style {
+            border: Border {
+                radius,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+}
+
 /// Creates a simple node with title bar and content area.
 ///
 /// This is a convenience function for building common node structures.
+/// Uses default node geometry (corner_radius=5.0, border_width=1.0).
 ///
 /// # Example
 /// ```ignore
@@ -264,10 +400,18 @@ pub fn simple_node<'a, Message>(
 where
     Message: Clone + 'a,
 {
+    // Get border_width from style
+    let border_width = style.border_width;
+
     column![
         node_title_bar(title, style.clone()),
         container(content)
-            .padding([6, 8])
+            .padding(Padding {
+                top: 6.0,
+                bottom: 6.0,
+                left: 8.0 + border_width,
+                right: 8.0 + border_width,
+            })
             .style(move |_theme: &Theme| container::Style {
                 background: Some(style.body_background.into()),
                 text_color: Some(style.body_text),

@@ -33,7 +33,7 @@ mod theme_defaults;
 // Re-export cascading style types
 pub use cascade::Cascade;
 pub use config::{EdgeConfig, GraphConfig, NodeConfig, PinConfig, SelectionConfig, ShadowConfig};
-pub use resolver::{GraphDefaults, StyleResolver};
+pub use resolver::{GraphDefaults, StyleResolver, resolve_node_style};
 pub use theme_defaults::ThemeDefaults;
 
 /// Shape of a pin indicator.
