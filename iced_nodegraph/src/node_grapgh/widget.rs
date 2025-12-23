@@ -7,7 +7,7 @@ use web_time::Instant;
 
 use super::{
     DragInfo, NodeGraph, NodeGraphEvent,
-    effects::{self, EdgeData, Layer},
+    effects::{self, EdgeData},
     euclid::{IntoIced, WorldVector},
     state::{Dragging, NodeGraphState},
 };
@@ -76,11 +76,13 @@ where
         let mut camera = state.camera;
 
         // Update time for animations
+        // Cap delta to prevent large time jumps when app is in background
         let time = {
             let now = Instant::now();
             if let Some(last_update) = state.last_update {
                 let delta = now.duration_since(last_update).as_secs_f32();
-                state.time + delta
+                let capped_delta = delta.min(0.1);
+                state.time + capped_delta
             } else {
                 state.time
             }
@@ -153,7 +155,6 @@ where
         let selection_border_width = selection_style.selected_border_width;
 
         let primitive_background = effects::NodeGraphPrimitive {
-            layer: Layer::Background,
             camera_zoom: camera.zoom(),
             camera_position: camera.position(),
             cursor_position: camera.screen_to_world().transform_point(
@@ -303,65 +304,64 @@ where
             ),
             edge_thickness: resolved_edge_defaults.thickness,
         };
-        let mut primitive_foreground = primitive_background.clone();
-        primitive_foreground.layer = Layer::Foreground;
 
-        // Draw the background primitive
-        renderer.draw_primitive(layout.bounds(), primitive_background);
+        // Layer 1: Draw primitive (canvas) with grid, edges, nodes, pins
+        renderer.with_layer(layout.bounds(), |renderer| {
+            renderer.draw_primitive(layout.bounds(), primitive_background);
+        });
 
-        // Draw child elements with camera transformation
-        camera.draw_with::<_, Renderer>(
-            renderer,
-            viewport,
-            cursor,
-            |renderer, viewport, cursor| {
-                for (node_index, (((_position, element, _style), tree), layout)) in self
-                    .elements_iter()
-                    .zip(&tree.children)
-                    .zip(layout.children())
-                    .enumerate()
-                {
-                    let is_selected = state.selected_nodes.contains(&node_index);
+        // Layer 2: Draw child elements (widgets) on top
+        renderer.with_layer(layout.bounds(), |renderer| {
+            camera.draw_with::<_, Renderer>(
+                renderer,
+                viewport,
+                cursor,
+                |renderer, viewport, cursor| {
+                    for (node_index, (((_position, element, _style), tree), layout)) in self
+                        .elements_iter()
+                        .zip(&tree.children)
+                        .zip(layout.children())
+                        .enumerate()
+                    {
+                        let is_selected = state.selected_nodes.contains(&node_index);
 
-                    // Calculate offset for single node drag
-                    let single_node_offset =
-                        if let Dragging::Node(dragging_node_index, origin) = state.dragging {
-                            cursor
-                                .position()
-                                .filter(|_| dragging_node_index == node_index)
-                                .map(|cursor_position| cursor_position - origin.into_iced())
+                        // Calculate offset for single node drag
+                        let single_node_offset =
+                            if let Dragging::Node(dragging_node_index, origin) = state.dragging {
+                                cursor
+                                    .position()
+                                    .filter(|_| dragging_node_index == node_index)
+                                    .map(|cursor_position| cursor_position - origin.into_iced())
+                            } else {
+                                None
+                            };
+
+                        // Calculate offset for group move (all selected nodes)
+                        let group_move_offset = if let Dragging::GroupMove(origin) = state.dragging {
+                            if is_selected {
+                                cursor
+                                    .position()
+                                    .map(|cursor_position| cursor_position - origin.into_iced())
+                            } else {
+                                None
+                            }
                         } else {
                             None
                         };
 
-                    // Calculate offset for group move (all selected nodes)
-                    let group_move_offset = if let Dragging::GroupMove(origin) = state.dragging {
-                        if is_selected {
-                            cursor
-                                .position()
-                                .map(|cursor_position| cursor_position - origin.into_iced())
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    };
+                        let node_move_offset = single_node_offset
+                            .or(group_move_offset)
+                            .unwrap_or(Vector::ZERO);
 
-                    let node_move_offset = single_node_offset
-                        .or(group_move_offset)
-                        .unwrap_or(Vector::ZERO);
-
-                    renderer.with_translation(node_move_offset, |renderer| {
-                        element
-                            .as_widget()
-                            .draw(tree, renderer, theme, style, layout, cursor, viewport);
-                    });
-                }
-            },
-        );
-
-        // Draw the foreground primitive (includes BoxSelect and EdgeCutting via shader)
-        renderer.draw_primitive(layout.bounds(), primitive_foreground);
+                        renderer.with_translation(node_move_offset, |renderer| {
+                            element
+                                .as_widget()
+                                .draw(tree, renderer, theme, style, layout, cursor, viewport);
+                        });
+                    }
+                },
+            );
+        });
     }
 
     fn size_hint(&self) -> Size<Length> {
@@ -419,11 +419,14 @@ where
         }
 
         // Update time for animations
+        // Cap delta to prevent large time jumps when app is in background
         let now = Instant::now();
 
         if let Some(last_update) = state.last_update {
             let delta = now.duration_since(last_update).as_secs_f32();
-            state.time += delta;
+            // Cap at 100ms to prevent freeze after background
+            let capped_delta = delta.min(0.1);
+            state.time += capped_delta;
         }
         state.last_update = Some(now);
 

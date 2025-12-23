@@ -28,9 +28,11 @@ use iced::{Color, Theme};
 use iced_nodegraph::{EdgeConfig, EdgeType, NodeConfig, PinConfig, PinShape, ShadowConfig};
 
 /// Semantic pin colors for consistent visual language across nodes.
-/// Based on "Floating Workbench" design system.
+/// Based on "Industrial Precision" design system.
 pub mod colors {
     use iced::Color;
+
+    // === Pin Type Colors ===
 
     /// Email/Message data - Sky Blue (#38BDF8)
     pub const PIN_EMAIL: Color = Color::from_rgb(0.22, 0.74, 0.97);
@@ -55,6 +57,20 @@ pub mod colors {
 
     /// Config data - Cyan (#22D3EE)
     pub const PIN_CONFIG: Color = Color::from_rgb(0.13, 0.83, 0.93);
+
+    // === Surface Colors (Industrial Precision Theme) ===
+
+    /// Elevated surface for controls - Deep slate (#2A2A3C)
+    pub const SURFACE_ELEVATED: Color = Color::from_rgb(0.165, 0.165, 0.235);
+
+    /// Subtle border color (#3A3A4C)
+    pub const BORDER_SUBTLE: Color = Color::from_rgb(0.227, 0.227, 0.298);
+
+    /// Primary text color (#E4E4E7)
+    pub const TEXT_PRIMARY: Color = Color::from_rgb(0.894, 0.894, 0.906);
+
+    /// Muted/secondary text (#A1A1AA)
+    pub const TEXT_MUTED: Color = Color::from_rgb(0.631, 0.631, 0.667);
 }
 
 /// Node value types for data flow between nodes

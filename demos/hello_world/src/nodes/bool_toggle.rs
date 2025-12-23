@@ -1,11 +1,12 @@
 //! Boolean Toggle Input Node
 //!
-//! Outputs a boolean value via checkbox toggle.
+//! Outputs a boolean value via modern switch toggle.
+//! Industrial Precision design: clean pill track, responsive thumb.
 
 use iced::{
-    Length,
+    Color, Length,
     alignment::Horizontal,
-    widget::{checkbox, column, container, row, text},
+    widget::{column, container, row, text, toggler},
 };
 use iced_nodegraph::{NodeContentStyle, node_title_bar, pin};
 
@@ -37,7 +38,7 @@ impl BoolToggleConfig {
     }
 }
 
-/// Creates a boolean toggle node with checkbox widget
+/// Creates a boolean toggle node with modern switch styling
 pub fn bool_toggle_node<'a, Message>(
     theme: &'a iced::Theme,
     value: bool,
@@ -49,15 +50,59 @@ where
 {
     let style = NodeContentStyle::input(theme);
 
-    let checkbox_widget = checkbox(value)
-        .label(&config.toggle_label)
+    // State indicator text
+    let state_text = text(if value { "ON" } else { "OFF" })
+        .size(10)
+        .color(if value { colors::PIN_BOOL } else { colors::TEXT_MUTED });
+
+    // Modern switch toggle with Industrial Precision styling
+    let toggle_widget = toggler(value)
         .on_toggle(on_change)
         .size(16)
-        .text_size(11);
+        .style(move |_, status| {
+            let is_on = match status {
+                toggler::Status::Active { is_toggled } => is_toggled,
+                toggler::Status::Hovered { is_toggled } => is_toggled,
+                toggler::Status::Disabled { is_toggled } => is_toggled,
+            };
 
+            let (background, foreground, foreground_border) = match status {
+                toggler::Status::Active { .. } => {
+                    if is_on {
+                        (colors::PIN_BOOL, Color::WHITE, colors::PIN_BOOL)
+                    } else {
+                        (colors::SURFACE_ELEVATED, Color::WHITE, colors::BORDER_SUBTLE)
+                    }
+                }
+                toggler::Status::Hovered { .. } => {
+                    if is_on {
+                        (colors::PIN_BOOL, colors::PIN_BOOL, Color::WHITE)
+                    } else {
+                        (colors::BORDER_SUBTLE, Color::WHITE, colors::TEXT_MUTED)
+                    }
+                }
+                toggler::Status::Disabled { .. } => {
+                    (colors::SURFACE_ELEVATED, colors::TEXT_MUTED, colors::BORDER_SUBTLE)
+                }
+            };
+
+            toggler::Style {
+                background: background.into(),
+                background_border_width: 1.0,
+                background_border_color: if is_on { colors::PIN_BOOL } else { colors::BORDER_SUBTLE },
+                foreground: foreground.into(),
+                foreground_border_width: 2.0,
+                foreground_border_color: foreground_border,
+                border_radius: Some(8.0.into()),
+                padding_ratio: 0.12,
+                text_color: Some(colors::TEXT_PRIMARY),
+            }
+        });
+
+    // Output pin
     let output_pin = container(pin!(
         Right,
-        "value",
+        text("value").size(10),
         Output,
         "bool",
         colors::PIN_BOOL
@@ -70,10 +115,12 @@ where
         container(
             column![
                 row![
-                    checkbox_widget,
-                    container(text(if value { "true" } else { "false" }).size(10))
-                        .width(Length::Fill)
-                        .align_x(Horizontal::Right)
+                    text(&config.toggle_label).size(11).color(colors::TEXT_PRIMARY),
+                    container(
+                        row![toggle_widget, state_text].spacing(6).align_y(iced::Alignment::Center)
+                    )
+                    .width(Length::Fill)
+                    .align_x(Horizontal::Right),
                 ]
                 .spacing(8)
                 .align_y(iced::Alignment::Center),

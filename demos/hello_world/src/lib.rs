@@ -184,6 +184,12 @@ struct ComputedStyle {
     fill_color: Option<Color>,
     edge_thickness: Option<f32>,
     edge_color: Option<Color>,
+    // Pin config values
+    pin_color: Option<Color>,
+    pin_radius: Option<f32>,
+    pin_shape: Option<iced_nodegraph::PinShape>,
+    pin_border_color: Option<Color>,
+    pin_border_width: Option<f32>,
 }
 
 impl ComputedStyle {
@@ -228,6 +234,26 @@ impl ComputedStyle {
             style = style.solid_color(c);
         }
         Some(style)
+    }
+
+    /// Builds a PinConfig from computed values, returns None if no pin styling is set
+    fn to_pin_config(&self) -> Option<iced_nodegraph::PinConfig> {
+        if self.pin_color.is_none()
+            && self.pin_radius.is_none()
+            && self.pin_shape.is_none()
+            && self.pin_border_color.is_none()
+            && self.pin_border_width.is_none()
+        {
+            return None;
+        }
+
+        Some(iced_nodegraph::PinConfig {
+            color: self.pin_color,
+            radius: self.pin_radius,
+            shape: self.pin_shape,
+            border_color: self.pin_border_color,
+            border_width: self.pin_border_width,
+        })
     }
 }
 
@@ -502,7 +528,7 @@ impl Application {
             if let NodeType::Config(ConfigNodeType::ApplyToGraph {
                 has_node_config,
                 has_edge_config,
-                ..
+                has_pin_config,
             }) = node_type
             {
                 if let Some(configs) = self.pending_configs.get(&node_id) {
@@ -536,8 +562,25 @@ impl Application {
                                     }
                                 }
                             }
-                            ConfigOutput::Pin(_) => {
-                                // Pin config application not yet implemented
+                            ConfigOutput::Pin(pin_config) => {
+                                if *has_pin_config {
+                                    // Apply pin config to computed style
+                                    if let Some(c) = pin_config.color {
+                                        computed.pin_color = Some(c);
+                                    }
+                                    if let Some(r) = pin_config.radius {
+                                        computed.pin_radius = Some(r);
+                                    }
+                                    if let Some(s) = pin_config.shape {
+                                        computed.pin_shape = Some(s);
+                                    }
+                                    if let Some(c) = pin_config.border_color {
+                                        computed.pin_border_color = Some(c);
+                                    }
+                                    if let Some(w) = pin_config.border_width {
+                                        computed.pin_border_width = Some(w);
+                                    }
+                                }
                             }
                         }
                     }
@@ -969,7 +1012,7 @@ impl Application {
 
     fn view(&self) -> iced::Element<'_, ApplicationMessage> {
         // Graph-wide style defaults using the new cascading style system
-        let graph_defaults = GraphDefaults::new()
+        let mut graph_defaults = GraphDefaults::new()
             .node(
                 NodeConfig::new()
                     .corner_radius(8.0)
@@ -981,6 +1024,11 @@ impl Application {
                     ),
             )
             .edge(EdgeConfig::new().thickness(1.0));
+
+        // Apply computed pin config if any
+        if let Some(pin_config) = self.computed_style.to_pin_config() {
+            graph_defaults = graph_defaults.pin(pin_config);
+        }
 
         let mut ng = node_graph()
             .defaults(graph_defaults)
@@ -1200,44 +1248,14 @@ impl Application {
             }
             PaletteView::Submenu(submenu) if submenu == "input_nodes" => {
                 let commands = vec![
-                    command("corner_radius_slider", "Corner Radius Slider")
-                        .description("Float slider for corner radius (0-20)")
+                    command("float_slider", "Float Slider")
+                        .description("Generic float slider (0-20)")
                         .action(ApplicationMessage::SpawnNode {
                             x: 100.0,
                             y: 100.0,
                             node_type: NodeType::Input(InputNodeType::FloatSlider {
-                                config: FloatSliderConfig::corner_radius(),
+                                config: FloatSliderConfig::default(),
                                 value: 5.0,
-                            }),
-                        }),
-                    command("opacity_slider", "Opacity Slider")
-                        .description("Float slider for opacity (0.1-1.0)")
-                        .action(ApplicationMessage::SpawnNode {
-                            x: 100.0,
-                            y: 200.0,
-                            node_type: NodeType::Input(InputNodeType::FloatSlider {
-                                config: FloatSliderConfig::opacity(),
-                                value: 0.75,
-                            }),
-                        }),
-                    command("border_width_slider", "Border Width Slider")
-                        .description("Float slider for border width (0.5-5)")
-                        .action(ApplicationMessage::SpawnNode {
-                            x: 100.0,
-                            y: 300.0,
-                            node_type: NodeType::Input(InputNodeType::FloatSlider {
-                                config: FloatSliderConfig::border_width(),
-                                value: 1.0,
-                            }),
-                        }),
-                    command("thickness_slider", "Edge Thickness Slider")
-                        .description("Float slider for edge thickness (0.5-8)")
-                        .action(ApplicationMessage::SpawnNode {
-                            x: 100.0,
-                            y: 400.0,
-                            node_type: NodeType::Input(InputNodeType::FloatSlider {
-                                config: FloatSliderConfig::thickness(),
-                                value: 2.0,
                             }),
                         }),
                     command("color_picker", "Color Picker (RGB)")

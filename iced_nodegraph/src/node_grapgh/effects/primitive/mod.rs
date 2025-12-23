@@ -15,11 +15,6 @@ use crate::style::EdgeStyle;
 
 use super::pipeline::Pipeline;
 
-#[derive(Debug, Clone, Copy)]
-pub enum Layer {
-    Background,
-    Foreground,
-}
 
 /// Edge data for GPU rendering, including style information.
 #[derive(Debug, Clone)]
@@ -33,7 +28,6 @@ pub struct EdgeData {
 
 #[derive(Debug, Clone)]
 pub struct NodeGraphPrimitive {
-    pub layer: Layer,
     pub camera_zoom: f32,
     pub camera_position: WorldPoint,
     pub cursor_position: WorldPoint,
@@ -102,7 +96,7 @@ impl Primitive for NodeGraphPrimitive {
             width: 800,
             height: 600,
         };
-        pipeline.render_pass(render_pass, viewport, self.layer);
+        pipeline.render_pass(render_pass, viewport);
         true // We handle the drawing ourselves
     }
 }

@@ -5,12 +5,11 @@ use iced::{
     wgpu::{
         BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
         BindGroupLayoutEntry, BindingResource, BindingType, BlendState, Buffer, BufferBindingType,
-        BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites, CommandEncoder, Device,
-        FragmentState, FrontFace, LoadOp, MultisampleState, Operations, PipelineCompilationOptions,
+        BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites, Device,
+        FragmentState, FrontFace, MultisampleState, PipelineCompilationOptions,
         PipelineLayout, PipelineLayoutDescriptor, PolygonMode, PrimitiveState, PrimitiveTopology,
-        Queue, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
-        RenderPipelineDescriptor, ShaderModule, ShaderModuleDescriptor, ShaderSource, ShaderStages,
-        StoreOp, TextureFormat, TextureView, VertexState,
+        Queue, RenderPipeline, RenderPipelineDescriptor, ShaderModule, ShaderModuleDescriptor,
+        ShaderSource, ShaderStages, TextureFormat, VertexState,
     },
 };
 use iced_wgpu::graphics::Viewport;
@@ -18,7 +17,7 @@ use iced_wgpu::primitive::Pipeline as PipelineTrait;
 
 use crate::node_grapgh::{effects::Node, euclid::WorldPoint, state::Dragging};
 
-use super::{EdgeData, Layer, primitive::NodeGraphPrimitive};
+use super::{EdgeData, primitive::NodeGraphPrimitive};
 
 mod buffer;
 mod types;
@@ -532,38 +531,10 @@ impl Pipeline {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn render(
-        &self,
-        target: &TextureView,
-        encoder: &mut CommandEncoder,
-        viewport: Rectangle<u32>,
-        layer: Layer,
-    ) {
-        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-            label: Some("pipeline.pass"),
-            color_attachments: &[Some(RenderPassColorAttachment {
-                view: target,
-                resolve_target: None,
-                ops: Operations {
-                    load: LoadOp::Load,
-                    store: StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
-
-        self.render_pass(&mut pass, viewport, layer);
-    }
-
     pub fn render_pass(
         &self,
         pass: &mut iced::wgpu::RenderPass<'_>,
         _viewport: Rectangle<u32>,
-        layer: Layer,
     ) {
         let num_nodes = self.nodes.len();
         let num_pins = self.pins.len();
@@ -571,36 +542,31 @@ impl Pipeline {
 
         pass.set_bind_group(0, &self.bind_group, &[]);
 
-        match layer {
-            Layer::Background => {
-                // Pass 1: Background grid (fullscreen)
-                pass.set_pipeline(&self.pipeline_background);
-                pass.draw(0..3, 0..1);
+        // Pass 1: Background grid (fullscreen)
+        pass.set_pipeline(&self.pipeline_background);
+        pass.draw(0..3, 0..1);
 
-                // Pass 2: Edges (instanced - behind nodes)
-                if num_edges > 0 {
-                    pass.set_pipeline(&self.pipeline_edges);
-                    pass.draw(0..6, 0..num_edges as u32);
-                }
-
-                // Pass 3: Nodes (instanced)
-                if num_nodes > 0 {
-                    pass.set_pipeline(&self.pipeline_nodes);
-                    pass.draw(0..6, 0..num_nodes as u32);
-                }
-
-                // Pass 4: Pin indicators (instanced)
-                if num_pins > 0 {
-                    pass.set_pipeline(&self.pipeline_pins);
-                    pass.draw(0..6, 0..num_pins as u32);
-                }
-            }
-            Layer::Foreground => {
-                // Pass 5: Dragging edge (if active)
-                pass.set_pipeline(&self.pipeline_dragging);
-                pass.draw(0..6, 0..1);
-            }
+        // Pass 2: Edges (instanced - behind nodes)
+        if num_edges > 0 {
+            pass.set_pipeline(&self.pipeline_edges);
+            pass.draw(0..6, 0..num_edges as u32);
         }
+
+        // Pass 3: Nodes (instanced)
+        if num_nodes > 0 {
+            pass.set_pipeline(&self.pipeline_nodes);
+            pass.draw(0..6, 0..num_nodes as u32);
+        }
+
+        // Pass 4: Pin indicators (instanced)
+        if num_pins > 0 {
+            pass.set_pipeline(&self.pipeline_pins);
+            pass.draw(0..6, 0..num_pins as u32);
+        }
+
+        // Pass 5: Dragging edge / box select (if active)
+        pass.set_pipeline(&self.pipeline_dragging);
+        pass.draw(0..6, 0..1);
     }
 }
 
