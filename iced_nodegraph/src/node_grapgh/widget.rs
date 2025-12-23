@@ -1,6 +1,4 @@
-use iced::{
-    Background, Color, Element, Event, Length, Point, Rectangle, Size, Vector, border, keyboard,
-};
+use iced::{Element, Event, Length, Point, Rectangle, Size, Vector, keyboard};
 use iced_widget::core::{
     Clipboard, Layout, Shell, layout, mouse, renderer,
     widget::{self, Tree, tree},
@@ -356,7 +354,7 @@ where
                     renderer.with_translation(node_move_offset, |renderer| {
                         element
                             .as_widget()
-                            .draw(tree, renderer, theme, style, layout, cursor, &viewport);
+                            .draw(tree, renderer, theme, style, layout, cursor, viewport);
                     });
                 }
             },
@@ -524,22 +522,7 @@ where
                     #[cfg(not(target_arch = "wasm32"))]
                     let zoom_delta = scroll_amount * 0.01 * state.camera.zoom();
 
-                    #[cfg(debug_assertions)]
-                    println!(
-                        "\n=== ZOOM: {:.2} + delta={:.2} at screen={:?} ===",
-                        state.camera.zoom(),
-                        zoom_delta,
-                        cursor_pos
-                    );
-
                     state.camera = state.camera.zoom_at(cursor_pos, zoom_delta);
-
-                    #[cfg(debug_assertions)]
-                    println!(
-                        "  New camera: zoom={:.2}, position={:?}",
-                        state.camera.zoom(),
-                        state.camera.position()
-                    );
                 }
                 shell.capture_event();
                 shell.request_redraw();
@@ -560,11 +543,6 @@ where
             .move_by(graph_move_offset.into_euclid())
             .update_with(viewport, screen_cursor, |viewport, world_cursor| {
                 let state = tree.state.downcast_mut::<NodeGraphState>();
-                // println!("camera: {:?}", state.camera);
-                // println!("cursor: {:?}", cursor);
-                // println!("viewport: {:?}", viewport);
-                // println!("state.offset: {:?}", state.offset);
-                // println!("state.zoom: {:?}", state.zoom);
 
                 if state.dragging != Dragging::None {
                     match event {
@@ -774,9 +752,6 @@ where
                                 }
 
                                 if let Some((to_node, to_pin)) = target_pin {
-                                    #[cfg(debug_assertions)]
-                                    println!("  ✓ SNAP TO PIN: node={}, pin={}", to_node, to_pin);
-
                                     // Fire EdgeConnected event immediately on snap (plug behavior)
                                     let from_ref = PinReference::new(from_node, from_pin);
                                     let to_ref = PinReference::new(to_node, to_pin);
@@ -859,9 +834,6 @@ where
                         }
                         Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                             // Edge already connected via snap event - just end the drag
-                            #[cfg(debug_assertions)]
-                            println!("  ✓ DRAG COMPLETE (edge already connected): node {} pin {} -> node {} pin {}\n", from_node, from_pin, to_node, to_pin);
-
                             state.dragging = Dragging::None;
                             // Emit drag end event
                             if let Some(handler) = self.on_drag_end_handler() {
@@ -898,8 +870,6 @@ where
                                     }
                                 }
 
-                                #[cfg(debug_assertions)]
-                                println!("Box selection complete: {} nodes selected", state.selected_nodes.len());
 
                                 // Notify selection change
                                 let selected: Vec<usize> = state.selected_nodes.iter().copied().collect();
@@ -930,8 +900,6 @@ where
                                 let cursor_position: WorldPoint = cursor_position.into_euclid();
                                 let offset = cursor_position - origin;
 
-                                #[cfg(debug_assertions)]
-                                println!("Group move complete: offset={:?}", offset);
 
                                 // Call on_group_move handler with selected nodes and offset
                                 let node_ids: Vec<usize> = state.selected_nodes.iter().copied().collect();
@@ -950,24 +918,6 @@ where
                             }
                             shell.capture_event();
                             shell.invalidate_layout();
-                            shell.request_redraw();
-                        }
-                        _ => {}
-                    },
-                    // Edge vertex dragging (for physics wire simulation)
-                    Dragging::EdgeVertex { edge_index, vertex_index, origin } => match event {
-                        Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                            // TODO: Implement vertex drag with physics impulse
-                            // For now, just mark the edge as dirty
-                            let _ = (edge_index, vertex_index, origin);
-                            shell.request_redraw();
-                        }
-                        Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                            state.dragging = Dragging::None;
-                            if let Some(handler) = self.on_drag_end_handler() {
-                                shell.publish(handler());
-                            }
-                            shell.capture_event();
                             shell.request_redraw();
                         }
                         _ => {}
@@ -1021,19 +971,6 @@ where
                         // Track left mouse button state for Fruit Ninja edge cutting
                         state.left_mouse_down = true;
 
-                        // === MEASUREMENT POINT: Mouse Click ===
-                        #[cfg(debug_assertions)]
-                        {
-                            if let Some(screen_pos) = screen_cursor.position() {
-                                let screen_pos_euclid: ScreenPoint = screen_pos.into_euclid();
-                                let world_pos = state.camera.screen_to_world().transform_point(screen_pos_euclid);
-                                println!(
-                                    "\n=== CLICK: screen={:?}, world={:?}, zoom={:.2}, cam_pos={:?} ===",
-                                    screen_pos, world_pos, state.camera.zoom(), state.camera.position()
-                                );
-                            }
-                        }
-
                         // Ctrl+Click: Edge cut tool
                         if state.modifiers.command() {
                             if let Some(cursor_position) = world_cursor.position() {
@@ -1059,9 +996,6 @@ where
                                         const EDGE_CUT_THRESHOLD: f32 = 10.0;
 
                                         if distance < EDGE_CUT_THRESHOLD {
-                                            #[cfg(debug_assertions)]
-                                            println!("Edge cut: disconnecting {} pin {} -> {} pin {}", from_node, from_pin, to_node, to_pin);
-
                                             if let Some(handler) = self.on_disconnect_handler() {
                                                 shell.publish(handler(*from_ref, *to_ref));
                                             }
@@ -1086,13 +1020,6 @@ where
                                 layout.children().zip(&mut tree.children).enumerate()
                             {
                                 let pins = find_pins(node_tree, node_layout);
-                                #[cfg(debug_assertions)]
-                                if !pins.is_empty() {
-                                    println!("  Node {} has {} pins at node_bounds={:?}", node_index, pins.len(), node_layout.bounds());
-                                    for (idx, _, (pin_pos, _)) in &pins {
-                                        println!("    Pin {} at world position: {:?}", idx, pin_pos);
-                                    }
-                                }
 
                                 for (pin_index, _, (a, b)) in pins {
                                     // Pin positions from layout are ALREADY in world space
@@ -1101,18 +1028,7 @@ where
                                         .distance(cursor_position)
                                         .min(b.distance(cursor_position));
 
-                                    #[cfg(debug_assertions)]
-                                    if distance < 10.0 {  // Log if we're anywhere near (increased threshold for visibility)
-                                        println!(
-                                            "  PIN CHECK: node={}, pin={}, pin_world={:?}, cursor_world={:?}, distance={:.2}",
-                                            node_index, pin_index, a, cursor_position, distance
-                                        );
-                                    }
-
                                     if distance < PIN_CLICK_THRESHOLD {
-                                        #[cfg(debug_assertions)]
-                                        println!("  ✓ PIN HIT!");
-
                                         // Check if this pin has existing connections
                                         // If it does, "unplug" the clicked end (like pulling a cable)
                                         for (from_ref, to_ref, _style) in &self.edges {
@@ -1121,12 +1037,6 @@ where
                                             // If we clicked the "from" pin, unplug FROM and drag it
                                             // Keep TO pin connected, drag away from it
                                             if from_node == node_index && from_pin == pin_index {
-                                                #[cfg(debug_assertions)]
-                                                println!(
-                                                    "  Unplugging FROM pin - keep TO pin at node {} pin {}, drag FROM end",
-                                                    to_node, to_pin
-                                                );
-
                                                 // Disconnect the edge
                                                 if let Some(handler) = self.on_disconnect_handler() {
                                                     shell.publish(handler(*from_ref, *to_ref));
@@ -1152,12 +1062,6 @@ where
                                             // If we clicked the "to" pin, unplug TO and drag it
                                             // Keep FROM pin connected, drag away from it
                                             else if to_node == node_index && to_pin == pin_index {
-                                                #[cfg(debug_assertions)]
-                                                println!(
-                                                    "  Unplugging TO pin - keep FROM pin at node {} pin {}, drag TO end",
-                                                    from_node, from_pin
-                                                );
-
                                                 // Disconnect the edge
                                                 if let Some(handler) = self.on_disconnect_handler() {
                                                     shell.publish(handler(*from_ref, *to_ref));
@@ -1232,9 +1136,6 @@ where
                                     // Get the new selection for callback
                                     let new_selection: Vec<usize> = state.selected_nodes.iter().copied().collect();
 
-                                    #[cfg(debug_assertions)]
-                                    println!("node {:?} clicked, selected: {:?}", node_index, state.selected_nodes);
-
                                     // Decide between single node drag or group move
                                     if state.selected_nodes.len() > 1 && state.selected_nodes.contains(&node_index) {
                                         // Multiple nodes selected, start group move
@@ -1276,8 +1177,6 @@ where
 
                             // Ctrl+Left: Start edge cutting mode instead of box selection
                             if state.modifiers.command() {
-                                #[cfg(debug_assertions)]
-                                println!("Starting edge cutting from {:?}", cursor_position);
                                 state.dragging = Dragging::EdgeCutting {
                                     trail: vec![cursor_position],
                                     pending_cuts: std::collections::HashSet::new(),
@@ -1291,8 +1190,6 @@ where
                                 state.selected_nodes.clear();
                             }
 
-                            #[cfg(debug_assertions)]
-                            println!("starting box selection from {:?}", cursor_position);
                             state.dragging = Dragging::BoxSelect(cursor_position, cursor_position);
                             // Emit drag start event for box select
                             if let Some(handler) = self.on_drag_start_handler() {
@@ -1302,7 +1199,6 @@ where
                                 }));
                             }
                             shell.capture_event();
-                            return;
                         }
                     }
                     Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
@@ -1310,12 +1206,9 @@ where
                         if let Some(cursor_position) = screen_cursor.position() {
                             let cursor_position: ScreenPoint = cursor_position.into_euclid();
                             let cursor_position: WorldPoint = state.camera.screen_to_world().transform_point(cursor_position);
-                            #[cfg(debug_assertions)]
-                            println!("dragging graph from {:?}", cursor_position);
                             let state = tree.state.downcast_mut::<NodeGraphState>();
                             state.dragging = Dragging::Graph(cursor_position.into_euclid());
                             shell.capture_event();
-                            return;
                         }
                     }
                     _ => {}
@@ -1353,7 +1246,7 @@ where
     NodeGraph::default()
 }
 
-//// Helper function to find all NodePin elements in the tree - OF A Node!!!
+/// Helper function to find all NodePin elements in the tree of a Node.
 fn find_pins<'a>(
     tree: &'a Tree,
     layout: Layout<'a>,
@@ -1434,40 +1327,6 @@ fn pin_position(position: Point, side: PinSide, node_bounds: Rectangle) -> Point
     }
 }
 
-// Helper function to draw a simple line between two points
-#[allow(dead_code)]
-fn draw_line<Renderer>(renderer: &mut Renderer, from: Point, to: Point, width: f32, color: Color)
-where
-    Renderer: iced_widget::core::renderer::Renderer,
-{
-    // Simple line drawing using small rectangles
-    let distance = ((to.x - from.x).powi(2) + (to.y - from.y).powi(2)).sqrt();
-    if distance < 0.1 {
-        return; // Too short to draw
-    }
-
-    // Draw line as series of small rectangles
-    let steps = (distance / 3.0).ceil() as usize; // Smaller step size for smoother lines
-    for i in 0..steps {
-        let t = i as f32 / steps as f32;
-        let point = Point::new(from.x + t * (to.x - from.x), from.y + t * (to.y - from.y));
-
-        let segment_bounds = Rectangle::new(
-            Point::new(point.x - width / 2.0, point.y - width / 2.0),
-            Size::new(width, width),
-        );
-
-        renderer.fill_quad(
-            renderer::Quad {
-                bounds: segment_bounds,
-                border: border::Border::default(),
-                ..Default::default()
-            },
-            Background::Color(color),
-        );
-    }
-}
-
 /// Creates a selection rectangle from two corner points (handles any corner order)
 fn selection_rect_from_points(a: WorldPoint, b: WorldPoint) -> Rectangle {
     let min_x = a.x.min(b.x);
@@ -1510,47 +1369,6 @@ fn point_to_line_distance(point: Point, line_start: Point, line_end: Point) -> f
     ((point.x - closest_x).powi(2) + (point.y - closest_y).powi(2)).sqrt()
 }
 
-/// Checks if two line segments intersect.
-/// Returns true if segments (a1,a2) and (b1,b2) cross each other.
-fn line_segments_intersect(a1: Point, a2: Point, b1: Point, b2: Point) -> bool {
-    // Using cross product method for line segment intersection
-    fn cross(o: Point, a: Point, b: Point) -> f32 {
-        (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
-    }
-
-    let d1 = cross(b1, b2, a1);
-    let d2 = cross(b1, b2, a2);
-    let d3 = cross(a1, a2, b1);
-    let d4 = cross(a1, a2, b2);
-
-    // Check if segments straddle each other
-    if ((d1 > 0.0 && d2 < 0.0) || (d1 < 0.0 && d2 > 0.0))
-        && ((d3 > 0.0 && d4 < 0.0) || (d3 < 0.0 && d4 > 0.0))
-    {
-        return true;
-    }
-
-    // Check for collinear cases (endpoint on segment)
-    fn on_segment(p: Point, q: Point, r: Point) -> bool {
-        q.x <= p.x.max(r.x) && q.x >= p.x.min(r.x) && q.y <= p.y.max(r.y) && q.y >= p.y.min(r.y)
-    }
-
-    if d1.abs() < 0.0001 && on_segment(b1, a1, b2) {
-        return true;
-    }
-    if d2.abs() < 0.0001 && on_segment(b1, a2, b2) {
-        return true;
-    }
-    if d3.abs() < 0.0001 && on_segment(a1, b1, a2) {
-        return true;
-    }
-    if d4.abs() < 0.0001 && on_segment(a1, b2, a2) {
-        return true;
-    }
-
-    false
-}
-
 /// Checks if a line segment intersects a cubic bezier curve.
 /// Uses analytical solution by substituting bezier into line equation.
 fn line_intersects_bezier(
@@ -1586,7 +1404,7 @@ fn line_intersects_bezier(
     let line_len_sq = (line_end.x - line_start.x).powi(2) + (line_end.y - line_start.y).powi(2);
 
     for t in roots {
-        if t >= 0.0 && t <= 1.0 {
+        if (0.0..=1.0).contains(&t) {
             // Evaluate bezier at this t
             let mt = 1.0 - t;
             let mt2 = mt * mt;

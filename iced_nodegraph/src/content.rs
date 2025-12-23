@@ -136,22 +136,12 @@ impl NodeContentStyle {
         let weak = palette.background.weak.color;
         let weak_text = palette.background.weak.text;
 
-        if palette.is_dark {
-            Self {
-                title_background: Color::from_rgba(weak.r, weak.g, weak.b, 0.7),
-                title_text: weak_text,
-                body_background: Color::TRANSPARENT,
-                body_text: Color::from_rgba(weak_text.r, weak_text.g, weak_text.b, 0.8),
-                accent: weak,
-            }
-        } else {
-            Self {
-                title_background: Color::from_rgba(weak.r, weak.g, weak.b, 0.7),
-                title_text: weak_text,
-                body_background: Color::TRANSPARENT,
-                body_text: Color::from_rgba(weak_text.r, weak_text.g, weak_text.b, 0.8),
-                accent: weak,
-            }
+        Self {
+            title_background: Color::from_rgba(weak.r, weak.g, weak.b, 0.7),
+            title_text: weak_text,
+            body_background: Color::TRANSPARENT,
+            body_text: Color::from_rgba(weak_text.r, weak_text.g, weak_text.b, 0.8),
+            accent: weak,
         }
     }
 
@@ -196,12 +186,12 @@ impl NodeContentStyle {
 /// ```ignore
 /// let title = node_title_bar("My Node", NodeContentStyle::process(theme));
 /// ```
-pub fn node_title_bar<'a, Message: 'a>(
+pub fn node_title_bar<'a, Message>(
     title: impl Into<String>,
     style: NodeContentStyle,
 ) -> Container<'a, Message, Theme, iced::Renderer>
 where
-    Message: Clone,
+    Message: Clone + 'a,
 {
     let title_text = text(title.into()).size(13).color(style.title_text);
 
@@ -221,12 +211,12 @@ where
 /// ```ignore
 /// let label = node_label("Parameter:", NodeContentStyle::input(theme));
 /// ```
-pub fn node_label<'a, Message: 'a>(
+pub fn node_label<'a, Message>(
     label: impl Into<String>,
     style: NodeContentStyle,
 ) -> Element<'a, Message, Theme, iced::Renderer>
 where
-    Message: Clone,
+    Message: Clone + 'a,
 {
     text(label.into()).size(12).color(style.body_text).into()
 }
@@ -235,11 +225,11 @@ where
 ///
 /// Note: This is a simple container-based separator since horizontal_rule
 /// may not be available in all Iced versions.
-pub fn node_separator<'a, Message: 'a>(
+pub fn node_separator<'a, Message>(
     style: NodeContentStyle,
 ) -> Element<'a, Message, Theme, iced::Renderer>
 where
-    Message: Clone,
+    Message: Clone + 'a,
 {
     container(text(""))
         .width(Length::Fill)
@@ -266,13 +256,13 @@ where
 ///     ]
 /// );
 /// ```
-pub fn simple_node<'a, Message: 'a>(
+pub fn simple_node<'a, Message>(
     title: impl Into<String>,
     style: NodeContentStyle,
     content: impl Into<Element<'a, Message, Theme, iced::Renderer>>,
 ) -> Element<'a, Message, Theme, iced::Renderer>
 where
-    Message: Clone,
+    Message: Clone + 'a,
 {
     column![
         node_title_bar(title, style.clone()),

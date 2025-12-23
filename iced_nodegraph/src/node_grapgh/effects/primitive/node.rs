@@ -8,7 +8,6 @@ use super::Pin;
 pub struct NodeFlags;
 
 impl NodeFlags {
-    pub const HOVERED: u32 = 1 << 0;
     pub const SELECTED: u32 = 1 << 1;
 }
 

@@ -6,7 +6,6 @@ use crate::node_pin::PinReference;
 use crate::style::{EdgeStyle, GraphDefaults, GraphStyle, NodeConfig, NodeStyle};
 
 pub mod camera;
-pub(crate) mod canonical;
 pub(crate) mod effects;
 pub(crate) mod euclid;
 pub(crate) mod state;
@@ -375,19 +374,6 @@ where
         self.nodes.iter_mut().map(|(p, e, s)| (*p, e, s.as_ref()))
     }
 
-    pub(super) fn get_graph_style(&self) -> Option<&GraphStyle> {
-        self.graph_style.as_ref()
-    }
-
-    #[allow(dead_code)]
-    pub(super) fn edges_iter(
-        &self,
-    ) -> impl Iterator<Item = (PinReference, PinReference, Option<&EdgeStyle>)> {
-        self.edges
-            .iter()
-            .map(|(from, to, style)| (*from, *to, style.as_ref()))
-    }
-
     pub(super) fn on_connect_handler(
         &self,
     ) -> Option<&Box<dyn Fn(PinReference, PinReference) -> Message + 'a>> {
@@ -426,9 +412,6 @@ where
     }
     pub(super) fn get_external_selection(&self) -> Option<&HashSet<usize>> {
         self.external_selection
-    }
-    pub(super) fn get_remote_users(&self) -> Option<&[RemoteUserState]> {
-        self.remote_users
     }
 
     pub(super) fn get_on_event(&self) -> Option<&(dyn Fn(NodeGraphEvent) -> Message + 'a)> {

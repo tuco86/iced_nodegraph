@@ -76,66 +76,6 @@ impl<T> Buffer<T> {
         self.buffer_vec.len() as _
     }
 
-    /// Incremental update with dirty tracking.
-    ///
-    /// Only uploads changed items when structure hasn't changed.
-    /// Falls back to full update on structural changes.
-    ///
-    /// # Arguments
-    /// * `new_data` - Complete new data (needed for structural changes)
-    /// * `dirty_indices` - Iterator of indices that changed
-    /// * `structure_changed` - If true, forces full rebuild
-    ///
-    /// # Returns
-    /// * `(count, buffer_recreated)` - Number of items and whether buffer was recreated
-    #[must_use]
-    pub fn update_incremental(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        new_data: &[T],
-        dirty_indices: impl Iterator<Item = usize>,
-        structure_changed: bool,
-    ) -> (u32, bool)
-    where
-        T: NoUninit + Clone,
-    {
-        // If structure changed or length differs, do full update
-        if structure_changed || new_data.len() != self.buffer_vec.len() {
-            self.buffer_vec.clear();
-            self.buffer_vec.extend_from_slice(new_data);
-            let recreated = self.ensure_capacity_and_write_all(device, queue);
-            return (self.buffer_vec.len() as u32, recreated);
-        }
-
-        // Incremental update: only write dirty items
-        let item_size = std::mem::size_of::<T>();
-        let mut any_written = false;
-
-        for idx in dirty_indices {
-            if idx < new_data.len() {
-                // Update local copy
-                self.buffer_vec[idx] = new_data[idx].clone();
-
-                // Write to GPU at specific offset
-                let offset = (idx * item_size) as wgpu::BufferAddress;
-                queue.write_buffer(
-                    &self.buffer_wgpu,
-                    offset,
-                    bytemuck::bytes_of(&new_data[idx]),
-                );
-                any_written = true;
-            }
-        }
-
-        // If nothing was written but we were called, ensure buffer_vec is synced
-        if !any_written && !new_data.is_empty() {
-            // Data is already synced from previous full updates
-        }
-
-        (self.buffer_vec.len() as u32, false)
-    }
-
     /// Ensure buffer has capacity and write all data.
     ///
     /// Returns true if buffer was recreated.

@@ -1,6 +1,4 @@
 use super::camera::Camera2D;
-use super::canonical::CanonicalState;
-use super::effects::pipeline::cache::DirtyFlags;
 use super::euclid::WorldPoint;
 use iced::keyboard;
 use std::collections::HashSet;
@@ -21,12 +19,6 @@ pub(crate) enum Dragging {
         trail: Vec<WorldPoint>,
         pending_cuts: HashSet<usize>,
     },
-    /// Dragging an edge vertex (for physics wire simulation)
-    EdgeVertex {
-        edge_index: usize,
-        vertex_index: usize,
-        origin: WorldPoint,
-    },
 }
 
 #[derive(Debug)]
@@ -41,14 +33,6 @@ pub(super) struct NodeGraphState {
     pub(super) left_mouse_down: bool,
     /// Currently hovered node index (for hover effects)
     pub(super) hovered_node: Option<usize>,
-
-    // Caching and incremental update support
-    /// Canonical state storage (authoritative data).
-    pub(super) canonical: CanonicalState,
-    /// Dirty flags for incremental GPU updates.
-    pub(super) dirty: DirtyFlags,
-    /// Generation counter for structural changes.
-    pub(super) generation: u64,
 }
 
 impl Default for NodeGraphState {
@@ -62,43 +46,7 @@ impl Default for NodeGraphState {
             modifiers: keyboard::Modifiers::default(),
             left_mouse_down: false,
             hovered_node: None,
-            canonical: CanonicalState::new(),
-            dirty: DirtyFlags::default(),
-            generation: 0,
         }
-    }
-}
-
-impl NodeGraphState {
-    /// Mark a node's position as dirty.
-    pub fn mark_node_position_dirty(&mut self, node_id: usize) {
-        self.dirty.mark_node_position(node_id);
-    }
-
-    /// Mark a node's style as dirty.
-    pub fn mark_node_style_dirty(&mut self, node_id: usize) {
-        self.dirty.mark_node_style(node_id);
-    }
-
-    /// Mark an edge as dirty.
-    pub fn mark_edge_dirty(&mut self, edge_id: usize) {
-        self.dirty.mark_edge(edge_id);
-    }
-
-    /// Mark structural change (node/edge added/removed).
-    pub fn mark_structure_changed(&mut self) {
-        self.dirty.mark_structure_changed();
-        self.generation += 1;
-    }
-
-    /// Clear dirty flags after GPU sync.
-    pub fn clear_dirty(&mut self) {
-        self.dirty.clear();
-    }
-
-    /// Check if any changes need to be synced to GPU.
-    pub fn needs_sync(&self) -> bool {
-        !self.dirty.is_clean()
     }
 }
 

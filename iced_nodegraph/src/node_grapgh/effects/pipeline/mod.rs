@@ -21,7 +21,6 @@ use crate::node_grapgh::{effects::Node, euclid::WorldPoint, state::Dragging};
 use super::{EdgeData, Layer, primitive::NodeGraphPrimitive};
 
 mod buffer;
-pub mod cache;
 mod types;
 
 pub struct Pipeline {
@@ -410,7 +409,6 @@ impl Pipeline {
             Dragging::BoxSelect(_, _) => 5,
             Dragging::GroupMove(_) => 6,
             Dragging::EdgeCutting { .. } => 7,
-            Dragging::EdgeVertex { .. } => 8, // Physics vertex drag
         };
 
         let (
@@ -462,7 +460,7 @@ impl Pipeline {
             }
         };
 
-        let scale = viewport.scale_factor() as f32;
+        let scale = viewport.scale_factor();
         let uniforms = types::Uniforms {
             os_scale_factor: scale,
             camera_zoom,
@@ -512,7 +510,6 @@ impl Pipeline {
             _pad_end0: 0,
             _pad_end1: 0,
         };
-        // println!("uniforms: {:?}", uniforms);
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
 
         // Only recreate bind group if buffer generations changed.
@@ -533,16 +530,6 @@ impl Pipeline {
             );
             self.bind_group_generations = current_generations;
         }
-
-        // println!(
-        //     "nodes: {:?} ({:?}), pins: {:?} ({:?}), edges: {:?} ({:?})",
-        //     self.nodes.len(),
-        //     self.nodes.capacity(),
-        //     self.pins.len(),
-        //     self.pins.capacity(),
-        //     self.edges.len(),
-        //     self.edges.capacity(),
-        // );
     }
 
     #[allow(dead_code)]
@@ -635,7 +622,7 @@ fn create_pipeline_custom(
         label: Some(label),
         layout: Some(layout),
         vertex: VertexState {
-            module: module,
+            module,
             entry_point: Some(vs_entry),
             buffers: &[],
             compilation_options: PipelineCompilationOptions::default(),
@@ -656,7 +643,7 @@ fn create_pipeline_custom(
             alpha_to_coverage_enabled: false,
         },
         fragment: Some(FragmentState {
-            module: &module,
+            module,
             entry_point: Some(fs_entry),
             targets: &fragment_targets,
             compilation_options: PipelineCompilationOptions::default(),
