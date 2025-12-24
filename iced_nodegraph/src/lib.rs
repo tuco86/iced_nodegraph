@@ -138,7 +138,7 @@
 //! - **World -> Screen**: `screen = (world + position) * zoom`
 //! - **Zoom at Cursor**: `new_pos = old_pos + cursor_screen * (1/new_zoom - 1/old_zoom)`
 //!
-//! See [`camera`](node_grapgh::camera) module for implementation details and comprehensive test coverage.
+//! See [`Camera2D`] for implementation details and comprehensive test coverage.
 //!
 //! ### Custom Rendering
 //!

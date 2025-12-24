@@ -71,7 +71,7 @@ macro_rules! node_graph {
     }};
 }
 
-/// Adds a node to the graph and returns a [`NodeHandle`].
+/// Adds a node to the graph and returns a [`crate::NodeHandle`].
 ///
 /// # Basic Usage
 /// ```rust,ignore
