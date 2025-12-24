@@ -15,8 +15,10 @@ use crate::style::EdgeStyle;
 
 use super::pipeline::Pipeline;
 
-
-/// Edge data for GPU rendering, including style information.
+/// Legacy edge data structure (for gradual migration).
+///
+/// This stores indices that are looked up in the shader.
+/// Prefer using `EdgePrimitive` for new code.
 #[derive(Debug, Clone)]
 pub struct EdgeData {
     pub from_node: usize,

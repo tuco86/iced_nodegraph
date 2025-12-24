@@ -87,21 +87,31 @@ pub struct Pin {
     pub flags: u32,               // 4 bytes @ 60 (total 64 bytes - aligned to 16)
 }
 
+/// Edge with resolved world positions (no index lookups needed in shader).
+///
+/// Layout: 96 bytes, 16-byte aligned.
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct Edge {
-    pub from_node: u32,        // 4 bytes @ 0
-    pub from_pin: u32,         // 4 bytes @ 4
-    pub to_node: u32,          // 4 bytes @ 8
-    pub to_pin: u32,           // 4 bytes @ 12 (total 16)
-    pub start_color: glam::Vec4, // 16 bytes @ 16 - color at source pin (t=0)
-    pub end_color: glam::Vec4,   // 16 bytes @ 32 - color at target pin (t=1)
-    pub thickness: f32,        // 4 bytes @ 48
-    pub edge_type: u32,        // 4 bytes @ 52 (0=Bezier, 1=Straight, 2=SmoothStep, 3=Step)
-    pub dash_length: f32,      // 4 bytes @ 56 (0.0 = solid line)
-    pub gap_length: f32,       // 4 bytes @ 60 (total 64)
-    pub flow_speed: f32,       // 4 bytes @ 64 (pixels per second, 0.0 = no animation)
-    pub flags: u32,            // 4 bytes @ 68 (bit 0: animated dash, bit 1: glow, bit 2: pulse)
-    pub _pad0: f32,            // 4 bytes @ 72
-    pub _pad1: f32,            // 4 bytes @ 76 (total 80)
+    // Positions and directions (resolved from pins)
+    pub start: WorldVector,       // vec2<f32> = 8 bytes @ 0
+    pub end: WorldVector,         // vec2<f32> = 8 bytes @ 8
+    pub start_direction: u32,     // 4 bytes @ 16 (PinSide: 0=Left, 1=Right, 2=Top, 3=Bottom)
+    pub end_direction: u32,       // 4 bytes @ 20
+    pub _pad_align0: u32,         // 4 bytes @ 24 (padding to align vec4)
+    pub _pad_align1: u32,         // 4 bytes @ 28 (total 32)
+
+    // Colors (already resolved from pin colors if needed)
+    pub start_color: glam::Vec4,  // 16 bytes @ 32 - color at source (t=0)
+    pub end_color: glam::Vec4,    // 16 bytes @ 48 - color at target (t=1)
+
+    // Style parameters
+    pub thickness: f32,           // 4 bytes @ 64
+    pub edge_type: u32,           // 4 bytes @ 68 (0=Bezier, 1=Straight, 2=SmoothStep, 3=Step)
+    pub dash_length: f32,         // 4 bytes @ 72 (0.0 = solid line)
+    pub gap_length: f32,          // 4 bytes @ 76 (total 80)
+    pub flow_speed: f32,          // 4 bytes @ 80 (pixels per second, 0.0 = no animation)
+    pub flags: u32,               // 4 bytes @ 84 (bit 0: animated dash, bit 1: glow, bit 2: pulse, bit 3: pending cut)
+    pub _pad0: f32,               // 4 bytes @ 88
+    pub _pad1: f32,               // 4 bytes @ 92 (total 96)
 }

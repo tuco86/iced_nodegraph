@@ -4,10 +4,109 @@
 //! - Cloning/duplicating nodes with proper edge remapping
 //! - Deleting nodes with automatic edge cleanup
 //! - Selection management helpers
+//! - Node and pin handles for macro-based API
 
 use crate::PinReference;
 use iced::Point;
 use std::collections::{HashMap, HashSet};
+
+// =============================================================================
+// Node and Pin Handles (for macro-based API)
+// =============================================================================
+
+/// Handle to a node, returned by the `node!` macro.
+///
+/// Provides ergonomic access to node identity and pin references.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let node_a = node!(graph, (100.0, 150.0), text("Node A"));
+/// let node_b = node!(graph, (300.0, 150.0), text("Node B"));
+///
+/// // Connect first pin of node_a to first pin of node_b
+/// edge!(graph, node_a.pin(0) => node_b.pin(0));
+///
+/// // Access raw node ID if needed
+/// println!("Node A has ID: {}", node_a.id());
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct NodeHandle {
+    node_id: usize,
+}
+
+impl NodeHandle {
+    /// Creates a new node handle with the given ID.
+    pub fn new(node_id: usize) -> Self {
+        Self { node_id }
+    }
+
+    /// Returns a reference to a specific pin on this node.
+    ///
+    /// This is the primary way to reference pins for edge connections.
+    pub fn pin(&self, pin_id: usize) -> PinReference {
+        PinReference::new(self.node_id, pin_id)
+    }
+
+    /// Returns the underlying node ID.
+    pub fn id(&self) -> usize {
+        self.node_id
+    }
+}
+
+impl From<NodeHandle> for usize {
+    fn from(handle: NodeHandle) -> usize {
+        handle.node_id
+    }
+}
+
+impl From<usize> for NodeHandle {
+    fn from(node_id: usize) -> Self {
+        Self::new(node_id)
+    }
+}
+
+/// Handle to a specific pin, providing conversion to `PinReference`.
+///
+/// This is returned by `NodeHandle::pin()` but can also be constructed directly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PinHandle {
+    node_id: usize,
+    pin_id: usize,
+}
+
+impl PinHandle {
+    /// Creates a new pin handle.
+    pub fn new(node_id: usize, pin_id: usize) -> Self {
+        Self { node_id, pin_id }
+    }
+
+    /// Returns the node ID this pin belongs to.
+    pub fn node_id(&self) -> usize {
+        self.node_id
+    }
+
+    /// Returns the pin ID within the node.
+    pub fn pin_id(&self) -> usize {
+        self.pin_id
+    }
+}
+
+impl From<PinHandle> for PinReference {
+    fn from(handle: PinHandle) -> PinReference {
+        PinReference::new(handle.node_id, handle.pin_id)
+    }
+}
+
+impl From<PinReference> for PinHandle {
+    fn from(reference: PinReference) -> Self {
+        Self::new(reference.node_id, reference.pin_id)
+    }
+}
+
+// =============================================================================
+// Clone/Delete Helpers
+// =============================================================================
 
 /// Result of a clone operation containing new nodes and remapped edges.
 #[derive(Debug, Clone)]

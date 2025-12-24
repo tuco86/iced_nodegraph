@@ -15,7 +15,7 @@ use iced::{
 use iced_wgpu::graphics::Viewport;
 use iced_wgpu::primitive::Pipeline as PipelineTrait;
 
-use crate::node_grapgh::{effects::Node, euclid::WorldPoint, state::Dragging};
+use crate::node_grapgh::{effects::Node, euclid::{WorldPoint, WorldVector}, state::Dragging};
 
 use super::{EdgeData, primitive::NodeGraphPrimitive};
 
@@ -310,6 +310,22 @@ impl Pipeline {
             device,
             queue,
             edges.iter().enumerate().map(|(edge_idx, edge_data)| {
+                // Get source and target nodes/pins
+                let from_node = &nodes[edge_data.from_node];
+                let to_node = &nodes[edge_data.to_node];
+                let from_pin = &from_node.pins[edge_data.from_pin];
+                let to_pin = &to_node.pins[edge_data.to_pin];
+
+                // Compute absolute pin positions (node position + pin offset)
+                let start_pos = WorldVector::new(
+                    from_node.position.x + from_pin.offset.x,
+                    from_node.position.y + from_pin.offset.y,
+                );
+                let end_pos = WorldVector::new(
+                    to_node.position.x + to_pin.offset.x,
+                    to_node.position.y + to_pin.offset.y,
+                );
+
                 // Highlight edges where both ends are selected
                 let is_highlighted = selected_nodes.contains(&edge_data.from_node)
                     && selected_nodes.contains(&edge_data.to_node);
@@ -330,10 +346,6 @@ impl Pipeline {
                     // Selected edges use selection color (solid)
                     (selected_edge_color, selected_edge_color)
                 } else {
-                    // Get pin colors for fallback
-                    let from_pin = &nodes[edge_data.from_node].pins[edge_data.from_pin];
-                    let to_pin = &nodes[edge_data.to_node].pins[edge_data.to_pin];
-
                     // Resolve start color: explicit or pin color
                     let start = if style.start_color.a > 0.01 {
                         glam::Vec4::new(
@@ -381,10 +393,12 @@ impl Pipeline {
                 let flags = style.animation_flags() | if is_pending_cut { 8 } else { 0 };
 
                 types::Edge {
-                    from_node: edge_data.from_node as _,
-                    from_pin: edge_data.from_pin as _,
-                    to_node: edge_data.to_node as _,
-                    to_pin: edge_data.to_pin as _,
+                    start: start_pos,
+                    end: end_pos,
+                    start_direction: from_pin.side,
+                    end_direction: to_pin.side,
+                    _pad_align0: 0,
+                    _pad_align1: 0,
                     start_color,
                     end_color,
                     thickness: style.thickness,

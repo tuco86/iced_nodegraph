@@ -278,8 +278,8 @@ where
                 .map(|(from, to, edge_style)| {
                     // Resolve edge style through cascade:
                     // Theme Defaults -> Graph Defaults -> Per-Edge Style
-                    let edge_config = edge_style.as_ref().map(|s| crate::style::EdgeConfig::from(s.clone()));
-                    let resolved_edge = resolver.resolve_edge(edge_config.as_ref());
+                    let edge_config = crate::style::EdgeConfig::from(edge_style.clone());
+                    let resolved_edge = resolver.resolve_edge(Some(&edge_config));
                     EdgeData {
                         from_node: from.node_id,
                         from_pin: from.pin_id,

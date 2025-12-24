@@ -190,7 +190,9 @@ pub use content::{
     ContentPosition, NodeContentStyle, get_text_color, is_theme_dark, node_content_container,
     node_label, node_separator, node_title_bar, simple_node,
 };
-pub use helpers::{CloneResult, DeleteResult, SelectionHelper, clone_nodes, delete_nodes};
+pub use helpers::{
+    CloneResult, DeleteResult, NodeHandle, PinHandle, SelectionHelper, clone_nodes, delete_nodes,
+};
 pub use node_grapgh::{
     DragInfo, NodeGraph, NodeGraphEvent, RemoteDrag, RemoteUserState, camera::Camera2D,
     widget::node_graph,
@@ -207,7 +209,11 @@ pub use style::{
 
 pub mod content;
 pub mod helpers;
+mod macros;
 mod node;
 mod node_grapgh;
 mod node_pin;
 pub mod style;
+
+// Re-export iced for macro usage
+pub use iced;

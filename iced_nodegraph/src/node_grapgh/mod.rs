@@ -100,7 +100,8 @@ pub struct NodeGraph<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer
         iced::Element<'a, Message, Theme, Renderer>,
         Option<NodeConfig>,
     )>,
-    pub(super) edges: Vec<(PinReference, PinReference, Option<EdgeStyle>)>,
+    /// Edges with resolved styles. All edges have concrete style values.
+    pub(super) edges: Vec<(PinReference, PinReference, EdgeStyle)>,
     graph_style: Option<GraphStyle>,
     /// Graph-wide style defaults for the cascading style system.
     /// Applied after theme defaults but before per-item styles.
@@ -193,12 +194,50 @@ where
             .push((position, element.into(), Some(NodeConfig::from(style))));
     }
 
+    /// Adds an edge with default styling.
+    ///
+    /// The edge will use `EdgeStyle::default()` which inherits colors from pins.
     pub fn push_edge(&mut self, from: PinReference, to: PinReference) {
-        self.edges.push((from, to, None));
+        self.edges.push((from, to, EdgeStyle::default()));
     }
 
+    /// Adds an edge with specific styling.
     pub fn push_edge_styled(&mut self, from: PinReference, to: PinReference, style: EdgeStyle) {
-        self.edges.push((from, to, Some(style)));
+        self.edges.push((from, to, style));
+    }
+
+    /// Adds an edge and returns a handle (for macro-based API).
+    ///
+    /// This is used by the `edge!` macro to provide method chaining.
+    pub fn push_edge_returning(&mut self, from: PinReference, to: PinReference) -> usize {
+        let edge_id = self.edges.len();
+        self.edges.push((from, to, EdgeStyle::default()));
+        edge_id
+    }
+
+    /// Adds a node and returns its ID (for macro-based API).
+    ///
+    /// This is used by the `node!` macro to return a `NodeHandle`.
+    pub fn push_node_returning(
+        &mut self,
+        position: Point,
+        element: impl Into<iced::Element<'a, Message, Theme, Renderer>>,
+    ) -> usize {
+        let node_id = self.nodes.len();
+        self.nodes.push((position, element.into(), None));
+        node_id
+    }
+
+    /// Adds a node with config and returns its ID (for macro-based API).
+    pub fn push_node_config_returning(
+        &mut self,
+        position: Point,
+        element: impl Into<iced::Element<'a, Message, Theme, Renderer>>,
+        config: NodeConfig,
+    ) -> usize {
+        let node_id = self.nodes.len();
+        self.nodes.push((position, element.into(), Some(config)));
+        node_id
     }
 
     pub fn graph_style(mut self, style: GraphStyle) -> Self {
@@ -340,10 +379,11 @@ where
         self.edges.len()
     }
 
-    pub fn edges(&self) -> impl Iterator<Item = (PinReference, PinReference, Option<&EdgeStyle>)> {
+    /// Returns an iterator over all edges with their styles.
+    pub fn edges(&self) -> impl Iterator<Item = (PinReference, PinReference, &EdgeStyle)> {
         self.edges
             .iter()
-            .map(|(from, to, style)| (*from, *to, style.as_ref()))
+            .map(|(from, to, style)| (*from, *to, style))
     }
 
     pub fn node_position(&self, node_id: usize) -> Option<Point> {

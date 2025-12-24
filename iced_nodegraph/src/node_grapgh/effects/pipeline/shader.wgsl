@@ -85,19 +85,27 @@ struct Pin {
     flags: u32,
 };
 
+// Edge with resolved world positions (no index lookups needed)
 struct Edge {
-    from_node: u32,
-    from_pin: u32,
-    to_node: u32,
-    to_pin: u32,
-    start_color: vec4<f32>,  // color at source pin (t=0)
-    end_color: vec4<f32>,    // color at target pin (t=1)
+    // Positions (resolved in Rust from node + pin offset)
+    start: vec2<f32>,           // World position of source pin
+    end: vec2<f32>,             // World position of target pin
+    start_direction: u32,       // PinSide: 0=Left, 1=Right, 2=Top, 3=Bottom
+    end_direction: u32,         // PinSide for target pin
+    _pad_align0: u32,           // Padding for vec4 alignment
+    _pad_align1: u32,
+
+    // Colors (already resolved from pin colors if needed)
+    start_color: vec4<f32>,     // Color at source (t=0)
+    end_color: vec4<f32>,       // Color at target (t=1)
+
+    // Style parameters
     thickness: f32,
-    edge_type: u32,    // 0=Bezier, 1=Straight, 2=SmoothStep, 3=Step
-    dash_length: f32,  // 0.0 = solid line
+    edge_type: u32,             // 0=Bezier, 1=Straight, 2=SmoothStep, 3=Step
+    dash_length: f32,           // 0.0 = solid line
     gap_length: f32,
-    flow_speed: f32,   // pixels per second
-    flags: u32,        // bit 0: animated dash, bit 1: glow, bit 2: pulse, bit 3: particles, bit 4: rainbow
+    flow_speed: f32,            // pixels per second
+    flags: u32,                 // bit 0: animated dash, bit 1: glow, bit 2: pulse, bit 3: pending cut
     _pad0: f32,
     _pad1: f32,
 }
@@ -614,17 +622,14 @@ fn fs_background(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<
 fn vs_edge(@builtin(instance_index) instance: u32,
            @builtin(vertex_index) vertex: u32) -> EdgeVertexOutput {
     let edge = edges[instance];
-    let from_node = nodes[edge.from_node];
-    let from_pin = pins[from_node.pin_start + edge.from_pin];
-    let to_node = nodes[edge.to_node];
-    let to_pin = pins[to_node.pin_start + edge.to_pin];
 
-    let dir_from = get_pin_direction(from_pin.side);
-    let dir_to = get_pin_direction(to_pin.side);
+    // Use resolved positions directly (no more index lookups)
+    let dir_from = get_pin_direction(edge.start_direction);
+    let dir_to = get_pin_direction(edge.end_direction);
     let seg_len = 80.0;
-    let p0 = from_pin.position;
+    let p0 = edge.start;
     let p1 = p0 + dir_from * seg_len;
-    let p3 = to_pin.position;
+    let p3 = edge.end;
     let p2 = p3 + dir_to * seg_len;
 
     var bbox_min: vec2<f32>;
@@ -667,17 +672,14 @@ fn vs_edge(@builtin(instance_index) instance: u32,
 @fragment
 fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
     let edge = edges[in.instance_id];
-    let from_node = nodes[edge.from_node];
-    let from_pin = pins[from_node.pin_start + edge.from_pin];
-    let to_node = nodes[edge.to_node];
-    let to_pin = pins[to_node.pin_start + edge.to_pin];
 
-    let dir_from = get_pin_direction(from_pin.side);
-    let dir_to = get_pin_direction(to_pin.side);
+    // Use resolved positions directly (no more index lookups)
+    let dir_from = get_pin_direction(edge.start_direction);
+    let dir_to = get_pin_direction(edge.end_direction);
     let seg_len = 80.0;
-    let p0 = from_pin.position;
+    let p0 = edge.start;
     let p1 = p0 + dir_from * seg_len;
-    let p3 = to_pin.position;
+    let p3 = edge.end;
     let p2 = p3 + dir_to * seg_len;
 
     // Calculate distance and t parameter based on edge type
