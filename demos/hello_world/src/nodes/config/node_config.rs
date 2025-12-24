@@ -7,9 +7,9 @@ use iced::{
     alignment::Horizontal,
     widget::{column, container, row, text},
 };
-use iced_nodegraph::{NodeConfig, NodeContentStyle, ShadowConfig, node_title_bar, pin};
+use iced_nodegraph::{NodeConfig, NodeContentStyle, ShadowConfig, pin};
 
-use crate::nodes::colors;
+use crate::nodes::{colors, node_title_bar};
 
 /// Collected inputs for NodeConfigNode
 #[derive(Debug, Clone, Default, PartialEq)]

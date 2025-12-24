@@ -73,6 +73,9 @@ struct Node {
 const NODE_FLAG_HOVERED: u32 = 1u;
 const NODE_FLAG_SELECTED: u32 = 2u;
 
+// Pin flag constants (computed in Rust)
+const PIN_FLAG_VALID_TARGET: u32 = 1u;
+
 struct Pin {
     position: vec2<f32>,
     side: u32,
@@ -533,26 +536,9 @@ fn get_pin_direction(side: u32) -> vec2<f32> {
     }
 }
 
-fn check_valid_drop_target(node_id: u32, pin_index: u32) -> bool {
-    let from_node = nodes[uniforms.dragging_edge_from_node];
-    let from_pin = pins[from_node.pin_start + uniforms.dragging_edge_from_pin];
-    let pin = pins[nodes[node_id].pin_start + pin_index];
-
-    var direction_valid = false;
-    if (from_pin.direction == 2u || pin.direction == 2u) {
-        direction_valid = true;
-    } else if ((from_pin.direction == 1u && pin.direction == 0u) ||
-               (from_pin.direction == 0u && pin.direction == 1u)) {
-        direction_valid = true;
-    }
-
-    let color_diff = length(from_pin.color.xyz - pin.color.xyz);
-    let type_valid = color_diff < 0.1;
-
-    let is_source = (node_id == uniforms.dragging_edge_from_node) &&
-                    (pin_index == uniforms.dragging_edge_from_pin);
-
-    return direction_valid && type_valid && !is_source;
+// Valid drop target is now computed in Rust and stored in pin.flags
+fn is_valid_drop_target(pin: Pin) -> bool {
+    return (pin.flags & PIN_FLAG_VALID_TARGET) != 0u;
 }
 
 // Convert world position to clip space, accounting for widget bounds offset
@@ -946,8 +932,8 @@ fn vs_pin(@builtin(instance_index) instance: u32,
     }
 
     var is_valid_target = false;
-    if (uniforms.dragging == 3u) {
-        is_valid_target = check_valid_drop_target(node_id, pin_index);
+    if (uniforms.dragging == 3u || uniforms.dragging == 4u) {
+        is_valid_target = is_valid_drop_target(pin);
     }
 
     var anim_scale = 1.0;
@@ -1009,8 +995,8 @@ fn fs_pin(in: PinVertexOutput) -> @location(0) vec4<f32> {
     let pin_center = in.world_uv - pin.position;
 
     var is_valid_target = false;
-    if (uniforms.dragging == 3u) {
-        is_valid_target = check_valid_drop_target(in.node_id, in.pin_index);
+    if (uniforms.dragging == 3u || uniforms.dragging == 4u) {
+        is_valid_target = is_valid_drop_target(pin);
     }
 
     var anim_scale = 1.0;

@@ -7,9 +7,9 @@ use iced::{
     alignment::Horizontal,
     widget::{column, container, row, text},
 };
-use iced_nodegraph::{NodeContentStyle, node_title_bar, pin};
+use iced_nodegraph::{NodeContentStyle, pin};
 
-use crate::nodes::colors;
+use crate::nodes::{colors, node_title_bar};
 
 /// Creates an ApplyToGraph node that receives configs and applies them globally
 pub fn apply_to_graph_node<'a, Message>(

@@ -15,7 +15,7 @@ use iced::{
 use iced_wgpu::graphics::Viewport;
 use iced_wgpu::primitive::Pipeline as PipelineTrait;
 
-use crate::node_grapgh::{effects::Node, euclid::{WorldPoint, WorldVector}, state::Dragging};
+use crate::node_grapgh::{effects::Node, euclid::WorldPoint, state::Dragging};
 
 use super::{EdgeData, primitive::NodeGraphPrimitive};
 
@@ -265,15 +265,65 @@ impl Pipeline {
             }),
         );
 
+        // Extract source pin info for valid target computation
+        let source_pin_info: Option<(usize, usize, glam::Vec4, u32)> = match dragging {
+            Dragging::Edge(from_node, from_pin, _) | Dragging::EdgeOver(from_node, from_pin, _, _) => {
+                let pin = &nodes[*from_node].pins[*from_pin];
+                let color = glam::Vec4::new(pin.color.r, pin.color.g, pin.color.b, pin.color.a);
+                let direction = match pin.direction {
+                    crate::node_pin::PinDirection::Input => 0,
+                    crate::node_pin::PinDirection::Output => 1,
+                    crate::node_pin::PinDirection::Both => 2,
+                };
+                Some((*from_node, *from_pin, color, direction))
+            }
+            _ => None,
+        };
+
         let num_pins = self.pins.update(
             device,
             queue,
-            nodes.iter().flat_map(|node| node.pins.iter()).map(|pin| {
+            nodes.iter().enumerate().flat_map(|(node_id, node)| {
+                node.pins.iter().enumerate().map(move |(pin_id, pin)| (node_id, pin_id, pin))
+            }).map(|(node_id, pin_id, pin)| {
                 use crate::node_pin::PinDirection;
                 use crate::style::PinShape;
+
+                let pin_direction = match pin.direction {
+                    PinDirection::Input => 0,
+                    PinDirection::Output => 1,
+                    PinDirection::Both => 2,
+                };
+                let pin_color = glam::Vec4::new(pin.color.r, pin.color.g, pin.color.b, pin.color.a);
+
+                // Compute valid target flag
+                let flags = if let Some((src_node, src_pin, src_color, src_direction)) = source_pin_info {
+                    // Check if this pin is a valid drop target:
+                    // 1. Not the source pin itself
+                    let is_source = node_id == src_node && pin_id == src_pin;
+                    // 2. Direction compatible (Input<->Output or either is Both)
+                    let direction_valid = src_direction == 2 || pin_direction == 2
+                        || (src_direction == 1 && pin_direction == 0)
+                        || (src_direction == 0 && pin_direction == 1);
+                    // 3. Type compatible (color distance < 0.1)
+                    let color_diff = ((src_color.x - pin_color.x).powi(2)
+                        + (src_color.y - pin_color.y).powi(2)
+                        + (src_color.z - pin_color.z).powi(2))
+                        .sqrt();
+                    let type_valid = color_diff < 0.1;
+
+                    if !is_source && direction_valid && type_valid {
+                        types::PIN_FLAG_VALID_TARGET
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                };
+
                 types::Pin {
                     position: pin.offset,
-                    color: glam::Vec4::new(pin.color.r, pin.color.g, pin.color.b, pin.color.a),
+                    color: pin_color,
                     border_color: glam::Vec4::new(
                         pin.border_color.r,
                         pin.border_color.g,
@@ -282,11 +332,7 @@ impl Pipeline {
                     ),
                     side: pin.side,
                     radius: pin.radius,
-                    direction: match pin.direction {
-                        PinDirection::Input => 0,
-                        PinDirection::Output => 1,
-                        PinDirection::Both => 2,
-                    },
+                    direction: pin_direction,
                     shape: match pin.shape {
                         PinShape::Circle => 0,
                         PinShape::Square => 1,
@@ -294,7 +340,7 @@ impl Pipeline {
                         PinShape::Triangle => 3,
                     },
                     border_width: pin.border_width,
-                    flags: 0,
+                    flags,
                 }
             }),
         );
@@ -316,15 +362,10 @@ impl Pipeline {
                 let from_pin = &from_node.pins[edge_data.from_pin];
                 let to_pin = &to_node.pins[edge_data.to_pin];
 
-                // Compute absolute pin positions (node position + pin offset)
-                let start_pos = WorldVector::new(
-                    from_node.position.x + from_pin.offset.x,
-                    from_node.position.y + from_pin.offset.y,
-                );
-                let end_pos = WorldVector::new(
-                    to_node.position.x + to_pin.offset.x,
-                    to_node.position.y + to_pin.offset.y,
-                );
+                // Pin offsets are already absolute world positions (not relative to node)
+                // This is because widget.rs adds the node position when creating pins
+                let start_pos = from_pin.offset;
+                let end_pos = to_pin.offset;
 
                 // Highlight edges where both ends are selected
                 let is_highlighted = selected_nodes.contains(&edge_data.from_node)

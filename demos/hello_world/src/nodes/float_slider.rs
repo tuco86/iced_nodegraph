@@ -4,9 +4,9 @@
 //! Industrial Precision design: clean track, responsive handle.
 
 use iced::{Color, Length, widget::{column, container, row, slider, text}};
-use iced_nodegraph::{NodeContentStyle, node_title_bar, pin};
+use iced_nodegraph::{NodeContentStyle, pin};
 
-use super::colors;
+use super::{colors, node_title_bar};
 
 /// Float slider node configuration
 #[derive(Debug, Clone, PartialEq)]

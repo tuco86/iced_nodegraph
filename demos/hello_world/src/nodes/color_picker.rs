@@ -7,9 +7,9 @@ use iced::{
     alignment::Horizontal,
     widget::{button, column, container, row, slider, text},
 };
-use iced_nodegraph::{NodeContentStyle, node_title_bar, pin};
+use iced_nodegraph::{NodeContentStyle, pin};
 
-use super::colors;
+use super::{colors, node_title_bar};
 
 /// Predefined color presets
 #[derive(Debug, Clone, Copy, PartialEq)]

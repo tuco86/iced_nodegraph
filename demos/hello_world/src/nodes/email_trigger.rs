@@ -1,7 +1,7 @@
 use iced::widget::{column, container};
-use iced_nodegraph::{NodeContentStyle, node_title_bar, pin};
+use iced_nodegraph::{NodeContentStyle, pin};
 
-use super::colors;
+use super::{colors, node_title_bar};
 
 /// Email Trigger Node - Only outputs
 pub fn email_trigger_node<'a, Message>(theme: &'a iced::Theme) -> iced::Element<'a, Message>

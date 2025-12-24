@@ -8,9 +8,9 @@ use iced::{
     alignment::Horizontal,
     widget::{button, column, container, row, text},
 };
-use iced_nodegraph::{EdgeType, NodeContentStyle, PinShape, node_title_bar, pin};
+use iced_nodegraph::{EdgeType, NodeContentStyle, PinShape, pin};
 
-use super::colors;
+use super::{colors, node_title_bar};
 
 /// Creates a pill button for enum selection
 fn pill_button<'a, T, Message>(

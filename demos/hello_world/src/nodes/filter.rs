@@ -3,9 +3,9 @@ use iced::{
     alignment::Horizontal,
     widget::{column, container, row},
 };
-use iced_nodegraph::{NodeContentStyle, node_title_bar, pin};
+use iced_nodegraph::{NodeContentStyle, pin};
 
-use super::colors;
+use super::{colors, node_title_bar};
 
 /// Filter Node - Input + output
 pub fn filter_node<'a, Message>(theme: &'a iced::Theme) -> iced::Element<'a, Message>

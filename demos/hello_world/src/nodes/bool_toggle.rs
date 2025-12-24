@@ -8,9 +8,9 @@ use iced::{
     alignment::Horizontal,
     widget::{column, container, row, text, toggler},
 };
-use iced_nodegraph::{NodeContentStyle, node_title_bar, pin};
+use iced_nodegraph::{NodeContentStyle, pin};
 
-use super::colors;
+use super::{colors, node_title_bar};
 
 /// Boolean toggle configuration
 #[derive(Debug, Clone, PartialEq)]

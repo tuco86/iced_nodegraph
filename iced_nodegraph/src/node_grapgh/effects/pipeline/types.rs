@@ -1,5 +1,8 @@
 use crate::node_grapgh::euclid::{WorldPoint, WorldSize, WorldVector};
 
+// Pin flag constants
+pub const PIN_FLAG_VALID_TARGET: u32 = 1; // bit 0: valid drop target during edge dragging
+
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct Uniforms {

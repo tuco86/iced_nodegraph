@@ -24,8 +24,14 @@ pub use filter::filter_node;
 pub use float_slider::{FloatSliderConfig, float_slider_node};
 pub use int_slider::{IntSliderConfig, int_slider_node};
 
-use iced::{Color, Theme};
-use iced_nodegraph::{EdgeConfig, EdgeType, NodeConfig, PinConfig, PinShape, ShadowConfig};
+use iced::{
+    Color, Padding, Theme,
+    widget::{Container, container, text},
+};
+use iced_nodegraph::{
+    EdgeConfig, EdgeType, NodeConfig, NodeContentStyle, PinConfig, PinShape, ShadowConfig,
+    node_header,
+};
 
 /// Semantic pin colors for consistent visual language across nodes.
 /// Based on "Industrial Precision" design system.
@@ -287,4 +293,31 @@ where
         "calendar" => calendar_node(theme),
         _ => email_trigger_node(theme), // fallback
     }
+}
+
+/// Creates a themed title bar container for nodes.
+///
+/// Uses `node_header` from the library as the base container with proper
+/// rounded corners, then adds title text with appropriate padding.
+pub fn node_title_bar<'a, Message>(
+    title: impl Into<String>,
+    style: NodeContentStyle,
+) -> Container<'a, Message, Theme, iced::Renderer>
+where
+    Message: Clone + 'a,
+{
+    let title_text = text(title.into()).size(13).color(style.title_text);
+
+    // Use node_header for the rounded corner container
+    node_header(
+        container(title_text).padding(Padding {
+            top: 4.0,
+            bottom: 4.0,
+            left: 8.0,
+            right: 8.0,
+        }),
+        style.title_background,
+        style.corner_radius,
+        style.border_width,
+    )
 }

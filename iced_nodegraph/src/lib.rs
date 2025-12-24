@@ -188,7 +188,7 @@
 
 pub use content::{
     ContentPosition, NodeContentStyle, get_text_color, is_theme_dark, node_content_container,
-    node_label, node_separator, node_title_bar, simple_node,
+    node_footer, node_header, node_label, node_separator, simple_node,
 };
 pub use helpers::{
     CloneResult, DeleteResult, NodeHandle, PinHandle, SelectionHelper, clone_nodes, delete_nodes,

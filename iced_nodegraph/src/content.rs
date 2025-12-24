@@ -228,61 +228,6 @@ impl NodeContentStyle {
     }
 }
 
-/// Creates a themed title bar container for nodes.
-///
-/// The title bar has rounded corners at the top, calculated from the node's
-/// corner_radius minus border_width to fit precisely within the node border.
-/// The geometry values are taken from the `style.corner_radius` and `style.border_width`
-/// fields.
-///
-/// # Arguments
-/// * `title` - The title text
-/// * `style` - Style including colors and geometry (corner_radius, border_width)
-///
-/// # Example
-/// ```ignore
-/// // Basic usage with default geometry
-/// let title = node_title_bar("My Node", NodeContentStyle::process(theme));
-///
-/// // With custom geometry from resolved node style
-/// let style = NodeContentStyle::input(theme).with_geometry(8.0, 2.0);
-/// let title = node_title_bar("Custom Node", style);
-/// ```
-pub fn node_title_bar<'a, Message>(
-    title: impl Into<String>,
-    style: NodeContentStyle,
-) -> Container<'a, Message, Theme, iced::Renderer>
-where
-    Message: Clone + 'a,
-{
-    // Use geometry from style
-    let corner_radius = style.corner_radius;
-    let border_width = style.border_width;
-
-    // Inner radius fits inside the node border
-    let inner_radius = (corner_radius - border_width).max(0.0);
-
-    let title_text = text(title.into()).size(13).color(style.title_text);
-
-    container(title_text)
-        .padding(Padding {
-            top: 4.0,
-            bottom: 4.0,
-            left: 8.0 + border_width,
-            right: 8.0 + border_width,
-        })
-        .width(Length::Fill)
-        .style(move |_theme: &Theme| container::Style {
-            background: Some(style.title_background.into()),
-            text_color: Some(style.title_text),
-            border: Border {
-                radius: border::top(inner_radius),
-                ..Default::default()
-            },
-            ..Default::default()
-        })
-}
-
 /// Creates a themed label row for node content.
 ///
 /// # Example
@@ -400,11 +345,25 @@ pub fn simple_node<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    // Get border_width from style
+    let corner_radius = style.corner_radius;
     let border_width = style.border_width;
 
+    // Title bar using node_header
+    let title_text = text(title.into()).size(13).color(style.title_text);
+    let title_bar = node_header(
+        container(title_text).padding(Padding {
+            top: 4.0,
+            bottom: 4.0,
+            left: 8.0,
+            right: 8.0,
+        }),
+        style.title_background,
+        corner_radius,
+        border_width,
+    );
+
     column![
-        node_title_bar(title, style.clone()),
+        title_bar,
         container(content)
             .padding(Padding {
                 top: 6.0,
@@ -429,4 +388,118 @@ pub fn get_text_color(theme: &Theme) -> Color {
 /// Returns whether the current theme is dark.
 pub fn is_theme_dark(theme: &Theme) -> bool {
     theme.extended_palette().is_dark
+}
+
+/// Creates a header container for nodes with top rounded corners.
+///
+/// The header fits precisely inside the node's border, with inner corner radius
+/// calculated as `corner_radius - border_width`. Padding is applied on left/right
+/// to account for the node's border.
+///
+/// # Arguments
+/// * `content` - The content to wrap in the header
+/// * `background` - Background color for the header
+/// * `corner_radius` - The node's corner radius
+/// * `border_width` - The node's border width
+///
+/// # Example
+/// ```ignore
+/// use iced_nodegraph::{node_header, NodeStyle};
+/// use iced::widget::text;
+/// use iced::Color;
+///
+/// // Get geometry from node style
+/// let node_style = NodeStyle::default();
+/// let header = node_header(
+///     text("Header Content"),
+///     Color::from_rgb(0.2, 0.3, 0.4),
+///     node_style.corner_radius,
+///     node_style.border_width,
+/// );
+/// ```
+pub fn node_header<'a, Message>(
+    content: impl Into<Element<'a, Message, Theme, iced::Renderer>>,
+    background: Color,
+    corner_radius: f32,
+    border_width: f32,
+) -> Container<'a, Message, Theme, iced::Renderer>
+where
+    Message: Clone + 'a,
+{
+    // Inner radius fits inside the node border
+    let inner_radius = (corner_radius - border_width).max(0.0);
+
+    container(content)
+        .padding(Padding {
+            top: 0.0,
+            bottom: 0.0,
+            left: border_width,
+            right: border_width,
+        })
+        .width(Length::Fill)
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(background.into()),
+            border: Border {
+                radius: border::top(inner_radius),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+}
+
+/// Creates a footer container for nodes with bottom rounded corners.
+///
+/// The footer fits precisely inside the node's border, with inner corner radius
+/// calculated as `corner_radius - border_width`. Padding is applied on left/right
+/// to account for the node's border.
+///
+/// # Arguments
+/// * `content` - The content to wrap in the footer
+/// * `background` - Background color for the footer
+/// * `corner_radius` - The node's corner radius
+/// * `border_width` - The node's border width
+///
+/// # Example
+/// ```ignore
+/// use iced_nodegraph::{node_footer, NodeStyle};
+/// use iced::widget::text;
+/// use iced::Color;
+///
+/// // Get geometry from node style
+/// let node_style = NodeStyle::default();
+/// let footer = node_footer(
+///     text("Footer Content"),
+///     Color::from_rgb(0.15, 0.15, 0.15),
+///     node_style.corner_radius,
+///     node_style.border_width,
+/// );
+/// ```
+pub fn node_footer<'a, Message>(
+    content: impl Into<Element<'a, Message, Theme, iced::Renderer>>,
+    background: Color,
+    corner_radius: f32,
+    border_width: f32,
+) -> Container<'a, Message, Theme, iced::Renderer>
+where
+    Message: Clone + 'a,
+{
+    // Inner radius fits inside the node border
+    let inner_radius = (corner_radius - border_width).max(0.0);
+
+    container(content)
+        .padding(Padding {
+            top: 0.0,
+            bottom: 0.0,
+            left: border_width,
+            right: border_width,
+        })
+        .width(Length::Fill)
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(background.into()),
+            border: Border {
+                radius: border::bottom(inner_radius),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
 }
