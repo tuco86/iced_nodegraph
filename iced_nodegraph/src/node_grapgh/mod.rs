@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use iced::{Color, Length, Point, Size, Vector};
 
 use crate::node_pin::PinReference;
-use crate::style::{EdgeStyle, GraphDefaults, GraphStyle, NodeConfig, NodeStyle};
+use crate::style::{EdgeConfig, GraphStyle, NodeConfig};
 
 pub mod camera;
 pub(crate) mod effects;
@@ -92,20 +92,19 @@ pub enum NodeGraphEvent {
 #[allow(missing_debug_implementations)]
 pub struct NodeGraph<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer> {
     pub(super) size: Size<Length>,
-    /// Nodes with position, element, and optional config overrides.
-    /// Using NodeConfig (partial overrides) instead of NodeStyle (complete style)
-    /// ensures theme defaults are applied for any unspecified properties.
+    /// Nodes with position, element, and config overrides.
+    /// Config fields set to Some() override theme defaults.
+    /// None fields use `NodeStyle::from_theme()` values at render time.
     pub(super) nodes: Vec<(
         Point,
         iced::Element<'a, Message, Theme, Renderer>,
-        Option<NodeConfig>,
+        NodeConfig,
     )>,
-    /// Edges with resolved styles. All edges have concrete style values.
-    pub(super) edges: Vec<(PinReference, PinReference, EdgeStyle)>,
+    /// Edges with position references and config overrides.
+    /// Config fields set to Some() override theme defaults.
+    /// None fields use `EdgeStyle::from_theme()` values at render time.
+    pub(super) edges: Vec<(PinReference, PinReference, EdgeConfig)>,
     graph_style: Option<GraphStyle>,
-    /// Graph-wide style defaults for the cascading style system.
-    /// Applied after theme defaults but before per-item styles.
-    pub(super) graph_defaults: Option<GraphDefaults>,
     on_connect: Option<Box<dyn Fn(PinReference, PinReference) -> Message + 'a>>,
     on_disconnect: Option<Box<dyn Fn(PinReference, PinReference) -> Message + 'a>>,
     on_move: Option<Box<dyn Fn(usize, Point) -> Message + 'a>>,
@@ -135,7 +134,6 @@ where
             nodes: Vec::new(),
             edges: Vec::new(),
             graph_style: None,
-            graph_defaults: None,
             on_connect: None,
             on_disconnect: None,
             on_move: None,
@@ -157,118 +155,98 @@ impl<'a, Message, Theme, Renderer> NodeGraph<'a, Message, Theme, Renderer>
 where
     Renderer: iced_widget::core::renderer::Renderer,
 {
+    /// Adds a node with default styling.
+    ///
+    /// The node will use theme defaults from `NodeStyle::from_theme()`.
     pub fn push_node(
         &mut self,
         position: Point,
         element: impl Into<iced::Element<'a, Message, Theme, Renderer>>,
     ) {
-        self.nodes.push((position, element.into(), None));
+        self.nodes
+            .push((position, element.into(), NodeConfig::default()));
     }
 
-    /// Pushes a node with specific style overrides.
+    /// Adds a node with specific style overrides.
     ///
     /// Only the properties set in `config` will override theme defaults.
-    /// Unset properties will use the theme-derived values.
-    pub fn push_node_config(
+    /// Unset (None) properties will use `NodeStyle::from_theme()` values.
+    ///
+    /// Use `NodeConfig::merge()` to combine multiple configs for inheritance.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// // Define project-wide defaults
+    /// let my_defaults = NodeConfig::new().corner_radius(10.0).opacity(0.9);
+    ///
+    /// // Create specific config that inherits from defaults
+    /// let special = NodeConfig::new().fill_color(Color::RED);
+    /// let merged = special.merge(&my_defaults);
+    ///
+    /// graph.push_node_styled(pos, elem, merged);
+    /// ```
+    pub fn push_node_styled(
         &mut self,
         position: Point,
         element: impl Into<iced::Element<'a, Message, Theme, Renderer>>,
         config: NodeConfig,
     ) {
-        self.nodes.push((position, element.into(), Some(config)));
-    }
-
-    /// Pushes a node with a complete style (backwards compatibility).
-    ///
-    /// Note: This converts the NodeStyle to NodeConfig, meaning ALL properties
-    /// from the NodeStyle will override theme defaults. Prefer `push_node_config`
-    /// for partial overrides that respect theme defaults.
-    pub fn push_node_styled(
-        &mut self,
-        position: Point,
-        element: impl Into<iced::Element<'a, Message, Theme, Renderer>>,
-        style: NodeStyle,
-    ) {
-        // Convert NodeStyle to NodeConfig (all properties become overrides)
-        self.nodes
-            .push((position, element.into(), Some(NodeConfig::from(style))));
+        self.nodes.push((position, element.into(), config));
     }
 
     /// Adds an edge with default styling.
     ///
-    /// The edge will use `EdgeStyle::default()` which inherits colors from pins.
+    /// The edge will use theme defaults from `EdgeStyle::from_theme()`.
     pub fn push_edge(&mut self, from: PinReference, to: PinReference) {
-        self.edges.push((from, to, EdgeStyle::default()));
+        self.edges.push((from, to, EdgeConfig::default()));
     }
 
-    /// Adds an edge with specific styling.
-    pub fn push_edge_styled(&mut self, from: PinReference, to: PinReference, style: EdgeStyle) {
-        self.edges.push((from, to, style));
+    /// Adds an edge with specific style overrides.
+    ///
+    /// Only the properties set in `config` will override theme defaults.
+    /// Unset (None) properties will use `EdgeStyle::from_theme()` values.
+    pub fn push_edge_styled(
+        &mut self,
+        from: PinReference,
+        to: PinReference,
+        config: EdgeConfig,
+    ) {
+        self.edges.push((from, to, config));
     }
 
     /// Adds an edge and returns a handle (for macro-based API).
-    ///
-    /// This is used by the `edge!` macro to provide method chaining.
     pub fn push_edge_returning(&mut self, from: PinReference, to: PinReference) -> usize {
         let edge_id = self.edges.len();
-        self.edges.push((from, to, EdgeStyle::default()));
+        self.edges.push((from, to, EdgeConfig::default()));
         edge_id
     }
 
     /// Adds a node and returns its ID (for macro-based API).
-    ///
-    /// This is used by the `node!` macro to return a `NodeHandle`.
     pub fn push_node_returning(
         &mut self,
         position: Point,
         element: impl Into<iced::Element<'a, Message, Theme, Renderer>>,
     ) -> usize {
         let node_id = self.nodes.len();
-        self.nodes.push((position, element.into(), None));
+        self.nodes
+            .push((position, element.into(), NodeConfig::default()));
         node_id
     }
 
     /// Adds a node with config and returns its ID (for macro-based API).
-    pub fn push_node_config_returning(
+    pub fn push_node_styled_returning(
         &mut self,
         position: Point,
         element: impl Into<iced::Element<'a, Message, Theme, Renderer>>,
         config: NodeConfig,
     ) -> usize {
         let node_id = self.nodes.len();
-        self.nodes.push((position, element.into(), Some(config)));
+        self.nodes.push((position, element.into(), config));
         node_id
     }
 
     pub fn graph_style(mut self, style: GraphStyle) -> Self {
         self.graph_style = Some(style);
-        self
-    }
-
-    /// Sets graph-wide style defaults for the cascading style system.
-    ///
-    /// These defaults are applied after theme defaults but before per-item styles.
-    /// Use this to configure consistent styling across all nodes, edges, and pins
-    /// in this graph without overriding individual item styles.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// use iced_nodegraph::style::{GraphDefaults, NodeConfig, EdgeConfig};
-    ///
-    /// let defaults = GraphDefaults::new()
-    ///     .node(NodeConfig::new()
-    ///         .corner_radius(10.0)
-    ///         .opacity(0.8))
-    ///     .edge(EdgeConfig::new()
-    ///         .thickness(3.0));
-    ///
-    /// node_graph()
-    ///     .defaults(defaults)
-    ///     // nodes will inherit corner_radius=10.0 and opacity=0.8
-    /// ```
-    pub fn defaults(mut self, defaults: GraphDefaults) -> Self {
-        self.graph_defaults = Some(defaults);
         self
     }
 
@@ -379,11 +357,11 @@ where
         self.edges.len()
     }
 
-    /// Returns an iterator over all edges with their styles.
-    pub fn edges(&self) -> impl Iterator<Item = (PinReference, PinReference, &EdgeStyle)> {
+    /// Returns an iterator over all edges with their configs.
+    pub fn edges(&self) -> impl Iterator<Item = (PinReference, PinReference, &EdgeConfig)> {
         self.edges
             .iter()
-            .map(|(from, to, style)| (*from, *to, style))
+            .map(|(from, to, config)| (*from, *to, config))
     }
 
     pub fn node_position(&self, node_id: usize) -> Option<Point> {
@@ -396,10 +374,10 @@ where
         Item = (
             Point,
             &iced::Element<'a, Message, Theme, Renderer>,
-            Option<&NodeConfig>,
+            &NodeConfig,
         ),
     > {
-        self.nodes.iter().map(|(p, e, s)| (*p, e, s.as_ref()))
+        self.nodes.iter().map(|(p, e, c)| (*p, e, c))
     }
 
     pub(super) fn elements_iter_mut(
@@ -408,10 +386,12 @@ where
         Item = (
             Point,
             &mut iced::Element<'a, Message, Theme, Renderer>,
-            Option<&NodeConfig>,
+            &NodeConfig,
         ),
     > {
-        self.nodes.iter_mut().map(|(p, e, s)| (*p, e, s.as_ref()))
+        self.nodes
+            .iter_mut()
+            .map(|(p, e, c)| (*p, e, c as &NodeConfig))
     }
 
     pub(super) fn on_connect_handler(

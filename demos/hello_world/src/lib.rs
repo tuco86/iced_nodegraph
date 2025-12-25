@@ -40,7 +40,7 @@ use iced::{
     window,
 };
 use iced_nodegraph::{
-    EdgeConfig, EdgeStyle, GraphDefaults, NodeConfig, PinReference, ShadowConfig,
+    EdgeConfig, NodeConfig, PinReference, ShadowConfig,
     node_graph,
 };
 use iced_palette::{
@@ -182,6 +182,7 @@ struct ComputedStyle {
     opacity: Option<f32>,
     border_width: Option<f32>,
     fill_color: Option<Color>,
+    shadow: Option<ShadowConfig>,
     edge_thickness: Option<f32>,
     edge_color: Option<Color>,
     // Pin config values
@@ -209,6 +210,9 @@ impl ComputedStyle {
         if let Some(c) = self.fill_color {
             config = config.fill_color(c);
         }
+        if let Some(ref s) = self.shadow {
+            config = config.shadow(s.clone());
+        }
         config
     }
 
@@ -220,20 +224,16 @@ impl ComputedStyle {
             || self.fill_color.is_some()
     }
 
-    /// Builds an EdgeStyle from computed values, returns None if no edge styling is set
-    fn to_edge_style(&self) -> Option<EdgeStyle> {
-        if self.edge_color.is_none() && self.edge_thickness.is_none() {
-            return None;
-        }
-
-        let mut style = EdgeStyle::default();
+    /// Builds an EdgeConfig from computed values
+    fn to_edge_config(&self) -> EdgeConfig {
+        let mut config = EdgeConfig::new();
         if let Some(t) = self.edge_thickness {
-            style = style.thickness(t);
+            config = config.thickness(t);
         }
         if let Some(c) = self.edge_color {
-            style = style.solid_color(c);
+            config = config.start_color(c).end_color(c);
         }
-        Some(style)
+        config
     }
 
     /// Builds a PinConfig from computed values, returns None if no pin styling is set
@@ -370,6 +370,40 @@ impl Application {
                 if let (NodeType::Config(_), NodeType::Input(input)) = (&from_type, &to_type) {
                     let value = input.output_value();
                     self.apply_value_to_config_node(from.node_id, from.pin_id, &value);
+                }
+            }
+        }
+
+        // Phase 2.5: Handle ShadowConfig → NodeConfig connections
+        // ShadowConfig's output connects to NodeConfig's shadow input (pin 7)
+        for (from, to) in &edges_snapshot {
+            let from_node_type = self.nodes.get(from.node_id).map(|(_, t)| t.clone());
+            let to_node_type = self.nodes.get(to.node_id).map(|(_, t)| t.clone());
+
+            if let (Some(from_type), Some(to_type)) = (from_node_type, to_node_type) {
+                // ShadowConfig (output pin 1) → NodeConfig (shadow pin 7)
+                if let (
+                    NodeType::Config(ConfigNodeType::ShadowConfig(shadow_inputs)),
+                    NodeType::Config(ConfigNodeType::NodeConfig(_)),
+                ) = (&from_type, &to_type)
+                {
+                    if from.pin_id == 1 && to.pin_id == 7 {
+                        let shadow_config = shadow_inputs.build();
+                        let value = NodeValue::ShadowConfig(shadow_config);
+                        self.apply_value_to_config_node(to.node_id, to.pin_id, &value);
+                    }
+                }
+                // Reverse: NodeConfig ← ShadowConfig
+                if let (
+                    NodeType::Config(ConfigNodeType::NodeConfig(_)),
+                    NodeType::Config(ConfigNodeType::ShadowConfig(shadow_inputs)),
+                ) = (&from_type, &to_type)
+                {
+                    if to.pin_id == 1 && from.pin_id == 7 {
+                        let shadow_config = shadow_inputs.build();
+                        let value = NodeValue::ShadowConfig(shadow_config);
+                        self.apply_value_to_config_node(from.node_id, from.pin_id, &value);
+                    }
                 }
             }
         }
@@ -548,6 +582,9 @@ impl Application {
                                     }
                                     if let Some(c) = node_config.fill_color {
                                         computed.fill_color = Some(c);
+                                    }
+                                    if node_config.shadow.is_some() {
+                                        computed.shadow = node_config.shadow.clone();
                                     }
                                 }
                             }
@@ -1011,27 +1048,12 @@ impl Application {
     }
 
     fn view(&self) -> iced::Element<'_, ApplicationMessage> {
-        // Graph-wide style defaults using the new cascading style system
-        let mut graph_defaults = GraphDefaults::new()
-            .node(
-                NodeConfig::new()
-                    .corner_radius(8.0)
-                    .opacity(0.88)
-                    .shadow(
-                        ShadowConfig::new()
-                            .blur_radius(24.0)
-                            .offset(0.0, 6.0),
-                    ),
-            )
-            .edge(EdgeConfig::new().thickness(1.0));
-
-        // Apply computed pin config if any
-        if let Some(pin_config) = self.computed_style.to_pin_config() {
-            graph_defaults = graph_defaults.pin(pin_config);
-        }
+        // Graph-wide node defaults - combine with per-node configs using merge()
+        let node_defaults = NodeConfig::new()
+            .corner_radius(8.0)
+            .opacity(0.88);
 
         let mut ng = node_graph()
-            .defaults(graph_defaults)
             .on_connect(|from, to| ApplicationMessage::EdgeConnected { from, to })
             .on_disconnect(|from, to| ApplicationMessage::EdgeDisconnected { from, to })
             .on_move(|node_index, new_position| ApplicationMessage::NodeMoved {
@@ -1148,23 +1170,19 @@ impl Application {
             };
 
             // Apply computed style to workflow nodes only (not to input/config nodes)
-            // Only use push_node_config if there are actual overrides
-            if matches!(node_type, NodeType::Workflow(_)) && self.computed_style.has_node_overrides()
-            {
-                ng.push_node_config(*position, element, self.computed_style.to_node_config());
+            // Merge per-node config with defaults (per-node takes priority)
+            if matches!(node_type, NodeType::Workflow(_)) {
+                let config = self.computed_style.to_node_config().merge(&node_defaults);
+                ng.push_node_styled(*position, element, config);
             } else {
-                ng.push_node(*position, element);
+                ng.push_node_styled(*position, element, node_defaults.clone());
             }
         }
 
-        // Add stored edges with optional computed style
-        let edge_style = self.computed_style.to_edge_style();
+        // Add stored edges with computed config
+        let edge_config = self.computed_style.to_edge_config();
         for (from, to) in &self.edges {
-            if let Some(ref style) = edge_style {
-                ng.push_edge_styled(*from, *to, style.clone());
-            } else {
-                ng.push_edge(*from, *to);
-            }
+            ng.push_edge_styled(*from, *to, edge_config.clone());
         }
 
         let graph_view: iced::Element<'_, ApplicationMessage> = ng.into();

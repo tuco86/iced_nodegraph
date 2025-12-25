@@ -645,6 +645,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "demo_clip"
+version = "0.1.0"
+dependencies = [
+ "iced",
+]
+
+[[package]]
 name = "demo_hello_world"
 version = "0.1.0"
 dependencies = [

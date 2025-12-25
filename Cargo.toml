@@ -6,6 +6,7 @@ members = [
     "demos/interaction",
     "demos/500_nodes",
     "demos/shader_editor",
+    "demos/clip",
 ]
 resolver = "2"
 

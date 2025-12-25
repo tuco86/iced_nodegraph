@@ -466,7 +466,8 @@ impl Application {
             .selection(&self.graph_selection);
 
         for (position, name, style) in &self.nodes {
-            ng.push_node_styled(*position, styled_node(name, style, theme), style.clone());
+            // Convert NodeStyle to NodeConfig for API
+            ng.push_node_styled(*position, styled_node(name, style, theme), style.clone().into());
         }
 
         for (from, to) in &self.edges {

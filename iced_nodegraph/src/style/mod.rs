@@ -3,38 +3,33 @@
 //! This module provides style types for customizing the appearance of nodes,
 //! edges, and the overall graph canvas.
 //!
-//! ## Cascading Style System
+//! ## Config vs Style
 //!
-//! The style system supports a three-layer cascade for flexible customization:
-//!
-//! 1. **Theme Defaults** - Base styles derived from `iced::Theme`
-//! 2. **Graph Defaults** - Graph-wide overrides via [`GraphDefaults`]
-//! 3. **Item Config** - Per-item overrides via [`NodeConfig`], [`EdgeConfig`], etc.
+//! - **Config types** (`NodeConfig`, `EdgeConfig`, etc.) use `Option<T>` fields
+//!   for partial overrides. Use `merge()` to combine configs.
+//! - **Style types** (`NodeStyle`, `EdgeStyle`, etc.) have concrete values and
+//!   are resolved from Config + Theme at render time via `from_theme()`.
 //!
 //! ```rust
-//! use iced_nodegraph::style::{GraphDefaults, NodeConfig, EdgeConfig};
+//! use iced_nodegraph::style::NodeConfig;
+//! use iced::Color;
 //!
-//! let defaults = GraphDefaults::new()
-//!     .node(NodeConfig::new()
-//!         .corner_radius(10.0)
-//!         .opacity(0.8))
-//!     .edge(EdgeConfig::new()
-//!         .thickness(3.0));
+//! // Define project-wide defaults
+//! let my_defaults = NodeConfig::new().corner_radius(10.0).opacity(0.9);
+//!
+//! // Create specific config that inherits from defaults
+//! let special = NodeConfig::new().fill_color(Color::from_rgb(1.0, 0.0, 0.0));
+//! let merged = special.merge(&my_defaults);
+//!
+//! // Use with push_node_styled(), theme fills unset fields at render time
 //! ```
 
 use iced::{Color, Theme};
 
-// Submodules for cascading style system
-mod cascade;
 mod config;
-mod resolver;
-mod theme_defaults;
 
-// Re-export cascading style types
-pub use cascade::Cascade;
+// Re-export config types
 pub use config::{EdgeConfig, GraphConfig, NodeConfig, PinConfig, SelectionConfig, ShadowConfig};
-pub use resolver::{GraphDefaults, StyleResolver, resolve_node_style};
-pub use theme_defaults::ThemeDefaults;
 
 /// Shape of a pin indicator.
 ///
@@ -167,6 +162,38 @@ impl PinStyle {
             border_width: 1.0,
         }
     }
+
+    /// Creates a pin style derived from an iced Theme.
+    ///
+    /// This is the base style for pins when no custom config is provided.
+    pub fn from_theme(theme: &Theme) -> Self {
+        let palette = theme.extended_palette();
+        let secondary = palette.secondary.base.color;
+        let text = palette.background.base.text;
+
+        if palette.is_dark {
+            Self {
+                color: Color::from_rgba(secondary.r, secondary.g, secondary.b, 0.7),
+                radius: 6.0,
+                shape: PinShape::Circle,
+                border_color: None,
+                border_width: 1.0,
+            }
+        } else {
+            Self {
+                color: Color::from_rgba(
+                    secondary.r * 0.7,
+                    secondary.g * 0.7,
+                    secondary.b * 0.7,
+                    0.8,
+                ),
+                radius: 6.0,
+                shape: PinShape::Circle,
+                border_color: Some(Color::from_rgba(text.r, text.g, text.b, 0.3)),
+                border_width: 1.0,
+            }
+        }
+    }
 }
 
 /// Shadow configuration for nodes.
@@ -276,7 +303,7 @@ impl Default for NodeStyle {
             fill_color: Color::from_rgb(0.14, 0.14, 0.16),
             border_color: Color::from_rgb(0.20, 0.20, 0.22),
             border_width: 1.0,
-            corner_radius: 5.0,
+            corner_radius: 8.0,
             opacity: 0.75,
             shadow: Some(ShadowStyle::subtle()),
         }
@@ -502,6 +529,71 @@ impl NodeStyle {
             corner_radius: 3.0,
             opacity: 0.60,
             shadow: None,
+        }
+    }
+
+    /// Creates a node style derived from an iced Theme.
+    ///
+    /// This is the base style for nodes when no custom config is provided.
+    pub fn from_theme(theme: &Theme) -> Self {
+        let palette = theme.extended_palette();
+        let bg = palette.background.base.color;
+        let bg_weak = palette.background.weak.color;
+
+        if palette.is_dark {
+            // Derive node fill from background (slightly lighter)
+            let node_fill = Color::from_rgba(
+                bg.r + (bg_weak.r - bg.r) * 0.3,
+                bg.g + (bg_weak.g - bg.g) * 0.3,
+                bg.b + (bg_weak.b - bg.b) * 0.3,
+                1.0,
+            );
+
+            // Derive border from weak background
+            let node_border = Color::from_rgba(
+                bg_weak.r * 1.2,
+                bg_weak.g * 1.2,
+                bg_weak.b * 1.2,
+                0.8,
+            );
+
+            Self {
+                fill_color: node_fill,
+                border_color: node_border,
+                border_width: 1.0,
+                corner_radius: 5.0,
+                opacity: 0.75,
+                shadow: Some(ShadowStyle::subtle()),
+            }
+        } else {
+            // Derive node fill from background (slightly darker for contrast)
+            let node_fill = Color::from_rgba(
+                bg.r - (bg.r - bg_weak.r) * 0.15,
+                bg.g - (bg.g - bg_weak.g) * 0.15,
+                bg.b - (bg.b - bg_weak.b) * 0.15,
+                1.0,
+            );
+
+            // Derive border from weak background
+            let node_border = Color::from_rgba(
+                bg_weak.r * 0.9,
+                bg_weak.g * 0.9,
+                bg_weak.b * 0.9,
+                0.9,
+            );
+
+            Self {
+                fill_color: node_fill,
+                border_color: node_border,
+                border_width: 1.0,
+                corner_radius: 5.0,
+                opacity: 0.85,
+                shadow: Some(ShadowStyle {
+                    offset: (2.0, 2.0),
+                    blur_radius: 6.0,
+                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.12),
+                }),
+            }
         }
     }
 }
@@ -871,6 +963,22 @@ impl EdgeStyle {
     /// Gets the flow speed (0.0 if no animation).
     pub fn flow_speed(&self) -> f32 {
         self.animation.map(|a| a.flow_speed).unwrap_or(0.0)
+    }
+
+    /// Creates an edge style derived from an iced Theme.
+    ///
+    /// This is the base style for edges when no custom config is provided.
+    /// Uses transparent colors to inherit from pin colors.
+    pub fn from_theme(_theme: &Theme) -> Self {
+        // Edge defaults are theme-independent: use pin colors for gradient
+        Self {
+            start_color: Color::TRANSPARENT,
+            end_color: Color::TRANSPARENT,
+            thickness: 2.0,
+            edge_type: EdgeType::Bezier,
+            dash_pattern: None,
+            animation: None,
+        }
     }
 }
 

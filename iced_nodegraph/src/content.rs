@@ -46,7 +46,7 @@ pub struct NodeContentStyle {
 }
 
 /// Default corner radius for nodes (used when no resolved style is provided)
-const DEFAULT_CORNER_RADIUS: f32 = 5.0;
+const DEFAULT_CORNER_RADIUS: f32 = 8.0;
 /// Default border width for nodes (used when no resolved style is provided)
 const DEFAULT_BORDER_WIDTH: f32 = 1.0;
 

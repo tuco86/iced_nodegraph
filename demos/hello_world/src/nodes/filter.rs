@@ -3,16 +3,22 @@ use iced::{
     alignment::Horizontal,
     widget::{column, container, row},
 };
-use iced_nodegraph::{NodeContentStyle, pin};
+use iced_nodegraph::{NodeContentStyle, NodeStyle, pin};
 
 use super::{colors, node_title_bar};
 
 /// Filter Node - Input + output
+///
+/// Uses the default NodeStyle geometry to ensure the title bar corners
+/// match the actual node's rounded corners.
 pub fn filter_node<'a, Message>(theme: &'a iced::Theme) -> iced::Element<'a, Message>
 where
     Message: Clone + 'a,
 {
-    let style = NodeContentStyle::process(theme);
+    // Use actual NodeStyle defaults for precise corner calculation
+    let node_defaults = NodeStyle::default();
+    let style = NodeContentStyle::process(theme)
+        .with_geometry(node_defaults.corner_radius, node_defaults.border_width);
 
     let pin_list = row![
         container(pin!(

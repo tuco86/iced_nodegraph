@@ -1,4 +1,4 @@
-use iced::{Element, Event, Length, Point, Rectangle, Size, Vector, keyboard};
+use iced::{Element, Event, Length, Point, Rectangle, Size, Theme, Vector, keyboard};
 use iced_widget::core::{
     Clipboard, Layout, Shell, layout, mouse, renderer,
     widget::{self, Tree, tree},
@@ -15,11 +15,63 @@ use crate::{
     PinReference, PinSide,
     node_grapgh::euclid::{IntoEuclid, ScreenPoint, WorldPoint},
     node_pin::NodePinState,
-    style::StyleResolver,
+    style::{EdgeConfig, EdgeStyle, GraphStyle, NodeConfig, NodeStyle, PinStyle},
 };
 
 // Click detection threshold (in world-space pixels)
 const PIN_CLICK_THRESHOLD: f32 = 8.0;
+
+/// Resolves a NodeConfig to a complete NodeStyle using theme defaults.
+fn resolve_node_style(config: &NodeConfig, theme: &Theme) -> NodeStyle {
+    let base = NodeStyle::from_theme(theme);
+    NodeStyle {
+        fill_color: config.fill_color.unwrap_or(base.fill_color),
+        border_color: config.border_color.unwrap_or(base.border_color),
+        border_width: config.border_width.unwrap_or(base.border_width),
+        corner_radius: config.corner_radius.unwrap_or(base.corner_radius),
+        opacity: config.opacity.unwrap_or(base.opacity),
+        shadow: config
+            .shadow
+            .as_ref()
+            .filter(|sc| sc.enabled.unwrap_or(true)) // Only if enabled (default true)
+            .map(|sc| crate::style::ShadowStyle {
+                offset: sc.offset.unwrap_or((4.0, 4.0)),
+                blur_radius: sc.blur_radius.unwrap_or(8.0),
+                color: sc.color.unwrap_or(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3)),
+            })
+            .or_else(|| {
+                // Fall back to base.shadow only if config.shadow is None
+                if config.shadow.is_none() {
+                    base.shadow
+                } else {
+                    None // config.shadow exists but enabled=false
+                }
+            }),
+    }
+}
+
+/// Resolves an EdgeConfig to a complete EdgeStyle using theme defaults.
+fn resolve_edge_style(config: &EdgeConfig, theme: &Theme) -> EdgeStyle {
+    let base = EdgeStyle::from_theme(theme);
+    EdgeStyle {
+        start_color: config.start_color.unwrap_or(base.start_color),
+        end_color: config.end_color.unwrap_or(base.end_color),
+        thickness: config.thickness.unwrap_or(base.thickness),
+        edge_type: config.edge_type.unwrap_or(base.edge_type),
+        dash_pattern: config.dash_pattern.clone().or(base.dash_pattern),
+        animation: config.animation.clone().or(base.animation),
+    }
+}
+
+/// Resolves a GraphStyle or uses theme defaults.
+fn resolve_graph_style(style: Option<&GraphStyle>, theme: &Theme) -> GraphStyle {
+    style.cloned().unwrap_or_else(|| GraphStyle::from_theme(theme))
+}
+
+/// Gets PinStyle from theme.
+fn resolve_pin_style(theme: &Theme) -> PinStyle {
+    PinStyle::from_theme(theme)
+}
 
 impl<Message, Renderer> iced_widget::core::Widget<Message, iced::Theme, Renderer>
     for NodeGraph<'_, Message, iced::Theme, Renderer>
@@ -100,16 +152,11 @@ where
             }
         }
 
-        // Create StyleResolver for cascading style system
-        // Theme Defaults -> Graph Defaults -> Item Config
-        // Uses iced::Theme directly for proper palette access
-        let resolver = StyleResolver::new(theme, self.graph_defaults.as_ref());
-
-        // Resolve graph-level styles through cascade
-        let resolved_graph = resolver.resolve_graph();
-        let resolved_node_defaults = resolver.resolve_node(None);
-        let resolved_edge_defaults = resolver.resolve_edge(None);
-        let resolved_pin_defaults = resolver.resolve_pin(None);
+        // Resolve styles using from_theme() + config overrides
+        let resolved_graph = resolve_graph_style(self.graph_style.as_ref(), theme);
+        let resolved_node_defaults = NodeStyle::from_theme(theme);
+        let resolved_edge_defaults = EdgeStyle::from_theme(theme);
+        let resolved_pin_defaults = resolve_pin_style(theme);
 
         // Convert resolved styles to GPU-compatible formats
         let bg_color = glam::vec4(
@@ -207,10 +254,8 @@ where
                                 }
                             }
 
-                            // Resolve node style through cascade:
-                            // Theme Defaults -> Graph Defaults -> Per-Node Config
-                            // node_style is now Option<NodeConfig> (partial overrides)
-                            let resolved = resolver.resolve_node(node_style.as_ref());
+                            // Resolve node style: config overrides theme defaults
+                            let resolved = resolve_node_style(node_style, theme);
 
                             // Extract shadow properties
                             let (shadow_offset, shadow_blur, shadow_color) =
@@ -271,15 +316,12 @@ where
                     )
                     .collect()
             },
-            // Extract edge connectivity with style resolved through cascade
+            // Extract edge connectivity with style resolved from config + theme
             edges: self
                 .edges
                 .iter()
-                .map(|(from, to, edge_style)| {
-                    // Resolve edge style through cascade:
-                    // Theme Defaults -> Graph Defaults -> Per-Edge Style
-                    let edge_config = crate::style::EdgeConfig::from(edge_style.clone());
-                    let resolved_edge = resolver.resolve_edge(Some(&edge_config));
+                .map(|(from, to, edge_config)| {
+                    let resolved_edge = resolve_edge_style(edge_config, theme);
                     EdgeData {
                         from_node: from.node_id,
                         from_pin: from.pin_id,
@@ -326,7 +368,7 @@ where
                         let is_selected = state.selected_nodes.contains(&node_index);
 
                         // Resolve node style to get border_width for clip inset
-                        let resolved = resolver.resolve_node(node_style);
+                        let resolved = resolve_node_style(node_style, theme);
                         let border_inset = if is_selected {
                             selection_border_width
                         } else {

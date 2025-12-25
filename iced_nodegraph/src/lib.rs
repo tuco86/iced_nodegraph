@@ -199,12 +199,11 @@ pub use node_grapgh::{
 };
 pub use node_pin::{NodePin, PinDirection, PinReference, PinSide, node_pin};
 pub use style::{
-    // Core style types (resolved)
+    // Style types (resolved from theme)
     DashPattern, EdgeAnimation, EdgeStyle, EdgeType, GraphStyle, NodeStyle, PinShape, PinStyle,
     STANDARD_THEMES, SelectionStyle, ShadowStyle, is_dark_theme, relative_luminance, theme_name,
-    // Cascading style system
-    Cascade, EdgeConfig, GraphConfig, GraphDefaults, NodeConfig, PinConfig, SelectionConfig,
-    ShadowConfig, StyleResolver, ThemeDefaults, resolve_node_style,
+    // Config types (partial overrides with merge())
+    EdgeConfig, GraphConfig, NodeConfig, PinConfig, SelectionConfig, ShadowConfig,
 };
 
 pub mod content;
