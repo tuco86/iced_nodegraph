@@ -26,11 +26,11 @@ where
 {
     let is_selected = value == selected;
 
-    button(
-        text(label)
-            .size(10)
-            .color(if is_selected { Color::BLACK } else { colors::TEXT_PRIMARY })
-    )
+    button(text(label).size(10).color(if is_selected {
+        Color::BLACK
+    } else {
+        colors::TEXT_PRIMARY
+    }))
     .padding([4, 8])
     .on_press(on_click)
     .style(move |_, status| {
@@ -49,17 +49,17 @@ where
                     (colors::SURFACE_ELEVATED, accent_color)
                 }
             }
-            button::Status::Pressed => {
-                (accent_color, accent_color)
-            }
-            button::Status::Disabled => {
-                (colors::SURFACE_ELEVATED, colors::BORDER_SUBTLE)
-            }
+            button::Status::Pressed => (accent_color, accent_color),
+            button::Status::Disabled => (colors::SURFACE_ELEVATED, colors::BORDER_SUBTLE),
         };
 
         button::Style {
             background: Some(bg.into()),
-            text_color: if is_selected { Color::BLACK } else { colors::TEXT_PRIMARY },
+            text_color: if is_selected {
+                Color::BLACK
+            } else {
+                colors::TEXT_PRIMARY
+            },
             border: Border {
                 color: border_color,
                 width: 1.0,
@@ -91,14 +91,40 @@ where
     let on_change4 = on_change.clone();
 
     let row1 = row![
-        pill_button("Bezier", EdgeType::Bezier, selected, on_change1(EdgeType::Bezier), accent),
-        pill_button("Line", EdgeType::Straight, selected, on_change2(EdgeType::Straight), accent),
-    ].spacing(4);
+        pill_button(
+            "Bezier",
+            EdgeType::Bezier,
+            selected,
+            on_change1(EdgeType::Bezier),
+            accent
+        ),
+        pill_button(
+            "Line",
+            EdgeType::Straight,
+            selected,
+            on_change2(EdgeType::Straight),
+            accent
+        ),
+    ]
+    .spacing(4);
 
     let row2 = row![
-        pill_button("Step", EdgeType::Step, selected, on_change3(EdgeType::Step), accent),
-        pill_button("Smooth", EdgeType::SmoothStep, selected, on_change4(EdgeType::SmoothStep), accent),
-    ].spacing(4);
+        pill_button(
+            "Step",
+            EdgeType::Step,
+            selected,
+            on_change3(EdgeType::Step),
+            accent
+        ),
+        pill_button(
+            "Smooth",
+            EdgeType::SmoothStep,
+            selected,
+            on_change4(EdgeType::SmoothStep),
+            accent
+        ),
+    ]
+    .spacing(4);
 
     let output_pin = container(pin!(
         Right,
@@ -112,14 +138,8 @@ where
 
     column![
         node_title_bar("Edge Type", style),
-        container(
-            column![
-                column![row1, row2].spacing(4),
-                output_pin,
-            ]
-            .spacing(8)
-        )
-        .padding([10, 12])
+        container(column![column![row1, row2].spacing(4), output_pin,].spacing(8))
+            .padding([10, 12])
     ]
     .width(160.0)
     .into()
@@ -144,14 +164,40 @@ where
     let on_change4 = on_change.clone();
 
     let row1 = row![
-        pill_button("Circle", PinShape::Circle, selected, on_change1(PinShape::Circle), accent),
-        pill_button("Square", PinShape::Square, selected, on_change2(PinShape::Square), accent),
-    ].spacing(4);
+        pill_button(
+            "Circle",
+            PinShape::Circle,
+            selected,
+            on_change1(PinShape::Circle),
+            accent
+        ),
+        pill_button(
+            "Square",
+            PinShape::Square,
+            selected,
+            on_change2(PinShape::Square),
+            accent
+        ),
+    ]
+    .spacing(4);
 
     let row2 = row![
-        pill_button("Diamond", PinShape::Diamond, selected, on_change3(PinShape::Diamond), accent),
-        pill_button("Triangle", PinShape::Triangle, selected, on_change4(PinShape::Triangle), accent),
-    ].spacing(4);
+        pill_button(
+            "Diamond",
+            PinShape::Diamond,
+            selected,
+            on_change3(PinShape::Diamond),
+            accent
+        ),
+        pill_button(
+            "Triangle",
+            PinShape::Triangle,
+            selected,
+            on_change4(PinShape::Triangle),
+            accent
+        ),
+    ]
+    .spacing(4);
 
     let output_pin = container(pin!(
         Right,
@@ -165,14 +211,8 @@ where
 
     column![
         node_title_bar("Pin Shape", style),
-        container(
-            column![
-                column![row1, row2].spacing(4),
-                output_pin,
-            ]
-            .spacing(8)
-        )
-        .padding([10, 12])
+        container(column![column![row1, row2].spacing(4), output_pin,].spacing(8))
+            .padding([10, 12])
     ]
     .width(160.0)
     .into()

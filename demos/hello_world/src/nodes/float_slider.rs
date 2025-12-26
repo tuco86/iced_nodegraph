@@ -3,7 +3,10 @@
 //! Outputs a configurable float value via slider.
 //! Industrial Precision design: clean track, responsive handle.
 
-use iced::{Color, Length, widget::{column, container, row, slider, text}};
+use iced::{
+    Color, Length,
+    widget::{column, container, row, slider, text},
+};
 use iced_nodegraph::{NodeContentStyle, pin};
 
 use super::{colors, node_title_bar};
@@ -58,10 +61,7 @@ where
             };
             slider::Style {
                 rail: slider::Rail {
-                    backgrounds: (
-                        colors::PIN_NUMBER.into(),
-                        colors::SURFACE_ELEVATED.into(),
-                    ),
+                    backgrounds: (colors::PIN_NUMBER.into(), colors::SURFACE_ELEVATED.into()),
                     width: 6.0,
                     border: iced::Border {
                         radius: 3.0.into(),
@@ -78,7 +78,13 @@ where
         });
 
     // Output pin
-    let output_pin = pin!(Right, text("value").size(10), Output, "float", colors::PIN_NUMBER);
+    let output_pin = pin!(
+        Right,
+        text("value").size(10),
+        Output,
+        "float",
+        colors::PIN_NUMBER
+    );
 
     // Use border_width from style for padding
     let border_width = style.border_width;
@@ -93,8 +99,10 @@ where
                 container(output_pin)
                     .width(Length::Fill)
                     .align_x(iced::alignment::Horizontal::Right),
-            ].spacing(6)
-        ).padding([10, 12 + border_width as u16])
+            ]
+            .spacing(6)
+        )
+        .padding([10, 12 + border_width as u16])
     ]
     .width(180.0)
     .into()

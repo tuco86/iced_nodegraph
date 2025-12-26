@@ -1,6 +1,6 @@
 use iced::{
-    Border, Color, Element, Length, Padding, Task, Theme,
     widget::{column, container, text},
+    Border, Color, Element, Length, Padding, Task, Theme,
 };
 
 fn main() -> iced::Result {

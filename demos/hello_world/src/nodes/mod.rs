@@ -13,9 +13,8 @@ pub use bool_toggle::{BoolToggleConfig, bool_toggle_node};
 pub use calendar::calendar_node;
 pub use color_picker::{color_picker_node, color_preset_node};
 pub use config::{
-    EdgeConfigInputs, NodeConfigInputs, PinConfigInputs, ShadowConfigInputs,
-    apply_to_graph_node, apply_to_node_node, edge_config_node, node_config_node, pin_config_node,
-    shadow_config_node,
+    EdgeConfigInputs, NodeConfigInputs, PinConfigInputs, ShadowConfigInputs, apply_to_graph_node,
+    apply_to_node_node, edge_config_node, node_config_node, pin_config_node, shadow_config_node,
 };
 pub use email_parser::email_parser_node;
 pub use email_trigger::email_trigger_node;

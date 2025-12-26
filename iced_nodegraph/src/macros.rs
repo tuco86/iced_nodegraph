@@ -95,10 +95,8 @@ macro_rules! node_graph {
 macro_rules! node {
     // Basic: graph, position, content
     ($graph:expr, ($x:expr, $y:expr), $content:expr) => {{
-        let node_id = $graph.push_node_returning(
-            $crate::iced::Point::new($x as f32, $y as f32),
-            $content,
-        );
+        let node_id =
+            $graph.push_node_returning($crate::iced::Point::new($x as f32, $y as f32), $content);
         $crate::NodeHandle::new(node_id)
     }};
 

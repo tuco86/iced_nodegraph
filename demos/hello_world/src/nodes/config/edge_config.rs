@@ -52,17 +52,32 @@ where
 
     // Config row: input left, output right
     let config_row = row![
-        pin!(Left, text("config").size(10), Input, "edge_config", colors::PIN_CONFIG),
+        pin!(
+            Left,
+            text("config").size(10),
+            Input,
+            "edge_config",
+            colors::PIN_CONFIG
+        ),
         container(text("")).width(Length::Fill),
-        pin!(Right, text("config").size(10), Output, "edge_config", colors::PIN_CONFIG),
-    ].align_y(iced::Alignment::Center);
+        pin!(
+            Right,
+            text("config").size(10),
+            Output,
+            "edge_config",
+            colors::PIN_CONFIG
+        ),
+    ]
+    .align_y(iced::Alignment::Center);
 
     // Separator line
     let separator = container(text(""))
         .width(Length::Fill)
         .height(1)
         .style(|_: &_| container::Style {
-            background: Some(iced::Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.1))),
+            background: Some(iced::Background::Color(Color::from_rgba(
+                1.0, 1.0, 1.0, 0.1,
+            ))),
             ..Default::default()
         });
 
@@ -85,9 +100,18 @@ where
         text("--").size(9).into()
     };
     let start_row = row![
-        pin!(Left, text("start").size(10), Input, "color", colors::PIN_COLOR),
-        container(start_display).width(Length::Fill).align_x(Horizontal::Right),
-    ].align_y(iced::Alignment::Center);
+        pin!(
+            Left,
+            text("start").size(10),
+            Input,
+            "color",
+            colors::PIN_COLOR
+        ),
+        container(start_display)
+            .width(Length::Fill)
+            .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center);
 
     // End color row
     let end_display: iced::Element<'a, Message> = if let Some(c) = result.end_color {
@@ -108,16 +132,40 @@ where
         text("--").size(9).into()
     };
     let end_row = row![
-        pin!(Left, text("end").size(10), Input, "color", colors::PIN_COLOR),
-        container(end_display).width(Length::Fill).align_x(Horizontal::Right),
-    ].align_y(iced::Alignment::Center);
+        pin!(
+            Left,
+            text("end").size(10),
+            Input,
+            "color",
+            colors::PIN_COLOR
+        ),
+        container(end_display)
+            .width(Length::Fill)
+            .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center);
 
     // Thickness row
     let thick_row = row![
-        pin!(Left, text("thick").size(10), Input, "float", colors::PIN_NUMBER),
-        container(text(result.thickness.map_or("--".to_string(), |v| format!("{:.1}", v))).size(9))
-            .width(Length::Fill).align_x(Horizontal::Right),
-    ].align_y(iced::Alignment::Center);
+        pin!(
+            Left,
+            text("thick").size(10),
+            Input,
+            "float",
+            colors::PIN_NUMBER
+        ),
+        container(
+            text(
+                result
+                    .thickness
+                    .map_or("--".to_string(), |v| format!("{:.1}", v))
+            )
+            .size(9)
+        )
+        .width(Length::Fill)
+        .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center);
 
     // Edge type row
     let edge_type_label = match result.edge_type {
@@ -128,18 +176,23 @@ where
         None => "--",
     };
     let type_row = row![
-        pin!(Left, text("type").size(10), Input, "edge_type", colors::PIN_ANY),
-        container(text(edge_type_label).size(9)).width(Length::Fill).align_x(Horizontal::Right),
-    ].align_y(iced::Alignment::Center);
+        pin!(
+            Left,
+            text("type").size(10),
+            Input,
+            "edge_type",
+            colors::PIN_ANY
+        ),
+        container(text(edge_type_label).size(9))
+            .width(Length::Fill)
+            .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center);
 
     let content = column![
-        config_row,
-        separator,
-        start_row,
-        end_row,
-        thick_row,
-        type_row,
-    ].spacing(4);
+        config_row, separator, start_row, end_row, thick_row, type_row,
+    ]
+    .spacing(4);
 
     column![
         node_title_bar("Edge Config", style),

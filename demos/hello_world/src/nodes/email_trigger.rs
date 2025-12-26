@@ -10,14 +10,7 @@ where
 {
     let style = NodeContentStyle::input(theme);
 
-    let pin_list = column![pin!(
-        Right,
-        "on email",
-        Output,
-        "email",
-        colors::PIN_EMAIL
-    ),]
-    .spacing(4);
+    let pin_list = column![pin!(Right, "on email", Output, "email", colors::PIN_EMAIL),].spacing(4);
 
     column![
         node_title_bar("Email Trigger", style),

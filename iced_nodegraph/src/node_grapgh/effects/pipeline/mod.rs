@@ -5,10 +5,10 @@ use iced::{
     wgpu::{
         BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
         BindGroupLayoutEntry, BindingResource, BindingType, BlendState, Buffer, BufferBindingType,
-        BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites, Device,
-        FragmentState, FrontFace, MultisampleState, PipelineCompilationOptions,
-        PipelineLayout, PipelineLayoutDescriptor, PolygonMode, PrimitiveState, PrimitiveTopology,
-        Queue, RenderPipeline, RenderPipelineDescriptor, ShaderModule, ShaderModuleDescriptor,
+        BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites, Device, FragmentState,
+        FrontFace, MultisampleState, PipelineCompilationOptions, PipelineLayout,
+        PipelineLayoutDescriptor, PolygonMode, PrimitiveState, PrimitiveTopology, Queue,
+        RenderPipeline, RenderPipelineDescriptor, ShaderModule, ShaderModuleDescriptor,
         ShaderSource, ShaderStages, TextureFormat, VertexState,
     },
 };
@@ -30,7 +30,7 @@ pub struct Pipeline {
 
     pipeline_background: RenderPipeline,
     pipeline_edges: RenderPipeline,
-    pipeline_nodes_fill: RenderPipeline,  // Background: node fill + shadow
+    pipeline_nodes_fill: RenderPipeline, // Background: node fill + shadow
     pipeline_nodes_border: RenderPipeline, // Foreground: node border only
     pipeline_pins: RenderPipeline,
     pipeline_dragging: RenderPipeline,
@@ -121,10 +121,22 @@ impl Pipeline {
             device, format, &layout, &module, "vs_edge", "fs_edge", "edges",
         );
         let pipeline_nodes_fill = create_pipeline_custom(
-            device, format, &layout, &module, "vs_node", "fs_node_fill", "nodes_fill",
+            device,
+            format,
+            &layout,
+            &module,
+            "vs_node",
+            "fs_node_fill",
+            "nodes_fill",
         );
         let pipeline_nodes_border = create_pipeline_custom(
-            device, format, &layout, &module, "vs_node", "fs_node", "nodes_border",
+            device,
+            format,
+            &layout,
+            &module,
+            "vs_node",
+            "fs_node",
+            "nodes_border",
         );
         let pipeline_pins =
             create_pipeline_custom(device, format, &layout, &module, "vs_pin", "fs_pin", "pins");
@@ -262,7 +274,8 @@ impl Pipeline {
 
         // Extract source pin info for valid target computation
         let source_pin_info: Option<(usize, usize, glam::Vec4, u32)> = match dragging {
-            Dragging::Edge(from_node, from_pin, _) | Dragging::EdgeOver(from_node, from_pin, _, _) => {
+            Dragging::Edge(from_node, from_pin, _)
+            | Dragging::EdgeOver(from_node, from_pin, _, _) => {
                 let pin = &nodes[*from_node].pins[*from_pin];
                 let color = glam::Vec4::new(pin.color.r, pin.color.g, pin.color.b, pin.color.a);
                 let direction = match pin.direction {
@@ -278,66 +291,77 @@ impl Pipeline {
         let num_pins = self.pins.update(
             device,
             queue,
-            nodes.iter().enumerate().flat_map(|(node_id, node)| {
-                node.pins.iter().enumerate().map(move |(pin_id, pin)| (node_id, pin_id, pin))
-            }).map(|(node_id, pin_id, pin)| {
-                use crate::node_pin::PinDirection;
-                use crate::style::PinShape;
+            nodes
+                .iter()
+                .enumerate()
+                .flat_map(|(node_id, node)| {
+                    node.pins
+                        .iter()
+                        .enumerate()
+                        .map(move |(pin_id, pin)| (node_id, pin_id, pin))
+                })
+                .map(|(node_id, pin_id, pin)| {
+                    use crate::node_pin::PinDirection;
+                    use crate::style::PinShape;
 
-                let pin_direction = match pin.direction {
-                    PinDirection::Input => 0,
-                    PinDirection::Output => 1,
-                    PinDirection::Both => 2,
-                };
-                let pin_color = glam::Vec4::new(pin.color.r, pin.color.g, pin.color.b, pin.color.a);
+                    let pin_direction = match pin.direction {
+                        PinDirection::Input => 0,
+                        PinDirection::Output => 1,
+                        PinDirection::Both => 2,
+                    };
+                    let pin_color =
+                        glam::Vec4::new(pin.color.r, pin.color.g, pin.color.b, pin.color.a);
 
-                // Compute valid target flag
-                let flags = if let Some((src_node, src_pin, src_color, src_direction)) = source_pin_info {
-                    // Check if this pin is a valid drop target:
-                    // 1. Not the source pin itself
-                    let is_source = node_id == src_node && pin_id == src_pin;
-                    // 2. Direction compatible (Input<->Output or either is Both)
-                    let direction_valid = src_direction == 2 || pin_direction == 2
-                        || (src_direction == 1 && pin_direction == 0)
-                        || (src_direction == 0 && pin_direction == 1);
-                    // 3. Type compatible (color distance < 0.1)
-                    let color_diff = ((src_color.x - pin_color.x).powi(2)
-                        + (src_color.y - pin_color.y).powi(2)
-                        + (src_color.z - pin_color.z).powi(2))
+                    // Compute valid target flag
+                    let flags = if let Some((src_node, src_pin, src_color, src_direction)) =
+                        source_pin_info
+                    {
+                        // Check if this pin is a valid drop target:
+                        // 1. Not the source pin itself
+                        let is_source = node_id == src_node && pin_id == src_pin;
+                        // 2. Direction compatible (Input<->Output or either is Both)
+                        let direction_valid = src_direction == 2
+                            || pin_direction == 2
+                            || (src_direction == 1 && pin_direction == 0)
+                            || (src_direction == 0 && pin_direction == 1);
+                        // 3. Type compatible (color distance < 0.1)
+                        let color_diff = ((src_color.x - pin_color.x).powi(2)
+                            + (src_color.y - pin_color.y).powi(2)
+                            + (src_color.z - pin_color.z).powi(2))
                         .sqrt();
-                    let type_valid = color_diff < 0.1;
+                        let type_valid = color_diff < 0.1;
 
-                    if !is_source && direction_valid && type_valid {
-                        types::PIN_FLAG_VALID_TARGET
+                        if !is_source && direction_valid && type_valid {
+                            types::PIN_FLAG_VALID_TARGET
+                        } else {
+                            0
+                        }
                     } else {
                         0
-                    }
-                } else {
-                    0
-                };
+                    };
 
-                types::Pin {
-                    position: pin.offset,
-                    color: pin_color,
-                    border_color: glam::Vec4::new(
-                        pin.border_color.r,
-                        pin.border_color.g,
-                        pin.border_color.b,
-                        pin.border_color.a,
-                    ),
-                    side: pin.side,
-                    radius: pin.radius,
-                    direction: pin_direction,
-                    shape: match pin.shape {
-                        PinShape::Circle => 0,
-                        PinShape::Square => 1,
-                        PinShape::Diamond => 2,
-                        PinShape::Triangle => 3,
-                    },
-                    border_width: pin.border_width,
-                    flags,
-                }
-            }),
+                    types::Pin {
+                        position: pin.offset,
+                        color: pin_color,
+                        border_color: glam::Vec4::new(
+                            pin.border_color.r,
+                            pin.border_color.g,
+                            pin.border_color.b,
+                            pin.border_color.a,
+                        ),
+                        side: pin.side,
+                        radius: pin.radius,
+                        direction: pin_direction,
+                        shape: match pin.shape {
+                            PinShape::Circle => 0,
+                            PinShape::Square => 1,
+                            PinShape::Diamond => 2,
+                            PinShape::Triangle => 3,
+                        },
+                        border_width: pin.border_width,
+                        flags,
+                    }
+                }),
         );
 
         // Extract pending cuts for edge cutting highlight

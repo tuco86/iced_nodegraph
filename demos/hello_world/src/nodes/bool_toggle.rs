@@ -53,7 +53,11 @@ where
     // State indicator text
     let state_text = text(if value { "ON" } else { "OFF" })
         .size(10)
-        .color(if value { colors::PIN_BOOL } else { colors::TEXT_MUTED });
+        .color(if value {
+            colors::PIN_BOOL
+        } else {
+            colors::TEXT_MUTED
+        });
 
     // Modern switch toggle with Industrial Precision styling
     let toggle_widget = toggler(value)
@@ -71,7 +75,11 @@ where
                     if is_on {
                         (colors::PIN_BOOL, Color::WHITE, colors::PIN_BOOL)
                     } else {
-                        (colors::SURFACE_ELEVATED, Color::WHITE, colors::BORDER_SUBTLE)
+                        (
+                            colors::SURFACE_ELEVATED,
+                            Color::WHITE,
+                            colors::BORDER_SUBTLE,
+                        )
                     }
                 }
                 toggler::Status::Hovered { .. } => {
@@ -81,15 +89,21 @@ where
                         (colors::BORDER_SUBTLE, Color::WHITE, colors::TEXT_MUTED)
                     }
                 }
-                toggler::Status::Disabled { .. } => {
-                    (colors::SURFACE_ELEVATED, colors::TEXT_MUTED, colors::BORDER_SUBTLE)
-                }
+                toggler::Status::Disabled { .. } => (
+                    colors::SURFACE_ELEVATED,
+                    colors::TEXT_MUTED,
+                    colors::BORDER_SUBTLE,
+                ),
             };
 
             toggler::Style {
                 background: background.into(),
                 background_border_width: 1.0,
-                background_border_color: if is_on { colors::PIN_BOOL } else { colors::BORDER_SUBTLE },
+                background_border_color: if is_on {
+                    colors::PIN_BOOL
+                } else {
+                    colors::BORDER_SUBTLE
+                },
                 foreground: foreground.into(),
                 foreground_border_width: 2.0,
                 foreground_border_color: foreground_border,
@@ -115,9 +129,13 @@ where
         container(
             column![
                 row![
-                    text(&config.toggle_label).size(11).color(colors::TEXT_PRIMARY),
+                    text(&config.toggle_label)
+                        .size(11)
+                        .color(colors::TEXT_PRIMARY),
                     container(
-                        row![toggle_widget, state_text].spacing(6).align_y(iced::Alignment::Center)
+                        row![toggle_widget, state_text]
+                            .spacing(6)
+                            .align_y(iced::Alignment::Center)
                     )
                     .width(Length::Fill)
                     .align_x(Horizontal::Right),

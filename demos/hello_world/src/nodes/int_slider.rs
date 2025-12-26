@@ -63,15 +63,9 @@ where
     .step(1.0)
     .width(Length::Fill);
 
-    let output_pin = container(pin!(
-        Right,
-        "value",
-        Output,
-        "int",
-        colors::PIN_NUMBER
-    ))
-    .width(Length::Fill)
-    .align_x(Horizontal::Right);
+    let output_pin = container(pin!(Right, "value", Output, "int", colors::PIN_NUMBER))
+        .width(Length::Fill)
+        .align_x(Horizontal::Right);
 
     column![
         node_title_bar(&config.label, style),

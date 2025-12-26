@@ -54,17 +54,32 @@ where
 
     // Config row: input left, output right
     let config_row = row![
-        pin!(Left, text("config").size(10), Input, "node_config", colors::PIN_CONFIG),
+        pin!(
+            Left,
+            text("config").size(10),
+            Input,
+            "node_config",
+            colors::PIN_CONFIG
+        ),
         container(text("")).width(Length::Fill),
-        pin!(Right, text("config").size(10), Output, "node_config", colors::PIN_CONFIG),
-    ].align_y(iced::Alignment::Center);
+        pin!(
+            Right,
+            text("config").size(10),
+            Output,
+            "node_config",
+            colors::PIN_CONFIG
+        ),
+    ]
+    .align_y(iced::Alignment::Center);
 
     // Separator line
     let separator = container(text(""))
         .width(Length::Fill)
         .height(1)
         .style(|_: &_| container::Style {
-            background: Some(iced::Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.1))),
+            background: Some(iced::Background::Color(Color::from_rgba(
+                1.0, 1.0, 1.0, 0.1,
+            ))),
             ..Default::default()
         });
 
@@ -87,9 +102,18 @@ where
         text("--").size(9).into()
     };
     let fill_row = row![
-        pin!(Left, text("fill").size(10), Input, "color", colors::PIN_COLOR),
-        container(fill_display).width(Length::Fill).align_x(Horizontal::Right),
-    ].align_y(iced::Alignment::Center);
+        pin!(
+            Left,
+            text("fill").size(10),
+            Input,
+            "color",
+            colors::PIN_COLOR
+        ),
+        container(fill_display)
+            .width(Length::Fill)
+            .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center);
 
     // Border color row
     let border_display: iced::Element<'a, Message> = if let Some(c) = result.border_color {
@@ -110,37 +134,99 @@ where
         text("--").size(9).into()
     };
     let border_row = row![
-        pin!(Left, text("border").size(10), Input, "color", colors::PIN_COLOR),
-        container(border_display).width(Length::Fill).align_x(Horizontal::Right),
-    ].align_y(iced::Alignment::Center);
+        pin!(
+            Left,
+            text("border").size(10),
+            Input,
+            "color",
+            colors::PIN_COLOR
+        ),
+        container(border_display)
+            .width(Length::Fill)
+            .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center);
 
     // Border width row
     let width_row = row![
-        pin!(Left, text("width").size(10), Input, "float", colors::PIN_NUMBER),
-        container(text(result.border_width.map_or("--".to_string(), |v| format!("{:.1}", v))).size(9))
-            .width(Length::Fill).align_x(Horizontal::Right),
-    ].align_y(iced::Alignment::Center);
+        pin!(
+            Left,
+            text("width").size(10),
+            Input,
+            "float",
+            colors::PIN_NUMBER
+        ),
+        container(
+            text(
+                result
+                    .border_width
+                    .map_or("--".to_string(), |v| format!("{:.1}", v))
+            )
+            .size(9)
+        )
+        .width(Length::Fill)
+        .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center);
 
     // Corner radius row
     let radius_row = row![
-        pin!(Left, text("radius").size(10), Input, "float", colors::PIN_NUMBER),
-        container(text(result.corner_radius.map_or("--".to_string(), |v| format!("{:.1}", v))).size(9))
-            .width(Length::Fill).align_x(Horizontal::Right),
-    ].align_y(iced::Alignment::Center);
+        pin!(
+            Left,
+            text("radius").size(10),
+            Input,
+            "float",
+            colors::PIN_NUMBER
+        ),
+        container(
+            text(
+                result
+                    .corner_radius
+                    .map_or("--".to_string(), |v| format!("{:.1}", v))
+            )
+            .size(9)
+        )
+        .width(Length::Fill)
+        .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center);
 
     // Opacity row
     let opacity_row = row![
-        pin!(Left, text("opacity").size(10), Input, "float", colors::PIN_NUMBER),
-        container(text(result.opacity.map_or("--".to_string(), |v| format!("{:.0}%", v * 100.0))).size(9))
-            .width(Length::Fill).align_x(Horizontal::Right),
-    ].align_y(iced::Alignment::Center);
+        pin!(
+            Left,
+            text("opacity").size(10),
+            Input,
+            "float",
+            colors::PIN_NUMBER
+        ),
+        container(
+            text(
+                result
+                    .opacity
+                    .map_or("--".to_string(), |v| format!("{:.0}%", v * 100.0))
+            )
+            .size(9)
+        )
+        .width(Length::Fill)
+        .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center);
 
     // Shadow row
     let shadow_row = row![
-        pin!(Left, text("shadow").size(10), Input, "shadow_config", colors::PIN_CONFIG),
+        pin!(
+            Left,
+            text("shadow").size(10),
+            Input,
+            "shadow_config",
+            colors::PIN_CONFIG
+        ),
         container(text(if result.shadow.is_some() { "set" } else { "--" }).size(9))
-            .width(Length::Fill).align_x(Horizontal::Right),
-    ].align_y(iced::Alignment::Center);
+            .width(Length::Fill)
+            .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center);
 
     let content = column![
         config_row,
@@ -151,7 +237,8 @@ where
         radius_row,
         opacity_row,
         shadow_row,
-    ].spacing(4);
+    ]
+    .spacing(4);
 
     column![
         node_title_bar("Node Config", style),

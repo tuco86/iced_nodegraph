@@ -11,27 +11,9 @@ where
     let style = NodeContentStyle::output(theme);
 
     let pin_list = column![
-        pin!(
-            Left,
-            "datetime",
-            Input,
-            "datetime",
-            colors::PIN_DATETIME
-        ),
-        pin!(
-            Left,
-            "title",
-            Input,
-            "string",
-            colors::PIN_STRING
-        ),
-        pin!(
-            Left,
-            "description",
-            Input,
-            "string",
-            colors::PIN_STRING
-        ),
+        pin!(Left, "datetime", Input, "datetime", colors::PIN_DATETIME),
+        pin!(Left, "title", Input, "string", colors::PIN_STRING),
+        pin!(Left, "description", Input, "string", colors::PIN_STRING),
     ]
     .spacing(4);
 

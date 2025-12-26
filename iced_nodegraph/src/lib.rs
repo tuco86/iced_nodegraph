@@ -200,10 +200,27 @@ pub use node_grapgh::{
 pub use node_pin::{NodePin, PinDirection, PinReference, PinSide, node_pin};
 pub use style::{
     // Style types (resolved from theme)
-    DashPattern, EdgeAnimation, EdgeStyle, EdgeType, GraphStyle, NodeStyle, PinShape, PinStyle,
-    STANDARD_THEMES, SelectionStyle, ShadowStyle, is_dark_theme, relative_luminance, theme_name,
+    DashPattern,
+    EdgeAnimation,
     // Config types (partial overrides with merge())
-    EdgeConfig, GraphConfig, NodeConfig, PinConfig, SelectionConfig, ShadowConfig,
+    EdgeConfig,
+    EdgeStyle,
+    EdgeType,
+    GraphConfig,
+    GraphStyle,
+    NodeConfig,
+    NodeStyle,
+    PinConfig,
+    PinShape,
+    PinStyle,
+    STANDARD_THEMES,
+    SelectionConfig,
+    SelectionStyle,
+    ShadowConfig,
+    ShadowStyle,
+    is_dark_theme,
+    relative_luminance,
+    theme_name,
 };
 
 pub mod content;

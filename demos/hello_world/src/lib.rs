@@ -39,21 +39,19 @@ use iced::{
     widget::{container, stack, text},
     window,
 };
-use iced_nodegraph::{
-    EdgeConfig, NodeConfig, PinReference, ShadowConfig,
-    node_graph,
-};
+use iced_nodegraph::{EdgeConfig, NodeConfig, PinReference, ShadowConfig, node_graph};
+use iced_nodegraph::{EdgeType, PinShape};
 use iced_palette::{
     Command, Shortcut, command, command_palette, find_matching_shortcut, focus_input,
     get_filtered_command_index, get_filtered_count, is_toggle_shortcut, navigate_down, navigate_up,
 };
-use iced_nodegraph::{EdgeType, PinShape};
 use nodes::{
     BoolToggleConfig, ConfigNodeType, EdgeConfigInputs, FloatSliderConfig, InputNodeType,
     IntSliderConfig, NodeConfigInputs, NodeType, NodeValue, PinConfigInputs, ShadowConfigInputs,
-    apply_to_graph_node, apply_to_node_node, bool_toggle_node, color_picker_node, color_preset_node,
-    edge_config_node, edge_type_selector_node, float_slider_node, int_slider_node, node,
-    node_config_node, pin_config_node, pin_shape_selector_node, shadow_config_node,
+    apply_to_graph_node, apply_to_node_node, bool_toggle_node, color_picker_node,
+    color_preset_node, edge_config_node, edge_type_selector_node, float_slider_node,
+    int_slider_node, node, node_config_node, pin_config_node, pin_shape_selector_node,
+    shadow_config_node,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -414,14 +412,18 @@ impl Application {
 
             if let (Some(from_type), Some(to_type)) = (from_node_type, to_node_type) {
                 // Handle Config → ApplyToGraph connections
-                if let (NodeType::Config(config), NodeType::Config(ConfigNodeType::ApplyToGraph { .. })) =
-                    (&from_type, &to_type)
+                if let (
+                    NodeType::Config(config),
+                    NodeType::Config(ConfigNodeType::ApplyToGraph { .. }),
+                ) = (&from_type, &to_type)
                 {
                     self.connect_config_to_apply(from.node_id, config, to.node_id, to.pin_id);
                 }
                 // Handle ApplyToGraph → Config connections (reverse)
-                if let (NodeType::Config(ConfigNodeType::ApplyToGraph { .. }), NodeType::Config(config)) =
-                    (&from_type, &to_type)
+                if let (
+                    NodeType::Config(ConfigNodeType::ApplyToGraph { .. }),
+                    NodeType::Config(config),
+                ) = (&from_type, &to_type)
                 {
                     self.connect_config_to_apply(to.node_id, config, from.node_id, from.pin_id);
                 }
@@ -1058,9 +1060,7 @@ impl Application {
 
     fn view(&self) -> iced::Element<'_, ApplicationMessage> {
         // Graph-wide node defaults - combine with per-node configs using merge()
-        let node_defaults = NodeConfig::new()
-            .corner_radius(8.0)
-            .opacity(0.88);
+        let node_defaults = NodeConfig::new().corner_radius(8.0).opacity(0.88);
 
         let mut ng = node_graph()
             .on_connect(|from, to| ApplicationMessage::EdgeConnected { from, to })
@@ -1171,12 +1171,8 @@ impl Application {
                     ConfigNodeType::ApplyToNode {
                         has_node_config,
                         target_id,
-                    } => apply_to_node_node(
-                        &self.current_theme,
-                        *has_node_config,
-                        *target_id,
-                    ),
-                }
+                    } => apply_to_node_node(&self.current_theme, *has_node_config, *target_id),
+                },
             };
 
             // Apply computed style to workflow nodes only (not to input/config nodes)

@@ -76,7 +76,8 @@ where
 /// Determines the content style based on the node's fill color.
 /// Uses the node's actual corner_radius and border_width for proper geometry.
 fn determine_content_style(style: &NodeStyle, theme: &iced::Theme) -> NodeContentStyle {
-    let base = if style.fill_color.b > style.fill_color.r && style.fill_color.b > style.fill_color.g {
+    let base = if style.fill_color.b > style.fill_color.r && style.fill_color.b > style.fill_color.g
+    {
         NodeContentStyle::input(theme)
     } else if style.fill_color.g > style.fill_color.r && style.fill_color.g > style.fill_color.b {
         NodeContentStyle::process(theme)

@@ -209,12 +209,7 @@ where
     ///
     /// Only the properties set in `config` will override theme defaults.
     /// Unset (None) properties will use `EdgeStyle::from_theme()` values.
-    pub fn push_edge_styled(
-        &mut self,
-        from: PinReference,
-        to: PinReference,
-        config: EdgeConfig,
-    ) {
+    pub fn push_edge_styled(&mut self, from: PinReference, to: PinReference, config: EdgeConfig) {
         self.edges.push((from, to, config));
     }
 

@@ -61,40 +61,100 @@ where
 
     // Config row: input left, output right
     let config_row = row![
-        pin!(Left, text("config").size(10), Input, "shadow_config", colors::PIN_CONFIG),
+        pin!(
+            Left,
+            text("config").size(10),
+            Input,
+            "shadow_config",
+            colors::PIN_CONFIG
+        ),
         container(text("")).width(Length::Fill),
-        pin!(Right, text("config").size(10), Output, "shadow_config", colors::PIN_CONFIG),
-    ].align_y(iced::Alignment::Center);
+        pin!(
+            Right,
+            text("config").size(10),
+            Output,
+            "shadow_config",
+            colors::PIN_CONFIG
+        ),
+    ]
+    .align_y(iced::Alignment::Center);
 
     // Separator line
     let separator = container(text(""))
         .width(Length::Fill)
         .height(1)
         .style(|_: &_| container::Style {
-            background: Some(iced::Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.1))),
+            background: Some(iced::Background::Color(Color::from_rgba(
+                1.0, 1.0, 1.0, 0.1,
+            ))),
             ..Default::default()
         });
 
     // Offset X row
     let offset_x_row = row![
-        pin!(Left, text("off x").size(10), Input, "float", colors::PIN_NUMBER),
-        container(text(result.offset.map_or("--".to_string(), |(x, _)| format!("{:.0}", x))).size(9))
-            .width(Length::Fill).align_x(Horizontal::Right),
-    ].align_y(iced::Alignment::Center);
+        pin!(
+            Left,
+            text("off x").size(10),
+            Input,
+            "float",
+            colors::PIN_NUMBER
+        ),
+        container(
+            text(
+                result
+                    .offset
+                    .map_or("--".to_string(), |(x, _)| format!("{:.0}", x))
+            )
+            .size(9)
+        )
+        .width(Length::Fill)
+        .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center);
 
     // Offset Y row
     let offset_y_row = row![
-        pin!(Left, text("off y").size(10), Input, "float", colors::PIN_NUMBER),
-        container(text(result.offset.map_or("--".to_string(), |(_, y)| format!("{:.0}", y))).size(9))
-            .width(Length::Fill).align_x(Horizontal::Right),
-    ].align_y(iced::Alignment::Center);
+        pin!(
+            Left,
+            text("off y").size(10),
+            Input,
+            "float",
+            colors::PIN_NUMBER
+        ),
+        container(
+            text(
+                result
+                    .offset
+                    .map_or("--".to_string(), |(_, y)| format!("{:.0}", y))
+            )
+            .size(9)
+        )
+        .width(Length::Fill)
+        .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center);
 
     // Blur radius row
     let blur_row = row![
-        pin!(Left, text("blur").size(10), Input, "float", colors::PIN_NUMBER),
-        container(text(result.blur_radius.map_or("--".to_string(), |v| format!("{:.0}", v))).size(9))
-            .width(Length::Fill).align_x(Horizontal::Right),
-    ].align_y(iced::Alignment::Center);
+        pin!(
+            Left,
+            text("blur").size(10),
+            Input,
+            "float",
+            colors::PIN_NUMBER
+        ),
+        container(
+            text(
+                result
+                    .blur_radius
+                    .map_or("--".to_string(), |v| format!("{:.0}", v))
+            )
+            .size(9)
+        )
+        .width(Length::Fill)
+        .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center);
 
     // Color row
     let color_display: iced::Element<'a, Message> = if let Some(c) = result.color {
@@ -115,9 +175,18 @@ where
         text("--").size(9).into()
     };
     let color_row = row![
-        pin!(Left, text("color").size(10), Input, "color", colors::PIN_COLOR),
-        container(color_display).width(Length::Fill).align_x(Horizontal::Right),
-    ].align_y(iced::Alignment::Center);
+        pin!(
+            Left,
+            text("color").size(10),
+            Input,
+            "color",
+            colors::PIN_COLOR
+        ),
+        container(color_display)
+            .width(Length::Fill)
+            .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center);
 
     // Enabled row
     let enabled_label = match result.enabled {
@@ -127,8 +196,11 @@ where
     };
     let enabled_row = row![
         pin!(Left, text("on").size(10), Input, "bool", colors::PIN_BOOL),
-        container(text(enabled_label).size(9)).width(Length::Fill).align_x(Horizontal::Right),
-    ].align_y(iced::Alignment::Center);
+        container(text(enabled_label).size(9))
+            .width(Length::Fill)
+            .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center);
 
     let content = column![
         config_row,
@@ -138,7 +210,8 @@ where
         blur_row,
         color_row,
         enabled_row,
-    ].spacing(4);
+    ]
+    .spacing(4);
 
     column![
         node_title_bar("Shadow Config", style),

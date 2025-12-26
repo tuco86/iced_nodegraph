@@ -37,7 +37,9 @@ fn resolve_node_style(config: &NodeConfig, theme: &Theme) -> NodeStyle {
             .map(|sc| crate::style::ShadowStyle {
                 offset: sc.offset.unwrap_or((4.0, 4.0)),
                 blur_radius: sc.blur_radius.unwrap_or(8.0),
-                color: sc.color.unwrap_or(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3)),
+                color: sc
+                    .color
+                    .unwrap_or(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3)),
             })
             .or_else(|| {
                 // Fall back to base.shadow only if config.shadow is None
@@ -65,7 +67,9 @@ fn resolve_edge_style(config: &EdgeConfig, theme: &Theme) -> EdgeStyle {
 
 /// Resolves a GraphStyle or uses theme defaults.
 fn resolve_graph_style(style: Option<&GraphStyle>, theme: &Theme) -> GraphStyle {
-    style.cloned().unwrap_or_else(|| GraphStyle::from_theme(theme))
+    style
+        .cloned()
+        .unwrap_or_else(|| GraphStyle::from_theme(theme))
 }
 
 /// Gets PinStyle from theme.
@@ -304,7 +308,9 @@ where
                                         color: pin_state.color,
                                         direction: pin_state.direction,
                                         shape: resolved_pin_defaults.shape,
-                                        border_color: resolved_pin_defaults.border_color.unwrap_or(iced::Color::TRANSPARENT),
+                                        border_color: resolved_pin_defaults
+                                            .border_color
+                                            .unwrap_or(iced::Color::TRANSPARENT),
                                         border_width: resolved_pin_defaults.border_width,
                                     })
                                     .collect(),
@@ -392,7 +398,8 @@ where
                             };
 
                         // Calculate offset for group move (all selected nodes)
-                        let group_move_offset = if let Dragging::GroupMove(origin) = state.dragging {
+                        let group_move_offset = if let Dragging::GroupMove(origin) = state.dragging
+                        {
                             if is_selected {
                                 cursor
                                     .position()
@@ -601,10 +608,7 @@ where
                     // Emit camera change event
                     if let Some(handler) = self.on_camera_change_handler() {
                         let pos = state.camera.position();
-                        shell.publish(handler(
-                            Point::new(pos.x, pos.y),
-                            state.camera.zoom(),
-                        ));
+                        shell.publish(handler(Point::new(pos.x, pos.y), state.camera.zoom()));
                     }
                 }
                 shell.capture_event();
@@ -677,46 +681,78 @@ where
                                 let cursor_position: WorldPoint = cursor_position.into_euclid();
 
                                 // Update trail and check which edges intersect with cutting line
-                                if let Dragging::EdgeCutting { ref mut trail, ref mut pending_cuts } = state.dragging {
+                                if let Dragging::EdgeCutting {
+                                    ref mut trail,
+                                    ref mut pending_cuts,
+                                } = state.dragging
+                                {
                                     trail.push(cursor_position);
 
                                     // Get cutting line: from start point to current cursor
-                                    let cut_start = trail.first().copied().unwrap_or(cursor_position);
+                                    let cut_start =
+                                        trail.first().copied().unwrap_or(cursor_position);
                                     let cut_end = cursor_position;
 
                                     // Clear and recalculate - only edges intersecting cutting line are highlighted
                                     pending_cuts.clear();
 
                                     // Check each edge for intersection with the cutting line
-                                    for (edge_idx, (from_ref, to_ref, _style)) in self.edges.iter().enumerate() {
-                                        let (from_node, from_pin) = (from_ref.node_id, from_ref.pin_id);
+                                    for (edge_idx, (from_ref, to_ref, _style)) in
+                                        self.edges.iter().enumerate()
+                                    {
+                                        let (from_node, from_pin) =
+                                            (from_ref.node_id, from_ref.pin_id);
                                         let (to_node, to_pin) = (to_ref.node_id, to_ref.pin_id);
 
                                         // Get pin positions and sides for bezier calculation
-                                        let from_pin_data = layout.children().nth(from_node).and_then(|node_layout| {
-                                            tree.children.get(from_node).and_then(|node_tree| {
-                                                find_pins(node_tree, node_layout).get(from_pin).map(|(_, state, (pos, _))| (*pos, state.side))
-                                            })
-                                        });
-                                        let to_pin_data = layout.children().nth(to_node).and_then(|node_layout| {
-                                            tree.children.get(to_node).and_then(|node_tree| {
-                                                find_pins(node_tree, node_layout).get(to_pin).map(|(_, state, (pos, _))| (*pos, state.side))
-                                            })
-                                        });
+                                        let from_pin_data = layout
+                                            .children()
+                                            .nth(from_node)
+                                            .and_then(|node_layout| {
+                                                tree.children.get(from_node).and_then(|node_tree| {
+                                                    find_pins(node_tree, node_layout)
+                                                        .get(from_pin)
+                                                        .map(|(_, state, (pos, _))| {
+                                                            (*pos, state.side)
+                                                        })
+                                                })
+                                            });
+                                        let to_pin_data = layout.children().nth(to_node).and_then(
+                                            |node_layout| {
+                                                tree.children.get(to_node).and_then(|node_tree| {
+                                                    find_pins(node_tree, node_layout)
+                                                        .get(to_pin)
+                                                        .map(|(_, state, (pos, _))| {
+                                                            (*pos, state.side)
+                                                        })
+                                                })
+                                            },
+                                        );
 
-                                        if let (Some((p0, from_side)), Some((p3, to_side))) = (from_pin_data, to_pin_data) {
+                                        if let (Some((p0, from_side)), Some((p3, to_side))) =
+                                            (from_pin_data, to_pin_data)
+                                        {
                                             // Calculate bezier control points (same as shader)
                                             let seg_len = 80.0;
                                             let dir_from = pin_side_to_direction(from_side);
                                             let dir_to = pin_side_to_direction(to_side);
-                                            let p1 = Point::new(p0.x + dir_from.0 * seg_len, p0.y + dir_from.1 * seg_len);
-                                            let p2 = Point::new(p3.x + dir_to.0 * seg_len, p3.y + dir_to.1 * seg_len);
+                                            let p1 = Point::new(
+                                                p0.x + dir_from.0 * seg_len,
+                                                p0.y + dir_from.1 * seg_len,
+                                            );
+                                            let p2 = Point::new(
+                                                p3.x + dir_to.0 * seg_len,
+                                                p3.y + dir_to.1 * seg_len,
+                                            );
 
                                             // Check if cutting line intersects this bezier edge
                                             if line_intersects_bezier(
                                                 cut_start.into_iced(),
                                                 cut_end.into_iced(),
-                                                p0, p1, p2, p3,
+                                                p0,
+                                                p1,
+                                                p2,
+                                                p3,
                                             ) {
                                                 pending_cuts.insert(edge_idx);
                                             }
@@ -738,10 +774,12 @@ where
                                             shell.publish(handler(*from_ref, *to_ref));
                                         }
                                         if let Some(handler) = self.get_on_event() {
-                                            shell.publish(handler(NodeGraphEvent::EdgeDisconnected {
-                                                from: *from_ref,
-                                                to: *to_ref,
-                                            }));
+                                            shell.publish(handler(
+                                                NodeGraphEvent::EdgeDisconnected {
+                                                    from: *from_ref,
+                                                    to: *to_ref,
+                                                },
+                                            ));
                                         }
                                     }
                                 }
@@ -757,7 +795,8 @@ where
                             if let Some(cursor_position) = screen_cursor.position() {
                                 let screen_to_world = state.camera.screen_to_world();
                                 let cursor_position: ScreenPoint = cursor_position.into_euclid();
-                                let cursor_position: WorldPoint = screen_to_world.transform_point(cursor_position);
+                                let cursor_position: WorldPoint =
+                                    screen_to_world.transform_point(cursor_position);
                                 let offset = cursor_position - origin;
                                 state.camera = state.camera.move_by(offset);
 
@@ -813,14 +852,19 @@ where
                                 let mut target_pin: Option<(usize, usize)> = None;
 
                                 // Get the source pin state for validation
-                                let from_pin_state = find_pins(&tree.children[from_node], layout.children().nth(from_node).unwrap())
-                                    .get(from_pin)
-                                    .map(|(_, state, _)| *state);
+                                let from_pin_state = find_pins(
+                                    &tree.children[from_node],
+                                    layout.children().nth(from_node).unwrap(),
+                                )
+                                .get(from_pin)
+                                .map(|(_, state, _)| *state);
 
                                 for (node_index, (node_layout, node_tree)) in
                                     layout.children().zip(&tree.children).enumerate()
                                 {
-                                    for (pin_index, pin_state, (a, b)) in find_pins(node_tree, node_layout) {
+                                    for (pin_index, pin_state, (a, b)) in
+                                        find_pins(node_tree, node_layout)
+                                    {
                                         // Pin positions are already in world space (from layout)
                                         let distance = a
                                             .distance(cursor_position)
@@ -830,7 +874,9 @@ where
                                             if node_index != from_node || pin_index != from_pin {
                                                 // Validate pin connection (direction and type compatibility)
                                                 if let Some(from_state) = from_pin_state {
-                                                    if validate_pin_connection(from_state, pin_state) {
+                                                    if validate_pin_connection(
+                                                        from_state, pin_state,
+                                                    ) {
                                                         target_pin = Some((node_index, pin_index));
                                                         break;
                                                     }
@@ -857,12 +903,8 @@ where
                                         }));
                                     }
 
-                                    state.dragging = Dragging::EdgeOver(
-                                        from_node,
-                                        from_pin,
-                                        to_node,
-                                        to_pin,
-                                    );
+                                    state.dragging =
+                                        Dragging::EdgeOver(from_node, from_pin, to_node, to_pin);
                                 }
                             }
                             shell.request_redraw();
@@ -883,14 +925,11 @@ where
                             // Check if still over the target pin, otherwise go back to Edge state
                             if let Some(cursor_position) = world_cursor.position() {
                                 let mut still_over_pin = false;
-                                if let Some((node_layout, node_tree)) = layout
-                                    .children()
-                                    .zip(&tree.children)
-                                    .nth(to_node)
+                                if let Some((node_layout, node_tree)) =
+                                    layout.children().zip(&tree.children).nth(to_node)
                                 {
-                                    if let Some((_, _, (a, b))) = find_pins(node_tree, node_layout)
-                                        .into_iter()
-                                        .nth(to_pin)
+                                    if let Some((_, _, (a, b))) =
+                                        find_pins(node_tree, node_layout).into_iter().nth(to_pin)
                                     {
                                         // Pin positions are already in world space (from layout)
                                         let distance = a
@@ -940,7 +979,8 @@ where
                         Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                             // Update the box selection end point
                             if let Some(cursor_position) = world_cursor.position() {
-                                state.dragging = Dragging::BoxSelect(start, cursor_position.into_euclid());
+                                state.dragging =
+                                    Dragging::BoxSelect(start, cursor_position.into_euclid());
                             }
                             shell.request_redraw();
                         }
@@ -962,14 +1002,16 @@ where
                                     }
                                 }
 
-
                                 // Notify selection change
-                                let selected: Vec<usize> = state.selected_nodes.iter().copied().collect();
+                                let selected: Vec<usize> =
+                                    state.selected_nodes.iter().copied().collect();
                                 if let Some(handler) = self.on_select_handler() {
                                     shell.publish(handler(selected.clone()));
                                 }
                                 if let Some(handler) = self.get_on_event() {
-                                    shell.publish(handler(NodeGraphEvent::SelectionChanged { selected }));
+                                    shell.publish(handler(NodeGraphEvent::SelectionChanged {
+                                        selected,
+                                    }));
                                 }
                             }
                             state.dragging = Dragging::None;
@@ -992,15 +1034,18 @@ where
                                 let cursor_position: WorldPoint = cursor_position.into_euclid();
                                 let offset = cursor_position - origin;
 
-
                                 // Call on_group_move handler with selected nodes and offset
-                                let node_ids: Vec<usize> = state.selected_nodes.iter().copied().collect();
+                                let node_ids: Vec<usize> =
+                                    state.selected_nodes.iter().copied().collect();
                                 let delta = offset.into_iced();
                                 if let Some(handler) = self.on_group_move_handler() {
                                     shell.publish(handler(node_ids.clone(), delta));
                                 }
                                 if let Some(handler) = self.get_on_event() {
-                                    shell.publish(handler(NodeGraphEvent::GroupMoved { node_ids, delta }));
+                                    shell.publish(handler(NodeGraphEvent::GroupMoved {
+                                        node_ids,
+                                        delta,
+                                    }));
                                 }
                             }
                             state.dragging = Dragging::None;
@@ -1080,20 +1125,32 @@ where
                                     let (from_node, from_pin) = (from_ref.node_id, from_ref.pin_id);
                                     let (to_node, to_pin) = (to_ref.node_id, to_ref.pin_id);
                                     // Get pin positions for both ends of the edge
-                                    let from_pin_pos = layout.children().nth(from_node).and_then(|node_layout| {
-                                        tree.children.get(from_node).and_then(|node_tree| {
-                                            find_pins(node_tree, node_layout).get(from_pin).map(|(_, _, (a, _))| *a)
-                                        })
-                                    });
-                                    let to_pin_pos = layout.children().nth(to_node).and_then(|node_layout| {
-                                        tree.children.get(to_node).and_then(|node_tree| {
-                                            find_pins(node_tree, node_layout).get(to_pin).map(|(_, _, (a, _))| *a)
-                                        })
-                                    });
+                                    let from_pin_pos =
+                                        layout.children().nth(from_node).and_then(|node_layout| {
+                                            tree.children.get(from_node).and_then(|node_tree| {
+                                                find_pins(node_tree, node_layout)
+                                                    .get(from_pin)
+                                                    .map(|(_, _, (a, _))| *a)
+                                            })
+                                        });
+                                    let to_pin_pos =
+                                        layout.children().nth(to_node).and_then(|node_layout| {
+                                            tree.children.get(to_node).and_then(|node_tree| {
+                                                find_pins(node_tree, node_layout)
+                                                    .get(to_pin)
+                                                    .map(|(_, _, (a, _))| *a)
+                                            })
+                                        });
 
-                                    if let (Some(from_pos), Some(to_pos)) = (from_pin_pos, to_pin_pos) {
+                                    if let (Some(from_pos), Some(to_pos)) =
+                                        (from_pin_pos, to_pin_pos)
+                                    {
                                         // Check if cursor is near the edge line (using simple distance to line segment)
-                                        let distance = point_to_line_distance(cursor_position, from_pos, to_pos);
+                                        let distance = point_to_line_distance(
+                                            cursor_position,
+                                            from_pos,
+                                            to_pos,
+                                        );
                                         const EDGE_CUT_THRESHOLD: f32 = 10.0;
 
                                         if distance < EDGE_CUT_THRESHOLD {
@@ -1101,10 +1158,12 @@ where
                                                 shell.publish(handler(*from_ref, *to_ref));
                                             }
                                             if let Some(handler) = self.get_on_event() {
-                                                shell.publish(handler(NodeGraphEvent::EdgeDisconnected {
-                                                    from: *from_ref,
-                                                    to: *to_ref,
-                                                }));
+                                                shell.publish(handler(
+                                                    NodeGraphEvent::EdgeDisconnected {
+                                                        from: *from_ref,
+                                                        to: *to_ref,
+                                                    },
+                                                ));
                                             }
                                             shell.capture_event();
                                             shell.request_redraw();
@@ -1133,25 +1192,30 @@ where
                                         // Check if this pin has existing connections
                                         // If it does, "unplug" the clicked end (like pulling a cable)
                                         for (from_ref, to_ref, _style) in &self.edges {
-                                    let (from_node, from_pin) = (from_ref.node_id, from_ref.pin_id);
-                                    let (to_node, to_pin) = (to_ref.node_id, to_ref.pin_id);
+                                            let (from_node, from_pin) =
+                                                (from_ref.node_id, from_ref.pin_id);
+                                            let (to_node, to_pin) = (to_ref.node_id, to_ref.pin_id);
                                             // If we clicked the "from" pin, unplug FROM and drag it
                                             // Keep TO pin connected, drag away from it
                                             if from_node == node_index && from_pin == pin_index {
                                                 // Disconnect the edge
-                                                if let Some(handler) = self.on_disconnect_handler() {
+                                                if let Some(handler) = self.on_disconnect_handler()
+                                                {
                                                     shell.publish(handler(*from_ref, *to_ref));
                                                 }
                                                 if let Some(handler) = self.get_on_event() {
-                                                    shell.publish(handler(NodeGraphEvent::EdgeDisconnected {
-                                                        from: *from_ref,
-                                                        to: *to_ref,
-                                                    }));
+                                                    shell.publish(handler(
+                                                        NodeGraphEvent::EdgeDisconnected {
+                                                            from: *from_ref,
+                                                            to: *to_ref,
+                                                        },
+                                                    ));
                                                 }
 
                                                 // Start dragging FROM the TO pin (the end that stays connected)
                                                 // We're now dragging back towards the TO pin
-                                                let state = tree.state.downcast_mut::<NodeGraphState>();
+                                                let state =
+                                                    tree.state.downcast_mut::<NodeGraphState>();
                                                 state.dragging = Dragging::Edge(
                                                     to_node,
                                                     to_pin,
@@ -1164,19 +1228,23 @@ where
                                             // Keep FROM pin connected, drag away from it
                                             else if to_node == node_index && to_pin == pin_index {
                                                 // Disconnect the edge
-                                                if let Some(handler) = self.on_disconnect_handler() {
+                                                if let Some(handler) = self.on_disconnect_handler()
+                                                {
                                                     shell.publish(handler(*from_ref, *to_ref));
                                                 }
                                                 if let Some(handler) = self.get_on_event() {
-                                                    shell.publish(handler(NodeGraphEvent::EdgeDisconnected {
-                                                        from: *from_ref,
-                                                        to: *to_ref,
-                                                    }));
+                                                    shell.publish(handler(
+                                                        NodeGraphEvent::EdgeDisconnected {
+                                                            from: *from_ref,
+                                                            to: *to_ref,
+                                                        },
+                                                    ));
                                                 }
 
                                                 // Start dragging FROM the FROM pin (the end that stays connected)
                                                 // We're now dragging away from the FROM pin
-                                                let state = tree.state.downcast_mut::<NodeGraphState>();
+                                                let state =
+                                                    tree.state.downcast_mut::<NodeGraphState>();
                                                 state.dragging = Dragging::Edge(
                                                     from_node,
                                                     from_pin,
@@ -1211,7 +1279,8 @@ where
                             for (node_index, node_layout) in layout.children().enumerate() {
                                 if world_cursor.is_over(node_layout.bounds()) {
                                     let state = tree.state.downcast_mut::<NodeGraphState>();
-                                    let already_selected = state.selected_nodes.contains(&node_index);
+                                    let already_selected =
+                                        state.selected_nodes.contains(&node_index);
                                     let modifiers = state.modifiers;
                                     let selection_changed;
 
@@ -1235,23 +1304,35 @@ where
                                     }
 
                                     // Get the new selection for callback
-                                    let new_selection: Vec<usize> = state.selected_nodes.iter().copied().collect();
+                                    let new_selection: Vec<usize> =
+                                        state.selected_nodes.iter().copied().collect();
 
                                     // Decide between single node drag or group move
-                                    if state.selected_nodes.len() > 1 && state.selected_nodes.contains(&node_index) {
+                                    if state.selected_nodes.len() > 1
+                                        && state.selected_nodes.contains(&node_index)
+                                    {
                                         // Multiple nodes selected, start group move
-                                        let selected: Vec<usize> = state.selected_nodes.iter().copied().collect();
-                                        state.dragging = Dragging::GroupMove(cursor_position.into_euclid());
+                                        let selected: Vec<usize> =
+                                            state.selected_nodes.iter().copied().collect();
+                                        state.dragging =
+                                            Dragging::GroupMove(cursor_position.into_euclid());
                                         // Emit drag start event for group
                                         if let Some(handler) = self.on_drag_start_handler() {
-                                            shell.publish(handler(DragInfo::Group { node_ids: selected }));
+                                            shell.publish(handler(DragInfo::Group {
+                                                node_ids: selected,
+                                            }));
                                         }
                                     } else {
                                         // Single node drag
-                                        state.dragging = Dragging::Node(node_index, cursor_position.into_euclid());
+                                        state.dragging = Dragging::Node(
+                                            node_index,
+                                            cursor_position.into_euclid(),
+                                        );
                                         // Emit drag start event for single node
                                         if let Some(handler) = self.on_drag_start_handler() {
-                                            shell.publish(handler(DragInfo::Node { node_id: node_index }));
+                                            shell.publish(handler(DragInfo::Node {
+                                                node_id: node_index,
+                                            }));
                                         }
                                     }
 
@@ -1261,7 +1342,11 @@ where
                                             shell.publish(handler(new_selection.clone()));
                                         }
                                         if let Some(handler) = self.get_on_event() {
-                                            shell.publish(handler(NodeGraphEvent::SelectionChanged { selected: new_selection }));
+                                            shell.publish(handler(
+                                                NodeGraphEvent::SelectionChanged {
+                                                    selected: new_selection,
+                                                },
+                                            ));
                                         }
                                     }
 
@@ -1306,7 +1391,10 @@ where
                         // Right-click: start graph panning
                         if let Some(cursor_position) = screen_cursor.position() {
                             let cursor_position: ScreenPoint = cursor_position.into_euclid();
-                            let cursor_position: WorldPoint = state.camera.screen_to_world().transform_point(cursor_position);
+                            let cursor_position: WorldPoint = state
+                                .camera
+                                .screen_to_world()
+                                .transform_point(cursor_position);
                             let state = tree.state.downcast_mut::<NodeGraphState>();
                             state.dragging = Dragging::Graph(cursor_position.into_euclid());
                             shell.capture_event();

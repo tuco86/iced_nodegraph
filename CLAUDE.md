@@ -2,6 +2,22 @@
 
 This document provides essential context for Claude Code when working on the iced_nodegraph project.
 
+## Post-Implementation Cleanup
+
+**Automatic (via SubagentStop hook):**
+When a subagent/task completes, `.claude/hooks/validate.sh` runs automatically:
+- `cargo fmt --all` - formats code
+- `cargo check -p iced_nodegraph` - reports compile errors
+- `cargo test -p iced_nodegraph` - reports test failures
+
+The script only outputs on errors to avoid filling context. Exit code 2 = errors shown to Claude for fixing.
+
+**Additional manual checks for releases:**
+- `cargo clippy -- -D warnings` for lints
+- `cargo doc --no-deps` for doc warnings
+
+Use the `code-reviewer` agent for reviewing significant code changes before committing.
+
 ## Git Commit Message Rules
 
 **Format**: `type(scope): summary` (Conventional Commits)
@@ -34,6 +50,30 @@ This document provides essential context for Claude Code when working on the ice
 - Use clear, technical language without informal expressions
 - Status indicators: "VERIFIED", "TESTED", "INCOMPLETE" instead of emoji symbols
 - Professional tone in all user-facing text and developer documentation
+
+## Tool Usage Preferences
+
+**For Rust code navigation, prefer LSP (rust-analyzer) over grep/find:**
+
+| Task | Prefer | Fallback |
+|------|--------|----------|
+| Find definition of struct/fn/trait | LSP goto-definition | - |
+| Find all usages of a symbol | LSP find-references | - |
+| Get type information | LSP hover | - |
+| Symbol search in project | LSP workspace-symbols | Grep |
+| Text in comments/strings | Grep | - |
+| Non-Rust files (toml, md, wgsl) | Grep/Glob | - |
+
+**LSP commands available via rust-analyzer plugin:**
+- `goto_definition` - Jump to definition
+- `find_references` - Find all usages
+- `hover` - Type info and docs
+- `workspace_symbol` - Search symbols by name
+
+**When to use Grep instead:**
+- Searching in string literals or comments
+- Finding patterns across non-Rust files (shaders, configs)
+- Regex-based searches
 
 ## Architecture Overview
 
@@ -165,20 +205,59 @@ Custom effects use `shader::Primitive` trait:
 ### Cross-Project Dependencies
 - SpacetimeDB module (`ngwa-rs`) is independent backend component
 
-## File Organization Logic
+## Module Architecture
 
+### Library Entry Point
+- `iced_nodegraph/src/lib.rs` - Public API exports, re-exports all public types
+
+### Core Modules (iced_nodegraph/src/)
+
+| Module | Purpose | Key Types |
+|--------|---------|-----------|
+| `node_grapgh/mod.rs` | Main widget, events | `NodeGraph`, `NodeGraphEvent`, `DragInfo` |
+| `node_grapgh/widget.rs` | Widget trait impl | `node_graph()` constructor |
+| `node_grapgh/camera.rs` | Zoom/pan transforms | `Camera2D`, coordinate math |
+| `node_grapgh/euclid.rs` | Type-safe coords | `WorldPoint`, `ScreenPoint`, `IntoIced` |
+| `node_grapgh/state.rs` | Interaction state | `State`, `DragState` |
+| `node_pin/mod.rs` | Connection points | `NodePin`, `PinReference`, `PinSide` |
+| `style/mod.rs` | Theming | `NodeStyle`, `EdgeStyle`, `GraphStyle` |
+| `style/config.rs` | Partial overrides | `NodeConfig`, `EdgeConfig` (merge pattern) |
+| `content.rs` | Layout helpers | `node_header()`, `node_footer()`, `simple_node()` |
+| `helpers.rs` | Utilities | `clone_nodes()`, `delete_nodes()`, `SelectionHelper` |
+
+### Rendering Pipeline (iced_nodegraph/src/node_grapgh/effects/)
+
+| File | Purpose |
+|------|---------|
+| `mod.rs` | Effect orchestration |
+| `pipeline/mod.rs` | WGPU pipeline setup |
+| `pipeline/buffer.rs` | GPU buffer management |
+| `pipeline/types.rs` | Vertex/uniform types |
+| `primitive/mod.rs` | Render primitive trait |
+| `primitive/node.rs` | Node rendering |
+| `primitive/pin.rs` | Pin rendering |
+
+### Demo Applications (demos/)
+
+| Demo | Purpose | Key Patterns |
+|------|---------|--------------|
+| `hello_world/` | Basic usage | Node creation, connections |
+| `styling/` | Customization | `NodeConfig`, `EdgeConfig` usage |
+| `500_nodes/` | Performance | Procedural generation |
+| `shader_editor/` | Complex app | Compiler, live preview |
+
+### Dependency Flow
 ```
-src/
-├── lib.rs                    # Public API exports
-├── node_grapgh/              # Main widget (note: typo in original)
-│   ├── widget.rs            # Widget trait implementation
-│   ├── camera.rs            # 2D camera with zoom/pan
-│   ├── euclid.rs           # Coordinate system abstractions
-│   ├── effects/            # Custom rendering pipeline
-│   │   ├── pipeline/       # WGPU shaders and buffers
-│   │   └── primitive/      # Render primitives (nodes, pins, edges)
-│   └── state.rs            # Widget state management
-└── node_pin/               # Connection point widgets
+lib.rs (public API)
+  ├── node_grapgh/ (widget)
+  │     ├── widget.rs (iced Widget trait)
+  │     ├── state.rs (interaction)
+  │     ├── camera.rs (transforms)
+  │     └── effects/ (GPU rendering)
+  ├── node_pin/ (pin widget)
+  ├── style/ (theming)
+  ├── content.rs (layout helpers)
+  └── helpers.rs (utilities)
 ```
 
 ## Public API Reference

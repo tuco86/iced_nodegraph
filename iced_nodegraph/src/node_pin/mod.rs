@@ -283,30 +283,21 @@ where
 macro_rules! pin {
     // Full: side, content, direction, type, color
     ($side:ident, $content:expr, $dir:ident, $pin_type:expr, $color:expr) => {
-        $crate::node_pin(
-            $crate::PinSide::$side,
-            $content,
-        )
-        .direction($crate::PinDirection::$dir)
-        .pin_type($pin_type)
-        .color($color)
+        $crate::node_pin($crate::PinSide::$side, $content)
+            .direction($crate::PinDirection::$dir)
+            .pin_type($pin_type)
+            .color($color)
     };
 
     // Without color: side, content, direction, type
     ($side:ident, $content:expr, $dir:ident, $pin_type:expr) => {
-        $crate::node_pin(
-            $crate::PinSide::$side,
-            $content,
-        )
-        .direction($crate::PinDirection::$dir)
-        .pin_type($pin_type)
+        $crate::node_pin($crate::PinSide::$side, $content)
+            .direction($crate::PinDirection::$dir)
+            .pin_type($pin_type)
     };
 
     // Minimal: side, content only
     ($side:ident, $content:expr) => {
-        $crate::node_pin(
-            $crate::PinSide::$side,
-            $content,
-        )
+        $crate::node_pin($crate::PinSide::$side, $content)
     };
 }

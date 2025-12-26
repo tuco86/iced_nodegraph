@@ -124,9 +124,15 @@ where
     .spacing(4)
     .align_y(iced::Alignment::Center);
 
-    let output_pin = container(pin!(Right, text("color").size(10), Output, "color", colors::PIN_COLOR))
-        .width(Length::Fill)
-        .align_x(Horizontal::Right);
+    let output_pin = container(pin!(
+        Right,
+        text("color").size(10),
+        Output,
+        "color",
+        colors::PIN_COLOR
+    ))
+    .width(Length::Fill)
+    .align_x(Horizontal::Right);
 
     column![
         node_title_bar("Color", style),
@@ -219,9 +225,15 @@ where
         })
         .collect();
 
-    let output_pin = container(pin!(Right, text("color").size(10), Output, "color", colors::PIN_COLOR))
-        .width(Length::Fill)
-        .align_x(Horizontal::Right);
+    let output_pin = container(pin!(
+        Right,
+        text("color").size(10),
+        Output,
+        "color",
+        colors::PIN_COLOR
+    ))
+    .width(Length::Fill)
+    .align_x(Horizontal::Right);
 
     column![
         node_title_bar("Color Preset", style),

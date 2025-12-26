@@ -550,12 +550,8 @@ impl NodeStyle {
             );
 
             // Derive border from weak background
-            let node_border = Color::from_rgba(
-                bg_weak.r * 1.2,
-                bg_weak.g * 1.2,
-                bg_weak.b * 1.2,
-                0.8,
-            );
+            let node_border =
+                Color::from_rgba(bg_weak.r * 1.2, bg_weak.g * 1.2, bg_weak.b * 1.2, 0.8);
 
             Self {
                 fill_color: node_fill,
@@ -575,12 +571,8 @@ impl NodeStyle {
             );
 
             // Derive border from weak background
-            let node_border = Color::from_rgba(
-                bg_weak.r * 0.9,
-                bg_weak.g * 0.9,
-                bg_weak.b * 0.9,
-                0.9,
-            );
+            let node_border =
+                Color::from_rgba(bg_weak.r * 0.9, bg_weak.g * 0.9, bg_weak.b * 0.9, 0.9);
 
             Self {
                 fill_color: node_fill,
@@ -1081,11 +1073,7 @@ impl GraphStyle {
 
         if palette.is_dark {
             // Dark theme: darken background
-            let graph_bg = Color::from_rgb(
-                bg.r * 0.7,
-                bg.g * 0.7,
-                bg.b * 0.7,
-            );
+            let graph_bg = Color::from_rgb(bg.r * 0.7, bg.g * 0.7, bg.b * 0.7);
             let grid_color = Color::from_rgba(bg_weak.r, bg_weak.g, bg_weak.b, 0.4);
 
             Self {
@@ -1105,11 +1093,8 @@ impl GraphStyle {
             }
         } else {
             // Light theme: lighten background
-            let graph_bg = Color::from_rgb(
-                bg.r * 0.98 + 0.02,
-                bg.g * 0.98 + 0.02,
-                bg.b * 0.98 + 0.02,
-            );
+            let graph_bg =
+                Color::from_rgb(bg.r * 0.98 + 0.02, bg.g * 0.98 + 0.02, bg.b * 0.98 + 0.02);
             let grid_color = Color::from_rgba(bg_weak.r, bg_weak.g, bg_weak.b, 0.5);
 
             Self {
@@ -1484,9 +1469,7 @@ mod tests {
 
     #[test]
     fn test_edge_style_from_pins() {
-        let style = EdgeStyle::new()
-            .solid_color(Color::WHITE)
-            .from_pins(); // Should reset to TRANSPARENT
+        let style = EdgeStyle::new().solid_color(Color::WHITE).from_pins(); // Should reset to TRANSPARENT
 
         assert!(style.start_color.a < 0.01);
         assert!(style.end_color.a < 0.01);
