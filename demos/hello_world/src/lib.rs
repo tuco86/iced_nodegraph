@@ -117,11 +117,14 @@ enum ApplicationMessage {
     ExecuteShortcut(String),
     CommandPaletteNavigate(usize),
     SpawnNode {
-        x: f32,
-        y: f32,
         node_type: NodeType,
     },
     ChangeTheme(Theme),
+    CameraChanged {
+        position: Point,
+        zoom: f32,
+    },
+    WindowResized(iced::Size),
     NavigateToSubmenu(String),
     NavigateBack,
     Tick,
@@ -216,14 +219,6 @@ impl ComputedStyle {
         config
     }
 
-    /// Returns true if any node styling values are set
-    fn has_node_overrides(&self) -> bool {
-        self.corner_radius.is_some()
-            || self.opacity.is_some()
-            || self.border_width.is_some()
-            || self.fill_color.is_some()
-    }
-
     /// Builds an EdgeConfig from computed values
     fn to_edge_config(&self) -> EdgeConfig {
         let mut config = EdgeConfig::new();
@@ -234,26 +229,6 @@ impl ComputedStyle {
             config = config.start_color(c).end_color(c);
         }
         config
-    }
-
-    /// Builds a PinConfig from computed values, returns None if no pin styling is set
-    fn to_pin_config(&self) -> Option<iced_nodegraph::PinConfig> {
-        if self.pin_color.is_none()
-            && self.pin_radius.is_none()
-            && self.pin_shape.is_none()
-            && self.pin_border_color.is_none()
-            && self.pin_border_width.is_none()
-        {
-            return None;
-        }
-
-        Some(iced_nodegraph::PinConfig {
-            color: self.pin_color,
-            radius: self.pin_radius,
-            shape: self.pin_shape,
-            border_color: self.pin_border_color,
-            border_width: self.pin_border_width,
-        })
     }
 }
 
@@ -272,6 +247,12 @@ struct Application {
     computed_style: ComputedStyle,
     /// Pending config outputs from config nodes to be applied by ApplyToGraph
     pending_configs: HashMap<usize, Vec<(usize, ConfigOutput)>>,
+    /// Current viewport size for spawn-at-center calculation
+    viewport_size: iced::Size,
+    /// Current camera position from NodeGraph
+    camera_position: Point,
+    /// Current camera zoom from NodeGraph
+    camera_zoom: f32,
 }
 
 impl Default for Application {
@@ -311,6 +292,9 @@ impl Default for Application {
             palette_original_theme: None,
             computed_style: ComputedStyle::default(),
             pending_configs: HashMap::new(),
+            viewport_size: iced::Size::new(800.0, 600.0), // Default size
+            camera_position: Point::ORIGIN,
+            camera_zoom: 1.0,
         }
     }
 }
@@ -318,6 +302,20 @@ impl Default for Application {
 impl Application {
     fn new() -> Self {
         Self::default()
+    }
+
+    /// Calculate spawn position at screen center, converted to world coordinates.
+    fn spawn_position(&self) -> Point {
+        // Screen center
+        let screen_center_x = self.viewport_size.width / 2.0;
+        let screen_center_y = self.viewport_size.height / 2.0;
+
+        // Convert to world coordinates: world = screen / zoom - camera_position
+        let world_x = screen_center_x / self.camera_zoom - self.camera_position.x;
+        let world_y = screen_center_y / self.camera_zoom - self.camera_position.y;
+
+        // Offset for node size (approximate center, ~100x80 typical node)
+        Point::new(world_x - 50.0, world_y - 40.0)
     }
 
     /// Propagates values from input nodes to connected config nodes
@@ -765,9 +763,10 @@ impl Application {
                                 self.palette_view = PaletteView::Submenu(submenu);
                                 focus_input()
                             }
-                            ApplicationMessage::SpawnNode { x, y, node_type } => {
+                            ApplicationMessage::SpawnNode { node_type } => {
                                 let new_idx = self.nodes.len();
-                                self.nodes.push((Point::new(x, y), node_type));
+                                let pos = self.spawn_position();
+                                self.nodes.push((pos, node_type));
                                 self.selected_nodes = HashSet::from([new_idx]);
                                 self.command_palette_open = false;
                                 self.palette_view = PaletteView::Main;
@@ -801,13 +800,23 @@ impl Application {
                 self.palette_selected_index = 0;
                 Task::none()
             }
-            ApplicationMessage::SpawnNode { x, y, node_type } => {
+            ApplicationMessage::SpawnNode { node_type } => {
                 let new_idx = self.nodes.len();
-                self.nodes.push((Point::new(x, y), node_type));
+                let pos = self.spawn_position();
+                self.nodes.push((pos, node_type));
                 self.selected_nodes = HashSet::from([new_idx]);
                 self.command_palette_open = false;
                 self.command_input.clear();
                 self.palette_view = PaletteView::Main;
+                Task::none()
+            }
+            ApplicationMessage::CameraChanged { position, zoom } => {
+                self.camera_position = position;
+                self.camera_zoom = zoom;
+                Task::none()
+            }
+            ApplicationMessage::WindowResized(size) => {
+                self.viewport_size = size;
                 Task::none()
             }
             ApplicationMessage::ChangeTheme(theme) => {
@@ -1064,6 +1073,7 @@ impl Application {
             .on_clone(ApplicationMessage::CloneNodes)
             .on_delete(ApplicationMessage::DeleteNodes)
             .on_group_move(|indices, delta| ApplicationMessage::GroupMoved { indices, delta })
+            .on_camera_change(|position, zoom| ApplicationMessage::CameraChanged { position, zoom })
             .selection(&self.selected_nodes);
 
         // Add all nodes from state
@@ -1256,8 +1266,6 @@ impl Application {
                     .into_iter()
                     .map(|name| {
                         command(name, name).action(ApplicationMessage::SpawnNode {
-                            x: 400.0,
-                            y: 300.0,
                             node_type: NodeType::Workflow(name.to_string()),
                         })
                     })
@@ -1269,8 +1277,6 @@ impl Application {
                     command("float_slider", "Float Slider")
                         .description("Generic float slider (0-20)")
                         .action(ApplicationMessage::SpawnNode {
-                            x: 100.0,
-                            y: 100.0,
                             node_type: NodeType::Input(InputNodeType::FloatSlider {
                                 config: FloatSliderConfig::default(),
                                 value: 5.0,
@@ -1279,8 +1285,6 @@ impl Application {
                     command("color_picker", "Color Picker (RGB)")
                         .description("Full RGB color picker with sliders")
                         .action(ApplicationMessage::SpawnNode {
-                            x: 100.0,
-                            y: 500.0,
                             node_type: NodeType::Input(InputNodeType::ColorPicker {
                                 color: Color::from_rgb(0.5, 0.5, 0.5),
                             }),
@@ -1288,8 +1292,6 @@ impl Application {
                     command("color_preset", "Color Presets")
                         .description("Quick color selection from presets")
                         .action(ApplicationMessage::SpawnNode {
-                            x: 100.0,
-                            y: 600.0,
                             node_type: NodeType::Input(InputNodeType::ColorPreset {
                                 color: Color::from_rgb(0.5, 0.5, 0.5),
                             }),
@@ -1297,8 +1299,6 @@ impl Application {
                     command("int_slider", "Integer Slider")
                         .description("Integer slider for node index selection")
                         .action(ApplicationMessage::SpawnNode {
-                            x: 100.0,
-                            y: 700.0,
                             node_type: NodeType::Input(InputNodeType::IntSlider {
                                 config: IntSliderConfig::node_index(),
                                 value: 0,
@@ -1307,8 +1307,6 @@ impl Application {
                     command("bool_toggle", "Boolean Toggle")
                         .description("Toggle for shadow enabled and other booleans")
                         .action(ApplicationMessage::SpawnNode {
-                            x: 100.0,
-                            y: 800.0,
                             node_type: NodeType::Input(InputNodeType::BoolToggle {
                                 config: BoolToggleConfig::shadow_enabled(),
                                 value: true,
@@ -1317,8 +1315,6 @@ impl Application {
                     command("edge_type", "Edge Type Selector")
                         .description("Select edge type (Bezier, Straight, Step)")
                         .action(ApplicationMessage::SpawnNode {
-                            x: 100.0,
-                            y: 900.0,
                             node_type: NodeType::Input(InputNodeType::EdgeTypeSelector {
                                 value: EdgeType::Bezier,
                             }),
@@ -1326,8 +1322,6 @@ impl Application {
                     command("pin_shape", "Pin Shape Selector")
                         .description("Select pin shape (Circle, Square, Diamond)")
                         .action(ApplicationMessage::SpawnNode {
-                            x: 100.0,
-                            y: 1000.0,
                             node_type: NodeType::Input(InputNodeType::PinShapeSelector {
                                 value: PinShape::Circle,
                             }),
@@ -1340,8 +1334,6 @@ impl Application {
                     command("node_config", "Node Config")
                         .description("Node config with all fields and inheritance")
                         .action(ApplicationMessage::SpawnNode {
-                            x: 400.0,
-                            y: 100.0,
                             node_type: NodeType::Config(ConfigNodeType::NodeConfig(
                                 NodeConfigInputs::default(),
                             )),
@@ -1349,8 +1341,6 @@ impl Application {
                     command("edge_config", "Edge Config")
                         .description("Edge config with colors, thickness, type")
                         .action(ApplicationMessage::SpawnNode {
-                            x: 400.0,
-                            y: 200.0,
                             node_type: NodeType::Config(ConfigNodeType::EdgeConfig(
                                 EdgeConfigInputs::default(),
                             )),
@@ -1358,8 +1348,6 @@ impl Application {
                     command("shadow_config", "Shadow Config")
                         .description("Shadow configuration with offset, blur, color")
                         .action(ApplicationMessage::SpawnNode {
-                            x: 600.0,
-                            y: 300.0,
                             node_type: NodeType::Config(ConfigNodeType::ShadowConfig(
                                 ShadowConfigInputs::default(),
                             )),
@@ -1367,8 +1355,6 @@ impl Application {
                     command("pin_config", "Pin Config")
                         .description("Pin configuration with shape, color, radius")
                         .action(ApplicationMessage::SpawnNode {
-                            x: 600.0,
-                            y: 400.0,
                             node_type: NodeType::Config(ConfigNodeType::PinConfig(
                                 PinConfigInputs::default(),
                             )),
@@ -1377,8 +1363,6 @@ impl Application {
                     command("apply_to_graph", "Apply to Graph")
                         .description("Apply configs to all nodes/edges in graph")
                         .action(ApplicationMessage::SpawnNode {
-                            x: 800.0,
-                            y: 200.0,
                             node_type: NodeType::Config(ConfigNodeType::ApplyToGraph {
                                 has_node_config: false,
                                 has_edge_config: false,
@@ -1388,8 +1372,6 @@ impl Application {
                     command("apply_to_node", "Apply to Node")
                         .description("Apply config to a specific node by ID")
                         .action(ApplicationMessage::SpawnNode {
-                            x: 800.0,
-                            y: 350.0,
                             node_type: NodeType::Config(ConfigNodeType::ApplyToNode {
                                 has_node_config: false,
                                 target_id: None,
@@ -1416,6 +1398,12 @@ impl Application {
         Subscription::batch(vec![
             event::listen_with(handle_keyboard_event),
             window::frames().map(|_| ApplicationMessage::Tick),
+            event::listen_with(|event, _, _| match event {
+                Event::Window(window::Event::Resized(size)) => {
+                    Some(ApplicationMessage::WindowResized(size))
+                }
+                _ => None,
+            }),
         ])
     }
 }

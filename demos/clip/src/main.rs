@@ -29,7 +29,7 @@ impl App {
         Theme::Dark
     }
 
-    fn view(&self) -> Element<Message> {
+    fn view(&self) -> Element<'_, Message> {
         // Header without rounded corners (rectangular)
         let header = container(text("Header - No Rounded Corners").size(14))
             .padding(Padding::new(8.0))

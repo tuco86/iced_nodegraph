@@ -17,7 +17,7 @@ use iced_wgpu::primitive::Pipeline as PipelineTrait;
 
 use crate::node_grapgh::{effects::Node, euclid::WorldPoint, state::Dragging};
 
-use super::{EdgeData, primitive::NodeGraphPrimitive};
+use super::{EdgeData, Layer, primitive::NodeGraphPrimitive};
 
 mod buffer;
 mod types;
@@ -30,11 +30,10 @@ pub struct Pipeline {
 
     pipeline_background: RenderPipeline,
     pipeline_edges: RenderPipeline,
-    pipeline_nodes: RenderPipeline,
+    pipeline_nodes_fill: RenderPipeline,  // Background: node fill + shadow
+    pipeline_nodes_border: RenderPipeline, // Foreground: node border only
     pipeline_pins: RenderPipeline,
     pipeline_dragging: RenderPipeline,
-    #[allow(dead_code)]
-    pipeline_foreground: RenderPipeline,
 
     bind_group_layout: BindGroupLayout,
     bind_group: BindGroup,
@@ -121,8 +120,11 @@ impl Pipeline {
         let pipeline_edges = create_pipeline_custom(
             device, format, &layout, &module, "vs_edge", "fs_edge", "edges",
         );
-        let pipeline_nodes = create_pipeline_custom(
-            device, format, &layout, &module, "vs_node", "fs_node", "nodes",
+        let pipeline_nodes_fill = create_pipeline_custom(
+            device, format, &layout, &module, "vs_node", "fs_node_fill", "nodes_fill",
+        );
+        let pipeline_nodes_border = create_pipeline_custom(
+            device, format, &layout, &module, "vs_node", "fs_node", "nodes_border",
         );
         let pipeline_pins =
             create_pipeline_custom(device, format, &layout, &module, "vs_pin", "fs_pin", "pins");
@@ -135,15 +137,6 @@ impl Pipeline {
             "fs_dragging",
             "dragging",
         );
-        let pipeline_foreground = create_pipeline_custom(
-            device,
-            format,
-            &layout,
-            &module,
-            "vs_main",
-            "fs_foreground",
-            "foreground_legacy",
-        );
 
         Self {
             uniforms,
@@ -152,10 +145,10 @@ impl Pipeline {
             edges,
             pipeline_background,
             pipeline_edges,
-            pipeline_nodes,
+            pipeline_nodes_fill,
+            pipeline_nodes_border,
             pipeline_pins,
             pipeline_dragging,
-            pipeline_foreground,
             bind_group_layout,
             bind_group,
             bind_group_generations: (0, 0, 0),
@@ -192,6 +185,7 @@ impl Pipeline {
             &primitive.selected_nodes,
             primitive.selected_edge_color,
             primitive.edge_thickness,
+            primitive.layer,
         );
     }
 
@@ -217,6 +211,7 @@ impl Pipeline {
         selected_nodes: &std::collections::HashSet<usize>,
         selected_edge_color: glam::Vec4,
         edge_thickness: f32,
+        layer: Layer,
     ) {
         let mut pin_start = 0;
         let num_nodes = self.nodes.update(
@@ -553,8 +548,11 @@ impl Pipeline {
             edge_cutting_color: glam::Vec4::new(1.0, 0.3, 0.3, 1.0), // Warning red
             hover_glow_radius: 6.0,
             edge_thickness,
-            _pad_theme1: 0.0,
-            _pad_theme2: 0.0,
+            render_mode: match layer {
+                Layer::Background => 0,
+                Layer::Foreground => 1,
+            },
+            _pad_theme1: 0,
             viewport_size: glam::Vec2::new(
                 viewport.physical_width() as f32,
                 viewport.physical_height() as f32,
@@ -590,6 +588,7 @@ impl Pipeline {
         &self,
         pass: &mut iced::wgpu::RenderPass<'_>,
         _viewport: Rectangle<u32>,
+        layer: Layer,
     ) {
         let num_nodes = self.nodes.len();
         let num_pins = self.pins.len();
@@ -597,31 +596,42 @@ impl Pipeline {
 
         pass.set_bind_group(0, &self.bind_group, &[]);
 
-        // Pass 1: Background grid (fullscreen)
-        pass.set_pipeline(&self.pipeline_background);
-        pass.draw(0..3, 0..1);
+        match layer {
+            Layer::Background => {
+                // Pass 1: Background grid (fullscreen)
+                pass.set_pipeline(&self.pipeline_background);
+                pass.draw(0..3, 0..1);
 
-        // Pass 2: Edges (instanced - behind nodes)
-        if num_edges > 0 {
-            pass.set_pipeline(&self.pipeline_edges);
-            pass.draw(0..6, 0..num_edges as u32);
+                // Pass 2: Edges (instanced - behind nodes)
+                if num_edges > 0 {
+                    pass.set_pipeline(&self.pipeline_edges);
+                    pass.draw(0..6, 0..num_edges as u32);
+                }
+
+                // Pass 3: Node fills (instanced) - fs_node_fill shader
+                if num_nodes > 0 {
+                    pass.set_pipeline(&self.pipeline_nodes_fill);
+                    pass.draw(0..6, 0..num_nodes as u32);
+                }
+
+                // Pass 4: Pin indicators (instanced)
+                if num_pins > 0 {
+                    pass.set_pipeline(&self.pipeline_pins);
+                    pass.draw(0..6, 0..num_pins as u32);
+                }
+            }
+            Layer::Foreground => {
+                // Pass 1: Node borders (instanced) - fs_node shader (border only)
+                if num_nodes > 0 {
+                    pass.set_pipeline(&self.pipeline_nodes_border);
+                    pass.draw(0..6, 0..num_nodes as u32);
+                }
+
+                // Pass 2: Dragging edge / box select / edge cutting (if active)
+                pass.set_pipeline(&self.pipeline_dragging);
+                pass.draw(0..6, 0..1);
+            }
         }
-
-        // Pass 3: Nodes (instanced)
-        if num_nodes > 0 {
-            pass.set_pipeline(&self.pipeline_nodes);
-            pass.draw(0..6, 0..num_nodes as u32);
-        }
-
-        // Pass 4: Pin indicators (instanced)
-        if num_pins > 0 {
-            pass.set_pipeline(&self.pipeline_pins);
-            pass.draw(0..6, 0..num_pins as u32);
-        }
-
-        // Pass 5: Dragging edge / box select (if active)
-        pass.set_pipeline(&self.pipeline_dragging);
-        pass.draw(0..6, 0..1);
     }
 }
 

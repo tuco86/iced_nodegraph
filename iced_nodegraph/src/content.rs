@@ -392,9 +392,8 @@ pub fn is_theme_dark(theme: &Theme) -> bool {
 
 /// Creates a header container for nodes with top rounded corners.
 ///
-/// The header fits precisely inside the node's border, with inner corner radius
-/// calculated as `corner_radius - border_width`. Padding is applied on left/right
-/// to account for the node's border.
+/// Uses the same corner radius as the parent node for consistent appearance.
+/// Padding is applied on left/right to account for the node's border.
 ///
 /// # Arguments
 /// * `content` - The content to wrap in the header
@@ -426,9 +425,6 @@ pub fn node_header<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    // Inner radius fits inside the node border
-    let inner_radius = (corner_radius - border_width).max(0.0);
-
     container(content)
         .padding(Padding {
             top: 0.0,
@@ -440,8 +436,9 @@ where
         .style(move |_theme: &Theme| container::Style {
             background: Some(background.into()),
             border: Border {
-                radius: border::top(inner_radius),
-                ..Default::default()
+                radius: border::top(corner_radius),
+                width: border_width,
+                color: Color::TRANSPARENT,
             },
             ..Default::default()
         })
@@ -449,9 +446,8 @@ where
 
 /// Creates a footer container for nodes with bottom rounded corners.
 ///
-/// The footer fits precisely inside the node's border, with inner corner radius
-/// calculated as `corner_radius - border_width`. Padding is applied on left/right
-/// to account for the node's border.
+/// Uses the same corner radius as the parent node for consistent appearance.
+/// Padding is applied on left/right to account for the node's border.
 ///
 /// # Arguments
 /// * `content` - The content to wrap in the footer
@@ -483,9 +479,6 @@ pub fn node_footer<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    // Inner radius fits inside the node border
-    let inner_radius = (corner_radius - border_width).max(0.0);
-
     container(content)
         .padding(Padding {
             top: 0.0,
@@ -497,8 +490,9 @@ where
         .style(move |_theme: &Theme| container::Style {
             background: Some(background.into()),
             border: Border {
-                radius: border::bottom(inner_radius),
-                ..Default::default()
+                radius: border::bottom(corner_radius),
+                width: border_width,
+                color: Color::TRANSPARENT,
             },
             ..Default::default()
         })

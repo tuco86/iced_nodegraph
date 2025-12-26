@@ -42,8 +42,8 @@ struct Uniforms {
     edge_cutting_color: vec4<f32>,   // Edge cutting line color
     hover_glow_radius: f32,          // Node hover glow radius in world units
     edge_thickness: f32,             // Default edge thickness for dragging
-    _pad_theme1: f32,
-    _pad_theme2: f32,
+    render_mode: u32,                // 0=background (fill only), 1=foreground (border only)
+    _pad_theme1: u32,
 
     viewport_size: vec2<f32>,
     bounds_origin: vec2<f32>,  // widget bounds origin in physical pixels
@@ -839,8 +839,8 @@ fn vs_node(@builtin(instance_index) instance: u32,
     return NodeVertexOutput(clip, world_pos, instance);
 }
 
-@fragment
-fn fs_node(in: NodeVertexOutput) -> @location(0) vec4<f32> {
+// Shared node SDF computation
+fn compute_node_sdf(in: NodeVertexOutput) -> f32 {
     let node = nodes[in.instance_id];
     let node_half_size = node.size * 0.5;
     let node_center = in.world_uv - (node.position + node_half_size);
@@ -854,14 +854,18 @@ fn fs_node(in: NodeVertexOutput) -> @location(0) vec4<f32> {
         d = max(d, -pin_d);
     }
 
-    let aa = 0.5 / uniforms.camera_zoom;
-    // Use per-node border_width in world space (scales with zoom)
-    let border_width = node.border_width;
-    let node_opacity = node.opacity;
+    return d;
+}
 
-    // Check hover/selected state
+// Background layer: renders shadow, hover glow, and fill (no border)
+@fragment
+fn fs_node_fill(in: NodeVertexOutput) -> @location(0) vec4<f32> {
+    let node = nodes[in.instance_id];
+    let d = compute_node_sdf(in);
+
+    let aa = 0.5 / uniforms.camera_zoom;
+    let node_opacity = node.opacity;
     let is_hovered = (node.flags & NODE_FLAG_HOVERED) != 0u;
-    let is_selected = (node.flags & NODE_FLAG_SELECTED) != 0u;
 
     var col = vec3(0.0);
     var alpha = 0.0;
@@ -876,12 +880,11 @@ fn fs_node(in: NodeVertexOutput) -> @location(0) vec4<f32> {
     }
 
     // Render shadow (if enabled)
+    let node_half_size = node.size * 0.5;
+    let node_center = in.world_uv - (node.position + node_half_size);
     if (node.shadow_color.a > 0.0 && node.shadow_blur > 0.0) {
-        // Calculate shadow SDF with offset
         let shadow_center = node_center - node.shadow_offset;
         let shadow_d = sd_rounded_box(shadow_center, node_half_size, vec4(node.corner_radius));
-
-        // Soft shadow using blur radius
         let shadow_softness = node.shadow_blur;
         let shadow_alpha = (1.0 - smoothstep(-shadow_softness * 0.5, shadow_softness, shadow_d))
                            * node.shadow_color.a * node_opacity;
@@ -892,19 +895,39 @@ fn fs_node(in: NodeVertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    // Render node on top of shadow
+    // Render fill for entire node interior
     if (d < 0.0) {
-        if (d > -border_width) {
-            // Use per-node border_color (already highlighted for selection in Rust)
-            col = node.border_color.xyz;
-        } else {
-            // Use per-node fill_color
-            col = node.fill_color.xyz;
-        }
+        col = node.fill_color.xyz;
         alpha = node_opacity;
     } else if (d < aa) {
+        col = node.fill_color.xyz;
+        alpha = (1.0 - smoothstep(0.0, aa, d)) * node_opacity;
+    }
+
+    return vec4(col, alpha);
+}
+
+// Foreground layer: renders border only
+@fragment
+fn fs_node(in: NodeVertexOutput) -> @location(0) vec4<f32> {
+    let node = nodes[in.instance_id];
+    let d = compute_node_sdf(in);
+
+    let aa = 0.5 / uniforms.camera_zoom;
+    let border_width = node.border_width;
+    let node_opacity = node.opacity;
+
+    var col = vec3(0.0);
+    var alpha = 0.0;
+
+    // Render border only (the ring between d=0 and d=-border_width)
+    if (d < 0.0 && d > -border_width) {
         col = node.border_color.xyz;
-        alpha = max(alpha, (1.0 - smoothstep(0.0, aa, d)) * node_opacity);
+        alpha = node_opacity;
+    } else if (d >= 0.0 && d < aa) {
+        // Anti-aliased outer edge of border
+        col = node.border_color.xyz;
+        alpha = (1.0 - smoothstep(0.0, aa, d)) * node_opacity;
     }
 
     return vec4(col, alpha);

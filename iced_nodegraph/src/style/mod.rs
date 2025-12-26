@@ -1138,7 +1138,7 @@ impl GraphStyle {
 pub struct SelectionStyle {
     /// Border color for selected nodes
     pub selected_border_color: Color,
-    /// Border width for selected nodes (typically thicker than normal)
+    /// Border width for selected nodes
     pub selected_border_width: f32,
     /// Fill color for the box selection rectangle (semi-transparent)
     pub box_select_fill: Color,

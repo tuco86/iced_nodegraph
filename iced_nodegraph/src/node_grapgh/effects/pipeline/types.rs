@@ -45,8 +45,8 @@ pub struct Uniforms {
     pub edge_cutting_color: glam::Vec4,   // Edge cutting line color
     pub hover_glow_radius: f32,           // Node hover glow radius in world units
     pub edge_thickness: f32,              // Default edge thickness for dragging
-    pub _pad_theme1: f32,
-    pub _pad_theme2: f32,
+    pub render_mode: u32,                 // 0=background (fill only), 1=foreground (border only)
+    pub _pad_theme1: u32,
 
     pub viewport_size: glam::Vec2, // viewport size for clip space transform
     pub bounds_origin: glam::Vec2, // widget bounds origin in physical pixels

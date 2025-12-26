@@ -7,7 +7,7 @@ use web_time::Instant;
 
 use super::{
     DragInfo, NodeGraph, NodeGraphEvent,
-    effects::{self, EdgeData},
+    effects::{self, EdgeData, Layer},
     euclid::{IntoIced, WorldVector},
     state::{Dragging, NodeGraphState},
 };
@@ -202,6 +202,7 @@ where
         let selection_border_width = selection_style.selected_border_width;
 
         let primitive_background = effects::NodeGraphPrimitive {
+            layer: Layer::Background,
             camera_zoom: camera.zoom(),
             camera_position: camera.position(),
             cursor_position: camera.screen_to_world().transform_point(
@@ -347,12 +348,16 @@ where
             edge_thickness: resolved_edge_defaults.thickness,
         };
 
-        // Layer 1: Draw primitive (canvas) with grid, edges, nodes, pins
+        // Create foreground primitive (clone with different layer)
+        let mut primitive_foreground = primitive_background.clone();
+        primitive_foreground.layer = Layer::Foreground;
+
+        // Layer 1: Draw background primitive (grid, edges, node fills, pins)
         renderer.with_layer(layout.bounds(), |renderer| {
             renderer.draw_primitive(layout.bounds(), primitive_background);
         });
 
-        // Layer 2: Draw child elements (widgets) on top
+        // Layer 2: Draw child elements (widgets)
         renderer.with_layer(layout.bounds(), |renderer| {
             camera.draw_with::<_, Renderer>(
                 renderer,
@@ -422,6 +427,11 @@ where
                     }
                 },
             );
+        });
+
+        // Layer 3: Draw foreground primitive (node borders, dragging edge, selection box)
+        renderer.with_layer(layout.bounds(), |renderer| {
+            renderer.draw_primitive(layout.bounds(), primitive_foreground);
         });
     }
 
@@ -587,6 +597,15 @@ where
                     let zoom_delta = scroll_amount * 0.01 * state.camera.zoom();
 
                     state.camera = state.camera.zoom_at(cursor_pos, zoom_delta);
+
+                    // Emit camera change event
+                    if let Some(handler) = self.on_camera_change_handler() {
+                        let pos = state.camera.position();
+                        shell.publish(handler(
+                            Point::new(pos.x, pos.y),
+                            state.camera.zoom(),
+                        ));
+                    }
                 }
                 shell.capture_event();
                 shell.request_redraw();
@@ -741,6 +760,15 @@ where
                                 let cursor_position: WorldPoint = screen_to_world.transform_point(cursor_position);
                                 let offset = cursor_position - origin;
                                 state.camera = state.camera.move_by(offset);
+
+                                // Emit camera change event
+                                if let Some(handler) = self.on_camera_change_handler() {
+                                    let pos = state.camera.position();
+                                    shell.publish(handler(
+                                        Point::new(pos.x, pos.y),
+                                        state.camera.zoom(),
+                                    ));
+                                }
                             }
                             state.dragging = Dragging::None;
                             shell.capture_event();
@@ -1027,6 +1055,15 @@ where
                             let zoom_delta = scroll_amount / 100.0;
 
                             state.camera = state.camera.zoom_at(cursor_pos, zoom_delta);
+
+                            // Emit camera change event
+                            if let Some(handler) = self.on_camera_change_handler() {
+                                let pos = state.camera.position();
+                                shell.publish(handler(
+                                    Point::new(pos.x, pos.y),
+                                    state.camera.zoom(),
+                                ));
+                            }
                         }
                         shell.capture_event();
                         shell.request_redraw();

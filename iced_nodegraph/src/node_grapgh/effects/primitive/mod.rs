@@ -15,6 +15,14 @@ use crate::style::EdgeStyle;
 
 use super::pipeline::Pipeline;
 
+/// Rendering layer for two-pass rendering.
+/// Background renders behind Iced widgets, Foreground renders on top.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Layer {
+    Background,
+    Foreground,
+}
+
 /// Legacy edge data structure (for gradual migration).
 ///
 /// This stores indices that are looked up in the shader.
@@ -30,6 +38,7 @@ pub struct EdgeData {
 
 #[derive(Debug, Clone)]
 pub struct NodeGraphPrimitive {
+    pub layer: Layer,
     pub camera_zoom: f32,
     pub camera_position: WorldPoint,
     pub cursor_position: WorldPoint,
@@ -83,6 +92,7 @@ impl Primitive for NodeGraphPrimitive {
             &self.selected_nodes,
             self.selected_edge_color,
             self.edge_thickness,
+            self.layer,
         );
     }
 
@@ -98,7 +108,7 @@ impl Primitive for NodeGraphPrimitive {
             width: 800,
             height: 600,
         };
-        pipeline.render_pass(render_pass, viewport);
+        pipeline.render_pass(render_pass, viewport, self.layer);
         true // We handle the drawing ourselves
     }
 }

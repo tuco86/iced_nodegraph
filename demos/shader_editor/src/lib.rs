@@ -119,6 +119,12 @@ enum Message {
     ChangeTheme(Theme),
     // Animation
     Tick,
+    // Camera/viewport tracking
+    CameraChanged {
+        position: Point,
+        zoom: f32,
+    },
+    WindowResized(iced::Size),
 }
 
 struct Application {
@@ -132,6 +138,10 @@ struct Application {
     command_palette_open: bool,
     command_input: String,
     palette_selected_index: usize,
+    // Camera/viewport tracking for spawn-at-center
+    viewport_size: iced::Size,
+    camera_position: Point,
+    camera_zoom: f32,
 }
 
 impl Application {
@@ -192,11 +202,28 @@ impl Application {
             command_palette_open: false,
             command_input: String::new(),
             palette_selected_index: 0,
+            viewport_size: iced::Size::new(800.0, 600.0),
+            camera_position: Point::ORIGIN,
+            camera_zoom: 1.0,
         };
 
         app.recompile();
 
         (app, iced::Task::none())
+    }
+
+    /// Calculate spawn position at screen center, converted to world coordinates.
+    fn spawn_position(&self) -> Point {
+        // Screen center
+        let screen_center_x = self.viewport_size.width / 2.0;
+        let screen_center_y = self.viewport_size.height / 2.0;
+
+        // Convert to world coordinates: world = screen / zoom - camera_position
+        let world_x = screen_center_x / self.camera_zoom - self.camera_position.x;
+        let world_y = screen_center_y / self.camera_zoom - self.camera_position.y;
+
+        // Offset for node size (approximate center)
+        Point::new(world_x - 60.0, world_y - 40.0)
     }
 
     fn update(&mut self, message: Message) -> iced::Task<Message> {
@@ -357,13 +384,20 @@ impl Application {
                 self.palette_selected_index = 0;
             }
             Message::SpawnNode(node_type) => {
-                // Spawn node in center of view
-                let position = Point::new(400.0, 300.0);
+                // Spawn node at screen center (converted to world coordinates)
+                let position = self.spawn_position();
                 self.shader_graph.add_node(node_type, position);
                 println!("Spawned node: {}", node_type.name());
             }
             Message::ChangeTheme(theme) => {
                 self.current_theme = theme;
+            }
+            Message::CameraChanged { position, zoom } => {
+                self.camera_position = position;
+                self.camera_zoom = zoom;
+            }
+            Message::WindowResized(size) => {
+                self.viewport_size = size;
             }
             Message::Tick => {
                 // Animation frame - handled by the widget
@@ -384,6 +418,7 @@ impl Application {
             .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })
             .on_select(Message::SelectionChanged)
             .on_group_move(|indices, delta| Message::GroupMoved { indices, delta })
+            .on_camera_change(|position, zoom| Message::CameraChanged { position, zoom })
             .selection(&self.graph_selection);
 
         // Add all shader graph nodes
@@ -461,6 +496,11 @@ impl Application {
             }),
             // Animation frames for NodeGraph
             window::frames().map(|_| Message::Tick),
+            // Window resize events
+            event::listen_with(|event, _, _| match event {
+                Event::Window(window::Event::Resized(size)) => Some(Message::WindowResized(size)),
+                _ => None,
+            }),
         ])
     }
 

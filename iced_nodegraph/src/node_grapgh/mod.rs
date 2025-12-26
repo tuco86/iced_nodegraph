@@ -122,6 +122,9 @@ pub struct NodeGraph<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer
     /// Unified event callback for all graph interactions.
     /// Alternative to individual callbacks (on_connect, on_move, etc.)
     on_event: Option<Box<dyn Fn(NodeGraphEvent) -> Message + 'a>>,
+    /// Callback for camera state changes (position, zoom).
+    /// Used for tracking viewport state in application for features like spawn-at-center.
+    on_camera_change: Option<Box<dyn Fn(Point, f32) -> Message + 'a>>,
 }
 
 impl<Message, Theme, Renderer> Default for NodeGraph<'_, Message, Theme, Renderer>
@@ -147,6 +150,7 @@ where
             on_drag_end: None,
             remote_users: None,
             on_event: None,
+            on_camera_change: None,
         }
     }
 }
@@ -335,6 +339,22 @@ where
         self
     }
 
+    /// Sets a callback for when the camera state changes (pan or zoom).
+    ///
+    /// The callback receives the current camera position and zoom level.
+    /// Useful for tracking viewport state for features like spawn-at-screen-center.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// node_graph()
+    ///     .on_camera_change(|position, zoom| Message::CameraChanged { position, zoom })
+    /// ```
+    pub fn on_camera_change(mut self, f: impl Fn(Point, f32) -> Message + 'a) -> Self {
+        self.on_camera_change = Some(Box::new(f));
+        self
+    }
+
     pub fn selection(mut self, selection: &'a HashSet<usize>) -> Self {
         self.external_selection = Some(selection);
         self
@@ -436,6 +456,12 @@ where
 
     pub(super) fn get_on_event(&self) -> Option<&(dyn Fn(NodeGraphEvent) -> Message + 'a)> {
         self.on_event.as_deref()
+    }
+
+    pub(super) fn on_camera_change_handler(
+        &self,
+    ) -> Option<&Box<dyn Fn(Point, f32) -> Message + 'a>> {
+        self.on_camera_change.as_ref()
     }
 
     pub fn needs_animation(&self) -> bool {
