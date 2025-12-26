@@ -1,5 +1,7 @@
 use iced::Color;
 
+use crate::colors;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[allow(dead_code)]
 pub enum SocketType {
@@ -26,12 +28,12 @@ impl SocketType {
 
     pub fn color(&self) -> Color {
         match self {
-            SocketType::Float => Color::from_rgb(0.5, 0.8, 0.5),
-            SocketType::Vec2 => Color::from_rgb(0.8, 0.8, 0.3),
-            SocketType::Vec3 => Color::from_rgb(0.3, 0.5, 0.9),
-            SocketType::Vec4 => Color::from_rgb(0.9, 0.3, 0.9),
-            SocketType::Bool => Color::from_rgb(0.9, 0.3, 0.3),
-            SocketType::Int => Color::from_rgb(0.3, 0.9, 0.9),
+            SocketType::Float => colors::SOCKET_FLOAT,
+            SocketType::Vec2 => colors::SOCKET_VEC2,
+            SocketType::Vec3 => colors::SOCKET_VEC3,
+            SocketType::Vec4 => colors::SOCKET_VEC4,
+            SocketType::Bool => colors::SOCKET_BOOL,
+            SocketType::Int => colors::SOCKET_INT,
         }
     }
 

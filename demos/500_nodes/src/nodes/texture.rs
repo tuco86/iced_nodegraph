@@ -1,9 +1,11 @@
 use iced::{
-    Color, Length, Theme,
+    Length, Theme,
     alignment::Horizontal,
     widget::{column, container, row, text},
 };
 use iced_nodegraph::pin;
+
+use super::colors::{PIN_FLOAT, PIN_VEC2, PIN_VEC4, SPACING_PIN};
 
 fn title_bar<'a, Message>(
     title: &'a str,
@@ -28,24 +30,12 @@ where
     Message: Clone + 'a,
 {
     let pins = row![
-        container(pin!(
-            Left,
-            "uv",
-            Input,
-            "vec2",
-            Color::from_rgb(0.9, 0.7, 0.3)
-        ))
-        .width(Length::FillPortion(1))
-        .align_x(Horizontal::Left),
-        container(pin!(
-            Right,
-            "rgba",
-            Output,
-            "vec4",
-            Color::from_rgb(0.9, 0.5, 0.9)
-        ))
-        .width(Length::FillPortion(1))
-        .align_x(Horizontal::Right),
+        container(pin!(Left, "uv", Input, "vec2", PIN_VEC2))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Left),
+        container(pin!(Right, "rgba", Output, "vec4", PIN_VEC4))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Right),
     ]
     .width(Length::Fill);
 
@@ -60,37 +50,19 @@ where
 {
     let pins = column![
         row![
-            container(pin!(
-                Left,
-                "A",
-                Input,
-                "vec4",
-                Color::from_rgb(0.9, 0.5, 0.9)
-            ))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Left),
-            container(pin!(
-                Right,
-                "out",
-                Output,
-                "vec4",
-                Color::from_rgb(0.9, 0.5, 0.9)
-            ))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Right),
+            container(pin!(Left, "A", Input, "vec4", PIN_VEC4))
+                .width(Length::FillPortion(1))
+                .align_x(Horizontal::Left),
+            container(pin!(Right, "out", Output, "vec4", PIN_VEC4))
+                .width(Length::FillPortion(1))
+                .align_x(Horizontal::Right),
         ]
         .width(Length::Fill),
-        container(pin!(
-            Left,
-            "B",
-            Input,
-            "vec4",
-            Color::from_rgb(0.9, 0.5, 0.9)
-        ))
-        .width(Length::Fill)
-        .align_x(Horizontal::Left),
+        container(pin!(Left, "B", Input, "vec4", PIN_VEC4))
+            .width(Length::Fill)
+            .align_x(Horizontal::Left),
     ]
-    .spacing(1);
+    .spacing(SPACING_PIN);
 
     column![title_bar("Mix", theme), container(pins).padding([4, 0])]
         .width(130.0)
@@ -102,24 +74,12 @@ where
     Message: Clone + 'a,
 {
     let pins = row![
-        container(pin!(
-            Left,
-            "t",
-            Input,
-            "float",
-            Color::from_rgb(0.9, 0.5, 0.2)
-        ))
-        .width(Length::FillPortion(1))
-        .align_x(Horizontal::Left),
-        container(pin!(
-            Right,
-            "col",
-            Output,
-            "vec4",
-            Color::from_rgb(0.9, 0.5, 0.9)
-        ))
-        .width(Length::FillPortion(1))
-        .align_x(Horizontal::Right),
+        container(pin!(Left, "t", Input, "float", PIN_FLOAT))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Left),
+        container(pin!(Right, "col", Output, "vec4", PIN_VEC4))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Right),
     ]
     .width(Length::Fill);
 

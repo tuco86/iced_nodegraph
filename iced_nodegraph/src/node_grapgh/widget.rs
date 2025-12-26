@@ -15,7 +15,7 @@ use crate::{
     PinReference, PinSide,
     node_grapgh::euclid::{IntoEuclid, ScreenPoint, WorldPoint},
     node_pin::NodePinState,
-    style::{EdgeConfig, EdgeStyle, GraphStyle, NodeConfig, NodeStyle, PinStyle},
+    style::{EdgeConfig, EdgeStyle, GraphStyle, NodeConfig, NodeStyle, PinConfig, PinStyle},
 };
 
 // Click detection threshold (in world-space pixels)
@@ -72,9 +72,17 @@ fn resolve_graph_style(style: Option<&GraphStyle>, theme: &Theme) -> GraphStyle 
         .unwrap_or_else(|| GraphStyle::from_theme(theme))
 }
 
-/// Gets PinStyle from theme.
-fn resolve_pin_style(theme: &Theme) -> PinStyle {
-    PinStyle::from_theme(theme)
+/// Resolves pin style by merging PinConfig overrides with theme defaults.
+fn resolve_pin_style(config: Option<&PinConfig>, theme: &Theme) -> PinStyle {
+    let base = PinStyle::from_theme(theme);
+    let Some(config) = config else { return base };
+    PinStyle {
+        color: config.color.unwrap_or(base.color),
+        radius: config.radius.unwrap_or(base.radius),
+        shape: config.shape.unwrap_or(base.shape),
+        border_color: config.border_color.or(base.border_color),
+        border_width: config.border_width.unwrap_or(base.border_width),
+    }
 }
 
 impl<Message, Renderer> iced_widget::core::Widget<Message, iced::Theme, Renderer>
@@ -160,7 +168,7 @@ where
         let resolved_graph = resolve_graph_style(self.graph_style.as_ref(), theme);
         let resolved_node_defaults = NodeStyle::from_theme(theme);
         let resolved_edge_defaults = EdgeStyle::from_theme(theme);
-        let resolved_pin_defaults = resolve_pin_style(theme);
+        let resolved_pin_defaults = resolve_pin_style(self.pin_defaults.as_ref(), theme);
 
         // Convert resolved styles to GPU-compatible formats
         let bg_color = glam::vec4(

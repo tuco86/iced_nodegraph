@@ -31,6 +31,7 @@
 //! Use the command palette to add nodes from categories: Math, Vector, Color,
 //! Texture, Input, and Output. Connect them to build WGSL fragment shaders.
 
+pub mod colors;
 mod compiler;
 mod default_shader;
 mod shader_graph;
@@ -593,7 +594,7 @@ fn create_node_widget<'a>(
                     container(text("out").size(11)).padding([0, 8])
                 )
                 .direction(PinDirection::Output)
-                .color(Color::from_rgb(0.6, 0.6, 0.6))
+                .color(colors::TEXT_MUTED)
             ]
             .spacing(2),
         )
@@ -641,11 +642,11 @@ fn create_node_widget<'a>(
 fn get_socket_color(socket_type: &shader_graph::sockets::SocketType) -> Color {
     use shader_graph::sockets::SocketType;
     match socket_type {
-        SocketType::Float => Color::from_rgb(0.6, 0.8, 0.6), // Light green
-        SocketType::Vec2 => Color::from_rgb(0.6, 0.8, 0.9),  // Light cyan
-        SocketType::Vec3 => Color::from_rgb(0.9, 0.8, 0.5),  // Light yellow
-        SocketType::Vec4 => Color::from_rgb(0.9, 0.6, 0.7),  // Light pink
-        SocketType::Bool => Color::from_rgb(0.9, 0.5, 0.5),  // Light red
-        SocketType::Int => Color::from_rgb(0.7, 0.7, 0.9),   // Light purple
+        SocketType::Float => colors::SOCKET_FLOAT, // Light green
+        SocketType::Vec2 => colors::SOCKET_VEC2,   // Light cyan
+        SocketType::Vec3 => colors::SOCKET_VEC3,   // Light yellow
+        SocketType::Vec4 => colors::SOCKET_VEC4,   // Light pink
+        SocketType::Bool => colors::SOCKET_BOOL,   // Light red
+        SocketType::Int => colors::SOCKET_INT,     // Light purple
     }
 }

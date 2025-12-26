@@ -1,3 +1,4 @@
+pub mod colors;
 mod input;
 mod math;
 mod noise;

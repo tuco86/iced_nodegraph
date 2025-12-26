@@ -39,7 +39,7 @@ use iced::{
     widget::{container, stack, text},
     window,
 };
-use iced_nodegraph::{EdgeConfig, NodeConfig, PinReference, ShadowConfig, node_graph};
+use iced_nodegraph::{EdgeConfig, NodeConfig, PinConfig, PinReference, ShadowConfig, node_graph};
 use iced_nodegraph::{EdgeType, PinShape};
 use iced_palette::{
     Command, Shortcut, command, command_palette, find_matching_shortcut, focus_input,
@@ -47,11 +47,11 @@ use iced_palette::{
 };
 use nodes::{
     BoolToggleConfig, ConfigNodeType, EdgeConfigInputs, FloatSliderConfig, InputNodeType,
-    IntSliderConfig, NodeConfigInputs, NodeType, NodeValue, PinConfigInputs, ShadowConfigInputs,
-    apply_to_graph_node, apply_to_node_node, bool_toggle_node, color_picker_node,
-    color_preset_node, edge_config_node, edge_type_selector_node, float_slider_node,
-    int_slider_node, node, node_config_node, pin_config_node, pin_shape_selector_node,
-    shadow_config_node,
+    IntSliderConfig, MathNodeState, MathOperation, NodeConfigInputs, NodeType, NodeValue,
+    PinConfigInputs, ShadowConfigInputs, apply_to_graph_node, apply_to_node_node, bool_toggle_node,
+    color_picker_node, color_preset_node, edge_config_node, edge_type_selector_node,
+    float_slider_node, int_slider_node, math_node, node, node_config_node, pin_config_node,
+    pin_shape_selector_node, shadow_config_node,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -134,6 +134,8 @@ enum ApplicationMessage {
         indices: Vec<usize>,
         delta: Vector,
     },
+    // State export for Claude
+    ExportState,
     // Input node value changes
     SliderChanged {
         node_index: usize,
@@ -158,6 +160,18 @@ enum ApplicationMessage {
     ColorChanged {
         node_index: usize,
         color: Color,
+    },
+    // Collapsible node messages
+    ToggleNodeExpanded {
+        node_index: usize,
+    },
+    UpdateFloatSliderConfig {
+        node_index: usize,
+        config: FloatSliderConfig,
+    },
+    UpdateIntSliderConfig {
+        node_index: usize,
+        config: IntSliderConfig,
     },
 }
 
@@ -228,12 +242,35 @@ impl ComputedStyle {
         }
         config
     }
+
+    /// Builds a PinConfig from computed values
+    fn to_pin_config(&self) -> PinConfig {
+        let mut config = PinConfig::new();
+        if let Some(c) = self.pin_color {
+            config = config.color(c);
+        }
+        if let Some(r) = self.pin_radius {
+            config = config.radius(r);
+        }
+        if let Some(s) = self.pin_shape {
+            config = config.shape(s);
+        }
+        if let Some(bc) = self.pin_border_color {
+            config = config.border_color(bc);
+        }
+        if let Some(bw) = self.pin_border_width {
+            config = config.border_width(bw);
+        }
+        config
+    }
 }
 
 struct Application {
     edges: Vec<(PinReference, PinReference)>,
     nodes: Vec<(Point, NodeType)>,
     selected_nodes: HashSet<usize>,
+    /// Nodes with expanded options panels
+    expanded_nodes: HashSet<usize>,
     command_palette_open: bool,
     command_input: String,
     current_theme: Theme,
@@ -257,30 +294,31 @@ impl Default for Application {
     fn default() -> Self {
         Self {
             edges: vec![
-                (PinReference::new(0, 0), PinReference::new(1, 0)), // trigger.output -> parser.email
-                (PinReference::new(1, 1), PinReference::new(2, 0)), // parser.subject -> filter.input
-                (PinReference::new(1, 2), PinReference::new(3, 0)), // parser.datetime -> calendar.datetime
-                (PinReference::new(2, 1), PinReference::new(3, 1)), // filter.matches -> calendar.title
+                (PinReference::new(0, 0), PinReference::new(1, 0)),
+                (PinReference::new(1, 1), PinReference::new(2, 0)),
+                (PinReference::new(1, 2), PinReference::new(3, 0)),
+                (PinReference::new(2, 1), PinReference::new(3, 1)),
             ],
             nodes: vec![
                 (
-                    Point::new(100.0, 150.0),
+                    Point::new(45.5, 149.0),
                     NodeType::Workflow("email_trigger".to_string()),
                 ),
                 (
-                    Point::new(350.0, 150.0),
+                    Point::new(274.5, 227.5),
                     NodeType::Workflow("email_parser".to_string()),
                 ),
                 (
-                    Point::new(350.0, 350.0),
+                    Point::new(459.5, 432.5),
                     NodeType::Workflow("filter".to_string()),
                 ),
                 (
-                    Point::new(650.0, 250.0),
+                    Point::new(679.0, 252.5),
                     NodeType::Workflow("calendar".to_string()),
                 ),
             ],
             selected_nodes: HashSet::new(),
+            expanded_nodes: HashSet::new(),
             command_palette_open: false,
             command_input: String::new(),
             current_theme: Theme::CatppuccinFrappe,
@@ -316,15 +354,163 @@ impl Application {
         Point::new(world_x - 50.0, world_y - 40.0)
     }
 
+    /// Export current graph state to a file for Claude to read and update demos.
+    /// Format is designed to be human-readable and easily parseable.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn export_state_to_file(&self) {
+        use std::io::Write;
+
+        // Create out/ directory if it doesn't exist
+        let out_dir = std::path::Path::new("out");
+        if !out_dir.exists() {
+            if let Err(e) = std::fs::create_dir(out_dir) {
+                eprintln!("Failed to create out/ directory: {}", e);
+                return;
+            }
+        }
+
+        // Generate random filename
+        let filename = Self::generate_random_name();
+        let path = out_dir.join(format!("{}.txt", filename));
+
+        let mut output = String::new();
+        output.push_str("# Graph State Export\n");
+        output.push_str(
+            "# Generated by hello_world demo - use this to update demo initial state\n\n",
+        );
+
+        // Export nodes
+        output.push_str("## Nodes\n");
+        output.push_str(&format!("# Total: {} nodes\n\n", self.nodes.len()));
+
+        for (idx, (pos, node_type)) in self.nodes.iter().enumerate() {
+            output.push_str(&format!("Node {}: ({:.1}, {:.1})\n", idx, pos.x, pos.y));
+            match node_type {
+                NodeType::Workflow(name) => {
+                    output.push_str(&format!("  Type: Workflow(\"{}\")\n", name));
+                }
+                NodeType::Input(input) => {
+                    output.push_str(&format!("  Type: Input({:?})\n", input));
+                }
+                NodeType::Config(config) => {
+                    output.push_str(&format!("  Type: Config({:?})\n", config));
+                }
+                NodeType::Math(state) => {
+                    output.push_str(&format!("  Type: Math({:?})\n", state));
+                }
+            }
+            output.push('\n');
+        }
+
+        // Export edges
+        output.push_str("## Edges\n");
+        output.push_str(&format!("# Total: {} edges\n\n", self.edges.len()));
+
+        for (from, to) in &self.edges {
+            output.push_str(&format!(
+                "Edge: Node {}.Pin {} -> Node {}.Pin {}\n",
+                from.node_id, from.pin_id, to.node_id, to.pin_id
+            ));
+        }
+
+        // Export Rust code snippet for easy copy-paste
+        output.push_str("\n## Rust Code (copy-paste ready)\n\n");
+        output.push_str("```rust\n");
+        output.push_str("// Edges\n");
+        output.push_str("edges: vec![\n");
+        for (from, to) in &self.edges {
+            output.push_str(&format!(
+                "    (PinReference::new({}, {}), PinReference::new({}, {})),\n",
+                from.node_id, from.pin_id, to.node_id, to.pin_id
+            ));
+        }
+        output.push_str("],\n\n");
+
+        output.push_str("// Nodes\n");
+        output.push_str("nodes: vec![\n");
+        for (pos, node_type) in &self.nodes {
+            let type_str = match node_type {
+                NodeType::Workflow(name) => {
+                    format!("NodeType::Workflow(\"{}\".to_string())", name)
+                }
+                NodeType::Input(input) => {
+                    format!("NodeType::Input({:?})", input)
+                }
+                NodeType::Config(config) => {
+                    format!("NodeType::Config({:?})", config)
+                }
+                NodeType::Math(state) => {
+                    format!(
+                        "NodeType::Math(MathNodeState::new(MathOperation::{:?}))",
+                        state.operation
+                    )
+                }
+            };
+            output.push_str(&format!(
+                "    (Point::new({:.1}, {:.1}), {}),\n",
+                pos.x, pos.y, type_str
+            ));
+        }
+        output.push_str("],\n");
+        output.push_str("```\n");
+
+        // Write to file
+        match std::fs::File::create(&path) {
+            Ok(mut file) => {
+                if let Err(e) = file.write_all(output.as_bytes()) {
+                    eprintln!("Failed to write state export: {}", e);
+                } else {
+                    println!("State exported to: {}", path.display());
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to create export file: {}", e);
+            }
+        }
+    }
+
+    /// Generate a random two-word name for export files
+    #[cfg(not(target_arch = "wasm32"))]
+    fn generate_random_name() -> String {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        const ADJECTIVES: &[&str] = &[
+            "swift", "bright", "calm", "bold", "keen", "warm", "cool", "wild", "soft", "sharp",
+            "quick", "slow", "deep", "wide", "tall", "tiny", "grand", "pure", "rare", "wise",
+            "fair", "dark", "light", "fresh",
+        ];
+        const NOUNS: &[&str] = &[
+            "river", "mountain", "forest", "ocean", "meadow", "valley", "canyon", "island",
+            "sunset", "sunrise", "thunder", "breeze", "garden", "crystal", "shadow", "ember",
+            "falcon", "phoenix", "dragon", "tiger", "wolf", "eagle", "raven", "fox",
+        ];
+
+        // Simple random using system time nanoseconds
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+
+        let adj_idx = (nanos % ADJECTIVES.len() as u128) as usize;
+        let noun_idx = ((nanos / 7) % NOUNS.len() as u128) as usize;
+
+        format!("{}-{}", ADJECTIVES[adj_idx], NOUNS[noun_idx])
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn export_state_to_file(&self) {
+        // WASM: State export not available in browser
+    }
+
     /// Propagates values from input nodes to connected config nodes
     fn propagate_values(&mut self) {
         let mut new_computed = ComputedStyle::default();
         self.pending_configs.clear();
 
-        // Phase 1: Reset all config node inputs to defaults
+        // Phase 1: Reset all config node and math node inputs to defaults
         for (_, node_type) in &mut self.nodes {
-            if let NodeType::Config(config) = node_type {
-                match config {
+            match node_type {
+                NodeType::Config(config) => match config {
                     ConfigNodeType::NodeConfig(inputs) => *inputs = NodeConfigInputs::default(),
                     ConfigNodeType::EdgeConfig(inputs) => *inputs = EdgeConfigInputs::default(),
                     ConfigNodeType::ShadowConfig(inputs) => *inputs = ShadowConfigInputs::default(),
@@ -345,12 +531,92 @@ impl Application {
                         *has_node_config = false;
                         *target_id = None;
                     }
+                },
+                NodeType::Math(state) => {
+                    state.input_a = None;
+                    state.input_b = None;
                 }
+                _ => {}
+            }
+        }
+
+        // Phase 1.5: Propagate values INTO Math nodes (iteratively for chaining)
+        // Math nodes can be chained (e.g., (A+B)*C), so we iterate until stable
+        let edges_snapshot: Vec<_> = self.edges.clone();
+
+        // We need multiple passes because Math→Math chains require the source
+        // to have computed its result before the target can use it
+        const MAX_ITERATIONS: usize = 10;
+        for _ in 0..MAX_ITERATIONS {
+            let mut changed = false;
+
+            for (from, to) in &edges_snapshot {
+                // Get source node's output value
+                let source_value = self
+                    .nodes
+                    .get(from.node_id)
+                    .and_then(|(_, t)| t.output_value());
+
+                if let Some(value) = source_value {
+                    // Try to apply to target if it's a Math node
+                    if let Some((_, NodeType::Math(state))) = self.nodes.get_mut(to.node_id) {
+                        // Math pins: 0=A, 1=B, 2=result
+                        if let Some(float_val) = value.as_float() {
+                            match to.pin_id {
+                                0 => {
+                                    if state.input_a != Some(float_val) {
+                                        state.input_a = Some(float_val);
+                                        changed = true;
+                                    }
+                                }
+                                1 => {
+                                    if state.input_b != Some(float_val) {
+                                        state.input_b = Some(float_val);
+                                        changed = true;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+
+                // Also check reverse direction (edges can connect either way)
+                let source_value = self
+                    .nodes
+                    .get(to.node_id)
+                    .and_then(|(_, t)| t.output_value());
+
+                if let Some(value) = source_value {
+                    if let Some((_, NodeType::Math(state))) = self.nodes.get_mut(from.node_id) {
+                        if let Some(float_val) = value.as_float() {
+                            match from.pin_id {
+                                0 => {
+                                    if state.input_a != Some(float_val) {
+                                        state.input_a = Some(float_val);
+                                        changed = true;
+                                    }
+                                }
+                                1 => {
+                                    if state.input_b != Some(float_val) {
+                                        state.input_b = Some(float_val);
+                                        changed = true;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !changed {
+                break;
             }
         }
 
         // Phase 2: Apply Input → Config connections (in both edge directions)
-        let edges_snapshot: Vec<_> = self.edges.clone();
+        // Also apply Math → Config connections
 
         for (from, to) in &edges_snapshot {
             let from_node_type = self.nodes.get(from.node_id).map(|(_, t)| t.clone());
@@ -366,6 +632,20 @@ impl Application {
                 if let (NodeType::Config(_), NodeType::Input(input)) = (&from_type, &to_type) {
                     let value = input.output_value();
                     self.apply_value_to_config_node(from.node_id, from.pin_id, &value);
+                }
+                // Handle Math → Config connections
+                if let (NodeType::Math(state), NodeType::Config(_)) = (&from_type, &to_type) {
+                    if let Some(result) = state.result() {
+                        let value = NodeValue::Float(result);
+                        self.apply_value_to_config_node(to.node_id, to.pin_id, &value);
+                    }
+                }
+                // Handle Config → Math connections (reverse direction)
+                if let (NodeType::Config(_), NodeType::Math(state)) = (&from_type, &to_type) {
+                    if let Some(result) = state.result() {
+                        let value = NodeValue::Float(result);
+                        self.apply_value_to_config_node(from.node_id, from.pin_id, &value);
+                    }
                 }
             }
         }
@@ -690,6 +970,10 @@ impl Application {
                     self.command_input.clear();
                     focus_input()
                 }
+                "export_state" => {
+                    self.export_state_to_file();
+                    Task::none()
+                }
                 _ => Task::none(),
             },
             ApplicationMessage::CommandPaletteNavigate(new_index) => {
@@ -782,6 +1066,12 @@ impl Application {
                                 self.palette_view = PaletteView::Main;
                                 Task::none()
                             }
+                            ApplicationMessage::ExportState => {
+                                self.command_palette_open = false;
+                                self.palette_view = PaletteView::Main;
+                                self.export_state_to_file();
+                                Task::none()
+                            }
                             _ => Task::none(),
                         }
                     }
@@ -839,6 +1129,10 @@ impl Application {
                 focus_input()
             }
             ApplicationMessage::Tick => Task::none(),
+            ApplicationMessage::ExportState => {
+                self.export_state_to_file();
+                Task::none()
+            }
             ApplicationMessage::SelectionChanged(indices) => {
                 self.selected_nodes = indices.into_iter().collect();
                 Task::none()
@@ -978,6 +1272,34 @@ impl Application {
                 }
                 Task::none()
             }
+            ApplicationMessage::ToggleNodeExpanded { node_index } => {
+                if self.expanded_nodes.contains(&node_index) {
+                    self.expanded_nodes.remove(&node_index);
+                } else {
+                    self.expanded_nodes.insert(node_index);
+                }
+                Task::none()
+            }
+            ApplicationMessage::UpdateFloatSliderConfig { node_index, config } => {
+                if let Some((_, NodeType::Input(InputNodeType::FloatSlider { config: c, value }))) =
+                    self.nodes.get_mut(node_index)
+                {
+                    // Clamp value to new range if needed
+                    *value = value.clamp(config.min, config.max);
+                    *c = config;
+                }
+                Task::none()
+            }
+            ApplicationMessage::UpdateIntSliderConfig { node_index, config } => {
+                if let Some((_, NodeType::Input(InputNodeType::IntSlider { config: c, value }))) =
+                    self.nodes.get_mut(node_index)
+                {
+                    // Clamp value to new range if needed
+                    *value = (*value).clamp(config.min, config.max);
+                    *c = config;
+                }
+                Task::none()
+            }
         }
     }
 
@@ -999,6 +1321,12 @@ impl Application {
                 .shortcut(Shortcut::cmd('t'))
                 .action(ApplicationMessage::ExecuteShortcut(
                     "change_theme".to_string(),
+                )),
+            command("export_state", "Export State")
+                .description("Export graph state to file for Claude")
+                .shortcut(Shortcut::cmd('e'))
+                .action(ApplicationMessage::ExecuteShortcut(
+                    "export_state".to_string(),
                 )),
         ]
     }
@@ -1059,8 +1387,17 @@ impl Application {
     }
 
     fn view(&self) -> iced::Element<'_, ApplicationMessage> {
+        // Use preview theme if active (for theme selection), otherwise current theme
+        let theme = self
+            .palette_preview_theme
+            .as_ref()
+            .unwrap_or(&self.current_theme);
+
         // Graph-wide node defaults - combine with per-node configs using merge()
         let node_defaults = NodeConfig::new().corner_radius(8.0).opacity(0.88);
+
+        // Pin defaults from connected config nodes
+        let pin_defaults = self.computed_style.to_pin_config();
 
         let mut ng = node_graph()
             .on_connect(|from, to| ApplicationMessage::EdgeConnected { from, to })
@@ -1074,34 +1411,55 @@ impl Application {
             .on_delete(ApplicationMessage::DeleteNodes)
             .on_group_move(|indices, delta| ApplicationMessage::GroupMoved { indices, delta })
             .on_camera_change(|position, zoom| ApplicationMessage::CameraChanged { position, zoom })
-            .selection(&self.selected_nodes);
+            .selection(&self.selected_nodes)
+            .pin_defaults(pin_defaults);
 
         // Add all nodes from state
         for (idx, (position, node_type)) in self.nodes.iter().enumerate() {
             let element: iced::Element<'_, ApplicationMessage> = match node_type {
-                NodeType::Workflow(name) => node(name.as_str(), &self.current_theme),
+                NodeType::Workflow(name) => node(name.as_str(), theme),
                 NodeType::Input(input) => match input {
                     InputNodeType::FloatSlider { config, value } => {
                         let idx = idx;
-                        float_slider_node(&self.current_theme, *value, config, move |v| {
-                            ApplicationMessage::SliderChanged {
+                        let expanded = self.expanded_nodes.contains(&idx);
+                        float_slider_node(
+                            theme,
+                            *value,
+                            config,
+                            expanded,
+                            move |v| ApplicationMessage::SliderChanged {
                                 node_index: idx,
                                 value: v,
-                            }
-                        })
+                            },
+                            move |cfg| ApplicationMessage::UpdateFloatSliderConfig {
+                                node_index: idx,
+                                config: cfg,
+                            },
+                            ApplicationMessage::ToggleNodeExpanded { node_index: idx },
+                        )
                     }
                     InputNodeType::IntSlider { config, value } => {
                         let idx = idx;
-                        int_slider_node(&self.current_theme, *value, config, move |v| {
-                            ApplicationMessage::IntSliderChanged {
+                        let expanded = self.expanded_nodes.contains(&idx);
+                        int_slider_node(
+                            theme,
+                            *value,
+                            config,
+                            expanded,
+                            move |v| ApplicationMessage::IntSliderChanged {
                                 node_index: idx,
                                 value: v,
-                            }
-                        })
+                            },
+                            move |cfg| ApplicationMessage::UpdateIntSliderConfig {
+                                node_index: idx,
+                                config: cfg,
+                            },
+                            ApplicationMessage::ToggleNodeExpanded { node_index: idx },
+                        )
                     }
                     InputNodeType::BoolToggle { config, value } => {
                         let idx = idx;
-                        bool_toggle_node(&self.current_theme, *value, config, move |v| {
+                        bool_toggle_node(theme, *value, config, move |v| {
                             ApplicationMessage::BoolChanged {
                                 node_index: idx,
                                 value: v,
@@ -1110,7 +1468,7 @@ impl Application {
                     }
                     InputNodeType::EdgeTypeSelector { value } => {
                         let idx = idx;
-                        edge_type_selector_node(&self.current_theme, *value, move |v| {
+                        edge_type_selector_node(theme, *value, move |v| {
                             ApplicationMessage::EdgeTypeChanged {
                                 node_index: idx,
                                 value: v,
@@ -1119,7 +1477,7 @@ impl Application {
                     }
                     InputNodeType::PinShapeSelector { value } => {
                         let idx = idx;
-                        pin_shape_selector_node(&self.current_theme, *value, move |v| {
+                        pin_shape_selector_node(theme, *value, move |v| {
                             ApplicationMessage::PinShapeChanged {
                                 node_index: idx,
                                 value: v,
@@ -1128,7 +1486,7 @@ impl Application {
                     }
                     InputNodeType::ColorPicker { color } => {
                         let idx = idx;
-                        color_picker_node(&self.current_theme, *color, move |c| {
+                        color_picker_node(theme, *color, move |c| {
                             ApplicationMessage::ColorChanged {
                                 node_index: idx,
                                 color: c,
@@ -1137,7 +1495,7 @@ impl Application {
                     }
                     InputNodeType::ColorPreset { color } => {
                         let idx = idx;
-                        color_preset_node(&self.current_theme, *color, move |c| {
+                        color_preset_node(theme, *color, move |c| {
                             ApplicationMessage::ColorChanged {
                                 node_index: idx,
                                 color: c,
@@ -1146,24 +1504,16 @@ impl Application {
                     }
                 },
                 NodeType::Config(config) => match config {
-                    ConfigNodeType::NodeConfig(inputs) => {
-                        node_config_node(&self.current_theme, inputs)
-                    }
-                    ConfigNodeType::EdgeConfig(inputs) => {
-                        edge_config_node(&self.current_theme, inputs)
-                    }
-                    ConfigNodeType::ShadowConfig(inputs) => {
-                        shadow_config_node(&self.current_theme, inputs)
-                    }
-                    ConfigNodeType::PinConfig(inputs) => {
-                        pin_config_node(&self.current_theme, inputs)
-                    }
+                    ConfigNodeType::NodeConfig(inputs) => node_config_node(theme, inputs),
+                    ConfigNodeType::EdgeConfig(inputs) => edge_config_node(theme, inputs),
+                    ConfigNodeType::ShadowConfig(inputs) => shadow_config_node(theme, inputs),
+                    ConfigNodeType::PinConfig(inputs) => pin_config_node(theme, inputs),
                     ConfigNodeType::ApplyToGraph {
                         has_node_config,
                         has_edge_config,
                         has_pin_config,
                     } => apply_to_graph_node(
-                        &self.current_theme,
+                        theme,
                         *has_node_config,
                         *has_edge_config,
                         *has_pin_config,
@@ -1171,8 +1521,9 @@ impl Application {
                     ConfigNodeType::ApplyToNode {
                         has_node_config,
                         target_id,
-                    } => apply_to_node_node(&self.current_theme, *has_node_config, *target_id),
+                    } => apply_to_node_node(theme, *has_node_config, *target_id),
                 },
+                NodeType::Math(state) => math_node(theme, state),
             };
 
             // Apply computed style to workflow nodes only (not to input/config nodes)
@@ -1230,6 +1581,10 @@ impl Application {
                         .description("Switch to a different color theme")
                         .shortcut(Shortcut::cmd('t'))
                         .action(ApplicationMessage::NavigateToSubmenu("themes".to_string())),
+                    command("export_state", "Export State")
+                        .description("Export graph state to file for Claude")
+                        .shortcut(Shortcut::cmd('e'))
+                        .action(ApplicationMessage::ExportState),
                 ];
                 ("Command Palette", commands)
             }
@@ -1246,6 +1601,12 @@ impl Application {
                         .description("Sliders, color pickers, etc.")
                         .action(ApplicationMessage::NavigateToSubmenu(
                             "input_nodes".to_string(),
+                        )),
+                    // Math nodes
+                    command("math", "Math Nodes")
+                        .description("Add, Subtract, Multiply, Divide")
+                        .action(ApplicationMessage::NavigateToSubmenu(
+                            "math_nodes".to_string(),
                         )),
                     // Config nodes
                     command("config", "Style Config Nodes")
@@ -1292,12 +1653,12 @@ impl Application {
                                 color: Color::from_rgb(0.5, 0.5, 0.5),
                             }),
                         }),
-                    command("int_slider", "Integer Slider")
-                        .description("Integer slider for node index selection")
+                    command("int_slider", "Int Slider")
+                        .description("Integer slider (0-100)")
                         .action(ApplicationMessage::SpawnNode {
                             node_type: NodeType::Input(InputNodeType::IntSlider {
-                                config: IntSliderConfig::node_index(),
-                                value: 0,
+                                config: IntSliderConfig::default(),
+                                value: 50,
                             }),
                         }),
                     command("bool_toggle", "Boolean Toggle")
@@ -1324,6 +1685,31 @@ impl Application {
                         }),
                 ];
                 ("Input Nodes", commands)
+            }
+            PaletteView::Submenu(submenu) if submenu == "math_nodes" => {
+                let commands = vec![
+                    command("add", "Add").description("A + B").action(
+                        ApplicationMessage::SpawnNode {
+                            node_type: NodeType::Math(MathNodeState::new(MathOperation::Add)),
+                        },
+                    ),
+                    command("subtract", "Subtract").description("A - B").action(
+                        ApplicationMessage::SpawnNode {
+                            node_type: NodeType::Math(MathNodeState::new(MathOperation::Subtract)),
+                        },
+                    ),
+                    command("multiply", "Multiply").description("A * B").action(
+                        ApplicationMessage::SpawnNode {
+                            node_type: NodeType::Math(MathNodeState::new(MathOperation::Multiply)),
+                        },
+                    ),
+                    command("divide", "Divide").description("A / B").action(
+                        ApplicationMessage::SpawnNode {
+                            node_type: NodeType::Math(MathNodeState::new(MathOperation::Divide)),
+                        },
+                    ),
+                ];
+                ("Math Nodes", commands)
             }
             PaletteView::Submenu(submenu) if submenu == "config_nodes" => {
                 let commands = vec![
@@ -1439,5 +1825,169 @@ fn handle_keyboard_event(
             }
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nodes::{MathNodeState, MathOperation, NodeType};
+
+    // === Math Operation Tests ===
+
+    #[test]
+    fn test_math_add() {
+        let op = MathOperation::Add;
+        assert_eq!(op.compute(5.0, 3.0), 8.0);
+        assert_eq!(op.symbol(), "+");
+        assert_eq!(op.name(), "Add");
+    }
+
+    #[test]
+    fn test_math_subtract() {
+        let op = MathOperation::Subtract;
+        assert_eq!(op.compute(5.0, 3.0), 2.0);
+        assert_eq!(op.compute(3.0, 5.0), -2.0);
+        assert_eq!(op.symbol(), "-");
+    }
+
+    #[test]
+    fn test_math_multiply() {
+        let op = MathOperation::Multiply;
+        assert_eq!(op.compute(5.0, 3.0), 15.0);
+        assert_eq!(op.compute(0.0, 100.0), 0.0);
+        assert_eq!(op.symbol(), "*");
+    }
+
+    #[test]
+    fn test_math_divide() {
+        let op = MathOperation::Divide;
+        assert_eq!(op.compute(6.0, 2.0), 3.0);
+        assert_eq!(op.symbol(), "/");
+    }
+
+    #[test]
+    fn test_math_divide_by_zero() {
+        let op = MathOperation::Divide;
+        let result = op.compute(5.0, 0.0);
+        assert!(result.is_infinite());
+    }
+
+    // === MathNodeState Tests ===
+
+    #[test]
+    fn test_math_node_result_with_both_inputs() {
+        let mut state = MathNodeState::new(MathOperation::Add);
+        state.input_a = Some(10.0);
+        state.input_b = Some(5.0);
+        assert_eq!(state.result(), Some(15.0));
+    }
+
+    #[test]
+    fn test_math_node_result_with_missing_a() {
+        let mut state = MathNodeState::new(MathOperation::Add);
+        state.input_a = None;
+        state.input_b = Some(5.0);
+        assert_eq!(state.result(), None);
+    }
+
+    #[test]
+    fn test_math_node_result_with_missing_b() {
+        let mut state = MathNodeState::new(MathOperation::Add);
+        state.input_a = Some(10.0);
+        state.input_b = None;
+        assert_eq!(state.result(), None);
+    }
+
+    // === NodeType Output Value Tests ===
+
+    #[test]
+    fn test_math_node_output_value() {
+        let mut state = MathNodeState::new(MathOperation::Multiply);
+        state.input_a = Some(4.0);
+        state.input_b = Some(3.0);
+        let node_type = NodeType::Math(state);
+
+        let output = node_type.output_value();
+        assert!(output.is_some());
+        if let Some(NodeValue::Float(f)) = output {
+            assert_eq!(f, 12.0);
+        } else {
+            panic!("Expected Float value");
+        }
+    }
+
+    #[test]
+    fn test_math_node_output_value_no_result() {
+        let state = MathNodeState::new(MathOperation::Add); // No inputs
+        let node_type = NodeType::Math(state);
+        assert!(node_type.output_value().is_none());
+    }
+
+    #[test]
+    fn test_input_node_output_value() {
+        let input = InputNodeType::FloatSlider {
+            config: FloatSliderConfig::default(),
+            value: 7.5,
+        };
+        let node_type = NodeType::Input(input);
+
+        let output = node_type.output_value();
+        assert!(output.is_some());
+        if let Some(NodeValue::Float(f)) = output {
+            assert!((f - 7.5).abs() < 0.001);
+        } else {
+            panic!("Expected Float value");
+        }
+    }
+
+    // === ComputedStyle Tests ===
+
+    #[test]
+    fn test_computed_style_to_pin_config_empty() {
+        let style = ComputedStyle::default();
+        let config = style.to_pin_config();
+        // Empty style should produce empty config
+        assert!(config.color.is_none());
+        assert!(config.radius.is_none());
+        assert!(config.shape.is_none());
+    }
+
+    #[test]
+    fn test_computed_style_to_pin_config_with_values() {
+        let mut style = ComputedStyle::default();
+        style.pin_color = Some(Color::from_rgb(1.0, 0.0, 0.0));
+        style.pin_radius = Some(10.0);
+        style.pin_shape = Some(PinShape::Diamond);
+
+        let config = style.to_pin_config();
+        assert_eq!(config.color, Some(Color::from_rgb(1.0, 0.0, 0.0)));
+        assert_eq!(config.radius, Some(10.0));
+        assert_eq!(config.shape, Some(PinShape::Diamond));
+    }
+
+    #[test]
+    fn test_computed_style_to_node_config() {
+        let mut style = ComputedStyle::default();
+        style.corner_radius = Some(12.0);
+        style.opacity = Some(0.8);
+        style.fill_color = Some(Color::from_rgb(0.2, 0.3, 0.4));
+
+        let config = style.to_node_config();
+        assert_eq!(config.corner_radius, Some(12.0));
+        assert_eq!(config.opacity, Some(0.8));
+        assert_eq!(config.fill_color, Some(Color::from_rgb(0.2, 0.3, 0.4)));
+    }
+
+    #[test]
+    fn test_computed_style_to_edge_config() {
+        let mut style = ComputedStyle::default();
+        style.edge_thickness = Some(3.0);
+        style.edge_color = Some(Color::from_rgb(0.5, 0.5, 0.5));
+
+        let config = style.to_edge_config();
+        assert_eq!(config.thickness, Some(3.0));
+        assert_eq!(config.start_color, Some(Color::from_rgb(0.5, 0.5, 0.5)));
+        assert_eq!(config.end_color, Some(Color::from_rgb(0.5, 0.5, 0.5)));
     }
 }

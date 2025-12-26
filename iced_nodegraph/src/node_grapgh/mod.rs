@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use iced::{Color, Length, Point, Size, Vector};
 
 use crate::node_pin::PinReference;
-use crate::style::{EdgeConfig, GraphStyle, NodeConfig};
+use crate::style::{EdgeConfig, GraphStyle, NodeConfig, PinConfig};
 
 pub mod camera;
 pub(crate) mod effects;
@@ -125,6 +125,9 @@ pub struct NodeGraph<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer
     /// Callback for camera state changes (position, zoom).
     /// Used for tracking viewport state in application for features like spawn-at-center.
     on_camera_change: Option<Box<dyn Fn(Point, f32) -> Message + 'a>>,
+    /// Global pin style overrides applied to all pins.
+    /// Individual pin colors from widgets take precedence over this.
+    pub(super) pin_defaults: Option<PinConfig>,
 }
 
 impl<Message, Theme, Renderer> Default for NodeGraph<'_, Message, Theme, Renderer>
@@ -151,6 +154,7 @@ where
             remote_users: None,
             on_event: None,
             on_camera_change: None,
+            pin_defaults: None,
         }
     }
 }
@@ -246,6 +250,13 @@ where
 
     pub fn graph_style(mut self, style: GraphStyle) -> Self {
         self.graph_style = Some(style);
+        self
+    }
+
+    /// Sets global pin style defaults.
+    /// These override theme defaults but individual pin colors from widgets still take precedence.
+    pub fn pin_defaults(mut self, config: PinConfig) -> Self {
+        self.pin_defaults = Some(config);
         self
     }
 

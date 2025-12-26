@@ -8,6 +8,7 @@ mod enum_selector;
 mod filter;
 mod float_slider;
 mod int_slider;
+mod math;
 
 pub use bool_toggle::{BoolToggleConfig, bool_toggle_node};
 pub use calendar::calendar_node;
@@ -22,6 +23,7 @@ pub use enum_selector::{edge_type_selector_node, pin_shape_selector_node};
 pub use filter::filter_node;
 pub use float_slider::{FloatSliderConfig, float_slider_node};
 pub use int_slider::{IntSliderConfig, int_slider_node};
+pub use math::math_node;
 
 use iced::{
     Color, Padding, Theme,
@@ -187,6 +189,79 @@ pub enum ConfigNodeType {
     },
 }
 
+/// Mathematical operations for math nodes
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MathOperation {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+}
+
+impl MathOperation {
+    /// Returns the display symbol for this operation
+    pub fn symbol(&self) -> &'static str {
+        match self {
+            Self::Add => "+",
+            Self::Subtract => "-",
+            Self::Multiply => "*",
+            Self::Divide => "/",
+        }
+    }
+
+    /// Returns the display name for this operation
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Add => "Add",
+            Self::Subtract => "Subtract",
+            Self::Multiply => "Multiply",
+            Self::Divide => "Divide",
+        }
+    }
+
+    /// Computes the result of this operation
+    pub fn compute(&self, a: f32, b: f32) -> f32 {
+        match self {
+            Self::Add => a + b,
+            Self::Subtract => a - b,
+            Self::Multiply => a * b,
+            Self::Divide => {
+                if b != 0.0 {
+                    a / b
+                } else {
+                    f32::INFINITY
+                }
+            }
+        }
+    }
+}
+
+/// State for a math node
+#[derive(Debug, Clone, PartialEq)]
+pub struct MathNodeState {
+    pub operation: MathOperation,
+    pub input_a: Option<f32>,
+    pub input_b: Option<f32>,
+}
+
+impl MathNodeState {
+    pub fn new(operation: MathOperation) -> Self {
+        Self {
+            operation,
+            input_a: None,
+            input_b: None,
+        }
+    }
+
+    /// Computes the result if both inputs are available
+    pub fn result(&self) -> Option<f32> {
+        match (self.input_a, self.input_b) {
+            (Some(a), Some(b)) => Some(self.operation.compute(a, b)),
+            _ => None,
+        }
+    }
+}
+
 /// Input node types that produce values
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputNodeType {
@@ -252,6 +327,8 @@ pub enum NodeType {
     Input(InputNodeType),
     /// Config nodes that consume values and affect styling
     Config(ConfigNodeType),
+    /// Math nodes that compute values from inputs
+    Math(MathNodeState),
 }
 
 #[allow(dead_code)]
@@ -276,6 +353,16 @@ impl NodeType {
                 ConfigNodeType::ApplyToGraph { .. } => "Apply to Graph",
                 ConfigNodeType::ApplyToNode { .. } => "Apply to Node",
             },
+            Self::Math(state) => state.operation.name(),
+        }
+    }
+
+    /// Returns the output value for this node, if it produces one
+    pub fn output_value(&self) -> Option<NodeValue> {
+        match self {
+            Self::Input(input) => Some(input.output_value()),
+            Self::Math(state) => state.result().map(NodeValue::Float),
+            Self::Workflow(_) | Self::Config(_) => None,
         }
     }
 }

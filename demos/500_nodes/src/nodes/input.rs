@@ -1,8 +1,10 @@
 use iced::{
-    Color, Length, Theme,
+    Length, Theme,
     widget::{column, container, text},
 };
 use iced_nodegraph::pin;
+
+use super::colors::{PIN_FLOAT, PIN_NORMAL, PIN_POSITION, PIN_VEC2, SPACING_PIN};
 
 fn title_bar<'a, Message>(
     title: &'a str,
@@ -26,14 +28,7 @@ pub fn time_input_node<'a, Message>(theme: &'a Theme) -> iced::Element<'a, Messa
 where
     Message: Clone + 'a,
 {
-    let pins = column![pin!(
-        Right,
-        "t",
-        Output,
-        "float",
-        Color::from_rgb(0.9, 0.5, 0.2)
-    ),]
-    .spacing(1);
+    let pins = column![pin!(Right, "t", Output, "float", PIN_FLOAT),].spacing(SPACING_PIN);
 
     column![title_bar("Time", theme), container(pins).padding([4, 0])]
         .width(100.0)
@@ -44,14 +39,7 @@ pub fn uv_input_node<'a, Message>(theme: &'a Theme) -> iced::Element<'a, Message
 where
     Message: Clone + 'a,
 {
-    let pins = column![pin!(
-        Right,
-        "uv",
-        Output,
-        "vec2",
-        Color::from_rgb(0.9, 0.7, 0.3)
-    ),]
-    .spacing(1);
+    let pins = column![pin!(Right, "uv", Output, "vec2", PIN_VEC2),].spacing(SPACING_PIN);
 
     column![title_bar("UV", theme), container(pins).padding([4, 0])]
         .width(100.0)
@@ -62,14 +50,7 @@ pub fn normal_input_node<'a, Message>(theme: &'a Theme) -> iced::Element<'a, Mes
 where
     Message: Clone + 'a,
 {
-    let pins = column![pin!(
-        Right,
-        "N",
-        Output,
-        "vec3",
-        Color::from_rgb(0.5, 0.7, 0.9)
-    ),]
-    .spacing(1);
+    let pins = column![pin!(Right, "N", Output, "vec3", PIN_NORMAL),].spacing(SPACING_PIN);
 
     column![title_bar("Normal", theme), container(pins).padding([4, 0])]
         .width(100.0)
@@ -80,14 +61,7 @@ pub fn position_input_node<'a, Message>(theme: &'a Theme) -> iced::Element<'a, M
 where
     Message: Clone + 'a,
 {
-    let pins = column![pin!(
-        Right,
-        "P",
-        Output,
-        "vec3",
-        Color::from_rgb(0.3, 0.9, 0.5)
-    ),]
-    .spacing(1);
+    let pins = column![pin!(Right, "P", Output, "vec3", PIN_POSITION),].spacing(SPACING_PIN);
 
     column![
         title_bar("Position", theme),
