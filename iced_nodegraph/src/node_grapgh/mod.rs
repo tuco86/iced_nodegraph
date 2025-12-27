@@ -1,7 +1,10 @@
 use std::collections::HashSet;
+use std::fmt::Debug;
+use std::hash::Hash;
 
 use iced::{Color, Length, Point, Size, Vector};
 
+use crate::ids::{EdgeId, NodeId, PinId};
 use crate::node_pin::PinReference;
 use crate::style::{EdgeConfig, GraphStyle, NodeConfig, PinConfig};
 
@@ -88,6 +91,80 @@ pub enum NodeGraphEvent {
         node_ids: Vec<usize>,
     },
 }
+
+/// Generic message enum for graph interactions with user-defined ID types.
+///
+/// This is the generic version of [`NodeGraphEvent`] that uses your own ID types
+/// instead of `usize`. Wrap this in your application's message enum:
+///
+/// ```rust,ignore
+/// use iced_nodegraph::{NodeGraphMessage, PinRef};
+///
+/// #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// enum MyNodeId { Input, Process, Output }
+/// impl iced_nodegraph::NodeId for MyNodeId {}
+///
+/// #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// enum MyPinId { DataIn, DataOut }
+/// impl iced_nodegraph::PinId for MyPinId {}
+///
+/// #[derive(Clone, Debug)]
+/// enum AppMessage {
+///     Graph(NodeGraphMessage<MyNodeId, MyPinId>),
+///     // ... other messages
+/// }
+/// ```
+#[derive(Debug, Clone)]
+pub enum NodeGraphMessage<N = usize, P = usize, E = usize>
+where
+    N: NodeId,
+    P: PinId,
+    E: EdgeId,
+{
+    /// An edge was connected between two pins.
+    EdgeConnected {
+        edge_id: E,
+        from: PinRef<N, P>,
+        to: PinRef<N, P>,
+    },
+    /// An edge was disconnected.
+    EdgeDisconnected {
+        edge_id: E,
+        from: PinRef<N, P>,
+        to: PinRef<N, P>,
+    },
+    /// A node was moved to a new position.
+    NodeMoved { node_id: N, position: Point },
+    /// Multiple nodes were moved together.
+    GroupMoved { node_ids: Vec<N>, delta: Vector },
+    /// The selection changed.
+    SelectionChanged { selected: Vec<N> },
+    /// User requested to clone selected nodes.
+    CloneRequested { node_ids: Vec<N> },
+    /// User requested to delete selected nodes.
+    DeleteRequested { node_ids: Vec<N> },
+}
+
+/// Type alias for backwards compatibility with usize-based events.
+pub type NodeGraphMessageUsize = NodeGraphMessage<usize, usize, usize>;
+
+/// Generic pin reference with user-defined ID types.
+///
+/// This is the generic version of [`PinReference`] that uses your own ID types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PinRef<N, P> {
+    pub node_id: N,
+    pub pin_id: P,
+}
+
+impl<N: Clone, P: Clone> PinRef<N, P> {
+    pub fn new(node_id: N, pin_id: P) -> Self {
+        Self { node_id, pin_id }
+    }
+}
+
+/// Type alias for backwards compatibility.
+pub type PinRefUsize = PinRef<usize, usize>;
 
 #[allow(missing_debug_implementations)]
 pub struct NodeGraph<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer> {

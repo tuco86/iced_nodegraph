@@ -193,21 +193,27 @@ pub use content::{
 pub use helpers::{
     CloneResult, DeleteResult, NodeHandle, PinHandle, SelectionHelper, clone_nodes, delete_nodes,
 };
+pub use ids::{EdgeId, IdMap, IdMaps, NodeId, PinId};
 pub use node_grapgh::{
-    DragInfo, NodeGraph, NodeGraphEvent, RemoteDrag, RemoteUserState, camera::Camera2D,
-    widget::node_graph,
+    DragInfo, NodeGraph, NodeGraphEvent, NodeGraphMessage, NodeGraphMessageUsize, PinRef,
+    PinRefUsize, RemoteDrag, RemoteUserState, camera::Camera2D, widget::node_graph,
 };
 pub use node_pin::{NodePin, PinDirection, PinReference, PinSide, node_pin};
 pub use style::{
-    // Style types (resolved from theme)
-    DashPattern,
-    EdgeAnimation,
     // Config types (partial overrides with merge())
+    BorderConfig,
+    // Edge style layer types
+    BorderStyle,
+    DashCap,
+    DashMotion,
     EdgeConfig,
+    EdgeCurve,
+    EdgeShadowConfig,
+    EdgeShadowStyle,
     EdgeStyle,
-    EdgeType,
     GraphConfig,
     GraphStyle,
+    MotionDirection,
     NodeConfig,
     NodeStyle,
     PinConfig,
@@ -218,6 +224,10 @@ pub use style::{
     SelectionStyle,
     ShadowConfig,
     ShadowStyle,
+    StrokeCap,
+    StrokeConfig,
+    StrokePattern,
+    StrokeStyle,
     is_dark_theme,
     relative_luminance,
     theme_name,
@@ -225,6 +235,7 @@ pub use style::{
 
 pub mod content;
 pub mod helpers;
+pub mod ids;
 mod macros;
 mod node;
 mod node_grapgh;
