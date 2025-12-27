@@ -14,6 +14,7 @@ categories = ["gui", "graphics", "visualization"]
 euclid.workspace = true
 bytemuck.workspace = true
 glam.workspace = true
+encase.workspace = true
 iced_wgpu.workspace = true
 iced_widget.workspace = true
 # webgl feature adds WebGL2 fallback for browsers without WebGPU (ignored on native)

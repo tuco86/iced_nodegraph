@@ -1,14 +1,16 @@
-use crate::node_grapgh::euclid::{WorldPoint, WorldSize, WorldVector};
+// Allow dead_code warnings from encase's ShaderType derive macro
+#![allow(dead_code)]
+
+use encase::ShaderType;
 
 // Pin flag constants
 pub const PIN_FLAG_VALID_TARGET: u32 = 1; // bit 0: valid drop target during edge dragging
 
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-#[repr(C)]
+#[derive(Clone, Debug, ShaderType)]
 pub struct Uniforms {
     pub os_scale_factor: f32, // e.g. 1.0, 1.5
     pub camera_zoom: f32,
-    pub camera_position: WorldPoint,
+    pub camera_position: glam::Vec2,
 
     pub border_color: glam::Vec4,          // RGBA for node border
     pub fill_color: glam::Vec4,            // RGBA for node fill
@@ -17,7 +19,7 @@ pub struct Uniforms {
     pub drag_edge_color: glam::Vec4,       // RGBA for dragging edge (warning color)
     pub drag_edge_valid_color: glam::Vec4, // RGBA for valid connection (success color)
 
-    pub cursor_position: WorldPoint, // in world coordinates
+    pub cursor_position: glam::Vec2, // in world coordinates
 
     pub num_nodes: u32,
     pub num_pins: u32,
@@ -25,12 +27,9 @@ pub struct Uniforms {
     pub time: f32, // Time in seconds for animations
 
     pub dragging: u32,
-    pub _pad_uniforms0: u32,
-    pub _pad_uniforms1: u32,
-    pub _pad_uniforms2: u32,
     pub dragging_edge_from_node: u32,
     pub dragging_edge_from_pin: u32,
-    pub dragging_edge_from_origin: WorldPoint,
+    pub dragging_edge_from_origin: glam::Vec2,
     pub dragging_edge_to_node: u32,
     pub dragging_edge_to_pin: u32,
 
@@ -46,75 +45,305 @@ pub struct Uniforms {
     pub hover_glow_radius: f32,          // Node hover glow radius in world units
     pub edge_thickness: f32,             // Default edge thickness for dragging
     pub render_mode: u32,                // 0=background (fill only), 1=foreground (border only)
-    pub _pad_theme1: u32,
 
     pub viewport_size: glam::Vec2, // viewport size for clip space transform
     pub bounds_origin: glam::Vec2, // widget bounds origin in physical pixels
     pub bounds_size: glam::Vec2,   // widget bounds size in physical pixels
-    pub _pad_end0: u32,            // padding for 16-byte alignment
-    pub _pad_end1: u32,
 }
 
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-#[repr(C)]
+#[derive(Clone, Debug, ShaderType)]
 pub struct Node {
-    pub position: WorldVector,     // 8 bytes @ 0
-    pub size: WorldSize,           // 8 bytes @ 8 (total 16)
-    pub corner_radius: f32,        // 4 bytes @ 16
-    pub border_width: f32,         // 4 bytes @ 20
-    pub opacity: f32,              // 4 bytes @ 24
-    pub pin_start: u32,            // 4 bytes @ 28 (total 32)
-    pub pin_count: u32,            // 4 bytes @ 32
-    pub shadow_blur: f32,          // 4 bytes @ 36
-    pub shadow_offset: glam::Vec2, // 8 bytes @ 40 (total 48)
-    pub fill_color: glam::Vec4,    // 16 bytes @ 48 (16-byte aligned)
-    pub border_color: glam::Vec4,  // 16 bytes @ 64 (total 80)
-    pub shadow_color: glam::Vec4,  // 16 bytes @ 80 (total 96)
-    pub flags: u32,                // 4 bytes @ 96 (bit 0: hovered, bit 1: selected)
-    pub _pad_flags0: u32,          // 4 bytes @ 100
-    pub _pad_flags1: u32,          // 4 bytes @ 104
-    pub _pad_flags2: u32,          // 4 bytes @ 108 (total 112, aligned to 16)
+    pub position: glam::Vec2,
+    pub size: glam::Vec2,
+    pub corner_radius: f32,
+    pub border_width: f32,
+    pub opacity: f32,
+    pub pin_start: u32,
+    pub pin_count: u32,
+    pub shadow_blur: f32,
+    pub shadow_offset: glam::Vec2,
+    pub fill_color: glam::Vec4,
+    pub border_color: glam::Vec4,
+    pub shadow_color: glam::Vec4,
+    pub flags: u32, // bit 0: hovered, bit 1: selected
+    // Padding for 16-byte array stride alignment (112 bytes total)
+    pub _pad0: u32,
+    pub _pad1: u32,
+    pub _pad2: u32,
 }
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Debug, ShaderType)]
 pub struct Pin {
-    pub position: WorldVector,    // vec2<f32> = 8 bytes @ 0
-    pub side: u32,                // 4 bytes @ 8
-    pub radius: f32,              // 4 bytes @ 12 (total 16 bytes)
-    pub color: glam::Vec4,        // vec4<f32> = 16 bytes @ 16 (total 32 bytes)
-    pub border_color: glam::Vec4, // vec4<f32> = 16 bytes @ 32 (total 48 bytes)
-    pub direction: u32,           // 4 bytes @ 48
-    pub shape: u32,               // 4 bytes @ 52 (0=Circle, 1=Square, 2=Diamond, 3=Triangle)
-    pub border_width: f32,        // 4 bytes @ 56
-    pub flags: u32,               // 4 bytes @ 60 (total 64 bytes - aligned to 16)
+    pub position: glam::Vec2,
+    pub side: u32,
+    pub radius: f32,
+    pub color: glam::Vec4,
+    pub border_color: glam::Vec4,
+    pub direction: u32,
+    pub shape: u32, // 0=Circle, 1=Square, 2=Diamond, 3=Triangle
+    pub border_width: f32,
+    pub flags: u32, // bit 0: valid drop target during edge dragging
 }
 
 /// Edge with resolved world positions (no index lookups needed in shader).
 ///
-/// Layout: 96 bytes, 16-byte aligned.
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-#[repr(C)]
+/// Pattern type IDs: 0=Solid, 1=Dashed, 2=Angled, 3=Dotted, 4=DashDotted, 5=Custom
+#[derive(Clone, Debug, ShaderType)]
 pub struct Edge {
-    // Positions and directions (resolved from pins)
-    pub start: WorldVector,   // vec2<f32> = 8 bytes @ 0
-    pub end: WorldVector,     // vec2<f32> = 8 bytes @ 8
-    pub start_direction: u32, // 4 bytes @ 16 (PinSide: 0=Left, 1=Right, 2=Top, 3=Bottom)
-    pub end_direction: u32,   // 4 bytes @ 20
-    pub _pad_align0: u32,     // 4 bytes @ 24 (padding to align vec4)
-    pub _pad_align1: u32,     // 4 bytes @ 28 (total 32)
+    // Positions and directions
+    pub start: glam::Vec2,
+    pub end: glam::Vec2,
+    pub start_direction: u32, // PinSide: 0=Left, 1=Right, 2=Top, 3=Bottom
+    pub end_direction: u32,
+    pub edge_type: u32,    // 0=Bezier, 1=Straight, 2=SmoothStep, 3=Step
+    pub pattern_type: u32, // 0=solid, 1=dashed, 2=angled, 3=dotted, 4=dash-dotted
 
-    // Colors (already resolved from pin colors if needed)
-    pub start_color: glam::Vec4, // 16 bytes @ 32 - color at source (t=0)
-    pub end_color: glam::Vec4,   // 16 bytes @ 48 - color at target (t=1)
+    // Stroke colors
+    pub start_color: glam::Vec4, // color at source (t=0)
+    pub end_color: glam::Vec4,   // color at target (t=1)
 
-    // Style parameters
-    pub thickness: f32,   // 4 bytes @ 64
-    pub edge_type: u32,   // 4 bytes @ 68 (0=Bezier, 1=Straight, 2=SmoothStep, 3=Step)
-    pub dash_length: f32, // 4 bytes @ 72 (0.0 = solid line)
-    pub gap_length: f32,  // 4 bytes @ 76 (total 80)
-    pub flow_speed: f32,  // 4 bytes @ 80 (pixels per second, 0.0 = no animation)
-    pub flags: u32, // 4 bytes @ 84 (bit 0: animated dash, bit 1: glow, bit 2: pulse, bit 3: pending cut)
-    pub _pad0: f32, // 4 bytes @ 88
-    pub _pad1: f32, // 4 bytes @ 92 (total 96)
+    // Stroke parameters
+    pub thickness: f32,
+    pub curve_length: f32, // pre-computed arc length for proper parameterization
+    pub dash_length: f32,  // dashed/angled: segment, dotted: spacing
+    pub gap_length: f32,   // dashed/angled: gap, dotted: radius
+
+    // Animation and pattern
+    pub flow_speed: f32,     // world units per second, 0.0 = no animation
+    pub dash_cap: u32,       // 0=butt, 1=round, 2=square, 3=angled
+    pub dash_cap_angle: f32, // angle in radians for angled caps
+    pub pattern_angle: f32,  // angle in radians for Angled pattern
+
+    // Flags and border params
+    pub flags: u32, // bit 0: animated, bit 1: glow, bit 2: pulse, bit 3: pending cut
+    pub border_width: f32, // border/outline thickness
+    pub border_gap: f32, // gap between stroke and border
+    pub shadow_blur: f32, // shadow blur radius
+
+    // Border color
+    pub border_color: glam::Vec4,
+
+    // Shadow
+    pub shadow_color: glam::Vec4,
+    pub shadow_offset: glam::Vec2,
+    // Padding for 16-byte array stride alignment (160 bytes total)
+    pub _pad0: f32,
+    pub _pad1: f32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use encase::ShaderSize;
+
+    #[test]
+    fn test_node_shader_size() {
+        // WGSL Node struct is 112 bytes (28 x 4-byte fields)
+        assert_eq!(Node::SHADER_SIZE.get(), 112, "Node size mismatch");
+    }
+
+    #[test]
+    fn test_pin_shader_size() {
+        // WGSL Pin struct is 64 bytes (16 x 4-byte fields)
+        assert_eq!(Pin::SHADER_SIZE.get(), 64, "Pin size mismatch");
+    }
+
+    #[test]
+    fn test_edge_shader_size() {
+        // WGSL Edge struct is 160 bytes (40 x 4-byte fields)
+        assert_eq!(Edge::SHADER_SIZE.get(), 160, "Edge size mismatch");
+    }
+
+    #[test]
+    fn test_uniforms_shader_size() {
+        // WGSL Uniforms - validate it's reasonable
+        let size = Uniforms::SHADER_SIZE.get();
+        assert!(size > 0, "Uniforms size should be positive");
+        assert!(size % 16 == 0, "Uniforms size should be 16-byte aligned");
+    }
+
+    fn create_test_node(id: u32) -> Node {
+        Node {
+            position: glam::Vec2::new(id as f32 * 100.0, 0.0),
+            size: glam::Vec2::new(200.0, 150.0),
+            corner_radius: 8.0,
+            border_width: 2.0,
+            opacity: 1.0,
+            pin_start: id * 2,
+            pin_count: 2,
+            shadow_blur: 10.0,
+            shadow_offset: glam::Vec2::new(2.0, 2.0),
+            fill_color: glam::Vec4::new(0.2, 0.2, 0.2, 1.0),
+            border_color: glam::Vec4::new(0.5, 0.5, 0.5, 1.0),
+            shadow_color: glam::Vec4::new(0.0, 0.0, 0.0, 0.5),
+            flags: id,
+            _pad0: 0,
+            _pad1: 0,
+            _pad2: 0,
+        }
+    }
+
+    /// Helper to serialize items at correct offsets (like buffer.rs does)
+    fn serialize_items<T: ShaderType + ShaderSize + encase::internal::WriteInto>(
+        items: &[T],
+    ) -> Vec<u8> {
+        let item_size = T::SHADER_SIZE.get() as usize;
+        let total_size = items.len() * item_size;
+        let mut bytes = vec![0u8; total_size];
+
+        for (i, item) in items.iter().enumerate() {
+            let offset = i * item_size;
+            let slice = &mut bytes[offset..offset + item_size];
+            let mut writer = encase::StorageBuffer::new(slice);
+            writer.write(item).expect("write failed");
+        }
+
+        bytes
+    }
+
+    #[test]
+    fn test_array_serialization_correct_size() {
+        let nodes = vec![create_test_node(0), create_test_node(1), create_test_node(2)];
+        let bytes = serialize_items(&nodes);
+
+        // Each node is 112 bytes. For 3 nodes we expect 336 bytes.
+        let expected_size = 3 * Node::SHADER_SIZE.get() as usize;
+        assert_eq!(
+            bytes.len(),
+            expected_size,
+            "Array should be {} bytes for 3 nodes, got {}",
+            expected_size,
+            bytes.len()
+        );
+    }
+
+    #[test]
+    fn test_node_position_at_correct_offsets() {
+        let nodes = vec![create_test_node(0), create_test_node(1), create_test_node(2)];
+        let bytes = serialize_items(&nodes);
+        let stride = Node::SHADER_SIZE.get() as usize; // 112 bytes
+
+        // Check position.x at each node's offset (position is first field)
+        for (i, node) in nodes.iter().enumerate() {
+            let offset = i * stride;
+            let pos_x_bytes = &bytes[offset..offset + 4];
+            let pos_x = f32::from_le_bytes(pos_x_bytes.try_into().unwrap());
+            assert_eq!(
+                pos_x, node.position.x,
+                "Node {} position.x mismatch at offset {}: expected {}, got {}",
+                i, offset, node.position.x, pos_x
+            );
+        }
+    }
+
+    #[test]
+    fn test_node_flags_at_correct_offsets() {
+        let nodes = vec![create_test_node(0), create_test_node(1), create_test_node(2)];
+        let bytes = serialize_items(&nodes);
+        let stride = Node::SHADER_SIZE.get() as usize; // 112 bytes
+
+        // Calculate flags offset within Node struct:
+        // position: 8, size: 8, corner_radius: 4, border_width: 4, opacity: 4,
+        // pin_start: 4, pin_count: 4, shadow_blur: 4, shadow_offset: 8,
+        // fill_color: 16, border_color: 16, shadow_color: 16
+        // = 8+8+4+4+4+4+4+4+8+16+16+16 = 96 bytes, then flags at 96
+        let flags_offset_in_struct = 96;
+
+        for (i, node) in nodes.iter().enumerate() {
+            let offset = i * stride + flags_offset_in_struct;
+            let flags_bytes = &bytes[offset..offset + 4];
+            let flags = u32::from_le_bytes(flags_bytes.try_into().unwrap());
+            assert_eq!(
+                flags, node.flags,
+                "Node {} flags mismatch at offset {}: expected {}, got {}",
+                i, offset, node.flags, flags
+            );
+        }
+    }
+
+    fn create_test_pin(id: u32) -> Pin {
+        Pin {
+            position: glam::Vec2::new(id as f32 * 50.0, 100.0),
+            side: id % 4,
+            radius: 6.0,
+            color: glam::Vec4::new(0.8, 0.2, 0.2, 1.0),
+            border_color: glam::Vec4::new(1.0, 1.0, 1.0, 1.0),
+            direction: id % 3,
+            shape: id % 4,
+            border_width: 1.0,
+            flags: id,
+        }
+    }
+
+    #[test]
+    fn test_pin_array_serialization() {
+        let pins = vec![create_test_pin(0), create_test_pin(1), create_test_pin(2), create_test_pin(3)];
+        let bytes = serialize_items(&pins);
+        let stride = Pin::SHADER_SIZE.get() as usize; // 64 bytes
+
+        assert_eq!(bytes.len(), 4 * 64, "4 pins should be 256 bytes");
+
+        // Check position.x for each pin
+        for (i, pin) in pins.iter().enumerate() {
+            let offset = i * stride;
+            let pos_x_bytes = &bytes[offset..offset + 4];
+            let pos_x = f32::from_le_bytes(pos_x_bytes.try_into().unwrap());
+            assert_eq!(
+                pos_x, pin.position.x,
+                "Pin {} position.x mismatch",
+                i
+            );
+        }
+    }
+
+    fn create_test_edge(id: u32) -> Edge {
+        Edge {
+            start: glam::Vec2::new(id as f32 * 100.0, 0.0),
+            end: glam::Vec2::new(id as f32 * 100.0 + 200.0, 100.0),
+            start_direction: 1,
+            end_direction: 0,
+            edge_type: 0,
+            pattern_type: 0,
+            start_color: glam::Vec4::new(0.5, 0.5, 0.5, 1.0),
+            end_color: glam::Vec4::new(0.5, 0.5, 0.5, 1.0),
+            thickness: 2.0,
+            curve_length: 250.0,
+            dash_length: 10.0,
+            gap_length: 5.0,
+            flow_speed: 0.0,
+            dash_cap: 0,
+            dash_cap_angle: 0.0,
+            pattern_angle: 0.0,
+            flags: id,
+            border_width: 0.0,
+            border_gap: 0.0,
+            shadow_blur: 0.0,
+            border_color: glam::Vec4::ZERO,
+            shadow_color: glam::Vec4::ZERO,
+            shadow_offset: glam::Vec2::ZERO,
+            _pad0: 0.0,
+            _pad1: 0.0,
+        }
+    }
+
+    #[test]
+    fn test_edge_array_serialization() {
+        let edges = vec![create_test_edge(0), create_test_edge(1)];
+        let bytes = serialize_items(&edges);
+        let stride = Edge::SHADER_SIZE.get() as usize; // 160 bytes
+
+        assert_eq!(bytes.len(), 2 * 160, "2 edges should be 320 bytes");
+
+        // Check start.x for each edge
+        for (i, edge) in edges.iter().enumerate() {
+            let offset = i * stride;
+            let start_x_bytes = &bytes[offset..offset + 4];
+            let start_x = f32::from_le_bytes(start_x_bytes.try_into().unwrap());
+            assert_eq!(
+                start_x, edge.start.x,
+                "Edge {} start.x mismatch",
+                i
+            );
+        }
+    }
 }

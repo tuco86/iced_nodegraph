@@ -2,6 +2,7 @@
 // UNIFORMS AND STORAGE BUFFERS
 // ============================================================================
 
+// Layout follows encase std140 alignment rules - no explicit padding needed
 struct Uniforms {
     os_scale_factor: f32,
     camera_zoom: f32,
@@ -22,11 +23,9 @@ struct Uniforms {
     time: f32,
 
     dragging: u32,
-    _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
     dragging_edge_from_node: u32,
     dragging_edge_from_pin: u32,
+    // implicit padding for vec2 alignment
     dragging_edge_from_origin: vec2<f32>,
     dragging_edge_to_node: u32,
     dragging_edge_to_pin: u32,
@@ -43,7 +42,7 @@ struct Uniforms {
     hover_glow_radius: f32,          // Node hover glow radius in world units
     edge_thickness: f32,             // Default edge thickness for dragging
     render_mode: u32,                // 0=background (fill only), 1=foreground (border only)
-    _pad_theme1: u32,
+    // implicit padding for vec2 alignment
 
     viewport_size: vec2<f32>,
     bounds_origin: vec2<f32>,  // widget bounds origin in physical pixels
@@ -64,6 +63,7 @@ struct Node {
     border_color: vec4<f32>,
     shadow_color: vec4<f32>,
     flags: u32,        // bit 0: hovered, bit 1: selected
+    // Padding to match encase std430 layout (112 bytes total, 16-byte aligned)
     _pad_flags0: u32,
     _pad_flags1: u32,
     _pad_flags2: u32,
@@ -89,26 +89,46 @@ struct Pin {
 };
 
 // Edge with resolved world positions (no index lookups needed)
+// Layout: 160 bytes, must match Rust Edge struct exactly
+// Pattern type IDs: 0=Solid, 1=Dashed, 2=Arrowed, 3=Dotted, 4=DashDotted
 struct Edge {
-    // Positions (resolved in Rust from node + pin offset)
-    start: vec2<f32>,           // World position of source pin
-    end: vec2<f32>,             // World position of target pin
-    start_direction: u32,       // PinSide: 0=Left, 1=Right, 2=Top, 3=Bottom
-    end_direction: u32,         // PinSide for target pin
-    _pad_align0: u32,           // Padding for vec4 alignment
-    _pad_align1: u32,
+    // Positions and directions (32 bytes)
+    start: vec2<f32>,           // World position of source pin @ 0
+    end: vec2<f32>,             // World position of target pin @ 8
+    start_direction: u32,       // PinSide: 0=Left, 1=Right, 2=Top, 3=Bottom @ 16
+    end_direction: u32,         // PinSide for target pin @ 20
+    edge_type: u32,             // 0=Bezier, 1=Straight, 2=SmoothStep, 3=Step @ 24
+    pattern_type: u32,          // 0=solid, 1=dashed, 2=arrowed, 3=dotted, 4=dash-dotted @ 28
 
-    // Colors (already resolved from pin colors if needed)
-    start_color: vec4<f32>,     // Color at source (t=0)
-    end_color: vec4<f32>,       // Color at target (t=1)
+    // Stroke colors (32 bytes)
+    start_color: vec4<f32>,     // Color at source (t=0) @ 32
+    end_color: vec4<f32>,       // Color at target (t=1) @ 48
 
-    // Style parameters
-    thickness: f32,
-    edge_type: u32,             // 0=Bezier, 1=Straight, 2=SmoothStep, 3=Step
-    dash_length: f32,           // 0.0 = solid line
-    gap_length: f32,
-    flow_speed: f32,            // pixels per second
-    flags: u32,                 // bit 0: animated dash, bit 1: glow, bit 2: pulse, bit 3: pending cut
+    // Stroke parameters (16 bytes)
+    thickness: f32,             // @ 64
+    curve_length: f32,          // Pre-computed arc length @ 68
+    dash_length: f32,           // Dashed/Arrowed: segment, Dotted: spacing @ 72
+    gap_length: f32,            // Dashed/Arrowed: gap, Dotted: dot radius @ 76
+
+    // Animation and pattern (16 bytes)
+    flow_speed: f32,            // World units per second @ 80
+    dash_cap: u32,              // 0=butt, 1=round, 2=square, 3=angled @ 84
+    dash_cap_angle: f32,        // Angle in radians for angled caps @ 88
+    pattern_angle: f32,         // Angle in radians for Arrowed pattern @ 92
+
+    // Flags and border params (16 bytes)
+    flags: u32,                 // bit 0: animated, bit 1: glow, bit 2: pulse, bit 3: pending cut @ 96
+    border_width: f32,          // Border/outline thickness @ 100
+    border_gap: f32,            // Gap between stroke and border @ 104
+    shadow_blur: f32,           // Shadow blur radius @ 108
+
+    // Border color (16 bytes)
+    border_color: vec4<f32>,    // @ 112
+
+    // Shadow
+    shadow_color: vec4<f32>,
+    shadow_offset: vec2<f32>,
+    // Padding to match encase std430 layout (160 bytes total, 16-byte aligned)
     _pad0: f32,
     _pad1: f32,
 }
@@ -255,11 +275,49 @@ fn sdCubicBezierWithT(pos: vec2<f32>, p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32
     return vec2<f32>(sqrt(min_dist), best_t);
 }
 
-// Approximate bezier curve length using chord + control polygon method
-fn estimateBezierLength(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>) -> f32 {
-    let chord = length(p3 - p0);
-    let control_net = length(p1 - p0) + length(p2 - p1) + length(p3 - p2);
-    return (chord + control_net) * 0.5;
+// Bezier derivative at parameter t
+fn bezierDerivative(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>, t: f32) -> vec2<f32> {
+    let mt = 1.0 - t;
+    let mt2 = mt * mt;
+    let t2 = t * t;
+    // dB/dt = 3(1-t)²(P1-P0) + 6(1-t)t(P2-P1) + 3t²(P3-P2)
+    return 3.0 * mt2 * (p1 - p0) + 6.0 * mt * t * (p2 - p1) + 3.0 * t2 * (p3 - p2);
+}
+
+// Compute arc length from 0 to t using 5-point Gauss-Legendre quadrature
+// This gives accurate arc-length for proper pattern spacing
+fn bezierArcLengthTo(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>, t_end: f32) -> f32 {
+    // Gauss-Legendre 5-point weights and abscissae
+    let w0 = 0.2369268850;
+    let w1 = 0.4786286705;
+    let w2 = 0.5688888889;
+    let a0 = 0.9061798459;
+    let a1 = 0.5384693101;
+
+    // Map integration from [0, t_end] to [-1, 1]
+    let half_t = t_end * 0.5;
+
+    var length = 0.0;
+
+    // Sample points (symmetric around 0)
+    let t0 = half_t * (1.0 - a0);
+    let t1 = half_t * (1.0 - a1);
+    let t2 = half_t;  // center point (abscissa = 0)
+    let t3 = half_t * (1.0 + a1);
+    let t4 = half_t * (1.0 + a0);
+
+    length += w0 * length(bezierDerivative(p0, p1, p2, p3, t0));
+    length += w1 * length(bezierDerivative(p0, p1, p2, p3, t1));
+    length += w2 * length(bezierDerivative(p0, p1, p2, p3, t2));
+    length += w1 * length(bezierDerivative(p0, p1, p2, p3, t3));
+    length += w0 * length(bezierDerivative(p0, p1, p2, p3, t4));
+
+    return length * half_t;
+}
+
+// Total bezier curve length (arc length from 0 to 1)
+fn bezierTotalLength(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>) -> f32 {
+    return bezierArcLengthTo(p0, p1, p2, p3, 1.0);
 }
 
 // Straight line SDF with t parameter
@@ -637,8 +695,12 @@ fn vs_edge(@builtin(instance_index) instance: u32,
         }
     }
 
-    // Use actual edge thickness (world space) plus AA padding (screen space converted to world)
-    let edge_padding = edge.thickness + 2.0 / uniforms.camera_zoom;
+    // Use actual edge thickness (world space) plus border plus shadow plus AA padding
+    // Border extends beyond stroke by: gap + border_width
+    let border_extend = select(0.0, edge.border_gap + edge.border_width, edge.border_width > 0.0);
+    // Shadow extends by: blur radius + offset (in both directions to cover offset direction)
+    let shadow_extend = select(0.0, edge.shadow_blur + max(abs(edge.shadow_offset.x), abs(edge.shadow_offset.y)), edge.shadow_blur > 0.0);
+    let edge_padding = edge.thickness + max(border_extend, shadow_extend) + 2.0 / uniforms.camera_zoom;
     let bbox = vec4(bbox_min - vec2(edge_padding), bbox_max + vec2(edge_padding));
 
     let corners = array<vec2<f32>, 4>(
@@ -671,6 +733,7 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
     // Calculate distance and t parameter based on edge type
     var dist_and_t: vec2<f32>;
     var curve_length: f32;
+    var is_bezier = false;
 
     switch (edge.edge_type) {
         case 1u: {  // Straight
@@ -688,7 +751,9 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
         }
         default: {  // Bezier (0) or fallback
             dist_and_t = sdCubicBezierWithT(in.world_uv, p0, p1, p2, p3);
-            curve_length = estimateBezierLength(p0, p1, p2, p3);
+            // GPU-computed arc length using Gauss-Legendre quadrature
+            curve_length = bezierTotalLength(p0, p1, p2, p3);
+            is_bezier = true;
         }
     }
 
@@ -701,29 +766,207 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
     let edge_thickness = edge.thickness;
     let aa = 1.0 / uniforms.camera_zoom;
 
-    // Base alpha from distance
+    // Position along curve in world units (arc-length)
+    // For Bezier curves, use proper GPU arc-length integration instead of linear t approximation
+    // This ensures uniform dash spacing even at extreme curve angles
+    var s: f32;
+    if (is_bezier) {
+        // Proper arc-length: integrate |dB/dt| from 0 to t
+        s = bezierArcLengthTo(p0, p1, p2, p3, t);
+    } else {
+        // For straight lines and step paths, t is already proportional to arc-length
+        s = t * curve_length;
+    }
+
+    // Animation: shift pattern with time (bit 0 = animated)
+    if ((edge.flags & 1u) != 0u) {
+        s = s + uniforms.time * edge.flow_speed;
+    }
+
+    // Base alpha from distance to curve centerline
     var alpha = 1.0 - smoothstep(edge_thickness, edge_thickness + aa, dist);
 
-    // === DASH PATTERN ===
-    if (edge.dash_length > 0.0) {
-        let pattern_size = edge.dash_length + edge.gap_length;
+    // === PATTERN RENDERING ===
+    // pattern_type: 0=solid, 1=dashed, 2=arrowed, 3=dotted, 4=dash-dotted
+    if (edge.pattern_type == 1u) {
+        // === DASHED PATTERN ===
+        let dash = edge.dash_length;
+        let gap = edge.gap_length;
+        let period = dash + gap;
 
-        // Position along curve in world units
-        var curve_pos = t * curve_length;
+        // Position within pattern period
+        let pos_in_period = ((s % period) + period) % period;  // Handle negative s
 
-        // Animation: shift pattern with time (bit 0 = animated dash)
-        if ((edge.flags & 1u) != 0u) {
-            curve_pos = curve_pos + uniforms.time * edge.flow_speed;
+        // Distance to nearest dash (SDF approach for dash caps)
+        // Dash occupies [0, dash] within each period
+        let dash_center = dash * 0.5;
+        let dist_to_dash_center = abs(pos_in_period - dash_center);
+
+        // Apply dash cap style
+        var dash_sdf: f32;
+        switch (edge.dash_cap) {
+            case 1u: {
+                // Round caps: semicircle at dash ends
+                let half_dash = dash * 0.5;
+                if (dist_to_dash_center <= half_dash) {
+                    // Inside dash body
+                    dash_sdf = dist - edge_thickness;
+                } else {
+                    // In cap region - use circle SDF at dash end
+                    let cap_dist = dist_to_dash_center - half_dash;
+                    let cap_sdf = length(vec2(cap_dist, dist)) - edge_thickness;
+                    dash_sdf = cap_sdf;
+                }
+            }
+            case 2u: {
+                // Square caps: extend dash by thickness
+                let effective_half = dash * 0.5 + edge_thickness;
+                if (dist_to_dash_center <= effective_half) {
+                    dash_sdf = dist - edge_thickness;
+                } else {
+                    dash_sdf = 1.0;  // Outside
+                }
+            }
+            case 3u: {
+                // Angled caps: parallelogram shape
+                let half_dash = dash * 0.5;
+                let angle = edge.dash_cap_angle;
+                let tan_angle = tan(angle);
+                // Shift based on distance from centerline
+                let shift = dist * tan_angle;
+                let adjusted_dist = dist_to_dash_center - shift;
+                if (adjusted_dist <= half_dash && adjusted_dist >= -half_dash) {
+                    dash_sdf = dist - edge_thickness;
+                } else {
+                    dash_sdf = 1.0;  // Outside
+                }
+            }
+            default: {
+                // Butt caps (0): sharp cutoff
+                let half_dash = dash * 0.5;
+                if (dist_to_dash_center <= half_dash) {
+                    dash_sdf = dist - edge_thickness;
+                } else {
+                    dash_sdf = 1.0;  // In gap
+                }
+            }
         }
 
-        // Dash or gap?
-        let pattern_t = fract(curve_pos / pattern_size);
-        let dash_ratio = edge.dash_length / pattern_size;
+        // Apply SDF with anti-aliasing
+        alpha = 1.0 - smoothstep(-aa, aa, dash_sdf);
 
-        if (pattern_t > dash_ratio) {
-            // In gap - transparent
-            alpha = 0.0;
+    } else if (edge.pattern_type == 2u) {
+        // === ARROWED PATTERN ===
+        // Arrow-like slanted segments (like ///) crossing the edge at an angle
+        let segment = edge.dash_length;
+        let gap = edge.gap_length;
+        let angle = edge.pattern_angle;  // Angle of arrows (0 = vertical, PI/4 = 45 degrees)
+        let period = segment + gap;
+
+        // Position within pattern period
+        let pos_in_period = ((s % period) + period) % period;
+
+        // Calculate the SDF for an arrow segment
+        // The segment extends from the centerline at the configured angle
+        let tan_angle = tan(angle);
+        let cos_angle = cos(angle);
+        let sin_angle = sin(angle);
+
+        // Transform to segment-local coordinates
+        // Shift the s position based on perpendicular distance to create the slant
+        let slant_offset = dist * tan_angle;
+        let adjusted_pos = pos_in_period - slant_offset;
+
+        // Wrap adjusted position to handle segments crossing period boundaries
+        let wrapped_pos = ((adjusted_pos % period) + period) % period;
+
+        // Distance to segment center
+        let seg_center = segment * 0.5;
+        let dist_to_seg = abs(wrapped_pos - seg_center);
+
+        // SDF: inside segment if within half segment length
+        var seg_sdf: f32;
+        let half_seg = segment * 0.5;
+        if (dist_to_seg <= half_seg) {
+            seg_sdf = dist - edge_thickness;
+        } else {
+            seg_sdf = 1.0;  // In gap
         }
+
+        // Apply SDF with anti-aliasing
+        alpha = 1.0 - smoothstep(-aa, aa, seg_sdf);
+
+    } else if (edge.pattern_type == 3u) {
+        // === DOTTED PATTERN ===
+        let spacing = edge.dash_length;   // Distance between dot centers
+        let dot_radius = edge.gap_length; // Radius of each dot
+
+        // Find nearest dot center
+        let dot_index = round(s / spacing);
+        let dot_center_s = dot_index * spacing;
+
+        // Distance from current point to nearest dot center (along curve)
+        let dist_along = abs(s - dot_center_s);
+
+        // 2D distance to dot center (combining along-curve and perpendicular distances)
+        let dot_sdf = length(vec2(dist_along, dist)) - dot_radius;
+
+        // Apply SDF with anti-aliasing
+        alpha = 1.0 - smoothstep(-aa, aa, dot_sdf);
+
+    } else if (edge.pattern_type == 4u) {
+        // === DASH-DOTTED PATTERN ===
+        // Morse code style: dash-gap-dot-gap repeating
+        let dash = edge.dash_length;
+        let gap = edge.gap_length;
+        let dot_radius = edge_thickness * 0.8;  // Dot slightly smaller than stroke
+        let dot_gap = gap * 0.5;
+
+        // Pattern period: dash + gap + dot_diameter + gap
+        let period = dash + gap + dot_radius * 2.0 + dot_gap;
+
+        // Position within pattern period
+        let pos = ((s % period) + period) % period;
+
+        var pattern_sdf = 1.0;  // Start outside
+
+        // Dash segment: [0, dash]
+        if (pos < dash) {
+            let dash_center = dash * 0.5;
+            let dist_to_dash = abs(pos - dash_center);
+            if (dist_to_dash <= dash * 0.5) {
+                pattern_sdf = dist - edge_thickness;
+            }
+        }
+        // Dot segment: [dash + gap, dash + gap + dot_diameter]
+        else {
+            let dot_start = dash + gap;
+            let dot_center_s = dot_start + dot_radius;
+            if (pos >= dot_start && pos <= dot_start + dot_radius * 2.0) {
+                let dist_along = abs(pos - dot_center_s);
+                pattern_sdf = length(vec2(dist_along, dist)) - dot_radius;
+            }
+        }
+
+        // Apply SDF with anti-aliasing
+        alpha = 1.0 - smoothstep(-aa, aa, pattern_sdf);
+    }
+    // else: solid (pattern_type == 0), keep base alpha
+
+    // === BORDER RENDERING (outline with gap) ===
+    // Border is rendered behind the stroke, with a gap between
+    var border_alpha = 0.0;
+    if (edge.border_width > 0.0 && edge.border_color.a > 0.0) {
+        // Border ring: starts at (stroke_half_width + gap), extends by border_width
+        let stroke_half = edge_thickness;
+        let border_inner = stroke_half + edge.border_gap;
+        let border_outer = border_inner + edge.border_width;
+
+        // SDF-based border mask: 1.0 if in border ring, 0.0 otherwise
+        // Inside border ring: dist >= border_inner && dist <= border_outer
+        let inner_mask = smoothstep(border_inner - aa, border_inner + aa, dist);
+        let outer_mask = 1.0 - smoothstep(border_outer - aa, border_outer + aa, dist);
+        border_alpha = inner_mask * outer_mask * edge.border_color.a;
     }
 
     // === GLOW EFFECT (bit 1) ===
@@ -793,7 +1036,67 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
         edge_color = mix(edge_color, rgb, 0.7);
     }
 
-    return vec4(edge_color, alpha);
+    // === SHADOW RENDERING ===
+    // Shadow is rendered behind everything, using offset position and soft falloff
+    var shadow_alpha = 0.0;
+    if (edge.shadow_blur > 0.0 && edge.shadow_color.a > 0.0) {
+        // Compute SDF at shadow-offset position
+        let shadow_pos = in.world_uv - edge.shadow_offset;
+        var shadow_dist: f32;
+
+        switch (edge.edge_type) {
+            case 1u: {  // Straight
+                shadow_dist = sdStraightLine(shadow_pos, p0, p3).x;
+            }
+            case 2u: {  // SmoothStep
+                let corner_radius = 15.0;
+                shadow_dist = sdSmoothStepPath(shadow_pos, p0, p3, dir_from, dir_to, corner_radius).x;
+            }
+            case 3u: {  // Step
+                shadow_dist = sdStepPath(shadow_pos, p0, p3, dir_from, dir_to).x;
+            }
+            default: {  // Bezier
+                shadow_dist = sdCubicBezier(shadow_pos, p0, p1, p2, p3);
+            }
+        }
+
+        // Soft shadow falloff: smooth gradient from edge to blur radius
+        let shadow_softness = edge.shadow_blur;
+        let shadow_outer = edge_thickness + shadow_softness;
+        shadow_alpha = (1.0 - smoothstep(edge_thickness * 0.5, shadow_outer, shadow_dist))
+                     * edge.shadow_color.a;
+    }
+
+    // === COMPOSITE: stroke over border over shadow ===
+    // Layering order: shadow (back) -> border -> stroke (front)
+    var result_rgb = vec3(0.0);
+    var result_alpha = 0.0;
+
+    // Start with shadow
+    if (shadow_alpha > 0.0) {
+        result_rgb = edge.shadow_color.rgb;
+        result_alpha = shadow_alpha;
+    }
+
+    // Composite border over shadow
+    if (border_alpha > 0.0) {
+        let new_alpha = border_alpha + result_alpha * (1.0 - border_alpha);
+        if (new_alpha > 0.001) {
+            result_rgb = (edge.border_color.rgb * border_alpha + result_rgb * result_alpha * (1.0 - border_alpha)) / new_alpha;
+            result_alpha = new_alpha;
+        }
+    }
+
+    // Composite stroke over border+shadow
+    if (alpha > 0.0) {
+        let new_alpha = alpha + result_alpha * (1.0 - alpha);
+        if (new_alpha > 0.001) {
+            result_rgb = (edge_color * alpha + result_rgb * result_alpha * (1.0 - alpha)) / new_alpha;
+            result_alpha = new_alpha;
+        }
+    }
+
+    return vec4(result_rgb, result_alpha);
 }
 
 // ============================================================================

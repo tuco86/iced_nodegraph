@@ -33,6 +33,7 @@ iced_palette = { git = "https://github.com/tuco86/iced_palette.git", branch = "m
 euclid = { version = "0.22.11", features = ["bytemuck"] }
 bytemuck = { version = "1.0", features = ["derive"] }
 glam = { version = "0.25", features = ["bytemuck"] }
+encase = { version = "0.7", features = ["glam"] }
 
 # Graphics and GPU (same version as iced 0.14)
 wgpu = "27.0"

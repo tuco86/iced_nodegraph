@@ -1,4 +1,4 @@
-use bytemuck::NoUninit;
+use encase::{ShaderSize, ShaderType, internal::WriteInto};
 use iced::wgpu::{self, BindingResource};
 
 /// Growth factor for buffer capacity to reduce reallocations.
@@ -17,6 +17,8 @@ const BUFFER_MIN_CAPACITY: usize = 16;
 pub struct Buffer<T> {
     buffer_wgpu: wgpu::Buffer,
     buffer_vec: Vec<T>,
+    /// Scratch buffer for encase serialization
+    scratch: Vec<u8>,
     label: Option<&'static str>,
     usage: wgpu::BufferUsages,
     /// Generation counter - increments when buffer is recreated.
@@ -34,13 +36,14 @@ impl<T> Buffer<T> {
         usage: wgpu::BufferUsages,
     ) -> Self {
         let capacity = BUFFER_MIN_CAPACITY;
-        let size =
-            capacity as wgpu::BufferAddress * std::mem::size_of::<T>() as wgpu::BufferAddress;
+        // Use a reasonable initial size estimate (items don't have ShaderSize here)
+        let size = capacity as wgpu::BufferAddress * 256; // Conservative estimate
         let buffer_wgpu = create_wgpu_buffer(device, label, size, usage);
         let buffer_vec = Vec::with_capacity(capacity);
         Self {
             buffer_wgpu,
             buffer_vec,
+            scratch: Vec::new(),
             label,
             usage,
             generation: 0,
@@ -67,7 +70,7 @@ impl<T> Buffer<T> {
         data: I,
     ) -> u32
     where
-        T: NoUninit,
+        T: ShaderType + ShaderSize + WriteInto,
     {
         self.buffer_vec.clear();
         self.buffer_vec.extend(data);
@@ -81,18 +84,37 @@ impl<T> Buffer<T> {
     /// Returns true if buffer was recreated.
     fn ensure_capacity_and_write_all(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> bool
     where
-        T: NoUninit,
+        T: ShaderType + ShaderSize + WriteInto,
     {
-        let required_size = self.buffer_vec.capacity() as wgpu::BufferAddress
-            * std::mem::size_of::<T>() as wgpu::BufferAddress;
+        if self.buffer_vec.is_empty() {
+            return false;
+        }
+
+        // Calculate total size needed: each item takes SHADER_SIZE bytes
+        let item_size = T::SHADER_SIZE.get() as usize;
+        let total_size = self.buffer_vec.len() * item_size;
+
+        // Resize scratch buffer and zero it
+        self.scratch.clear();
+        self.scratch.resize(total_size, 0);
+
+        // Write each item at its correct offset using encase
+        for (i, item) in self.buffer_vec.iter().enumerate() {
+            let offset = i * item_size;
+            let slice = &mut self.scratch[offset..offset + item_size];
+            // Use encase's StorageBuffer to write a single item into the slice
+            let mut writer = encase::StorageBuffer::new(slice);
+            writer.write(item).expect("Failed to write to storage buffer");
+        }
+
+        let bytes = &self.scratch[..];
+
+        let required_size = bytes.len() as wgpu::BufferAddress;
 
         let recreated = if self.buffer_wgpu.size() < required_size {
             // Need larger buffer - grow with headroom
-            let new_capacity = ((self.buffer_vec.capacity() as f32 * BUFFER_GROWTH_FACTOR)
-                as usize)
-                .max(BUFFER_MIN_CAPACITY);
-            let new_size = new_capacity as wgpu::BufferAddress
-                * std::mem::size_of::<T>() as wgpu::BufferAddress;
+            let new_size = ((required_size as f32 * BUFFER_GROWTH_FACTOR) as u64)
+                .max(BUFFER_MIN_CAPACITY as u64 * 256);
 
             self.buffer_wgpu = create_wgpu_buffer(device, self.label, new_size, self.usage);
             self.generation += 1;
@@ -105,14 +127,11 @@ impl<T> Buffer<T> {
 
         // Compute content hash to avoid redundant writes.
         // Critical for WebGPU/WASM where staging buffer exhaustion causes crashes.
-        if !self.buffer_vec.is_empty() {
-            let bytes = bytemuck::cast_slice::<T, u8>(&self.buffer_vec);
-            let new_hash = simple_hash(bytes);
+        let new_hash = simple_hash(bytes);
 
-            if new_hash != self.content_hash || recreated {
-                queue.write_buffer(&self.buffer_wgpu, 0, bytes);
-                self.content_hash = new_hash;
-            }
+        if new_hash != self.content_hash || recreated {
+            queue.write_buffer(&self.buffer_wgpu, 0, bytes);
+            self.content_hash = new_hash;
         }
 
         recreated
