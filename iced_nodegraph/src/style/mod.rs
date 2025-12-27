@@ -29,7 +29,10 @@ use iced::{Color, Theme};
 mod config;
 
 // Re-export config types
-pub use config::{EdgeConfig, GraphConfig, NodeConfig, PinConfig, SelectionConfig, ShadowConfig};
+pub use config::{
+    BorderConfig, EdgeConfig, EdgeShadowConfig, GraphConfig, NodeConfig, PinConfig,
+    SelectionConfig, ShadowConfig, StrokeConfig,
+};
 
 /// Shape of a pin indicator.
 ///
@@ -590,224 +593,494 @@ impl NodeStyle {
     }
 }
 
-/// Edge rendering type determining the path shape.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[repr(u32)]
-pub enum EdgeType {
+// ============================================================================
+// Edge Curve Types
+// ============================================================================
+
+/// Edge path curve type determining the shape of the connection.
+///
+/// Controls how edges are rendered between pins.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum EdgeCurve {
     /// Smooth cubic bezier curve (default)
     #[default]
-    Bezier = 0,
-    /// Direct straight line
-    Straight = 1,
+    BezierCubic,
+    /// Quadratic bezier (simpler curve, single control point)
+    BezierQuadratic,
+    /// Orthogonal path with sharp 90-degree corners
+    Orthogonal,
     /// Orthogonal path with rounded corners
-    SmoothStep = 2,
-    /// Orthogonal path with sharp corners
-    Step = 3,
+    OrthogonalSmooth {
+        /// Corner radius in world-space pixels
+        radius: f32,
+    },
+    /// Direct straight line between pins
+    Line,
 }
 
-/// Dash pattern configuration for edges.
+impl EdgeCurve {
+    /// Returns the GPU type ID for this curve.
+    pub fn type_id(&self) -> u32 {
+        match self {
+            EdgeCurve::BezierCubic => 0,
+            EdgeCurve::BezierQuadratic => 1,
+            EdgeCurve::Orthogonal => 2,
+            EdgeCurve::OrthogonalSmooth { .. } => 3,
+            EdgeCurve::Line => 4,
+        }
+    }
+
+    /// Returns the corner radius (only applicable to OrthogonalSmooth).
+    pub fn corner_radius(&self) -> f32 {
+        match self {
+            EdgeCurve::OrthogonalSmooth { radius } => *radius,
+            _ => 0.0,
+        }
+    }
+
+    /// Creates an orthogonal smooth curve with default radius.
+    pub fn smooth(radius: f32) -> Self {
+        EdgeCurve::OrthogonalSmooth { radius }
+    }
+}
+
+// ============================================================================
+// Stroke Caps
+// ============================================================================
+
+/// End cap style for stroke endpoints.
+///
+/// Controls how the stroke terminates at its start and end points.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u32)]
+pub enum StrokeCap {
+    /// Rounded end caps (default)
+    #[default]
+    Round = 0,
+    /// Square end caps extending beyond endpoint by half stroke width
+    Square = 1,
+    /// Pointed/triangular end caps
+    Pointed = 2,
+}
+
+/// Cap style for individual dash segments in patterned lines.
+///
+/// Controls how each dash segment terminates within a dashed/dotted pattern.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum DashCap {
+    /// Flat end (no extension beyond dash length)
+    #[default]
+    Butt,
+    /// Rounded ends (semicircle at dash endpoints)
+    Round,
+    /// Square ends (extends by half stroke width)
+    Square,
+    /// Angled ends (parallelogram style cut)
+    Angled {
+        /// Angle in radians from perpendicular (0 = butt, PI/4 = 45 degrees)
+        angle_rad: f32,
+    },
+}
+
+impl DashCap {
+    /// Returns the GPU type ID for this cap.
+    pub fn type_id(&self) -> u32 {
+        match self {
+            DashCap::Butt => 0,
+            DashCap::Round => 1,
+            DashCap::Square => 2,
+            DashCap::Angled { .. } => 3,
+        }
+    }
+
+    /// Returns the angle in radians (only applicable to Angled).
+    pub fn angle(&self) -> f32 {
+        match self {
+            DashCap::Angled { angle_rad } => *angle_rad,
+            _ => 0.0,
+        }
+    }
+}
+
+// ============================================================================
+// Dash Motion
+// ============================================================================
+
+/// Direction of dash pattern motion along the edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MotionDirection {
+    /// Motion from source to target pin (default)
+    #[default]
+    Forward,
+    /// Motion from target to source pin
+    Backward,
+}
+
+impl MotionDirection {
+    /// Returns the sign multiplier for motion calculations.
+    pub fn sign(&self) -> f32 {
+        match self {
+            MotionDirection::Forward => 1.0,
+            MotionDirection::Backward => -1.0,
+        }
+    }
+}
+
+/// Animation configuration for dash pattern motion.
+///
+/// Controls how dashed/dotted patterns animate along the edge.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct DashPattern {
-    /// Length of each dash in world-space pixels
-    pub dash_length: f32,
-    /// Length of each gap in world-space pixels
-    pub gap_length: f32,
-    /// Whether the pattern should animate (marching ants effect)
-    pub animated: bool,
+pub struct DashMotion {
+    /// Speed in world-space units per second
+    pub speed: f32,
+    /// Direction of motion along the edge
+    pub direction: MotionDirection,
 }
 
-impl Default for DashPattern {
+impl Default for DashMotion {
     fn default() -> Self {
         Self {
-            dash_length: 8.0,
-            gap_length: 4.0,
-            animated: false,
+            speed: 30.0,
+            direction: MotionDirection::Forward,
         }
     }
 }
 
-impl DashPattern {
-    /// Creates a new dash pattern.
-    pub fn new(dash_length: f32, gap_length: f32) -> Self {
+impl DashMotion {
+    /// Creates a new motion with forward direction.
+    pub fn forward(speed: f32) -> Self {
         Self {
-            dash_length,
-            gap_length,
-            animated: false,
+            speed,
+            direction: MotionDirection::Forward,
         }
     }
 
-    /// Sets whether the pattern animates.
-    pub fn animated(mut self, animated: bool) -> Self {
-        self.animated = animated;
+    /// Creates a new motion with backward direction.
+    pub fn backward(speed: f32) -> Self {
+        Self {
+            speed,
+            direction: MotionDirection::Backward,
+        }
+    }
+
+    /// Sets the direction of motion.
+    pub fn with_direction(mut self, direction: MotionDirection) -> Self {
+        self.direction = direction;
         self
     }
+}
 
-    /// Creates a dotted pattern (equal dash and gap).
-    pub fn dotted() -> Self {
-        Self::new(4.0, 4.0)
+// ============================================================================
+// Stroke Patterns
+// ============================================================================
+
+/// Line pattern configuration for strokes.
+///
+/// Supports solid, dashed, dotted, and custom patterns with optional animation.
+/// All lengths are in world-space units.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StrokePattern {
+    /// Continuous solid line (default)
+    Solid,
+
+    /// Dashed line with configurable dash and gap lengths
+    Dashed {
+        /// Length of each dash in world-space pixels
+        dash: f32,
+        /// Length of each gap in world-space pixels
+        gap: f32,
+        /// Phase offset along the pattern (shifts pattern start)
+        phase: f32,
+        /// Optional animation motion
+        motion: Option<DashMotion>,
+    },
+
+    /// Arrowed segments (slashes/arrows) with configurable angle
+    /// Creates arrow-like marks (///) crossing the edge at an angle
+    Arrowed {
+        /// Length of each arrow segment in world-space pixels
+        segment: f32,
+        /// Gap between segments in world-space pixels
+        gap: f32,
+        /// Angle of arrows in radians (0 = vertical, PI/4 = 45 degrees forward)
+        angle: f32,
+        /// Phase offset along the pattern
+        phase: f32,
+        /// Optional animation motion
+        motion: Option<DashMotion>,
+    },
+
+    /// Dotted line with configurable spacing
+    Dotted {
+        /// Distance between dot centers in world-space pixels
+        spacing: f32,
+        /// Radius of each dot in world-space pixels
+        radius: f32,
+        /// Phase offset along the pattern
+        phase: f32,
+        /// Optional animation motion
+        motion: Option<DashMotion>,
+    },
+
+    /// Dash-dot pattern (morse code style: dash-gap-dot-gap)
+    DashDotted {
+        /// Length of each dash in world-space pixels
+        dash: f32,
+        /// Gap after dash
+        gap: f32,
+        /// Radius of dot
+        dot_radius: f32,
+        /// Gap after dot
+        dot_gap: f32,
+        /// Phase offset
+        phase: f32,
+        /// Optional animation motion
+        motion: Option<DashMotion>,
+    },
+
+    /// Custom pattern defined by alternating segment lengths
+    Custom {
+        /// Alternating lengths: [on, off, on, off, ...]
+        segments: Vec<f32>,
+        /// Phase offset
+        phase: f32,
+        /// Optional animation motion
+        motion: Option<DashMotion>,
+    },
+}
+
+impl Default for StrokePattern {
+    fn default() -> Self {
+        Self::Solid
+    }
+}
+
+impl StrokePattern {
+    /// Returns the GPU pattern type ID.
+    ///
+    /// Pattern IDs: 0=Solid, 1=Dashed, 2=Arrowed, 3=Dotted, 4=DashDotted, 5=Custom
+    pub fn type_id(&self) -> u32 {
+        match self {
+            StrokePattern::Solid => 0,
+            StrokePattern::Dashed { .. } => 1,
+            StrokePattern::Arrowed { .. } => 2,
+            StrokePattern::Dotted { .. } => 3,
+            StrokePattern::DashDotted { .. } => 4,
+            StrokePattern::Custom { .. } => 5,
+        }
     }
 
-    /// Creates a dashed pattern (longer dashes).
-    pub fn dashed() -> Self {
-        Self::new(12.0, 6.0)
+    /// Creates a dashed pattern with given dash and gap lengths.
+    pub fn dashed(dash: f32, gap: f32) -> Self {
+        Self::Dashed {
+            dash,
+            gap,
+            phase: 0.0,
+            motion: None,
+        }
+    }
+
+    /// Creates an arrowed pattern with arrow marks (///) crossing the edge.
+    /// Angle is in radians (default PI/4 = 45 degrees forward slash).
+    pub fn arrowed(segment: f32, gap: f32, angle: f32) -> Self {
+        Self::Arrowed {
+            segment,
+            gap,
+            angle,
+            phase: 0.0,
+            motion: None,
+        }
+    }
+
+    /// Creates a dotted pattern with given spacing and radius.
+    pub fn dotted(spacing: f32, radius: f32) -> Self {
+        Self::Dotted {
+            spacing,
+            radius,
+            phase: 0.0,
+            motion: None,
+        }
+    }
+
+    /// Creates a dash-dot pattern.
+    pub fn dash_dotted(dash: f32, gap: f32, dot_radius: f32, dot_gap: f32) -> Self {
+        Self::DashDotted {
+            dash,
+            gap,
+            dot_radius,
+            dot_gap,
+            phase: 0.0,
+            motion: None,
+        }
     }
 
     /// Creates an animated marching ants pattern.
     pub fn marching_ants() -> Self {
-        Self::new(6.0, 4.0).animated(true)
+        Self::Dashed {
+            dash: 6.0,
+            gap: 4.0,
+            phase: 0.0,
+            motion: Some(DashMotion::forward(30.0)),
+        }
     }
-}
 
-/// Animation configuration for edges.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct EdgeAnimation {
-    /// Flow speed in pixels per second (positive = toward target)
-    pub flow_speed: f32,
-    /// Pulsing/breathing effect
-    pub pulse: bool,
-    /// Outer glow effect
-    pub glow: bool,
-    /// Multiple particles flowing along edge (requires flow_speed > 0)
-    pub particles: bool,
-    /// Rainbow/HSV color cycling animation
-    pub rainbow: bool,
-}
+    /// Adds motion animation to the pattern.
+    pub fn with_motion(mut self, speed: f32) -> Self {
+        let motion = DashMotion::forward(speed);
+        match &mut self {
+            Self::Solid => {} // No effect on solid
+            Self::Dashed { motion: m, .. } => *m = Some(motion),
+            Self::Arrowed { motion: m, .. } => *m = Some(motion),
+            Self::Dotted { motion: m, .. } => *m = Some(motion),
+            Self::DashDotted { motion: m, .. } => *m = Some(motion),
+            Self::Custom { motion: m, .. } => *m = Some(motion),
+        }
+        self
+    }
 
-impl Default for EdgeAnimation {
-    fn default() -> Self {
-        Self {
-            flow_speed: 0.0,
-            pulse: false,
-            glow: false,
-            particles: false,
-            rainbow: false,
+    /// Adds motion with specific direction.
+    pub fn with_motion_dir(mut self, speed: f32, direction: MotionDirection) -> Self {
+        let motion = DashMotion { speed, direction };
+        match &mut self {
+            Self::Solid => {}
+            Self::Dashed { motion: m, .. } => *m = Some(motion),
+            Self::Arrowed { motion: m, .. } => *m = Some(motion),
+            Self::Dotted { motion: m, .. } => *m = Some(motion),
+            Self::DashDotted { motion: m, .. } => *m = Some(motion),
+            Self::Custom { motion: m, .. } => *m = Some(motion),
+        }
+        self
+    }
+
+    /// Sets the phase offset.
+    pub fn with_phase(mut self, new_phase: f32) -> Self {
+        match &mut self {
+            Self::Solid => {}
+            Self::Dashed { phase, .. } => *phase = new_phase,
+            Self::Arrowed { phase, .. } => *phase = new_phase,
+            Self::Dotted { phase, .. } => *phase = new_phase,
+            Self::DashDotted { phase, .. } => *phase = new_phase,
+            Self::Custom { phase, .. } => *phase = new_phase,
+        }
+        self
+    }
+
+    /// Returns the motion if any.
+    pub fn motion(&self) -> Option<&DashMotion> {
+        match self {
+            Self::Solid => None,
+            Self::Dashed { motion, .. } => motion.as_ref(),
+            Self::Arrowed { motion, .. } => motion.as_ref(),
+            Self::Dotted { motion, .. } => motion.as_ref(),
+            Self::DashDotted { motion, .. } => motion.as_ref(),
+            Self::Custom { motion, .. } => motion.as_ref(),
+        }
+    }
+
+    /// Returns the phase offset.
+    pub fn phase(&self) -> f32 {
+        match self {
+            Self::Solid => 0.0,
+            Self::Dashed { phase, .. } => *phase,
+            Self::Arrowed { phase, .. } => *phase,
+            Self::Dotted { phase, .. } => *phase,
+            Self::DashDotted { phase, .. } => *phase,
+            Self::Custom { phase, .. } => *phase,
+        }
+    }
+
+    /// Returns the primary pattern parameters for GPU (param1, param2).
+    /// For Dashed: (dash, gap), Dotted: (spacing, radius), etc.
+    pub fn params(&self) -> (f32, f32) {
+        match self {
+            Self::Solid => (0.0, 0.0),
+            Self::Dashed { dash, gap, .. } => (*dash, *gap),
+            Self::Arrowed { segment, gap, .. } => (*segment, *gap),
+            Self::Dotted {
+                spacing, radius, ..
+            } => (*spacing, *radius),
+            Self::DashDotted { dash, gap, .. } => (*dash, *gap),
+            Self::Custom { segments, .. } => {
+                // Return first two segments or zeros
+                let p1 = segments.first().copied().unwrap_or(0.0);
+                let p2 = segments.get(1).copied().unwrap_or(0.0);
+                (p1, p2)
+            }
+        }
+    }
+
+    /// Returns the angle in radians (only applicable to Arrowed pattern).
+    pub fn angle(&self) -> f32 {
+        match self {
+            Self::Arrowed { angle, .. } => *angle,
+            _ => 0.0,
         }
     }
 }
 
-impl EdgeAnimation {
-    /// Creates a new animation with flow speed.
-    pub fn flow(speed: f32) -> Self {
-        Self {
-            flow_speed: speed,
-            pulse: false,
-            glow: false,
-            particles: false,
-            rainbow: false,
-        }
-    }
+// ============================================================================
+// Stroke Style
+// ============================================================================
 
-    /// Enables pulse effect.
-    pub fn pulse(mut self) -> Self {
-        self.pulse = true;
-        self
-    }
-
-    /// Enables glow effect.
-    pub fn glow(mut self) -> Self {
-        self.glow = true;
-        self
-    }
-
-    /// Enables particles effect (multiple flowing dots).
-    pub fn particles(mut self) -> Self {
-        self.particles = true;
-        self
-    }
-
-    /// Enables rainbow color cycling.
-    pub fn rainbow(mut self) -> Self {
-        self.rainbow = true;
-        self
-    }
-
-    /// Creates a data flow animation (moderate speed with glow).
-    pub fn data_flow() -> Self {
-        Self::flow(30.0).glow()
-    }
-
-    /// Creates a particle stream animation.
-    pub fn particle_stream() -> Self {
-        Self::flow(60.0).particles()
-    }
-
-    /// Creates a rainbow animation (slow color cycling).
-    pub fn rainbow_flow() -> Self {
-        Self::flow(20.0).rainbow()
-    }
-
-    /// Creates an error animation (fast pulsing).
-    pub fn error() -> Self {
-        Self {
-            flow_speed: 50.0,
-            pulse: true,
-            glow: false,
-            particles: false,
-            rainbow: false,
-        }
-    }
-}
-
-/// Style configuration for edges/connections.
+/// Stroke layer configuration for edges.
 ///
-/// Controls the rendering of connection lines between pins.
-/// Supports gradient colors from source pin (start) to target pin (end).
-///
-/// # Gradient Behavior
-/// - `TRANSPARENT` colors indicate "use pin color at this end"
-/// - Explicit colors override pin colors
-/// - Mix and match: explicit start + transparent end creates gradient to target pin
+/// Controls the main visible line of an edge including color, width, pattern, and caps.
 #[derive(Debug, Clone, PartialEq)]
-pub struct EdgeStyle {
-    /// Color at the source pin (t=0). TRANSPARENT = use source pin color.
+pub struct StrokeStyle {
+    /// Line width in world-space pixels
+    pub width: f32,
+    /// Color at start of edge (t=0). TRANSPARENT = use source pin color.
     pub start_color: Color,
-    /// Color at the target pin (t=1). TRANSPARENT = use target pin color.
+    /// Color at end of edge (t=1). TRANSPARENT = use target pin color.
     pub end_color: Color,
-    /// Line thickness in world-space pixels
-    pub thickness: f32,
-    /// Edge path type (bezier, straight, step, etc.)
-    pub edge_type: EdgeType,
-    /// Optional dash pattern (None = solid line)
-    pub dash_pattern: Option<DashPattern>,
-    /// Optional animation effects
-    pub animation: Option<EdgeAnimation>,
+    /// Line pattern (solid, dashed, dotted, etc.)
+    pub pattern: StrokePattern,
+    /// End cap style for the stroke endpoints
+    pub cap: StrokeCap,
+    /// Cap style for individual dash segments (when using patterns)
+    pub dash_cap: DashCap,
 }
 
-impl Default for EdgeStyle {
+impl Default for StrokeStyle {
     fn default() -> Self {
         Self {
-            // Transparent = use pin colors for gradient
+            width: 2.0,
             start_color: Color::TRANSPARENT,
             end_color: Color::TRANSPARENT,
-            thickness: 2.0,
-            edge_type: EdgeType::default(),
-            dash_pattern: None,
-            animation: None,
+            pattern: StrokePattern::Solid,
+            cap: StrokeCap::Round,
+            dash_cap: DashCap::Butt,
         }
     }
 }
 
-impl EdgeStyle {
-    /// Creates a new EdgeStyle with default values.
+impl StrokeStyle {
+    /// Creates a new stroke with default values.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Sets the start color (at source pin, t=0).
+    /// Sets the stroke width.
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = width;
+        self
+    }
+
+    /// Sets a solid color (both start and end).
+    pub fn color(mut self, color: Color) -> Self {
+        self.start_color = color;
+        self.end_color = color;
+        self
+    }
+
+    /// Sets the start color (at source pin).
     pub fn start_color(mut self, color: Color) -> Self {
         self.start_color = color;
         self
     }
 
-    /// Sets the end color (at target pin, t=1).
+    /// Sets the end color (at target pin).
     pub fn end_color(mut self, color: Color) -> Self {
-        self.end_color = color;
-        self
-    }
-
-    /// Sets both start and end to the same color (solid edge).
-    pub fn solid_color(mut self, color: Color) -> Self {
-        self.start_color = color;
         self.end_color = color;
         self
     }
@@ -826,135 +1099,550 @@ impl EdgeStyle {
         self
     }
 
-    /// Sets the edge thickness.
-    pub fn thickness(mut self, thickness: f32) -> Self {
-        self.thickness = thickness;
+    /// Sets the line pattern.
+    pub fn pattern(mut self, pattern: StrokePattern) -> Self {
+        self.pattern = pattern;
         self
     }
 
-    /// Sets the edge type.
-    pub fn edge_type(mut self, edge_type: EdgeType) -> Self {
-        self.edge_type = edge_type;
+    /// Sets the end cap style.
+    pub fn cap(mut self, cap: StrokeCap) -> Self {
+        self.cap = cap;
         self
     }
 
-    /// Sets the dash pattern.
-    pub fn dash_pattern(mut self, pattern: DashPattern) -> Self {
-        self.dash_pattern = Some(pattern);
+    /// Sets the dash cap style.
+    pub fn dash_cap(mut self, dash_cap: DashCap) -> Self {
+        self.dash_cap = dash_cap;
         self
     }
 
-    /// Sets the animation.
-    pub fn animation(mut self, animation: EdgeAnimation) -> Self {
-        self.animation = Some(animation);
+    /// Makes this a dashed stroke.
+    pub fn dashed(mut self, dash: f32, gap: f32) -> Self {
+        self.pattern = StrokePattern::dashed(dash, gap);
         self
     }
 
-    /// Makes the edge a solid line (removes dash pattern).
-    pub fn solid(mut self) -> Self {
-        self.dash_pattern = None;
+    /// Makes this a dotted stroke.
+    pub fn dotted(mut self, spacing: f32, radius: f32) -> Self {
+        self.pattern = StrokePattern::dotted(spacing, radius);
         self
     }
 
-    /// Creates a data flow style (blue, animated glow).
+    /// Applies a StrokeConfig, returning a new StrokeStyle.
+    /// Config values override base values.
+    pub fn with_config(&self, config: &crate::style::config::StrokeConfig) -> Self {
+        Self {
+            width: config.width.unwrap_or(self.width),
+            start_color: config.start_color.unwrap_or(self.start_color),
+            end_color: config.end_color.unwrap_or(self.end_color),
+            pattern: config
+                .pattern
+                .clone()
+                .unwrap_or_else(|| self.pattern.clone()),
+            cap: config.cap.unwrap_or(self.cap),
+            dash_cap: config
+                .dash_cap
+                .clone()
+                .unwrap_or_else(|| self.dash_cap.clone()),
+        }
+    }
+}
+
+// ============================================================================
+// Border Style
+// ============================================================================
+
+/// Border layer configuration for edges.
+///
+/// Draws an outer ring around the stroke for emphasis or contrast.
+/// The border is rendered behind the stroke.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BorderStyle {
+    /// Border width in world-space pixels
+    pub width: f32,
+    /// Radial gap between stroke outer edge and border inner edge
+    pub gap: f32,
+    /// Border color
+    pub color: Color,
+}
+
+impl Default for BorderStyle {
+    fn default() -> Self {
+        Self {
+            width: 1.0,
+            gap: 0.5,
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.5),
+        }
+    }
+}
+
+impl BorderStyle {
+    /// Creates a new border with default values.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the border width.
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = width;
+        self
+    }
+
+    /// Sets the gap between stroke and border.
+    pub fn gap(mut self, gap: f32) -> Self {
+        self.gap = gap;
+        self
+    }
+
+    /// Sets the border color.
+    pub fn color(mut self, color: Color) -> Self {
+        self.color = color;
+        self
+    }
+
+    /// Applies a BorderConfig, returning a new BorderStyle.
+    /// Config values override base values.
+    pub fn with_config(&self, config: &crate::style::config::BorderConfig) -> Self {
+        Self {
+            width: config.width.unwrap_or(self.width),
+            gap: config.gap.unwrap_or(self.gap),
+            color: config.color.unwrap_or(self.color),
+        }
+    }
+}
+
+// ============================================================================
+// Edge Shadow Style
+// ============================================================================
+
+/// Shadow style for edges.
+///
+/// Creates a soft shadow effect beneath edges for depth and emphasis.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EdgeShadowStyle {
+    /// Blur radius in world-space pixels.
+    /// Larger values create softer shadows.
+    pub blur: f32,
+    /// Shadow color (typically semi-transparent).
+    pub color: Color,
+    /// Horizontal and vertical offset in world-space pixels.
+    pub offset: (f32, f32),
+}
+
+impl Default for EdgeShadowStyle {
+    fn default() -> Self {
+        Self {
+            blur: 4.0,
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+            offset: (2.0, 2.0),
+        }
+    }
+}
+
+impl EdgeShadowStyle {
+    /// Creates a new shadow with default values.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the blur radius.
+    pub fn blur(mut self, blur: f32) -> Self {
+        self.blur = blur;
+        self
+    }
+
+    /// Sets the shadow color.
+    pub fn color(mut self, color: Color) -> Self {
+        self.color = color;
+        self
+    }
+
+    /// Sets the shadow offset.
+    pub fn offset(mut self, x: f32, y: f32) -> Self {
+        self.offset = (x, y);
+        self
+    }
+
+    /// Creates a subtle shadow preset.
+    pub fn subtle() -> Self {
+        Self {
+            blur: 2.0,
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.15),
+            offset: (1.0, 1.0),
+        }
+    }
+
+    /// Creates a medium shadow preset (default).
+    pub fn medium() -> Self {
+        Self::default()
+    }
+
+    /// Creates a strong shadow preset.
+    pub fn strong() -> Self {
+        Self {
+            blur: 8.0,
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.5),
+            offset: (3.0, 3.0),
+        }
+    }
+
+    /// Creates a glow effect (centered, no offset).
+    pub fn glow(color: Color) -> Self {
+        Self {
+            blur: 6.0,
+            color: Color::from_rgba(color.r, color.g, color.b, 0.4),
+            offset: (0.0, 0.0),
+        }
+    }
+
+    /// Applies an EdgeShadowConfig, overriding fields where config has values.
+    pub fn with_config(&self, config: &EdgeShadowConfig) -> Self {
+        Self {
+            blur: config.blur.unwrap_or(self.blur),
+            color: config.color.unwrap_or(self.color),
+            offset: (
+                config.offset_x.unwrap_or(self.offset.0),
+                config.offset_y.unwrap_or(self.offset.1),
+            ),
+        }
+    }
+}
+
+// ============================================================================
+// Edge Style (Layer-based composition)
+// ============================================================================
+
+/// Style configuration for edges/connections with layer-based composition.
+///
+/// Edges consist of optional layers that can be combined:
+/// - **Stroke**: The main visible line with color, pattern, and caps
+/// - **Border**: An outer ring around the stroke for emphasis/contrast
+/// - **Shadow**: Soft shadow for depth
+/// - **Curve**: The path shape (bezier, orthogonal, line)
+///
+/// # Example
+/// ```rust
+/// use iced_nodegraph::style::{EdgeStyle, StrokeStyle, BorderStyle, EdgeCurve, StrokePattern};
+/// use iced::Color;
+///
+/// // Simple solid edge using pin colors
+/// let simple = EdgeStyle::new();
+///
+/// // Edge with explicit color and dashed pattern
+/// let dashed = EdgeStyle::new()
+///     .stroke(StrokeStyle::new()
+///         .width(2.0)
+///         .color(Color::WHITE)
+///         .pattern(StrokePattern::dashed(12.0, 6.0)));
+///
+/// // Edge with border for emphasis
+/// let emphasized = EdgeStyle::new()
+///     .stroke(StrokeStyle::new().width(2.5).color(Color::from_rgb(0.3, 0.6, 1.0)))
+///     .border(BorderStyle::new().width(1.5).color(Color::from_rgba(0.0, 0.0, 0.0, 0.5)));
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct EdgeStyle {
+    /// Main stroke layer (None = invisible edge, useful for grouping)
+    pub stroke: Option<StrokeStyle>,
+    /// Optional border layer drawn behind stroke
+    pub border: Option<BorderStyle>,
+    /// Optional shadow layer drawn behind everything
+    pub shadow: Option<EdgeShadowStyle>,
+    /// Path shape for the edge
+    pub curve: EdgeCurve,
+}
+
+impl Default for EdgeStyle {
+    fn default() -> Self {
+        Self {
+            stroke: Some(StrokeStyle::default()),
+            border: None,
+            shadow: None,
+            curve: EdgeCurve::default(),
+        }
+    }
+}
+
+impl EdgeStyle {
+    /// Creates a new edge style with defaults (solid stroke, no border, bezier curve).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Creates an invisible edge (useful for grouping/layout).
+    pub fn invisible() -> Self {
+        Self {
+            stroke: None,
+            border: None,
+            shadow: None,
+            curve: EdgeCurve::BezierCubic,
+        }
+    }
+
+    /// Sets the stroke layer.
+    pub fn stroke(mut self, stroke: StrokeStyle) -> Self {
+        self.stroke = Some(stroke);
+        self
+    }
+
+    /// Removes the stroke layer (makes edge invisible).
+    pub fn no_stroke(mut self) -> Self {
+        self.stroke = None;
+        self
+    }
+
+    /// Sets the border layer.
+    pub fn border(mut self, border: BorderStyle) -> Self {
+        self.border = Some(border);
+        self
+    }
+
+    /// Removes the border layer.
+    pub fn no_border(mut self) -> Self {
+        self.border = None;
+        self
+    }
+
+    /// Sets the shadow layer.
+    pub fn shadow(mut self, shadow: EdgeShadowStyle) -> Self {
+        self.shadow = Some(shadow);
+        self
+    }
+
+    /// Removes the shadow layer.
+    pub fn no_shadow(mut self) -> Self {
+        self.shadow = None;
+        self
+    }
+
+    /// Sets the curve type.
+    pub fn curve(mut self, curve: EdgeCurve) -> Self {
+        self.curve = curve;
+        self
+    }
+
+    // === Convenience Methods (operate on stroke layer) ===
+
+    /// Sets a solid color for the entire edge (overrides stroke colors).
+    pub fn solid_color(mut self, color: Color) -> Self {
+        if let Some(ref mut stroke) = self.stroke {
+            stroke.start_color = color;
+            stroke.end_color = color;
+        }
+        self
+    }
+
+    /// Sets a gradient from start to end color.
+    pub fn gradient(mut self, start: Color, end: Color) -> Self {
+        if let Some(ref mut stroke) = self.stroke {
+            stroke.start_color = start;
+            stroke.end_color = end;
+        }
+        self
+    }
+
+    /// Uses pin colors for gradient (default behavior).
+    pub fn from_pins(mut self) -> Self {
+        if let Some(ref mut stroke) = self.stroke {
+            stroke.start_color = Color::TRANSPARENT;
+            stroke.end_color = Color::TRANSPARENT;
+        }
+        self
+    }
+
+    /// Sets the stroke width.
+    pub fn width(mut self, width: f32) -> Self {
+        if let Some(ref mut stroke) = self.stroke {
+            stroke.width = width;
+        }
+        self
+    }
+
+    /// Alias for width (backwards compatibility).
+    pub fn thickness(self, thickness: f32) -> Self {
+        self.width(thickness)
+    }
+
+    /// Sets the stroke pattern.
+    pub fn pattern(mut self, pattern: StrokePattern) -> Self {
+        if let Some(ref mut stroke) = self.stroke {
+            stroke.pattern = pattern;
+        }
+        self
+    }
+
+    // === Preset Styles ===
+
+    /// Creates a data flow style (blue, bezier curve).
     pub fn data_flow() -> Self {
         let color = Color::from_rgb(0.3, 0.6, 1.0);
-        Self {
-            start_color: color,
-            end_color: color,
-            thickness: 2.5,
-            edge_type: EdgeType::Bezier,
-            dash_pattern: None,
-            animation: Some(EdgeAnimation::data_flow()),
-        }
+        Self::new()
+            .stroke(StrokeStyle::new().width(2.5).color(color))
+            .curve(EdgeCurve::BezierCubic)
     }
 
-    /// Creates a control flow style (white, straight).
+    /// Creates a control flow style (white, orthogonal with rounded corners).
     pub fn control_flow() -> Self {
-        Self {
-            start_color: Color::WHITE,
-            end_color: Color::WHITE,
-            thickness: 2.0,
-            edge_type: EdgeType::SmoothStep,
-            dash_pattern: None,
-            animation: None,
-        }
+        Self::new()
+            .stroke(StrokeStyle::new().width(2.0).color(Color::WHITE))
+            .curve(EdgeCurve::OrthogonalSmooth { radius: 15.0 })
     }
 
-    /// Creates an error style (red, animated dotted).
+    /// Creates an error style (red, animated marching ants with border).
     pub fn error() -> Self {
         let color = Color::from_rgb(0.9, 0.2, 0.2);
-        Self {
-            start_color: color,
-            end_color: color,
-            thickness: 2.0,
-            edge_type: EdgeType::Bezier,
-            dash_pattern: Some(DashPattern::marching_ants()),
-            animation: Some(EdgeAnimation::error()),
-        }
+        Self::new()
+            .stroke(
+                StrokeStyle::new()
+                    .width(2.0)
+                    .color(color)
+                    .pattern(StrokePattern::marching_ants()),
+            )
+            .border(BorderStyle::new().width(1.0).gap(0.5).color(color))
+            .curve(EdgeCurve::BezierCubic)
     }
 
     /// Creates a disabled style (gray, dashed).
     pub fn disabled() -> Self {
         let color = Color::from_rgb(0.5, 0.5, 0.5);
-        Self {
-            start_color: color,
-            end_color: color,
-            thickness: 1.5,
-            edge_type: EdgeType::Bezier,
-            dash_pattern: Some(DashPattern::dashed()),
-            animation: None,
-        }
+        Self::new()
+            .stroke(
+                StrokeStyle::new()
+                    .width(1.5)
+                    .color(color)
+                    .pattern(StrokePattern::dashed(12.0, 6.0)),
+            )
+            .curve(EdgeCurve::BezierCubic)
     }
 
-    /// Creates a highlighted style (bright, glowing).
+    /// Creates a highlighted style (bright, with border).
     pub fn highlighted() -> Self {
         let color = Color::from_rgb(1.0, 0.8, 0.2);
-        Self {
-            start_color: color,
-            end_color: color,
-            thickness: 3.0,
-            edge_type: EdgeType::Bezier,
-            dash_pattern: None,
-            animation: Some(EdgeAnimation::flow(0.0).glow()),
-        }
+        Self::new()
+            .stroke(StrokeStyle::new().width(3.0).color(color))
+            .border(
+                BorderStyle::new()
+                    .width(2.0)
+                    .gap(1.0)
+                    .color(Color::from_rgba(1.0, 1.0, 1.0, 0.3)),
+            )
+            .curve(EdgeCurve::BezierCubic)
     }
 
-    /// Computes animation flags for GPU buffer.
-    ///
-    /// Flag bits:
-    /// - bit 0: animated dash pattern
-    /// - bit 1: glow effect
-    /// - bit 2: pulse/breathing effect
-    /// - bit 3: particles (multiple flowing dots)
-    /// - bit 4: rainbow color cycling
-    pub fn animation_flags(&self) -> u32 {
+    /// Creates a debug/temporary style (dotted, cyan, straight line).
+    pub fn debug() -> Self {
+        Self::new()
+            .stroke(
+                StrokeStyle::new()
+                    .width(1.5)
+                    .color(Color::from_rgb(0.0, 1.0, 1.0))
+                    .pattern(StrokePattern::dotted(8.0, 2.0)),
+            )
+            .curve(EdgeCurve::Line)
+    }
+
+    // === GPU Helper Methods ===
+
+    /// Returns whether this edge has an animated pattern.
+    pub fn has_motion(&self) -> bool {
+        self.stroke
+            .as_ref()
+            .map(|s| s.pattern.motion().is_some())
+            .unwrap_or(false)
+    }
+
+    /// Gets the motion speed (0.0 if no motion).
+    pub fn motion_speed(&self) -> f32 {
+        self.stroke
+            .as_ref()
+            .and_then(|s| s.pattern.motion())
+            .map(|m| m.speed)
+            .unwrap_or(0.0)
+    }
+
+    /// Gets the motion direction sign (1.0 forward, -1.0 backward).
+    pub fn motion_direction_sign(&self) -> f32 {
+        self.stroke
+            .as_ref()
+            .and_then(|s| s.pattern.motion())
+            .map(|m| m.direction.sign())
+            .unwrap_or(1.0)
+    }
+
+    /// Returns GPU flags for this edge style.
+    /// - bit 0: has motion (animated pattern)
+    /// Note: bit 1/2/3 reserved for glow/pulse/pending_cut (set by shader pipeline)
+    /// Border rendering is controlled by border_width > 0, not by a flag.
+    pub fn flags(&self) -> u32 {
         let mut flags = 0u32;
-        if let Some(ref dash) = self.dash_pattern {
-            if dash.animated {
-                flags |= 1; // bit 0: animated dash
-            }
+        if self.has_motion() {
+            flags |= 1;
         }
-        if let Some(ref anim) = self.animation {
-            if anim.glow {
-                flags |= 2; // bit 1: glow
-            }
-            if anim.pulse {
-                flags |= 4; // bit 2: pulse
-            }
-            if anim.particles {
-                flags |= 8; // bit 3: particles
-            }
-            if anim.rainbow {
-                flags |= 16; // bit 4: rainbow
-            }
-        }
+        // Note: border is NOT a flag - it's rendered when border_width > 0.0
+        // Setting bit 1 here would incorrectly trigger the GLOW effect in shader.
         flags
     }
 
-    /// Gets the flow speed (0.0 if no animation).
-    pub fn flow_speed(&self) -> f32 {
-        self.animation.map(|a| a.flow_speed).unwrap_or(0.0)
+    // === Getter Methods ===
+
+    /// Gets the stroke start color, or TRANSPARENT if no stroke.
+    pub fn start_color(&self) -> Color {
+        self.stroke
+            .as_ref()
+            .map(|s| s.start_color)
+            .unwrap_or(Color::TRANSPARENT)
+    }
+
+    /// Gets the stroke end color, or TRANSPARENT if no stroke.
+    pub fn end_color(&self) -> Color {
+        self.stroke
+            .as_ref()
+            .map(|s| s.end_color)
+            .unwrap_or(Color::TRANSPARENT)
+    }
+
+    /// Gets the stroke width, or 2.0 (default) if no stroke.
+    pub fn get_width(&self) -> f32 {
+        self.stroke.as_ref().map(|s| s.width).unwrap_or(2.0)
+    }
+
+    /// Merges an EdgeConfig into this style, returning a new style.
+    /// Config values override base style values.
+    pub fn with_config(&self, config: &EdgeConfig) -> Self {
+        let stroke = match (&self.stroke, &config.stroke) {
+            (Some(base), Some(cfg)) => Some(base.with_config(cfg)),
+            (Some(base), None) => Some(base.clone()),
+            (None, Some(cfg)) => Some(StrokeStyle::default().with_config(cfg)),
+            (None, None) => None,
+        };
+
+        let border = match (&self.border, &config.border) {
+            (_, Some(cfg)) if cfg.enabled == Some(false) => None,
+            (Some(base), Some(cfg)) => Some(base.with_config(cfg)),
+            (Some(base), None) => Some(base.clone()),
+            (None, Some(cfg)) if cfg.enabled != Some(false) => {
+                Some(BorderStyle::default().with_config(cfg))
+            }
+            (None, _) => None,
+        };
+
+        let shadow = match (&self.shadow, &config.shadow) {
+            (_, Some(cfg)) if cfg.enabled == Some(false) => None,
+            (Some(base), Some(cfg)) => Some(base.with_config(cfg)),
+            (Some(base), None) => Some(*base),
+            (None, Some(cfg)) if cfg.enabled != Some(false) => {
+                Some(EdgeShadowStyle::default().with_config(cfg))
+            }
+            (None, _) => None,
+        };
+
+        Self {
+            stroke,
+            border,
+            shadow,
+            curve: config.curve.unwrap_or(self.curve),
+        }
     }
 
     /// Creates an edge style derived from an iced Theme.
@@ -963,14 +1651,7 @@ impl EdgeStyle {
     /// Uses transparent colors to inherit from pin colors.
     pub fn from_theme(_theme: &Theme) -> Self {
         // Edge defaults are theme-independent: use pin colors for gradient
-        Self {
-            start_color: Color::TRANSPARENT,
-            end_color: Color::TRANSPARENT,
-            thickness: 2.0,
-            edge_type: EdgeType::Bezier,
-            dash_pattern: None,
-            animation: None,
-        }
+        Self::new()
     }
 }
 
@@ -1443,18 +2124,20 @@ mod tests {
     #[test]
     fn test_edge_style_default_uses_pin_colors() {
         let style = EdgeStyle::default();
+        let stroke = style.stroke.unwrap();
         // TRANSPARENT means "use pin colors"
-        assert!(style.start_color.a < 0.01);
-        assert!(style.end_color.a < 0.01);
+        assert!(stroke.start_color.a < 0.01);
+        assert!(stroke.end_color.a < 0.01);
     }
 
     #[test]
     fn test_edge_style_solid_color() {
         let red = Color::from_rgb(1.0, 0.0, 0.0);
         let style = EdgeStyle::new().solid_color(red);
+        let stroke = style.stroke.unwrap();
 
-        assert_eq!(style.start_color, red);
-        assert_eq!(style.end_color, red);
+        assert_eq!(stroke.start_color, red);
+        assert_eq!(stroke.end_color, red);
     }
 
     #[test]
@@ -1462,35 +2145,95 @@ mod tests {
         let red = Color::from_rgb(1.0, 0.0, 0.0);
         let blue = Color::from_rgb(0.0, 0.0, 1.0);
         let style = EdgeStyle::new().gradient(red, blue);
+        let stroke = style.stroke.unwrap();
 
-        assert_eq!(style.start_color, red);
-        assert_eq!(style.end_color, blue);
+        assert_eq!(stroke.start_color, red);
+        assert_eq!(stroke.end_color, blue);
     }
 
     #[test]
     fn test_edge_style_from_pins() {
-        let style = EdgeStyle::new().solid_color(Color::WHITE).from_pins(); // Should reset to TRANSPARENT
+        let style = EdgeStyle::new().solid_color(Color::WHITE).from_pins();
+        let stroke = style.stroke.unwrap();
 
-        assert!(style.start_color.a < 0.01);
-        assert!(style.end_color.a < 0.01);
+        assert!(stroke.start_color.a < 0.01);
+        assert!(stroke.end_color.a < 0.01);
     }
 
     #[test]
     fn test_edge_style_presets_are_solid() {
         // All presets should have explicit colors (not gradients)
         let data_flow = EdgeStyle::data_flow();
-        assert_eq!(data_flow.start_color, data_flow.end_color);
+        let stroke = data_flow.stroke.unwrap();
+        assert_eq!(stroke.start_color, stroke.end_color);
 
         let control_flow = EdgeStyle::control_flow();
-        assert_eq!(control_flow.start_color, control_flow.end_color);
+        let stroke = control_flow.stroke.unwrap();
+        assert_eq!(stroke.start_color, stroke.end_color);
 
         let error = EdgeStyle::error();
-        assert_eq!(error.start_color, error.end_color);
+        let stroke = error.stroke.unwrap();
+        assert_eq!(stroke.start_color, stroke.end_color);
 
         let disabled = EdgeStyle::disabled();
-        assert_eq!(disabled.start_color, disabled.end_color);
+        let stroke = disabled.stroke.unwrap();
+        assert_eq!(stroke.start_color, stroke.end_color);
 
         let highlighted = EdgeStyle::highlighted();
-        assert_eq!(highlighted.start_color, highlighted.end_color);
+        let stroke = highlighted.stroke.unwrap();
+        assert_eq!(stroke.start_color, stroke.end_color);
+    }
+
+    #[test]
+    fn test_edge_curve_type_ids() {
+        assert_eq!(EdgeCurve::BezierCubic.type_id(), 0);
+        assert_eq!(EdgeCurve::BezierQuadratic.type_id(), 1);
+        assert_eq!(EdgeCurve::Orthogonal.type_id(), 2);
+        assert_eq!(EdgeCurve::OrthogonalSmooth { radius: 15.0 }.type_id(), 3);
+        assert_eq!(EdgeCurve::Line.type_id(), 4);
+    }
+
+    #[test]
+    fn test_stroke_pattern_type_ids() {
+        // Pattern IDs: 0=Solid, 1=Dashed, 2=Arrowed, 3=Dotted, 4=DashDotted, 5=Custom
+        assert_eq!(StrokePattern::Solid.type_id(), 0);
+        assert_eq!(StrokePattern::dashed(10.0, 5.0).type_id(), 1);
+        assert_eq!(
+            StrokePattern::arrowed(8.0, 4.0, std::f32::consts::FRAC_PI_4).type_id(),
+            2
+        );
+        assert_eq!(StrokePattern::dotted(8.0, 2.0).type_id(), 3);
+        assert_eq!(StrokePattern::dash_dotted(10.0, 5.0, 2.0, 5.0).type_id(), 4);
+    }
+
+    #[test]
+    fn test_stroke_pattern_angled() {
+        let pattern = StrokePattern::arrowed(10.0, 5.0, std::f32::consts::FRAC_PI_4);
+        assert_eq!(pattern.type_id(), 2);
+        let (segment, gap) = pattern.params();
+        assert_eq!(segment, 10.0);
+        assert_eq!(gap, 5.0);
+        assert!((pattern.angle() - std::f32::consts::FRAC_PI_4).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_edge_style_with_border() {
+        let style = EdgeStyle::new()
+            .stroke(StrokeStyle::new().width(2.0).color(Color::WHITE))
+            .border(BorderStyle::new().width(1.5).gap(0.5).color(Color::BLACK));
+
+        assert!(style.stroke.is_some());
+        assert!(style.border.is_some());
+        assert_eq!(style.border.unwrap().width, 1.5);
+    }
+
+    #[test]
+    fn test_stroke_pattern_motion() {
+        let pattern = StrokePattern::marching_ants();
+        assert!(pattern.motion().is_some());
+        assert_eq!(pattern.motion().unwrap().speed, 30.0);
+
+        let solid = StrokePattern::Solid;
+        assert!(solid.motion().is_none());
     }
 }

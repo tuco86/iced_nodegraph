@@ -55,14 +55,7 @@ fn resolve_node_style(config: &NodeConfig, theme: &Theme) -> NodeStyle {
 /// Resolves an EdgeConfig to a complete EdgeStyle using theme defaults.
 fn resolve_edge_style(config: &EdgeConfig, theme: &Theme) -> EdgeStyle {
     let base = EdgeStyle::from_theme(theme);
-    EdgeStyle {
-        start_color: config.start_color.unwrap_or(base.start_color),
-        end_color: config.end_color.unwrap_or(base.end_color),
-        thickness: config.thickness.unwrap_or(base.thickness),
-        edge_type: config.edge_type.unwrap_or(base.edge_type),
-        dash_pattern: config.dash_pattern.clone().or(base.dash_pattern),
-        animation: config.animation.clone().or(base.animation),
-    }
+    base.with_config(config)
 }
 
 /// Resolves a GraphStyle or uses theme defaults.
@@ -189,11 +182,12 @@ where
             resolved_node_defaults.fill_color.b,
             resolved_node_defaults.fill_color.a,
         );
+        let edge_start_color = resolved_edge_defaults.start_color();
         let edge_color = glam::vec4(
-            resolved_edge_defaults.start_color.r,
-            resolved_edge_defaults.start_color.g,
-            resolved_edge_defaults.start_color.b,
-            resolved_edge_defaults.start_color.a,
+            edge_start_color.r,
+            edge_start_color.g,
+            edge_start_color.b,
+            edge_start_color.a,
         );
         let drag_edge_color = glam::vec4(
             resolved_graph.drag_edge_color.r,
@@ -359,7 +353,7 @@ where
                 selection_border_color.b,
                 selection_border_color.a,
             ),
-            edge_thickness: resolved_edge_defaults.thickness,
+            edge_thickness: resolved_edge_defaults.get_width(),
         };
 
         // Create foreground primitive (clone with different layer)
@@ -567,22 +561,7 @@ where
                         shell.request_redraw();
                     }
                 }
-                // Delete/Backspace: Delete selected nodes
-                keyboard::Key::Named(keyboard::key::Named::Delete)
-                | keyboard::Key::Named(keyboard::key::Named::Backspace) => {
-                    if !state.selected_nodes.is_empty() {
-                        let node_ids: Vec<usize> = state.selected_nodes.iter().copied().collect();
-                        if let Some(handler) = self.on_delete_handler() {
-                            shell.publish(handler(node_ids.clone()));
-                        }
-                        if let Some(handler) = self.get_on_event() {
-                            shell.publish(handler(NodeGraphEvent::DeleteRequested { node_ids }));
-                        }
-                        state.selected_nodes.clear();
-                        shell.capture_event();
-                        shell.request_redraw();
-                    }
-                }
+                // Delete/Backspace handled AFTER child widgets to let text inputs consume it first
                 _ => {}
             }
         }
@@ -1088,6 +1067,31 @@ where
 
                 if shell.is_event_captured() {
                     return;
+                }
+
+                // Delete/Backspace: Delete selected nodes
+                // Handled AFTER child widgets so text inputs can consume the event first
+                if let Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = event {
+                    if matches!(
+                        key,
+                        keyboard::Key::Named(keyboard::key::Named::Delete)
+                            | keyboard::Key::Named(keyboard::key::Named::Backspace)
+                    ) {
+                        if !state.selected_nodes.is_empty() {
+                            let node_ids: Vec<usize> =
+                                state.selected_nodes.iter().copied().collect();
+                            if let Some(handler) = self.on_delete_handler() {
+                                shell.publish(handler(node_ids.clone()));
+                            }
+                            if let Some(handler) = self.get_on_event() {
+                                shell
+                                    .publish(handler(NodeGraphEvent::DeleteRequested { node_ids }));
+                            }
+                            state.selected_nodes.clear();
+                            shell.capture_event();
+                            shell.request_redraw();
+                        }
+                    }
                 }
 
                 // Only process mouse events if cursor is within our bounds

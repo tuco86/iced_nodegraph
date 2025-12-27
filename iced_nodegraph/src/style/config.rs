@@ -5,7 +5,7 @@
 
 use iced::Color;
 
-use super::{DashPattern, EdgeAnimation, EdgeType, PinShape};
+use super::{BorderStyle, DashCap, EdgeCurve, PinShape, StrokeCap, StrokePattern, StrokeStyle};
 
 /// Partial node configuration for cascading style overrides.
 ///
@@ -182,38 +182,301 @@ impl ShadowConfig {
     }
 }
 
-/// Edge configuration for connection lines.
+/// Partial stroke configuration for edge styling.
 ///
-/// # Example
-/// ```rust
-/// use iced_nodegraph::style::{EdgeConfig, EdgeType};
-/// use iced::Color;
-///
-/// // Solid color edge
-/// let config = EdgeConfig::new()
-///     .solid_color(Color::from_rgb(0.3, 0.6, 1.0))
-///     .thickness(3.0)
-///     .edge_type(EdgeType::Bezier);
-///
-/// // Gradient edge
-/// let gradient = EdgeConfig::new()
-///     .start_color(Color::from_rgb(1.0, 0.0, 0.0))
-///     .end_color(Color::from_rgb(0.0, 0.0, 1.0));
-/// ```
+/// All fields are optional - only set fields will override the base style.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct EdgeConfig {
+pub struct StrokeConfig {
+    /// Stroke width in world-space pixels
+    pub width: Option<f32>,
     /// Color at the source pin (t=0). TRANSPARENT = use source pin color.
     pub start_color: Option<Color>,
     /// Color at the target pin (t=1). TRANSPARENT = use target pin color.
     pub end_color: Option<Color>,
-    /// Line thickness in world-space pixels
-    pub thickness: Option<f32>,
-    /// Edge path type (bezier, straight, step, etc.)
-    pub edge_type: Option<EdgeType>,
-    /// Optional dash pattern
-    pub dash_pattern: Option<DashPattern>,
-    /// Optional animation effects
-    pub animation: Option<EdgeAnimation>,
+    /// Line pattern (solid, dashed, dotted, etc.)
+    pub pattern: Option<StrokePattern>,
+    /// End cap style for stroke endpoints
+    pub cap: Option<StrokeCap>,
+    /// Cap style for individual dash segments
+    pub dash_cap: Option<DashCap>,
+}
+
+impl StrokeConfig {
+    /// Creates an empty config with no overrides.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the stroke width override.
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = Some(width);
+        self
+    }
+
+    /// Sets a solid color (both start and end).
+    pub fn color(mut self, color: impl Into<Color>) -> Self {
+        let c = color.into();
+        self.start_color = Some(c);
+        self.end_color = Some(c);
+        self
+    }
+
+    /// Sets the start color (at source pin).
+    pub fn start_color(mut self, color: impl Into<Color>) -> Self {
+        self.start_color = Some(color.into());
+        self
+    }
+
+    /// Sets the end color (at target pin).
+    pub fn end_color(mut self, color: impl Into<Color>) -> Self {
+        self.end_color = Some(color.into());
+        self
+    }
+
+    /// Sets the line pattern override.
+    pub fn pattern(mut self, pattern: StrokePattern) -> Self {
+        self.pattern = Some(pattern);
+        self
+    }
+
+    /// Sets the end cap style override.
+    pub fn cap(mut self, cap: StrokeCap) -> Self {
+        self.cap = Some(cap);
+        self
+    }
+
+    /// Sets the dash cap style override.
+    pub fn dash_cap(mut self, dash_cap: DashCap) -> Self {
+        self.dash_cap = Some(dash_cap);
+        self
+    }
+
+    /// Returns true if this config has any overrides set.
+    pub fn has_overrides(&self) -> bool {
+        self.width.is_some()
+            || self.start_color.is_some()
+            || self.end_color.is_some()
+            || self.pattern.is_some()
+            || self.cap.is_some()
+            || self.dash_cap.is_some()
+    }
+
+    /// Merges two stroke configs. Self takes priority, other fills gaps.
+    pub fn merge(&self, other: &Self) -> Self {
+        Self {
+            width: self.width.or(other.width),
+            start_color: self.start_color.or(other.start_color),
+            end_color: self.end_color.or(other.end_color),
+            pattern: self.pattern.clone().or(other.pattern.clone()),
+            cap: self.cap.or(other.cap),
+            dash_cap: self.dash_cap.clone().or(other.dash_cap.clone()),
+        }
+    }
+}
+
+impl From<StrokeStyle> for StrokeConfig {
+    fn from(style: StrokeStyle) -> Self {
+        Self {
+            width: Some(style.width),
+            start_color: Some(style.start_color),
+            end_color: Some(style.end_color),
+            pattern: Some(style.pattern),
+            cap: Some(style.cap),
+            dash_cap: Some(style.dash_cap),
+        }
+    }
+}
+
+/// Partial border configuration for edge styling.
+///
+/// All fields are optional - only set fields will override the base style.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BorderConfig {
+    /// Border width in world-space pixels
+    pub width: Option<f32>,
+    /// Radial gap between stroke and border
+    pub gap: Option<f32>,
+    /// Border color
+    pub color: Option<Color>,
+    /// Explicit enabled flag (None = inherit, Some(false) = force disable)
+    pub enabled: Option<bool>,
+}
+
+impl BorderConfig {
+    /// Creates an empty config with no overrides.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the border width override.
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = Some(width);
+        self
+    }
+
+    /// Sets the gap override.
+    pub fn gap(mut self, gap: f32) -> Self {
+        self.gap = Some(gap);
+        self
+    }
+
+    /// Sets the border color override.
+    pub fn color(mut self, color: impl Into<Color>) -> Self {
+        self.color = Some(color.into());
+        self
+    }
+
+    /// Explicitly enables or disables the border.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = Some(enabled);
+        self
+    }
+
+    /// Returns true if this config has any overrides set.
+    pub fn has_overrides(&self) -> bool {
+        self.width.is_some() || self.gap.is_some() || self.color.is_some() || self.enabled.is_some()
+    }
+
+    /// Merges two border configs. Self takes priority, other fills gaps.
+    pub fn merge(&self, other: &Self) -> Self {
+        Self {
+            width: self.width.or(other.width),
+            gap: self.gap.or(other.gap),
+            color: self.color.or(other.color),
+            enabled: self.enabled.or(other.enabled),
+        }
+    }
+}
+
+impl From<BorderStyle> for BorderConfig {
+    fn from(style: BorderStyle) -> Self {
+        Self {
+            width: Some(style.width),
+            gap: Some(style.gap),
+            color: Some(style.color),
+            enabled: Some(true),
+        }
+    }
+}
+
+/// Edge shadow configuration (partial overrides for EdgeShadowStyle).
+///
+/// # Example
+/// ```rust
+/// use iced_nodegraph::style::EdgeShadowConfig;
+/// use iced::Color;
+///
+/// let shadow = EdgeShadowConfig::new()
+///     .blur(6.0)
+///     .color(Color::from_rgba(0.0, 0.0, 0.0, 0.4))
+///     .offset(2.0, 2.0);
+/// ```
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct EdgeShadowConfig {
+    /// Shadow blur radius
+    pub blur: Option<f32>,
+    /// Shadow color
+    pub color: Option<Color>,
+    /// Shadow offset (x, y)
+    pub offset_x: Option<f32>,
+    pub offset_y: Option<f32>,
+    /// Explicitly enable/disable shadow
+    pub enabled: Option<bool>,
+}
+
+impl EdgeShadowConfig {
+    /// Creates an empty config with no overrides.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the blur radius override.
+    pub fn blur(mut self, blur: f32) -> Self {
+        self.blur = Some(blur);
+        self
+    }
+
+    /// Sets the shadow color override.
+    pub fn color(mut self, color: impl Into<Color>) -> Self {
+        self.color = Some(color.into());
+        self
+    }
+
+    /// Sets the shadow offset override.
+    pub fn offset(mut self, x: f32, y: f32) -> Self {
+        self.offset_x = Some(x);
+        self.offset_y = Some(y);
+        self
+    }
+
+    /// Explicitly enables or disables the shadow.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = Some(enabled);
+        self
+    }
+
+    /// Returns true if this config has any overrides set.
+    pub fn has_overrides(&self) -> bool {
+        self.blur.is_some()
+            || self.color.is_some()
+            || self.offset_x.is_some()
+            || self.offset_y.is_some()
+            || self.enabled.is_some()
+    }
+
+    /// Merges two shadow configs. Self takes priority, other fills gaps.
+    pub fn merge(&self, other: &Self) -> Self {
+        Self {
+            blur: self.blur.or(other.blur),
+            color: self.color.or(other.color),
+            offset_x: self.offset_x.or(other.offset_x),
+            offset_y: self.offset_y.or(other.offset_y),
+            enabled: self.enabled.or(other.enabled),
+        }
+    }
+}
+
+impl From<super::EdgeShadowStyle> for EdgeShadowConfig {
+    fn from(style: super::EdgeShadowStyle) -> Self {
+        Self {
+            blur: Some(style.blur),
+            color: Some(style.color),
+            offset_x: Some(style.offset.0),
+            offset_y: Some(style.offset.1),
+            enabled: Some(true),
+        }
+    }
+}
+
+/// Edge configuration for connection lines with layer-based composition.
+///
+/// # Example
+/// ```rust
+/// use iced_nodegraph::style::{EdgeConfig, StrokeConfig, EdgeCurve, StrokePattern};
+/// use iced::Color;
+///
+/// // Solid color edge
+/// let config = EdgeConfig::new()
+///     .stroke(StrokeConfig::new()
+///         .color(Color::from_rgb(0.3, 0.6, 1.0))
+///         .width(3.0))
+///     .curve(EdgeCurve::BezierCubic);
+///
+/// // Shorthand for simple solid color
+/// let simple = EdgeConfig::new()
+///     .solid_color(Color::WHITE)
+///     .width(2.0);
+/// ```
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct EdgeConfig {
+    /// Stroke layer configuration
+    pub stroke: Option<StrokeConfig>,
+    /// Border layer configuration
+    pub border: Option<BorderConfig>,
+    /// Shadow layer configuration
+    pub shadow: Option<EdgeShadowConfig>,
+    /// Edge curve type
+    pub curve: Option<EdgeCurve>,
 }
 
 impl EdgeConfig {
@@ -222,69 +485,108 @@ impl EdgeConfig {
         Self::default()
     }
 
-    /// Sets the start color (at source pin, t=0).
-    pub fn start_color(mut self, color: impl Into<Color>) -> Self {
-        self.start_color = Some(color.into());
+    /// Sets the stroke configuration.
+    pub fn stroke(mut self, stroke: StrokeConfig) -> Self {
+        self.stroke = Some(stroke);
         self
     }
 
-    /// Sets the end color (at target pin, t=1).
-    pub fn end_color(mut self, color: impl Into<Color>) -> Self {
-        self.end_color = Some(color.into());
+    /// Sets the border configuration.
+    pub fn border(mut self, border: BorderConfig) -> Self {
+        self.border = Some(border);
         self
     }
 
-    /// Sets both start and end to the same color (solid edge).
+    /// Explicitly disables the border.
+    pub fn no_border(mut self) -> Self {
+        self.border = Some(BorderConfig {
+            enabled: Some(false),
+            ..Default::default()
+        });
+        self
+    }
+
+    /// Sets the shadow configuration.
+    pub fn shadow(mut self, shadow: EdgeShadowConfig) -> Self {
+        self.shadow = Some(shadow);
+        self
+    }
+
+    /// Explicitly disables the shadow.
+    pub fn no_shadow(mut self) -> Self {
+        self.shadow = Some(EdgeShadowConfig {
+            enabled: Some(false),
+            ..Default::default()
+        });
+        self
+    }
+
+    /// Sets the curve type.
+    pub fn curve(mut self, curve: EdgeCurve) -> Self {
+        self.curve = Some(curve);
+        self
+    }
+
+    // === Convenience Methods ===
+
+    /// Sets a solid color (shorthand for stroke color).
     pub fn solid_color(mut self, color: impl Into<Color>) -> Self {
         let c = color.into();
-        self.start_color = Some(c);
-        self.end_color = Some(c);
+        let stroke = self.stroke.get_or_insert_with(Default::default);
+        stroke.start_color = Some(c);
+        stroke.end_color = Some(c);
         self
     }
 
-    /// Sets the edge thickness override.
-    pub fn thickness(mut self, thickness: f32) -> Self {
-        self.thickness = Some(thickness);
+    /// Sets the stroke width (shorthand).
+    pub fn width(mut self, width: f32) -> Self {
+        let stroke = self.stroke.get_or_insert_with(Default::default);
+        stroke.width = Some(width);
         self
     }
 
-    /// Sets the edge type override.
-    pub fn edge_type(mut self, edge_type: EdgeType) -> Self {
-        self.edge_type = Some(edge_type);
-        self
+    /// Alias for width.
+    pub fn thickness(self, thickness: f32) -> Self {
+        self.width(thickness)
     }
 
-    /// Sets the dash pattern override.
-    pub fn dash_pattern(mut self, pattern: DashPattern) -> Self {
-        self.dash_pattern = Some(pattern);
-        self
-    }
-
-    /// Sets the animation override.
-    pub fn animation(mut self, animation: EdgeAnimation) -> Self {
-        self.animation = Some(animation);
+    /// Sets the stroke pattern (shorthand).
+    pub fn pattern(mut self, pattern: StrokePattern) -> Self {
+        let stroke = self.stroke.get_or_insert_with(Default::default);
+        stroke.pattern = Some(pattern);
         self
     }
 
     /// Returns true if this config has any overrides set.
     pub fn has_overrides(&self) -> bool {
-        self.start_color.is_some()
-            || self.end_color.is_some()
-            || self.thickness.is_some()
-            || self.edge_type.is_some()
-            || self.dash_pattern.is_some()
-            || self.animation.is_some()
+        self.stroke.is_some()
+            || self.border.is_some()
+            || self.shadow.is_some()
+            || self.curve.is_some()
     }
 
     /// Merges two edge configs. Self takes priority, other fills gaps.
     pub fn merge(&self, other: &Self) -> Self {
         Self {
-            start_color: self.start_color.or(other.start_color),
-            end_color: self.end_color.or(other.end_color),
-            thickness: self.thickness.or(other.thickness),
-            edge_type: self.edge_type.or(other.edge_type),
-            dash_pattern: self.dash_pattern.clone().or(other.dash_pattern.clone()),
-            animation: self.animation.clone().or(other.animation.clone()),
+            stroke: match (&self.stroke, &other.stroke) {
+                (Some(s), Some(o)) => Some(s.merge(o)),
+                (Some(s), None) => Some(s.clone()),
+                (None, Some(o)) => Some(o.clone()),
+                (None, None) => None,
+            },
+            border: match (&self.border, &other.border) {
+                (Some(s), Some(o)) => Some(s.merge(o)),
+                (Some(s), None) => Some(s.clone()),
+                (None, Some(o)) => Some(o.clone()),
+                (None, None) => None,
+            },
+            shadow: match (&self.shadow, &other.shadow) {
+                (Some(s), Some(o)) => Some(s.merge(o)),
+                (Some(s), None) => Some(s.clone()),
+                (None, Some(o)) => Some(o.clone()),
+                (None, None) => None,
+            },
+            curve: self.curve.or(other.curve),
         }
     }
 }
@@ -538,12 +840,10 @@ impl From<super::EdgeStyle> for EdgeConfig {
     /// Converts a complete EdgeStyle to EdgeConfig, setting all fields.
     fn from(style: super::EdgeStyle) -> Self {
         Self {
-            start_color: Some(style.start_color),
-            end_color: Some(style.end_color),
-            thickness: Some(style.thickness),
-            edge_type: Some(style.edge_type),
-            dash_pattern: style.dash_pattern,
-            animation: style.animation,
+            stroke: style.stroke.map(|s| s.into()),
+            border: style.border.map(|b| b.into()),
+            shadow: style.shadow.map(|s| s.into()),
+            curve: Some(style.curve),
         }
     }
 }
@@ -577,12 +877,16 @@ mod tests {
         let config = EdgeConfig::new()
             .solid_color(Color::from_rgb(0.3, 0.6, 1.0))
             .thickness(3.0)
-            .edge_type(EdgeType::SmoothStep);
+            .curve(EdgeCurve::OrthogonalSmooth { radius: 15.0 });
 
-        assert!(config.start_color.is_some());
-        assert!(config.end_color.is_some());
-        assert_eq!(config.thickness, Some(3.0));
-        assert_eq!(config.edge_type, Some(EdgeType::SmoothStep));
+        let stroke = config.stroke.unwrap();
+        assert!(stroke.start_color.is_some());
+        assert!(stroke.end_color.is_some());
+        assert_eq!(stroke.width, Some(3.0));
+        assert_eq!(
+            config.curve,
+            Some(EdgeCurve::OrthogonalSmooth { radius: 15.0 })
+        );
     }
 
     #[test]
@@ -609,11 +913,35 @@ mod tests {
     #[test]
     fn test_edge_config_merge() {
         let defaults = EdgeConfig::new().thickness(2.0);
-        let specific = EdgeConfig::new().start_color(Color::WHITE);
+        let specific = EdgeConfig::new().solid_color(Color::WHITE);
+        let merged = specific.merge(&defaults);
+
+        let stroke = merged.stroke.unwrap();
+        assert_eq!(stroke.start_color, Some(Color::WHITE));
+        assert_eq!(stroke.width, Some(2.0));
+    }
+
+    #[test]
+    fn test_stroke_config_merge() {
+        let defaults = StrokeConfig::new().width(2.0).cap(StrokeCap::Round);
+        let specific = StrokeConfig::new().color(Color::WHITE);
         let merged = specific.merge(&defaults);
 
         assert_eq!(merged.start_color, Some(Color::WHITE));
-        assert_eq!(merged.thickness, Some(2.0));
+        assert_eq!(merged.end_color, Some(Color::WHITE));
+        assert_eq!(merged.width, Some(2.0));
+        assert_eq!(merged.cap, Some(StrokeCap::Round));
+    }
+
+    #[test]
+    fn test_border_config_merge() {
+        let defaults = BorderConfig::new().width(1.5).gap(0.5);
+        let specific = BorderConfig::new().color(Color::BLACK);
+        let merged = specific.merge(&defaults);
+
+        assert_eq!(merged.color, Some(Color::BLACK));
+        assert_eq!(merged.width, Some(1.5));
+        assert_eq!(merged.gap, Some(0.5));
     }
 
     #[test]
