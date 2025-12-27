@@ -1,6 +1,6 @@
 //! Enum Selector Input Nodes
 //!
-//! Pill-style selection for EdgeType and PinShape enums.
+//! Pill-style selection for EdgeCurve, PinShape, and PatternType enums.
 //! Industrial Precision design: compact pills, clear selection state.
 
 use iced::{
@@ -8,9 +8,9 @@ use iced::{
     alignment::Horizontal,
     widget::{button, column, container, row, text},
 };
-use iced_nodegraph::{EdgeType, NodeContentStyle, PinShape, pin};
+use iced_nodegraph::{EdgeCurve, NodeContentStyle, PinShape, pin};
 
-use super::{colors, node_title_bar};
+use super::{PatternType, colors, node_title_bar};
 
 /// Creates a pill button for enum selection
 fn pill_button<'a, T, Message>(
@@ -72,11 +72,11 @@ where
     .into()
 }
 
-/// Creates an EdgeType selector node with pill buttons
-pub fn edge_type_selector_node<'a, Message>(
+/// Creates an EdgeCurve selector node with pill buttons
+pub fn edge_curve_selector_node<'a, Message>(
     theme: &'a iced::Theme,
-    selected: EdgeType,
-    on_change: impl Fn(EdgeType) -> Message + Clone + 'a,
+    selected: EdgeCurve,
+    on_change: impl Fn(EdgeCurve) -> Message + Clone + 'a,
 ) -> iced::Element<'a, Message>
 where
     Message: Clone + 'a,
@@ -93,16 +93,16 @@ where
     let row1 = row![
         pill_button(
             "Bezier",
-            EdgeType::Bezier,
+            EdgeCurve::BezierCubic,
             selected,
-            on_change1(EdgeType::Bezier),
+            on_change1(EdgeCurve::BezierCubic),
             accent
         ),
         pill_button(
             "Line",
-            EdgeType::Straight,
+            EdgeCurve::Line,
             selected,
-            on_change2(EdgeType::Straight),
+            on_change2(EdgeCurve::Line),
             accent
         ),
     ]
@@ -111,16 +111,16 @@ where
     let row2 = row![
         pill_button(
             "Step",
-            EdgeType::Step,
+            EdgeCurve::Orthogonal,
             selected,
-            on_change3(EdgeType::Step),
+            on_change3(EdgeCurve::Orthogonal),
             accent
         ),
         pill_button(
             "Smooth",
-            EdgeType::SmoothStep,
+            EdgeCurve::OrthogonalSmooth { radius: 15.0 },
             selected,
-            on_change4(EdgeType::SmoothStep),
+            on_change4(EdgeCurve::OrthogonalSmooth { radius: 15.0 }),
             accent
         ),
     ]
@@ -130,14 +130,14 @@ where
         Right,
         text("value").size(10),
         Output,
-        "edge_type",
+        "edge_curve",
         colors::PIN_ANY
     ))
     .width(Length::Fill)
     .align_x(Horizontal::Right);
 
     column![
-        node_title_bar("Edge Type", style),
+        node_title_bar("Edge Curve", style),
         container(column![column![row1, row2].spacing(4), output_pin,].spacing(8))
             .padding([10, 12])
     ]
@@ -215,5 +215,101 @@ where
             .padding([10, 12])
     ]
     .width(160.0)
+    .into()
+}
+
+/// Creates a PatternType selector node with pill buttons
+pub fn pattern_type_selector_node<'a, Message>(
+    theme: &'a iced::Theme,
+    selected: PatternType,
+    on_change: impl Fn(PatternType) -> Message + Clone + 'a,
+) -> iced::Element<'a, Message>
+where
+    Message: Clone + 'a,
+{
+    let style = NodeContentStyle::input(theme);
+    let accent = colors::PIN_ANY;
+
+    // Create pills for pattern types
+    let on_change1 = on_change.clone();
+    let on_change2 = on_change.clone();
+    let on_change3 = on_change.clone();
+    let on_change4 = on_change.clone();
+    let on_change5 = on_change.clone();
+    let on_change6 = on_change.clone();
+
+    // First row: Solid, Dashed
+    let pills_row1 = row![
+        pill_button(
+            "Solid",
+            PatternType::Solid,
+            selected,
+            on_change1(PatternType::Solid),
+            accent
+        ),
+        pill_button(
+            "Dashed",
+            PatternType::Dashed,
+            selected,
+            on_change2(PatternType::Dashed),
+            accent
+        ),
+    ]
+    .spacing(4);
+
+    // Second row: Arrowed (///), Angled (dashed with angled caps)
+    let pills_row2 = row![
+        pill_button(
+            "Arrowed",
+            PatternType::Arrowed,
+            selected,
+            on_change3(PatternType::Arrowed),
+            accent
+        ),
+        pill_button(
+            "Angled",
+            PatternType::Angled,
+            selected,
+            on_change4(PatternType::Angled),
+            accent
+        ),
+    ]
+    .spacing(4);
+
+    // Third row: Dotted, DashDot
+    let pills_row3 = row![
+        pill_button(
+            "Dotted",
+            PatternType::Dotted,
+            selected,
+            on_change5(PatternType::Dotted),
+            accent
+        ),
+        pill_button(
+            "Dash·Dot",
+            PatternType::DashDotted,
+            selected,
+            on_change6(PatternType::DashDotted),
+            accent
+        ),
+    ]
+    .spacing(4);
+
+    let output_pin = container(pin!(
+        Right,
+        text("value").size(10),
+        Output,
+        "pattern_type",
+        colors::PIN_ANY
+    ))
+    .width(Length::Fill)
+    .align_x(Horizontal::Right);
+
+    column![
+        node_title_bar("Pattern", style),
+        container(column![pills_row1, pills_row2, pills_row3, output_pin,].spacing(6))
+            .padding([10, 12])
+    ]
+    .width(200.0)
     .into()
 }

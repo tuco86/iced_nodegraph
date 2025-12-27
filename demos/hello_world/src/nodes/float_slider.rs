@@ -19,6 +19,13 @@ pub struct FloatSliderConfig {
     pub max: f32,
     pub step: f32,
     pub label: String,
+    // Temporary edit buffers for text inputs (only used during editing)
+    #[allow(dead_code)]
+    pub min_edit: Option<String>,
+    #[allow(dead_code)]
+    pub max_edit: Option<String>,
+    #[allow(dead_code)]
+    pub step_edit: Option<String>,
 }
 
 impl Default for FloatSliderConfig {
@@ -28,6 +35,129 @@ impl Default for FloatSliderConfig {
             max: 20.0,
             step: 0.1,
             label: "Float Slider".to_string(),
+            min_edit: None,
+            max_edit: None,
+            step_edit: None,
+        }
+    }
+}
+
+#[allow(dead_code)]
+impl FloatSliderConfig {
+    /// Creates a config with the given label
+    pub fn new(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            ..Default::default()
+        }
+    }
+
+    /// Sets the range
+    pub fn range(mut self, min: f32, max: f32) -> Self {
+        self.min = min;
+        self.max = max;
+        self
+    }
+
+    /// Named constructor for corner radius config
+    pub fn corner_radius() -> Self {
+        Self::new("Corner Radius").range(0.0, 30.0)
+    }
+
+    /// Named constructor for opacity config
+    pub fn opacity() -> Self {
+        Self {
+            min: 0.0,
+            max: 1.0,
+            step: 0.01,
+            label: "Opacity".to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// Named constructor for border width config
+    pub fn border_width() -> Self {
+        Self::new("Border Width").range(0.0, 10.0)
+    }
+
+    /// Named constructor for blur radius config
+    pub fn blur_radius() -> Self {
+        Self::new("Blur Radius").range(0.0, 50.0)
+    }
+
+    /// Named constructor for offset X config (supports negative)
+    pub fn offset_x() -> Self {
+        Self {
+            min: -50.0,
+            max: 50.0,
+            step: 1.0,
+            label: "Offset X".to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// Named constructor for offset Y config (supports negative)
+    pub fn offset_y() -> Self {
+        Self {
+            min: -50.0,
+            max: 50.0,
+            step: 1.0,
+            label: "Offset Y".to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// Named constructor for pattern angle config (degrees)
+    pub fn pattern_angle() -> Self {
+        Self {
+            min: -90.0,
+            max: 90.0,
+            step: 5.0,
+            label: "Pattern Angle".to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// Named constructor for thickness config
+    pub fn thickness() -> Self {
+        Self::new("Thickness").range(0.5, 10.0)
+    }
+
+    /// Named constructor for pin radius config
+    pub fn pin_radius() -> Self {
+        Self::new("Pin Radius").range(2.0, 20.0)
+    }
+
+    /// Named constructor for animation speed
+    pub fn animation_speed() -> Self {
+        Self {
+            min: 0.0,
+            max: 100.0,
+            step: 5.0,
+            label: "Speed".to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// Named constructor for dash length
+    pub fn dash_length() -> Self {
+        Self {
+            min: 1.0,
+            max: 50.0,
+            step: 1.0,
+            label: "Dash".to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// Named constructor for gap length
+    pub fn gap_length() -> Self {
+        Self {
+            min: 1.0,
+            max: 50.0,
+            step: 1.0,
+            label: "Gap".to_string(),
+            ..Default::default()
         }
     }
 }
@@ -95,28 +225,66 @@ where
 
     // Build expanded options if needed
     let body_content: iced::Element<'a, Message> = if expanded {
-        let config_clone = config.clone();
+        // Get display values from edit buffers or actual values
+        let min_display = config
+            .min_edit
+            .clone()
+            .unwrap_or_else(|| format!("{}", config.min));
+        let max_display = config
+            .max_edit
+            .clone()
+            .unwrap_or_else(|| format!("{}", config.max));
+        let step_display = config
+            .step_edit
+            .clone()
+            .unwrap_or_else(|| format!("{}", config.step));
 
-        // Min input - only update on valid parse, ensure min < max
+        // Min input - track edits, apply on Enter
         let min_input = {
-            let cfg = config_clone.clone();
+            let cfg = config.clone();
             let on_cfg = on_config_change.clone();
+            let on_cfg2 = on_config_change.clone();
             row![
                 text("Min").size(10).color(colors::TEXT_MUTED).width(30),
-                text_input("", &format!("{}", config.min))
+                text_input("", &min_display)
                     .on_input(move |s| {
-                        if let Ok(v) = s.parse::<f32>() {
-                            if v < cfg.max {
-                                return on_cfg(FloatSliderConfig {
-                                    min: v,
-                                    ..cfg.clone()
-                                });
+                        // Just store the edit, don't validate yet
+                        on_cfg(FloatSliderConfig {
+                            min_edit: Some(s),
+                            ..cfg.clone()
+                        })
+                    })
+                    .on_submit({
+                        let cfg = config.clone();
+                        // On Enter: parse, validate, and apply
+                        if let Some(ref edit) = config.min_edit {
+                            if let Ok(v) = edit.parse::<f32>() {
+                                if v.is_finite() && v < cfg.max {
+                                    on_cfg2(FloatSliderConfig {
+                                        min: v,
+                                        min_edit: None,
+                                        ..cfg
+                                    })
+                                } else {
+                                    // Invalid: reset to current value
+                                    on_cfg2(FloatSliderConfig {
+                                        min_edit: None,
+                                        ..cfg
+                                    })
+                                }
+                            } else {
+                                // Parse failed: reset
+                                on_cfg2(FloatSliderConfig {
+                                    min_edit: None,
+                                    ..cfg
+                                })
                             }
+                        } else {
+                            on_cfg2(cfg)
                         }
-                        on_cfg(cfg.clone())
                     })
                     .size(10)
-                    .width(Length::Fixed(50.0))
+                    .width(Length::Fixed(60.0))
                     .padding(4)
                     .style(config_input_style),
             ]
@@ -124,26 +292,48 @@ where
             .align_y(iced::Alignment::Center)
         };
 
-        // Max input - only update on valid parse, ensure max > min
+        // Max input - track edits, apply on Enter
         let max_input = {
-            let cfg = config_clone.clone();
+            let cfg = config.clone();
             let on_cfg = on_config_change.clone();
+            let on_cfg2 = on_config_change.clone();
             row![
                 text("Max").size(10).color(colors::TEXT_MUTED).width(30),
-                text_input("", &format!("{}", config.max))
+                text_input("", &max_display)
                     .on_input(move |s| {
-                        if let Ok(v) = s.parse::<f32>() {
-                            if v > cfg.min {
-                                return on_cfg(FloatSliderConfig {
-                                    max: v,
-                                    ..cfg.clone()
-                                });
+                        on_cfg(FloatSliderConfig {
+                            max_edit: Some(s),
+                            ..cfg.clone()
+                        })
+                    })
+                    .on_submit({
+                        let cfg = config.clone();
+                        if let Some(ref edit) = config.max_edit {
+                            if let Ok(v) = edit.parse::<f32>() {
+                                if v.is_finite() && v > cfg.min {
+                                    on_cfg2(FloatSliderConfig {
+                                        max: v,
+                                        max_edit: None,
+                                        ..cfg
+                                    })
+                                } else {
+                                    on_cfg2(FloatSliderConfig {
+                                        max_edit: None,
+                                        ..cfg
+                                    })
+                                }
+                            } else {
+                                on_cfg2(FloatSliderConfig {
+                                    max_edit: None,
+                                    ..cfg
+                                })
                             }
+                        } else {
+                            on_cfg2(cfg)
                         }
-                        on_cfg(cfg.clone())
                     })
                     .size(10)
-                    .width(Length::Fixed(50.0))
+                    .width(Length::Fixed(60.0))
                     .padding(4)
                     .style(config_input_style),
             ]
@@ -151,26 +341,48 @@ where
             .align_y(iced::Alignment::Center)
         };
 
-        // Step input - only update on valid parse, ensure step > 0
+        // Step input - track edits, apply on Enter
         let step_input = {
-            let cfg = config_clone;
-            let on_cfg = on_config_change;
+            let cfg = config.clone();
+            let on_cfg = on_config_change.clone();
+            let on_cfg2 = on_config_change;
             row![
                 text("Step").size(10).color(colors::TEXT_MUTED).width(30),
-                text_input("", &format!("{}", config.step))
+                text_input("", &step_display)
                     .on_input(move |s| {
-                        if let Ok(v) = s.parse::<f32>() {
-                            if v > 0.0 {
-                                return on_cfg(FloatSliderConfig {
-                                    step: v,
-                                    ..cfg.clone()
-                                });
+                        on_cfg(FloatSliderConfig {
+                            step_edit: Some(s),
+                            ..cfg.clone()
+                        })
+                    })
+                    .on_submit({
+                        let cfg = config.clone();
+                        if let Some(ref edit) = config.step_edit {
+                            if let Ok(v) = edit.parse::<f32>() {
+                                if v.is_finite() && v > 0.0 {
+                                    on_cfg2(FloatSliderConfig {
+                                        step: v,
+                                        step_edit: None,
+                                        ..cfg
+                                    })
+                                } else {
+                                    on_cfg2(FloatSliderConfig {
+                                        step_edit: None,
+                                        ..cfg
+                                    })
+                                }
+                            } else {
+                                on_cfg2(FloatSliderConfig {
+                                    step_edit: None,
+                                    ..cfg
+                                })
                             }
+                        } else {
+                            on_cfg2(cfg)
                         }
-                        on_cfg(cfg.clone())
                     })
                     .size(10)
-                    .width(Length::Fixed(50.0))
+                    .width(Length::Fixed(60.0))
                     .padding(4)
                     .style(config_input_style),
             ]
