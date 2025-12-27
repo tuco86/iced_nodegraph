@@ -14,12 +14,15 @@ pub use bool_toggle::{BoolToggleConfig, bool_toggle_node};
 pub use calendar::calendar_node;
 pub use color_picker::{color_picker_node, color_preset_node};
 pub use config::{
-    EdgeConfigInputs, NodeConfigInputs, PinConfigInputs, ShadowConfigInputs, apply_to_graph_node,
-    apply_to_node_node, edge_config_node, node_config_node, pin_config_node, shadow_config_node,
+    EdgeConfigInputs, NodeConfigInputs, PatternType, PinConfigInputs, ShadowConfigInputs,
+    apply_to_graph_node, apply_to_node_node, edge_config_node, node_config_node, pin_config_node,
+    shadow_config_node,
 };
 pub use email_parser::email_parser_node;
 pub use email_trigger::email_trigger_node;
-pub use enum_selector::{edge_type_selector_node, pin_shape_selector_node};
+pub use enum_selector::{
+    edge_curve_selector_node, pattern_type_selector_node, pin_shape_selector_node,
+};
 pub use filter::filter_node;
 pub use float_slider::{FloatSliderConfig, float_slider_node};
 pub use int_slider::{IntSliderConfig, int_slider_node};
@@ -30,7 +33,7 @@ use iced::{
     widget::{Container, container, text},
 };
 use iced_nodegraph::{
-    EdgeConfig, EdgeType, NodeConfig, NodeContentStyle, PinConfig, PinShape, ShadowConfig,
+    EdgeConfig, EdgeCurve, NodeConfig, NodeContentStyle, PinConfig, PinShape, ShadowConfig,
     node_header,
 };
 
@@ -88,8 +91,9 @@ pub enum NodeValue {
     Int(i32),
     Color(Color),
     Bool(bool),
-    EdgeType(EdgeType),
+    EdgeCurve(EdgeCurve),
     PinShape(PinShape),
+    PatternType(PatternType),
     // Config types for config-node chains
     NodeConfig(NodeConfig),
     EdgeConfig(EdgeConfig),
@@ -127,9 +131,9 @@ impl NodeValue {
         }
     }
 
-    pub fn as_edge_type(&self) -> Option<EdgeType> {
+    pub fn as_edge_curve(&self) -> Option<EdgeCurve> {
         match self {
-            NodeValue::EdgeType(t) => Some(*t),
+            NodeValue::EdgeCurve(t) => Some(*t),
             _ => None,
         }
     }
@@ -137,6 +141,13 @@ impl NodeValue {
     pub fn as_pin_shape(&self) -> Option<PinShape> {
         match self {
             NodeValue::PinShape(s) => Some(*s),
+            _ => None,
+        }
+    }
+
+    pub fn as_pattern_type(&self) -> Option<PatternType> {
+        match self {
+            NodeValue::PatternType(p) => Some(*p),
             _ => None,
         }
     }
@@ -277,11 +288,14 @@ pub enum InputNodeType {
         config: BoolToggleConfig,
         value: bool,
     },
-    EdgeTypeSelector {
-        value: EdgeType,
+    EdgeCurveSelector {
+        value: EdgeCurve,
     },
     PinShapeSelector {
         value: PinShape,
+    },
+    PatternTypeSelector {
+        value: PatternType,
     },
     ColorPicker {
         color: Color,
@@ -299,8 +313,9 @@ impl InputNodeType {
             Self::FloatSlider { value, .. } => NodeValue::Float(*value),
             Self::IntSlider { value, .. } => NodeValue::Int(*value),
             Self::BoolToggle { value, .. } => NodeValue::Bool(*value),
-            Self::EdgeTypeSelector { value } => NodeValue::EdgeType(*value),
+            Self::EdgeCurveSelector { value } => NodeValue::EdgeCurve(*value),
             Self::PinShapeSelector { value } => NodeValue::PinShape(*value),
+            Self::PatternTypeSelector { value } => NodeValue::PatternType(*value),
             Self::ColorPicker { color } | Self::ColorPreset { color } => NodeValue::Color(*color),
         }
     }
@@ -311,8 +326,9 @@ impl InputNodeType {
             Self::FloatSlider { .. } => "float",
             Self::IntSlider { .. } => "int",
             Self::BoolToggle { .. } => "bool",
-            Self::EdgeTypeSelector { .. } => "edge_type",
+            Self::EdgeCurveSelector { .. } => "edge_curve",
             Self::PinShapeSelector { .. } => "pin_shape",
+            Self::PatternTypeSelector { .. } => "pattern_type",
             Self::ColorPicker { .. } | Self::ColorPreset { .. } => "color",
         }
     }
@@ -340,8 +356,9 @@ impl NodeType {
                 InputNodeType::FloatSlider { config, .. } => config.label.as_str(),
                 InputNodeType::IntSlider { config, .. } => config.label.as_str(),
                 InputNodeType::BoolToggle { config, .. } => config.label.as_str(),
-                InputNodeType::EdgeTypeSelector { .. } => "Edge Type",
+                InputNodeType::EdgeCurveSelector { .. } => "Edge Curve",
                 InputNodeType::PinShapeSelector { .. } => "Pin Shape",
+                InputNodeType::PatternTypeSelector { .. } => "Pattern Type",
                 InputNodeType::ColorPicker { .. } => "Color Picker",
                 InputNodeType::ColorPreset { .. } => "Color Preset",
             },

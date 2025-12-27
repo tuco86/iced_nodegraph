@@ -29,6 +29,11 @@ iced_nodegraph.workspace = true
 iced = { workspace = true, features = ["advanced", "wgpu", "tokio", "webgl"] }
 iced_palette.workspace = true
 
+# Persistence (native only)
+serde = { workspace = true }
+serde_json = { workspace = true }
+directories = "5.0"
+
 # WASM-specific dependencies
 wasm-bindgen = { workspace = true, optional = true }
 web-sys = { workspace = true, features = [

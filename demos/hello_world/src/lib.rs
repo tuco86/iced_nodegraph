@@ -33,6 +33,8 @@
 //! to dynamically adjust the graph's appearance!
 
 mod nodes;
+#[cfg(not(target_arch = "wasm32"))]
+mod persistence;
 
 use iced::{
     Color, Event, Length, Point, Subscription, Task, Theme, Vector, event, keyboard,
@@ -40,7 +42,7 @@ use iced::{
     window,
 };
 use iced_nodegraph::{EdgeConfig, NodeConfig, PinConfig, PinReference, ShadowConfig, node_graph};
-use iced_nodegraph::{EdgeType, PinShape};
+use iced_nodegraph::{EdgeCurve, PinShape};
 use iced_palette::{
     Command, Shortcut, command, command_palette, find_matching_shortcut, focus_input,
     get_filtered_command_index, get_filtered_count, is_toggle_shortcut, navigate_down, navigate_up,
@@ -48,10 +50,11 @@ use iced_palette::{
 use nodes::{
     BoolToggleConfig, ConfigNodeType, EdgeConfigInputs, FloatSliderConfig, InputNodeType,
     IntSliderConfig, MathNodeState, MathOperation, NodeConfigInputs, NodeType, NodeValue,
-    PinConfigInputs, ShadowConfigInputs, apply_to_graph_node, apply_to_node_node, bool_toggle_node,
-    color_picker_node, color_preset_node, edge_config_node, edge_type_selector_node,
-    float_slider_node, int_slider_node, math_node, node, node_config_node, pin_config_node,
-    pin_shape_selector_node, shadow_config_node,
+    PatternType, PinConfigInputs, ShadowConfigInputs, apply_to_graph_node, apply_to_node_node,
+    bool_toggle_node, color_picker_node, color_preset_node, edge_config_node,
+    edge_curve_selector_node, float_slider_node, int_slider_node, math_node, node,
+    node_config_node, pattern_type_selector_node, pin_config_node, pin_shape_selector_node,
+    shadow_config_node,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -149,13 +152,17 @@ enum ApplicationMessage {
         node_index: usize,
         value: bool,
     },
-    EdgeTypeChanged {
+    EdgeCurveChanged {
         node_index: usize,
-        value: EdgeType,
+        value: EdgeCurve,
     },
     PinShapeChanged {
         node_index: usize,
         value: PinShape,
+    },
+    PatternTypeChanged {
+        node_index: usize,
+        value: PatternType,
     },
     ColorChanged {
         node_index: usize,
@@ -200,6 +207,11 @@ struct ComputedStyle {
     shadow: Option<ShadowConfig>,
     edge_thickness: Option<f32>,
     edge_color: Option<Color>,
+    edge_curve: Option<EdgeCurve>,
+    edge_pattern: Option<iced_nodegraph::StrokePattern>,
+    // Edge border and shadow
+    edge_border: Option<iced_nodegraph::BorderConfig>,
+    edge_shadow: Option<iced_nodegraph::EdgeShadowConfig>,
     // Pin config values
     pin_color: Option<Color>,
     pin_radius: Option<f32>,
@@ -238,7 +250,19 @@ impl ComputedStyle {
             config = config.thickness(t);
         }
         if let Some(c) = self.edge_color {
-            config = config.start_color(c).end_color(c);
+            config = config.solid_color(c);
+        }
+        if let Some(curve) = self.edge_curve {
+            config = config.curve(curve);
+        }
+        if let Some(ref pattern) = self.edge_pattern {
+            config = config.pattern(pattern.clone());
+        }
+        if let Some(ref border) = self.edge_border {
+            config.border = Some(border.clone());
+        }
+        if let Some(ref shadow) = self.edge_shadow {
+            config.shadow = Some(shadow.clone());
         }
         config
     }
@@ -337,7 +361,52 @@ impl Default for Application {
 
 impl Application {
     fn new() -> Self {
+        // Try to load saved state, fall back to default
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            match persistence::load_state() {
+                Ok(saved) => {
+                    let (nodes, edges, theme, camera_pos, camera_zoom) = saved.to_app();
+                    println!(
+                        "Loaded saved state: {} nodes, {} edges",
+                        nodes.len(),
+                        edges.len()
+                    );
+                    return Self {
+                        nodes,
+                        edges,
+                        current_theme: theme,
+                        camera_position: camera_pos,
+                        camera_zoom,
+                        ..Self::default()
+                    };
+                }
+                Err(e) => {
+                    println!("No saved state found: {}", e);
+                }
+            }
+        }
         Self::default()
+    }
+
+    /// Saves current state to disk (native only).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn save_state(&self) {
+        let saved = persistence::SavedState::from_app(
+            &self.nodes,
+            &self.edges,
+            &self.current_theme,
+            self.camera_position,
+            self.camera_zoom,
+        );
+        if let Err(e) = persistence::save_state(&saved) {
+            eprintln!("Failed to save state: {}", e);
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn save_state(&self) {
+        // No-op on WASM
     }
 
     /// Calculate spawn position at screen center, converted to world coordinates.
@@ -744,12 +813,40 @@ impl Application {
                 }
             }
             ConfigNodeType::EdgeConfig(inputs) => {
-                // EdgeConfig pin layout: 0=config_in, 1=config_out, 2=start_color, 3=end_color, 4=thickness, 5=edge_type
+                // EdgeConfig pin layout:
+                // 0=config_in, 1=config_out, 2=start_color, 3=end_color, 4=thickness, 5=curve
+                // 6=pattern_type, 7=dash_length, 8=gap_length, 9=pattern_angle, 10=animated, 11=speed
+                // 12=border_enabled, 13=border_width, 14=border_gap, 15=border_color
+                // 16=shadow_enabled, 17=shadow_blur, 18=shadow_offset, 19=shadow_color
                 match pin_id {
                     2 => inputs.start_color = value.as_color(),
                     3 => inputs.end_color = value.as_color(),
                     4 => inputs.thickness = value.as_float(),
-                    5 => inputs.edge_type = value.as_edge_type(),
+                    5 => inputs.curve = value.as_edge_curve(),
+                    6 => inputs.pattern_type = value.as_pattern_type(),
+                    7 => inputs.dash_length = value.as_float(),
+                    8 => inputs.gap_length = value.as_float(),
+                    9 => {
+                        // Convert degrees from slider to radians for pattern angle
+                        inputs.pattern_angle = value.as_float().map(|deg| deg.to_radians());
+                    }
+                    10 => inputs.animated = value.as_bool(),
+                    11 => inputs.animation_speed = value.as_float(),
+                    // Border settings
+                    12 => inputs.border_enabled = value.as_bool(),
+                    13 => inputs.border_width = value.as_float(),
+                    14 => inputs.border_gap = value.as_float(),
+                    15 => inputs.border_color = value.as_color(),
+                    // Shadow settings
+                    16 => inputs.shadow_enabled = value.as_bool(),
+                    17 => inputs.shadow_blur = value.as_float(),
+                    18 => {
+                        // Single offset value sets both x and y
+                        let offset = value.as_float();
+                        inputs.shadow_offset_x = offset;
+                        inputs.shadow_offset_y = offset;
+                    }
+                    19 => inputs.shadow_color = value.as_color(),
                     _ => {}
                 }
             }
@@ -871,11 +968,27 @@ impl Application {
                             ConfigOutput::Edge(edge_config) => {
                                 if *has_edge_config {
                                     // Apply edge config to computed style
-                                    if let Some(t) = edge_config.thickness {
-                                        computed.edge_thickness = Some(t);
+                                    if let Some(stroke) = &edge_config.stroke {
+                                        if let Some(t) = stroke.width {
+                                            computed.edge_thickness = Some(t);
+                                        }
+                                        if let Some(c) = stroke.start_color {
+                                            computed.edge_color = Some(c);
+                                        }
+                                        if let Some(ref p) = stroke.pattern {
+                                            computed.edge_pattern = Some(p.clone());
+                                        }
                                     }
-                                    if let Some(c) = edge_config.start_color {
-                                        computed.edge_color = Some(c);
+                                    if let Some(curve) = edge_config.curve {
+                                        computed.edge_curve = Some(curve);
+                                    }
+                                    // Apply border config
+                                    if let Some(ref border) = edge_config.border {
+                                        computed.edge_border = Some(border.clone());
+                                    }
+                                    // Apply shadow config
+                                    if let Some(ref shadow) = edge_config.shadow {
+                                        computed.edge_shadow = Some(shadow.clone());
                                     }
                                 }
                             }
@@ -914,6 +1027,7 @@ impl Application {
             ApplicationMessage::EdgeConnected { from, to } => {
                 self.edges.push((from, to));
                 self.propagate_values();
+                self.save_state();
                 Task::none()
             }
             ApplicationMessage::NodeMoved {
@@ -923,11 +1037,13 @@ impl Application {
                 if let Some((position, _)) = self.nodes.get_mut(node_index) {
                     *position = new_position;
                 }
+                self.save_state();
                 Task::none()
             }
             ApplicationMessage::EdgeDisconnected { from, to } => {
                 self.edges.retain(|(f, t)| !(f == &from && t == &to));
                 self.propagate_values();
+                self.save_state();
                 Task::none()
             }
             ApplicationMessage::ToggleCommandPalette => {
@@ -1100,6 +1216,7 @@ impl Application {
                 self.command_palette_open = false;
                 self.command_input.clear();
                 self.palette_view = PaletteView::Main;
+                self.save_state();
                 Task::none()
             }
             ApplicationMessage::CameraChanged { position, zoom } => {
@@ -1116,6 +1233,7 @@ impl Application {
                 self.command_palette_open = false;
                 self.command_input.clear();
                 self.palette_view = PaletteView::Main;
+                self.save_state();
                 Task::none()
             }
             ApplicationMessage::NavigateToSubmenu(submenu) => {
@@ -1174,6 +1292,7 @@ impl Application {
 
                 self.selected_nodes = new_indices.into_iter().collect();
                 self.propagate_values();
+                self.save_state();
                 Task::none()
             }
             ApplicationMessage::DeleteNodes(indices) => {
@@ -1200,6 +1319,7 @@ impl Application {
 
                 self.selected_nodes.clear();
                 self.propagate_values();
+                self.save_state();
                 Task::none()
             }
             ApplicationMessage::GroupMoved { indices, delta } => {
@@ -1209,6 +1329,7 @@ impl Application {
                         pos.y += delta.y;
                     }
                 }
+                self.save_state();
                 Task::none()
             }
             ApplicationMessage::SliderChanged { node_index, value } => {
@@ -1238,8 +1359,8 @@ impl Application {
                 }
                 Task::none()
             }
-            ApplicationMessage::EdgeTypeChanged { node_index, value } => {
-                if let Some((_, NodeType::Input(InputNodeType::EdgeTypeSelector { value: v }))) =
+            ApplicationMessage::EdgeCurveChanged { node_index, value } => {
+                if let Some((_, NodeType::Input(InputNodeType::EdgeCurveSelector { value: v }))) =
                     self.nodes.get_mut(node_index)
                 {
                     *v = value;
@@ -1249,6 +1370,15 @@ impl Application {
             }
             ApplicationMessage::PinShapeChanged { node_index, value } => {
                 if let Some((_, NodeType::Input(InputNodeType::PinShapeSelector { value: v }))) =
+                    self.nodes.get_mut(node_index)
+                {
+                    *v = value;
+                    self.propagate_values();
+                }
+                Task::none()
+            }
+            ApplicationMessage::PatternTypeChanged { node_index, value } => {
+                if let Some((_, NodeType::Input(InputNodeType::PatternTypeSelector { value: v }))) =
                     self.nodes.get_mut(node_index)
                 {
                     *v = value;
@@ -1466,10 +1596,10 @@ impl Application {
                             }
                         })
                     }
-                    InputNodeType::EdgeTypeSelector { value } => {
+                    InputNodeType::EdgeCurveSelector { value } => {
                         let idx = idx;
-                        edge_type_selector_node(theme, *value, move |v| {
-                            ApplicationMessage::EdgeTypeChanged {
+                        edge_curve_selector_node(theme, *value, move |v| {
+                            ApplicationMessage::EdgeCurveChanged {
                                 node_index: idx,
                                 value: v,
                             }
@@ -1479,6 +1609,15 @@ impl Application {
                         let idx = idx;
                         pin_shape_selector_node(theme, *value, move |v| {
                             ApplicationMessage::PinShapeChanged {
+                                node_index: idx,
+                                value: v,
+                            }
+                        })
+                    }
+                    InputNodeType::PatternTypeSelector { value } => {
+                        let idx = idx;
+                        pattern_type_selector_node(theme, *value, move |v| {
+                            ApplicationMessage::PatternTypeChanged {
                                 node_index: idx,
                                 value: v,
                             }
@@ -1639,6 +1778,14 @@ impl Application {
                                 value: 5.0,
                             }),
                         }),
+                    command("pattern_angle", "Pattern Angle")
+                        .description("Angle for Arrowed/Angled patterns (-90 to 90 degrees)")
+                        .action(ApplicationMessage::SpawnNode {
+                            node_type: NodeType::Input(InputNodeType::FloatSlider {
+                                config: FloatSliderConfig::pattern_angle(),
+                                value: 45.0,
+                            }),
+                        }),
                     command("color_picker", "Color Picker (RGB)")
                         .description("Full RGB color picker with sliders")
                         .action(ApplicationMessage::SpawnNode {
@@ -1662,18 +1809,18 @@ impl Application {
                             }),
                         }),
                     command("bool_toggle", "Boolean Toggle")
-                        .description("Toggle for shadow enabled and other booleans")
+                        .description("Toggle for boolean values")
                         .action(ApplicationMessage::SpawnNode {
                             node_type: NodeType::Input(InputNodeType::BoolToggle {
-                                config: BoolToggleConfig::shadow_enabled(),
+                                config: BoolToggleConfig::default(),
                                 value: true,
                             }),
                         }),
-                    command("edge_type", "Edge Type Selector")
-                        .description("Select edge type (Bezier, Straight, Step)")
+                    command("edge_curve", "Edge Curve Selector")
+                        .description("Select edge curve (Bezier, Line, Orthogonal)")
                         .action(ApplicationMessage::SpawnNode {
-                            node_type: NodeType::Input(InputNodeType::EdgeTypeSelector {
-                                value: EdgeType::Bezier,
+                            node_type: NodeType::Input(InputNodeType::EdgeCurveSelector {
+                                value: EdgeCurve::BezierCubic,
                             }),
                         }),
                     command("pin_shape", "Pin Shape Selector")
@@ -1681,6 +1828,13 @@ impl Application {
                         .action(ApplicationMessage::SpawnNode {
                             node_type: NodeType::Input(InputNodeType::PinShapeSelector {
                                 value: PinShape::Circle,
+                            }),
+                        }),
+                    command("pattern_type", "Pattern Type Selector")
+                        .description("Select edge pattern (Solid, Dashed, Dotted)")
+                        .action(ApplicationMessage::SpawnNode {
+                            node_type: NodeType::Input(InputNodeType::PatternTypeSelector {
+                                value: PatternType::Solid,
                             }),
                         }),
                 ];
@@ -1986,8 +2140,9 @@ mod tests {
         style.edge_color = Some(Color::from_rgb(0.5, 0.5, 0.5));
 
         let config = style.to_edge_config();
-        assert_eq!(config.thickness, Some(3.0));
-        assert_eq!(config.start_color, Some(Color::from_rgb(0.5, 0.5, 0.5)));
-        assert_eq!(config.end_color, Some(Color::from_rgb(0.5, 0.5, 0.5)));
+        let stroke = config.stroke.as_ref().expect("should have stroke config");
+        assert_eq!(stroke.width, Some(3.0));
+        assert_eq!(stroke.start_color, Some(Color::from_rgb(0.5, 0.5, 0.5)));
+        assert_eq!(stroke.end_color, Some(Color::from_rgb(0.5, 0.5, 0.5)));
     }
 }
