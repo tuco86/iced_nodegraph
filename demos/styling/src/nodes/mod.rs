@@ -5,6 +5,9 @@ use iced::{
 };
 use iced_nodegraph::{NodeContentStyle, NodeStyle, node_header, pin};
 
+/// Marker type for generic data pins
+pub struct Data;
+
 /// Creates a themed title bar container for nodes.
 fn node_title_bar<'a, Message>(
     title: impl Into<String>,
@@ -49,8 +52,9 @@ where
                 container(pin!(
                     Left,
                     "input",
+                    text(""),
                     Input,
-                    "data",
+                    Data,
                     Color::from_rgb(0.5, 0.7, 0.9)
                 ))
                 .width(Length::FillPortion(1))
@@ -58,8 +62,9 @@ where
                 container(pin!(
                     Right,
                     "output",
+                    text(""),
                     Output,
-                    "data",
+                    Data,
                     Color::from_rgb(0.9, 0.7, 0.5)
                 ))
                 .width(Length::FillPortion(1))

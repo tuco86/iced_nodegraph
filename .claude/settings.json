@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/hooks/validate.sh"
+            "command": "powershell -ExecutionPolicy Bypass -File .claude/hooks/validate.ps1"
           }
         ]
       }

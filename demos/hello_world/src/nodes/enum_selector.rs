@@ -10,7 +10,7 @@ use iced::{
 };
 use iced_nodegraph::{EdgeCurve, NodeContentStyle, PinShape, pin};
 
-use super::{PatternType, colors, node_title_bar};
+use super::{PatternType, colors, node_title_bar, pins};
 
 /// Creates a pill button for enum selection
 fn pill_button<'a, T, Message>(
@@ -128,9 +128,10 @@ where
 
     let output_pin = container(pin!(
         Right,
+        "value",
         text("value").size(10),
         Output,
-        "edge_curve",
+        pins::EdgeCurveData,
         colors::PIN_ANY
     ))
     .width(Length::Fill)
@@ -201,9 +202,10 @@ where
 
     let output_pin = container(pin!(
         Right,
+        "value",
         text("value").size(10),
         Output,
-        "pin_shape",
+        pins::PinShapeData,
         colors::PIN_ANY
     ))
     .width(Length::Fill)
@@ -297,9 +299,10 @@ where
 
     let output_pin = container(pin!(
         Right,
+        "value",
         text("value").size(10),
         Output,
-        "pattern_type",
+        pins::PatternTypeData,
         colors::PIN_ANY
     ))
     .width(Length::Fill)

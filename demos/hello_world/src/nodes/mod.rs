@@ -9,6 +9,7 @@ mod filter;
 mod float_slider;
 mod int_slider;
 mod math;
+pub mod pins;
 
 pub use bool_toggle::{BoolToggleConfig, bool_toggle_node};
 pub use calendar::calendar_node;

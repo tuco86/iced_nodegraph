@@ -1,10 +1,11 @@
 use std::collections::HashSet;
 use std::fmt::Debug;
 use std::hash::Hash;
+use std::marker::PhantomData;
 
 use iced::{Color, Length, Point, Size, Vector};
 
-use crate::ids::{EdgeId, NodeId, PinId};
+use crate::ids::{EdgeId, IdMaps, NodeId, PinId};
 use crate::node_pin::PinReference;
 use crate::style::{EdgeConfig, GraphStyle, NodeConfig, PinConfig};
 
@@ -145,9 +146,6 @@ where
     DeleteRequested { node_ids: Vec<N> },
 }
 
-/// Type alias for backwards compatibility with usize-based events.
-pub type NodeGraphMessageUsize = NodeGraphMessage<usize, usize, usize>;
-
 /// Generic pin reference with user-defined ID types.
 ///
 /// This is the generic version of [`PinReference`] that uses your own ID types.
@@ -163,11 +161,31 @@ impl<N: Clone, P: Clone> PinRef<N, P> {
     }
 }
 
-/// Type alias for backwards compatibility.
-pub type PinRefUsize = PinRef<usize, usize>;
-
+/// Node graph widget with generic ID types.
+///
+/// # Type Parameters
+/// - `N`: Node ID type (defaults to `usize`)
+/// - `P`: Pin ID type (defaults to `usize`)
+/// - `E`: Edge ID type (defaults to `usize`)
+/// - `Message`: Application message type
+/// - `Theme`: Iced theme type (defaults to `iced::Theme`)
+/// - `Renderer`: Iced renderer type (defaults to `iced::Renderer`)
+///
+/// Users can provide their own ID types by implementing [`NodeId`], [`PinId`], [`EdgeId`].
 #[allow(missing_debug_implementations)]
-pub struct NodeGraph<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer> {
+pub struct NodeGraph<
+    'a,
+    N = usize,
+    P = usize,
+    E = usize,
+    Message = (),
+    Theme = iced::Theme,
+    Renderer = iced::Renderer,
+> where
+    N: NodeId,
+    P: PinId,
+    E: EdgeId,
+{
     pub(super) size: Size<Length>,
     /// Nodes with position, element, and config overrides.
     /// Config fields set to Some() override theme defaults.
@@ -177,18 +195,21 @@ pub struct NodeGraph<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer
         iced::Element<'a, Message, Theme, Renderer>,
         NodeConfig,
     )>,
-    /// Edges with position references and config overrides.
+    /// Edges with user-defined pin references and config overrides.
+    /// Pin IDs are resolved to local indices at render time.
     /// Config fields set to Some() override theme defaults.
     /// None fields use `EdgeStyle::from_theme()` values at render time.
-    pub(super) edges: Vec<(PinReference, PinReference, EdgeConfig)>,
+    pub(super) edges: Vec<(PinRef<N, P>, PinRef<N, P>, EdgeConfig)>,
+    /// Bidirectional maps for ID translation.
+    pub(super) id_maps: IdMaps<N, P, E>,
     graph_style: Option<GraphStyle>,
-    on_connect: Option<Box<dyn Fn(PinReference, PinReference) -> Message + 'a>>,
-    on_disconnect: Option<Box<dyn Fn(PinReference, PinReference) -> Message + 'a>>,
-    on_move: Option<Box<dyn Fn(usize, Point) -> Message + 'a>>,
-    on_select: Option<Box<dyn Fn(Vec<usize>) -> Message + 'a>>,
-    on_clone: Option<Box<dyn Fn(Vec<usize>) -> Message + 'a>>,
-    on_delete: Option<Box<dyn Fn(Vec<usize>) -> Message + 'a>>,
-    on_group_move: Option<Box<dyn Fn(Vec<usize>, Vector) -> Message + 'a>>,
+    on_connect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>>,
+    on_disconnect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>>,
+    on_move: Option<Box<dyn Fn(N, Point) -> Message + 'a>>,
+    on_select: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
+    on_clone: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
+    on_delete: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
+    on_group_move: Option<Box<dyn Fn(Vec<N>, Vector) -> Message + 'a>>,
     external_selection: Option<&'a HashSet<usize>>,
     // Drag event callbacks for real-time collaboration
     on_drag_start: Option<Box<dyn Fn(DragInfo) -> Message + 'a>>,
@@ -198,17 +219,22 @@ pub struct NodeGraph<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer
     remote_users: Option<&'a [RemoteUserState]>,
     /// Unified event callback for all graph interactions.
     /// Alternative to individual callbacks (on_connect, on_move, etc.)
-    on_event: Option<Box<dyn Fn(NodeGraphEvent) -> Message + 'a>>,
+    on_event: Option<Box<dyn Fn(NodeGraphMessage<N, P, E>) -> Message + 'a>>,
     /// Callback for camera state changes (position, zoom).
     /// Used for tracking viewport state in application for features like spawn-at-center.
     on_camera_change: Option<Box<dyn Fn(Point, f32) -> Message + 'a>>,
     /// Global pin style overrides applied to all pins.
     /// Individual pin colors from widgets take precedence over this.
     pub(super) pin_defaults: Option<PinConfig>,
+    /// Phantom data for unused type parameter (E is only used in callbacks)
+    _phantom: PhantomData<E>,
 }
 
-impl<Message, Theme, Renderer> Default for NodeGraph<'_, Message, Theme, Renderer>
+impl<N, P, E, Message, Theme, Renderer> Default for NodeGraph<'_, N, P, E, Message, Theme, Renderer>
 where
+    N: NodeId,
+    P: PinId,
+    E: EdgeId,
     Renderer: iced_widget::core::renderer::Renderer,
 {
     fn default() -> Self {
@@ -216,6 +242,7 @@ where
             size: Size::new(Length::Fill, Length::Fill),
             nodes: Vec::new(),
             edges: Vec::new(),
+            id_maps: IdMaps::new(),
             graph_style: None,
             on_connect: None,
             on_disconnect: None,
@@ -232,22 +259,28 @@ where
             on_event: None,
             on_camera_change: None,
             pin_defaults: None,
+            _phantom: PhantomData,
         }
     }
 }
 
-impl<'a, Message, Theme, Renderer> NodeGraph<'a, Message, Theme, Renderer>
+impl<'a, N, P, E, Message, Theme, Renderer> NodeGraph<'a, N, P, E, Message, Theme, Renderer>
 where
+    N: NodeId + 'static,
+    P: PinId + 'static,
+    E: EdgeId + 'static,
     Renderer: iced_widget::core::renderer::Renderer,
 {
-    /// Adds a node with default styling.
+    /// Adds a node with the given ID and default styling.
     ///
     /// The node will use theme defaults from `NodeStyle::from_theme()`.
     pub fn push_node(
         &mut self,
+        node_id: N,
         position: Point,
         element: impl Into<iced::Element<'a, Message, Theme, Renderer>>,
     ) {
+        self.id_maps.register_node(node_id);
         self.nodes
             .push((position, element.into(), NodeConfig::default()));
     }
@@ -258,31 +291,22 @@ where
     /// Unset (None) properties will use `NodeStyle::from_theme()` values.
     ///
     /// Use `NodeConfig::merge()` to combine multiple configs for inheritance.
-    ///
-    /// # Example
-    /// ```rust,ignore
-    /// // Define project-wide defaults
-    /// let my_defaults = NodeConfig::new().corner_radius(10.0).opacity(0.9);
-    ///
-    /// // Create specific config that inherits from defaults
-    /// let special = NodeConfig::new().fill_color(Color::RED);
-    /// let merged = special.merge(&my_defaults);
-    ///
-    /// graph.push_node_styled(pos, elem, merged);
-    /// ```
     pub fn push_node_styled(
         &mut self,
+        node_id: N,
         position: Point,
         element: impl Into<iced::Element<'a, Message, Theme, Renderer>>,
         config: NodeConfig,
     ) {
+        self.id_maps.register_node(node_id);
         self.nodes.push((position, element.into(), config));
     }
 
     /// Adds an edge with default styling.
     ///
     /// The edge will use theme defaults from `EdgeStyle::from_theme()`.
-    pub fn push_edge(&mut self, from: PinReference, to: PinReference) {
+    /// Pin IDs are resolved to local indices at render time.
+    pub fn push_edge(&mut self, from: PinRef<N, P>, to: PinRef<N, P>) {
         self.edges.push((from, to, EdgeConfig::default()));
     }
 
@@ -290,39 +314,14 @@ where
     ///
     /// Only the properties set in `config` will override theme defaults.
     /// Unset (None) properties will use `EdgeStyle::from_theme()` values.
-    pub fn push_edge_styled(&mut self, from: PinReference, to: PinReference, config: EdgeConfig) {
+    /// Pin IDs are resolved to local indices at render time.
+    pub fn push_edge_styled(&mut self, from: PinRef<N, P>, to: PinRef<N, P>, config: EdgeConfig) {
         self.edges.push((from, to, config));
     }
 
-    /// Adds an edge and returns a handle (for macro-based API).
-    pub fn push_edge_returning(&mut self, from: PinReference, to: PinReference) -> usize {
-        let edge_id = self.edges.len();
-        self.edges.push((from, to, EdgeConfig::default()));
-        edge_id
-    }
-
-    /// Adds a node and returns its ID (for macro-based API).
-    pub fn push_node_returning(
-        &mut self,
-        position: Point,
-        element: impl Into<iced::Element<'a, Message, Theme, Renderer>>,
-    ) -> usize {
-        let node_id = self.nodes.len();
-        self.nodes
-            .push((position, element.into(), NodeConfig::default()));
-        node_id
-    }
-
-    /// Adds a node with config and returns its ID (for macro-based API).
-    pub fn push_node_styled_returning(
-        &mut self,
-        position: Point,
-        element: impl Into<iced::Element<'a, Message, Theme, Renderer>>,
-        config: NodeConfig,
-    ) -> usize {
-        let node_id = self.nodes.len();
-        self.nodes.push((position, element.into(), config));
-        node_id
+    /// Translates internal node index to user's node ID.
+    pub(super) fn index_to_node_id(&self, index: usize) -> Option<N> {
+        self.id_maps.node_id(index).cloned()
     }
 
     pub fn graph_style(mut self, style: GraphStyle) -> Self {
@@ -338,38 +337,38 @@ where
     }
 
     /// Sets a callback for when an edge is connected between two pins.
-    pub fn on_connect(mut self, f: impl Fn(PinReference, PinReference) -> Message + 'a) -> Self {
+    pub fn on_connect(mut self, f: impl Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a) -> Self {
         self.on_connect = Some(Box::new(f));
         self
     }
 
     /// Sets a callback for when an edge is disconnected between two pins.
-    pub fn on_disconnect(mut self, f: impl Fn(PinReference, PinReference) -> Message + 'a) -> Self {
+    pub fn on_disconnect(mut self, f: impl Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a) -> Self {
         self.on_disconnect = Some(Box::new(f));
         self
     }
 
-    pub fn on_move(mut self, f: impl Fn(usize, Point) -> Message + 'a) -> Self {
+    pub fn on_move(mut self, f: impl Fn(N, Point) -> Message + 'a) -> Self {
         self.on_move = Some(Box::new(f));
         self
     }
 
-    pub fn on_select(mut self, f: impl Fn(Vec<usize>) -> Message + 'a) -> Self {
+    pub fn on_select(mut self, f: impl Fn(Vec<N>) -> Message + 'a) -> Self {
         self.on_select = Some(Box::new(f));
         self
     }
 
-    pub fn on_clone(mut self, f: impl Fn(Vec<usize>) -> Message + 'a) -> Self {
+    pub fn on_clone(mut self, f: impl Fn(Vec<N>) -> Message + 'a) -> Self {
         self.on_clone = Some(Box::new(f));
         self
     }
 
-    pub fn on_delete(mut self, f: impl Fn(Vec<usize>) -> Message + 'a) -> Self {
+    pub fn on_delete(mut self, f: impl Fn(Vec<N>) -> Message + 'a) -> Self {
         self.on_delete = Some(Box::new(f));
         self
     }
 
-    pub fn on_group_move(mut self, f: impl Fn(Vec<usize>, Vector) -> Message + 'a) -> Self {
+    pub fn on_group_move(mut self, f: impl Fn(Vec<N>, Vector) -> Message + 'a) -> Self {
         self.on_group_move = Some(Box::new(f));
         self
     }
@@ -405,19 +404,7 @@ where
     ///
     /// This is an alternative to using individual callbacks (on_connect, on_move, etc.).
     /// When set, this callback fires for all graph events, allowing centralized event handling.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// node_graph()
-    ///     .on_event(|event| match event {
-    ///         NodeGraphEvent::EdgeConnected { from, to } => Message::Connected { from, to },
-    ///         NodeGraphEvent::NodeMoved { node_id, position } => Message::Moved { node_id, position },
-    ///         NodeGraphEvent::SelectionChanged { selected } => Message::Selected(selected),
-    ///         _ => Message::Noop,
-    ///     })
-    /// ```
-    pub fn on_event(mut self, f: impl Fn(NodeGraphEvent) -> Message + 'a) -> Self {
+    pub fn on_event(mut self, f: impl Fn(NodeGraphMessage<N, P, E>) -> Message + 'a) -> Self {
         self.on_event = Some(Box::new(f));
         self
     }
@@ -426,13 +413,6 @@ where
     ///
     /// The callback receives the current camera position and zoom level.
     /// Useful for tracking viewport state for features like spawn-at-screen-center.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// node_graph()
-    ///     .on_camera_change(|position, zoom| Message::CameraChanged { position, zoom })
-    /// ```
     pub fn on_camera_change(mut self, f: impl Fn(Point, f32) -> Message + 'a) -> Self {
         self.on_camera_change = Some(Box::new(f));
         self
@@ -461,14 +441,21 @@ where
     }
 
     /// Returns an iterator over all edges with their configs.
-    pub fn edges(&self) -> impl Iterator<Item = (PinReference, PinReference, &EdgeConfig)> {
+    pub fn edges(&self) -> impl Iterator<Item = (&PinRef<N, P>, &PinRef<N, P>, &EdgeConfig)> {
         self.edges
             .iter()
-            .map(|(from, to, config)| (*from, *to, config))
+            .map(|(from, to, config)| (from, to, config))
     }
 
-    pub fn node_position(&self, node_id: usize) -> Option<Point> {
-        self.nodes.get(node_id).map(|(pos, _, _)| *pos)
+    /// Returns the position of a node by its user ID.
+    pub fn node_position(&self, node_id: &N) -> Option<Point> {
+        let idx = self.id_maps.node_index(node_id)?;
+        self.nodes.get(idx).map(|(pos, _, _)| *pos)
+    }
+
+    /// Returns the position of a node by its internal index.
+    pub fn node_position_by_index(&self, index: usize) -> Option<Point> {
+        self.nodes.get(index).map(|(pos, _, _)| *pos)
     }
 
     pub(super) fn elements_iter(
@@ -499,29 +486,29 @@ where
 
     pub(super) fn on_connect_handler(
         &self,
-    ) -> Option<&Box<dyn Fn(PinReference, PinReference) -> Message + 'a>> {
+    ) -> Option<&Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>> {
         self.on_connect.as_ref()
     }
     pub(super) fn on_disconnect_handler(
         &self,
-    ) -> Option<&Box<dyn Fn(PinReference, PinReference) -> Message + 'a>> {
+    ) -> Option<&Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>> {
         self.on_disconnect.as_ref()
     }
-    pub(super) fn on_move_handler(&self) -> Option<&Box<dyn Fn(usize, Point) -> Message + 'a>> {
+    pub(super) fn on_move_handler(&self) -> Option<&Box<dyn Fn(N, Point) -> Message + 'a>> {
         self.on_move.as_ref()
     }
-    pub(super) fn on_select_handler(&self) -> Option<&Box<dyn Fn(Vec<usize>) -> Message + 'a>> {
+    pub(super) fn on_select_handler(&self) -> Option<&Box<dyn Fn(Vec<N>) -> Message + 'a>> {
         self.on_select.as_ref()
     }
-    pub(super) fn on_clone_handler(&self) -> Option<&Box<dyn Fn(Vec<usize>) -> Message + 'a>> {
+    pub(super) fn on_clone_handler(&self) -> Option<&Box<dyn Fn(Vec<N>) -> Message + 'a>> {
         self.on_clone.as_ref()
     }
-    pub(super) fn on_delete_handler(&self) -> Option<&Box<dyn Fn(Vec<usize>) -> Message + 'a>> {
+    pub(super) fn on_delete_handler(&self) -> Option<&Box<dyn Fn(Vec<N>) -> Message + 'a>> {
         self.on_delete.as_ref()
     }
     pub(super) fn on_group_move_handler(
         &self,
-    ) -> Option<&Box<dyn Fn(Vec<usize>, Vector) -> Message + 'a>> {
+    ) -> Option<&Box<dyn Fn(Vec<N>, Vector) -> Message + 'a>> {
         self.on_group_move.as_ref()
     }
     pub(super) fn on_drag_start_handler(&self) -> Option<&Box<dyn Fn(DragInfo) -> Message + 'a>> {
@@ -537,7 +524,9 @@ where
         self.external_selection
     }
 
-    pub(super) fn get_on_event(&self) -> Option<&(dyn Fn(NodeGraphEvent) -> Message + 'a)> {
+    pub(super) fn get_on_event(
+        &self,
+    ) -> Option<&(dyn Fn(NodeGraphMessage<N, P, E>) -> Message + 'a)> {
         self.on_event.as_deref()
     }
 
@@ -549,6 +538,15 @@ where
 
     pub fn needs_animation(&self) -> bool {
         false
+    }
+
+    /// Translates a list of internal node indices to user IDs.
+    /// Returns empty vec if any translation fails.
+    pub(super) fn translate_node_ids(&self, indices: &[usize]) -> Vec<N> {
+        indices
+            .iter()
+            .filter_map(|&idx| self.id_maps.node_id(idx).cloned())
+            .collect()
     }
 }
 

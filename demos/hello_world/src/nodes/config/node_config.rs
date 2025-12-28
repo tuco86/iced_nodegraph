@@ -9,7 +9,7 @@ use iced::{
 };
 use iced_nodegraph::{NodeConfig, NodeContentStyle, ShadowConfig, pin};
 
-use crate::nodes::{colors, node_title_bar};
+use crate::nodes::{colors, node_title_bar, pins};
 
 /// Collected inputs for NodeConfigNode
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -52,21 +52,23 @@ where
     let style = NodeContentStyle::output(theme);
     let result = inputs.build();
 
-    // Config row: input left, output right
+    // Config row: input left, typed output right
     let config_row = row![
         pin!(
             Left,
-            text("config").size(10),
+            pins::config::CONFIG,
+            text("in").size(10),
             Input,
-            "node_config",
+            pins::NodeConfigData,
             colors::PIN_CONFIG
         ),
         container(text("")).width(Length::Fill),
         pin!(
             Right,
-            text("config").size(10),
+            pins::config::NODE_OUT,
+            text("out").size(10),
             Output,
-            "node_config",
+            pins::NodeConfigData,
             colors::PIN_CONFIG
         ),
     ]
@@ -104,9 +106,10 @@ where
     let fill_row = row![
         pin!(
             Left,
+            pins::config::BG_COLOR,
             text("fill").size(10),
             Input,
-            "color",
+            pins::ColorData,
             colors::PIN_COLOR
         ),
         container(fill_display)
@@ -136,9 +139,10 @@ where
     let border_row = row![
         pin!(
             Left,
+            pins::config::COLOR,
             text("border").size(10),
             Input,
-            "color",
+            pins::ColorData,
             colors::PIN_COLOR
         ),
         container(border_display)
@@ -151,9 +155,10 @@ where
     let width_row = row![
         pin!(
             Left,
+            pins::config::WIDTH,
             text("width").size(10),
             Input,
-            "float",
+            pins::Float,
             colors::PIN_NUMBER
         ),
         container(
@@ -173,9 +178,10 @@ where
     let radius_row = row![
         pin!(
             Left,
+            pins::config::RADIUS,
             text("radius").size(10),
             Input,
-            "float",
+            pins::Float,
             colors::PIN_NUMBER
         ),
         container(
@@ -195,9 +201,10 @@ where
     let opacity_row = row![
         pin!(
             Left,
+            pins::config::OPACITY,
             text("opacity").size(10),
             Input,
-            "float",
+            pins::Float,
             colors::PIN_NUMBER
         ),
         container(
@@ -217,9 +224,10 @@ where
     let shadow_row = row![
         pin!(
             Left,
+            pins::config::SHADOW,
             text("shadow").size(10),
             Input,
-            "shadow_config",
+            pins::ShadowConfigData,
             colors::PIN_CONFIG
         ),
         container(text(if result.shadow.is_some() { "set" } else { "--" }).size(9))

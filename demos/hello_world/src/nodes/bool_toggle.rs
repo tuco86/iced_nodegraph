@@ -10,7 +10,7 @@ use iced::{
 };
 use iced_nodegraph::{NodeContentStyle, pin};
 
-use super::{colors, node_title_bar};
+use super::{colors, node_title_bar, pins};
 
 /// Boolean toggle configuration
 #[derive(Debug, Clone, PartialEq)]
@@ -22,7 +22,7 @@ pub struct BoolToggleConfig {
 impl Default for BoolToggleConfig {
     fn default() -> Self {
         Self {
-            label: "Toggle".to_string(),
+            label: "Boolean Toggle".to_string(),
             toggle_label: "Enabled".to_string(),
         }
     }
@@ -116,9 +116,23 @@ where
     // Output pin
     let output_pin = container(pin!(
         Right,
-        text("value").size(10),
+        "value",
+        row![
+            text(&config.toggle_label)
+                .size(11)
+                .color(colors::TEXT_PRIMARY),
+            container(
+                row![toggle_widget, state_text]
+                    .spacing(6)
+                    .align_y(iced::Alignment::Center)
+            )
+            .width(Length::Fill)
+            .align_x(Horizontal::Right),
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center),
         Output,
-        "bool",
+        pins::Bool,
         colors::PIN_BOOL
     ))
     .width(Length::Fill)
@@ -126,27 +140,7 @@ where
 
     column![
         node_title_bar(&config.label, style),
-        container(
-            column![
-                row![
-                    text(&config.toggle_label)
-                        .size(11)
-                        .color(colors::TEXT_PRIMARY),
-                    container(
-                        row![toggle_widget, state_text]
-                            .spacing(6)
-                            .align_y(iced::Alignment::Center)
-                    )
-                    .width(Length::Fill)
-                    .align_x(Horizontal::Right),
-                ]
-                .spacing(8)
-                .align_y(iced::Alignment::Center),
-                output_pin,
-            ]
-            .spacing(6)
-        )
-        .padding([10, 12])
+        container(output_pin).padding([10, 12])
     ]
     .width(180.0)
     .into()

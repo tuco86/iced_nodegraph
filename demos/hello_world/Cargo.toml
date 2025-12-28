@@ -34,6 +34,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 directories = "5.0"
 
+# ID generation
+nanoid = "0.4"
+
 # WASM-specific dependencies
 wasm-bindgen = { workspace = true, optional = true }
 web-sys = { workspace = true, features = [
@@ -45,3 +48,5 @@ console_error_panic_hook = { workspace = true, optional = true }
 # WASM: Embed Fira Sans font (system fonts not available in browser)
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 iced = { workspace = true, features = ["advanced", "wgpu", "tokio", "webgl", "fira-sans"] }
+# Enable JS backend for getrandom (required by nanoid on WASM)
+getrandom = { version = "0.2", features = ["js"] }

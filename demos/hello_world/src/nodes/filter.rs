@@ -1,11 +1,11 @@
 use iced::{
     Length,
     alignment::Horizontal,
-    widget::{column, container, row},
+    widget::{column, container, row, text},
 };
 use iced_nodegraph::{NodeContentStyle, NodeStyle, pin};
 
-use super::{colors, node_title_bar};
+use super::{colors, node_title_bar, pins};
 
 /// Filter Node - Input + output
 ///
@@ -21,12 +21,26 @@ where
         .with_geometry(node_defaults.corner_radius, node_defaults.border_width);
 
     let pin_list = row![
-        container(pin!(Left, "input", Input, "string", colors::PIN_STRING))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Left),
-        container(pin!(Right, "matches", Output, "string", colors::PIN_STRING))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Right),
+        container(pin!(
+            Left,
+            "input",
+            text("input"),
+            Input,
+            pins::StringData,
+            colors::PIN_STRING
+        ))
+        .width(Length::FillPortion(1))
+        .align_x(Horizontal::Left),
+        container(pin!(
+            Right,
+            "matches",
+            text("matches"),
+            Output,
+            pins::StringData,
+            colors::PIN_STRING
+        ))
+        .width(Length::FillPortion(1))
+        .align_x(Horizontal::Right),
     ]
     .width(Length::Fill);
 

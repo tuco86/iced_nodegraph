@@ -9,7 +9,7 @@ use iced::{
 };
 use iced_nodegraph::{NodeContentStyle, ShadowConfig, pin};
 
-use crate::nodes::{colors, node_title_bar};
+use crate::nodes::{colors, node_title_bar, pins};
 
 /// Collected inputs for ShadowConfigNode
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -59,21 +59,23 @@ where
     let style = NodeContentStyle::output(theme);
     let result = inputs.build();
 
-    // Config row: input left, output right
+    // Config row: input left, typed output right
     let config_row = row![
         pin!(
             Left,
-            text("config").size(10),
+            pins::config::CONFIG,
+            text("in").size(10),
             Input,
-            "shadow_config",
+            pins::ShadowConfigData,
             colors::PIN_CONFIG
         ),
         container(text("")).width(Length::Fill),
         pin!(
             Right,
-            text("config").size(10),
+            pins::config::SHADOW_OUT,
+            text("out").size(10),
             Output,
-            "shadow_config",
+            pins::ShadowConfigData,
             colors::PIN_CONFIG
         ),
     ]
@@ -94,9 +96,10 @@ where
     let offset_x_row = row![
         pin!(
             Left,
+            pins::config::SHADOW_OFFSET_X,
             text("off x").size(10),
             Input,
-            "float",
+            pins::Float,
             colors::PIN_NUMBER
         ),
         container(
@@ -116,9 +119,10 @@ where
     let offset_y_row = row![
         pin!(
             Left,
+            pins::config::SHADOW_OFFSET_Y,
             text("off y").size(10),
             Input,
-            "float",
+            pins::Float,
             colors::PIN_NUMBER
         ),
         container(
@@ -138,9 +142,10 @@ where
     let blur_row = row![
         pin!(
             Left,
+            pins::config::SHADOW_BLUR,
             text("blur").size(10),
             Input,
-            "float",
+            pins::Float,
             colors::PIN_NUMBER
         ),
         container(
@@ -177,9 +182,10 @@ where
     let color_row = row![
         pin!(
             Left,
+            pins::config::SHADOW_COLOR,
             text("color").size(10),
             Input,
-            "color",
+            pins::ColorData,
             colors::PIN_COLOR
         ),
         container(color_display)
@@ -195,7 +201,14 @@ where
         None => "--",
     };
     let enabled_row = row![
-        pin!(Left, text("on").size(10), Input, "bool", colors::PIN_BOOL),
+        pin!(
+            Left,
+            pins::config::ON,
+            text("on").size(10),
+            Input,
+            pins::Bool,
+            colors::PIN_BOOL
+        ),
         container(text(enabled_label).size(9))
             .width(Length::Fill)
             .align_x(Horizontal::Right),

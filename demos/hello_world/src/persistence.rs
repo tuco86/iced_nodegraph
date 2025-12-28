@@ -4,18 +4,22 @@
 //! - Windows: `%APPDATA%\iced_nodegraph\demo\state.json`
 //! - Linux: `~/.local/share/iced_nodegraph/demo/state.json`
 //! - macOS: `~/Library/Application Support/iced_nodegraph/demo/state.json`
+//!
+//! Uses NanoID-based string IDs for nodes and edges, with string labels for pins.
 
 use iced::{Point, Theme};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
+use crate::ids::{EdgeId, NodeId};
 use crate::nodes::{
     BoolToggleConfig, ConfigNodeType, EdgeConfigInputs, FloatSliderConfig, InputNodeType,
     IntSliderConfig, MathNodeState, MathOperation, NodeConfigInputs, NodeType, PatternType,
     PinConfigInputs, ShadowConfigInputs,
 };
-use iced_nodegraph::{EdgeCurve, PinReference, PinShape};
+use iced_nodegraph::{EdgeCurve, PinShape};
 
 /// Saved state format for persistence.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,11 +29,19 @@ pub struct SavedState {
     pub theme: String,
     pub camera_position: (f32, f32),
     pub camera_zoom: f32,
+    /// Window position (x, y) - None for old save files
+    #[serde(default)]
+    pub window_position: Option<(i32, i32)>,
+    /// Window size (width, height) - None for old save files
+    #[serde(default)]
+    pub window_size: Option<(u32, u32)>,
 }
 
-/// Saved node with position and type.
+/// Saved node with ID, position, and type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SavedNode {
+    /// Unique node identifier (NanoID)
+    pub id: NodeId,
     pub x: f32,
     pub y: f32,
     pub node_type: SavedNodeType,
@@ -90,79 +102,211 @@ pub enum SavedNodeType {
     },
 }
 
-/// Saved edge connection.
+/// Saved edge connection with stable IDs.
+/// Uses String for serialization - converted to/from &'static str at runtime.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SavedEdge {
-    pub from_node: usize,
-    pub from_pin: usize,
-    pub to_node: usize,
-    pub to_pin: usize,
+    /// Unique edge identifier (NanoID)
+    pub id: EdgeId,
+    /// Source node ID
+    pub from_node: NodeId,
+    /// Source pin label (unique within source node)
+    pub from_pin: String,
+    /// Target node ID
+    pub to_node: NodeId,
+    /// Target pin label (unique within target node)
+    pub to_pin: String,
+}
+
+/// Edge data for in-memory representation.
+/// Uses &'static str for pin labels to match the compile-time pin constants.
+#[derive(Debug, Clone)]
+pub struct EdgeData {
+    pub from_node: NodeId,
+    pub from_pin: &'static str,
+    pub to_node: NodeId,
+    pub to_pin: &'static str,
+}
+
+/// Maps a string pin label to its static equivalent.
+/// Returns the static label if found, or leaks the string to create a &'static str.
+/// This is safe because pin labels are a fixed set defined at compile time.
+pub fn to_static_pin_label(label: &str) -> &'static str {
+    use crate::nodes::pins::*;
+
+    // Check all known pin labels
+    match label {
+        // Workflow pins
+        s if s == workflow::ON_EMAIL => workflow::ON_EMAIL,
+        s if s == workflow::EMAIL => workflow::EMAIL,
+        s if s == workflow::SUBJECT => workflow::SUBJECT,
+        s if s == workflow::DATETIME => workflow::DATETIME,
+        s if s == workflow::BODY => workflow::BODY,
+        s if s == workflow::INPUT => workflow::INPUT,
+        s if s == workflow::MATCHES => workflow::MATCHES,
+        s if s == workflow::TITLE => workflow::TITLE,
+        s if s == workflow::DESCRIPTION => workflow::DESCRIPTION,
+        // Input pins
+        s if s == input::VALUE => input::VALUE,
+        s if s == input::COLOR => input::COLOR,
+        // Config pins
+        s if s == config::CONFIG => config::CONFIG,
+        s if s == config::START => config::START,
+        s if s == config::END => config::END,
+        s if s == config::THICK => config::THICK,
+        s if s == config::CURVE => config::CURVE,
+        s if s == config::PATTERN => config::PATTERN,
+        s if s == config::DASH => config::DASH,
+        s if s == config::GAP => config::GAP,
+        s if s == config::ANGLE => config::ANGLE,
+        s if s == config::ANIMATED => config::ANIMATED,
+        s if s == config::SPEED => config::SPEED,
+        // Border config pins
+        s if s == config::BORDER => config::BORDER,
+        s if s == config::BORDER_WIDTH => config::BORDER_WIDTH,
+        s if s == config::BORDER_GAP => config::BORDER_GAP,
+        s if s == config::BORDER_COLOR => config::BORDER_COLOR,
+        // Shadow config pins
+        s if s == config::SHADOW => config::SHADOW,
+        s if s == config::SHADOW_BLUR => config::SHADOW_BLUR,
+        s if s == config::SHADOW_OFFSET => config::SHADOW_OFFSET,
+        s if s == config::SHADOW_COLOR => config::SHADOW_COLOR,
+        // Node config pins
+        s if s == config::BG_COLOR => config::BG_COLOR,
+        s if s == config::RADIUS => config::RADIUS,
+        s if s == config::WIDTH => config::WIDTH,
+        s if s == config::COLOR => config::COLOR,
+        s if s == config::OPACITY => config::OPACITY,
+        // Pin config pins
+        s if s == config::SIZE => config::SIZE,
+        s if s == config::SHAPE => config::SHAPE,
+        s if s == config::GLOW => config::GLOW,
+        s if s == config::PULSE => config::PULSE,
+        // Apply node pins
+        s if s == config::NODE_CONFIG => config::NODE_CONFIG,
+        s if s == config::EDGE_CONFIG => config::EDGE_CONFIG,
+        s if s == config::PIN_CONFIG => config::PIN_CONFIG,
+        s if s == config::ON => config::ON,
+        s if s == config::TARGET => config::TARGET,
+        // Typed config output pins
+        s if s == config::NODE_OUT => config::NODE_OUT,
+        s if s == config::EDGE_OUT => config::EDGE_OUT,
+        s if s == config::PIN_OUT => config::PIN_OUT,
+        s if s == config::SHADOW_OUT => config::SHADOW_OUT,
+        // Math pins
+        s if s == math::A => math::A,
+        s if s == math::B => math::B,
+        s if s == math::RESULT => math::RESULT,
+        // Unknown - leak the string (should not happen in normal use)
+        _ => Box::leak(label.to_string().into_boxed_str()),
+    }
 }
 
 impl SavedState {
     /// Creates a saved state from application state.
+    ///
+    /// Takes nodes as a HashMap with NodeId keys, and edges as a HashMap with EdgeId keys.
     pub fn from_app(
-        nodes: &[(Point, NodeType)],
-        edges: &[(PinReference, PinReference)],
+        nodes: &HashMap<NodeId, (Point, NodeType)>,
+        node_order: &[NodeId],
+        edges: &HashMap<EdgeId, EdgeData>,
+        edge_order: &[EdgeId],
         theme: &Theme,
         camera_position: Point,
         camera_zoom: f32,
+        window_position: Option<(i32, i32)>,
+        window_size: Option<(u32, u32)>,
     ) -> Self {
         Self {
-            nodes: nodes
+            nodes: node_order
                 .iter()
-                .map(|(pos, node_type)| SavedNode {
-                    x: pos.x,
-                    y: pos.y,
-                    node_type: SavedNodeType::from(node_type),
+                .filter_map(|id| {
+                    nodes.get(id).map(|(pos, node_type)| SavedNode {
+                        id: id.clone(),
+                        x: pos.x,
+                        y: pos.y,
+                        node_type: SavedNodeType::from(node_type),
+                    })
                 })
                 .collect(),
-            edges: edges
+            edges: edge_order
                 .iter()
-                .map(|(from, to)| SavedEdge {
-                    from_node: from.node_id,
-                    from_pin: from.pin_id,
-                    to_node: to.node_id,
-                    to_pin: to.pin_id,
+                .filter_map(|id| {
+                    edges.get(id).map(|e| SavedEdge {
+                        id: id.clone(),
+                        from_node: e.from_node.clone(),
+                        from_pin: e.from_pin.to_string(),
+                        to_node: e.to_node.clone(),
+                        to_pin: e.to_pin.to_string(),
+                    })
                 })
                 .collect(),
             theme: theme_to_string(theme),
             camera_position: (camera_position.x, camera_position.y),
             camera_zoom,
+            window_position,
+            window_size,
         }
     }
 
     /// Converts saved state back to application types.
+    ///
+    /// Returns nodes as HashMap, node order, edges as HashMap, edge order, and other settings.
+    #[allow(clippy::type_complexity)]
     pub fn to_app(
         &self,
     ) -> (
-        Vec<(Point, NodeType)>,
-        Vec<(PinReference, PinReference)>,
+        HashMap<NodeId, (Point, NodeType)>,
+        Vec<NodeId>,
+        HashMap<EdgeId, EdgeData>,
+        Vec<EdgeId>,
         Theme,
         Point,
         f32,
+        Option<(i32, i32)>,
+        Option<(u32, u32)>,
     ) {
-        let nodes = self
-            .nodes
-            .iter()
-            .map(|n| (Point::new(n.x, n.y), n.node_type.to_node_type()))
-            .collect();
+        let mut nodes = HashMap::new();
+        let mut node_order = Vec::new();
 
-        let edges = self
-            .edges
-            .iter()
-            .map(|e| {
-                (
-                    PinReference::new(e.from_node, e.from_pin),
-                    PinReference::new(e.to_node, e.to_pin),
-                )
-            })
-            .collect();
+        for n in &self.nodes {
+            nodes.insert(
+                n.id.clone(),
+                (Point::new(n.x, n.y), n.node_type.to_node_type()),
+            );
+            node_order.push(n.id.clone());
+        }
+
+        let mut edges = HashMap::new();
+        let mut edge_order = Vec::new();
+
+        for e in &self.edges {
+            edges.insert(
+                e.id.clone(),
+                EdgeData {
+                    from_node: e.from_node.clone(),
+                    from_pin: to_static_pin_label(&e.from_pin),
+                    to_node: e.to_node.clone(),
+                    to_pin: to_static_pin_label(&e.to_pin),
+                },
+            );
+            edge_order.push(e.id.clone());
+        }
 
         let theme = string_to_theme(&self.theme);
         let camera_pos = Point::new(self.camera_position.0, self.camera_position.1);
 
-        (nodes, edges, theme, camera_pos, self.camera_zoom)
+        (
+            nodes,
+            node_order,
+            edges,
+            edge_order,
+            theme,
+            camera_pos,
+            self.camera_zoom,
+            self.window_position,
+            self.window_size,
+        )
     }
 }
 

@@ -48,7 +48,7 @@ use iced::{
     widget::{column, container, stack, text},
     window,
 };
-use iced_nodegraph::{PinReference, node_graph};
+use iced_nodegraph::{PinRef, node_graph};
 use nodes::NodeType;
 use std::collections::HashSet;
 
@@ -83,16 +83,16 @@ pub fn run_demo() {
 enum ApplicationMessage {
     Noop,
     EdgeConnected {
-        from: PinReference,
-        to: PinReference,
+        from: PinRef<usize, usize>,
+        to: PinRef<usize, usize>,
     },
     NodeMoved {
         node_index: usize,
         new_position: Point,
     },
     EdgeDisconnected {
-        from: PinReference,
-        to: PinReference,
+        from: PinRef<usize, usize>,
+        to: PinRef<usize, usize>,
     },
     SelectionChanged(Vec<usize>),
     GroupMoved {
@@ -103,7 +103,7 @@ enum ApplicationMessage {
 }
 
 struct Application {
-    edges: Vec<(PinReference, PinReference)>,
+    edges: Vec<(PinRef<usize, usize>, PinRef<usize, usize>)>,
     nodes: Vec<(Point, NodeType)>,
     current_theme: Theme,
     selected_nodes: HashSet<usize>,
@@ -177,8 +177,8 @@ impl Application {
             .selection(&self.selected_nodes);
 
         // Add all nodes
-        for (position, node_type) in &self.nodes {
-            ng.push_node(*position, node_type.create_node(&self.current_theme));
+        for (index, (position, node_type)) in self.nodes.iter().enumerate() {
+            ng.push_node(index, *position, node_type.create_node(&self.current_theme));
         }
 
         // Add all edges

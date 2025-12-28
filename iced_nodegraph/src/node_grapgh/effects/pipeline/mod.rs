@@ -332,6 +332,7 @@ impl Pipeline {
             primitive.selected_edge_color,
             primitive.edge_thickness,
             primitive.layer,
+            &primitive.valid_drop_targets,
         );
     }
 
@@ -358,6 +359,7 @@ impl Pipeline {
         selected_edge_color: glam::Vec4,
         edge_thickness: f32,
         layer: Layer,
+        valid_drop_targets: &std::collections::HashSet<(usize, usize)>,
     ) {
         let mut pin_start = 0;
         let num_nodes = self.nodes.update(
@@ -406,21 +408,11 @@ impl Pipeline {
             }),
         );
 
-        // Extract source pin info for valid target computation
-        let source_pin_info: Option<(usize, usize, glam::Vec4, u32)> = match dragging {
-            Dragging::Edge(from_node, from_pin, _)
-            | Dragging::EdgeOver(from_node, from_pin, _, _) => {
-                let pin = &nodes[*from_node].pins[*from_pin];
-                let color = glam::Vec4::new(pin.color.r, pin.color.g, pin.color.b, pin.color.a);
-                let direction = match pin.direction {
-                    crate::node_pin::PinDirection::Input => 0,
-                    crate::node_pin::PinDirection::Output => 1,
-                    crate::node_pin::PinDirection::Both => 2,
-                };
-                Some((*from_node, *from_pin, color, direction))
-            }
-            _ => None,
-        };
+        // Check if we're in edge dragging mode
+        let is_edge_dragging = matches!(
+            dragging,
+            Dragging::Edge(_, _, _) | Dragging::EdgeOver(_, _, _, _)
+        );
 
         let num_pins = self.pins.update(
             device,
@@ -446,33 +438,14 @@ impl Pipeline {
                     let pin_color =
                         glam::Vec4::new(pin.color.r, pin.color.g, pin.color.b, pin.color.a);
 
-                    // Compute valid target flag
-                    let flags = if let Some((src_node, src_pin, src_color, src_direction)) =
-                        source_pin_info
-                    {
-                        // Check if this pin is a valid drop target:
-                        // 1. Not the source pin itself
-                        let is_source = node_id == src_node && pin_id == src_pin;
-                        // 2. Direction compatible (Input<->Output or either is Both)
-                        let direction_valid = src_direction == 2
-                            || pin_direction == 2
-                            || (src_direction == 1 && pin_direction == 0)
-                            || (src_direction == 0 && pin_direction == 1);
-                        // 3. Type compatible (color distance < 0.1)
-                        let color_diff = ((src_color.x - pin_color.x).powi(2)
-                            + (src_color.y - pin_color.y).powi(2)
-                            + (src_color.z - pin_color.z).powi(2))
-                        .sqrt();
-                        let type_valid = color_diff < 0.1;
-
-                        if !is_source && direction_valid && type_valid {
+                    // Use precomputed valid_drop_targets from widget state
+                    // This was computed once at drag-start using the can_connect callback
+                    let flags =
+                        if is_edge_dragging && valid_drop_targets.contains(&(node_id, pin_id)) {
                             types::PIN_FLAG_VALID_TARGET
                         } else {
                             0
-                        }
-                    } else {
-                        0
-                    };
+                        };
 
                     types::Pin {
                         position: glam::Vec2::new(pin.offset.x, pin.offset.y),

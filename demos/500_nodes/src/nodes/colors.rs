@@ -4,6 +4,21 @@
 
 use iced::Color;
 
+// === Pin Data Type Markers ===
+// These marker types are used with the pin! macro for TypeId-based matching
+
+/// Scalar float data type marker
+pub struct Float;
+
+/// 2D vector data type marker
+pub struct Vec2;
+
+/// 3D vector data type marker
+pub struct Vec3;
+
+/// 4D vector / RGBA data type marker
+pub struct Vec4;
+
 // === Data Type Colors ===
 
 /// Scalar float values (time, parameters)

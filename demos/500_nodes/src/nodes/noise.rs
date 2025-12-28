@@ -5,7 +5,7 @@ use iced::{
 };
 use iced_nodegraph::pin;
 
-use super::colors::{PIN_NOISE, PIN_VEC2};
+use super::colors::{self, PIN_NOISE, PIN_VEC2};
 
 fn title_bar<'a, Message>(
     title: &'a str,
@@ -30,12 +30,19 @@ where
     Message: Clone + 'a,
 {
     let pins = row![
-        container(pin!(Left, "in", Input, "vec2", PIN_VEC2))
+        container(pin!(Left, "in", text(""), Input, colors::Vec2, PIN_VEC2))
             .width(Length::FillPortion(1))
             .align_x(Horizontal::Left),
-        container(pin!(Right, "out", Output, "float", PIN_NOISE))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Right),
+        container(pin!(
+            Right,
+            "out",
+            text(""),
+            Output,
+            colors::Float,
+            PIN_NOISE
+        ))
+        .width(Length::FillPortion(1))
+        .align_x(Horizontal::Right),
     ]
     .width(Length::Fill);
 
@@ -49,12 +56,19 @@ where
     Message: Clone + 'a,
 {
     let pins = row![
-        container(pin!(Left, "in", Input, "vec2", PIN_VEC2))
+        container(pin!(Left, "in", text(""), Input, colors::Vec2, PIN_VEC2))
             .width(Length::FillPortion(1))
             .align_x(Horizontal::Left),
-        container(pin!(Right, "out", Output, "float", PIN_NOISE))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Right),
+        container(pin!(
+            Right,
+            "out",
+            text(""),
+            Output,
+            colors::Float,
+            PIN_NOISE
+        ))
+        .width(Length::FillPortion(1))
+        .align_x(Horizontal::Right),
     ]
     .width(Length::Fill);
 
@@ -68,12 +82,19 @@ where
     Message: Clone + 'a,
 {
     let pins = row![
-        container(pin!(Left, "in", Input, "vec2", PIN_VEC2))
+        container(pin!(Left, "in", text(""), Input, colors::Vec2, PIN_VEC2))
             .width(Length::FillPortion(1))
             .align_x(Horizontal::Left),
-        container(pin!(Right, "out", Output, "float", PIN_NOISE))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Right),
+        container(pin!(
+            Right,
+            "out",
+            text(""),
+            Output,
+            colors::Float,
+            PIN_NOISE
+        ))
+        .width(Length::FillPortion(1))
+        .align_x(Horizontal::Right),
     ]
     .width(Length::Fill);
 

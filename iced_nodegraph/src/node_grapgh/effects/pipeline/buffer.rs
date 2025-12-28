@@ -104,7 +104,9 @@ impl<T> Buffer<T> {
             let slice = &mut self.scratch[offset..offset + item_size];
             // Use encase's StorageBuffer to write a single item into the slice
             let mut writer = encase::StorageBuffer::new(slice);
-            writer.write(item).expect("Failed to write to storage buffer");
+            writer
+                .write(item)
+                .expect("Failed to write to storage buffer");
         }
 
         let bytes = &self.scratch[..];

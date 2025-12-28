@@ -32,6 +32,7 @@
 //! Add input nodes (sliders, color pickers) and connect them to config nodes
 //! to dynamically adjust the graph's appearance!
 
+mod ids;
 mod nodes;
 #[cfg(not(target_arch = "wasm32"))]
 mod persistence;
@@ -41,12 +42,13 @@ use iced::{
     widget::{container, stack, text},
     window,
 };
-use iced_nodegraph::{EdgeConfig, NodeConfig, PinConfig, PinReference, ShadowConfig, node_graph};
+use iced_nodegraph::{EdgeConfig, NodeConfig, PinConfig, PinRef, ShadowConfig};
 use iced_nodegraph::{EdgeCurve, PinShape};
 use iced_palette::{
     Command, Shortcut, command, command_palette, find_matching_shortcut, focus_input,
     get_filtered_command_index, get_filtered_count, is_toggle_shortcut, navigate_down, navigate_up,
 };
+use ids::{EdgeId, NodeId, PinLabel, generate_edge_id, generate_node_id};
 use nodes::{
     BoolToggleConfig, ConfigNodeType, EdgeConfigInputs, FloatSliderConfig, InputNodeType,
     IntSliderConfig, MathNodeState, MathOperation, NodeConfigInputs, NodeType, NodeValue,
@@ -56,7 +58,19 @@ use nodes::{
     node_config_node, pattern_type_selector_node, pin_config_node, pin_shape_selector_node,
     shadow_config_node,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use persistence::EdgeData;
 use std::collections::{HashMap, HashSet};
+
+/// Edge data for in-memory representation (WASM version).
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Clone)]
+pub struct EdgeData {
+    pub from_node: NodeId,
+    pub from_pin: PinLabel,
+    pub to_node: NodeId,
+    pub to_pin: PinLabel,
+}
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -77,7 +91,23 @@ pub fn main() -> iced::Result {
     };
 
     #[cfg(not(target_arch = "wasm32"))]
-    let window_settings = iced::window::Settings::default();
+    let window_settings = {
+        // Try to load saved window settings
+        let (position, size) = persistence::load_state()
+            .map(|s| (s.window_position, s.window_size))
+            .unwrap_or((None, None));
+
+        iced::window::Settings {
+            position: position
+                .map(|(x, y)| iced::window::Position::Specific(Point::new(x as f32, y as f32)))
+                .unwrap_or(iced::window::Position::Centered),
+            size: size
+                .map(|(w, h)| iced::Size::new(w as f32, h as f32))
+                .unwrap_or(iced::Size::new(1280.0, 800.0)),
+            ..Default::default()
+        }
+    };
+
     iced::application(Application::new, Application::update, Application::view)
         .subscription(Application::subscription)
         .title("Hello World - iced_nodegraph Demo")
@@ -97,16 +127,16 @@ pub fn run_demo() {
 enum ApplicationMessage {
     Noop,
     EdgeConnected {
-        from: PinReference,
-        to: PinReference,
+        from: PinRef<NodeId, PinLabel>,
+        to: PinRef<NodeId, PinLabel>,
     },
     NodeMoved {
-        node_index: usize,
+        node_id: NodeId,
         new_position: Point,
     },
     EdgeDisconnected {
-        from: PinReference,
-        to: PinReference,
+        from: PinRef<NodeId, PinLabel>,
+        to: PinRef<NodeId, PinLabel>,
     },
     ToggleCommandPalette,
     CommandPaletteInput(String),
@@ -126,58 +156,59 @@ enum ApplicationMessage {
         zoom: f32,
     },
     WindowResized(iced::Size),
+    WindowMoved(Point),
     NavigateToSubmenu(String),
     NavigateBack,
     Tick,
     // Selection-related messages
-    SelectionChanged(Vec<usize>),
-    CloneNodes(Vec<usize>),
-    DeleteNodes(Vec<usize>),
+    SelectionChanged(Vec<NodeId>),
+    CloneNodes(Vec<NodeId>),
+    DeleteNodes(Vec<NodeId>),
     GroupMoved {
-        indices: Vec<usize>,
+        node_ids: Vec<NodeId>,
         delta: Vector,
     },
     // State export for Claude
     ExportState,
     // Input node value changes
     SliderChanged {
-        node_index: usize,
+        node_id: NodeId,
         value: f32,
     },
     IntSliderChanged {
-        node_index: usize,
+        node_id: NodeId,
         value: i32,
     },
     BoolChanged {
-        node_index: usize,
+        node_id: NodeId,
         value: bool,
     },
     EdgeCurveChanged {
-        node_index: usize,
+        node_id: NodeId,
         value: EdgeCurve,
     },
     PinShapeChanged {
-        node_index: usize,
+        node_id: NodeId,
         value: PinShape,
     },
     PatternTypeChanged {
-        node_index: usize,
+        node_id: NodeId,
         value: PatternType,
     },
     ColorChanged {
-        node_index: usize,
+        node_id: NodeId,
         color: Color,
     },
     // Collapsible node messages
     ToggleNodeExpanded {
-        node_index: usize,
+        node_id: NodeId,
     },
     UpdateFloatSliderConfig {
-        node_index: usize,
+        node_id: NodeId,
         config: FloatSliderConfig,
     },
     UpdateIntSliderConfig {
-        node_index: usize,
+        node_id: NodeId,
         config: IntSliderConfig,
     },
 }
@@ -209,6 +240,7 @@ struct ComputedStyle {
     edge_color: Option<Color>,
     edge_curve: Option<EdgeCurve>,
     edge_pattern: Option<iced_nodegraph::StrokePattern>,
+    edge_dash_cap: Option<iced_nodegraph::DashCap>,
     // Edge border and shadow
     edge_border: Option<iced_nodegraph::BorderConfig>,
     edge_shadow: Option<iced_nodegraph::EdgeShadowConfig>,
@@ -258,6 +290,9 @@ impl ComputedStyle {
         if let Some(ref pattern) = self.edge_pattern {
             config = config.pattern(pattern.clone());
         }
+        if let Some(ref dash_cap) = self.edge_dash_cap {
+            config = config.dash_cap(dash_cap.clone());
+        }
         if let Some(ref border) = self.edge_border {
             config.border = Some(border.clone());
         }
@@ -290,11 +325,18 @@ impl ComputedStyle {
 }
 
 struct Application {
-    edges: Vec<(PinReference, PinReference)>,
-    nodes: Vec<(Point, NodeType)>,
-    selected_nodes: HashSet<usize>,
+    /// Nodes stored by unique ID
+    nodes: HashMap<NodeId, (Point, NodeType)>,
+    /// Node order for deterministic iteration
+    node_order: Vec<NodeId>,
+    /// Edges stored by unique ID
+    edges: HashMap<EdgeId, EdgeData>,
+    /// Edge order for deterministic iteration
+    edge_order: Vec<EdgeId>,
+    /// Currently selected nodes
+    selected_nodes: HashSet<NodeId>,
     /// Nodes with expanded options panels
-    expanded_nodes: HashSet<usize>,
+    expanded_nodes: HashSet<NodeId>,
     command_palette_open: bool,
     command_input: String,
     current_theme: Theme,
@@ -305,42 +347,127 @@ struct Application {
     /// Computed style values from config node connections
     computed_style: ComputedStyle,
     /// Pending config outputs from config nodes to be applied by ApplyToGraph
-    pending_configs: HashMap<usize, Vec<(usize, ConfigOutput)>>,
+    pending_configs: HashMap<NodeId, Vec<(PinLabel, ConfigOutput)>>,
     /// Current viewport size for spawn-at-center calculation
     viewport_size: iced::Size,
     /// Current camera position from NodeGraph
     camera_position: Point,
     /// Current camera zoom from NodeGraph
     camera_zoom: f32,
+    /// Window position (x, y) for persistence
+    window_position: Option<(i32, i32)>,
+    /// Window size (width, height) for persistence
+    window_size: Option<(u32, u32)>,
 }
 
 impl Default for Application {
     fn default() -> Self {
+        use nodes::pins::workflow;
+
+        // Create nodes with stable NanoIDs
+        let node0_id = generate_node_id();
+        let node1_id = generate_node_id();
+        let node2_id = generate_node_id();
+        let node3_id = generate_node_id();
+
+        let mut nodes = HashMap::new();
+        nodes.insert(
+            node0_id.clone(),
+            (
+                Point::new(45.5, 149.0),
+                NodeType::Workflow("email_trigger".to_string()),
+            ),
+        );
+        nodes.insert(
+            node1_id.clone(),
+            (
+                Point::new(274.5, 227.5),
+                NodeType::Workflow("email_parser".to_string()),
+            ),
+        );
+        nodes.insert(
+            node2_id.clone(),
+            (
+                Point::new(459.5, 432.5),
+                NodeType::Workflow("filter".to_string()),
+            ),
+        );
+        nodes.insert(
+            node3_id.clone(),
+            (
+                Point::new(679.0, 252.5),
+                NodeType::Workflow("calendar".to_string()),
+            ),
+        );
+
+        let node_order = vec![
+            node0_id.clone(),
+            node1_id.clone(),
+            node2_id.clone(),
+            node3_id.clone(),
+        ];
+
+        // Create edges with stable NanoIDs and string pin labels
+        let mut edges = HashMap::new();
+        let mut edge_order = Vec::new();
+
+        // Edge 0: email_trigger "on email" -> email_parser "email"
+        let edge0_id = generate_edge_id();
+        edges.insert(
+            edge0_id.clone(),
+            EdgeData {
+                from_node: node0_id.clone(),
+                from_pin: workflow::ON_EMAIL,
+                to_node: node1_id.clone(),
+                to_pin: workflow::EMAIL,
+            },
+        );
+        edge_order.push(edge0_id);
+
+        // Edge 1: email_parser "subject" -> filter "input"
+        let edge1_id = generate_edge_id();
+        edges.insert(
+            edge1_id.clone(),
+            EdgeData {
+                from_node: node1_id.clone(),
+                from_pin: workflow::SUBJECT,
+                to_node: node2_id.clone(),
+                to_pin: workflow::INPUT,
+            },
+        );
+        edge_order.push(edge1_id);
+
+        // Edge 2: email_parser "datetime" -> calendar "datetime"
+        let edge2_id = generate_edge_id();
+        edges.insert(
+            edge2_id.clone(),
+            EdgeData {
+                from_node: node1_id.clone(),
+                from_pin: workflow::DATETIME,
+                to_node: node3_id.clone(),
+                to_pin: workflow::DATETIME,
+            },
+        );
+        edge_order.push(edge2_id);
+
+        // Edge 3: filter "matches" -> calendar "title"
+        let edge3_id = generate_edge_id();
+        edges.insert(
+            edge3_id.clone(),
+            EdgeData {
+                from_node: node2_id.clone(),
+                from_pin: workflow::MATCHES,
+                to_node: node3_id.clone(),
+                to_pin: workflow::TITLE,
+            },
+        );
+        edge_order.push(edge3_id);
+
         Self {
-            edges: vec![
-                (PinReference::new(0, 0), PinReference::new(1, 0)),
-                (PinReference::new(1, 1), PinReference::new(2, 0)),
-                (PinReference::new(1, 2), PinReference::new(3, 0)),
-                (PinReference::new(2, 1), PinReference::new(3, 1)),
-            ],
-            nodes: vec![
-                (
-                    Point::new(45.5, 149.0),
-                    NodeType::Workflow("email_trigger".to_string()),
-                ),
-                (
-                    Point::new(274.5, 227.5),
-                    NodeType::Workflow("email_parser".to_string()),
-                ),
-                (
-                    Point::new(459.5, 432.5),
-                    NodeType::Workflow("filter".to_string()),
-                ),
-                (
-                    Point::new(679.0, 252.5),
-                    NodeType::Workflow("calendar".to_string()),
-                ),
-            ],
+            nodes,
+            node_order,
+            edges,
+            edge_order,
             selected_nodes: HashSet::new(),
             expanded_nodes: HashSet::new(),
             command_palette_open: false,
@@ -355,6 +482,8 @@ impl Default for Application {
             viewport_size: iced::Size::new(800.0, 600.0), // Default size
             camera_position: Point::ORIGIN,
             camera_zoom: 1.0,
+            window_position: None,
+            window_size: None,
         }
     }
 }
@@ -366,20 +495,37 @@ impl Application {
         {
             match persistence::load_state() {
                 Ok(saved) => {
-                    let (nodes, edges, theme, camera_pos, camera_zoom) = saved.to_app();
+                    let (
+                        nodes,
+                        node_order,
+                        edges,
+                        edge_order,
+                        theme,
+                        camera_pos,
+                        camera_zoom,
+                        window_pos,
+                        window_size,
+                    ) = saved.to_app();
                     println!(
                         "Loaded saved state: {} nodes, {} edges",
                         nodes.len(),
                         edges.len()
                     );
-                    return Self {
+                    let mut app = Self {
                         nodes,
+                        node_order,
                         edges,
+                        edge_order,
                         current_theme: theme,
                         camera_position: camera_pos,
                         camera_zoom,
+                        window_position: window_pos,
+                        window_size,
                         ..Self::default()
                     };
+                    // Apply computed styles from config nodes immediately
+                    app.propagate_values();
+                    return app;
                 }
                 Err(e) => {
                     println!("No saved state found: {}", e);
@@ -394,10 +540,14 @@ impl Application {
     fn save_state(&self) {
         let saved = persistence::SavedState::from_app(
             &self.nodes,
+            &self.node_order,
             &self.edges,
+            &self.edge_order,
             &self.current_theme,
             self.camera_position,
             self.camera_zoom,
+            self.window_position,
+            self.window_size,
         );
         if let Err(e) = persistence::save_state(&saved) {
             eprintln!("Failed to save state: {}", e);
@@ -452,75 +602,78 @@ impl Application {
         output.push_str("## Nodes\n");
         output.push_str(&format!("# Total: {} nodes\n\n", self.nodes.len()));
 
-        for (idx, (pos, node_type)) in self.nodes.iter().enumerate() {
-            output.push_str(&format!("Node {}: ({:.1}, {:.1})\n", idx, pos.x, pos.y));
-            match node_type {
-                NodeType::Workflow(name) => {
-                    output.push_str(&format!("  Type: Workflow(\"{}\")\n", name));
+        for node_id in &self.node_order {
+            if let Some((pos, node_type)) = self.nodes.get(node_id) {
+                output.push_str(&format!("Node {}: ({:.1}, {:.1})\n", node_id, pos.x, pos.y));
+                match node_type {
+                    NodeType::Workflow(name) => {
+                        output.push_str(&format!("  Type: Workflow(\"{}\")\n", name));
+                    }
+                    NodeType::Input(input) => {
+                        output.push_str(&format!("  Type: Input({:?})\n", input));
+                    }
+                    NodeType::Config(config) => {
+                        output.push_str(&format!("  Type: Config({:?})\n", config));
+                    }
+                    NodeType::Math(state) => {
+                        output.push_str(&format!("  Type: Math({:?})\n", state));
+                    }
                 }
-                NodeType::Input(input) => {
-                    output.push_str(&format!("  Type: Input({:?})\n", input));
-                }
-                NodeType::Config(config) => {
-                    output.push_str(&format!("  Type: Config({:?})\n", config));
-                }
-                NodeType::Math(state) => {
-                    output.push_str(&format!("  Type: Math({:?})\n", state));
-                }
+                output.push('\n');
             }
-            output.push('\n');
         }
 
         // Export edges
         output.push_str("## Edges\n");
         output.push_str(&format!("# Total: {} edges\n\n", self.edges.len()));
 
-        for (from, to) in &self.edges {
-            output.push_str(&format!(
-                "Edge: Node {}.Pin {} -> Node {}.Pin {}\n",
-                from.node_id, from.pin_id, to.node_id, to.pin_id
-            ));
+        for edge_id in &self.edge_order {
+            if let Some(edge) = self.edges.get(edge_id) {
+                output.push_str(&format!(
+                    "Edge {}: Node {}.Pin \"{}\" -> Node {}.Pin \"{}\"\n",
+                    edge_id, edge.from_node, edge.from_pin, edge.to_node, edge.to_pin
+                ));
+            }
         }
 
-        // Export Rust code snippet for easy copy-paste
-        output.push_str("\n## Rust Code (copy-paste ready)\n\n");
-        output.push_str("```rust\n");
-        output.push_str("// Edges\n");
-        output.push_str("edges: vec![\n");
-        for (from, to) in &self.edges {
-            output.push_str(&format!(
-                "    (PinReference::new({}, {}), PinReference::new({}, {})),\n",
-                from.node_id, from.pin_id, to.node_id, to.pin_id
-            ));
+        // Export JSON snippet for easy copy-paste
+        output.push_str("\n## JSON Format (for state.json)\n\n");
+        output.push_str("```json\n");
+        output.push_str("{\n  \"nodes\": [\n");
+        for (i, node_id) in self.node_order.iter().enumerate() {
+            if let Some((pos, node_type)) = self.nodes.get(node_id) {
+                let type_str = match node_type {
+                    NodeType::Workflow(name) => {
+                        format!("{{\"type\": \"Workflow\", \"name\": \"{}\"}}", name)
+                    }
+                    _ => format!("{:?}", node_type),
+                };
+                let comma = if i < self.node_order.len() - 1 {
+                    ","
+                } else {
+                    ""
+                };
+                output.push_str(&format!(
+                    "    {{\"id\": \"{}\", \"x\": {:.1}, \"y\": {:.1}, \"node_type\": {}}}{}\n",
+                    node_id, pos.x, pos.y, type_str, comma
+                ));
+            }
         }
-        output.push_str("],\n\n");
-
-        output.push_str("// Nodes\n");
-        output.push_str("nodes: vec![\n");
-        for (pos, node_type) in &self.nodes {
-            let type_str = match node_type {
-                NodeType::Workflow(name) => {
-                    format!("NodeType::Workflow(\"{}\".to_string())", name)
-                }
-                NodeType::Input(input) => {
-                    format!("NodeType::Input({:?})", input)
-                }
-                NodeType::Config(config) => {
-                    format!("NodeType::Config({:?})", config)
-                }
-                NodeType::Math(state) => {
-                    format!(
-                        "NodeType::Math(MathNodeState::new(MathOperation::{:?}))",
-                        state.operation
-                    )
-                }
-            };
-            output.push_str(&format!(
-                "    (Point::new({:.1}, {:.1}), {}),\n",
-                pos.x, pos.y, type_str
-            ));
+        output.push_str("  ],\n  \"edges\": [\n");
+        for (i, edge_id) in self.edge_order.iter().enumerate() {
+            if let Some(edge) = self.edges.get(edge_id) {
+                let comma = if i < self.edge_order.len() - 1 {
+                    ","
+                } else {
+                    ""
+                };
+                output.push_str(&format!(
+                    "    {{\"id\": \"{}\", \"from_node\": \"{}\", \"from_pin\": \"{}\", \"to_node\": \"{}\", \"to_pin\": \"{}\"}}{}\n",
+                    edge_id, edge.from_node, edge.from_pin, edge.to_node, edge.to_pin, comma
+                ));
+            }
         }
-        output.push_str("],\n");
+        output.push_str("  ]\n}\n");
         output.push_str("```\n");
 
         // Write to file
@@ -573,11 +726,13 @@ impl Application {
 
     /// Propagates values from input nodes to connected config nodes
     fn propagate_values(&mut self) {
+        use nodes::pins::{config as pin_config, math as pin_math};
+
         let mut new_computed = ComputedStyle::default();
         self.pending_configs.clear();
 
         // Phase 1: Reset all config node and math node inputs to defaults
-        for (_, node_type) in &mut self.nodes {
+        for (_, (_, node_type)) in &mut self.nodes {
             match node_type {
                 NodeType::Config(config) => match config {
                     ConfigNodeType::NodeConfig(inputs) => *inputs = NodeConfigInputs::default(),
@@ -611,7 +766,7 @@ impl Application {
 
         // Phase 1.5: Propagate values INTO Math nodes (iteratively for chaining)
         // Math nodes can be chained (e.g., (A+B)*C), so we iterate until stable
-        let edges_snapshot: Vec<_> = self.edges.clone();
+        let edges_snapshot: Vec<_> = self.edges.values().cloned().collect();
 
         // We need multiple passes because Math→Math chains require the source
         // to have computed its result before the target can use it
@@ -619,32 +774,28 @@ impl Application {
         for _ in 0..MAX_ITERATIONS {
             let mut changed = false;
 
-            for (from, to) in &edges_snapshot {
+            for edge in &edges_snapshot {
                 // Get source node's output value
                 let source_value = self
                     .nodes
-                    .get(from.node_id)
+                    .get(&edge.from_node)
                     .and_then(|(_, t)| t.output_value());
 
                 if let Some(value) = source_value {
                     // Try to apply to target if it's a Math node
-                    if let Some((_, NodeType::Math(state))) = self.nodes.get_mut(to.node_id) {
-                        // Math pins: 0=A, 1=B, 2=result
+                    if let Some((_, NodeType::Math(state))) = self.nodes.get_mut(&edge.to_node) {
+                        // Math pins: A, B (inputs), result (output)
                         if let Some(float_val) = value.as_float() {
-                            match to.pin_id {
-                                0 => {
-                                    if state.input_a != Some(float_val) {
-                                        state.input_a = Some(float_val);
-                                        changed = true;
-                                    }
+                            if edge.to_pin == pin_math::A {
+                                if state.input_a != Some(float_val) {
+                                    state.input_a = Some(float_val);
+                                    changed = true;
                                 }
-                                1 => {
-                                    if state.input_b != Some(float_val) {
-                                        state.input_b = Some(float_val);
-                                        changed = true;
-                                    }
+                            } else if edge.to_pin == pin_math::B {
+                                if state.input_b != Some(float_val) {
+                                    state.input_b = Some(float_val);
+                                    changed = true;
                                 }
-                                _ => {}
                             }
                         }
                     }
@@ -653,26 +804,22 @@ impl Application {
                 // Also check reverse direction (edges can connect either way)
                 let source_value = self
                     .nodes
-                    .get(to.node_id)
+                    .get(&edge.to_node)
                     .and_then(|(_, t)| t.output_value());
 
                 if let Some(value) = source_value {
-                    if let Some((_, NodeType::Math(state))) = self.nodes.get_mut(from.node_id) {
+                    if let Some((_, NodeType::Math(state))) = self.nodes.get_mut(&edge.from_node) {
                         if let Some(float_val) = value.as_float() {
-                            match from.pin_id {
-                                0 => {
-                                    if state.input_a != Some(float_val) {
-                                        state.input_a = Some(float_val);
-                                        changed = true;
-                                    }
+                            if edge.from_pin == pin_math::A {
+                                if state.input_a != Some(float_val) {
+                                    state.input_a = Some(float_val);
+                                    changed = true;
                                 }
-                                1 => {
-                                    if state.input_b != Some(float_val) {
-                                        state.input_b = Some(float_val);
-                                        changed = true;
-                                    }
+                            } else if edge.from_pin == pin_math::B {
+                                if state.input_b != Some(float_val) {
+                                    state.input_b = Some(float_val);
+                                    changed = true;
                                 }
-                                _ => {}
                             }
                         }
                     }
@@ -687,55 +834,55 @@ impl Application {
         // Phase 2: Apply Input → Config connections (in both edge directions)
         // Also apply Math → Config connections
 
-        for (from, to) in &edges_snapshot {
-            let from_node_type = self.nodes.get(from.node_id).map(|(_, t)| t.clone());
-            let to_node_type = self.nodes.get(to.node_id).map(|(_, t)| t.clone());
+        for edge in &edges_snapshot {
+            let from_node_type = self.nodes.get(&edge.from_node).map(|(_, t)| t.clone());
+            let to_node_type = self.nodes.get(&edge.to_node).map(|(_, t)| t.clone());
 
             if let (Some(from_type), Some(to_type)) = (from_node_type, to_node_type) {
                 // Handle Input → Config connections
                 if let (NodeType::Input(input), NodeType::Config(_)) = (&from_type, &to_type) {
                     let value = input.output_value();
-                    self.apply_value_to_config_node(to.node_id, to.pin_id, &value);
+                    self.apply_value_to_config_node(&edge.to_node, &edge.to_pin, &value);
                 }
                 // Handle Config → Input connections (reverse direction)
                 if let (NodeType::Config(_), NodeType::Input(input)) = (&from_type, &to_type) {
                     let value = input.output_value();
-                    self.apply_value_to_config_node(from.node_id, from.pin_id, &value);
+                    self.apply_value_to_config_node(&edge.from_node, &edge.from_pin, &value);
                 }
                 // Handle Math → Config connections
                 if let (NodeType::Math(state), NodeType::Config(_)) = (&from_type, &to_type) {
                     if let Some(result) = state.result() {
                         let value = NodeValue::Float(result);
-                        self.apply_value_to_config_node(to.node_id, to.pin_id, &value);
+                        self.apply_value_to_config_node(&edge.to_node, &edge.to_pin, &value);
                     }
                 }
                 // Handle Config → Math connections (reverse direction)
                 if let (NodeType::Config(_), NodeType::Math(state)) = (&from_type, &to_type) {
                     if let Some(result) = state.result() {
                         let value = NodeValue::Float(result);
-                        self.apply_value_to_config_node(from.node_id, from.pin_id, &value);
+                        self.apply_value_to_config_node(&edge.from_node, &edge.from_pin, &value);
                     }
                 }
             }
         }
 
         // Phase 2.5: Handle ShadowConfig → NodeConfig connections
-        // ShadowConfig's output connects to NodeConfig's shadow input (pin 7)
-        for (from, to) in &edges_snapshot {
-            let from_node_type = self.nodes.get(from.node_id).map(|(_, t)| t.clone());
-            let to_node_type = self.nodes.get(to.node_id).map(|(_, t)| t.clone());
+        // ShadowConfig's output connects to NodeConfig's shadow input
+        for edge in &edges_snapshot {
+            let from_node_type = self.nodes.get(&edge.from_node).map(|(_, t)| t.clone());
+            let to_node_type = self.nodes.get(&edge.to_node).map(|(_, t)| t.clone());
 
             if let (Some(from_type), Some(to_type)) = (from_node_type, to_node_type) {
-                // ShadowConfig (output pin 1) → NodeConfig (shadow pin 7)
+                // ShadowConfig (output CONFIG) → NodeConfig (shadow input SHADOW)
                 if let (
                     NodeType::Config(ConfigNodeType::ShadowConfig(shadow_inputs)),
                     NodeType::Config(ConfigNodeType::NodeConfig(_)),
                 ) = (&from_type, &to_type)
                 {
-                    if from.pin_id == 1 && to.pin_id == 7 {
+                    if edge.from_pin == pin_config::CONFIG && edge.to_pin == pin_config::SHADOW {
                         let shadow_config = shadow_inputs.build();
                         let value = NodeValue::ShadowConfig(shadow_config);
-                        self.apply_value_to_config_node(to.node_id, to.pin_id, &value);
+                        self.apply_value_to_config_node(&edge.to_node, &edge.to_pin, &value);
                     }
                 }
                 // Reverse: NodeConfig ← ShadowConfig
@@ -744,10 +891,10 @@ impl Application {
                     NodeType::Config(ConfigNodeType::ShadowConfig(shadow_inputs)),
                 ) = (&from_type, &to_type)
                 {
-                    if to.pin_id == 1 && from.pin_id == 7 {
+                    if edge.to_pin == pin_config::CONFIG && edge.from_pin == pin_config::SHADOW {
                         let shadow_config = shadow_inputs.build();
                         let value = NodeValue::ShadowConfig(shadow_config);
-                        self.apply_value_to_config_node(from.node_id, from.pin_id, &value);
+                        self.apply_value_to_config_node(&edge.from_node, &edge.from_pin, &value);
                     }
                 }
             }
@@ -755,9 +902,9 @@ impl Application {
 
         // Phase 3: After all inputs applied, process Config → ApplyToGraph connections
         // Now config nodes have their updated inputs, so we can build configs
-        for (from, to) in &edges_snapshot {
-            let from_node_type = self.nodes.get(from.node_id).map(|(_, t)| t.clone());
-            let to_node_type = self.nodes.get(to.node_id).map(|(_, t)| t.clone());
+        for edge in &edges_snapshot {
+            let from_node_type = self.nodes.get(&edge.from_node).map(|(_, t)| t.clone());
+            let to_node_type = self.nodes.get(&edge.to_node).map(|(_, t)| t.clone());
 
             if let (Some(from_type), Some(to_type)) = (from_node_type, to_node_type) {
                 // Handle Config → ApplyToGraph connections
@@ -766,7 +913,12 @@ impl Application {
                     NodeType::Config(ConfigNodeType::ApplyToGraph { .. }),
                 ) = (&from_type, &to_type)
                 {
-                    self.connect_config_to_apply(from.node_id, config, to.node_id, to.pin_id);
+                    self.connect_config_to_apply(
+                        &edge.from_node,
+                        config,
+                        &edge.to_node,
+                        &edge.to_pin,
+                    );
                 }
                 // Handle ApplyToGraph → Config connections (reverse)
                 if let (
@@ -774,7 +926,12 @@ impl Application {
                     NodeType::Config(config),
                 ) = (&from_type, &to_type)
                 {
-                    self.connect_config_to_apply(to.node_id, config, from.node_id, from.pin_id);
+                    self.connect_config_to_apply(
+                        &edge.to_node,
+                        config,
+                        &edge.from_node,
+                        &edge.from_pin,
+                    );
                 }
             }
         }
@@ -786,7 +943,14 @@ impl Application {
     }
 
     /// Applies an input value to a specific pin on a config node
-    fn apply_value_to_config_node(&mut self, node_id: usize, pin_id: usize, value: &NodeValue) {
+    fn apply_value_to_config_node(
+        &mut self,
+        node_id: &NodeId,
+        pin_label: &PinLabel,
+        value: &NodeValue,
+    ) {
+        use nodes::pins::config as pin;
+
         let Some((_, node_type)) = self.nodes.get_mut(node_id) else {
             return;
         };
@@ -797,84 +961,103 @@ impl Application {
 
         match config {
             ConfigNodeType::NodeConfig(inputs) => {
-                // NodeConfig pin layout: 0=config_in, 1=config_out, 2=fill, 3=border, 4=width, 5=radius, 6=opacity, 7=shadow
-                match pin_id {
-                    2 => inputs.fill_color = value.as_color(),
-                    3 => inputs.border_color = value.as_color(),
-                    4 => inputs.border_width = value.as_float(),
-                    5 => inputs.corner_radius = value.as_float(),
-                    6 => inputs.opacity = value.as_float(),
-                    7 => {
-                        if let Some(shadow) = value.as_shadow_config() {
-                            inputs.shadow = Some(shadow.clone());
-                        }
+                // NodeConfig pin labels: config, bg, color, width, radius, opacity, shadow
+                if *pin_label == pin::BG_COLOR {
+                    inputs.fill_color = value.as_color();
+                } else if *pin_label == pin::COLOR {
+                    inputs.border_color = value.as_color();
+                } else if *pin_label == pin::WIDTH {
+                    inputs.border_width = value.as_float();
+                } else if *pin_label == pin::RADIUS {
+                    inputs.corner_radius = value.as_float();
+                } else if *pin_label == pin::OPACITY {
+                    inputs.opacity = value.as_float();
+                } else if *pin_label == pin::SHADOW {
+                    if let Some(shadow) = value.as_shadow_config() {
+                        inputs.shadow = Some(shadow.clone());
                     }
-                    _ => {}
                 }
             }
             ConfigNodeType::EdgeConfig(inputs) => {
-                // EdgeConfig pin layout:
-                // 0=config_in, 1=config_out, 2=start_color, 3=end_color, 4=thickness, 5=curve
-                // 6=pattern_type, 7=dash_length, 8=gap_length, 9=pattern_angle, 10=animated, 11=speed
-                // 12=border_enabled, 13=border_width, 14=border_gap, 15=border_color
-                // 16=shadow_enabled, 17=shadow_blur, 18=shadow_offset, 19=shadow_color
-                match pin_id {
-                    2 => inputs.start_color = value.as_color(),
-                    3 => inputs.end_color = value.as_color(),
-                    4 => inputs.thickness = value.as_float(),
-                    5 => inputs.curve = value.as_edge_curve(),
-                    6 => inputs.pattern_type = value.as_pattern_type(),
-                    7 => inputs.dash_length = value.as_float(),
-                    8 => inputs.gap_length = value.as_float(),
-                    9 => {
-                        // Convert degrees from slider to radians for pattern angle
-                        inputs.pattern_angle = value.as_float().map(|deg| deg.to_radians());
-                    }
-                    10 => inputs.animated = value.as_bool(),
-                    11 => inputs.animation_speed = value.as_float(),
-                    // Border settings
-                    12 => inputs.border_enabled = value.as_bool(),
-                    13 => inputs.border_width = value.as_float(),
-                    14 => inputs.border_gap = value.as_float(),
-                    15 => inputs.border_color = value.as_color(),
-                    // Shadow settings
-                    16 => inputs.shadow_enabled = value.as_bool(),
-                    17 => inputs.shadow_blur = value.as_float(),
-                    18 => {
-                        // Single offset value sets both x and y
-                        let offset = value.as_float();
-                        inputs.shadow_offset_x = offset;
-                        inputs.shadow_offset_y = offset;
-                    }
-                    19 => inputs.shadow_color = value.as_color(),
-                    _ => {}
+                // EdgeConfig pin labels
+                if *pin_label == pin::START {
+                    inputs.start_color = value.as_color();
+                } else if *pin_label == pin::END {
+                    inputs.end_color = value.as_color();
+                } else if *pin_label == pin::THICK {
+                    inputs.thickness = value.as_float();
+                } else if *pin_label == pin::CURVE {
+                    inputs.curve = value.as_edge_curve();
+                } else if *pin_label == pin::PATTERN {
+                    inputs.pattern_type = value.as_pattern_type();
+                } else if *pin_label == pin::DASH {
+                    inputs.dash_length = value.as_float();
+                } else if *pin_label == pin::GAP {
+                    inputs.gap_length = value.as_float();
+                } else if *pin_label == pin::ANGLE {
+                    // Convert degrees from slider to radians for pattern angle
+                    inputs.pattern_angle = value.as_float().map(|deg| deg.to_radians());
+                } else if *pin_label == pin::ANIMATED {
+                    inputs.animated = value.as_bool();
+                } else if *pin_label == pin::SPEED {
+                    inputs.animation_speed = value.as_float();
+                // Border settings
+                } else if *pin_label == pin::BORDER {
+                    inputs.border_enabled = value.as_bool();
+                } else if *pin_label == pin::BORDER_WIDTH {
+                    inputs.border_width = value.as_float();
+                } else if *pin_label == pin::BORDER_GAP {
+                    inputs.border_gap = value.as_float();
+                } else if *pin_label == pin::BORDER_COLOR {
+                    inputs.border_color = value.as_color();
+                // Shadow settings
+                } else if *pin_label == pin::SHADOW {
+                    inputs.shadow_enabled = value.as_bool();
+                } else if *pin_label == pin::SHADOW_BLUR {
+                    inputs.shadow_blur = value.as_float();
+                } else if *pin_label == pin::SHADOW_OFFSET {
+                    // Single offset value sets both x and y
+                    let offset = value.as_float();
+                    inputs.shadow_offset_x = offset;
+                    inputs.shadow_offset_y = offset;
+                } else if *pin_label == pin::SHADOW_COLOR {
+                    inputs.shadow_color = value.as_color();
                 }
             }
             ConfigNodeType::ShadowConfig(inputs) => {
-                // ShadowConfig pin layout: 0=config_in, 1=config_out, 2=offset_x, 3=offset_y, 4=blur, 5=color, 6=enabled
-                match pin_id {
-                    2 => inputs.offset_x = value.as_float(),
-                    3 => inputs.offset_y = value.as_float(),
-                    4 => inputs.blur_radius = value.as_float(),
-                    5 => inputs.color = value.as_color(),
-                    6 => inputs.enabled = value.as_bool(),
-                    _ => {}
+                // ShadowConfig pin labels
+                if *pin_label == pin::SHADOW_OFFSET {
+                    // For shadow config, offset sets both x and y
+                    inputs.offset_x = value.as_float();
+                    inputs.offset_y = value.as_float();
+                } else if *pin_label == pin::SHADOW_OFFSET_X {
+                    inputs.offset_x = value.as_float();
+                } else if *pin_label == pin::SHADOW_OFFSET_Y {
+                    inputs.offset_y = value.as_float();
+                } else if *pin_label == pin::SHADOW_BLUR {
+                    inputs.blur_radius = value.as_float();
+                } else if *pin_label == pin::SHADOW_COLOR {
+                    inputs.color = value.as_color();
+                } else if *pin_label == pin::ON {
+                    inputs.enabled = value.as_bool();
                 }
             }
             ConfigNodeType::PinConfig(inputs) => {
-                // PinConfig pin layout: 0=config_in, 1=config_out, 2=color, 3=radius, 4=shape, 5=border_color, 6=border_width
-                match pin_id {
-                    2 => inputs.color = value.as_color(),
-                    3 => inputs.radius = value.as_float(),
-                    4 => inputs.shape = value.as_pin_shape(),
-                    5 => inputs.border_color = value.as_color(),
-                    6 => inputs.border_width = value.as_float(),
-                    _ => {}
+                // PinConfig pin labels
+                if *pin_label == pin::COLOR {
+                    inputs.color = value.as_color();
+                } else if *pin_label == pin::SIZE {
+                    inputs.radius = value.as_float();
+                } else if *pin_label == pin::SHAPE {
+                    inputs.shape = value.as_pin_shape();
+                } else if *pin_label == pin::GLOW {
+                    inputs.border_color = value.as_color();
+                } else if *pin_label == pin::PULSE {
+                    inputs.border_width = value.as_float();
                 }
             }
             ConfigNodeType::ApplyToNode { target_id, .. } => {
-                // ApplyToNode pin 1 = target_id (int)
-                if pin_id == 1 {
+                if *pin_label == pin::TARGET {
                     *target_id = value.as_int();
                 }
             }
@@ -885,11 +1068,13 @@ impl Application {
     /// Connects a config node's output to an ApplyToGraph node
     fn connect_config_to_apply(
         &mut self,
-        config_node_id: usize,
+        config_node_id: &NodeId,
         _config_type: &ConfigNodeType, // Ignored - we read from current state
-        apply_node_id: usize,
-        apply_pin_id: usize,
+        apply_node_id: &NodeId,
+        apply_pin_label: &PinLabel,
     ) {
+        use nodes::pins::config as pin;
+
         // Build the config from the CURRENT state of the config node (not the snapshot)
         let built_config = match self.nodes.get(config_node_id) {
             Some((_, NodeType::Config(ConfigNodeType::NodeConfig(inputs)))) => {
@@ -914,35 +1099,42 @@ impl Application {
             has_pin_config,
         }) = node_type
         {
-            // ApplyToGraph pin layout: 0=node_config, 1=edge_config, 2=pin_config
-            match (apply_pin_id, &built_config) {
-                (0, Some(ConfigOutput::Node(_))) => *has_node_config = true,
-                (1, Some(ConfigOutput::Edge(_))) => *has_edge_config = true,
-                (2, Some(ConfigOutput::Pin(_))) => *has_pin_config = true,
-                _ => {}
+            // ApplyToGraph pin labels: node, edge, pin
+            if *apply_pin_label == pin::NODE_CONFIG {
+                if matches!(&built_config, Some(ConfigOutput::Node(_))) {
+                    *has_node_config = true;
+                }
+            } else if *apply_pin_label == pin::EDGE_CONFIG {
+                if matches!(&built_config, Some(ConfigOutput::Edge(_))) {
+                    *has_edge_config = true;
+                }
+            } else if *apply_pin_label == pin::PIN_CONFIG {
+                if matches!(&built_config, Some(ConfigOutput::Pin(_))) {
+                    *has_pin_config = true;
+                }
             }
         }
 
         // Store the config for later application
         if let Some(config) = built_config {
             self.pending_configs
-                .entry(apply_node_id)
+                .entry(apply_node_id.clone())
                 .or_default()
-                .push((config_node_id, config));
+                .push((*apply_pin_label, config));
         }
     }
 
     /// Applies configs from ApplyToGraph nodes to the computed style
     fn apply_graph_configs(&mut self, computed: &mut ComputedStyle) {
         // Find ApplyToGraph nodes and apply their connected configs
-        for (node_id, (_, node_type)) in self.nodes.iter().enumerate() {
+        for (node_id, (_, node_type)) in &self.nodes {
             if let NodeType::Config(ConfigNodeType::ApplyToGraph {
                 has_node_config,
                 has_edge_config,
                 has_pin_config,
             }) = node_type
             {
-                if let Some(configs) = self.pending_configs.get(&node_id) {
+                if let Some(configs) = self.pending_configs.get(node_id) {
                     for (_, config) in configs {
                         match config {
                             ConfigOutput::Node(node_config) => {
@@ -977,6 +1169,9 @@ impl Application {
                                         }
                                         if let Some(ref p) = stroke.pattern {
                                             computed.edge_pattern = Some(p.clone());
+                                        }
+                                        if let Some(ref dc) = stroke.dash_cap {
+                                            computed.edge_dash_cap = Some(dc.clone());
                                         }
                                     }
                                     if let Some(curve) = edge_config.curve {
@@ -1025,23 +1220,48 @@ impl Application {
         match message {
             ApplicationMessage::Noop => Task::none(),
             ApplicationMessage::EdgeConnected { from, to } => {
-                self.edges.push((from, to));
+                let edge_id = generate_edge_id();
+                self.edges.insert(
+                    edge_id.clone(),
+                    EdgeData {
+                        from_node: from.node_id,
+                        from_pin: from.pin_id,
+                        to_node: to.node_id,
+                        to_pin: to.pin_id,
+                    },
+                );
+                self.edge_order.push(edge_id);
                 self.propagate_values();
                 self.save_state();
                 Task::none()
             }
             ApplicationMessage::NodeMoved {
-                node_index,
+                node_id,
                 new_position,
             } => {
-                if let Some((position, _)) = self.nodes.get_mut(node_index) {
+                if let Some((position, _)) = self.nodes.get_mut(&node_id) {
                     *position = new_position;
                 }
                 self.save_state();
                 Task::none()
             }
             ApplicationMessage::EdgeDisconnected { from, to } => {
-                self.edges.retain(|(f, t)| !(f == &from && t == &to));
+                // Find and remove the edge by matching from/to
+                let edge_to_remove: Option<EdgeId> = self
+                    .edges
+                    .iter()
+                    .find(|(_, e)| {
+                        e.from_node == from.node_id
+                            && e.from_pin == from.pin_id
+                            && e.to_node == to.node_id
+                            && e.to_pin == to.pin_id
+                    })
+                    .map(|(id, _)| id.clone());
+
+                if let Some(edge_id) = edge_to_remove {
+                    self.edges.remove(&edge_id);
+                    self.edge_order.retain(|id| id != &edge_id);
+                }
                 self.propagate_values();
                 self.save_state();
                 Task::none()
@@ -1166,10 +1386,11 @@ impl Application {
                                 focus_input()
                             }
                             ApplicationMessage::SpawnNode { node_type } => {
-                                let new_idx = self.nodes.len();
+                                let new_id = generate_node_id();
                                 let pos = self.spawn_position();
-                                self.nodes.push((pos, node_type));
-                                self.selected_nodes = HashSet::from([new_idx]);
+                                self.nodes.insert(new_id.clone(), (pos, node_type));
+                                self.node_order.push(new_id.clone());
+                                self.selected_nodes = HashSet::from([new_id]);
                                 self.command_palette_open = false;
                                 self.palette_view = PaletteView::Main;
                                 Task::none()
@@ -1209,10 +1430,11 @@ impl Application {
                 Task::none()
             }
             ApplicationMessage::SpawnNode { node_type } => {
-                let new_idx = self.nodes.len();
+                let new_id = generate_node_id();
                 let pos = self.spawn_position();
-                self.nodes.push((pos, node_type));
-                self.selected_nodes = HashSet::from([new_idx]);
+                self.nodes.insert(new_id.clone(), (pos, node_type));
+                self.node_order.push(new_id.clone());
+                self.selected_nodes = HashSet::from([new_id]);
                 self.command_palette_open = false;
                 self.command_input.clear();
                 self.palette_view = PaletteView::Main;
@@ -1226,6 +1448,13 @@ impl Application {
             }
             ApplicationMessage::WindowResized(size) => {
                 self.viewport_size = size;
+                self.window_size = Some((size.width as u32, size.height as u32));
+                self.save_state();
+                Task::none()
+            }
+            ApplicationMessage::WindowMoved(position) => {
+                self.window_position = Some((position.x as i32, position.y as i32));
+                self.save_state();
                 Task::none()
             }
             ApplicationMessage::ChangeTheme(theme) => {
@@ -1251,69 +1480,79 @@ impl Application {
                 self.export_state_to_file();
                 Task::none()
             }
-            ApplicationMessage::SelectionChanged(indices) => {
-                self.selected_nodes = indices.into_iter().collect();
+            ApplicationMessage::SelectionChanged(node_ids) => {
+                self.selected_nodes = node_ids.into_iter().collect();
                 Task::none()
             }
-            ApplicationMessage::CloneNodes(indices) => {
+            ApplicationMessage::CloneNodes(node_ids) => {
                 let offset = Vector::new(50.0, 50.0);
-                let mut index_map: HashMap<usize, usize> = HashMap::new();
-                let mut new_indices = Vec::new();
+                let mut id_map: HashMap<NodeId, NodeId> = HashMap::new();
+                let mut new_ids = Vec::new();
 
-                for &idx in &indices {
-                    if let Some((pos, node_type)) = self.nodes.get(idx) {
+                // Clone selected nodes
+                for old_id in &node_ids {
+                    if let Some((pos, node_type)) = self.nodes.get(old_id) {
+                        let new_id = generate_node_id();
                         let new_pos = Point::new(pos.x + offset.x, pos.y + offset.y);
-                        let new_idx = self.nodes.len();
-                        self.nodes.push((new_pos, node_type.clone()));
-                        index_map.insert(idx, new_idx);
-                        new_indices.push(new_idx);
+                        self.nodes
+                            .insert(new_id.clone(), (new_pos, node_type.clone()));
+                        self.node_order.push(new_id.clone());
+                        id_map.insert(old_id.clone(), new_id.clone());
+                        new_ids.push(new_id);
                     }
                 }
 
+                // Clone edges between selected nodes
                 let edges_to_clone: Vec<_> = self
                     .edges
                     .iter()
-                    .filter(|(from, to)| {
-                        indices.contains(&from.node_id) && indices.contains(&to.node_id)
+                    .filter(|(_, e)| {
+                        node_ids.contains(&e.from_node) && node_ids.contains(&e.to_node)
                     })
-                    .cloned()
+                    .map(|(_, e)| e.clone())
                     .collect();
 
-                for (from, to) in edges_to_clone {
-                    if let (Some(&new_from), Some(&new_to)) =
-                        (index_map.get(&from.node_id), index_map.get(&to.node_id))
+                for edge in edges_to_clone {
+                    if let (Some(new_from), Some(new_to)) =
+                        (id_map.get(&edge.from_node), id_map.get(&edge.to_node))
                     {
-                        self.edges.push((
-                            PinReference::new(new_from, from.pin_id),
-                            PinReference::new(new_to, to.pin_id),
-                        ));
+                        let new_edge_id = generate_edge_id();
+                        self.edges.insert(
+                            new_edge_id.clone(),
+                            EdgeData {
+                                from_node: new_from.clone(),
+                                from_pin: edge.from_pin,
+                                to_node: new_to.clone(),
+                                to_pin: edge.to_pin,
+                            },
+                        );
+                        self.edge_order.push(new_edge_id);
                     }
                 }
 
-                self.selected_nodes = new_indices.into_iter().collect();
+                self.selected_nodes = new_ids.into_iter().collect();
                 self.propagate_values();
                 self.save_state();
                 Task::none()
             }
-            ApplicationMessage::DeleteNodes(indices) => {
-                let mut sorted_indices: Vec<_> = indices.into_iter().collect();
-                sorted_indices.sort_by(|a, b| b.cmp(a));
+            ApplicationMessage::DeleteNodes(node_ids) => {
+                // With NanoIDs, deletion is simple - no index remapping needed!
+                for node_id in &node_ids {
+                    // Remove node
+                    self.nodes.remove(node_id);
+                    self.node_order.retain(|id| id != node_id);
 
-                for idx in sorted_indices {
-                    self.edges
-                        .retain(|(from, to)| from.node_id != idx && to.node_id != idx);
+                    // Remove edges connected to this node
+                    let edges_to_remove: Vec<_> = self
+                        .edges
+                        .iter()
+                        .filter(|(_, e)| &e.from_node == node_id || &e.to_node == node_id)
+                        .map(|(id, _)| id.clone())
+                        .collect();
 
-                    for (from, to) in &mut self.edges {
-                        if from.node_id > idx {
-                            from.node_id -= 1;
-                        }
-                        if to.node_id > idx {
-                            to.node_id -= 1;
-                        }
-                    }
-
-                    if idx < self.nodes.len() {
-                        self.nodes.remove(idx);
+                    for edge_id in edges_to_remove {
+                        self.edges.remove(&edge_id);
+                        self.edge_order.retain(|id| id != &edge_id);
                     }
                 }
 
@@ -1322,9 +1561,9 @@ impl Application {
                 self.save_state();
                 Task::none()
             }
-            ApplicationMessage::GroupMoved { indices, delta } => {
-                for idx in indices {
-                    if let Some((pos, _)) = self.nodes.get_mut(idx) {
+            ApplicationMessage::GroupMoved { node_ids, delta } => {
+                for node_id in node_ids {
+                    if let Some((pos, _)) = self.nodes.get_mut(&node_id) {
                         pos.x += delta.x;
                         pos.y += delta.y;
                     }
@@ -1332,62 +1571,62 @@ impl Application {
                 self.save_state();
                 Task::none()
             }
-            ApplicationMessage::SliderChanged { node_index, value } => {
+            ApplicationMessage::SliderChanged { node_id, value } => {
                 if let Some((_, NodeType::Input(InputNodeType::FloatSlider { value: v, .. }))) =
-                    self.nodes.get_mut(node_index)
+                    self.nodes.get_mut(&node_id)
                 {
                     *v = value;
                     self.propagate_values();
                 }
                 Task::none()
             }
-            ApplicationMessage::IntSliderChanged { node_index, value } => {
+            ApplicationMessage::IntSliderChanged { node_id, value } => {
                 if let Some((_, NodeType::Input(InputNodeType::IntSlider { value: v, .. }))) =
-                    self.nodes.get_mut(node_index)
+                    self.nodes.get_mut(&node_id)
                 {
                     *v = value;
                     self.propagate_values();
                 }
                 Task::none()
             }
-            ApplicationMessage::BoolChanged { node_index, value } => {
+            ApplicationMessage::BoolChanged { node_id, value } => {
                 if let Some((_, NodeType::Input(InputNodeType::BoolToggle { value: v, .. }))) =
-                    self.nodes.get_mut(node_index)
+                    self.nodes.get_mut(&node_id)
                 {
                     *v = value;
                     self.propagate_values();
                 }
                 Task::none()
             }
-            ApplicationMessage::EdgeCurveChanged { node_index, value } => {
+            ApplicationMessage::EdgeCurveChanged { node_id, value } => {
                 if let Some((_, NodeType::Input(InputNodeType::EdgeCurveSelector { value: v }))) =
-                    self.nodes.get_mut(node_index)
+                    self.nodes.get_mut(&node_id)
                 {
                     *v = value;
                     self.propagate_values();
                 }
                 Task::none()
             }
-            ApplicationMessage::PinShapeChanged { node_index, value } => {
+            ApplicationMessage::PinShapeChanged { node_id, value } => {
                 if let Some((_, NodeType::Input(InputNodeType::PinShapeSelector { value: v }))) =
-                    self.nodes.get_mut(node_index)
+                    self.nodes.get_mut(&node_id)
                 {
                     *v = value;
                     self.propagate_values();
                 }
                 Task::none()
             }
-            ApplicationMessage::PatternTypeChanged { node_index, value } => {
+            ApplicationMessage::PatternTypeChanged { node_id, value } => {
                 if let Some((_, NodeType::Input(InputNodeType::PatternTypeSelector { value: v }))) =
-                    self.nodes.get_mut(node_index)
+                    self.nodes.get_mut(&node_id)
                 {
                     *v = value;
                     self.propagate_values();
                 }
                 Task::none()
             }
-            ApplicationMessage::ColorChanged { node_index, color } => {
-                if let Some((_, node_type)) = self.nodes.get_mut(node_index) {
+            ApplicationMessage::ColorChanged { node_id, color } => {
+                if let Some((_, node_type)) = self.nodes.get_mut(&node_id) {
                     match node_type {
                         NodeType::Input(InputNodeType::ColorPicker { color: c }) => {
                             *c = color;
@@ -1402,17 +1641,17 @@ impl Application {
                 }
                 Task::none()
             }
-            ApplicationMessage::ToggleNodeExpanded { node_index } => {
-                if self.expanded_nodes.contains(&node_index) {
-                    self.expanded_nodes.remove(&node_index);
+            ApplicationMessage::ToggleNodeExpanded { node_id } => {
+                if self.expanded_nodes.contains(&node_id) {
+                    self.expanded_nodes.remove(&node_id);
                 } else {
-                    self.expanded_nodes.insert(node_index);
+                    self.expanded_nodes.insert(node_id);
                 }
                 Task::none()
             }
-            ApplicationMessage::UpdateFloatSliderConfig { node_index, config } => {
+            ApplicationMessage::UpdateFloatSliderConfig { node_id, config } => {
                 if let Some((_, NodeType::Input(InputNodeType::FloatSlider { config: c, value }))) =
-                    self.nodes.get_mut(node_index)
+                    self.nodes.get_mut(&node_id)
                 {
                     // Clamp value to new range if needed
                     *value = value.clamp(config.min, config.max);
@@ -1420,9 +1659,9 @@ impl Application {
                 }
                 Task::none()
             }
-            ApplicationMessage::UpdateIntSliderConfig { node_index, config } => {
+            ApplicationMessage::UpdateIntSliderConfig { node_id, config } => {
                 if let Some((_, NodeType::Input(InputNodeType::IntSlider { config: c, value }))) =
-                    self.nodes.get_mut(node_index)
+                    self.nodes.get_mut(&node_id)
                 {
                     // Clamp value to new range if needed
                     *value = (*value).clamp(config.min, config.max);
@@ -1517,6 +1756,8 @@ impl Application {
     }
 
     fn view(&self) -> iced::Element<'_, ApplicationMessage> {
+        use iced_nodegraph::{NodeGraph, PinRef};
+
         // Use preview theme if active (for theme selection), otherwise current theme
         let theme = self
             .palette_preview_theme
@@ -1529,114 +1770,147 @@ impl Application {
         // Pin defaults from connected config nodes
         let pin_defaults = self.computed_style.to_pin_config();
 
-        let mut ng = node_graph()
-            .on_connect(|from, to| ApplicationMessage::EdgeConnected { from, to })
-            .on_disconnect(|from, to| ApplicationMessage::EdgeDisconnected { from, to })
-            .on_move(|node_index, new_position| ApplicationMessage::NodeMoved {
-                node_index,
+        let mut ng: NodeGraph<
+            '_,
+            NodeId,
+            PinLabel,
+            EdgeId,
+            ApplicationMessage,
+            Theme,
+            iced::Renderer,
+        > = NodeGraph::default();
+
+        ng = ng
+            .on_connect(
+                |from: PinRef<NodeId, PinLabel>, to: PinRef<NodeId, PinLabel>| {
+                    ApplicationMessage::EdgeConnected { from, to }
+                },
+            )
+            .on_disconnect(
+                |from: PinRef<NodeId, PinLabel>, to: PinRef<NodeId, PinLabel>| {
+                    ApplicationMessage::EdgeDisconnected { from, to }
+                },
+            )
+            .on_move(|node_id, new_position| ApplicationMessage::NodeMoved {
+                node_id,
                 new_position,
             })
             .on_select(ApplicationMessage::SelectionChanged)
             .on_clone(ApplicationMessage::CloneNodes)
             .on_delete(ApplicationMessage::DeleteNodes)
-            .on_group_move(|indices, delta| ApplicationMessage::GroupMoved { indices, delta })
+            .on_group_move(|node_ids, delta| ApplicationMessage::GroupMoved { node_ids, delta })
             .on_camera_change(|position, zoom| ApplicationMessage::CameraChanged { position, zoom })
-            .selection(&self.selected_nodes)
             .pin_defaults(pin_defaults);
 
-        // Add all nodes from state
-        for (idx, (position, node_type)) in self.nodes.iter().enumerate() {
+        // Add all nodes from state (in order)
+        for node_id in &self.node_order {
+            let Some((position, node_type)) = self.nodes.get(node_id) else {
+                continue;
+            };
+            let node_id_clone = node_id.clone();
             let element: iced::Element<'_, ApplicationMessage> = match node_type {
                 NodeType::Workflow(name) => node(name.as_str(), theme),
                 NodeType::Input(input) => match input {
                     InputNodeType::FloatSlider { config, value } => {
-                        let idx = idx;
-                        let expanded = self.expanded_nodes.contains(&idx);
+                        let id = node_id_clone.clone();
+                        let expanded = self.expanded_nodes.contains(node_id);
                         float_slider_node(
                             theme,
                             *value,
                             config,
                             expanded,
-                            move |v| ApplicationMessage::SliderChanged {
-                                node_index: idx,
-                                value: v,
+                            {
+                                let id = id.clone();
+                                move |v| ApplicationMessage::SliderChanged {
+                                    node_id: id.clone(),
+                                    value: v,
+                                }
                             },
-                            move |cfg| ApplicationMessage::UpdateFloatSliderConfig {
-                                node_index: idx,
-                                config: cfg,
+                            {
+                                let id = id.clone();
+                                move |cfg| ApplicationMessage::UpdateFloatSliderConfig {
+                                    node_id: id.clone(),
+                                    config: cfg,
+                                }
                             },
-                            ApplicationMessage::ToggleNodeExpanded { node_index: idx },
+                            ApplicationMessage::ToggleNodeExpanded { node_id: id },
                         )
                     }
                     InputNodeType::IntSlider { config, value } => {
-                        let idx = idx;
-                        let expanded = self.expanded_nodes.contains(&idx);
+                        let id = node_id_clone.clone();
+                        let expanded = self.expanded_nodes.contains(node_id);
                         int_slider_node(
                             theme,
                             *value,
                             config,
                             expanded,
-                            move |v| ApplicationMessage::IntSliderChanged {
-                                node_index: idx,
-                                value: v,
+                            {
+                                let id = id.clone();
+                                move |v| ApplicationMessage::IntSliderChanged {
+                                    node_id: id.clone(),
+                                    value: v,
+                                }
                             },
-                            move |cfg| ApplicationMessage::UpdateIntSliderConfig {
-                                node_index: idx,
-                                config: cfg,
+                            {
+                                let id = id.clone();
+                                move |cfg| ApplicationMessage::UpdateIntSliderConfig {
+                                    node_id: id.clone(),
+                                    config: cfg,
+                                }
                             },
-                            ApplicationMessage::ToggleNodeExpanded { node_index: idx },
+                            ApplicationMessage::ToggleNodeExpanded { node_id: id },
                         )
                     }
                     InputNodeType::BoolToggle { config, value } => {
-                        let idx = idx;
+                        let id = node_id_clone.clone();
                         bool_toggle_node(theme, *value, config, move |v| {
                             ApplicationMessage::BoolChanged {
-                                node_index: idx,
+                                node_id: id.clone(),
                                 value: v,
                             }
                         })
                     }
                     InputNodeType::EdgeCurveSelector { value } => {
-                        let idx = idx;
+                        let id = node_id_clone.clone();
                         edge_curve_selector_node(theme, *value, move |v| {
                             ApplicationMessage::EdgeCurveChanged {
-                                node_index: idx,
+                                node_id: id.clone(),
                                 value: v,
                             }
                         })
                     }
                     InputNodeType::PinShapeSelector { value } => {
-                        let idx = idx;
+                        let id = node_id_clone.clone();
                         pin_shape_selector_node(theme, *value, move |v| {
                             ApplicationMessage::PinShapeChanged {
-                                node_index: idx,
+                                node_id: id.clone(),
                                 value: v,
                             }
                         })
                     }
                     InputNodeType::PatternTypeSelector { value } => {
-                        let idx = idx;
+                        let id = node_id_clone.clone();
                         pattern_type_selector_node(theme, *value, move |v| {
                             ApplicationMessage::PatternTypeChanged {
-                                node_index: idx,
+                                node_id: id.clone(),
                                 value: v,
                             }
                         })
                     }
                     InputNodeType::ColorPicker { color } => {
-                        let idx = idx;
+                        let id = node_id_clone.clone();
                         color_picker_node(theme, *color, move |c| {
                             ApplicationMessage::ColorChanged {
-                                node_index: idx,
+                                node_id: id.clone(),
                                 color: c,
                             }
                         })
                     }
                     InputNodeType::ColorPreset { color } => {
-                        let idx = idx;
+                        let id = node_id_clone.clone();
                         color_preset_node(theme, *color, move |c| {
                             ApplicationMessage::ColorChanged {
-                                node_index: idx,
+                                node_id: id.clone(),
                                 color: c,
                             }
                         })
@@ -1669,16 +1943,20 @@ impl Application {
             // Merge per-node config with defaults (per-node takes priority)
             if matches!(node_type, NodeType::Workflow(_)) {
                 let config = self.computed_style.to_node_config().merge(&node_defaults);
-                ng.push_node_styled(*position, element, config);
+                ng.push_node_styled(node_id.clone(), *position, element, config);
             } else {
-                ng.push_node_styled(*position, element, node_defaults.clone());
+                ng.push_node_styled(node_id.clone(), *position, element, node_defaults.clone());
             }
         }
 
         // Add stored edges with computed config
         let edge_config = self.computed_style.to_edge_config();
-        for (from, to) in &self.edges {
-            ng.push_edge_styled(*from, *to, edge_config.clone());
+        for edge_id in &self.edge_order {
+            if let Some(edge) = self.edges.get(edge_id) {
+                let from = PinRef::new(edge.from_node.clone(), edge.from_pin);
+                let to = PinRef::new(edge.to_node.clone(), edge.to_pin);
+                ng.push_edge_styled(from, to, edge_config.clone());
+            }
         }
 
         let graph_view: iced::Element<'_, ApplicationMessage> = ng.into();
@@ -1937,6 +2215,9 @@ impl Application {
             event::listen_with(|event, _, _| match event {
                 Event::Window(window::Event::Resized(size)) => {
                     Some(ApplicationMessage::WindowResized(size))
+                }
+                Event::Window(window::Event::Moved(position)) => {
+                    Some(ApplicationMessage::WindowMoved(position))
                 }
                 _ => None,
             }),

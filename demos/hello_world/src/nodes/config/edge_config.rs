@@ -12,7 +12,7 @@ use iced_nodegraph::{
     NodeContentStyle, StrokeConfig, StrokePattern, pin,
 };
 
-use crate::nodes::{colors, node_title_bar};
+use crate::nodes::{colors, node_title_bar, pins};
 
 /// Pattern type for simple selection (maps to StrokePattern)
 /// IDs: 0=Solid, 1=Dashed, 2=Arrowed, 3=Angled, 4=Dotted, 5=DashDotted
@@ -239,21 +239,23 @@ where
     let style = NodeContentStyle::process(theme);
     let result = inputs.build();
 
-    // Config row: input left, output right
+    // Config row: input left, typed output right
     let config_row = row![
         pin!(
             Left,
-            text("config").size(10),
+            pins::config::CONFIG,
+            text("in").size(10),
             Input,
-            "edge_config",
+            pins::EdgeConfigData,
             colors::PIN_CONFIG
         ),
         container(text("")).width(Length::Fill),
         pin!(
             Right,
-            text("config").size(10),
+            pins::config::EDGE_OUT,
+            text("out").size(10),
             Output,
-            "edge_config",
+            pins::EdgeConfigData,
             colors::PIN_CONFIG
         ),
     ]
@@ -299,9 +301,10 @@ where
     let start_row = row![
         pin!(
             Left,
+            pins::config::START,
             text("start").size(10),
             Input,
-            "color",
+            pins::ColorData,
             colors::PIN_COLOR
         ),
         container(start_display)
@@ -331,9 +334,10 @@ where
     let end_row = row![
         pin!(
             Left,
+            pins::config::END,
             text("end").size(10),
             Input,
-            "color",
+            pins::ColorData,
             colors::PIN_COLOR
         ),
         container(end_display)
@@ -346,9 +350,10 @@ where
     let thick_row = row![
         pin!(
             Left,
+            pins::config::THICK,
             text("thick").size(10),
             Input,
-            "float",
+            pins::Float,
             colors::PIN_NUMBER
         ),
         container(text(thickness.map_or("--".to_string(), |v| format!("{:.1}", v))).size(9))
@@ -369,9 +374,10 @@ where
     let curve_row = row![
         pin!(
             Left,
+            pins::config::CURVE,
             text("curve").size(10),
             Input,
-            "edge_curve",
+            pins::EdgeCurveData,
             colors::PIN_ANY
         ),
         container(text(curve_label).size(9))
@@ -392,9 +398,10 @@ where
     let pattern_row = row![
         pin!(
             Left,
+            pins::config::PATTERN,
             text("pattern").size(10),
             Input,
-            "pattern_type",
+            pins::PatternTypeData,
             colors::PIN_ANY
         ),
         container(text(pattern_label).size(9))
@@ -407,9 +414,10 @@ where
     let dash_row = row![
         pin!(
             Left,
+            pins::config::DASH,
             text("dash").size(10),
             Input,
-            "float",
+            pins::Float,
             colors::PIN_NUMBER
         ),
         container(
@@ -429,9 +437,10 @@ where
     let gap_row = row![
         pin!(
             Left,
+            pins::config::GAP,
             text("gap").size(10),
             Input,
-            "float",
+            pins::Float,
             colors::PIN_NUMBER
         ),
         container(
@@ -454,9 +463,10 @@ where
     let angle_row = row![
         pin!(
             Left,
+            pins::config::ANGLE,
             text("angle").size(10),
             Input,
-            "float",
+            pins::Float,
             colors::PIN_NUMBER
         ),
         container(text(angle_display).size(9))
@@ -474,9 +484,10 @@ where
     let animated_row = row![
         pin!(
             Left,
+            pins::config::ANIMATED,
             text("animated").size(10),
             Input,
-            "bool",
+            pins::Bool,
             colors::PIN_BOOL
         ),
         container(text(animated_label).size(9))
@@ -489,9 +500,10 @@ where
     let speed_row = row![
         pin!(
             Left,
+            pins::config::SPEED,
             text("speed").size(10),
             Input,
-            "float",
+            pins::Float,
             colors::PIN_NUMBER
         ),
         container(
@@ -516,9 +528,10 @@ where
     let border_enabled_row = row![
         pin!(
             Left,
+            pins::config::BORDER,
             text("border").size(10),
             Input,
-            "bool",
+            pins::Bool,
             colors::PIN_BOOL
         ),
         container(text(border_label).size(9))
@@ -531,9 +544,10 @@ where
     let border_width_row = row![
         pin!(
             Left,
+            pins::config::BORDER_WIDTH,
             text("b.width").size(10),
             Input,
-            "float",
+            pins::Float,
             colors::PIN_NUMBER
         ),
         container(
@@ -553,9 +567,10 @@ where
     let border_gap_row = row![
         pin!(
             Left,
+            pins::config::BORDER_GAP,
             text("b.gap").size(10),
             Input,
-            "float",
+            pins::Float,
             colors::PIN_NUMBER
         ),
         container(
@@ -592,9 +607,10 @@ where
     let border_color_row = row![
         pin!(
             Left,
+            pins::config::BORDER_COLOR,
             text("b.color").size(10),
             Input,
-            "color",
+            pins::ColorData,
             colors::PIN_COLOR
         ),
         container(border_color_display)
@@ -612,9 +628,10 @@ where
     let shadow_enabled_row = row![
         pin!(
             Left,
+            pins::config::SHADOW,
             text("shadow").size(10),
             Input,
-            "bool",
+            pins::Bool,
             colors::PIN_BOOL
         ),
         container(text(shadow_label).size(9))
@@ -627,9 +644,10 @@ where
     let shadow_blur_row = row![
         pin!(
             Left,
+            pins::config::SHADOW_BLUR,
             text("s.blur").size(10),
             Input,
-            "float",
+            pins::Float,
             colors::PIN_NUMBER
         ),
         container(
@@ -655,9 +673,10 @@ where
     let shadow_offset_row = row![
         pin!(
             Left,
+            pins::config::SHADOW_OFFSET,
             text("s.offs").size(10),
             Input,
-            "float",
+            pins::Float,
             colors::PIN_NUMBER
         ),
         container(text(offset_display).size(9))
@@ -687,9 +706,10 @@ where
     let shadow_color_row = row![
         pin!(
             Left,
+            pins::config::SHADOW_COLOR,
             text("s.color").size(10),
             Input,
-            "color",
+            pins::ColorData,
             colors::PIN_COLOR
         ),
         container(shadow_color_display)

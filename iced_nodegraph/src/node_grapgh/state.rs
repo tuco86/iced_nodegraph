@@ -33,6 +33,10 @@ pub(super) struct NodeGraphState {
     pub(super) left_mouse_down: bool,
     /// Currently hovered node index (for hover effects)
     pub(super) hovered_node: Option<usize>,
+    /// Valid drop targets computed at edge drag start.
+    /// Contains (node_index, pin_index) pairs that are valid connection targets.
+    /// Only populated during Edge/EdgeOver dragging states.
+    pub(super) valid_drop_targets: HashSet<(usize, usize)>,
 }
 
 impl Default for NodeGraphState {
@@ -46,6 +50,7 @@ impl Default for NodeGraphState {
             modifiers: keyboard::Modifiers::default(),
             left_mouse_down: false,
             hovered_node: None,
+            valid_drop_targets: HashSet::new(),
         }
     }
 }
@@ -209,5 +214,6 @@ mod tests {
         assert!(state.last_update.is_none());
         assert!(state.selected_nodes.is_empty());
         assert!(!state.left_mouse_down);
+        assert!(state.valid_drop_targets.is_empty());
     }
 }

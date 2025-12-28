@@ -41,7 +41,7 @@ pub trait NodeId: Clone + Eq + Hash + Debug {}
 ///
 /// impl PinId for MathNodePins {}
 /// ```
-pub trait PinId: Clone + Eq + Hash + Debug {}
+pub trait PinId: Clone + Eq + Hash + Debug + Send + Sync {}
 
 /// Trait for user-defined edge identifiers.
 ///
@@ -66,6 +66,10 @@ impl EdgeId for u64 {}
 impl NodeId for String {}
 impl PinId for String {}
 impl EdgeId for String {}
+
+impl NodeId for &'static str {}
+impl PinId for &'static str {}
+impl EdgeId for &'static str {}
 
 // UUID support would require the uuid crate as a dependency
 // Users can implement the traits for uuid::Uuid in their own code
@@ -288,6 +292,75 @@ mod tests {
         assert_eq!(
             maps.pin_id(1),
             Some(&(TestNodeId::NodeA, TestPinId::Output))
+        );
+    }
+
+    /// Helper to compute hash of any hashable value.
+    fn compute_hash<T: std::hash::Hash>(value: &T) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::Hasher;
+        let mut hasher = DefaultHasher::new();
+        value.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    #[test]
+    fn test_string_and_str_hash_consistency() {
+        // CRITICAL: This test verifies that String and &str with same content
+        // produce the same hash. This is essential for the hash-based pin matching
+        // to work when pins use &'static str literals but edges use String.
+
+        let static_str: &'static str = "input_pin";
+        let owned_string: String = "input_pin".to_string();
+
+        let hash_str = compute_hash(&static_str);
+        let hash_string = compute_hash(&owned_string);
+
+        assert_eq!(
+            hash_str, hash_string,
+            "String and &str with same content must produce same hash for pin matching to work"
+        );
+    }
+
+    #[test]
+    fn test_hash_consistency_various_pin_labels() {
+        // Test various pin label patterns that might be used
+        let test_cases = [
+            "value",
+            "input_a",
+            "output",
+            "result",
+            "float_value",
+            "NODE_CONFIG",
+            "edge-config",
+            "",  // empty string
+            "a", // single char
+            "very_long_pin_label_name_that_exceeds_normal_length",
+        ];
+
+        for label in test_cases {
+            let static_ref: &str = label;
+            let owned: String = label.to_string();
+
+            assert_eq!(
+                compute_hash(&static_ref),
+                compute_hash(&owned),
+                "Hash mismatch for label: '{}'",
+                label
+            );
+        }
+    }
+
+    #[test]
+    fn test_different_content_different_hash() {
+        // Verify that different content produces different hashes
+        let a = "input";
+        let b = "output";
+
+        assert_ne!(
+            compute_hash(&a),
+            compute_hash(&b),
+            "Different pin labels should have different hashes"
         );
     }
 }

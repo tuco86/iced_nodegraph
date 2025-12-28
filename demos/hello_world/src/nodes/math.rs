@@ -10,7 +10,7 @@ use iced::{
 };
 use iced_nodegraph::{NodeContentStyle, pin};
 
-use super::{MathNodeState, colors, node_title_bar};
+use super::{MathNodeState, colors, node_title_bar, pins};
 
 /// Creates a math operation node with horizontal pin pairing
 pub fn math_node<'a, Message>(
@@ -59,17 +59,38 @@ where
         .color(result_color);
 
     let row_a = row![
-        pin!(Left, "A", Input, "float", colors::PIN_NUMBER),
+        pin!(
+            Left,
+            "input_a",
+            text("A"),
+            Input,
+            pins::Float,
+            colors::PIN_NUMBER
+        ),
         text(a_display).size(10).color(colors::TEXT_MUTED),
         Space::new().width(Length::Fill),
-        pin!(Right, result_text, Output, "float", colors::PIN_NUMBER),
+        pin!(
+            Right,
+            "result",
+            result_text,
+            Output,
+            pins::Float,
+            colors::PIN_NUMBER
+        ),
     ]
     .spacing(6)
     .align_y(iced::Alignment::Center);
 
     // Row 2: Input B only
     let row_b = row![
-        pin!(Left, "B", Input, "float", colors::PIN_NUMBER),
+        pin!(
+            Left,
+            "input_b",
+            text("B"),
+            Input,
+            pins::Float,
+            colors::PIN_NUMBER
+        ),
         text(b_display).size(10).color(colors::TEXT_MUTED),
     ]
     .spacing(6)

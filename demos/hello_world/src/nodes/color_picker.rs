@@ -9,7 +9,7 @@ use iced::{
 };
 use iced_nodegraph::{NodeContentStyle, pin};
 
-use super::{colors, node_title_bar};
+use super::{colors, node_title_bar, pins};
 
 /// Predefined color presets
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -126,9 +126,10 @@ where
 
     let output_pin = container(pin!(
         Right,
+        "color",
         text("color").size(10),
         Output,
-        "color",
+        pins::ColorData,
         colors::PIN_COLOR
     ))
     .width(Length::Fill)
@@ -227,9 +228,10 @@ where
 
     let output_pin = container(pin!(
         Right,
+        "color",
         text("color").size(10),
         Output,
-        "color",
+        pins::ColorData,
         colors::PIN_COLOR
     ))
     .width(Length::Fill)

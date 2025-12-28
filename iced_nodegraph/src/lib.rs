@@ -18,27 +18,27 @@
 //! ## Quick Start
 //!
 //! ```rust,no_run
-//! use iced_nodegraph::{NodeGraph, PinReference, node_graph};
+//! use iced_nodegraph::{NodeGraph, PinRef, node_graph};
 //! use iced::{Element, Theme, Point};
 //! use iced::widget::text;
 //! use iced_wgpu::Renderer;
 //!
 //! #[derive(Debug, Clone)]
 //! enum Message {
-//!     EdgeConnected { from: PinReference, to: PinReference },
+//!     EdgeConnected { from: PinRef<usize, usize>, to: PinRef<usize, usize> },
 //!     NodeMoved { node_id: usize, position: Point },
 //! }
 //!
-//! fn view(edges: &[(PinReference, PinReference)]) -> Element<'_, Message, Theme, Renderer> {
+//! fn view(edges: &[(PinRef<usize, usize>, PinRef<usize, usize>)]) -> Element<'_, Message, Theme, Renderer> {
 //!     let mut ng = node_graph()
 //!         .on_connect(|from, to| Message::EdgeConnected { from, to })
 //!         .on_move(|node_id, position| Message::NodeMoved { node_id, position });
 //!
-//!     // Add nodes
-//!     ng.push_node(Point::new(100.0, 100.0), text("Node A"));
-//!     ng.push_node(Point::new(300.0, 100.0), text("Node B"));
+//!     // Add nodes with IDs
+//!     ng.push_node(0, Point::new(100.0, 100.0), text("Node A"));
+//!     ng.push_node(1, Point::new(300.0, 100.0), text("Node B"));
 //!
-//!     // Add edges using type-safe PinReference
+//!     // Add edges using type-safe PinRef
 //!     for (from, to) in edges {
 //!         ng.push_edge(*from, *to);
 //!     }
@@ -195,8 +195,8 @@ pub use helpers::{
 };
 pub use ids::{EdgeId, IdMap, IdMaps, NodeId, PinId};
 pub use node_grapgh::{
-    DragInfo, NodeGraph, NodeGraphEvent, NodeGraphMessage, NodeGraphMessageUsize, PinRef,
-    PinRefUsize, RemoteDrag, RemoteUserState, camera::Camera2D, widget::node_graph,
+    DragInfo, NodeGraph, NodeGraphEvent, NodeGraphMessage, PinRef, RemoteDrag, RemoteUserState,
+    camera::Camera2D, widget::node_graph,
 };
 pub use node_pin::{NodePin, PinDirection, PinReference, PinSide, node_pin};
 pub use style::{

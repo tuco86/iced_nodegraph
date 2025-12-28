@@ -9,7 +9,7 @@ use iced::{
 };
 use iced_nodegraph::{NodeContentStyle, pin};
 
-use crate::nodes::{colors, node_title_bar};
+use crate::nodes::{colors, node_title_bar, pins};
 
 /// Creates an ApplyToGraph node that receives configs and applies them globally
 pub fn apply_to_graph_node<'a, Message>(
@@ -28,9 +28,10 @@ where
     let node_config_row = row![
         pin!(
             Left,
+            pins::config::NODE_CONFIG,
             text("nodes").size(10),
             Input,
-            "node_config",
+            pins::NodeConfigData,
             colors::PIN_CONFIG
         ),
         container(text(node_status).size(9))
@@ -44,9 +45,10 @@ where
     let edge_config_row = row![
         pin!(
             Left,
+            pins::config::EDGE_CONFIG,
             text("edges").size(10),
             Input,
-            "edge_config",
+            pins::EdgeConfigData,
             colors::PIN_CONFIG
         ),
         container(text(edge_status).size(9))
@@ -60,9 +62,10 @@ where
     let pin_config_row = row![
         pin!(
             Left,
+            pins::config::PIN_CONFIG,
             text("pins").size(10),
             Input,
-            "pin_config",
+            pins::PinConfigData,
             colors::PIN_CONFIG
         ),
         container(text(pin_status).size(9))
@@ -97,9 +100,10 @@ where
     let config_row = row![
         pin!(
             Left,
+            pins::config::NODE_CONFIG,
             text("config").size(10),
             Input,
-            "node_config",
+            pins::NodeConfigData,
             colors::PIN_CONFIG
         ),
         container(text(config_status).size(9))
@@ -113,9 +117,10 @@ where
     let target_row = row![
         pin!(
             Left,
+            pins::config::TARGET,
             text("target").size(10),
             Input,
-            "int",
+            pins::Int,
             colors::PIN_NUMBER
         ),
         container(text(id_display).size(9))

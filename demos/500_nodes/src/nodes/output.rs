@@ -4,7 +4,7 @@ use iced::{
 };
 use iced_nodegraph::pin;
 
-use super::colors::{PIN_EMISSION, PIN_GENERIC_OUT, PIN_NORMAL, PIN_VEC4, SPACING_PIN};
+use super::colors::{self, PIN_EMISSION, PIN_GENERIC_OUT, PIN_NORMAL, PIN_VEC4, SPACING_PIN};
 
 fn title_bar<'a, Message>(
     title: &'a str,
@@ -28,7 +28,8 @@ pub fn base_color_node<'a, Message>(theme: &'a Theme) -> iced::Element<'a, Messa
 where
     Message: Clone + 'a,
 {
-    let pins = column![pin!(Left, "col", Input, "vec4", PIN_VEC4),].spacing(SPACING_PIN);
+    let pins =
+        column![pin!(Left, "col", text(""), Input, colors::Vec4, PIN_VEC4),].spacing(SPACING_PIN);
 
     column![
         title_bar("Base Color", theme),
@@ -42,7 +43,15 @@ pub fn roughness_node<'a, Message>(theme: &'a Theme) -> iced::Element<'a, Messag
 where
     Message: Clone + 'a,
 {
-    let pins = column![pin!(Left, "val", Input, "float", PIN_GENERIC_OUT),].spacing(SPACING_PIN);
+    let pins = column![pin!(
+        Left,
+        "val",
+        text(""),
+        Input,
+        colors::Float,
+        PIN_GENERIC_OUT
+    ),]
+    .spacing(SPACING_PIN);
 
     column![
         title_bar("Roughness", theme),
@@ -56,7 +65,15 @@ pub fn metallic_node<'a, Message>(theme: &'a Theme) -> iced::Element<'a, Message
 where
     Message: Clone + 'a,
 {
-    let pins = column![pin!(Left, "val", Input, "float", PIN_GENERIC_OUT),].spacing(SPACING_PIN);
+    let pins = column![pin!(
+        Left,
+        "val",
+        text(""),
+        Input,
+        colors::Float,
+        PIN_GENERIC_OUT
+    ),]
+    .spacing(SPACING_PIN);
 
     column![
         title_bar("Metallic", theme),
@@ -70,7 +87,15 @@ pub fn emission_node<'a, Message>(theme: &'a Theme) -> iced::Element<'a, Message
 where
     Message: Clone + 'a,
 {
-    let pins = column![pin!(Left, "col", Input, "vec4", PIN_EMISSION),].spacing(SPACING_PIN);
+    let pins = column![pin!(
+        Left,
+        "col",
+        text(""),
+        Input,
+        colors::Vec4,
+        PIN_EMISSION
+    ),]
+    .spacing(SPACING_PIN);
 
     column![
         title_bar("Emission", theme),
@@ -84,7 +109,8 @@ pub fn normal_output_node<'a, Message>(theme: &'a Theme) -> iced::Element<'a, Me
 where
     Message: Clone + 'a,
 {
-    let pins = column![pin!(Left, "N", Input, "vec3", PIN_NORMAL),].spacing(SPACING_PIN);
+    let pins =
+        column![pin!(Left, "N", text(""), Input, colors::Vec3, PIN_NORMAL),].spacing(SPACING_PIN);
 
     column![title_bar("Normal", theme), container(pins).padding([4, 0])]
         .width(140.0)

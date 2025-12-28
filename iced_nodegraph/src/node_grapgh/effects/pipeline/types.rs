@@ -203,7 +203,11 @@ mod tests {
 
     #[test]
     fn test_array_serialization_correct_size() {
-        let nodes = vec![create_test_node(0), create_test_node(1), create_test_node(2)];
+        let nodes = vec![
+            create_test_node(0),
+            create_test_node(1),
+            create_test_node(2),
+        ];
         let bytes = serialize_items(&nodes);
 
         // Each node is 112 bytes. For 3 nodes we expect 336 bytes.
@@ -219,7 +223,11 @@ mod tests {
 
     #[test]
     fn test_node_position_at_correct_offsets() {
-        let nodes = vec![create_test_node(0), create_test_node(1), create_test_node(2)];
+        let nodes = vec![
+            create_test_node(0),
+            create_test_node(1),
+            create_test_node(2),
+        ];
         let bytes = serialize_items(&nodes);
         let stride = Node::SHADER_SIZE.get() as usize; // 112 bytes
 
@@ -238,7 +246,11 @@ mod tests {
 
     #[test]
     fn test_node_flags_at_correct_offsets() {
-        let nodes = vec![create_test_node(0), create_test_node(1), create_test_node(2)];
+        let nodes = vec![
+            create_test_node(0),
+            create_test_node(1),
+            create_test_node(2),
+        ];
         let bytes = serialize_items(&nodes);
         let stride = Node::SHADER_SIZE.get() as usize; // 112 bytes
 
@@ -277,7 +289,12 @@ mod tests {
 
     #[test]
     fn test_pin_array_serialization() {
-        let pins = vec![create_test_pin(0), create_test_pin(1), create_test_pin(2), create_test_pin(3)];
+        let pins = vec![
+            create_test_pin(0),
+            create_test_pin(1),
+            create_test_pin(2),
+            create_test_pin(3),
+        ];
         let bytes = serialize_items(&pins);
         let stride = Pin::SHADER_SIZE.get() as usize; // 64 bytes
 
@@ -288,11 +305,7 @@ mod tests {
             let offset = i * stride;
             let pos_x_bytes = &bytes[offset..offset + 4];
             let pos_x = f32::from_le_bytes(pos_x_bytes.try_into().unwrap());
-            assert_eq!(
-                pos_x, pin.position.x,
-                "Pin {} position.x mismatch",
-                i
-            );
+            assert_eq!(pos_x, pin.position.x, "Pin {} position.x mismatch", i);
         }
     }
 
@@ -339,11 +352,7 @@ mod tests {
             let offset = i * stride;
             let start_x_bytes = &bytes[offset..offset + 4];
             let start_x = f32::from_le_bytes(start_x_bytes.try_into().unwrap());
-            assert_eq!(
-                start_x, edge.start.x,
-                "Edge {} start.x mismatch",
-                i
-            );
+            assert_eq!(start_x, edge.start.x, "Edge {} start.x mismatch", i);
         }
     }
 }

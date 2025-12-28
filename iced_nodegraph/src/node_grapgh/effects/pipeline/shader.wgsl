@@ -192,6 +192,43 @@ fn sd_box(p: vec2<f32>, half_size: f32) -> f32 {
     return length(max(d, vec2(0.0))) + min(max(d.x, d.y), 0.0);
 }
 
+// SDF for axis-aligned rectangle with different half-widths
+fn sd_box_2d(p: vec2<f32>, half_size: vec2<f32>) -> f32 {
+    let d = abs(p) - half_size;
+    return length(max(d, vec2(0.0))) + min(max(d.x, d.y), 0.0);
+}
+
+// SDF for a dash segment: finds nearest dash in periodic pattern and returns box SDF
+// s = position along curve, perp_dist = perpendicular distance from centerline
+// dash = dash length, gap = gap length, thickness = half-height of dash
+fn sd_periodic_dash(s: f32, perp_dist: f32, dash: f32, gap: f32, thickness: f32) -> f32 {
+    let period = dash + gap;
+    let half_dash = dash * 0.5;
+
+    // Find which period we're in and position within period
+    let period_index = floor(s / period);
+    let pos_in_period = s - period_index * period;
+
+    // Dash center is at half_dash within each period
+    // Distance to this dash center
+    var dist_to_center = pos_in_period - half_dash;
+
+    // Also check adjacent periods (handles boundary cases)
+    let dist_to_prev = dist_to_center + period;  // Distance to previous dash
+    let dist_to_next = dist_to_center - period;  // Distance to next dash
+
+    // Pick the closest dash center
+    if (abs(dist_to_prev) < abs(dist_to_center)) {
+        dist_to_center = dist_to_prev;
+    }
+    if (abs(dist_to_next) < abs(dist_to_center)) {
+        dist_to_center = dist_to_next;
+    }
+
+    // 2D box SDF: x = along curve, y = perpendicular
+    return sd_box_2d(vec2(dist_to_center, perp_dist), vec2(half_dash, thickness));
+}
+
 // SDF for diamond (45-degree rotated square)
 fn sd_diamond(p: vec2<f32>, half_size: f32) -> f32 {
     // Rotate by 45 degrees
@@ -284,6 +321,17 @@ fn bezierDerivative(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>, 
     return 3.0 * mt2 * (p1 - p0) + 6.0 * mt * t * (p2 - p1) + 3.0 * t2 * (p3 - p2);
 }
 
+// Bezier point at parameter t (cubic Bezier evaluation)
+fn bezierPoint(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>, t: f32) -> vec2<f32> {
+    let mt = 1.0 - t;
+    let mt2 = mt * mt;
+    let mt3 = mt2 * mt;
+    let t2 = t * t;
+    let t3 = t2 * t;
+    // B(t) = (1-t)³P0 + 3(1-t)²tP1 + 3(1-t)t²P2 + t³P3
+    return mt3 * p0 + 3.0 * mt2 * t * p1 + 3.0 * mt * t2 * p2 + t3 * p3;
+}
+
 // Compute arc length from 0 to t using 5-point Gauss-Legendre quadrature
 // This gives accurate arc-length for proper pattern spacing
 fn bezierArcLengthTo(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>, t_end: f32) -> f32 {
@@ -297,7 +345,7 @@ fn bezierArcLengthTo(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>,
     // Map integration from [0, t_end] to [-1, 1]
     let half_t = t_end * 0.5;
 
-    var length = 0.0;
+    var len = 0.0;
 
     // Sample points (symmetric around 0)
     let t0 = half_t * (1.0 - a0);
@@ -306,13 +354,13 @@ fn bezierArcLengthTo(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>,
     let t3 = half_t * (1.0 + a1);
     let t4 = half_t * (1.0 + a0);
 
-    length += w0 * length(bezierDerivative(p0, p1, p2, p3, t0));
-    length += w1 * length(bezierDerivative(p0, p1, p2, p3, t1));
-    length += w2 * length(bezierDerivative(p0, p1, p2, p3, t2));
-    length += w1 * length(bezierDerivative(p0, p1, p2, p3, t3));
-    length += w0 * length(bezierDerivative(p0, p1, p2, p3, t4));
+    len += w0 * length(bezierDerivative(p0, p1, p2, p3, t0));
+    len += w1 * length(bezierDerivative(p0, p1, p2, p3, t1));
+    len += w2 * length(bezierDerivative(p0, p1, p2, p3, t2));
+    len += w1 * length(bezierDerivative(p0, p1, p2, p3, t3));
+    len += w0 * length(bezierDerivative(p0, p1, p2, p3, t4));
 
-    return length * half_t;
+    return len * half_t;
 }
 
 // Total bezier curve length (arc length from 0 to 1)
@@ -760,6 +808,42 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
     let dist = dist_and_t.x;
     let t = dist_and_t.y;
 
+    // Compute signed perpendicular distance (positive on one side, negative on other)
+    // Used for angled dash caps to create parallelogram shapes
+    var signed_dist: f32 = dist;
+    switch (edge.edge_type) {
+        case 1u: {
+            // Straight line: tangent is constant
+            let tangent = normalize(p3 - p0);
+            let curve_point = mix(p0, p3, t);
+            let to_point = in.world_uv - curve_point;
+            // 2D cross product gives signed perpendicular distance
+            signed_dist = tangent.x * to_point.y - tangent.y * to_point.x;
+        }
+        case 2u: {
+            // SmoothStep path
+            let dir_from = normalize(p1 - p0);
+            let curve_point = mix(p0, p3, t);
+            let to_point = in.world_uv - curve_point;
+            signed_dist = dir_from.x * to_point.y - dir_from.y * to_point.x;
+        }
+        case 3u: {
+            // Step path
+            let dir_from = normalize(p1 - p0);
+            let curve_point = mix(p0, p3, t);
+            let to_point = in.world_uv - curve_point;
+            signed_dist = dir_from.x * to_point.y - dir_from.y * to_point.x;
+        }
+        default: {
+            // Bezier: compute tangent at t
+            let tangent = normalize(bezierDerivative(p0, p1, p2, p3, t));
+            let curve_point = bezierPoint(p0, p1, p2, p3, t);
+            let to_point = in.world_uv - curve_point;
+            // 2D cross product gives signed perpendicular distance
+            signed_dist = tangent.x * to_point.y - tangent.y * to_point.x;
+        }
+    }
+
     // Gradient from start_color to end_color based on position along edge
     var edge_color = mix(edge.start_color.rgb, edge.end_color.rgb, t);
 
@@ -790,65 +874,61 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
     // pattern_type: 0=solid, 1=dashed, 2=arrowed, 3=dotted, 4=dash-dotted
     if (edge.pattern_type == 1u) {
         // === DASHED PATTERN ===
+        // Pure SDF approach: compute actual distance to nearest dash shape
         let dash = edge.dash_length;
         let gap = edge.gap_length;
         let period = dash + gap;
+        let half_dash = dash * 0.5;
 
-        // Position within pattern period
-        let pos_in_period = ((s % period) + period) % period;  // Handle negative s
+        // Find nearest dash center (check current and adjacent periods)
+        let period_index = floor(s / period);
+        let pos_in_period = s - period_index * period;
+        var dist_along = pos_in_period - half_dash;
 
-        // Distance to nearest dash (SDF approach for dash caps)
-        // Dash occupies [0, dash] within each period
-        let dash_center = dash * 0.5;
-        let dist_to_dash_center = abs(pos_in_period - dash_center);
+        // Check adjacent dashes and pick closest
+        if (abs(dist_along + period) < abs(dist_along)) {
+            dist_along = dist_along + period;
+        }
+        if (abs(dist_along - period) < abs(dist_along)) {
+            dist_along = dist_along - period;
+        }
 
-        // Apply dash cap style
+        // Apply dash cap style - all using true SDF
         var dash_sdf: f32;
         switch (edge.dash_cap) {
             case 1u: {
-                // Round caps: semicircle at dash ends
-                let half_dash = dash * 0.5;
-                if (dist_to_dash_center <= half_dash) {
-                    // Inside dash body
-                    dash_sdf = dist - edge_thickness;
-                } else {
-                    // In cap region - use circle SDF at dash end
-                    let cap_dist = dist_to_dash_center - half_dash;
-                    let cap_sdf = length(vec2(cap_dist, dist)) - edge_thickness;
-                    dash_sdf = cap_sdf;
-                }
+                // Round caps: stadium/capsule shape
+                // Clamp position to dash body, then compute distance to that point
+                let clamped_along = clamp(dist_along, -half_dash, half_dash);
+                dash_sdf = length(vec2(dist_along - clamped_along, dist)) - edge_thickness;
             }
             case 2u: {
                 // Square caps: extend dash by thickness
-                let effective_half = dash * 0.5 + edge_thickness;
-                if (dist_to_dash_center <= effective_half) {
-                    dash_sdf = dist - edge_thickness;
-                } else {
-                    dash_sdf = 1.0;  // Outside
-                }
+                let effective_half = half_dash + edge_thickness;
+                dash_sdf = sd_box_2d(vec2(dist_along, dist), vec2(effective_half, edge_thickness));
             }
             case 3u: {
                 // Angled caps: parallelogram shape
-                let half_dash = dash * 0.5;
+                // Shift position based on signed perpendicular distance
                 let angle = edge.dash_cap_angle;
                 let tan_angle = tan(angle);
-                // Shift based on distance from centerline
-                let shift = dist * tan_angle;
-                let adjusted_dist = dist_to_dash_center - shift;
-                if (adjusted_dist <= half_dash && adjusted_dist >= -half_dash) {
-                    dash_sdf = dist - edge_thickness;
-                } else {
-                    dash_sdf = 1.0;  // Outside
+                let shifted_along = dist_along - signed_dist * tan_angle;
+
+                // Find nearest dash with shifted coordinates
+                var nearest_shifted = shifted_along;
+                if (abs(nearest_shifted + period) < abs(nearest_shifted)) {
+                    nearest_shifted = nearest_shifted + period;
                 }
+                if (abs(nearest_shifted - period) < abs(nearest_shifted)) {
+                    nearest_shifted = nearest_shifted - period;
+                }
+
+                // Box SDF with shifted position
+                dash_sdf = sd_box_2d(vec2(nearest_shifted, dist), vec2(half_dash, edge_thickness));
             }
             default: {
-                // Butt caps (0): sharp cutoff
-                let half_dash = dash * 0.5;
-                if (dist_to_dash_center <= half_dash) {
-                    dash_sdf = dist - edge_thickness;
-                } else {
-                    dash_sdf = 1.0;  // In gap
-                }
+                // Butt caps (0): simple rectangle
+                dash_sdf = sd_box_2d(vec2(dist_along, dist), vec2(half_dash, edge_thickness));
             }
         }
 
@@ -857,41 +937,32 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
 
     } else if (edge.pattern_type == 2u) {
         // === ARROWED PATTERN ===
-        // Arrow-like slanted segments (like ///) crossing the edge at an angle
+        // Chevron/arrow segments: use abs(dist) so both sides shift same direction
         let segment = edge.dash_length;
         let gap = edge.gap_length;
-        let angle = edge.pattern_angle;  // Angle of arrows (0 = vertical, PI/4 = 45 degrees)
+        let angle = edge.pattern_angle;
         let period = segment + gap;
-
-        // Position within pattern period
-        let pos_in_period = ((s % period) + period) % period;
-
-        // Calculate the SDF for an arrow segment
-        // The segment extends from the centerline at the configured angle
-        let tan_angle = tan(angle);
-        let cos_angle = cos(angle);
-        let sin_angle = sin(angle);
-
-        // Transform to segment-local coordinates
-        // Shift the s position based on perpendicular distance to create the slant
-        let slant_offset = dist * tan_angle;
-        let adjusted_pos = pos_in_period - slant_offset;
-
-        // Wrap adjusted position to handle segments crossing period boundaries
-        let wrapped_pos = ((adjusted_pos % period) + period) % period;
-
-        // Distance to segment center
-        let seg_center = segment * 0.5;
-        let dist_to_seg = abs(wrapped_pos - seg_center);
-
-        // SDF: inside segment if within half segment length
-        var seg_sdf: f32;
         let half_seg = segment * 0.5;
-        if (dist_to_seg <= half_seg) {
-            seg_sdf = dist - edge_thickness;
-        } else {
-            seg_sdf = 1.0;  // In gap
+        let tan_angle = tan(angle);
+
+        // Shift position based on absolute perpendicular distance (creates chevron)
+        let shifted_s = s - abs(dist) * tan_angle;
+
+        // Find nearest segment center
+        let period_index = floor(shifted_s / period);
+        let pos_in_period = shifted_s - period_index * period;
+        var dist_along = pos_in_period - half_seg;
+
+        // Check adjacent segments
+        if (abs(dist_along + period) < abs(dist_along)) {
+            dist_along = dist_along + period;
         }
+        if (abs(dist_along - period) < abs(dist_along)) {
+            dist_along = dist_along - period;
+        }
+
+        // True SDF: 2D box distance
+        let seg_sdf = sd_box_2d(vec2(dist_along, dist), vec2(half_seg, edge_thickness));
 
         // Apply SDF with anti-aliasing
         alpha = 1.0 - smoothstep(-aa, aa, seg_sdf);
@@ -916,37 +987,51 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
 
     } else if (edge.pattern_type == 4u) {
         // === DASH-DOTTED PATTERN ===
-        // Morse code style: dash-gap-dot-gap repeating
+        // Pure SDF: compute distance to nearest dash OR dot, take minimum
         let dash = edge.dash_length;
         let gap = edge.gap_length;
-        let dot_radius = edge_thickness * 0.8;  // Dot slightly smaller than stroke
+        let dot_radius = edge_thickness * 0.8;
         let dot_gap = gap * 0.5;
+        let half_dash = dash * 0.5;
 
-        // Pattern period: dash + gap + dot_diameter + gap
+        // Pattern period: dash + gap + dot_diameter + dot_gap
         let period = dash + gap + dot_radius * 2.0 + dot_gap;
 
-        // Position within pattern period
-        let pos = ((s % period) + period) % period;
+        // Dash center is at half_dash within each period
+        let dash_center_in_period = half_dash;
+        // Dot center is at dash + gap + dot_radius
+        let dot_center_in_period = dash + gap + dot_radius;
 
-        var pattern_sdf = 1.0;  // Start outside
+        // Find which period we're in
+        let period_index = floor(s / period);
+        let pos_in_period = s - period_index * period;
 
-        // Dash segment: [0, dash]
-        if (pos < dash) {
-            let dash_center = dash * 0.5;
-            let dist_to_dash = abs(pos - dash_center);
-            if (dist_to_dash <= dash * 0.5) {
-                pattern_sdf = dist - edge_thickness;
-            }
+        // Distance to dash center (check current and adjacent periods)
+        var dist_to_dash = pos_in_period - dash_center_in_period;
+        if (abs(dist_to_dash + period) < abs(dist_to_dash)) {
+            dist_to_dash = dist_to_dash + period;
         }
-        // Dot segment: [dash + gap, dash + gap + dot_diameter]
-        else {
-            let dot_start = dash + gap;
-            let dot_center_s = dot_start + dot_radius;
-            if (pos >= dot_start && pos <= dot_start + dot_radius * 2.0) {
-                let dist_along = abs(pos - dot_center_s);
-                pattern_sdf = length(vec2(dist_along, dist)) - dot_radius;
-            }
+        if (abs(dist_to_dash - period) < abs(dist_to_dash)) {
+            dist_to_dash = dist_to_dash - period;
         }
+
+        // Distance to dot center (check current and adjacent periods)
+        var dist_to_dot = pos_in_period - dot_center_in_period;
+        if (abs(dist_to_dot + period) < abs(dist_to_dot)) {
+            dist_to_dot = dist_to_dot + period;
+        }
+        if (abs(dist_to_dot - period) < abs(dist_to_dot)) {
+            dist_to_dot = dist_to_dot - period;
+        }
+
+        // SDF to dash (box)
+        let dash_sdf = sd_box_2d(vec2(dist_to_dash, dist), vec2(half_dash, edge_thickness));
+
+        // SDF to dot (circle)
+        let dot_sdf = length(vec2(dist_to_dot, dist)) - dot_radius;
+
+        // Union: take minimum of both SDFs
+        let pattern_sdf = min(dash_sdf, dot_sdf);
 
         // Apply SDF with anti-aliasing
         alpha = 1.0 - smoothstep(-aa, aa, pattern_sdf);

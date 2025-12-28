@@ -58,6 +58,9 @@ pub struct NodeGraphPrimitive {
     pub selected_edge_color: glam::Vec4,
     /// Default edge thickness (for dragging edge)
     pub edge_thickness: f32,
+    /// Valid drop targets for edge dragging (computed at drag-start).
+    /// Contains (node_index, pin_index) pairs that are valid connection targets.
+    pub valid_drop_targets: HashSet<(usize, usize)>,
 }
 
 impl Primitive for NodeGraphPrimitive {
@@ -93,6 +96,7 @@ impl Primitive for NodeGraphPrimitive {
             self.selected_edge_color,
             self.edge_thickness,
             self.layer,
+            &self.valid_drop_targets,
         );
     }
 

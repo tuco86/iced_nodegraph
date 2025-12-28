@@ -51,7 +51,7 @@ use iced::{
     widget::{column, container, stack, text},
     window,
 };
-use iced_nodegraph::{PinDirection, PinReference, PinSide, node_graph};
+use iced_nodegraph::{PinDirection, PinRef, PinSide, node_graph, node_pin};
 use iced_palette::{
     Command, command, command_palette, focus_input, get_filtered_command_index, get_filtered_count,
     navigate_down, navigate_up,
@@ -89,16 +89,16 @@ pub fn run_demo() {
 #[derive(Debug, Clone)]
 enum Message {
     EdgeConnected {
-        from: PinReference,
-        to: PinReference,
+        from: PinRef<usize, usize>,
+        to: PinRef<usize, usize>,
     },
     NodeMoved {
         node_index: usize,
         new_position: Point,
     },
     EdgeDisconnected {
-        from: PinReference,
-        to: PinReference,
+        from: PinRef<usize, usize>,
+        to: PinRef<usize, usize>,
     },
     SelectionChanged(Vec<usize>),
     GroupMoved {
@@ -132,7 +132,7 @@ struct Application {
     shader_graph: ShaderGraph,
     compiled_shader: Option<String>,
     compilation_error: Option<String>,
-    visual_edges: Vec<(PinReference, PinReference)>,
+    visual_edges: Vec<(PinRef<usize, usize>, PinRef<usize, usize>)>,
     current_theme: Theme,
     graph_selection: HashSet<usize>,
     // Command palette state
@@ -152,7 +152,7 @@ impl Application {
         // Convert shader graph connections to visual edges
         // NodeGraph widget uses flat pin indices: [input0, input1, ..., output0, output1, ...]
         // ShaderGraph uses separate indices: from_socket = output index, to_socket = input index
-        let visual_edges: Vec<(PinReference, PinReference)> = shader_graph
+        let visual_edges: Vec<(PinRef<usize, usize>, PinRef<usize, usize>)> = shader_graph
             .connections
             .iter()
             .filter_map(|conn| {
@@ -187,8 +187,8 @@ impl Application {
                 );
 
                 Some((
-                    PinReference::new(from_node_idx, from_visual_pin),
-                    PinReference::new(to_node_idx, to_visual_pin),
+                    PinRef::new(from_node_idx, from_visual_pin),
+                    PinRef::new(to_node_idx, to_visual_pin),
                 ))
             })
             .collect();
@@ -412,7 +412,7 @@ impl Application {
         // Build node graph
         let mut graph = node_graph()
             .on_connect(|from, to| Message::EdgeConnected { from, to })
-            .on_move(|node_index, new_position| Message::NodeMoved {
+            .on_move(|node_index: usize, new_position| Message::NodeMoved {
                 node_index,
                 new_position,
             })
@@ -423,9 +423,9 @@ impl Application {
             .selection(&self.graph_selection);
 
         // Add all shader graph nodes
-        for node in &self.shader_graph.nodes {
+        for (node_idx, node) in self.shader_graph.nodes.iter().enumerate() {
             let node_content = create_node_widget(&node.node_type, &self.current_theme);
-            graph.push_node(node.position, node_content);
+            graph.push_node(node_idx, node.position, node_content);
         }
 
         // Add all edges
@@ -591,6 +591,7 @@ fn create_node_widget<'a>(
             column![
                 node_pin(
                     PinSide::Right,
+                    "out",
                     container(text("out").size(11)).padding([0, 8])
                 )
                 .direction(PinDirection::Output)
@@ -606,31 +607,25 @@ fn create_node_widget<'a>(
         for input in inputs {
             let socket_color = get_socket_color(&input.socket_type);
             let label = input.name.clone();
-            pin_elements.push(
-                node_pin(
-                    PinSide::Left,
-                    container(text(label).size(11)).padding([0, 8]),
-                )
-                .direction(PinDirection::Input)
-                .pin_type(format!("{:?}", input.socket_type))
-                .color(socket_color)
-                .into(),
-            );
+            pin_elements.push(create_typed_pin(
+                PinSide::Left,
+                label,
+                PinDirection::Input,
+                &input.socket_type,
+                socket_color,
+            ));
         }
 
         for output in outputs {
             let socket_color = get_socket_color(&output.socket_type);
             let label = output.name.clone();
-            pin_elements.push(
-                node_pin(
-                    PinSide::Right,
-                    container(text(label).size(11)).padding([0, 8]),
-                )
-                .direction(PinDirection::Output)
-                .pin_type(format!("{:?}", output.socket_type))
-                .color(socket_color)
-                .into(),
-            );
+            pin_elements.push(create_typed_pin(
+                PinSide::Right,
+                label,
+                PinDirection::Output,
+                &output.socket_type,
+                socket_color,
+            ));
         }
 
         container(iced::widget::Column::with_children(pin_elements).spacing(2)).padding([6, 0])
@@ -648,5 +643,52 @@ fn get_socket_color(socket_type: &shader_graph::sockets::SocketType) -> Color {
         SocketType::Vec4 => colors::SOCKET_VEC4,   // Light pink
         SocketType::Bool => colors::SOCKET_BOOL,   // Light red
         SocketType::Int => colors::SOCKET_INT,     // Light purple
+    }
+}
+
+/// Creates a typed pin element based on the socket type.
+/// Uses marker types for TypeId-based connection matching.
+fn create_typed_pin<'a, Message: Clone + 'a>(
+    side: PinSide,
+    label: String,
+    direction: PinDirection,
+    socket_type: &shader_graph::sockets::SocketType,
+    color: Color,
+) -> Element<'a, Message> {
+    use shader_graph::sockets::SocketType;
+
+    let content = container(text(label.clone()).size(11)).padding([0, 8]);
+
+    match socket_type {
+        SocketType::Float => node_pin(side, label, content)
+            .direction(direction)
+            .data_type::<colors::Float>()
+            .color(color)
+            .into(),
+        SocketType::Vec2 => node_pin(side, label, content)
+            .direction(direction)
+            .data_type::<colors::Vec2>()
+            .color(color)
+            .into(),
+        SocketType::Vec3 => node_pin(side, label, content)
+            .direction(direction)
+            .data_type::<colors::Vec3>()
+            .color(color)
+            .into(),
+        SocketType::Vec4 => node_pin(side, label, content)
+            .direction(direction)
+            .data_type::<colors::Vec4>()
+            .color(color)
+            .into(),
+        SocketType::Bool => node_pin(side, label, content)
+            .direction(direction)
+            .data_type::<colors::Bool>()
+            .color(color)
+            .into(),
+        SocketType::Int => node_pin(side, label, content)
+            .direction(direction)
+            .data_type::<colors::Int>()
+            .color(color)
+            .into(),
     }
 }

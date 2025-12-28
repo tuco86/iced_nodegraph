@@ -3,16 +3,18 @@ use iced_widget::core::{
     Clipboard, Layout, Shell, layout, mouse, renderer,
     widget::{self, Tree, tree},
 };
+use std::hash::Hasher;
 use web_time::Instant;
 
 use super::{
-    DragInfo, NodeGraph, NodeGraphEvent,
+    DragInfo, NodeGraph, NodeGraphMessage,
     effects::{self, EdgeData, Layer},
     euclid::{IntoIced, WorldVector},
     state::{Dragging, NodeGraphState},
 };
 use crate::{
-    PinReference, PinSide,
+    PinRef, PinSide,
+    ids::{EdgeId, NodeId, PinId},
     node_grapgh::euclid::{IntoEuclid, ScreenPoint, WorldPoint},
     node_pin::NodePinState,
     style::{EdgeConfig, EdgeStyle, GraphStyle, NodeConfig, NodeStyle, PinConfig, PinStyle},
@@ -20,6 +22,18 @@ use crate::{
 
 // Click detection threshold (in world-space pixels)
 const PIN_CLICK_THRESHOLD: f32 = 8.0;
+
+// Hysteresis thresholds for edge snap/unsnap (prevents jitter at boundary)
+const SNAP_THRESHOLD: f32 = 10.0; // Distance to enter snap zone
+const UNSNAP_THRESHOLD: f32 = 15.0; // Distance to leave snap zone (larger = more stable)
+
+/// Computes a hash for any PinId type.
+/// Used to match pin_id_hash in NodePinState.
+fn compute_pin_hash<P: PinId>(pin_id: &P) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::hash::Hash::hash(pin_id, &mut hasher);
+    hasher.finish()
+}
 
 /// Resolves a NodeConfig to a complete NodeStyle using theme defaults.
 fn resolve_node_style(config: &NodeConfig, theme: &Theme) -> NodeStyle {
@@ -78,9 +92,12 @@ fn resolve_pin_style(config: Option<&PinConfig>, theme: &Theme) -> PinStyle {
     }
 }
 
-impl<Message, Renderer> iced_widget::core::Widget<Message, iced::Theme, Renderer>
-    for NodeGraph<'_, Message, iced::Theme, Renderer>
+impl<N, P, E, Message, Renderer> iced_widget::core::Widget<Message, iced::Theme, Renderer>
+    for NodeGraph<'_, N, P, E, Message, iced::Theme, Renderer>
 where
+    N: NodeId + 'static,
+    P: PinId + 'static,
+    E: EdgeId + 'static,
     Renderer: iced_widget::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
     fn tag(&self) -> tree::Tag {
@@ -326,18 +343,42 @@ where
                     .collect()
             },
             // Extract edge connectivity with style resolved from config + theme
+            // Edges are stored with user IDs (PinRef<N, P>) and resolved to indices here
             edges: self
                 .edges
                 .iter()
-                .map(|(from, to, edge_config)| {
+                .filter_map(|(from, to, edge_config)| {
+                    // Resolve node IDs to indices
+                    let from_node_idx = self.id_maps.nodes.index(&from.node_id)?;
+                    let to_node_idx = self.id_maps.nodes.index(&to.node_id)?;
+
+                    // Get tree/layout for each node
+                    let from_node_tree = tree.children.get(from_node_idx)?;
+                    let from_node_layout = layout.children().nth(from_node_idx)?;
+                    let to_node_tree = tree.children.get(to_node_idx)?;
+                    let to_node_layout = layout.children().nth(to_node_idx)?;
+
+                    // Find pins by matching pin_id hash
+                    let from_pin_hash = compute_pin_hash(&from.pin_id);
+                    let from_pins = find_pins(from_node_tree, from_node_layout);
+                    let from_pin_idx = from_pins
+                        .iter()
+                        .position(|(_, state, _)| state.pin_id_hash == from_pin_hash)?;
+
+                    let to_pin_hash = compute_pin_hash(&to.pin_id);
+                    let to_pins = find_pins(to_node_tree, to_node_layout);
+                    let to_pin_idx = to_pins
+                        .iter()
+                        .position(|(_, state, _)| state.pin_id_hash == to_pin_hash)?;
+
                     let resolved_edge = resolve_edge_style(edge_config, theme);
-                    EdgeData {
-                        from_node: from.node_id,
-                        from_pin: from.pin_id,
-                        to_node: to.node_id,
-                        to_pin: to.pin_id,
+                    Some(EdgeData {
+                        from_node: from_node_idx,
+                        from_pin: from_pin_idx,
+                        to_node: to_node_idx,
+                        to_pin: to_pin_idx,
                         style: resolved_edge,
-                    }
+                    })
                 })
                 .collect(),
             edge_color,
@@ -354,6 +395,7 @@ where
                 selection_border_color.a,
             ),
             edge_thickness: resolved_edge_defaults.get_width(),
+            valid_drop_targets: state.valid_drop_targets.clone(),
         };
 
         // Create foreground primitive (clone with different layer)
@@ -521,12 +563,13 @@ where
                 // Ctrl+D: Clone selected nodes
                 keyboard::Key::Character(c) if c.as_str() == "d" && modifiers.command() => {
                     if !state.selected_nodes.is_empty() {
-                        let node_ids: Vec<usize> = state.selected_nodes.iter().copied().collect();
+                        let indices: Vec<usize> = state.selected_nodes.iter().copied().collect();
+                        let node_ids = self.translate_node_ids(&indices);
                         if let Some(handler) = self.on_clone_handler() {
                             shell.publish(handler(node_ids.clone()));
                         }
                         if let Some(handler) = self.get_on_event() {
-                            shell.publish(handler(NodeGraphEvent::CloneRequested { node_ids }));
+                            shell.publish(handler(NodeGraphMessage::CloneRequested { node_ids }));
                         }
                         shell.capture_event();
                     }
@@ -535,12 +578,13 @@ where
                 keyboard::Key::Character(c) if c.as_str() == "a" && modifiers.command() => {
                     let count = self.nodes.len();
                     state.selected_nodes = (0..count).collect();
-                    let selected: Vec<usize> = state.selected_nodes.iter().copied().collect();
+                    let indices: Vec<usize> = state.selected_nodes.iter().copied().collect();
+                    let selected = self.translate_node_ids(&indices);
                     if let Some(handler) = self.on_select_handler() {
                         shell.publish(handler(selected.clone()));
                     }
                     if let Some(handler) = self.get_on_event() {
-                        shell.publish(handler(NodeGraphEvent::SelectionChanged { selected }));
+                        shell.publish(handler(NodeGraphMessage::SelectionChanged { selected }));
                     }
                     shell.capture_event();
                     shell.request_redraw();
@@ -553,7 +597,7 @@ where
                             shell.publish(handler(vec![]));
                         }
                         if let Some(handler) = self.get_on_event() {
-                            shell.publish(handler(NodeGraphEvent::SelectionChanged {
+                            shell.publish(handler(NodeGraphMessage::SelectionChanged {
                                 selected: vec![],
                             }));
                         }
@@ -687,34 +731,57 @@ where
                                     for (edge_idx, (from_ref, to_ref, _style)) in
                                         self.edges.iter().enumerate()
                                     {
-                                        let (from_node, from_pin) =
-                                            (from_ref.node_id, from_ref.pin_id);
-                                        let (to_node, to_pin) = (to_ref.node_id, to_ref.pin_id);
+                                        // Resolve user IDs to indices
+                                        let from_node_idx =
+                                            match self.id_maps.nodes.index(&from_ref.node_id) {
+                                                Some(idx) => idx,
+                                                None => continue,
+                                            };
+                                        let to_node_idx =
+                                            match self.id_maps.nodes.index(&to_ref.node_id) {
+                                                Some(idx) => idx,
+                                                None => continue,
+                                            };
 
                                         // Get pin positions and sides for bezier calculation
+                                        let from_pin_hash = compute_pin_hash(&from_ref.pin_id);
                                         let from_pin_data = layout
                                             .children()
-                                            .nth(from_node)
+                                            .nth(from_node_idx)
                                             .and_then(|node_layout| {
-                                                tree.children.get(from_node).and_then(|node_tree| {
-                                                    find_pins(node_tree, node_layout)
-                                                        .get(from_pin)
-                                                        .map(|(_, state, (pos, _))| {
-                                                            (*pos, state.side)
-                                                        })
-                                                })
+                                                tree.children.get(from_node_idx).and_then(
+                                                    |node_tree| {
+                                                        let pins =
+                                                            find_pins(node_tree, node_layout);
+                                                        pins.iter()
+                                                            .find(|(_, state, _)| {
+                                                                state.pin_id_hash == from_pin_hash
+                                                            })
+                                                            .map(|(_, state, (pos, _))| {
+                                                                (*pos, state.side)
+                                                            })
+                                                    },
+                                                )
                                             });
-                                        let to_pin_data = layout.children().nth(to_node).and_then(
-                                            |node_layout| {
-                                                tree.children.get(to_node).and_then(|node_tree| {
-                                                    find_pins(node_tree, node_layout)
-                                                        .get(to_pin)
-                                                        .map(|(_, state, (pos, _))| {
-                                                            (*pos, state.side)
-                                                        })
-                                                })
-                                            },
-                                        );
+                                        let to_pin_hash = compute_pin_hash(&to_ref.pin_id);
+                                        let to_pin_data = layout
+                                            .children()
+                                            .nth(to_node_idx)
+                                            .and_then(|node_layout| {
+                                                tree.children.get(to_node_idx).and_then(
+                                                    |node_tree| {
+                                                        let pins =
+                                                            find_pins(node_tree, node_layout);
+                                                        pins.iter()
+                                                            .find(|(_, state, _)| {
+                                                                state.pin_id_hash == to_pin_hash
+                                                            })
+                                                            .map(|(_, state, (pos, _))| {
+                                                                (*pos, state.side)
+                                                            })
+                                                    },
+                                                )
+                                            });
 
                                         if let (Some((p0, from_side)), Some((p3, to_side))) =
                                             (from_pin_data, to_pin_data)
@@ -757,17 +824,13 @@ where
 
                                 for &edge_idx in pending_cuts.iter() {
                                     if let Some((from_ref, to_ref, _)) = self.edges.get(edge_idx) {
+                                        // Edges already store user IDs (PinRef<N, P>)
                                         if let Some(handler) = self.on_disconnect_handler() {
-                                            shell.publish(handler(*from_ref, *to_ref));
+                                            shell
+                                                .publish(handler(from_ref.clone(), to_ref.clone()));
                                         }
-                                        if let Some(handler) = self.get_on_event() {
-                                            shell.publish(handler(
-                                                NodeGraphEvent::EdgeDisconnected {
-                                                    from: *from_ref,
-                                                    to: *to_ref,
-                                                },
-                                            ));
-                                        }
+                                        // Note: EdgeDisconnected message not fired for edge cutting
+                                        // because edges are not registered with IDs in current design
                                     }
                                 }
                             }
@@ -809,16 +872,18 @@ where
                                 let offset = cursor_position - origin;
                                 let new_position = self.nodes[node_index].0 + offset.into_iced();
 
-                                // Call on_move handler if set
-                                if let Some(handler) = self.on_move_handler() {
-                                    let message = handler(node_index, new_position);
-                                    shell.publish(message);
-                                }
-                                if let Some(handler) = self.get_on_event() {
-                                    shell.publish(handler(NodeGraphEvent::NodeMoved {
-                                        node_id: node_index,
-                                        position: new_position,
-                                    }));
+                                // Translate internal index to user ID
+                                if let Some(node_id) = self.index_to_node_id(node_index) {
+                                    // Call on_move handler if set
+                                    if let Some(handler) = self.on_move_handler() {
+                                        shell.publish(handler(node_id.clone(), new_position));
+                                    }
+                                    if let Some(handler) = self.get_on_event() {
+                                        shell.publish(handler(NodeGraphMessage::NodeMoved {
+                                            node_id,
+                                            position: new_position,
+                                        }));
+                                    }
                                 }
                             }
                             state.dragging = Dragging::None;
@@ -834,60 +899,85 @@ where
                     },
                     Dragging::Edge(from_node, from_pin, _) => match event {
                         Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                            // Check if cursor is over a pin to transition to EdgeOver
+                            // Check if cursor is over a valid target pin to transition to EdgeOver
                             if let Some(cursor_position) = world_cursor.position() {
-                                let mut target_pin: Option<(usize, usize)> = None;
+                                // Copy valid_drop_targets before iterating over tree.children
+                                let valid_targets = state.valid_drop_targets.clone();
 
-                                // Get the source pin state for validation
-                                let from_pin_state = find_pins(
-                                    &tree.children[from_node],
-                                    layout.children().nth(from_node).unwrap(),
-                                )
-                                .get(from_pin)
-                                .map(|(_, state, _)| *state);
+                                // Extract from_pin_id while iterating (need access to tree.children)
+                                let mut from_pin_id: Option<P> = None;
+                                let mut target_info: Option<(usize, usize, P)> = None;
 
+                                // Check all pins for proximity and validity (use SNAP_THRESHOLD to enter)
                                 for (node_index, (node_layout, node_tree)) in
                                     layout.children().zip(&tree.children).enumerate()
                                 {
                                     for (pin_index, pin_state, (a, b)) in
                                         find_pins(node_tree, node_layout)
                                     {
+                                        // Extract from_pin_id when we find the source pin
+                                        if node_index == from_node && pin_index == from_pin {
+                                            from_pin_id =
+                                                pin_state.pin_id.downcast_ref::<P>().cloned();
+                                        }
+
                                         // Pin positions are already in world space (from layout)
                                         let distance = a
                                             .distance(cursor_position)
                                             .min(b.distance(cursor_position));
-                                        if distance < PIN_CLICK_THRESHOLD {
-                                            // Don't connect to the same pin we're dragging from
-                                            if node_index != from_node || pin_index != from_pin {
-                                                // Validate pin connection (direction and type compatibility)
-                                                if let Some(from_state) = from_pin_state {
-                                                    if validate_pin_connection(
-                                                        from_state, pin_state,
-                                                    ) {
-                                                        target_pin = Some((node_index, pin_index));
-                                                        break;
-                                                    }
+
+                                        // Use SNAP_THRESHOLD for entering snap zone
+                                        if distance < SNAP_THRESHOLD && target_info.is_none() {
+                                            // Check if this pin is in valid_drop_targets
+                                            if valid_targets.contains(&(node_index, pin_index)) {
+                                                if let Some(pid) =
+                                                    pin_state.pin_id.downcast_ref::<P>().cloned()
+                                                {
+                                                    target_info =
+                                                        Some((node_index, pin_index, pid));
                                                 }
                                             }
                                         }
                                     }
-                                    if target_pin.is_some() {
-                                        break;
-                                    }
                                 }
 
-                                if let Some((to_node, to_pin)) = target_pin {
+                                if let Some((to_node, to_pin, to_pin_id)) = target_info {
                                     // Fire EdgeConnected event immediately on snap (plug behavior)
-                                    let from_ref = PinReference::new(from_node, from_pin);
-                                    let to_ref = PinReference::new(to_node, to_pin);
-                                    if let Some(handler) = self.on_connect_handler() {
-                                        shell.publish(handler(from_ref, to_ref));
-                                    }
-                                    if let Some(handler) = self.get_on_event() {
-                                        shell.publish(handler(NodeGraphEvent::EdgeConnected {
-                                            from: from_ref,
-                                            to: to_ref,
-                                        }));
+                                    let from_node_id = self.index_to_node_id(from_node);
+                                    let to_node_id = self.index_to_node_id(to_node);
+
+                                    if let (Some(from_nid), Some(to_nid), Some(from_pid)) =
+                                        (from_node_id, to_node_id, from_pin_id)
+                                    {
+                                        let from_ref = PinRef::new(from_nid.clone(), from_pid);
+                                        let to_ref = PinRef::new(to_nid.clone(), to_pin_id);
+
+                                        if let Some(handler) = self.on_connect_handler() {
+                                            shell
+                                                .publish(handler(from_ref.clone(), to_ref.clone()));
+                                        }
+                                        if let Some(handler) = self.get_on_event() {
+                                            // For on_event, we need edge_id - use edge count
+                                            use std::any::Any;
+                                            let edge_id: Option<E> = if std::any::TypeId::of::<E>()
+                                                == std::any::TypeId::of::<usize>()
+                                            {
+                                                let boxed: Box<dyn Any> =
+                                                    Box::new(self.edges.len());
+                                                boxed.downcast::<E>().ok().map(|b| *b)
+                                            } else {
+                                                None
+                                            };
+                                            if let Some(eid) = edge_id {
+                                                shell.publish(handler(
+                                                    NodeGraphMessage::EdgeConnected {
+                                                        edge_id: eid,
+                                                        from: from_ref,
+                                                        to: to_ref,
+                                                    },
+                                                ));
+                                            }
+                                        }
                                     }
 
                                     state.dragging =
@@ -910,34 +1000,76 @@ where
                     Dragging::EdgeOver(from_node, from_pin, to_node, to_pin) => match event {
                         Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                             // Check if still over the target pin, otherwise go back to Edge state
+                            // Use UNSNAP_THRESHOLD (larger than SNAP_THRESHOLD) to prevent jitter
                             if let Some(cursor_position) = world_cursor.position() {
+                                // Extract pin IDs and check distance in one pass through tree.children
                                 let mut still_over_pin = false;
-                                if let Some((node_layout, node_tree)) =
-                                    layout.children().zip(&tree.children).nth(to_node)
+                                let mut from_pin_id: Option<P> = None;
+                                let mut to_pin_id: Option<P> = None;
+
+                                for (node_index, (node_layout, node_tree)) in
+                                    layout.children().zip(&tree.children).enumerate()
                                 {
-                                    if let Some((_, _, (a, b))) =
-                                        find_pins(node_tree, node_layout).into_iter().nth(to_pin)
+                                    for (pin_index, pin_state, (a, b)) in
+                                        find_pins(node_tree, node_layout)
                                     {
-                                        // Pin positions are already in world space (from layout)
-                                        let distance = a
-                                            .distance(cursor_position)
-                                            .min(b.distance(cursor_position));
-                                        still_over_pin = distance < PIN_CLICK_THRESHOLD;
+                                        // Extract from_pin_id
+                                        if node_index == from_node && pin_index == from_pin {
+                                            from_pin_id =
+                                                pin_state.pin_id.downcast_ref::<P>().cloned();
+                                        }
+                                        // Extract to_pin_id and check distance
+                                        if node_index == to_node && pin_index == to_pin {
+                                            to_pin_id =
+                                                pin_state.pin_id.downcast_ref::<P>().cloned();
+                                            let distance = a
+                                                .distance(cursor_position)
+                                                .min(b.distance(cursor_position));
+                                            still_over_pin = distance < UNSNAP_THRESHOLD;
+                                        }
                                     }
                                 }
 
                                 if !still_over_pin {
                                     // Fire EdgeDisconnected event when leaving snap (plug behavior)
-                                    let from_ref = PinReference::new(from_node, from_pin);
-                                    let to_ref = PinReference::new(to_node, to_pin);
-                                    if let Some(handler) = self.on_disconnect_handler() {
-                                        shell.publish(handler(from_ref, to_ref));
-                                    }
-                                    if let Some(handler) = self.get_on_event() {
-                                        shell.publish(handler(NodeGraphEvent::EdgeDisconnected {
-                                            from: from_ref,
-                                            to: to_ref,
-                                        }));
+                                    let from_node_id = self.index_to_node_id(from_node);
+                                    let to_node_id = self.index_to_node_id(to_node);
+
+                                    if let (
+                                        Some(from_nid),
+                                        Some(to_nid),
+                                        Some(from_pid),
+                                        Some(to_pid),
+                                    ) = (from_node_id, to_node_id, from_pin_id, to_pin_id)
+                                    {
+                                        let from_ref = PinRef::new(from_nid.clone(), from_pid);
+                                        let to_ref = PinRef::new(to_nid.clone(), to_pid);
+
+                                        if let Some(handler) = self.on_disconnect_handler() {
+                                            shell
+                                                .publish(handler(from_ref.clone(), to_ref.clone()));
+                                        }
+                                        if let Some(handler) = self.get_on_event() {
+                                            // For on_event, we need edge_id
+                                            use std::any::Any;
+                                            let edge_id: Option<E> = if std::any::TypeId::of::<E>()
+                                                == std::any::TypeId::of::<usize>()
+                                            {
+                                                let boxed: Box<dyn Any> = Box::new(0usize);
+                                                boxed.downcast::<E>().ok().map(|b| *b)
+                                            } else {
+                                                None
+                                            };
+                                            if let Some(eid) = edge_id {
+                                                shell.publish(handler(
+                                                    NodeGraphMessage::EdgeDisconnected {
+                                                        edge_id: eid,
+                                                        from: from_ref,
+                                                        to: to_ref,
+                                                    },
+                                                ));
+                                            }
+                                        }
                                     }
 
                                     // Moved away from pin, go back to dragging
@@ -990,13 +1122,14 @@ where
                                 }
 
                                 // Notify selection change
-                                let selected: Vec<usize> =
+                                let indices: Vec<usize> =
                                     state.selected_nodes.iter().copied().collect();
+                                let selected = self.translate_node_ids(&indices);
                                 if let Some(handler) = self.on_select_handler() {
                                     shell.publish(handler(selected.clone()));
                                 }
                                 if let Some(handler) = self.get_on_event() {
-                                    shell.publish(handler(NodeGraphEvent::SelectionChanged {
+                                    shell.publish(handler(NodeGraphMessage::SelectionChanged {
                                         selected,
                                     }));
                                 }
@@ -1021,15 +1154,16 @@ where
                                 let cursor_position: WorldPoint = cursor_position.into_euclid();
                                 let offset = cursor_position - origin;
 
-                                // Call on_group_move handler with selected nodes and offset
-                                let node_ids: Vec<usize> =
+                                // Translate internal indices to user IDs
+                                let indices: Vec<usize> =
                                     state.selected_nodes.iter().copied().collect();
+                                let node_ids = self.translate_node_ids(&indices);
                                 let delta = offset.into_iced();
                                 if let Some(handler) = self.on_group_move_handler() {
                                     shell.publish(handler(node_ids.clone(), delta));
                                 }
                                 if let Some(handler) = self.get_on_event() {
-                                    shell.publish(handler(NodeGraphEvent::GroupMoved {
+                                    shell.publish(handler(NodeGraphMessage::GroupMoved {
                                         node_ids,
                                         delta,
                                     }));
@@ -1078,14 +1212,16 @@ where
                             | keyboard::Key::Named(keyboard::key::Named::Backspace)
                     ) {
                         if !state.selected_nodes.is_empty() {
-                            let node_ids: Vec<usize> =
+                            let indices: Vec<usize> =
                                 state.selected_nodes.iter().copied().collect();
+                            let node_ids = self.translate_node_ids(&indices);
                             if let Some(handler) = self.on_delete_handler() {
                                 shell.publish(handler(node_ids.clone()));
                             }
                             if let Some(handler) = self.get_on_event() {
-                                shell
-                                    .publish(handler(NodeGraphEvent::DeleteRequested { node_ids }));
+                                shell.publish(handler(NodeGraphMessage::DeleteRequested {
+                                    node_ids,
+                                }));
                             }
                             state.selected_nodes.clear();
                             shell.capture_event();
@@ -1134,25 +1270,46 @@ where
                             if let Some(cursor_position) = world_cursor.position() {
                                 // Check if click is near any edge
                                 for (from_ref, to_ref, _style) in &self.edges {
-                                    let (from_node, from_pin) = (from_ref.node_id, from_ref.pin_id);
-                                    let (to_node, to_pin) = (to_ref.node_id, to_ref.pin_id);
+                                    // Resolve user IDs to indices
+                                    let from_node_idx =
+                                        match self.id_maps.nodes.index(&from_ref.node_id) {
+                                            Some(idx) => idx,
+                                            None => continue,
+                                        };
+                                    let to_node_idx =
+                                        match self.id_maps.nodes.index(&to_ref.node_id) {
+                                            Some(idx) => idx,
+                                            None => continue,
+                                        };
+
                                     // Get pin positions for both ends of the edge
-                                    let from_pin_pos =
-                                        layout.children().nth(from_node).and_then(|node_layout| {
-                                            tree.children.get(from_node).and_then(|node_tree| {
-                                                find_pins(node_tree, node_layout)
-                                                    .get(from_pin)
+                                    let from_pin_hash = compute_pin_hash(&from_ref.pin_id);
+                                    let from_pin_pos = layout
+                                        .children()
+                                        .nth(from_node_idx)
+                                        .and_then(|node_layout| {
+                                            tree.children.get(from_node_idx).and_then(|node_tree| {
+                                                let pins = find_pins(node_tree, node_layout);
+                                                pins.iter()
+                                                    .find(|(_, state, _)| {
+                                                        state.pin_id_hash == from_pin_hash
+                                                    })
                                                     .map(|(_, _, (a, _))| *a)
                                             })
                                         });
-                                    let to_pin_pos =
-                                        layout.children().nth(to_node).and_then(|node_layout| {
-                                            tree.children.get(to_node).and_then(|node_tree| {
-                                                find_pins(node_tree, node_layout)
-                                                    .get(to_pin)
+                                    let to_pin_hash = compute_pin_hash(&to_ref.pin_id);
+                                    let to_pin_pos = layout.children().nth(to_node_idx).and_then(
+                                        |node_layout| {
+                                            tree.children.get(to_node_idx).and_then(|node_tree| {
+                                                let pins = find_pins(node_tree, node_layout);
+                                                pins.iter()
+                                                    .find(|(_, state, _)| {
+                                                        state.pin_id_hash == to_pin_hash
+                                                    })
                                                     .map(|(_, _, (a, _))| *a)
                                             })
-                                        });
+                                        },
+                                    );
 
                                     if let (Some(from_pos), Some(to_pos)) =
                                         (from_pin_pos, to_pin_pos)
@@ -1166,15 +1323,11 @@ where
                                         const EDGE_CUT_THRESHOLD: f32 = 10.0;
 
                                         if distance < EDGE_CUT_THRESHOLD {
+                                            // Edges already store user IDs
                                             if let Some(handler) = self.on_disconnect_handler() {
-                                                shell.publish(handler(*from_ref, *to_ref));
-                                            }
-                                            if let Some(handler) = self.get_on_event() {
                                                 shell.publish(handler(
-                                                    NodeGraphEvent::EdgeDisconnected {
-                                                        from: *from_ref,
-                                                        to: *to_ref,
-                                                    },
+                                                    from_ref.clone(),
+                                                    to_ref.clone(),
                                                 ));
                                             }
                                             shell.capture_event();
@@ -1189,11 +1342,17 @@ where
                         if let Some(cursor_position) = world_cursor.position() {
                             // check bounds for pins
                             for (node_index, (node_layout, node_tree)) in
-                                layout.children().zip(&mut tree.children).enumerate()
+                                layout.children().zip(&tree.children).enumerate()
                             {
                                 let pins = find_pins(node_tree, node_layout);
+                                // Get node_id for this node_index
+                                let current_node_id =
+                                    match self.id_maps.nodes.id(node_index).cloned() {
+                                        Some(id) => id,
+                                        None => continue,
+                                    };
 
-                                for (pin_index, _, (a, b)) in pins {
+                                for (pin_index, pin_state, (a, b)) in pins {
                                     // Pin positions from layout are ALREADY in world space
                                     // because layout was created with .move_to(world_position)
                                     let distance = a
@@ -1204,33 +1363,67 @@ where
                                         // Check if this pin has existing connections
                                         // If it does, "unplug" the clicked end (like pulling a cable)
                                         for (from_ref, to_ref, _style) in &self.edges {
-                                            let (from_node, from_pin) =
-                                                (from_ref.node_id, from_ref.pin_id);
-                                            let (to_node, to_pin) = (to_ref.node_id, to_ref.pin_id);
+                                            // Compare using hash-based matching
+                                            let from_pin_hash = compute_pin_hash(&from_ref.pin_id);
+                                            let to_pin_hash = compute_pin_hash(&to_ref.pin_id);
+
                                             // If we clicked the "from" pin, unplug FROM and drag it
                                             // Keep TO pin connected, drag away from it
-                                            if from_node == node_index && from_pin == pin_index {
-                                                // Disconnect the edge
+                                            if from_ref.node_id == current_node_id
+                                                && from_pin_hash == pin_state.pin_id_hash
+                                            {
+                                                // Disconnect the edge - already have user IDs
                                                 if let Some(handler) = self.on_disconnect_handler()
                                                 {
-                                                    shell.publish(handler(*from_ref, *to_ref));
-                                                }
-                                                if let Some(handler) = self.get_on_event() {
                                                     shell.publish(handler(
-                                                        NodeGraphEvent::EdgeDisconnected {
-                                                            from: *from_ref,
-                                                            to: *to_ref,
-                                                        },
+                                                        from_ref.clone(),
+                                                        to_ref.clone(),
                                                     ));
                                                 }
+                                                // Note: EdgeDisconnected message not fired here
 
                                                 // Start dragging FROM the TO pin (the end that stays connected)
                                                 // We're now dragging back towards the TO pin
+                                                // Resolve to_ref to indices for internal Dragging state
+                                                let to_node_idx =
+                                                    match self.id_maps.nodes.index(&to_ref.node_id)
+                                                    {
+                                                        Some(idx) => idx,
+                                                        None => continue,
+                                                    };
+                                                let to_pin_idx = {
+                                                    let to_tree =
+                                                        match tree.children.get(to_node_idx) {
+                                                            Some(t) => t,
+                                                            None => continue,
+                                                        };
+                                                    let to_layout =
+                                                        match layout.children().nth(to_node_idx) {
+                                                            Some(l) => l,
+                                                            None => continue,
+                                                        };
+                                                    let to_pins = find_pins(to_tree, to_layout);
+                                                    match to_pins.iter().position(|(_, s, _)| {
+                                                        s.pin_id_hash == to_pin_hash
+                                                    }) {
+                                                        Some(idx) => idx,
+                                                        None => continue,
+                                                    }
+                                                };
+                                                // Compute valid targets for the new drag
+                                                let valid_targets = compute_valid_targets(
+                                                    self,
+                                                    tree,
+                                                    layout,
+                                                    to_node_idx,
+                                                    to_pin_idx,
+                                                );
                                                 let state =
                                                     tree.state.downcast_mut::<NodeGraphState>();
+                                                state.valid_drop_targets = valid_targets;
                                                 state.dragging = Dragging::Edge(
-                                                    to_node,
-                                                    to_pin,
+                                                    to_node_idx,
+                                                    to_pin_idx,
                                                     cursor_position.into_euclid(),
                                                 );
                                                 shell.capture_event();
@@ -1238,28 +1431,66 @@ where
                                             }
                                             // If we clicked the "to" pin, unplug TO and drag it
                                             // Keep FROM pin connected, drag away from it
-                                            else if to_node == node_index && to_pin == pin_index {
-                                                // Disconnect the edge
+                                            else if to_ref.node_id == current_node_id
+                                                && to_pin_hash == pin_state.pin_id_hash
+                                            {
+                                                // Disconnect the edge - already have user IDs
                                                 if let Some(handler) = self.on_disconnect_handler()
                                                 {
-                                                    shell.publish(handler(*from_ref, *to_ref));
-                                                }
-                                                if let Some(handler) = self.get_on_event() {
                                                     shell.publish(handler(
-                                                        NodeGraphEvent::EdgeDisconnected {
-                                                            from: *from_ref,
-                                                            to: *to_ref,
-                                                        },
+                                                        from_ref.clone(),
+                                                        to_ref.clone(),
                                                     ));
                                                 }
+                                                // Note: EdgeDisconnected message not fired here
 
                                                 // Start dragging FROM the FROM pin (the end that stays connected)
                                                 // We're now dragging away from the FROM pin
+                                                // Resolve from_ref to indices for internal Dragging state
+                                                let from_node_idx = match self
+                                                    .id_maps
+                                                    .nodes
+                                                    .index(&from_ref.node_id)
+                                                {
+                                                    Some(idx) => idx,
+                                                    None => continue,
+                                                };
+                                                let from_pin_idx = {
+                                                    let from_tree =
+                                                        match tree.children.get(from_node_idx) {
+                                                            Some(t) => t,
+                                                            None => continue,
+                                                        };
+                                                    let from_layout = match layout
+                                                        .children()
+                                                        .nth(from_node_idx)
+                                                    {
+                                                        Some(l) => l,
+                                                        None => continue,
+                                                    };
+                                                    let from_pins =
+                                                        find_pins(from_tree, from_layout);
+                                                    match from_pins.iter().position(|(_, s, _)| {
+                                                        s.pin_id_hash == from_pin_hash
+                                                    }) {
+                                                        Some(idx) => idx,
+                                                        None => continue,
+                                                    }
+                                                };
+                                                // Compute valid targets for the new drag
+                                                let valid_targets = compute_valid_targets(
+                                                    self,
+                                                    tree,
+                                                    layout,
+                                                    from_node_idx,
+                                                    from_pin_idx,
+                                                );
                                                 let state =
                                                     tree.state.downcast_mut::<NodeGraphState>();
+                                                state.valid_drop_targets = valid_targets;
                                                 state.dragging = Dragging::Edge(
-                                                    from_node,
-                                                    from_pin,
+                                                    from_node_idx,
+                                                    from_pin_idx,
                                                     cursor_position.into_euclid(),
                                                 );
                                                 shell.capture_event();
@@ -1268,7 +1499,12 @@ where
                                         }
 
                                         // If no existing connection, start a new drag
+                                        // Compute valid targets ONCE at drag-start
+                                        let valid_targets = compute_valid_targets(
+                                            self, tree, layout, node_index, pin_index,
+                                        );
                                         let state = tree.state.downcast_mut::<NodeGraphState>();
+                                        state.valid_drop_targets = valid_targets;
                                         state.dragging = Dragging::Edge(
                                             node_index,
                                             pin_index,
@@ -1350,14 +1586,13 @@ where
 
                                     // Notify selection change
                                     if selection_changed {
+                                        let selected = self.translate_node_ids(&new_selection);
                                         if let Some(handler) = self.on_select_handler() {
-                                            shell.publish(handler(new_selection.clone()));
+                                            shell.publish(handler(selected.clone()));
                                         }
                                         if let Some(handler) = self.get_on_event() {
                                             shell.publish(handler(
-                                                NodeGraphEvent::SelectionChanged {
-                                                    selected: new_selection,
-                                                },
+                                                NodeGraphMessage::SelectionChanged { selected },
                                             ));
                                         }
                                     }
@@ -1429,18 +1664,25 @@ where
     }
 }
 
-impl<'a, Message, Renderer> From<NodeGraph<'a, Message, iced::Theme, Renderer>>
+impl<'a, N, P, E, Message, Renderer> From<NodeGraph<'a, N, P, E, Message, iced::Theme, Renderer>>
     for Element<'a, Message, iced::Theme, Renderer>
 where
+    N: NodeId + 'static,
+    P: PinId + 'static,
+    E: EdgeId + 'static,
     Renderer: iced_widget::core::renderer::Renderer + 'a + iced_wgpu::primitive::Renderer,
     Message: 'static,
 {
-    fn from(graph: NodeGraph<'a, Message, iced::Theme, Renderer>) -> Self {
+    fn from(graph: NodeGraph<'a, N, P, E, Message, iced::Theme, Renderer>) -> Self {
         Element::new(graph)
     }
 }
 
-pub fn node_graph<'a, Message, Theme, Renderer>() -> NodeGraph<'a, Message, Theme, Renderer>
+/// Creates a new NodeGraph with default usize-based IDs.
+///
+/// For custom ID types, use `NodeGraph::<N, P, E, Message, Theme, Renderer>::default()`.
+pub fn node_graph<'a, Message, Theme, Renderer>()
+-> NodeGraph<'a, usize, usize, usize, Message, Theme, Renderer>
 where
     Renderer: iced_widget::core::renderer::Renderer,
 {
@@ -1448,6 +1690,8 @@ where
 }
 
 /// Helper function to find all NodePin elements in the tree of a Node.
+/// Returns: Vec of (pin_index, &NodePinState, (Point, Point) positions)
+/// NodePinState is non-generic and contains pin_id_hash for matching.
 fn find_pins<'a>(
     tree: &'a Tree,
     layout: Layout<'a>,
@@ -1464,6 +1708,7 @@ fn inner_find_pins<'a>(
     node_layout: Layout<'a>,
     pin_tree: &'a Tree,
 ) {
+    // NodePinState is non-generic, so tree::Tag is always the same
     if pin_tree.tag == tree::Tag::of::<NodePinState>() {
         let pin_state = pin_tree.state.downcast_ref::<NodePinState>();
         let node_bounds = node_layout.bounds();
@@ -1477,16 +1722,16 @@ fn inner_find_pins<'a>(
     }
 }
 
-/// Validates if two pins can be connected based on direction and type.
-/// Returns true if connection is valid.
-fn validate_pin_connection(from_pin: &NodePinState, to_pin: &NodePinState) -> bool {
+/// Validates if two pins can be connected based on direction.
+/// Only checks direction compatibility - type/custom logic is handled by can_connect callback.
+fn validate_pin_direction(from_pin: &NodePinState, to_pin: &NodePinState) -> bool {
     use crate::node_pin::PinDirection;
 
     // Check direction compatibility:
     // - Output can connect to Input or Both
     // - Input can connect to Output or Both
     // - Both can connect to anything
-    let direction_valid = match (from_pin.direction, to_pin.direction) {
+    match (from_pin.direction, to_pin.direction) {
         // Both can connect to anything
         (PinDirection::Both, _) | (_, PinDirection::Both) => true,
         // Output -> Input or Input -> Output is valid
@@ -1494,16 +1739,71 @@ fn validate_pin_connection(from_pin: &NodePinState, to_pin: &NodePinState) -> bo
         | (PinDirection::Input, PinDirection::Output) => true,
         // Same direction is not allowed (Output->Output or Input->Input)
         _ => false,
+    }
+}
+
+/// Computes valid drop targets for edge dragging.
+///
+/// Called ONCE at drag-start to determine which pins are valid connection targets.
+/// Results are stored in state.valid_drop_targets for efficient lookup during drag.
+///
+/// A pin is a valid target if:
+/// 1. It's not the source pin (can't connect to self)
+/// 2. Direction is compatible (Output->Input, etc.)
+/// 3. TypeId matches (same data type)
+fn compute_valid_targets<N, P, E, Message, Renderer>(
+    _graph: &NodeGraph<'_, N, P, E, Message, iced::Theme, Renderer>,
+    tree: &Tree,
+    layout: Layout<'_>,
+    from_node: usize,
+    from_pin: usize,
+) -> std::collections::HashSet<(usize, usize)>
+where
+    N: NodeId + 'static,
+    P: PinId + 'static,
+    E: EdgeId + 'static,
+    Renderer: iced_widget::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
+{
+    let mut valid_targets = std::collections::HashSet::new();
+
+    // Get the source pin state for direction and type validation
+    let from_pin_state = tree.children.get(from_node).and_then(|node_tree| {
+        layout.children().nth(from_node).and_then(|node_layout| {
+            find_pins(node_tree, node_layout)
+                .into_iter()
+                .nth(from_pin)
+                .map(|(_, state, _)| state.clone())
+        })
+    });
+
+    let Some(from_state) = from_pin_state else {
+        return valid_targets;
     };
 
-    // Check type compatibility (empty string or "any" matches everything)
-    let type_valid = from_pin.pin_type == to_pin.pin_type
-        || from_pin.pin_type == "any"
-        || to_pin.pin_type == "any"
-        || from_pin.pin_type.is_empty()
-        || to_pin.pin_type.is_empty();
+    // Iterate all pins in all nodes
+    for (node_index, (node_layout, node_tree)) in layout.children().zip(&tree.children).enumerate()
+    {
+        for (pin_index, pin_state, _) in find_pins(node_tree, node_layout) {
+            // Skip source pin
+            if node_index == from_node && pin_index == from_pin {
+                continue;
+            }
 
-    direction_valid && type_valid
+            // Check direction compatibility (Input<->Output, etc.)
+            if !validate_pin_direction(&from_state, pin_state) {
+                continue;
+            }
+
+            // Check TypeId compatibility - only same types can connect
+            if from_state.data_type != pin_state.data_type {
+                continue;
+            }
+
+            valid_targets.insert((node_index, pin_index));
+        }
+    }
+
+    valid_targets
 }
 
 fn pin_positions(state: &NodePinState, node_bounds: Rectangle) -> (Point, Point) {

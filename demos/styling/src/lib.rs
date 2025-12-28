@@ -39,7 +39,7 @@ use iced::{
     widget::{button, column, container, pick_list, row, slider, stack, text},
     window,
 };
-use iced_nodegraph::{NodeStyle, PinReference, node_graph};
+use iced_nodegraph::{NodeStyle, PinRef, node_graph};
 use nodes::styled_node;
 use std::collections::HashSet;
 
@@ -82,12 +82,12 @@ pub fn run_demo() {
 enum Message {
     // Graph events
     EdgeConnected {
-        from: PinReference,
-        to: PinReference,
+        from: PinRef<usize, usize>,
+        to: PinRef<usize, usize>,
     },
     EdgeDisconnected {
-        from: PinReference,
-        to: PinReference,
+        from: PinRef<usize, usize>,
+        to: PinRef<usize, usize>,
     },
     NodeMoved {
         node_index: usize,
@@ -138,7 +138,7 @@ impl NodePreset {
 }
 
 struct Application {
-    edges: Vec<(PinReference, PinReference)>,
+    edges: Vec<(PinRef<usize, usize>, PinRef<usize, usize>)>,
     nodes: Vec<(Point, String, NodeStyle)>,
     current_theme: Theme,
     selected_node: Option<usize>,
@@ -154,8 +154,8 @@ impl Default for Application {
     fn default() -> Self {
         Self {
             edges: vec![
-                (PinReference::new(0, 0), PinReference::new(1, 0)), // Input -> Process
-                (PinReference::new(1, 0), PinReference::new(2, 0)), // Process -> Output
+                (PinRef::new(0, 1), PinRef::new(1, 0)), // Input node output -> Process node input
+                (PinRef::new(1, 1), PinRef::new(2, 0)), // Process node output -> Output node input
             ],
             nodes: vec![
                 (
@@ -465,9 +465,10 @@ impl Application {
             .on_group_move(|indices, delta| Message::GroupMoved { indices, delta })
             .selection(&self.graph_selection);
 
-        for (position, name, style) in &self.nodes {
+        for (index, (position, name, style)) in self.nodes.iter().enumerate() {
             // Convert NodeStyle to NodeConfig for API
             ng.push_node_styled(
+                index,
                 *position,
                 styled_node(name, style, theme),
                 style.clone().into(),

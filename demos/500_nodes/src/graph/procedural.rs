@@ -1,7 +1,7 @@
 use super::layout::ForceDirectedLayout;
 use crate::nodes::NodeType;
 use iced::Point;
-use iced_nodegraph::PinReference;
+use iced_nodegraph::PinRef;
 
 /// Generates a realistic procedural shader graph with ~500 nodes.
 ///
@@ -13,7 +13,10 @@ use iced_nodegraph::PinReference;
 /// 5. Texture operations (100) - Sampler2D, ColorMix, Gradient
 /// 6. Blending (50) - Mix and blend nodes
 /// 7. Output nodes (10) - BaseColor, Roughness, Metallic, Emission, Normal
-pub fn generate_procedural_graph() -> (Vec<(Point, NodeType)>, Vec<(PinReference, PinReference)>) {
+pub fn generate_procedural_graph() -> (
+    Vec<(Point, NodeType)>,
+    Vec<(PinRef<usize, usize>, PinRef<usize, usize>)>,
+) {
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
     let mut node_idx = 0;
@@ -55,8 +58,8 @@ pub fn generate_procedural_graph() -> (Vec<(Point, NodeType)>, Vec<(PinReference
             // Connect to random input
             let (src_idx, src_type) = input_nodes[row % input_nodes.len()];
             edges.push((
-                PinReference::new(src_idx, src_type.output_pin().unwrap()),
-                PinReference::new(node_idx, node_type.input_pin(0).unwrap()),
+                PinRef::new(src_idx, src_type.output_pin().unwrap()),
+                PinRef::new(node_idx, node_type.input_pin(0).unwrap()),
             ));
 
             noise_nodes.push((node_idx, node_type));
@@ -82,8 +85,8 @@ pub fn generate_procedural_graph() -> (Vec<(Point, NodeType)>, Vec<(PinReference
             // Connect to noise nodes
             let (src_idx, src_type) = noise_nodes[row % noise_nodes.len()];
             edges.push((
-                PinReference::new(src_idx, src_type.output_pin().unwrap()),
-                PinReference::new(node_idx, node_type.input_pin(0).unwrap()),
+                PinRef::new(src_idx, src_type.output_pin().unwrap()),
+                PinRef::new(node_idx, node_type.input_pin(0).unwrap()),
             ));
 
             vector_nodes.push((node_idx, node_type));
@@ -109,16 +112,16 @@ pub fn generate_procedural_graph() -> (Vec<(Point, NodeType)>, Vec<(PinReference
             // Connect to vector operations
             let (src_idx, src_type) = vector_nodes[row % vector_nodes.len()];
             edges.push((
-                PinReference::new(src_idx, src_type.output_pin().unwrap()),
-                PinReference::new(node_idx, node_type.input_pin(0).unwrap()),
+                PinRef::new(src_idx, src_type.output_pin().unwrap()),
+                PinRef::new(node_idx, node_type.input_pin(0).unwrap()),
             ));
 
             // Some math nodes also connect to other math nodes in previous column
             if col > 0 {
                 let (prev_idx, prev_type) = math_nodes[row % math_nodes.len().max(1)];
                 edges.push((
-                    PinReference::new(prev_idx, prev_type.output_pin().unwrap()),
-                    PinReference::new(node_idx, node_type.input_pin(1).unwrap()),
+                    PinRef::new(prev_idx, prev_type.output_pin().unwrap()),
+                    PinRef::new(node_idx, node_type.input_pin(1).unwrap()),
                 ));
             }
 
@@ -143,8 +146,8 @@ pub fn generate_procedural_graph() -> (Vec<(Point, NodeType)>, Vec<(PinReference
             // Connect to math operations
             let (src_idx, src_type) = math_nodes[row % math_nodes.len()];
             edges.push((
-                PinReference::new(src_idx, src_type.output_pin().unwrap()),
-                PinReference::new(node_idx, node_type.input_pin(0).unwrap()),
+                PinRef::new(src_idx, src_type.output_pin().unwrap()),
+                PinRef::new(node_idx, node_type.input_pin(0).unwrap()),
             ));
 
             texture_nodes.push((node_idx, node_type));
@@ -167,15 +170,15 @@ pub fn generate_procedural_graph() -> (Vec<(Point, NodeType)>, Vec<(PinReference
         // Connect to texture operations
         let (tex_idx, tex_type) = texture_nodes[row % texture_nodes.len()];
         edges.push((
-            PinReference::new(tex_idx, tex_type.output_pin().unwrap()),
-            PinReference::new(node_idx, node_type.input_pin(0).unwrap()),
+            PinRef::new(tex_idx, tex_type.output_pin().unwrap()),
+            PinRef::new(node_idx, node_type.input_pin(0).unwrap()),
         ));
 
         // Also connect to another texture node for blending
         let (tex_idx2, tex_type2) = texture_nodes[(row + 1) % texture_nodes.len()];
         edges.push((
-            PinReference::new(tex_idx2, tex_type2.output_pin().unwrap()),
-            PinReference::new(node_idx, node_type.input_pin(1).unwrap()),
+            PinRef::new(tex_idx2, tex_type2.output_pin().unwrap()),
+            PinRef::new(node_idx, node_type.input_pin(1).unwrap()),
         ));
 
         blend_nodes.push((node_idx, node_type));
@@ -204,8 +207,8 @@ pub fn generate_procedural_graph() -> (Vec<(Point, NodeType)>, Vec<(PinReference
         // Connect to blend nodes
         let (blend_idx, blend_type) = blend_nodes[i * 5 % blend_nodes.len()];
         edges.push((
-            PinReference::new(blend_idx, blend_type.output_pin().unwrap()),
-            PinReference::new(node_idx, node_type.input_pin(0).unwrap()),
+            PinRef::new(blend_idx, blend_type.output_pin().unwrap()),
+            PinRef::new(node_idx, node_type.input_pin(0).unwrap()),
         ));
 
         node_idx += 1;
@@ -232,7 +235,10 @@ pub fn generate_procedural_graph() -> (Vec<(Point, NodeType)>, Vec<(PinReference
 
 /// Validates that all edges connect outputs to inputs correctly.
 #[allow(dead_code)]
-fn validate_edges(nodes: &[(Point, NodeType)], edges: &[(PinReference, PinReference)]) {
+fn validate_edges(
+    nodes: &[(Point, NodeType)],
+    edges: &[(PinRef<usize, usize>, PinRef<usize, usize>)],
+) {
     let mut error_count = 0;
     for (from, to) in edges {
         let from_type = &nodes[from.node_id].1;

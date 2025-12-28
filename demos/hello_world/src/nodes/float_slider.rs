@@ -10,7 +10,7 @@ use iced::{
 };
 use iced_nodegraph::{NodeContentStyle, node_footer, pin};
 
-use super::{colors, node_title_bar};
+use super::{colors, node_title_bar, pins};
 
 /// Float slider node configuration
 #[derive(Debug, Clone, PartialEq)]
@@ -218,7 +218,14 @@ where
     // Build the main content - slider and pin-wrapped value on same row
     let main_content = row![
         slider_widget,
-        pin!(Right, value_display, Output, "float", colors::PIN_NUMBER)
+        pin!(
+            Right,
+            "value",
+            value_display,
+            Output,
+            pins::Float,
+            colors::PIN_NUMBER
+        )
     ]
     .spacing(8)
     .align_y(iced::Alignment::Center);

@@ -557,6 +557,13 @@ impl EdgeConfig {
         self
     }
 
+    /// Sets the dash cap style (shorthand).
+    pub fn dash_cap(mut self, dash_cap: DashCap) -> Self {
+        let stroke = self.stroke.get_or_insert_with(Default::default);
+        stroke.dash_cap = Some(dash_cap);
+        self
+    }
+
     /// Returns true if this config has any overrides set.
     pub fn has_overrides(&self) -> bool {
         self.stroke.is_some()

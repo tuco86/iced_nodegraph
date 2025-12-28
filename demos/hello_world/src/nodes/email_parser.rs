@@ -1,11 +1,11 @@
 use iced::{
     Length,
     alignment::Horizontal,
-    widget::{column, container, row},
+    widget::{column, container, row, text},
 };
 use iced_nodegraph::{NodeContentStyle, pin};
 
-use super::{colors, node_title_bar};
+use super::{colors, node_title_bar, pins};
 
 /// Email Parser Node - Input + multiple outputs
 pub fn email_parser_node<'a, Message>(theme: &'a iced::Theme) -> iced::Element<'a, Message>
@@ -17,28 +17,50 @@ where
     let pin_list = column![
         // Row 1: email input + subject output
         row![
-            container(pin!(Left, "email", Input, "email", colors::PIN_EMAIL))
-                .width(Length::FillPortion(1))
-                .align_x(Horizontal::Left),
-            container(pin!(Right, "subject", Output, "string", colors::PIN_STRING))
-                .width(Length::FillPortion(1))
-                .align_x(Horizontal::Right),
+            container(pin!(
+                Left,
+                "email",
+                text("email"),
+                Input,
+                pins::Email,
+                colors::PIN_EMAIL
+            ))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Left),
+            container(pin!(
+                Right,
+                "subject",
+                text("subject"),
+                Output,
+                pins::StringData,
+                colors::PIN_STRING
+            ))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Right),
         ]
         .width(Length::Fill),
         // Row 2: datetime output
         container(pin!(
             Right,
             "datetime",
+            text("datetime"),
             Output,
-            "datetime",
+            pins::DateTime,
             colors::PIN_DATETIME
         ))
         .width(Length::Fill)
         .align_x(Horizontal::Right),
         // Row 3: body output
-        container(pin!(Right, "body", Output, "string", colors::PIN_STRING))
-            .width(Length::Fill)
-            .align_x(Horizontal::Right),
+        container(pin!(
+            Right,
+            "body",
+            text("body"),
+            Output,
+            pins::StringData,
+            colors::PIN_STRING
+        ))
+        .width(Length::Fill)
+        .align_x(Horizontal::Right),
     ]
     .spacing(4);
 
