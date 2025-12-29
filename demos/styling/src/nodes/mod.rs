@@ -51,7 +51,7 @@ where
             row![
                 container(pin!(
                     Left,
-                    "input",
+                    0usize,
                     text(""),
                     Input,
                     Data,
@@ -61,7 +61,7 @@ where
                 .align_x(Horizontal::Left),
                 container(pin!(
                     Right,
-                    "output",
+                    1usize,
                     text(""),
                     Output,
                     Data,

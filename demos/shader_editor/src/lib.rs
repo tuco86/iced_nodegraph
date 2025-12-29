@@ -585,13 +585,14 @@ fn create_node_widget<'a>(
         });
 
     // Build pin list - must match hello_world's column![] macro structure
+    // Pin IDs use sequential indices: inputs first (0..n), then outputs (n..n+m)
     let pin_section = if inputs.is_empty() && outputs.is_empty() {
         // No pins - minimal output indicator
         container(
             column![
                 node_pin(
                     PinSide::Right,
-                    "out",
+                    0usize,
                     container(text("out").size(11)).padding([0, 8])
                 )
                 .direction(PinDirection::Output)
@@ -603,12 +604,14 @@ fn create_node_widget<'a>(
     } else {
         // Build pins dynamically but wrap in container same way
         let mut pin_elements: Vec<iced::Element<'a, Message>> = Vec::new();
+        let num_inputs = inputs.len();
 
-        for input in inputs {
+        for (i, input) in inputs.into_iter().enumerate() {
             let socket_color = get_socket_color(&input.socket_type);
             let label = input.name.clone();
             pin_elements.push(create_typed_pin(
                 PinSide::Left,
+                i, // Pin ID = input index
                 label,
                 PinDirection::Input,
                 &input.socket_type,
@@ -616,11 +619,12 @@ fn create_node_widget<'a>(
             ));
         }
 
-        for output in outputs {
+        for (i, output) in outputs.into_iter().enumerate() {
             let socket_color = get_socket_color(&output.socket_type);
             let label = output.name.clone();
             pin_elements.push(create_typed_pin(
                 PinSide::Right,
+                num_inputs + i, // Pin ID = num_inputs + output index
                 label,
                 PinDirection::Output,
                 &output.socket_type,
@@ -650,6 +654,7 @@ fn get_socket_color(socket_type: &shader_graph::sockets::SocketType) -> Color {
 /// Uses marker types for TypeId-based connection matching.
 fn create_typed_pin<'a, Message: Clone + 'a>(
     side: PinSide,
+    pin_id: usize,
     label: String,
     direction: PinDirection,
     socket_type: &shader_graph::sockets::SocketType,
@@ -657,35 +662,35 @@ fn create_typed_pin<'a, Message: Clone + 'a>(
 ) -> Element<'a, Message> {
     use shader_graph::sockets::SocketType;
 
-    let content = container(text(label.clone()).size(11)).padding([0, 8]);
+    let content = container(text(label).size(11)).padding([0, 8]);
 
     match socket_type {
-        SocketType::Float => node_pin(side, label, content)
+        SocketType::Float => node_pin(side, pin_id, content)
             .direction(direction)
             .data_type::<colors::Float>()
             .color(color)
             .into(),
-        SocketType::Vec2 => node_pin(side, label, content)
+        SocketType::Vec2 => node_pin(side, pin_id, content)
             .direction(direction)
             .data_type::<colors::Vec2>()
             .color(color)
             .into(),
-        SocketType::Vec3 => node_pin(side, label, content)
+        SocketType::Vec3 => node_pin(side, pin_id, content)
             .direction(direction)
             .data_type::<colors::Vec3>()
             .color(color)
             .into(),
-        SocketType::Vec4 => node_pin(side, label, content)
+        SocketType::Vec4 => node_pin(side, pin_id, content)
             .direction(direction)
             .data_type::<colors::Vec4>()
             .color(color)
             .into(),
-        SocketType::Bool => node_pin(side, label, content)
+        SocketType::Bool => node_pin(side, pin_id, content)
             .direction(direction)
             .data_type::<colors::Bool>()
             .color(color)
             .into(),
-        SocketType::Int => node_pin(side, label, content)
+        SocketType::Int => node_pin(side, pin_id, content)
             .direction(direction)
             .data_type::<colors::Int>()
             .color(color)

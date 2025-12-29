@@ -30,12 +30,12 @@ where
     Message: Clone + 'a,
 {
     let pins = row![
-        container(pin!(Left, "in", text(""), Input, colors::Vec2, PIN_VEC2))
+        container(pin!(Left, 0usize, text(""), Input, colors::Vec2, PIN_VEC2))
             .width(Length::FillPortion(1))
             .align_x(Horizontal::Left),
         container(pin!(
             Right,
-            "out",
+            1usize,
             text(""),
             Output,
             colors::Float,
@@ -56,12 +56,12 @@ where
     Message: Clone + 'a,
 {
     let pins = row![
-        container(pin!(Left, "in", text(""), Input, colors::Vec2, PIN_VEC2))
+        container(pin!(Left, 0usize, text(""), Input, colors::Vec2, PIN_VEC2))
             .width(Length::FillPortion(1))
             .align_x(Horizontal::Left),
         container(pin!(
             Right,
-            "out",
+            1usize,
             text(""),
             Output,
             colors::Float,
@@ -82,12 +82,12 @@ where
     Message: Clone + 'a,
 {
     let pins = row![
-        container(pin!(Left, "in", text(""), Input, colors::Vec2, PIN_VEC2))
+        container(pin!(Left, 0usize, text(""), Input, colors::Vec2, PIN_VEC2))
             .width(Length::FillPortion(1))
             .align_x(Horizontal::Left),
         container(pin!(
             Right,
-            "out",
+            1usize,
             text(""),
             Output,
             colors::Float,

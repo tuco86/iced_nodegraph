@@ -30,7 +30,7 @@ where
 {
     let pins = column![pin!(
         Right,
-        "t",
+        0usize,
         text("t"),
         Output,
         colors::Float,
@@ -49,7 +49,7 @@ where
 {
     let pins = column![pin!(
         Right,
-        "uv",
+        0usize,
         text("uv"),
         Output,
         colors::Vec2,
@@ -68,7 +68,7 @@ where
 {
     let pins = column![pin!(
         Right,
-        "N",
+        0usize,
         text("N"),
         Output,
         colors::Vec3,
@@ -87,7 +87,7 @@ where
 {
     let pins = column![pin!(
         Right,
-        "P",
+        0usize,
         text("P"),
         Output,
         colors::Vec3,

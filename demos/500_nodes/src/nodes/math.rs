@@ -33,7 +33,7 @@ where
         row![
             container(pin!(
                 Left,
-                "A",
+                0usize,
                 text("A"),
                 Input,
                 colors::Float,
@@ -43,7 +43,7 @@ where
             .align_x(Horizontal::Left),
             container(pin!(
                 Right,
-                "out",
+                1usize,
                 text(""),
                 Output,
                 colors::Float,
@@ -55,7 +55,7 @@ where
         .width(Length::Fill),
         container(pin!(
             Left,
-            "B",
+            2usize,
             text("B"),
             Input,
             colors::Float,
@@ -79,7 +79,7 @@ where
         row![
             container(pin!(
                 Left,
-                "A",
+                0usize,
                 text("A"),
                 Input,
                 colors::Float,
@@ -89,7 +89,7 @@ where
             .align_x(Horizontal::Left),
             container(pin!(
                 Right,
-                "out",
+                1usize,
                 text(""),
                 Output,
                 colors::Float,
@@ -101,7 +101,7 @@ where
         .width(Length::Fill),
         container(pin!(
             Left,
-            "B",
+            2usize,
             text("B"),
             Input,
             colors::Float,
@@ -128,7 +128,7 @@ where
         row![
             container(pin!(
                 Left,
-                "A",
+                0usize,
                 text("A"),
                 Input,
                 colors::Float,
@@ -138,7 +138,7 @@ where
             .align_x(Horizontal::Left),
             container(pin!(
                 Right,
-                "out",
+                1usize,
                 text(""),
                 Output,
                 colors::Float,
@@ -150,7 +150,7 @@ where
         .width(Length::Fill),
         container(pin!(
             Left,
-            "B",
+            2usize,
             text("B"),
             Input,
             colors::Float,
@@ -174,7 +174,7 @@ where
         row![
             container(pin!(
                 Left,
-                "A",
+                0usize,
                 text("A"),
                 Input,
                 colors::Float,
@@ -184,7 +184,7 @@ where
             .align_x(Horizontal::Left),
             container(pin!(
                 Right,
-                "out",
+                1usize,
                 text(""),
                 Output,
                 colors::Float,
@@ -196,7 +196,7 @@ where
         .width(Length::Fill),
         container(pin!(
             Left,
-            "B",
+            2usize,
             text("B"),
             Input,
             colors::Float,
@@ -223,7 +223,7 @@ where
         row![
             container(pin!(
                 Left,
-                "val",
+                0usize,
                 text("val"),
                 Input,
                 colors::Float,
@@ -233,7 +233,7 @@ where
             .align_x(Horizontal::Left),
             container(pin!(
                 Right,
-                "out",
+                1usize,
                 text(""),
                 Output,
                 colors::Float,
@@ -245,7 +245,7 @@ where
         .width(Length::Fill),
         container(pin!(
             Left,
-            "exp",
+            2usize,
             text("exp"),
             Input,
             colors::Float,
