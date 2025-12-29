@@ -26,8 +26,8 @@ impl PinReference {
 }
 
 /// Convert from generic PinRef<usize, usize> to PinReference for backwards compatibility.
-impl From<crate::node_grapgh::PinRef<usize, usize>> for PinReference {
-    fn from(pin_ref: crate::node_grapgh::PinRef<usize, usize>) -> Self {
+impl From<crate::node_graph::PinRef<usize, usize>> for PinReference {
+    fn from(pin_ref: crate::node_graph::PinRef<usize, usize>) -> Self {
         Self {
             node_id: pin_ref.node_id,
             pin_id: pin_ref.pin_id,
@@ -36,7 +36,7 @@ impl From<crate::node_grapgh::PinRef<usize, usize>> for PinReference {
 }
 
 /// Convert from PinReference to generic PinRef<usize, usize>.
-impl From<PinReference> for crate::node_grapgh::PinRef<usize, usize> {
+impl From<PinReference> for crate::node_graph::PinRef<usize, usize> {
     fn from(pin_ref: PinReference) -> Self {
         Self {
             node_id: pin_ref.node_id,

@@ -16,7 +16,7 @@ iced_nodegraph/                    # Workspace root
 │   ├── Cargo.toml                 # Library dependencies
 │   ├── src/
 │   │   ├── lib.rs                 # Public API exports
-│   │   ├── node_grapgh/           # Main widget implementation
+│   │   ├── node_graph/           # Main widget implementation
 │   │   │   ├── mod.rs
 │   │   │   ├── widget.rs          # Widget trait implementation
 │   │   │   ├── camera.rs          # 2D camera transformations

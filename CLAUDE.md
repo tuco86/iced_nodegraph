@@ -98,8 +98,8 @@ For WASM demos, Chrome or Chromium-based browsers are recommended.
 ### Coordinate System Abstraction - VERIFIED & TESTED
 The project uses **euclid** crate for type-safe coordinate transformations:
 - `WorldPoint`/`ScreenPoint` distinguish coordinate spaces with compile-time type safety
-- `Camera2D` handles zoom/pan transformations in `src/node_grapgh/camera.rs`
-- Convert between coordinate systems using `IntoIced`/`IntoEuclid` traits in `src/node_grapgh/euclid.rs`
+- `Camera2D` handles zoom/pan transformations in `src/node_graph/camera.rs`
+- Convert between coordinate systems using `IntoIced`/`IntoEuclid` traits in `src/node_graph/euclid.rs`
 
 **Critical Transformation Formulas** (mathematically verified):
 - **Screen → World**: `world = screen / zoom - position`
@@ -111,18 +111,18 @@ The project uses **euclid** crate for type-safe coordinate transformations:
 
 **Test Coverage**: 44 unit tests across camera, state, interaction, and API modules validate all core functionality.
 
-**See `src/node_grapgh/camera.rs` module documentation for complete mathematical derivations and usage patterns.**
+**See `src/node_graph/camera.rs` module documentation for complete mathematical derivations and usage patterns.**
 
 ### Widget Architecture
-- **NodeGraph** (`src/node_grapgh/mod.rs`) - Main container widget managing nodes and edges
+- **NodeGraph** (`src/node_graph/mod.rs`) - Main container widget managing nodes and edges
 - **NodePin** (`src/node_pin/mod.rs`) - Connection points with `PinSide` enum (Left/Right/Top/Bottom/Row)
 - **PinReference** (`src/node_pin/mod.rs`) - Type-safe identifier for pin connections (`node_id`, `pin_id`)
-- **NodeGraphEvent** (`src/node_grapgh/mod.rs`) - Unified event enum for all graph interactions
-- **State Management** (`src/node_grapgh/state.rs`) - Handles dragging states and camera state
+- **NodeGraphEvent** (`src/node_graph/mod.rs`) - Unified event enum for all graph interactions
+- **State Management** (`src/node_graph/state.rs`) - Handles dragging states and camera state
 
 ### Custom Rendering Pipeline
 Uses **WGPU shaders** for high-performance node graph rendering:
-- `src/node_grapgh/effects/pipeline/` contains WGPU rendering pipeline
+- `src/node_graph/effects/pipeline/` contains WGPU rendering pipeline
 - `shader.wgsl` defines visual appearance of nodes/edges
 - Background/Foreground layers for proper rendering order
 - GPU-accelerated with custom vertex/fragment shaders
@@ -214,18 +214,18 @@ Custom effects use `shader::Primitive` trait:
 
 | Module | Purpose | Key Types |
 |--------|---------|-----------|
-| `node_grapgh/mod.rs` | Main widget, events | `NodeGraph`, `NodeGraphEvent`, `DragInfo` |
-| `node_grapgh/widget.rs` | Widget trait impl | `node_graph()` constructor |
-| `node_grapgh/camera.rs` | Zoom/pan transforms | `Camera2D`, coordinate math |
-| `node_grapgh/euclid.rs` | Type-safe coords | `WorldPoint`, `ScreenPoint`, `IntoIced` |
-| `node_grapgh/state.rs` | Interaction state | `State`, `DragState` |
+| `node_graph/mod.rs` | Main widget, events | `NodeGraph`, `NodeGraphEvent`, `DragInfo` |
+| `node_graph/widget.rs` | Widget trait impl | `node_graph()` constructor |
+| `node_graph/camera.rs` | Zoom/pan transforms | `Camera2D`, coordinate math |
+| `node_graph/euclid.rs` | Type-safe coords | `WorldPoint`, `ScreenPoint`, `IntoIced` |
+| `node_graph/state.rs` | Interaction state | `State`, `DragState` |
 | `node_pin/mod.rs` | Connection points | `NodePin`, `PinReference`, `PinSide` |
 | `style/mod.rs` | Theming | `NodeStyle`, `EdgeStyle`, `GraphStyle` |
 | `style/config.rs` | Partial overrides | `NodeConfig`, `EdgeConfig` (merge pattern) |
 | `content.rs` | Layout helpers | `node_header()`, `node_footer()`, `simple_node()` |
 | `helpers.rs` | Utilities | `clone_nodes()`, `delete_nodes()`, `SelectionHelper` |
 
-### Rendering Pipeline (iced_nodegraph/src/node_grapgh/effects/)
+### Rendering Pipeline (iced_nodegraph/src/node_graph/effects/)
 
 | File | Purpose |
 |------|---------|
@@ -249,7 +249,7 @@ Custom effects use `shader::Primitive` trait:
 ### Dependency Flow
 ```
 lib.rs (public API)
-  ├── node_grapgh/ (widget)
+  ├── node_graph/ (widget)
   │     ├── widget.rs (iced Widget trait)
   │     ├── state.rs (interaction)
   │     ├── camera.rs (transforms)

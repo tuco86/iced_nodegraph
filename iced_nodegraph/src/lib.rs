@@ -194,7 +194,7 @@ pub use helpers::{
     CloneResult, DeleteResult, NodeHandle, PinHandle, SelectionHelper, clone_nodes, delete_nodes,
 };
 pub use ids::{EdgeId, IdMap, IdMaps, NodeId, PinId};
-pub use node_grapgh::{
+pub use node_graph::{
     DragInfo, NodeGraph, NodeGraphEvent, NodeGraphMessage, PinRef, RemoteDrag, RemoteUserState,
     camera::Camera2D, widget::node_graph,
 };
@@ -242,7 +242,7 @@ pub mod helpers;
 pub mod ids;
 mod macros;
 mod node;
-mod node_grapgh;
+mod node_graph;
 mod node_pin;
 pub mod style;
 

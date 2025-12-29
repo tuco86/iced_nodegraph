@@ -210,7 +210,9 @@ pub struct NodeGraph<
     on_clone: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
     on_delete: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
     on_group_move: Option<Box<dyn Fn(Vec<N>, Vector) -> Message + 'a>>,
-    external_selection: Option<&'a HashSet<usize>>,
+    /// External selection using internal indices.
+    /// Populated by `selection()` method which converts user IDs to indices.
+    external_selection: Option<HashSet<usize>>,
     // Drag event callbacks for real-time collaboration
     on_drag_start: Option<Box<dyn Fn(DragInfo) -> Message + 'a>>,
     on_drag_update: Option<Box<dyn Fn(f32, f32) -> Message + 'a>>,
@@ -418,7 +420,26 @@ where
         self
     }
 
-    pub fn selection(mut self, selection: &'a HashSet<usize>) -> Self {
+    /// Sets the external selection using user node IDs.
+    ///
+    /// The IDs are converted to internal indices. Unknown IDs are ignored.
+    /// This allows controlling which nodes are selected from outside the widget.
+    pub fn selection<'b>(mut self, selection: impl IntoIterator<Item = &'b N>) -> Self
+    where
+        N: 'b,
+    {
+        let indices: HashSet<usize> = selection
+            .into_iter()
+            .filter_map(|id| self.id_maps.node_index(id))
+            .collect();
+        self.external_selection = Some(indices);
+        self
+    }
+
+    /// Sets the external selection using internal indices (for advanced use).
+    ///
+    /// Prefer `selection()` which uses user node IDs.
+    pub fn selection_by_indices(mut self, selection: HashSet<usize>) -> Self {
         self.external_selection = Some(selection);
         self
     }
@@ -456,6 +477,55 @@ where
     /// Returns the position of a node by its internal index.
     pub fn node_position_by_index(&self, index: usize) -> Option<Point> {
         self.nodes.get(index).map(|(pos, _, _)| *pos)
+    }
+
+    /// Updates a node's position by its ID.
+    ///
+    /// Returns `true` if the node was found and updated, `false` otherwise.
+    pub fn update_node_position(&mut self, node_id: &N, position: Point) -> bool {
+        if let Some(idx) = self.id_maps.node_index(node_id) {
+            if let Some((pos, _, _)) = self.nodes.get_mut(idx) {
+                *pos = position;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Updates a node's position by its internal index.
+    ///
+    /// Returns `true` if the node was found and updated, `false` otherwise.
+    pub fn update_node_position_by_index(&mut self, index: usize, position: Point) -> bool {
+        if let Some((pos, _, _)) = self.nodes.get_mut(index) {
+            *pos = position;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Removes an edge between two pins.
+    ///
+    /// Returns `true` if an edge was found and removed, `false` otherwise.
+    pub fn remove_edge(&mut self, from: &PinRef<N, P>, to: &PinRef<N, P>) -> bool {
+        if let Some(idx) = self.edges.iter().position(|(f, t, _)| f == from && t == to) {
+            self.edges.remove(idx);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Removes all edges from the graph.
+    pub fn clear_edges(&mut self) {
+        self.edges.clear();
+    }
+
+    /// Removes all nodes and edges from the graph, resetting it to empty.
+    pub fn clear(&mut self) {
+        self.nodes.clear();
+        self.edges.clear();
+        self.id_maps = IdMaps::new();
     }
 
     pub(super) fn elements_iter(
@@ -521,7 +591,21 @@ where
         self.on_drag_end.as_ref()
     }
     pub(super) fn get_external_selection(&self) -> Option<&HashSet<usize>> {
-        self.external_selection
+        self.external_selection.as_ref()
+    }
+
+    /// Returns the currently selected node IDs (if set via `selection()`).
+    ///
+    /// Returns `None` if no external selection was set.
+    /// Note: This only reflects the selection passed to `selection()`,
+    /// not the internal widget selection state.
+    pub fn selected_nodes(&self) -> Option<Vec<N>> {
+        self.external_selection.as_ref().map(|indices| {
+            indices
+                .iter()
+                .filter_map(|&idx| self.id_maps.node_id(idx).cloned())
+                .collect()
+        })
     }
 
     pub(super) fn get_on_event(

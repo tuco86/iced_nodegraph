@@ -1,4 +1,4 @@
-use crate::node_grapgh::euclid::WorldVector;
+use crate::node_graph::euclid::WorldVector;
 use crate::node_pin::PinDirection;
 use crate::style::PinShape;
 use iced::Color;

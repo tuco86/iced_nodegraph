@@ -28,7 +28,6 @@ impl Default for BoolToggleConfig {
     }
 }
 
-
 /// Creates a boolean toggle node with modern switch styling
 pub fn bool_toggle_node<'a, Message>(
     theme: &'a iced::Theme,

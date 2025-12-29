@@ -10,7 +10,7 @@ pub use node::Node;
 pub use node::NodeFlags;
 pub use pin::Pin;
 
-use crate::node_grapgh::{euclid::WorldPoint, state::Dragging};
+use crate::node_graph::{euclid::WorldPoint, state::Dragging};
 use crate::style::{BackgroundStyle, EdgeStyle};
 
 use super::pipeline::Pipeline;
@@ -23,10 +23,10 @@ pub enum Layer {
     Foreground,
 }
 
-/// Legacy edge data structure (for gradual migration).
+/// Edge data for GPU rendering.
 ///
-/// This stores indices that are looked up in the shader.
-/// Prefer using `EdgePrimitive` for new code.
+/// This stores node/pin indices that are looked up in the shader
+/// to compute edge endpoints from pin positions.
 #[derive(Debug, Clone)]
 pub struct EdgeData {
     pub from_node: usize,
@@ -108,14 +108,7 @@ impl Primitive for NodeGraphPrimitive {
         pipeline: &Self::Pipeline,
         render_pass: &mut iced::wgpu::RenderPass<'_>,
     ) -> bool {
-        // Use default viewport - this should come from the bounds in practice
-        let viewport = Rectangle {
-            x: 0,
-            y: 0,
-            width: 800,
-            height: 600,
-        };
-        pipeline.render_pass(render_pass, viewport, self.layer);
+        pipeline.render_pass(render_pass, self.layer);
         true // We handle the drawing ourselves
     }
 }

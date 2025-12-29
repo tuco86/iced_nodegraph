@@ -1,6 +1,6 @@
 use iced::Color;
 
-use crate::node_grapgh::euclid::{WorldSize, WorldVector};
+use crate::node_graph::euclid::{WorldSize, WorldVector};
 
 use super::Pin;
 

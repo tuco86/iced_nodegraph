@@ -7,8 +7,8 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::node_grapgh::camera::Camera2D;
-    use crate::node_grapgh::euclid::*;
+    use crate::node_graph::camera::Camera2D;
+    use crate::node_graph::euclid::*;
     use iced::Point;
 
     #[test]

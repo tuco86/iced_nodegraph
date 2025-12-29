@@ -182,7 +182,10 @@ where
         .filter_map(|&idx| {
             get_node(idx).map(|(pos, data)| {
                 let new_pos = Point::new(pos.x + offset.x, pos.y + offset.y);
-                (*index_map.get(&idx).unwrap(), new_pos, data)
+                let new_idx = *index_map
+                    .get(&idx)
+                    .expect("clone_nodes: source index must exist in index_map");
+                (new_idx, new_pos, data)
             })
         })
         .collect();
@@ -193,8 +196,14 @@ where
         .iter()
         .filter(|(from, to)| source_set.contains(&from.node_id) && source_set.contains(&to.node_id))
         .map(|(from, to)| {
-            let new_from = PinReference::new(*index_map.get(&from.node_id).unwrap(), from.pin_id);
-            let new_to = PinReference::new(*index_map.get(&to.node_id).unwrap(), to.pin_id);
+            let new_from_id = *index_map
+                .get(&from.node_id)
+                .expect("clone_nodes: edge source node must exist in index_map");
+            let new_to_id = *index_map
+                .get(&to.node_id)
+                .expect("clone_nodes: edge target node must exist in index_map");
+            let new_from = PinReference::new(new_from_id, from.pin_id);
+            let new_to = PinReference::new(new_to_id, to.pin_id);
             (new_from, new_to)
         })
         .collect();

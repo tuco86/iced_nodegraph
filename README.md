@@ -148,7 +148,7 @@ iced_nodegraph/                    # Workspace root
 ├── iced_nodegraph/                # Core library
 │   ├── Cargo.toml
 │   └── src/
-│       ├── node_grapgh/           # Main widget
+│       ├── node_graph/           # Main widget
 │       │   ├── camera.rs          # Coordinate transformations (15 tests)
 │       │   ├── widget.rs          # Widget implementation
 │       │   ├── state.rs           # Interaction state
@@ -195,7 +195,7 @@ The node graph uses a **custom WGPU rendering pipeline** with **instanced render
 - **Scalability**: Tested with 500+ nodes and 600+ edges
 - **Bottleneck**: Currently all nodes/edges rendered regardless of visibility (Phase 3 frustum culling planned)
 
-**Implementation**: See [`iced_nodegraph/src/node_grapgh/effects/pipeline/`](iced_nodegraph/src/node_grapgh/effects/pipeline/) for shader code and rendering logic.
+**Implementation**: See [`iced_nodegraph/src/node_graph/effects/pipeline/`](iced_nodegraph/src/node_graph/effects/pipeline/) for shader code and rendering logic.
 
 ### Coordinate System
 
@@ -204,7 +204,7 @@ The widget uses two distinct coordinate spaces with compile-time type safety:
 - **Screen Space** - Pixel coordinates from user input (mouse, viewport)
 - **World Space** - Virtual infinite canvas where nodes exist
 
-Transformations use mathematically consistent formulas. See [`iced_nodegraph/src/node_grapgh/camera.rs`](iced_nodegraph/src/node_grapgh/camera.rs) for implementation details and comprehensive test coverage.
+Transformations use mathematically consistent formulas. See [`iced_nodegraph/src/node_graph/camera.rs`](iced_nodegraph/src/node_graph/camera.rs) for implementation details and comprehensive test coverage.
 
 ## Interaction
 

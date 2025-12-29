@@ -15,7 +15,7 @@ use super::{
 use crate::{
     PinRef, PinSide,
     ids::{EdgeId, NodeId, PinId},
-    node_grapgh::euclid::{IntoEuclid, ScreenPoint, WorldPoint},
+    node_graph::euclid::{IntoEuclid, ScreenPoint, WorldPoint},
     node_pin::NodePinState,
     style::{EdgeConfig, EdgeStyle, GraphStyle, NodeConfig, NodeStyle, PinConfig, PinStyle},
 };

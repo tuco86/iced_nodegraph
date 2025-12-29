@@ -16,10 +16,10 @@ use iced::{
 use iced_wgpu::graphics::Viewport;
 use iced_wgpu::primitive::Pipeline as PipelineTrait;
 
-use crate::node_grapgh::{effects::Node, euclid::WorldPoint, state::Dragging};
+use crate::node_graph::{effects::Node, euclid::WorldPoint, state::Dragging};
 use crate::style::EdgeCurve;
 
-use super::{EdgeData, Layer, primitive::NodeGraphPrimitive};
+use super::{EdgeData, Layer};
 
 mod buffer;
 mod types;
@@ -299,42 +299,6 @@ impl Pipeline {
             bind_group,
             bind_group_generations: (0, 0, 0),
         }
-    }
-
-    #[allow(dead_code)]
-    pub fn update(
-        &mut self,
-        device: &Device,
-        queue: &Queue,
-        bounds: &Rectangle<f32>,
-        viewport: &Viewport,
-        primitive: &NodeGraphPrimitive,
-    ) {
-        self.update_new(
-            device,
-            queue,
-            bounds,
-            viewport,
-            primitive.camera_zoom,
-            primitive.camera_position,
-            primitive.cursor_position,
-            primitive.time,
-            &primitive.dragging,
-            &primitive.nodes,
-            &primitive.edges,
-            primitive.edge_color,
-            primitive.background_color,
-            primitive.border_color,
-            primitive.fill_color,
-            primitive.drag_edge_color,
-            primitive.drag_edge_valid_color,
-            &primitive.selected_nodes,
-            primitive.selected_edge_color,
-            primitive.edge_thickness,
-            primitive.layer,
-            &primitive.valid_drop_targets,
-            &primitive.background_style,
-        );
     }
 
     pub fn update_new(
@@ -861,12 +825,7 @@ impl Pipeline {
         }
     }
 
-    pub fn render_pass(
-        &self,
-        pass: &mut iced::wgpu::RenderPass<'_>,
-        _viewport: Rectangle<u32>,
-        layer: Layer,
-    ) {
+    pub fn render_pass(&self, pass: &mut iced::wgpu::RenderPass<'_>, layer: Layer) {
         let num_nodes = self.nodes.len();
         let num_pins = self.pins.len();
         let num_edges = self.edges.len();
@@ -985,7 +944,7 @@ fn create_bind_group_layout(device: &Device) -> BindGroupLayout {
                     has_dynamic_offset: false,
                     min_binding_size: Some(
                         NonZeroU64::new(<types::Node as ShaderSize>::SHADER_SIZE.get() * 10)
-                            .unwrap(),
+                            .expect("Node SHADER_SIZE * 10 must be non-zero"),
                     ),
                 },
                 count: None,
@@ -999,7 +958,7 @@ fn create_bind_group_layout(device: &Device) -> BindGroupLayout {
                     has_dynamic_offset: false,
                     min_binding_size: Some(
                         NonZeroU64::new(<types::Pin as ShaderSize>::SHADER_SIZE.get() * 10)
-                            .unwrap(),
+                            .expect("Pin SHADER_SIZE * 10 must be non-zero"),
                     ),
                 },
                 count: None,
@@ -1013,7 +972,7 @@ fn create_bind_group_layout(device: &Device) -> BindGroupLayout {
                     has_dynamic_offset: false,
                     min_binding_size: Some(
                         NonZeroU64::new(<types::Edge as ShaderSize>::SHADER_SIZE.get() * 10)
-                            .unwrap(),
+                            .expect("Edge SHADER_SIZE * 10 must be non-zero"),
                     ),
                 },
                 count: None,

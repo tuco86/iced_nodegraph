@@ -98,7 +98,7 @@
 //! ## Mouse Input → World Coordinates
 //!
 //! ```rust,ignore
-//! use crate::node_grapgh::euclid::IntoEuclid;
+//! use crate::node_graph::euclid::IntoEuclid;
 //!
 //! // Mouse events arrive in screen space
 //! if let Some(cursor_position) = screen_cursor.position() {
@@ -212,7 +212,10 @@ impl Camera2D {
     #[allow(dead_code)]
     pub fn world_to_screen(&self) -> Transform2D<f32, World, Screen> {
         // Converts world coordinates to screen coordinates.
-        self.screen_to_world().inverse().unwrap()
+        // The transform is always invertible since zoom is clamped to [0.1, 10.0].
+        self.screen_to_world()
+            .inverse()
+            .expect("Camera transform must be invertible (zoom cannot be 0)")
     }
 
     pub fn move_by(&self, offset: WorldVector) -> Self {
