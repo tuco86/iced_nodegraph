@@ -42,7 +42,7 @@ use iced::{
     widget::{container, stack, text},
     window,
 };
-use iced_nodegraph::{EdgeConfig, NodeConfig, PinConfig, PinRef, ShadowConfig};
+use iced_nodegraph::{BackgroundConfig, EdgeConfig, NodeConfig, PinConfig, PinRef, ShadowConfig};
 use iced_nodegraph::{EdgeCurve, PinShape};
 use iced_palette::{
     Command, Shortcut, command, command_palette, find_matching_shortcut, focus_input,
@@ -50,12 +50,13 @@ use iced_palette::{
 };
 use ids::{EdgeId, NodeId, PinLabel, generate_edge_id, generate_node_id};
 use nodes::{
-    BoolToggleConfig, ConfigNodeType, EdgeConfigInputs, FloatSliderConfig, InputNodeType,
-    IntSliderConfig, MathNodeState, MathOperation, NodeConfigInputs, NodeType, NodeValue,
-    PatternType, PinConfigInputs, ShadowConfigInputs, apply_to_graph_node, apply_to_node_node,
-    bool_toggle_node, color_picker_node, color_preset_node, edge_config_node,
-    edge_curve_selector_node, float_slider_node, int_slider_node, math_node, node,
-    node_config_node, pattern_type_selector_node, pin_config_node, pin_shape_selector_node,
+    BackgroundConfigInputs, BoolToggleConfig, ConfigNodeType, EdgeConfigInputs, FloatSliderConfig,
+    InputNodeType, IntSliderConfig, MathNodeState, MathOperation, NodeConfigInputs, NodeType,
+    NodeValue, PatternType, PatternTypeSelection, PinConfigInputs, ShadowConfigInputs,
+    apply_to_graph_node, apply_to_node_node, background_config_node,
+    background_pattern_selector_node, bool_toggle_node, color_picker_node, color_preset_node,
+    edge_config_node, edge_curve_selector_node, float_slider_node, int_slider_node, math_node,
+    node, node_config_node, pattern_type_selector_node, pin_config_node, pin_shape_selector_node,
     shadow_config_node,
 };
 #[cfg(not(target_arch = "wasm32"))]
@@ -195,6 +196,10 @@ enum ApplicationMessage {
         node_id: NodeId,
         value: PatternType,
     },
+    BackgroundPatternChanged {
+        node_id: NodeId,
+        value: PatternTypeSelection,
+    },
     ColorChanged {
         node_id: NodeId,
         color: Color,
@@ -226,6 +231,7 @@ enum ConfigOutput {
     Node(NodeConfig),
     Edge(EdgeConfig),
     Pin(iced_nodegraph::PinConfig),
+    Background(BackgroundConfig),
 }
 
 /// Computed style values from connected config nodes
@@ -250,6 +256,8 @@ struct ComputedStyle {
     pin_shape: Option<iced_nodegraph::PinShape>,
     pin_border_color: Option<Color>,
     pin_border_width: Option<f32>,
+    // Background config
+    background: Option<BackgroundConfig>,
 }
 
 impl ComputedStyle {
@@ -739,14 +747,19 @@ impl Application {
                     ConfigNodeType::EdgeConfig(inputs) => *inputs = EdgeConfigInputs::default(),
                     ConfigNodeType::ShadowConfig(inputs) => *inputs = ShadowConfigInputs::default(),
                     ConfigNodeType::PinConfig(inputs) => *inputs = PinConfigInputs::default(),
+                    ConfigNodeType::BackgroundConfig(inputs) => {
+                        *inputs = BackgroundConfigInputs::default()
+                    }
                     ConfigNodeType::ApplyToGraph {
                         has_node_config,
                         has_edge_config,
                         has_pin_config,
+                        has_background_config,
                     } => {
                         *has_node_config = false;
                         *has_edge_config = false;
                         *has_pin_config = false;
+                        *has_background_config = false;
                     }
                     ConfigNodeType::ApplyToNode {
                         has_node_config,
@@ -1056,6 +1069,20 @@ impl Application {
                     inputs.border_width = value.as_float();
                 }
             }
+            ConfigNodeType::BackgroundConfig(inputs) => {
+                // BackgroundConfig pin labels
+                if *pin_label == pin::PATTERN {
+                    inputs.pattern = value.as_background_pattern();
+                } else if *pin_label == pin::BACKGROUND_COLOR {
+                    inputs.background_color = value.as_color();
+                } else if *pin_label == pin::PRIMARY_COLOR {
+                    inputs.primary_color = value.as_color();
+                } else if *pin_label == pin::MINOR_SPACING {
+                    inputs.minor_spacing = value.as_float();
+                } else if *pin_label == pin::ADAPTIVE_ZOOM {
+                    inputs.adaptive_zoom = value.as_bool();
+                }
+            }
             ConfigNodeType::ApplyToNode { target_id, .. } => {
                 if *pin_label == pin::TARGET {
                     *target_id = value.as_int();
@@ -1086,6 +1113,9 @@ impl Application {
             Some((_, NodeType::Config(ConfigNodeType::PinConfig(inputs)))) => {
                 Some(ConfigOutput::Pin(inputs.build()))
             }
+            Some((_, NodeType::Config(ConfigNodeType::BackgroundConfig(inputs)))) => {
+                Some(ConfigOutput::Background(inputs.build()))
+            }
             _ => None,
         };
 
@@ -1097,9 +1127,10 @@ impl Application {
             has_node_config,
             has_edge_config,
             has_pin_config,
+            has_background_config,
         }) = node_type
         {
-            // ApplyToGraph pin labels: node, edge, pin
+            // ApplyToGraph pin labels: node, edge, pin, background
             if *apply_pin_label == pin::NODE_CONFIG {
                 if matches!(&built_config, Some(ConfigOutput::Node(_))) {
                     *has_node_config = true;
@@ -1111,6 +1142,10 @@ impl Application {
             } else if *apply_pin_label == pin::PIN_CONFIG {
                 if matches!(&built_config, Some(ConfigOutput::Pin(_))) {
                     *has_pin_config = true;
+                }
+            } else if *apply_pin_label == pin::BACKGROUND_CONFIG {
+                if matches!(&built_config, Some(ConfigOutput::Background(_))) {
+                    *has_background_config = true;
                 }
             }
         }
@@ -1132,6 +1167,7 @@ impl Application {
                 has_node_config,
                 has_edge_config,
                 has_pin_config,
+                has_background_config,
             }) = node_type
             {
                 if let Some(configs) = self.pending_configs.get(node_id) {
@@ -1205,6 +1241,12 @@ impl Application {
                                     if let Some(w) = pin_config.border_width {
                                         computed.pin_border_width = Some(w);
                                     }
+                                }
+                            }
+                            ConfigOutput::Background(bg_config) => {
+                                if *has_background_config {
+                                    // Store the background config for later application
+                                    computed.background = Some(bg_config.clone());
                                 }
                             }
                         }
@@ -1625,6 +1667,17 @@ impl Application {
                 }
                 Task::none()
             }
+            ApplicationMessage::BackgroundPatternChanged { node_id, value } => {
+                if let Some((
+                    _,
+                    NodeType::Input(InputNodeType::BackgroundPatternSelector { value: v }),
+                )) = self.nodes.get_mut(&node_id)
+                {
+                    *v = value;
+                    self.propagate_values();
+                }
+                Task::none()
+            }
             ApplicationMessage::ColorChanged { node_id, color } => {
                 if let Some((_, node_type)) = self.nodes.get_mut(&node_id) {
                     match node_type {
@@ -1756,7 +1809,7 @@ impl Application {
     }
 
     fn view(&self) -> iced::Element<'_, ApplicationMessage> {
-        use iced_nodegraph::{NodeGraph, PinRef};
+        use iced_nodegraph::{GraphStyle, NodeGraph, PinRef};
 
         // Use preview theme if active (for theme selection), otherwise current theme
         let theme = self
@@ -1897,6 +1950,15 @@ impl Application {
                             }
                         })
                     }
+                    InputNodeType::BackgroundPatternSelector { value } => {
+                        let id = node_id_clone.clone();
+                        background_pattern_selector_node(theme, *value, move |v| {
+                            ApplicationMessage::BackgroundPatternChanged {
+                                node_id: id.clone(),
+                                value: v,
+                            }
+                        })
+                    }
                     InputNodeType::ColorPicker { color } => {
                         let id = node_id_clone.clone();
                         color_picker_node(theme, *color, move |c| {
@@ -1921,15 +1983,20 @@ impl Application {
                     ConfigNodeType::EdgeConfig(inputs) => edge_config_node(theme, inputs),
                     ConfigNodeType::ShadowConfig(inputs) => shadow_config_node(theme, inputs),
                     ConfigNodeType::PinConfig(inputs) => pin_config_node(theme, inputs),
+                    ConfigNodeType::BackgroundConfig(inputs) => {
+                        background_config_node(theme, inputs)
+                    }
                     ConfigNodeType::ApplyToGraph {
                         has_node_config,
                         has_edge_config,
                         has_pin_config,
+                        has_background_config,
                     } => apply_to_graph_node(
                         theme,
                         *has_node_config,
                         *has_edge_config,
                         *has_pin_config,
+                        *has_background_config,
                     ),
                     ConfigNodeType::ApplyToNode {
                         has_node_config,
@@ -1957,6 +2024,12 @@ impl Application {
                 let to = PinRef::new(edge.to_node.clone(), edge.to_pin);
                 ng.push_edge_styled(from, to, edge_config.clone());
             }
+        }
+
+        // Apply background config to graph style
+        if let Some(bg_config) = &self.computed_style.background {
+            let graph_style = GraphStyle::default().background(bg_config.resolve());
+            ng = ng.graph_style(graph_style);
         }
 
         let graph_view: iced::Element<'_, ApplicationMessage> = ng.into();
@@ -2115,6 +2188,13 @@ impl Application {
                                 value: PatternType::Solid,
                             }),
                         }),
+                    command("bg_pattern", "Background Pattern Selector")
+                        .description("Select background pattern (Grid, Hex, Dots, etc.)")
+                        .action(ApplicationMessage::SpawnNode {
+                            node_type: NodeType::Input(InputNodeType::BackgroundPatternSelector {
+                                value: PatternTypeSelection::Grid,
+                            }),
+                        }),
                 ];
                 ("Input Nodes", commands)
             }
@@ -2173,6 +2253,13 @@ impl Application {
                                 PinConfigInputs::default(),
                             )),
                         }),
+                    command("background_config", "Background Config")
+                        .description("Background pattern, colors, spacing, adaptive zoom")
+                        .action(ApplicationMessage::SpawnNode {
+                            node_type: NodeType::Config(ConfigNodeType::BackgroundConfig(
+                                BackgroundConfigInputs::default(),
+                            )),
+                        }),
                     // Apply nodes
                     command("apply_to_graph", "Apply to Graph")
                         .description("Apply configs to all nodes/edges in graph")
@@ -2181,6 +2268,7 @@ impl Application {
                                 has_node_config: false,
                                 has_edge_config: false,
                                 has_pin_config: false,
+                                has_background_config: false,
                             }),
                         }),
                     command("apply_to_node", "Apply to Node")

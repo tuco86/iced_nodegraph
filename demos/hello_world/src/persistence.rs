@@ -15,9 +15,9 @@ use std::path::PathBuf;
 
 use crate::ids::{EdgeId, NodeId};
 use crate::nodes::{
-    BoolToggleConfig, ConfigNodeType, EdgeConfigInputs, FloatSliderConfig, InputNodeType,
-    IntSliderConfig, MathNodeState, MathOperation, NodeConfigInputs, NodeType, PatternType,
-    PinConfigInputs, ShadowConfigInputs,
+    BackgroundConfigInputs, BoolToggleConfig, ConfigNodeType, EdgeConfigInputs, FloatSliderConfig,
+    InputNodeType, IntSliderConfig, MathNodeState, MathOperation, NodeConfigInputs, NodeType,
+    PatternType, PatternTypeSelection, PinConfigInputs, ShadowConfigInputs,
 };
 use iced_nodegraph::{EdgeCurve, PinShape};
 
@@ -91,10 +91,14 @@ pub enum SavedNodeType {
     PatternTypeSelector {
         pattern: String,
     },
+    BackgroundPatternSelector {
+        pattern: String,
+    },
     NodeConfig,
     EdgeConfig,
     ShadowConfig,
     PinConfig,
+    BackgroundConfig,
     ApplyToGraph,
     ApplyToNode,
     Math {
@@ -354,12 +358,18 @@ impl SavedNodeType {
                         pattern: pattern_type_to_string(value),
                     }
                 }
+                InputNodeType::BackgroundPatternSelector { value } => {
+                    SavedNodeType::BackgroundPatternSelector {
+                        pattern: background_pattern_to_string(value),
+                    }
+                }
             },
             NodeType::Config(config) => match config {
                 ConfigNodeType::NodeConfig(_) => SavedNodeType::NodeConfig,
                 ConfigNodeType::EdgeConfig(_) => SavedNodeType::EdgeConfig,
                 ConfigNodeType::ShadowConfig(_) => SavedNodeType::ShadowConfig,
                 ConfigNodeType::PinConfig(_) => SavedNodeType::PinConfig,
+                ConfigNodeType::BackgroundConfig(_) => SavedNodeType::BackgroundConfig,
                 ConfigNodeType::ApplyToGraph { .. } => SavedNodeType::ApplyToGraph,
                 ConfigNodeType::ApplyToNode { .. } => SavedNodeType::ApplyToNode,
             },
@@ -435,6 +445,11 @@ impl SavedNodeType {
                     value: string_to_pattern_type(pattern),
                 })
             }
+            SavedNodeType::BackgroundPatternSelector { pattern } => {
+                NodeType::Input(InputNodeType::BackgroundPatternSelector {
+                    value: string_to_background_pattern(pattern),
+                })
+            }
             SavedNodeType::NodeConfig => {
                 NodeType::Config(ConfigNodeType::NodeConfig(NodeConfigInputs::default()))
             }
@@ -447,10 +462,14 @@ impl SavedNodeType {
             SavedNodeType::PinConfig => {
                 NodeType::Config(ConfigNodeType::PinConfig(PinConfigInputs::default()))
             }
+            SavedNodeType::BackgroundConfig => NodeType::Config(ConfigNodeType::BackgroundConfig(
+                BackgroundConfigInputs::default(),
+            )),
             SavedNodeType::ApplyToGraph => NodeType::Config(ConfigNodeType::ApplyToGraph {
                 has_node_config: false,
                 has_edge_config: false,
                 has_pin_config: false,
+                has_background_config: false,
             }),
             SavedNodeType::ApplyToNode => NodeType::Config(ConfigNodeType::ApplyToNode {
                 has_node_config: false,
@@ -624,6 +643,32 @@ fn string_to_pattern_type(s: &str) -> PatternType {
         "Dotted" => PatternType::Dotted,
         "DashDotted" => PatternType::DashDotted,
         _ => PatternType::Solid,
+    }
+}
+
+fn background_pattern_to_string(pattern: &PatternTypeSelection) -> String {
+    match pattern {
+        PatternTypeSelection::None => "None",
+        PatternTypeSelection::Grid => "Grid",
+        PatternTypeSelection::Hex => "Hex",
+        PatternTypeSelection::Triangle => "Triangle",
+        PatternTypeSelection::Dots => "Dots",
+        PatternTypeSelection::Lines => "Lines",
+        PatternTypeSelection::Crosshatch => "Crosshatch",
+    }
+    .to_string()
+}
+
+fn string_to_background_pattern(s: &str) -> PatternTypeSelection {
+    match s {
+        "None" => PatternTypeSelection::None,
+        "Grid" => PatternTypeSelection::Grid,
+        "Hex" => PatternTypeSelection::Hex,
+        "Triangle" => PatternTypeSelection::Triangle,
+        "Dots" => PatternTypeSelection::Dots,
+        "Lines" => PatternTypeSelection::Lines,
+        "Crosshatch" => PatternTypeSelection::Crosshatch,
+        _ => PatternTypeSelection::Grid,
     }
 }
 

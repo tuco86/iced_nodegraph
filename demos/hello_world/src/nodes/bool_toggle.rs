@@ -28,15 +28,6 @@ impl Default for BoolToggleConfig {
     }
 }
 
-impl BoolToggleConfig {
-    /// Creates a config for shadow enabled toggle
-    pub fn shadow_enabled() -> Self {
-        Self {
-            label: "Shadow".to_string(),
-            toggle_label: "Enabled".to_string(),
-        }
-    }
-}
 
 /// Creates a boolean toggle node with modern switch styling
 pub fn bool_toggle_node<'a, Message>(

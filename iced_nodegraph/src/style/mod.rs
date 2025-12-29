@@ -30,8 +30,8 @@ mod config;
 
 // Re-export config types
 pub use config::{
-    BorderConfig, EdgeConfig, EdgeShadowConfig, GraphConfig, NodeConfig, PinConfig,
-    SelectionConfig, ShadowConfig, StrokeConfig,
+    BackgroundConfig, BorderConfig, EdgeConfig, EdgeShadowConfig, GraphConfig, NodeConfig,
+    PinConfig, SelectionConfig, ShadowConfig, StrokeConfig,
 };
 
 /// Shape of a pin indicator.
@@ -1655,15 +1655,325 @@ impl EdgeStyle {
     }
 }
 
+// ============================================================================
+// Background Pattern System
+// ============================================================================
+
+/// Background pattern type for the graph canvas.
+///
+/// Each pattern supports adaptive zoom behavior where spacing automatically
+/// adjusts to maintain visual clarity at different zoom levels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u32)]
+pub enum BackgroundPattern {
+    /// No pattern, solid background color only
+    None = 0,
+    /// Rectangular grid with major/minor lines (default)
+    #[default]
+    Grid = 1,
+    /// Hexagonal honeycomb pattern
+    Hex = 2,
+    /// Equilateral triangle tessellation
+    Triangle = 3,
+    /// Regular dot pattern
+    Dots = 4,
+    /// Parallel diagonal lines
+    Lines = 5,
+    /// Crosshatch (intersecting diagonal lines)
+    Crosshatch = 6,
+}
+
+impl BackgroundPattern {
+    /// Returns the GPU type ID for this pattern.
+    pub fn type_id(&self) -> u32 {
+        *self as u32
+    }
+}
+
+/// Complete background style configuration.
+///
+/// Controls the rendering of the graph canvas background including pattern,
+/// colors, spacing, line widths, and adaptive zoom behavior.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BackgroundStyle {
+    /// Pattern type (Grid, Hex, Triangle, Dots, Lines, Crosshatch, None)
+    pub pattern: BackgroundPattern,
+
+    // === Colors ===
+    /// Background fill color
+    pub background_color: Color,
+    /// Primary pattern color (major lines/elements)
+    pub primary_color: Color,
+    /// Secondary pattern color (minor lines/elements)
+    pub secondary_color: Color,
+
+    // === Spacing ===
+    /// Minor grid/pattern spacing in world-space pixels
+    pub minor_spacing: f32,
+    /// Major grid spacing (typically multiple of minor_spacing).
+    /// None = no major grid distinction
+    pub major_spacing: Option<f32>,
+
+    // === Line Properties ===
+    /// Minor line width in world-space pixels
+    pub minor_width: f32,
+    /// Major line width in world-space pixels
+    pub major_width: f32,
+    /// Minor line opacity (0.0 - 1.0)
+    pub minor_opacity: f32,
+    /// Major line opacity (0.0 - 1.0)
+    pub major_opacity: f32,
+
+    // === Pattern-Specific Options ===
+    /// Dot radius (for Dots pattern) in world-space pixels
+    pub dot_radius: f32,
+    /// Line angle in radians (for Lines/Crosshatch patterns).
+    /// 0 = horizontal, PI/4 = 45 degrees
+    pub line_angle: f32,
+    /// Secondary line angle (for Crosshatch, typically -line_angle)
+    pub crosshatch_angle: f32,
+    /// Hex orientation: true = pointy-top, false = flat-top
+    pub hex_pointy_top: bool,
+
+    // === Adaptive Zoom ===
+    /// Enable adaptive spacing that adjusts with zoom level
+    pub adaptive_zoom: bool,
+    /// Minimum screen-space spacing before pattern doubles (prevents too-dense patterns)
+    pub adaptive_min_spacing: f32,
+    /// Maximum screen-space spacing before pattern halves (prevents too-sparse patterns)
+    pub adaptive_max_spacing: f32,
+    /// Fade range for minor elements at zoom extremes (0.0 = no fade)
+    pub adaptive_fade_range: f32,
+}
+
+impl Default for BackgroundStyle {
+    fn default() -> Self {
+        Self {
+            pattern: BackgroundPattern::Grid,
+            background_color: Color::from_rgb(0.08, 0.08, 0.09),
+            primary_color: Color::from_rgba(1.0, 1.0, 1.0, 0.12),
+            secondary_color: Color::from_rgba(1.0, 1.0, 1.0, 0.05),
+            minor_spacing: 50.0,
+            major_spacing: Some(250.0), // Every 5th line is major
+            minor_width: 1.0,
+            major_width: 2.0,
+            minor_opacity: 0.35,
+            major_opacity: 0.7,
+            dot_radius: 2.0,
+            line_angle: std::f32::consts::FRAC_PI_4, // 45 degrees
+            crosshatch_angle: -std::f32::consts::FRAC_PI_4, // -45 degrees
+            hex_pointy_top: true,
+            adaptive_zoom: true,
+            adaptive_min_spacing: 20.0, // Double when spacing < 20px on screen
+            adaptive_max_spacing: 200.0, // Halve when spacing > 200px on screen
+            adaptive_fade_range: 0.3,   // Fade minor lines over 30% of threshold
+        }
+    }
+}
+
+impl BackgroundStyle {
+    /// Creates a new BackgroundStyle with defaults.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the pattern type.
+    pub fn pattern(mut self, pattern: BackgroundPattern) -> Self {
+        self.pattern = pattern;
+        self
+    }
+
+    /// Sets the background color.
+    pub fn background_color(mut self, color: Color) -> Self {
+        self.background_color = color;
+        self
+    }
+
+    /// Sets the primary pattern color (major lines/elements).
+    pub fn primary_color(mut self, color: Color) -> Self {
+        self.primary_color = color;
+        self
+    }
+
+    /// Sets the secondary pattern color (minor lines/elements).
+    pub fn secondary_color(mut self, color: Color) -> Self {
+        self.secondary_color = color;
+        self
+    }
+
+    /// Sets the minor grid spacing.
+    pub fn minor_spacing(mut self, spacing: f32) -> Self {
+        self.minor_spacing = spacing;
+        self
+    }
+
+    /// Sets the major grid spacing.
+    pub fn major_spacing(mut self, spacing: f32) -> Self {
+        self.major_spacing = Some(spacing);
+        self
+    }
+
+    /// Disables major grid distinction.
+    pub fn no_major_grid(mut self) -> Self {
+        self.major_spacing = None;
+        self
+    }
+
+    /// Sets the minor line width.
+    pub fn minor_width(mut self, width: f32) -> Self {
+        self.minor_width = width;
+        self
+    }
+
+    /// Sets the major line width.
+    pub fn major_width(mut self, width: f32) -> Self {
+        self.major_width = width;
+        self
+    }
+
+    /// Sets the minor line opacity.
+    pub fn minor_opacity(mut self, opacity: f32) -> Self {
+        self.minor_opacity = opacity.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Sets the major line opacity.
+    pub fn major_opacity(mut self, opacity: f32) -> Self {
+        self.major_opacity = opacity.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Sets the dot radius (for Dots pattern).
+    pub fn dot_radius(mut self, radius: f32) -> Self {
+        self.dot_radius = radius;
+        self
+    }
+
+    /// Sets the line angle in radians (for Lines/Crosshatch patterns).
+    pub fn line_angle(mut self, angle_rad: f32) -> Self {
+        self.line_angle = angle_rad;
+        self
+    }
+
+    /// Sets the crosshatch secondary angle.
+    pub fn crosshatch_angle(mut self, angle_rad: f32) -> Self {
+        self.crosshatch_angle = angle_rad;
+        self
+    }
+
+    /// Sets hex orientation (true = pointy-top, false = flat-top).
+    pub fn hex_pointy_top(mut self, pointy: bool) -> Self {
+        self.hex_pointy_top = pointy;
+        self
+    }
+
+    /// Enables or disables adaptive zoom.
+    pub fn adaptive_zoom(mut self, enabled: bool) -> Self {
+        self.adaptive_zoom = enabled;
+        self
+    }
+
+    /// Sets the adaptive zoom thresholds.
+    pub fn adaptive_thresholds(mut self, min: f32, max: f32) -> Self {
+        self.adaptive_min_spacing = min;
+        self.adaptive_max_spacing = max;
+        self
+    }
+
+    /// Sets the adaptive fade range.
+    pub fn adaptive_fade(mut self, range: f32) -> Self {
+        self.adaptive_fade_range = range.clamp(0.0, 1.0);
+        self
+    }
+
+    // === Presets ===
+
+    /// Blueprint-style grid (blue on dark blue).
+    pub fn blueprint() -> Self {
+        Self {
+            pattern: BackgroundPattern::Grid,
+            background_color: Color::from_rgb(0.05, 0.08, 0.15),
+            primary_color: Color::from_rgba(0.3, 0.5, 0.8, 0.25),
+            secondary_color: Color::from_rgba(0.3, 0.5, 0.8, 0.10),
+            minor_spacing: 25.0,
+            major_spacing: Some(100.0),
+            ..Default::default()
+        }
+    }
+
+    /// Subtle dots pattern.
+    pub fn subtle_dots() -> Self {
+        Self {
+            pattern: BackgroundPattern::Dots,
+            background_color: Color::from_rgb(0.12, 0.12, 0.14),
+            primary_color: Color::from_rgba(1.0, 1.0, 1.0, 0.15),
+            secondary_color: Color::TRANSPARENT,
+            minor_spacing: 30.0,
+            major_spacing: None,
+            dot_radius: 1.5,
+            ..Default::default()
+        }
+    }
+
+    /// Clean hexagonal pattern.
+    pub fn hexagonal() -> Self {
+        Self {
+            pattern: BackgroundPattern::Hex,
+            background_color: Color::from_rgb(0.10, 0.10, 0.12),
+            primary_color: Color::from_rgba(1.0, 1.0, 1.0, 0.08),
+            secondary_color: Color::TRANSPARENT,
+            minor_spacing: 40.0,
+            major_spacing: None,
+            ..Default::default()
+        }
+    }
+
+    /// Light theme grid.
+    pub fn light() -> Self {
+        Self {
+            pattern: BackgroundPattern::Grid,
+            background_color: Color::from_rgb(0.95, 0.95, 0.96),
+            primary_color: Color::from_rgba(0.0, 0.0, 0.0, 0.10),
+            secondary_color: Color::from_rgba(0.0, 0.0, 0.0, 0.04),
+            ..Default::default()
+        }
+    }
+
+    /// Creates a background style from an iced Theme.
+    pub fn from_theme(theme: &Theme) -> Self {
+        let palette = theme.extended_palette();
+        let bg = palette.background.base.color;
+        let weak = palette.background.weak.color;
+
+        if palette.is_dark {
+            Self {
+                background_color: Color::from_rgb(bg.r * 0.7, bg.g * 0.7, bg.b * 0.7),
+                primary_color: Color::from_rgba(weak.r, weak.g, weak.b, 0.15),
+                secondary_color: Color::from_rgba(weak.r, weak.g, weak.b, 0.06),
+                ..Default::default()
+            }
+        } else {
+            Self {
+                background_color: Color::from_rgb(
+                    bg.r * 0.98 + 0.02,
+                    bg.g * 0.98 + 0.02,
+                    bg.b * 0.98 + 0.02,
+                ),
+                primary_color: Color::from_rgba(0.0, 0.0, 0.0, 0.08),
+                secondary_color: Color::from_rgba(0.0, 0.0, 0.0, 0.03),
+                ..Default::default()
+            }
+        }
+    }
+}
+
 /// Complete graph style configuration.
 ///
 /// Controls the appearance of the graph canvas background and drag feedback.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GraphStyle {
-    /// Background color of the canvas
-    pub background_color: Color,
-    /// Grid line color (for future grid rendering)
-    pub grid_color: Color,
+    /// Background rendering style
+    pub background: BackgroundStyle,
     /// Drag edge color when connection is invalid
     pub drag_edge_color: Color,
     /// Drag edge color when connection is valid
@@ -1675,8 +1985,7 @@ pub struct GraphStyle {
 impl Default for GraphStyle {
     fn default() -> Self {
         Self {
-            background_color: Color::from_rgb(0.08, 0.08, 0.09),
-            grid_color: Color::from_rgb(0.20, 0.20, 0.22),
+            background: BackgroundStyle::default(),
             drag_edge_color: Color::from_rgb(0.9, 0.6, 0.3),
             drag_edge_valid_color: Color::from_rgb(0.3, 0.8, 0.5),
             selection_style: SelectionStyle::default(),
@@ -1690,15 +1999,9 @@ impl GraphStyle {
         Self::default()
     }
 
-    /// Sets the background color.
-    pub fn background_color(mut self, color: Color) -> Self {
-        self.background_color = color;
-        self
-    }
-
-    /// Sets the grid color.
-    pub fn grid_color(mut self, color: Color) -> Self {
-        self.grid_color = color;
+    /// Sets the background style.
+    pub fn background(mut self, background: BackgroundStyle) -> Self {
+        self.background = background;
         self
     }
 
@@ -1723,8 +2026,7 @@ impl GraphStyle {
     /// Creates a dark theme graph style.
     pub fn dark() -> Self {
         Self {
-            background_color: Color::from_rgb(0.08, 0.08, 0.09),
-            grid_color: Color::from_rgb(0.20, 0.20, 0.22),
+            background: BackgroundStyle::default(),
             drag_edge_color: Color::from_rgb(0.9, 0.6, 0.3),
             drag_edge_valid_color: Color::from_rgb(0.3, 0.8, 0.5),
             selection_style: SelectionStyle::default(),
@@ -1734,8 +2036,7 @@ impl GraphStyle {
     /// Creates a light theme graph style.
     pub fn light() -> Self {
         Self {
-            background_color: Color::from_rgb(0.92, 0.92, 0.93),
-            grid_color: Color::from_rgb(0.70, 0.70, 0.72),
+            background: BackgroundStyle::light(),
             drag_edge_color: Color::from_rgb(0.8, 0.5, 0.2),
             drag_edge_valid_color: Color::from_rgb(0.2, 0.7, 0.4),
             selection_style: SelectionStyle::default(),
@@ -1749,17 +2050,10 @@ impl GraphStyle {
         let palette = theme.extended_palette();
         let secondary = palette.secondary.base.color;
         let success = palette.success.base.color;
-        let bg = palette.background.base.color;
-        let bg_weak = palette.background.weak.color;
 
         if palette.is_dark {
-            // Dark theme: darken background
-            let graph_bg = Color::from_rgb(bg.r * 0.7, bg.g * 0.7, bg.b * 0.7);
-            let grid_color = Color::from_rgba(bg_weak.r, bg_weak.g, bg_weak.b, 0.4);
-
             Self {
-                background_color: graph_bg,
-                grid_color,
+                background: BackgroundStyle::from_theme(theme),
                 drag_edge_color: Color::from_rgb(
                     secondary.r * 0.9 + 0.1,
                     secondary.g * 0.6,
@@ -1773,14 +2067,8 @@ impl GraphStyle {
                 selection_style: SelectionStyle::from_theme(theme),
             }
         } else {
-            // Light theme: lighten background
-            let graph_bg =
-                Color::from_rgb(bg.r * 0.98 + 0.02, bg.g * 0.98 + 0.02, bg.b * 0.98 + 0.02);
-            let grid_color = Color::from_rgba(bg_weak.r, bg_weak.g, bg_weak.b, 0.5);
-
             Self {
-                background_color: graph_bg,
-                grid_color,
+                background: BackgroundStyle::from_theme(theme),
                 drag_edge_color: Color::from_rgb(
                     secondary.r * 0.8,
                     secondary.g * 0.5,

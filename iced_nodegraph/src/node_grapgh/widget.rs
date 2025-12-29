@@ -181,17 +181,18 @@ where
         let resolved_pin_defaults = resolve_pin_style(self.pin_defaults.as_ref(), theme);
 
         // Convert resolved styles to GPU-compatible formats
+        let bg = &resolved_graph.background;
         let bg_color = glam::vec4(
-            resolved_graph.background_color.r,
-            resolved_graph.background_color.g,
-            resolved_graph.background_color.b,
-            resolved_graph.background_color.a,
+            bg.background_color.r,
+            bg.background_color.g,
+            bg.background_color.b,
+            bg.background_color.a,
         );
         let border_color = glam::vec4(
-            resolved_graph.grid_color.r,
-            resolved_graph.grid_color.g,
-            resolved_graph.grid_color.b,
-            resolved_graph.grid_color.a,
+            bg.primary_color.r,
+            bg.primary_color.g,
+            bg.primary_color.b,
+            bg.primary_color.a,
         );
         let fill_color = glam::vec4(
             resolved_node_defaults.fill_color.r,
@@ -396,6 +397,7 @@ where
             ),
             edge_thickness: resolved_edge_defaults.get_width(),
             valid_drop_targets: state.valid_drop_targets.clone(),
+            background_style: resolved_graph.background.clone(),
         };
 
         // Create foreground primitive (clone with different layer)

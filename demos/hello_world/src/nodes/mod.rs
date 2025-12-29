@@ -15,14 +15,16 @@ pub use bool_toggle::{BoolToggleConfig, bool_toggle_node};
 pub use calendar::calendar_node;
 pub use color_picker::{color_picker_node, color_preset_node};
 pub use config::{
-    EdgeConfigInputs, NodeConfigInputs, PatternType, PinConfigInputs, ShadowConfigInputs,
-    apply_to_graph_node, apply_to_node_node, edge_config_node, node_config_node, pin_config_node,
+    BackgroundConfigInputs, EdgeConfigInputs, NodeConfigInputs, PatternType, PatternTypeSelection,
+    PinConfigInputs, ShadowConfigInputs, apply_to_graph_node, apply_to_node_node,
+    background_config_node, edge_config_node, node_config_node, pin_config_node,
     shadow_config_node,
 };
 pub use email_parser::email_parser_node;
 pub use email_trigger::email_trigger_node;
 pub use enum_selector::{
-    edge_curve_selector_node, pattern_type_selector_node, pin_shape_selector_node,
+    background_pattern_selector_node, edge_curve_selector_node, pattern_type_selector_node,
+    pin_shape_selector_node,
 };
 pub use filter::filter_node;
 pub use float_slider::{FloatSliderConfig, float_slider_node};
@@ -95,6 +97,7 @@ pub enum NodeValue {
     EdgeCurve(EdgeCurve),
     PinShape(PinShape),
     PatternType(PatternType),
+    BackgroundPattern(PatternTypeSelection),
     // Config types for config-node chains
     NodeConfig(NodeConfig),
     EdgeConfig(EdgeConfig),
@@ -180,6 +183,13 @@ impl NodeValue {
             _ => None,
         }
     }
+
+    pub fn as_background_pattern(&self) -> Option<PatternTypeSelection> {
+        match self {
+            NodeValue::BackgroundPattern(p) => Some(*p),
+            _ => None,
+        }
+    }
 }
 
 /// Configuration node types that affect graph styling
@@ -189,11 +199,13 @@ pub enum ConfigNodeType {
     EdgeConfig(EdgeConfigInputs),
     ShadowConfig(ShadowConfigInputs),
     PinConfig(PinConfigInputs),
+    BackgroundConfig(BackgroundConfigInputs),
     // Apply nodes
     ApplyToGraph {
         has_node_config: bool,
         has_edge_config: bool,
         has_pin_config: bool,
+        has_background_config: bool,
     },
     ApplyToNode {
         has_node_config: bool,
@@ -298,6 +310,9 @@ pub enum InputNodeType {
     PatternTypeSelector {
         value: PatternType,
     },
+    BackgroundPatternSelector {
+        value: PatternTypeSelection,
+    },
     ColorPicker {
         color: Color,
     },
@@ -317,6 +332,7 @@ impl InputNodeType {
             Self::EdgeCurveSelector { value } => NodeValue::EdgeCurve(*value),
             Self::PinShapeSelector { value } => NodeValue::PinShape(*value),
             Self::PatternTypeSelector { value } => NodeValue::PatternType(*value),
+            Self::BackgroundPatternSelector { value } => NodeValue::BackgroundPattern(*value),
             Self::ColorPicker { color } | Self::ColorPreset { color } => NodeValue::Color(*color),
         }
     }
@@ -330,6 +346,7 @@ impl InputNodeType {
             Self::EdgeCurveSelector { .. } => "edge_curve",
             Self::PinShapeSelector { .. } => "pin_shape",
             Self::PatternTypeSelector { .. } => "pattern_type",
+            Self::BackgroundPatternSelector { .. } => "background_pattern",
             Self::ColorPicker { .. } | Self::ColorPreset { .. } => "color",
         }
     }
@@ -360,6 +377,7 @@ impl NodeType {
                 InputNodeType::EdgeCurveSelector { .. } => "Edge Curve",
                 InputNodeType::PinShapeSelector { .. } => "Pin Shape",
                 InputNodeType::PatternTypeSelector { .. } => "Pattern Type",
+                InputNodeType::BackgroundPatternSelector { .. } => "Bg Pattern",
                 InputNodeType::ColorPicker { .. } => "Color Picker",
                 InputNodeType::ColorPreset { .. } => "Color Preset",
             },
@@ -368,6 +386,7 @@ impl NodeType {
                 ConfigNodeType::EdgeConfig(_) => "Edge Config",
                 ConfigNodeType::ShadowConfig(_) => "Shadow Config",
                 ConfigNodeType::PinConfig(_) => "Pin Config",
+                ConfigNodeType::BackgroundConfig(_) => "Background Config",
                 ConfigNodeType::ApplyToGraph { .. } => "Apply to Graph",
                 ConfigNodeType::ApplyToNode { .. } => "Apply to Node",
             },

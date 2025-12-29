@@ -5,7 +5,10 @@
 
 use iced::Color;
 
-use super::{BorderStyle, DashCap, EdgeCurve, PinShape, StrokeCap, StrokePattern, StrokeStyle};
+use super::{
+    BackgroundPattern, BackgroundStyle, BorderStyle, DashCap, EdgeCurve, PinShape, StrokeCap,
+    StrokePattern, StrokeStyle,
+};
 
 /// Partial node configuration for cascading style overrides.
 ///
@@ -178,6 +181,282 @@ impl ShadowConfig {
             blur_radius: self.blur_radius.or(other.blur_radius),
             color: self.color.or(other.color),
             enabled: self.enabled.or(other.enabled),
+        }
+    }
+}
+
+/// Partial background configuration for cascading style overrides.
+///
+/// All fields are optional - only set fields will override the base style.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BackgroundConfig {
+    /// Pattern type
+    pub pattern: Option<BackgroundPattern>,
+
+    // Colors
+    /// Background fill color
+    pub background_color: Option<Color>,
+    /// Primary pattern color (major lines/elements)
+    pub primary_color: Option<Color>,
+    /// Secondary pattern color (minor lines/elements)
+    pub secondary_color: Option<Color>,
+
+    // Spacing
+    /// Minor grid/pattern spacing in world-space pixels
+    pub minor_spacing: Option<f32>,
+    /// Major grid spacing. Some(None) = explicitly no major grid
+    pub major_spacing: Option<Option<f32>>,
+
+    // Line properties
+    /// Minor line width in world-space pixels
+    pub minor_width: Option<f32>,
+    /// Major line width in world-space pixels
+    pub major_width: Option<f32>,
+    /// Minor line opacity (0.0 - 1.0)
+    pub minor_opacity: Option<f32>,
+    /// Major line opacity (0.0 - 1.0)
+    pub major_opacity: Option<f32>,
+
+    // Pattern-specific
+    /// Dot radius (for Dots pattern)
+    pub dot_radius: Option<f32>,
+    /// Line angle in radians (for Lines/Crosshatch patterns)
+    pub line_angle: Option<f32>,
+    /// Crosshatch secondary angle
+    pub crosshatch_angle: Option<f32>,
+    /// Hex orientation (true = pointy-top)
+    pub hex_pointy_top: Option<bool>,
+
+    // Adaptive zoom
+    /// Enable adaptive spacing
+    pub adaptive_zoom: Option<bool>,
+    /// Minimum screen-space spacing before pattern doubles
+    pub adaptive_min_spacing: Option<f32>,
+    /// Maximum screen-space spacing before pattern halves
+    pub adaptive_max_spacing: Option<f32>,
+    /// Fade range for minor elements at zoom extremes
+    pub adaptive_fade_range: Option<f32>,
+}
+
+impl BackgroundConfig {
+    /// Creates an empty config with no overrides.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the pattern type.
+    pub fn pattern(mut self, pattern: BackgroundPattern) -> Self {
+        self.pattern = Some(pattern);
+        self
+    }
+
+    /// Sets the background color.
+    pub fn background_color(mut self, color: impl Into<Color>) -> Self {
+        self.background_color = Some(color.into());
+        self
+    }
+
+    /// Sets the primary pattern color.
+    pub fn primary_color(mut self, color: impl Into<Color>) -> Self {
+        self.primary_color = Some(color.into());
+        self
+    }
+
+    /// Sets the secondary pattern color.
+    pub fn secondary_color(mut self, color: impl Into<Color>) -> Self {
+        self.secondary_color = Some(color.into());
+        self
+    }
+
+    /// Sets the minor spacing.
+    pub fn minor_spacing(mut self, spacing: f32) -> Self {
+        self.minor_spacing = Some(spacing);
+        self
+    }
+
+    /// Sets the major spacing.
+    pub fn major_spacing(mut self, spacing: f32) -> Self {
+        self.major_spacing = Some(Some(spacing));
+        self
+    }
+
+    /// Explicitly disables major grid.
+    pub fn no_major_grid(mut self) -> Self {
+        self.major_spacing = Some(None);
+        self
+    }
+
+    /// Sets the minor line width.
+    pub fn minor_width(mut self, width: f32) -> Self {
+        self.minor_width = Some(width);
+        self
+    }
+
+    /// Sets the major line width.
+    pub fn major_width(mut self, width: f32) -> Self {
+        self.major_width = Some(width);
+        self
+    }
+
+    /// Sets the minor line opacity.
+    pub fn minor_opacity(mut self, opacity: f32) -> Self {
+        self.minor_opacity = Some(opacity);
+        self
+    }
+
+    /// Sets the major line opacity.
+    pub fn major_opacity(mut self, opacity: f32) -> Self {
+        self.major_opacity = Some(opacity);
+        self
+    }
+
+    /// Sets the dot radius.
+    pub fn dot_radius(mut self, radius: f32) -> Self {
+        self.dot_radius = Some(radius);
+        self
+    }
+
+    /// Sets the line angle.
+    pub fn line_angle(mut self, angle_rad: f32) -> Self {
+        self.line_angle = Some(angle_rad);
+        self
+    }
+
+    /// Sets the crosshatch angle.
+    pub fn crosshatch_angle(mut self, angle_rad: f32) -> Self {
+        self.crosshatch_angle = Some(angle_rad);
+        self
+    }
+
+    /// Sets hex orientation.
+    pub fn hex_pointy_top(mut self, pointy: bool) -> Self {
+        self.hex_pointy_top = Some(pointy);
+        self
+    }
+
+    /// Enables or disables adaptive zoom.
+    pub fn adaptive_zoom(mut self, enabled: bool) -> Self {
+        self.adaptive_zoom = Some(enabled);
+        self
+    }
+
+    /// Sets the adaptive zoom thresholds.
+    pub fn adaptive_thresholds(mut self, min: f32, max: f32) -> Self {
+        self.adaptive_min_spacing = Some(min);
+        self.adaptive_max_spacing = Some(max);
+        self
+    }
+
+    /// Sets the adaptive fade range.
+    pub fn adaptive_fade(mut self, range: f32) -> Self {
+        self.adaptive_fade_range = Some(range);
+        self
+    }
+
+    /// Applies this config as overrides to a base style.
+    ///
+    /// Fields set in this config will override the base style values.
+    /// Unset fields will keep the base style values.
+    pub fn apply_to(&self, base: BackgroundStyle) -> BackgroundStyle {
+        BackgroundStyle {
+            pattern: self.pattern.unwrap_or(base.pattern),
+            background_color: self.background_color.unwrap_or(base.background_color),
+            primary_color: self.primary_color.unwrap_or(base.primary_color),
+            secondary_color: self.secondary_color.unwrap_or(base.secondary_color),
+            minor_spacing: self.minor_spacing.unwrap_or(base.minor_spacing),
+            major_spacing: self.major_spacing.unwrap_or(base.major_spacing),
+            minor_width: self.minor_width.unwrap_or(base.minor_width),
+            major_width: self.major_width.unwrap_or(base.major_width),
+            minor_opacity: self.minor_opacity.unwrap_or(base.minor_opacity),
+            major_opacity: self.major_opacity.unwrap_or(base.major_opacity),
+            dot_radius: self.dot_radius.unwrap_or(base.dot_radius),
+            line_angle: self.line_angle.unwrap_or(base.line_angle),
+            crosshatch_angle: self.crosshatch_angle.unwrap_or(base.crosshatch_angle),
+            hex_pointy_top: self.hex_pointy_top.unwrap_or(base.hex_pointy_top),
+            adaptive_zoom: self.adaptive_zoom.unwrap_or(base.adaptive_zoom),
+            adaptive_min_spacing: self
+                .adaptive_min_spacing
+                .unwrap_or(base.adaptive_min_spacing),
+            adaptive_max_spacing: self
+                .adaptive_max_spacing
+                .unwrap_or(base.adaptive_max_spacing),
+            adaptive_fade_range: self.adaptive_fade_range.unwrap_or(base.adaptive_fade_range),
+        }
+    }
+
+    /// Applies this config to the default BackgroundStyle.
+    pub fn resolve(&self) -> BackgroundStyle {
+        self.apply_to(BackgroundStyle::default())
+    }
+
+    /// Returns true if this config has any overrides set.
+    pub fn has_overrides(&self) -> bool {
+        self.pattern.is_some()
+            || self.background_color.is_some()
+            || self.primary_color.is_some()
+            || self.secondary_color.is_some()
+            || self.minor_spacing.is_some()
+            || self.major_spacing.is_some()
+            || self.minor_width.is_some()
+            || self.major_width.is_some()
+            || self.minor_opacity.is_some()
+            || self.major_opacity.is_some()
+            || self.dot_radius.is_some()
+            || self.line_angle.is_some()
+            || self.crosshatch_angle.is_some()
+            || self.hex_pointy_top.is_some()
+            || self.adaptive_zoom.is_some()
+            || self.adaptive_min_spacing.is_some()
+            || self.adaptive_max_spacing.is_some()
+            || self.adaptive_fade_range.is_some()
+    }
+
+    /// Merges two background configs. Self takes priority, other fills gaps.
+    pub fn merge(&self, other: &Self) -> Self {
+        Self {
+            pattern: self.pattern.or(other.pattern),
+            background_color: self.background_color.or(other.background_color),
+            primary_color: self.primary_color.or(other.primary_color),
+            secondary_color: self.secondary_color.or(other.secondary_color),
+            minor_spacing: self.minor_spacing.or(other.minor_spacing),
+            major_spacing: self.major_spacing.or(other.major_spacing),
+            minor_width: self.minor_width.or(other.minor_width),
+            major_width: self.major_width.or(other.major_width),
+            minor_opacity: self.minor_opacity.or(other.minor_opacity),
+            major_opacity: self.major_opacity.or(other.major_opacity),
+            dot_radius: self.dot_radius.or(other.dot_radius),
+            line_angle: self.line_angle.or(other.line_angle),
+            crosshatch_angle: self.crosshatch_angle.or(other.crosshatch_angle),
+            hex_pointy_top: self.hex_pointy_top.or(other.hex_pointy_top),
+            adaptive_zoom: self.adaptive_zoom.or(other.adaptive_zoom),
+            adaptive_min_spacing: self.adaptive_min_spacing.or(other.adaptive_min_spacing),
+            adaptive_max_spacing: self.adaptive_max_spacing.or(other.adaptive_max_spacing),
+            adaptive_fade_range: self.adaptive_fade_range.or(other.adaptive_fade_range),
+        }
+    }
+}
+
+impl From<BackgroundStyle> for BackgroundConfig {
+    fn from(style: BackgroundStyle) -> Self {
+        Self {
+            pattern: Some(style.pattern),
+            background_color: Some(style.background_color),
+            primary_color: Some(style.primary_color),
+            secondary_color: Some(style.secondary_color),
+            minor_spacing: Some(style.minor_spacing),
+            major_spacing: Some(style.major_spacing),
+            minor_width: Some(style.minor_width),
+            major_width: Some(style.major_width),
+            minor_opacity: Some(style.minor_opacity),
+            major_opacity: Some(style.major_opacity),
+            dot_radius: Some(style.dot_radius),
+            line_angle: Some(style.line_angle),
+            crosshatch_angle: Some(style.crosshatch_angle),
+            hex_pointy_top: Some(style.hex_pointy_top),
+            adaptive_zoom: Some(style.adaptive_zoom),
+            adaptive_min_spacing: Some(style.adaptive_min_spacing),
+            adaptive_max_spacing: Some(style.adaptive_max_spacing),
+            adaptive_fade_range: Some(style.adaptive_fade_range),
         }
     }
 }

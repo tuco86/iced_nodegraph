@@ -17,6 +17,7 @@ pub fn apply_to_graph_node<'a, Message>(
     has_node_config: bool,
     has_edge_config: bool,
     has_pin_config: bool,
+    has_background_config: bool,
 ) -> iced::Element<'a, Message>
 where
     Message: Clone + 'a,
@@ -74,7 +75,30 @@ where
     ]
     .align_y(iced::Alignment::Center);
 
-    let content = column![node_config_row, edge_config_row, pin_config_row,].spacing(4);
+    // Background config row
+    let bg_status = if has_background_config { "ok" } else { "--" };
+    let bg_config_row = row![
+        pin!(
+            Left,
+            pins::config::BACKGROUND_CONFIG,
+            text("background").size(10),
+            Input,
+            pins::BackgroundConfigData,
+            colors::PIN_CONFIG
+        ),
+        container(text(bg_status).size(9))
+            .width(Length::Fill)
+            .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center);
+
+    let content = column![
+        node_config_row,
+        edge_config_row,
+        pin_config_row,
+        bg_config_row,
+    ]
+    .spacing(4);
 
     column![
         node_title_bar("Apply to Graph", style),

@@ -333,6 +333,7 @@ impl Pipeline {
             primitive.edge_thickness,
             primitive.layer,
             &primitive.valid_drop_targets,
+            &primitive.background_style,
         );
     }
 
@@ -360,6 +361,7 @@ impl Pipeline {
         edge_thickness: f32,
         layer: Layer,
         valid_drop_targets: &std::collections::HashSet<(usize, usize)>,
+        background_style: &crate::style::BackgroundStyle,
     ) {
         let mut pin_start = 0;
         let num_nodes = self.nodes.update(
@@ -781,6 +783,55 @@ impl Pipeline {
             ),
             bounds_origin: glam::Vec2::new(bounds.x * scale, bounds.y * scale),
             bounds_size: glam::Vec2::new(bounds.width * scale, bounds.height * scale),
+
+            // Background pattern configuration
+            bg_pattern_type: background_style.pattern.type_id(),
+            bg_flags: (if background_style.adaptive_zoom {
+                1u32
+            } else {
+                0
+            }) | (if background_style.hex_pointy_top {
+                2u32
+            } else {
+                0
+            }),
+            bg_minor_spacing: background_style.minor_spacing,
+            bg_major_ratio: background_style
+                .major_spacing
+                .map(|m| m / background_style.minor_spacing)
+                .unwrap_or(0.0),
+            bg_line_widths: glam::Vec2::new(
+                background_style.minor_width,
+                background_style.major_width,
+            ),
+            bg_opacities: glam::Vec2::new(
+                background_style.minor_opacity,
+                background_style.major_opacity,
+            ),
+            bg_primary_color: glam::Vec4::new(
+                background_style.primary_color.r,
+                background_style.primary_color.g,
+                background_style.primary_color.b,
+                background_style.primary_color.a,
+            ),
+            bg_secondary_color: glam::Vec4::new(
+                background_style.secondary_color.r,
+                background_style.secondary_color.g,
+                background_style.secondary_color.b,
+                background_style.secondary_color.a,
+            ),
+            bg_pattern_params: glam::Vec4::new(
+                background_style.dot_radius,
+                background_style.line_angle,
+                background_style.crosshatch_angle,
+                0.0, // padding
+            ),
+            bg_adaptive_params: glam::Vec4::new(
+                background_style.adaptive_min_spacing,
+                background_style.adaptive_max_spacing,
+                background_style.adaptive_fade_range,
+                0.0, // padding
+            ),
         };
 
         // Write uniforms using encase for proper layout

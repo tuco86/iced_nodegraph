@@ -11,7 +11,7 @@ pub use node::NodeFlags;
 pub use pin::Pin;
 
 use crate::node_grapgh::{euclid::WorldPoint, state::Dragging};
-use crate::style::EdgeStyle;
+use crate::style::{BackgroundStyle, EdgeStyle};
 
 use super::pipeline::Pipeline;
 
@@ -61,6 +61,8 @@ pub struct NodeGraphPrimitive {
     /// Valid drop targets for edge dragging (computed at drag-start).
     /// Contains (node_index, pin_index) pairs that are valid connection targets.
     pub valid_drop_targets: HashSet<(usize, usize)>,
+    /// Background style configuration
+    pub background_style: BackgroundStyle,
 }
 
 impl Primitive for NodeGraphPrimitive {
@@ -97,6 +99,7 @@ impl Primitive for NodeGraphPrimitive {
             self.edge_thickness,
             self.layer,
             &self.valid_drop_targets,
+            &self.background_style,
         );
     }
 

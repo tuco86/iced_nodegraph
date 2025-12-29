@@ -54,6 +54,9 @@ pub struct PinConfigData;
 /// Marker type for shadow configuration bundle pins
 pub struct ShadowConfigData;
 
+/// Marker type for background configuration bundle pins
+pub struct BackgroundConfigData;
+
 // =============================================================================
 // Pin Label Constants
 // =============================================================================
@@ -223,6 +226,24 @@ pub mod config {
 
     /// Pin config input pin (apply nodes)
     pub const PIN_CONFIG: &str = "pin";
+
+    /// Background config input pin (apply nodes)
+    pub const BACKGROUND_CONFIG: &str = "background";
+
+    /// Background config output pin
+    pub const BACKGROUND_OUT: &str = "bg_out";
+
+    /// Background color input pin
+    pub const BACKGROUND_COLOR: &str = "bg_color";
+
+    /// Primary pattern color input pin
+    pub const PRIMARY_COLOR: &str = "primary";
+
+    /// Minor spacing input pin
+    pub const MINOR_SPACING: &str = "minor_spacing";
+
+    /// Adaptive zoom toggle input pin
+    pub const ADAPTIVE_ZOOM: &str = "adaptive";
 
     /// Toggle on/off input pin
     pub const ON: &str = "on";

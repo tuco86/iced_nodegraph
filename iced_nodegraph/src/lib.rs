@@ -200,6 +200,10 @@ pub use node_grapgh::{
 };
 pub use node_pin::{NodePin, PinDirection, PinReference, PinSide, node_pin};
 pub use style::{
+    // Background style types
+    BackgroundConfig,
+    BackgroundPattern,
+    BackgroundStyle,
     // Config types (partial overrides with merge())
     BorderConfig,
     // Edge style layer types

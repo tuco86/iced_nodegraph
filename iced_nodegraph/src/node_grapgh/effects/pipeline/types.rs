@@ -38,17 +38,43 @@ pub struct Uniforms {
     pub dragging_edge_end_color: glam::Vec4,   // Color at cursor/target end
 
     // Theme-derived visual parameters (computed in Rust, no hardcodes in shader)
-    pub grid_color: glam::Vec4,          // Pre-computed grid line color
-    pub hover_glow_color: glam::Vec4,    // Node hover glow color
+    pub grid_color: glam::Vec4, // Pre-computed grid line color (legacy, kept for compatibility)
+    pub hover_glow_color: glam::Vec4, // Node hover glow color
     pub selection_box_color: glam::Vec4, // Box selection fill/border color
-    pub edge_cutting_color: glam::Vec4,  // Edge cutting line color
-    pub hover_glow_radius: f32,          // Node hover glow radius in world units
-    pub edge_thickness: f32,             // Default edge thickness for dragging
-    pub render_mode: u32,                // 0=background (fill only), 1=foreground (border only)
+    pub edge_cutting_color: glam::Vec4, // Edge cutting line color
+    pub hover_glow_radius: f32, // Node hover glow radius in world units
+    pub edge_thickness: f32,    // Default edge thickness for dragging
+    pub render_mode: u32,       // 0=background (fill only), 1=foreground (border only)
 
     pub viewport_size: glam::Vec2, // viewport size for clip space transform
     pub bounds_origin: glam::Vec2, // widget bounds origin in physical pixels
     pub bounds_size: glam::Vec2,   // widget bounds size in physical pixels
+
+    // === Background Pattern Configuration ===
+    /// Pattern type: 0=None, 1=Grid, 2=Hex, 3=Triangle, 4=Dots, 5=Lines, 6=Crosshatch
+    pub bg_pattern_type: u32,
+    /// Adaptive zoom flags: bit 0 = enabled, bit 1 = hex_pointy_top
+    pub bg_flags: u32,
+    /// Minor spacing in world-space pixels
+    pub bg_minor_spacing: f32,
+    /// Major spacing ratio (major_spacing / minor_spacing), 0 = no major grid
+    pub bg_major_ratio: f32,
+
+    /// Line widths: (minor_width, major_width)
+    pub bg_line_widths: glam::Vec2,
+    /// Opacities: (minor_opacity, major_opacity)
+    pub bg_opacities: glam::Vec2,
+
+    /// Primary pattern color
+    pub bg_primary_color: glam::Vec4,
+    /// Secondary pattern color
+    pub bg_secondary_color: glam::Vec4,
+
+    /// Pattern-specific params: (dot_radius, line_angle, crosshatch_angle, _padding)
+    pub bg_pattern_params: glam::Vec4,
+
+    /// Adaptive zoom thresholds: (min_spacing, max_spacing, fade_range, _padding)
+    pub bg_adaptive_params: glam::Vec4,
 }
 
 #[derive(Clone, Debug, ShaderType)]
