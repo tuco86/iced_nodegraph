@@ -2026,6 +2026,9 @@ impl Application {
             }
         }
 
+        // Set edge defaults for dragging edge preview
+        ng = ng.edge_defaults(edge_config);
+
         // Apply background config to graph style
         if let Some(bg_config) = &self.computed_style.background {
             let graph_style = GraphStyle::default().background(bg_config.resolve());

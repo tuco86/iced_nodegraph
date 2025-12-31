@@ -7,7 +7,6 @@ use iced::{Rectangle, wgpu};
 use iced_wgpu::graphics::Viewport;
 use iced_wgpu::primitive::Primitive;
 pub use node::Node;
-pub use node::NodeFlags;
 pub use pin::Pin;
 
 use crate::node_graph::{euclid::WorldPoint, state::Dragging};
@@ -17,7 +16,9 @@ use super::pipeline::Pipeline;
 
 /// Rendering layer for two-pass rendering.
 /// Background renders behind Iced widgets, Foreground renders on top.
+/// Note: Background is no longer used with new per-node primitives, kept for legacy overlay support.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum Layer {
     Background,
     Foreground,

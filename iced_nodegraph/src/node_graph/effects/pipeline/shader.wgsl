@@ -1809,46 +1809,9 @@ fn fs_dragging(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
     }
 
     // === Edge dragging (3, 4) ===
-    if (uniforms.dragging != 3u && uniforms.dragging != 4u) {
-        return vec4(0.0);
-    }
-
-    let from_node = nodes[uniforms.dragging_edge_from_node];
-    let from_pin = pins[from_node.pin_start + uniforms.dragging_edge_from_pin];
-
-    let dir_from = get_pin_direction(from_pin.side);
-    let seg_len = 80.0;
-    let p0 = from_pin.position;
-    let p1 = p0 + dir_from * seg_len;
-
-    var p3 = uniforms.cursor_position;
-    var dir_to = -dir_from;
-
-    if (uniforms.dragging == 4u) {
-        let to_node = nodes[uniforms.dragging_edge_to_node];
-        let to_pin = pins[to_node.pin_start + uniforms.dragging_edge_to_pin];
-        p3 = to_pin.position;
-        dir_to = get_pin_direction(to_pin.side);
-    }
-
-    let p2 = p3 + dir_to * seg_len;
-
-    // Compute distance and t parameter for gradient
-    let dist_and_t = sdCubicBezierWithT(in.world_uv, p0, p1, p2, p3);
-    let dist = dist_and_t.x;
-    let t = dist_and_t.y;
-
-    // Gradient from start_color (pin end) to end_color (cursor/target end)
-    let edge_color = mix(
-        uniforms.dragging_edge_start_color.rgb,
-        uniforms.dragging_edge_end_color.rgb,
-        t
-    );
-
-    let edge_thickness = uniforms.edge_thickness;  // From resolved edge defaults
-    let alpha = 1.0 - smoothstep(edge_thickness, edge_thickness + aa, dist);
-
-    return vec4(edge_color, alpha);
+    // NOTE: Edge dragging is now rendered via EdgesPrimitive for consistent styling.
+    // This shader no longer handles edge dragging - only BoxSelect (5) and EdgeCutting (7).
+    return vec4(0.0);
 }
 
 // ============================================================================

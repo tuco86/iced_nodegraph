@@ -228,6 +228,9 @@ pub struct NodeGraph<
     /// Global pin style overrides applied to all pins.
     /// Individual pin colors from widgets take precedence over this.
     pub(super) pin_defaults: Option<PinConfig>,
+    /// Global edge style defaults.
+    /// Applied to all edges (including dragging edge) unless overridden per-edge.
+    pub(super) edge_defaults: Option<EdgeConfig>,
     /// Phantom data for unused type parameter (E is only used in callbacks)
     _phantom: PhantomData<E>,
 }
@@ -261,6 +264,7 @@ where
             on_event: None,
             on_camera_change: None,
             pin_defaults: None,
+            edge_defaults: None,
             _phantom: PhantomData,
         }
     }
@@ -335,6 +339,18 @@ where
     /// These override theme defaults but individual pin colors from widgets still take precedence.
     pub fn pin_defaults(mut self, config: PinConfig) -> Self {
         self.pin_defaults = Some(config);
+        self
+    }
+
+    /// Sets global edge style defaults for all edges including dragging edge.
+    ///
+    /// These defaults are applied to:
+    /// - All edges that don't have per-edge style overrides
+    /// - The dragging edge preview while creating new connections
+    ///
+    /// Per-edge styles set via `push_edge_styled()` take precedence.
+    pub fn edge_defaults(mut self, config: EdgeConfig) -> Self {
+        self.edge_defaults = Some(config);
         self
     }
 

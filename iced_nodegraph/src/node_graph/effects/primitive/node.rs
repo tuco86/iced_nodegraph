@@ -5,8 +5,11 @@ use crate::node_graph::euclid::{WorldSize, WorldVector};
 use super::Pin;
 
 /// Node state flags for GPU rendering.
+/// Note: Now handled in new NodePrimitive, kept for legacy overlay support.
+#[allow(dead_code)]
 pub struct NodeFlags;
 
+#[allow(dead_code)]
 impl NodeFlags {
     pub const SELECTED: u32 = 1 << 1;
 }

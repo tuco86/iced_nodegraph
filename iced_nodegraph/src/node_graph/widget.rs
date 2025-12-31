@@ -8,12 +8,15 @@ use web_time::Instant;
 
 use super::{
     DragInfo, NodeGraph, NodeGraphMessage,
-    effects::{self, EdgeData, Layer},
+    effects::{
+        self, EdgeRenderData, EdgesPrimitive, GridPrimitive, Layer, NodeLayer, NodePrimitive,
+        PinRenderData,
+    },
     euclid::{IntoIced, WorldVector},
     state::{Dragging, NodeGraphState},
 };
 use crate::{
-    PinRef, PinSide,
+    PinDirection, PinRef, PinSide,
     ids::{EdgeId, NodeId, PinId},
     node_graph::euclid::{IntoEuclid, ScreenPoint, WorldPoint},
     node_pin::NodePinState,
@@ -150,7 +153,6 @@ where
         let mut camera = state.camera;
 
         // Update time for animations
-        // Cap delta to prevent large time jumps when app is in background
         let time = {
             let now = Instant::now();
             if let Some(last_update) = state.last_update {
@@ -162,7 +164,7 @@ where
             }
         };
 
-        // Handle panning when dragging the graph.
+        // Handle panning when dragging the graph
         if let Dragging::Graph(origin) = state.dragging {
             if let Some(cursor_position) = cursor.position() {
                 let cursor_position: ScreenPoint = cursor_position.into_euclid();
@@ -174,318 +176,481 @@ where
             }
         }
 
-        // Resolve styles using from_theme() + config overrides
+        // Resolve styles
         let resolved_graph = resolve_graph_style(self.graph_style.as_ref(), theme);
-        let resolved_node_defaults = NodeStyle::from_theme(theme);
-        let resolved_edge_defaults = EdgeStyle::from_theme(theme);
         let resolved_pin_defaults = resolve_pin_style(self.pin_defaults.as_ref(), theme);
+        let resolved_edge_defaults = EdgeStyle::from_theme(theme);
 
-        // Convert resolved styles to GPU-compatible formats
-        let bg = &resolved_graph.background;
-        let bg_color = glam::vec4(
-            bg.background_color.r,
-            bg.background_color.g,
-            bg.background_color.b,
-            bg.background_color.a,
-        );
-        let border_color = glam::vec4(
-            bg.primary_color.r,
-            bg.primary_color.g,
-            bg.primary_color.b,
-            bg.primary_color.a,
-        );
-        let fill_color = glam::vec4(
-            resolved_node_defaults.fill_color.r,
-            resolved_node_defaults.fill_color.g,
-            resolved_node_defaults.fill_color.b,
-            resolved_node_defaults.fill_color.a,
-        );
-        let edge_start_color = resolved_edge_defaults.start_color();
-        let edge_color = glam::vec4(
-            edge_start_color.r,
-            edge_start_color.g,
-            edge_start_color.b,
-            edge_start_color.a,
-        );
-        let drag_edge_color = glam::vec4(
-            resolved_graph.drag_edge_color.r,
-            resolved_graph.drag_edge_color.g,
-            resolved_graph.drag_edge_color.b,
-            resolved_graph.drag_edge_color.a,
-        );
-        let drag_valid_color = glam::vec4(
-            resolved_graph.drag_edge_valid_color.r,
-            resolved_graph.drag_edge_valid_color.g,
-            resolved_graph.drag_edge_valid_color.b,
-            resolved_graph.drag_edge_valid_color.a,
-        );
-
-        // Get selection style from resolved graph style
         let selection_style = &resolved_graph.selection_style;
         let selection_border_color = selection_style.selected_border_color;
         let selection_border_width = selection_style.selected_border_width;
+        let selected_edge_color = glam::vec4(
+            selection_border_color.r,
+            selection_border_color.g,
+            selection_border_color.b,
+            selection_border_color.a,
+        );
 
-        let primitive_background = effects::NodeGraphPrimitive {
-            layer: Layer::Background,
-            camera_zoom: camera.zoom(),
-            camera_position: camera.position(),
-            cursor_position: camera.screen_to_world().transform_point(
-                cursor
-                    .position()
-                    .unwrap_or(Point::new(0.0, 0.0))
-                    .into_euclid(),
-            ),
-            time,
-            dragging: state.dragging.clone(),
-            nodes: {
-                self.nodes
-                    .iter()
-                    .zip(&tree.children)
-                    .zip(layout.children())
-                    .enumerate()
-                    .map(
-                        |(
-                            node_index,
-                            (((_position, _element, node_style), node_tree), node_layout),
-                        )| {
-                            let is_selected = state.selected_nodes.contains(&node_index);
-                            let mut offset = WorldVector::zero();
+        // Check if we're edge dragging
+        let is_edge_dragging = matches!(
+            state.dragging,
+            Dragging::Edge(_, _, _) | Dragging::EdgeOver(_, _, _, _)
+        );
 
-                            // Handle single node drag offset
-                            if let (
-                                Dragging::Node(drag_node_index, origin),
-                                Some(cursor_position),
-                            ) = (state.dragging.clone(), cursor.position())
-                            {
-                                if drag_node_index == node_index {
-                                    let cursor_position: ScreenPoint =
-                                        cursor_position.into_euclid();
-                                    let cursor_position: WorldPoint =
-                                        camera.screen_to_world().transform_point(cursor_position);
-                                    offset = cursor_position - origin
-                                }
-                            }
-
-                            // Handle group move offset for all selected nodes
-                            if let (Dragging::GroupMove(origin), Some(cursor_position)) =
-                                (state.dragging.clone(), cursor.position())
-                            {
-                                if is_selected {
-                                    let cursor_position: ScreenPoint =
-                                        cursor_position.into_euclid();
-                                    let cursor_position: WorldPoint =
-                                        camera.screen_to_world().transform_point(cursor_position);
-                                    offset = cursor_position - origin
-                                }
-                            }
-
-                            // Resolve node style: config overrides theme defaults
-                            let resolved = resolve_node_style(node_style, theme);
-
-                            // Extract shadow properties
-                            let (shadow_offset, shadow_blur, shadow_color) =
-                                if let Some(shadow) = &resolved.shadow {
-                                    (shadow.offset, shadow.blur_radius, shadow.color)
-                                } else {
-                                    ((0.0, 0.0), 0.0, iced::Color::TRANSPARENT)
-                                };
-
-                            let node_fill = resolved.fill_color;
-                            let mut node_border = resolved.border_color;
-                            let corner_rad = resolved.corner_radius;
-                            let mut border_w = resolved.border_width;
-                            let opacity = resolved.opacity;
-
-                            // Apply selection highlighting
-                            if is_selected {
-                                node_border = selection_border_color;
-                                border_w = selection_border_width;
-                            }
-
-                            // Compute state flags
-                            // Note: Hover glow disabled for cleaner UX
-                            let mut flags = 0u32;
-                            if is_selected {
-                                flags |= effects::NodeFlags::SELECTED;
-                            }
-
-                            effects::Node {
-                                position: node_layout.bounds().position().into_euclid().to_vector()
-                                    + offset,
-                                size: node_layout.bounds().size().into_euclid(),
-                                corner_radius: corner_rad,
-                                border_width: border_w,
-                                opacity,
-                                fill_color: node_fill,
-                                border_color: node_border,
-                                pins: find_pins(node_tree, node_layout)
-                                    .iter()
-                                    .map(|(_pin_index, pin_state, (a, _b))| effects::Pin {
-                                        side: pin_state.side.into(),
-                                        offset: a.into_euclid().to_vector() + offset,
-                                        // Use resolved pin defaults, but pin color comes from the pin widget
-                                        radius: resolved_pin_defaults.radius,
-                                        color: pin_state.color,
-                                        direction: pin_state.direction,
-                                        shape: resolved_pin_defaults.shape,
-                                        border_color: resolved_pin_defaults
-                                            .border_color
-                                            .unwrap_or(iced::Color::TRANSPARENT),
-                                        border_width: resolved_pin_defaults.border_width,
-                                    })
-                                    .collect(),
-                                shadow_offset,
-                                shadow_blur,
-                                shadow_color,
-                                flags,
-                            }
-                        },
-                    )
-                    .collect()
-            },
-            // Extract edge connectivity with style resolved from config + theme
-            // Edges are stored with user IDs (PinRef<N, P>) and resolved to indices here
-            edges: self
-                .edges
-                .iter()
-                .filter_map(|(from, to, edge_config)| {
-                    // Resolve node IDs to indices
-                    let from_node_idx = self.id_maps.nodes.index(&from.node_id)?;
-                    let to_node_idx = self.id_maps.nodes.index(&to.node_id)?;
-
-                    // Get tree/layout for each node
-                    let from_node_tree = tree.children.get(from_node_idx)?;
-                    let from_node_layout = layout.children().nth(from_node_idx)?;
-                    let to_node_tree = tree.children.get(to_node_idx)?;
-                    let to_node_layout = layout.children().nth(to_node_idx)?;
-
-                    // Find pins by matching pin_id hash
-                    let from_pin_hash = compute_pin_hash(&from.pin_id);
-                    let from_pins = find_pins(from_node_tree, from_node_layout);
-                    let from_pin_idx = from_pins
-                        .iter()
-                        .position(|(_, state, _)| state.pin_id_hash == from_pin_hash)?;
-
-                    let to_pin_hash = compute_pin_hash(&to.pin_id);
-                    let to_pins = find_pins(to_node_tree, to_node_layout);
-                    let to_pin_idx = to_pins
-                        .iter()
-                        .position(|(_, state, _)| state.pin_id_hash == to_pin_hash)?;
-
-                    let resolved_edge = resolve_edge_style(edge_config, theme);
-                    Some(EdgeData {
-                        from_node: from_node_idx,
-                        from_pin: from_pin_idx,
-                        to_node: to_node_idx,
-                        to_pin: to_pin_idx,
-                        style: resolved_edge,
-                    })
-                })
-                .collect(),
-            edge_color,
-            background_color: bg_color,
-            border_color,
-            fill_color,
-            drag_edge_color,
-            drag_edge_valid_color: drag_valid_color,
-            selected_nodes: state.selected_nodes.clone(),
-            selected_edge_color: glam::vec4(
-                selection_border_color.r,
-                selection_border_color.g,
-                selection_border_color.b,
-                selection_border_color.a,
-            ),
-            edge_thickness: resolved_edge_defaults.get_width(),
-            valid_drop_targets: state.valid_drop_targets.clone(),
-            background_style: resolved_graph.background.clone(),
-        };
-
-        // Create foreground primitive (clone with different layer)
-        let mut primitive_foreground = primitive_background.clone();
-        primitive_foreground.layer = Layer::Foreground;
-
-        // Layer 1: Draw background primitive (grid, edges, node fills, pins)
+        // ========================================
+        // Layer 1: Grid (behind everything)
+        // ========================================
         renderer.with_layer(layout.bounds(), |renderer| {
-            renderer.draw_primitive(layout.bounds(), primitive_background);
-        });
-
-        // Layer 2: Draw child elements (widgets)
-        renderer.with_layer(layout.bounds(), |renderer| {
-            camera.draw_with::<_, Renderer>(
-                renderer,
-                viewport,
-                cursor,
-                |renderer, viewport, cursor| {
-                    for (node_index, (((_position, element, node_style), tree), layout)) in self
-                        .elements_iter()
-                        .zip(&tree.children)
-                        .zip(layout.children())
-                        .enumerate()
-                    {
-                        let is_selected = state.selected_nodes.contains(&node_index);
-
-                        // Resolve node style to get border_width for clip inset
-                        let resolved = resolve_node_style(node_style, theme);
-                        let border_inset = if is_selected {
-                            selection_border_width
-                        } else {
-                            resolved.border_width
-                        };
-
-                        // Calculate offset for single node drag
-                        let single_node_offset =
-                            if let Dragging::Node(dragging_node_index, origin) = state.dragging {
-                                cursor
-                                    .position()
-                                    .filter(|_| dragging_node_index == node_index)
-                                    .map(|cursor_position| cursor_position - origin.into_iced())
-                            } else {
-                                None
-                            };
-
-                        // Calculate offset for group move (all selected nodes)
-                        let group_move_offset = if let Dragging::GroupMove(origin) = state.dragging
-                        {
-                            if is_selected {
-                                cursor
-                                    .position()
-                                    .map(|cursor_position| cursor_position - origin.into_iced())
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        };
-
-                        let node_move_offset = single_node_offset
-                            .or(group_move_offset)
-                            .unwrap_or(Vector::ZERO);
-
-                        // Clip bounds: inset by border_width and follow node during drag
-                        let bounds = layout.bounds();
-                        let clip_bounds = Rectangle {
-                            x: bounds.x + node_move_offset.x + border_inset,
-                            y: bounds.y + node_move_offset.y + border_inset,
-                            width: (bounds.width - 2.0 * border_inset).max(0.0),
-                            height: (bounds.height - 2.0 * border_inset).max(0.0),
-                        };
-
-                        renderer.with_layer(clip_bounds, |renderer| {
-                            renderer.with_translation(node_move_offset, |renderer| {
-                                element
-                                    .as_widget()
-                                    .draw(tree, renderer, theme, style, layout, cursor, viewport);
-                            });
-                        });
-                    }
+            renderer.draw_primitive(
+                layout.bounds(),
+                GridPrimitive {
+                    camera_zoom: camera.zoom(),
+                    camera_position: camera.position(),
+                    background_style: resolved_graph.background.clone(),
                 },
             );
         });
 
-        // Layer 3: Draw foreground primitive (node borders, dragging edge, selection box)
+        // ========================================
+        // Collect edge data with resolved positions
+        // ========================================
+        // Helper to compute drag offset for a node
+        let compute_node_offset = |node_idx: usize| -> WorldVector {
+            let mut offset = WorldVector::zero();
+            let is_selected = state.selected_nodes.contains(&node_idx);
+
+            // Single node drag
+            if let (Dragging::Node(drag_idx, origin), Some(cursor_pos)) =
+                (state.dragging.clone(), cursor.position())
+            {
+                if drag_idx == node_idx {
+                    let cursor_world: WorldPoint = camera
+                        .screen_to_world()
+                        .transform_point(cursor_pos.into_euclid());
+                    offset = cursor_world - origin;
+                }
+            }
+
+            // Group move
+            if let (Dragging::GroupMove(origin), Some(cursor_pos)) =
+                (state.dragging.clone(), cursor.position())
+            {
+                if is_selected {
+                    let cursor_world: WorldPoint = camera
+                        .screen_to_world()
+                        .transform_point(cursor_pos.into_euclid());
+                    offset = cursor_world - origin;
+                }
+            }
+
+            offset
+        };
+
+        let static_edges: Vec<EdgeRenderData> = self
+            .edges
+            .iter()
+            .filter_map(|(from, to, edge_config)| {
+                // Resolve node IDs to indices
+                let from_node_idx = self.id_maps.nodes.index(&from.node_id)?;
+                let to_node_idx = self.id_maps.nodes.index(&to.node_id)?;
+
+                // Get tree/layout for each node
+                let from_node_tree = tree.children.get(from_node_idx)?;
+                let from_node_layout = layout.children().nth(from_node_idx)?;
+                let to_node_tree = tree.children.get(to_node_idx)?;
+                let to_node_layout = layout.children().nth(to_node_idx)?;
+
+                // Compute drag offsets for both nodes
+                let from_offset = compute_node_offset(from_node_idx);
+                let to_offset = compute_node_offset(to_node_idx);
+
+                // Find pins by matching pin_id hash
+                let from_pin_hash = compute_pin_hash(&from.pin_id);
+                let from_pins = find_pins(from_node_tree, from_node_layout);
+                let (_, from_pin_state, (from_pin_pos, _)) = from_pins
+                    .iter()
+                    .find(|(_, state, _)| state.pin_id_hash == from_pin_hash)?;
+
+                let to_pin_hash = compute_pin_hash(&to.pin_id);
+                let to_pins = find_pins(to_node_tree, to_node_layout);
+                let (_, to_pin_state, (to_pin_pos, _)) = to_pins
+                    .iter()
+                    .find(|(_, state, _)| state.pin_id_hash == to_pin_hash)?;
+
+                let is_selected = state.selected_nodes.contains(&from_node_idx)
+                    && state.selected_nodes.contains(&to_node_idx);
+
+                // Apply drag offsets to pin positions
+                let start_pos = (from_pin_pos.into_euclid().to_vector() + from_offset).to_point();
+                let end_pos = (to_pin_pos.into_euclid().to_vector() + to_offset).to_point();
+
+                Some(EdgeRenderData {
+                    start_pos,
+                    end_pos,
+                    start_side: from_pin_state.side.into(),
+                    end_side: to_pin_state.side.into(),
+                    start_direction: from_pin_state.direction,
+                    end_direction: to_pin_state.direction,
+                    style: resolve_edge_style(edge_config, theme),
+                    is_selected,
+                    is_pending_cut: false,
+                    start_pin_color: from_pin_state.color,
+                    end_pin_color: to_pin_state.color,
+                })
+            })
+            .collect();
+
+        // Add dragging edge if actively dragging (but not when snapped - EdgeOver)
+        let mut all_edges = static_edges;
+        if let Dragging::Edge(from_node_idx, from_pin_idx, _) = &state.dragging {
+            if let Some(cursor_pos) = cursor.position() {
+                // Get source pin info
+                if let (Some(from_tree), Some(from_layout)) = (
+                    tree.children.get(*from_node_idx),
+                    layout.children().nth(*from_node_idx),
+                ) {
+                    let from_pins = find_pins(from_tree, from_layout);
+                    if let Some((_, from_pin_state, (from_pin_pos, _))) =
+                        from_pins.get(*from_pin_idx)
+                    {
+                        // Apply drag offset to source pin
+                        let from_offset = compute_node_offset(*from_node_idx);
+                        let start_pos =
+                            (from_pin_pos.into_euclid().to_vector() + from_offset).to_point();
+
+                        // End position is cursor in world coordinates
+                        let end_pos: WorldPoint = camera
+                            .screen_to_world()
+                            .transform_point(cursor_pos.into_euclid());
+
+                        // Use global edge_defaults if set, otherwise fall back to EdgeConfig::default()
+                        let drag_edge_config = self.edge_defaults.clone().unwrap_or_default();
+                        let drag_edge_style = resolve_edge_style(&drag_edge_config, theme);
+
+                        // Compute opposite side for end
+                        let end_side: u32 = match from_pin_state.side {
+                            PinSide::Left => 1,   // Right
+                            PinSide::Right => 0,  // Left
+                            PinSide::Top => 3,    // Bottom
+                            PinSide::Bottom => 2, // Top
+                            PinSide::Row => 1,    // Default to Right
+                        };
+
+                        // Compute opposite direction for end
+                        let end_direction = match from_pin_state.direction {
+                            PinDirection::Input => PinDirection::Output,
+                            PinDirection::Output => PinDirection::Input,
+                            PinDirection::Both => PinDirection::Both,
+                        };
+
+                        all_edges.push(EdgeRenderData {
+                            start_pos,
+                            end_pos,
+                            start_side: from_pin_state.side.into(),
+                            end_side,
+                            start_direction: from_pin_state.direction,
+                            end_direction,
+                            style: drag_edge_style,
+                            is_selected: false,
+                            is_pending_cut: false,
+                            start_pin_color: from_pin_state.color,
+                            end_pin_color: from_pin_state.color,
+                        });
+                    }
+                }
+            }
+        }
+
+        // ========================================
+        // Layer 2: Static Edges (behind nodes)
+        // ========================================
         renderer.with_layer(layout.bounds(), |renderer| {
-            renderer.draw_primitive(layout.bounds(), primitive_foreground);
+            renderer.draw_primitive(
+                layout.bounds(),
+                EdgesPrimitive {
+                    edges: all_edges,
+                    camera_zoom: camera.zoom(),
+                    camera_position: camera.position(),
+                    time,
+                    selected_edge_color,
+                },
+            );
         });
+
+        // ========================================
+        // Layers 3..N: Nodes (each node gets 3 sub-layers)
+        // For each node: Background → Widgets → Foreground
+        // ========================================
+        for (node_index, (((_position, element, node_style), node_tree), node_layout)) in self
+            .nodes
+            .iter()
+            .zip(&tree.children)
+            .zip(layout.children())
+            .enumerate()
+        {
+            let is_selected = state.selected_nodes.contains(&node_index);
+
+            // Compute drag offset
+            let offset = {
+                let mut offset = WorldVector::zero();
+
+                // Single node drag
+                if let (Dragging::Node(drag_idx, origin), Some(cursor_pos)) =
+                    (state.dragging.clone(), cursor.position())
+                {
+                    if drag_idx == node_index {
+                        let cursor_world: WorldPoint = camera
+                            .screen_to_world()
+                            .transform_point(cursor_pos.into_euclid());
+                        offset = cursor_world - origin;
+                    }
+                }
+
+                // Group move
+                if let (Dragging::GroupMove(origin), Some(cursor_pos)) =
+                    (state.dragging.clone(), cursor.position())
+                {
+                    if is_selected {
+                        let cursor_world: WorldPoint = camera
+                            .screen_to_world()
+                            .transform_point(cursor_pos.into_euclid());
+                        offset = cursor_world - origin;
+                    }
+                }
+
+                offset
+            };
+
+            // Resolve node style
+            let resolved = resolve_node_style(node_style, theme);
+            let (shadow_offset, shadow_blur, shadow_color) = if let Some(shadow) = &resolved.shadow
+            {
+                (shadow.offset, shadow.blur_radius, shadow.color)
+            } else {
+                ((0.0, 0.0), 0.0, iced::Color::TRANSPARENT)
+            };
+
+            let (border_color, border_width) = if is_selected {
+                (selection_border_color, selection_border_width)
+            } else {
+                (resolved.border_color, resolved.border_width)
+            };
+
+            // Collect pins for this node
+            let pins: Vec<PinRenderData> = find_pins(node_tree, node_layout)
+                .iter()
+                .enumerate()
+                .map(|(pin_idx, (_pin_index, pin_state, (pin_pos, _)))| {
+                    let is_valid_target = is_edge_dragging
+                        && state.valid_drop_targets.contains(&(node_index, pin_idx));
+                    PinRenderData {
+                        offset: (pin_pos.into_euclid().to_vector() + offset).to_point(),
+                        side: pin_state.side.into(),
+                        radius: resolved_pin_defaults.radius,
+                        color: pin_state.color,
+                        direction: pin_state.direction,
+                        shape: resolved_pin_defaults.shape,
+                        border_color: resolved_pin_defaults
+                            .border_color
+                            .unwrap_or(iced::Color::TRANSPARENT),
+                        border_width: resolved_pin_defaults.border_width,
+                        is_valid_target,
+                    }
+                })
+                .collect();
+
+            let node_position: WorldPoint =
+                (node_layout.bounds().position().into_euclid().to_vector() + offset).to_point();
+            let node_size = node_layout.bounds().size();
+
+            // Build NodePrimitive data (will be used for both layers)
+            let node_primitive = NodePrimitive {
+                layer: NodeLayer::Background, // Will be overwritten
+                position: node_position,
+                size: node_size,
+                corner_radius: resolved.corner_radius,
+                border_width,
+                opacity: resolved.opacity,
+                fill_color: resolved.fill_color,
+                border_color,
+                shadow_offset,
+                shadow_blur,
+                shadow_color,
+                is_selected,
+                pins: pins.clone(),
+                camera_zoom: camera.zoom(),
+                camera_position: camera.position(),
+                time,
+            };
+
+            // Layer 3a: Node Background (fill + shadow)
+            renderer.with_layer(layout.bounds(), |renderer| {
+                renderer.draw_primitive(
+                    layout.bounds(),
+                    NodePrimitive {
+                        layer: NodeLayer::Background,
+                        ..node_primitive.clone()
+                    },
+                );
+            });
+
+            // Layer 3b: Node Widgets
+            renderer.with_layer(layout.bounds(), |renderer| {
+                camera.draw_with::<_, Renderer>(
+                    renderer,
+                    viewport,
+                    cursor,
+                    |renderer, viewport, cursor| {
+                        let bounds = node_layout.bounds();
+                        let screen_offset: Vector = offset.into_iced();
+                        let clip_bounds = Rectangle {
+                            x: bounds.x + screen_offset.x + border_width,
+                            y: bounds.y + screen_offset.y + border_width,
+                            width: (bounds.width - 2.0 * border_width).max(0.0),
+                            height: (bounds.height - 2.0 * border_width).max(0.0),
+                        };
+
+                        renderer.with_layer(clip_bounds, |renderer| {
+                            renderer.with_translation(screen_offset, |renderer| {
+                                element.as_widget().draw(
+                                    node_tree,
+                                    renderer,
+                                    theme,
+                                    style,
+                                    node_layout,
+                                    cursor,
+                                    viewport,
+                                );
+                            });
+                        });
+                    },
+                );
+            });
+
+            // Layer 3c: Node Foreground (border + pins)
+            renderer.with_layer(layout.bounds(), |renderer| {
+                renderer.draw_primitive(
+                    layout.bounds(),
+                    NodePrimitive {
+                        layer: NodeLayer::Foreground,
+                        ..node_primitive
+                    },
+                );
+            });
+        }
+
+        // ========================================
+        // Layer N+1: Dragging Edge / Selection Box / Edge Cutting
+        // Use old primitive for these overlay elements for now
+        // ========================================
+        if matches!(
+            state.dragging,
+            Dragging::Edge(_, _, _)
+                | Dragging::EdgeOver(_, _, _, _)
+                | Dragging::BoxSelect(_, _)
+                | Dragging::EdgeCutting { .. }
+        ) {
+            // For dragging overlay, fall back to the old primitive approach
+            // This handles the dragging edge, selection box, and edge cutting visuals
+            let drag_primitive = effects::NodeGraphPrimitive {
+                layer: Layer::Foreground,
+                camera_zoom: camera.zoom(),
+                camera_position: camera.position(),
+                cursor_position: camera
+                    .screen_to_world()
+                    .transform_point(cursor.position().unwrap_or(Point::ORIGIN).into_euclid()),
+                time,
+                dragging: state.dragging.clone(),
+                nodes: self
+                    .nodes
+                    .iter()
+                    .zip(&tree.children)
+                    .zip(layout.children())
+                    .enumerate()
+                    .map(|(node_index, ((_, node_tree), node_layout))| {
+                        let is_selected = state.selected_nodes.contains(&node_index);
+                        let offset = {
+                            let mut offset = WorldVector::zero();
+                            if let (Dragging::Node(drag_idx, origin), Some(cursor_pos)) =
+                                (state.dragging.clone(), cursor.position())
+                            {
+                                if drag_idx == node_index {
+                                    let cursor_world: WorldPoint = camera
+                                        .screen_to_world()
+                                        .transform_point(cursor_pos.into_euclid());
+                                    offset = cursor_world - origin;
+                                }
+                            }
+                            if let (Dragging::GroupMove(origin), Some(cursor_pos)) =
+                                (state.dragging.clone(), cursor.position())
+                            {
+                                if is_selected {
+                                    let cursor_world: WorldPoint = camera
+                                        .screen_to_world()
+                                        .transform_point(cursor_pos.into_euclid());
+                                    offset = cursor_world - origin;
+                                }
+                            }
+                            offset
+                        };
+
+                        effects::Node {
+                            position: node_layout.bounds().position().into_euclid().to_vector()
+                                + offset,
+                            size: node_layout.bounds().size().into_euclid(),
+                            corner_radius: 8.0,
+                            border_width: 2.0,
+                            opacity: 1.0,
+                            fill_color: iced::Color::TRANSPARENT,
+                            border_color: iced::Color::TRANSPARENT,
+                            pins: find_pins(node_tree, node_layout)
+                                .iter()
+                                .map(|(_, pin_state, (a, _))| effects::Pin {
+                                    side: pin_state.side.into(),
+                                    offset: a.into_euclid().to_vector() + offset,
+                                    radius: resolved_pin_defaults.radius,
+                                    color: pin_state.color,
+                                    direction: pin_state.direction,
+                                    shape: resolved_pin_defaults.shape,
+                                    border_color: iced::Color::TRANSPARENT,
+                                    border_width: 0.0,
+                                })
+                                .collect(),
+                            shadow_offset: (0.0, 0.0),
+                            shadow_blur: 0.0,
+                            shadow_color: iced::Color::TRANSPARENT,
+                            flags: 0,
+                        }
+                    })
+                    .collect(),
+                edges: vec![],
+                edge_color: glam::Vec4::ZERO,
+                background_color: glam::Vec4::ZERO,
+                border_color: glam::Vec4::ZERO,
+                fill_color: glam::Vec4::ZERO,
+                drag_edge_color: glam::vec4(
+                    resolved_graph.drag_edge_color.r,
+                    resolved_graph.drag_edge_color.g,
+                    resolved_graph.drag_edge_color.b,
+                    resolved_graph.drag_edge_color.a,
+                ),
+                drag_edge_valid_color: glam::vec4(
+                    resolved_graph.drag_edge_valid_color.r,
+                    resolved_graph.drag_edge_valid_color.g,
+                    resolved_graph.drag_edge_valid_color.b,
+                    resolved_graph.drag_edge_valid_color.a,
+                ),
+                selected_nodes: state.selected_nodes.clone(),
+                selected_edge_color,
+                edge_thickness: resolved_edge_defaults.get_width(),
+                valid_drop_targets: state.valid_drop_targets.clone(),
+                background_style: resolved_graph.background.clone(),
+            };
+
+            renderer.with_layer(layout.bounds(), |renderer| {
+                renderer.draw_primitive(layout.bounds(), drag_primitive);
+            });
+        }
     }
 
     fn size_hint(&self) -> Size<Length> {

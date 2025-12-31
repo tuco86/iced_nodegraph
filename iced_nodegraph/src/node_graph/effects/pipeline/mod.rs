@@ -21,8 +21,8 @@ use crate::style::EdgeCurve;
 
 use super::{EdgeData, Layer};
 
-mod buffer;
-mod types;
+pub(crate) mod buffer;
+pub(crate) mod types;
 
 // ============================================================================
 // Arc-Length Computation (CPU-side for accurate pattern spacing)
@@ -165,7 +165,8 @@ pub struct Pipeline {
     pipeline_background: RenderPipeline,
     pipeline_edges: RenderPipeline,
     pipeline_nodes_fill: RenderPipeline, // Background: node fill + shadow
-    pipeline_nodes_border: RenderPipeline, // Foreground: node border only
+    #[allow(dead_code)] // Kept for potential future use, borders now rendered by NodePrimitive
+    pipeline_nodes_border: RenderPipeline,
     pipeline_pins: RenderPipeline,
     pipeline_dragging: RenderPipeline,
 
@@ -857,13 +858,10 @@ impl Pipeline {
                 }
             }
             Layer::Foreground => {
-                // Pass 1: Node borders (instanced) - fs_node shader (border only)
-                if num_nodes > 0 {
-                    pass.set_pipeline(&self.pipeline_nodes_border);
-                    pass.draw(0..6, 0..num_nodes as u32);
-                }
+                // NOTE: Node borders are now rendered by the new NodePrimitive system.
+                // This old primitive is only used for drag overlays (edge, box select, edge cutting).
 
-                // Pass 2: Dragging edge / box select / edge cutting (if active)
+                // Draw dragging edge / box select / edge cutting overlay
                 pass.set_pipeline(&self.pipeline_dragging);
                 pass.draw(0..6, 0..1);
             }

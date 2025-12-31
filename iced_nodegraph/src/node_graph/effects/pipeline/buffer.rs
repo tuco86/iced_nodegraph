@@ -151,6 +151,78 @@ impl<T> Buffer<T> {
     pub fn is_empty(&self) -> bool {
         self.buffer_vec.is_empty()
     }
+
+    /// Push a single item to the buffer and write it to GPU.
+    ///
+    /// Returns the index (slot) where the item was placed.
+    #[must_use]
+    pub fn push(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, item: T) -> usize
+    where
+        T: ShaderType + ShaderSize + WriteInto,
+    {
+        let slot = self.buffer_vec.len();
+        self.buffer_vec.push(item);
+
+        let item_size = T::SHADER_SIZE.get() as usize;
+        let offset = slot * item_size;
+        let required_size = (slot + 1) * item_size;
+
+        // Ensure GPU buffer is large enough
+        if self.buffer_wgpu.size() < required_size as u64 {
+            let new_size = ((required_size as f32 * BUFFER_GROWTH_FACTOR) as u64)
+                .max(BUFFER_MIN_CAPACITY as u64 * 256);
+            self.buffer_wgpu = create_wgpu_buffer(device, self.label, new_size, self.usage);
+            self.generation += 1;
+
+            // Must rewrite entire buffer after resize
+            self.rewrite_all(queue);
+        } else {
+            // Write just this item at its offset
+            self.scratch.clear();
+            self.scratch.resize(item_size, 0);
+            let mut writer = encase::StorageBuffer::new(&mut self.scratch[..]);
+            writer
+                .write(&self.buffer_vec[slot])
+                .expect("Failed to write to storage buffer");
+            queue.write_buffer(&self.buffer_wgpu, offset as u64, &self.scratch);
+        }
+
+        slot
+    }
+
+    /// Rewrite entire buffer_vec to GPU buffer.
+    fn rewrite_all(&mut self, queue: &wgpu::Queue)
+    where
+        T: ShaderType + ShaderSize + WriteInto,
+    {
+        if self.buffer_vec.is_empty() {
+            return;
+        }
+
+        let item_size = T::SHADER_SIZE.get() as usize;
+        let total_size = self.buffer_vec.len() * item_size;
+
+        self.scratch.clear();
+        self.scratch.resize(total_size, 0);
+
+        for (i, item) in self.buffer_vec.iter().enumerate() {
+            let offset = i * item_size;
+            let slice = &mut self.scratch[offset..offset + item_size];
+            let mut writer = encase::StorageBuffer::new(slice);
+            writer
+                .write(item)
+                .expect("Failed to write to storage buffer");
+        }
+
+        queue.write_buffer(&self.buffer_wgpu, 0, &self.scratch);
+    }
+
+    /// Clear the buffer for next frame.
+    pub fn clear(&mut self) {
+        self.buffer_vec.clear();
+        // Reset content hash so next write isn't skipped
+        self.content_hash = 0;
+    }
 }
 
 /// Fast, simple hash function for content change detection.
