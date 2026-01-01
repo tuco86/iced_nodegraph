@@ -20,7 +20,7 @@
 //!
 //! ## Controls
 //!
-//! - **Cmd/Ctrl+K** - Open command palette
+//! - **Cmd/Ctrl+Space** - Open command palette
 //! - **Drag nodes** - Move nodes around the canvas
 //! - **Drag from pins** - Create connections between nodes
 //! - **Click edges** - Disconnect existing connections

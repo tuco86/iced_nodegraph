@@ -1,9 +1,12 @@
 //! Shared GPU resources for all NodeGraph primitives.
 //!
-//! Uses `OnceLock<Arc<...>>` pattern to ensure shader module and render pipelines
+//! Uses lazy initialization to ensure shader module and render pipelines
 //! are created exactly once and shared across all primitive types (Grid, Node, Edges).
+//!
+//! On native: Uses `OnceLock<Arc<...>>` for thread-safe global storage.
+//! On WASM: Uses `thread_local!` because WGPU types contain JsValue which is not Send+Sync.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use encase::ShaderSize;
 use iced::wgpu::{
@@ -16,9 +19,17 @@ use iced::wgpu::{
 
 use super::pipeline::types;
 
-/// Global shared resources instance.
-/// Created once on first use, then shared across all NodeGraph primitives.
-static SHARED_RESOURCES: OnceLock<Arc<SharedNodeGraphResources>> = OnceLock::new();
+// Native: Use OnceLock for thread-safe global storage
+#[cfg(not(target_arch = "wasm32"))]
+static SHARED_RESOURCES: std::sync::OnceLock<Arc<SharedNodeGraphResources>> =
+    std::sync::OnceLock::new();
+
+// WASM: Use thread_local because WGPU types contain JsValue (not Send+Sync)
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static SHARED_RESOURCES: std::cell::RefCell<Option<Arc<SharedNodeGraphResources>>> =
+        const { std::cell::RefCell::new(None) };
+}
 
 /// Shared GPU resources for all NodeGraph primitives.
 ///
@@ -55,10 +66,26 @@ impl SharedNodeGraphResources {
     ///
     /// This is called by each Pipeline::new() implementation. The first call
     /// creates the resources; subsequent calls return the cached Arc.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn get_or_init(device: &Device, format: TextureFormat) -> Arc<Self> {
         SHARED_RESOURCES
             .get_or_init(|| Arc::new(Self::new(device, format)))
             .clone()
+    }
+
+    /// Get or initialize the shared GPU resources (WASM version).
+    ///
+    /// Uses thread_local storage since WGPU types on WASM contain JsValue
+    /// which is not Send+Sync.
+    #[cfg(target_arch = "wasm32")]
+    pub fn get_or_init(device: &Device, format: TextureFormat) -> Arc<Self> {
+        SHARED_RESOURCES.with(|cell| {
+            let mut opt = cell.borrow_mut();
+            if opt.is_none() {
+                *opt = Some(Arc::new(Self::new(device, format)));
+            }
+            opt.as_ref().unwrap().clone()
+        })
     }
 
     /// Create all shared GPU resources.

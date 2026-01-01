@@ -9,7 +9,7 @@ A high-performance node graph editor widget for the [Iced](https://github.com/ic
 **Smooth animations restored (droppable pins pulsing)**  
 **Cross-platform support (Windows, macOS, Linux)**  
 
-**[Live Demo](https://tuco86.github.io/iced_nodegraph/iced_nodegraph/) | [Documentation](https://github.com/tuco86/iced_nodegraph/tree/main/docs) | [Demos](https://github.com/tuco86/iced_nodegraph/tree/main/demos)**
+**[Live Demo](https://tuco86.github.io/iced_nodegraph/demo_hello_world/index.html) | [Documentation](https://tuco86.github.io/iced_nodegraph/iced_nodegraph/)**
 
 ## Project Structure
 

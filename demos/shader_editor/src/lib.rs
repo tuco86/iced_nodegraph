@@ -20,7 +20,7 @@
 //!
 //! ## Controls
 //!
-//! - **Cmd/Ctrl+K** - Open command palette to add shader nodes
+//! - **Cmd/Ctrl+Space** - Open command palette to add shader nodes
 //! - **Drag nodes** - Move nodes around the canvas
 //! - **Drag from pins** - Create connections between compatible sockets
 //! - **Scroll** - Zoom in/out
@@ -467,11 +467,9 @@ impl Application {
             // Keyboard events for command palette
             event::listen_with(|event, _status, _id| {
                 if let Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event {
-                    // Ctrl+Space or Ctrl+K to toggle palette
+                    // Ctrl+Space or Ctrl+Space to toggle palette
                     if modifiers.command() {
-                        if key == keyboard::Key::Named(Named::Space)
-                            || key == keyboard::Key::Character("k".into())
-                        {
+                        if key == keyboard::Key::Named(Named::Space) {
                             return Some(Message::ToggleCommandPalette);
                         }
                     }
