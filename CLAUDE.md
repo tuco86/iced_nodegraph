@@ -7,7 +7,8 @@ This document provides essential context for Claude Code when working on the ice
 **Automatic (via SubagentStop hook):**
 When a subagent/task completes, `.claude/hooks/validate.sh` runs automatically:
 - `cargo fmt --all` - formats code
-- `cargo check -p iced_nodegraph` - reports compile errors
+- `cargo check -p iced_nodegraph` - reports native compile errors
+- `cargo check -p iced_nodegraph --target wasm32-unknown-unknown` - reports WASM compile errors
 - `cargo test -p iced_nodegraph` - reports test failures
 
 The script only outputs on errors to avoid filling context. Exit code 2 = errors shown to Claude for fixing.
@@ -53,27 +54,29 @@ Use the `code-reviewer` agent for reviewing significant code changes before comm
 
 ## Tool Usage Preferences
 
-**For Rust code navigation, prefer LSP (rust-analyzer) over grep/find:**
+**ALWAYS use LSP (cclsp MCP) for Rust code navigation - it's faster and more accurate than grep:**
 
-| Task | Prefer | Fallback |
-|------|--------|----------|
-| Find definition of struct/fn/trait | LSP goto-definition | - |
-| Find all usages of a symbol | LSP find-references | - |
-| Get type information | LSP hover | - |
-| Symbol search in project | LSP workspace-symbols | Grep |
-| Text in comments/strings | Grep | - |
-| Non-Rust files (toml, md, wgsl) | Grep/Glob | - |
+| Task | Tool | Example |
+|------|------|---------|
+| Find definition | `mcp__cclsp__find_definition` | `symbol_name: "NodeGraph"` |
+| Find all usages | `mcp__cclsp__find_references` | `symbol_name: "edge_defaults"` |
+| Rename symbol | `mcp__cclsp__rename_symbol` | `symbol_name: "old", new_name: "new"` |
+| Get diagnostics | `mcp__cclsp__get_diagnostics` | `file_path: "src/lib.rs"` |
 
-**LSP commands available via rust-analyzer plugin:**
-- `goto_definition` - Jump to definition
-- `find_references` - Find all usages
-- `hover` - Type info and docs
-- `workspace_symbol` - Search symbols by name
+**Parameters:**
+- `file_path`: File where symbol is defined (for context)
+- `symbol_name`: Name of the symbol to find
+- `symbol_kind`: Optional - "function", "struct", "method", "field", etc.
 
-**When to use Grep instead:**
+**When to use Grep/Glob instead:**
 - Searching in string literals or comments
-- Finding patterns across non-Rust files (shaders, configs)
-- Regex-based searches
+- Non-Rust files (toml, md, wgsl)
+- Regex pattern searches
+- LSP server unavailable
+
+**Common patterns to follow:**
+- When adding a new global config field, use `find_references` on `pin_defaults` to see the pattern
+- When modifying NodeGraph API, check usages in demos with `find_references`
 
 ## Architecture Overview
 
