@@ -1,6 +1,6 @@
 //! # Hello World Demo
 //!
-//! Basic node graph with command palette (Cmd/Ctrl+K) for adding nodes and changing themes.
+//! Basic node graph with command palette (Cmd/Ctrl+Space) for adding nodes and changing themes.
 //! Now includes interactive style configuration nodes!
 //!
 //! ## Interactive Demo

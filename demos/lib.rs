@@ -34,7 +34,7 @@
 //!
 //! **Features:**
 //! - Pre-configured email processing workflow
-//! - Command palette (Cmd/Ctrl+K) for actions
+//! - Command palette (Cmd/Ctrl+Space) for actions
 //! - Theme switcher with live preview
 //! - Node creation from palette
 //! - Pan (middle-mouse) and zoom (scroll)

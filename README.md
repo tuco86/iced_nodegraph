@@ -245,7 +245,7 @@ Test coverage includes:
 ## Demos
 
 ### [hello_world](demos/hello_world/)
-Basic node graph with command palette (Cmd+K) for adding nodes and changing themes.
+Basic node graph with command palette (Cmd+Space) for adding nodes and changing themes.
 
 **Features:**
 - Node creation, cloning (Ctrl+D), and deletion (Delete)
