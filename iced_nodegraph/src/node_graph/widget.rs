@@ -165,8 +165,8 @@ where
         };
 
         // Handle panning when dragging the graph
-        if let Dragging::Graph(origin) = state.dragging {
-            if let Some(cursor_position) = cursor.position() {
+        if let Dragging::Graph(origin) = state.dragging
+            && let Some(cursor_position) = cursor.position() {
                 let cursor_position: ScreenPoint = cursor_position.into_euclid();
                 let cursor_position: WorldPoint = state
                     .camera
@@ -174,7 +174,6 @@ where
                     .transform_point(cursor_position);
                 camera = camera.move_by(cursor_position - origin);
             }
-        }
 
         // Resolve styles
         let resolved_graph = resolve_graph_style(self.graph_style.as_ref(), theme);
@@ -222,26 +221,22 @@ where
             // Single node drag
             if let (Dragging::Node(drag_idx, origin), Some(cursor_pos)) =
                 (state.dragging.clone(), cursor.position())
-            {
-                if drag_idx == node_idx {
+                && drag_idx == node_idx {
                     let cursor_world: WorldPoint = camera
                         .screen_to_world()
                         .transform_point(cursor_pos.into_euclid());
                     offset = cursor_world - origin;
                 }
-            }
 
             // Group move
             if let (Dragging::GroupMove(origin), Some(cursor_pos)) =
                 (state.dragging.clone(), cursor.position())
-            {
-                if is_selected {
+                && is_selected {
                     let cursor_world: WorldPoint = camera
                         .screen_to_world()
                         .transform_point(cursor_pos.into_euclid());
                     offset = cursor_world - origin;
                 }
-            }
 
             offset
         };
@@ -302,8 +297,8 @@ where
 
         // Add dragging edge if actively dragging (but not when snapped - EdgeOver)
         let mut all_edges = static_edges;
-        if let Dragging::Edge(from_node_idx, from_pin_idx, _) = &state.dragging {
-            if let Some(cursor_pos) = cursor.position() {
+        if let Dragging::Edge(from_node_idx, from_pin_idx, _) = &state.dragging
+            && let Some(cursor_pos) = cursor.position() {
                 // Get source pin info
                 if let (Some(from_tree), Some(from_layout)) = (
                     tree.children.get(*from_node_idx),
@@ -359,7 +354,6 @@ where
                     }
                 }
             }
-        }
 
         // ========================================
         // Layer 2: Static Edges (behind nodes)
@@ -397,26 +391,22 @@ where
                 // Single node drag
                 if let (Dragging::Node(drag_idx, origin), Some(cursor_pos)) =
                     (state.dragging.clone(), cursor.position())
-                {
-                    if drag_idx == node_index {
+                    && drag_idx == node_index {
                         let cursor_world: WorldPoint = camera
                             .screen_to_world()
                             .transform_point(cursor_pos.into_euclid());
                         offset = cursor_world - origin;
                     }
-                }
 
                 // Group move
                 if let (Dragging::GroupMove(origin), Some(cursor_pos)) =
                     (state.dragging.clone(), cursor.position())
-                {
-                    if is_selected {
+                    && is_selected {
                         let cursor_world: WorldPoint = camera
                             .screen_to_world()
                             .transform_point(cursor_pos.into_euclid());
                         offset = cursor_world - origin;
                     }
-                }
 
                 offset
             };
@@ -573,24 +563,20 @@ where
                             let mut offset = WorldVector::zero();
                             if let (Dragging::Node(drag_idx, origin), Some(cursor_pos)) =
                                 (state.dragging.clone(), cursor.position())
-                            {
-                                if drag_idx == node_index {
+                                && drag_idx == node_index {
                                     let cursor_world: WorldPoint = camera
                                         .screen_to_world()
                                         .transform_point(cursor_pos.into_euclid());
                                     offset = cursor_world - origin;
                                 }
-                            }
                             if let (Dragging::GroupMove(origin), Some(cursor_pos)) =
                                 (state.dragging.clone(), cursor.position())
-                            {
-                                if is_selected {
+                                && is_selected {
                                     let cursor_world: WorldPoint = camera
                                         .screen_to_world()
                                         .transform_point(cursor_pos.into_euclid());
                                     offset = cursor_world - origin;
                                 }
-                            }
                             offset
                         };
 
@@ -701,11 +687,10 @@ where
         let state = tree.state.downcast_mut::<NodeGraphState>();
 
         // Synchronize external selection with internal state
-        if let Some(external) = self.get_external_selection() {
-            if state.selected_nodes != *external {
+        if let Some(external) = self.get_external_selection()
+            && state.selected_nodes != *external {
                 state.selected_nodes = external.clone();
             }
-        }
 
         // Update time for animations
         // Cap delta to prevent large time jumps when app is in background
@@ -778,41 +763,35 @@ where
         }
 
         // Track left mouse button state globally (for Fruit Ninja edge cutting)
-        match event {
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                state.left_mouse_down = false;
-            }
-            _ => {}
+        if let Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) = event {
+            state.left_mouse_down = false;
         }
 
-        match event {
-            Event::Mouse(mouse::Event::WheelScrolled { delta, .. }) => {
-                if let Some(cursor_pos) = screen_cursor.position() {
-                    let cursor_pos: ScreenPoint = cursor_pos.into_euclid();
+        if let Event::Mouse(mouse::Event::WheelScrolled { delta, .. }) = event {
+            if let Some(cursor_pos) = screen_cursor.position() {
+                let cursor_pos: ScreenPoint = cursor_pos.into_euclid();
 
-                    let scroll_amount = match delta {
-                        mouse::ScrollDelta::Pixels { y, .. } => *y,
-                        mouse::ScrollDelta::Lines { y, .. } => *y * 10.0,
-                    };
+                let scroll_amount = match delta {
+                    mouse::ScrollDelta::Pixels { y, .. } => *y,
+                    mouse::ScrollDelta::Lines { y, .. } => *y * 10.0,
+                };
 
-                    // Different zoom speeds for WASM vs native
-                    #[cfg(target_arch = "wasm32")]
-                    let zoom_delta = scroll_amount * 0.001 * state.camera.zoom();
-                    #[cfg(not(target_arch = "wasm32"))]
-                    let zoom_delta = scroll_amount * 0.01 * state.camera.zoom();
+                // Different zoom speeds for WASM vs native
+                #[cfg(target_arch = "wasm32")]
+                let zoom_delta = scroll_amount * 0.001 * state.camera.zoom();
+                #[cfg(not(target_arch = "wasm32"))]
+                let zoom_delta = scroll_amount * 0.01 * state.camera.zoom();
 
-                    state.camera = state.camera.zoom_at(cursor_pos, zoom_delta);
+                state.camera = state.camera.zoom_at(cursor_pos, zoom_delta);
 
-                    // Emit camera change event
-                    if let Some(handler) = self.on_camera_change_handler() {
-                        let pos = state.camera.position();
-                        shell.publish(handler(Point::new(pos.x, pos.y), state.camera.zoom()));
-                    }
+                // Emit camera change event
+                if let Some(handler) = self.on_camera_change_handler() {
+                    let pos = state.camera.position();
+                    shell.publish(handler(Point::new(pos.x, pos.y), state.camera.zoom()));
                 }
-                shell.capture_event();
-                shell.request_redraw();
             }
-            _ => {}
+            shell.capture_event();
+            shell.request_redraw();
         }
 
         let graph_move_offset = if let Dragging::Graph(origin) = state.dragging {
@@ -830,18 +809,14 @@ where
                 let state = tree.state.downcast_mut::<NodeGraphState>();
 
                 if state.dragging != Dragging::None {
-                    match event {
-                        Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                            // Emit drag update event with current cursor position
-                            if let Some(cursor_position) = world_cursor.position() {
-                                if let Some(handler) = self.on_drag_update_handler() {
-                                    shell.publish(handler(cursor_position.x, cursor_position.y));
-                                }
+                    if let Event::Mouse(mouse::Event::CursorMoved { .. }) = event {
+                        // Emit drag update event with current cursor position
+                        if let Some(cursor_position) = world_cursor.position()
+                            && let Some(handler) = self.on_drag_update_handler() {
+                                shell.publish(handler(cursor_position.x, cursor_position.y));
                             }
-                            shell.capture_event();
-                            shell.request_redraw();
-                        }
-                        _ => {}
+                        shell.capture_event();
+                        shell.request_redraw();
                     }
                 }
 
@@ -1007,62 +982,56 @@ where
                         }
                         _ => {}
                     },
-                    Dragging::Graph(origin) => match event {
-                        Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)) => {
-                            if let Some(cursor_position) = screen_cursor.position() {
-                                let screen_to_world = state.camera.screen_to_world();
-                                let cursor_position: ScreenPoint = cursor_position.into_euclid();
-                                let cursor_position: WorldPoint =
-                                    screen_to_world.transform_point(cursor_position);
-                                let offset = cursor_position - origin;
-                                state.camera = state.camera.move_by(offset);
+                    Dragging::Graph(origin) => if let Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)) = event {
+                        if let Some(cursor_position) = screen_cursor.position() {
+                            let screen_to_world = state.camera.screen_to_world();
+                            let cursor_position: ScreenPoint = cursor_position.into_euclid();
+                            let cursor_position: WorldPoint =
+                                screen_to_world.transform_point(cursor_position);
+                            let offset = cursor_position - origin;
+                            state.camera = state.camera.move_by(offset);
 
-                                // Emit camera change event
-                                if let Some(handler) = self.on_camera_change_handler() {
-                                    let pos = state.camera.position();
-                                    shell.publish(handler(
-                                        Point::new(pos.x, pos.y),
-                                        state.camera.zoom(),
-                                    ));
-                                }
+                            // Emit camera change event
+                            if let Some(handler) = self.on_camera_change_handler() {
+                                let pos = state.camera.position();
+                                shell.publish(handler(
+                                    Point::new(pos.x, pos.y),
+                                    state.camera.zoom(),
+                                ));
                             }
-                            state.dragging = Dragging::None;
-                            shell.capture_event();
-                            shell.request_redraw();
                         }
-                        _ => {}
+                        state.dragging = Dragging::None;
+                        shell.capture_event();
+                        shell.request_redraw();
                     },
-                    Dragging::Node(node_index, origin) => match event {
-                        Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                            if let Some(cursor_position) = world_cursor.position() {
-                                let cursor_position = cursor_position.into_euclid();
-                                let offset = cursor_position - origin;
-                                let new_position = self.nodes[node_index].0 + offset.into_iced();
+                    Dragging::Node(node_index, origin) => if let Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) = event {
+                        if let Some(cursor_position) = world_cursor.position() {
+                            let cursor_position = cursor_position.into_euclid();
+                            let offset = cursor_position - origin;
+                            let new_position = self.nodes[node_index].0 + offset.into_iced();
 
-                                // Translate internal index to user ID
-                                if let Some(node_id) = self.index_to_node_id(node_index) {
-                                    // Call on_move handler if set
-                                    if let Some(handler) = self.on_move_handler() {
-                                        shell.publish(handler(node_id.clone(), new_position));
-                                    }
-                                    if let Some(handler) = self.get_on_event() {
-                                        shell.publish(handler(NodeGraphMessage::NodeMoved {
-                                            node_id,
-                                            position: new_position,
-                                        }));
-                                    }
+                            // Translate internal index to user ID
+                            if let Some(node_id) = self.index_to_node_id(node_index) {
+                                // Call on_move handler if set
+                                if let Some(handler) = self.on_move_handler() {
+                                    shell.publish(handler(node_id.clone(), new_position));
+                                }
+                                if let Some(handler) = self.get_on_event() {
+                                    shell.publish(handler(NodeGraphMessage::NodeMoved {
+                                        node_id,
+                                        position: new_position,
+                                    }));
                                 }
                             }
-                            state.dragging = Dragging::None;
-                            // Emit drag end event
-                            if let Some(handler) = self.on_drag_end_handler() {
-                                shell.publish(handler());
-                            }
-                            shell.capture_event();
-                            shell.invalidate_layout();
-                            shell.request_redraw();
                         }
-                        _ => {}
+                        state.dragging = Dragging::None;
+                        // Emit drag end event
+                        if let Some(handler) = self.on_drag_end_handler() {
+                            shell.publish(handler());
+                        }
+                        shell.capture_event();
+                        shell.invalidate_layout();
+                        shell.request_redraw();
                     },
                     Dragging::Edge(from_node, from_pin, _) => match event {
                         Event::Mouse(mouse::Event::CursorMoved { .. }) => {
@@ -1096,14 +1065,13 @@ where
                                         // Use SNAP_THRESHOLD for entering snap zone
                                         if distance < SNAP_THRESHOLD && target_info.is_none() {
                                             // Check if this pin is in valid_drop_targets
-                                            if valid_targets.contains(&(node_index, pin_index)) {
-                                                if let Some(pid) =
+                                            if valid_targets.contains(&(node_index, pin_index))
+                                                && let Some(pid) =
                                                     pin_state.pin_id.downcast_ref::<P>().cloned()
                                                 {
                                                     target_info =
                                                         Some((node_index, pin_index, pid));
                                                 }
-                                            }
                                         }
                                     }
                                 }
@@ -1372,13 +1340,13 @@ where
 
                 // Delete/Backspace: Delete selected nodes
                 // Handled AFTER child widgets so text inputs can consume the event first
-                if let Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = event {
-                    if matches!(
+                if let Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = event
+                    && matches!(
                         key,
                         keyboard::Key::Named(keyboard::key::Named::Delete)
                             | keyboard::Key::Named(keyboard::key::Named::Backspace)
-                    ) {
-                        if !state.selected_nodes.is_empty() {
+                    )
+                        && !state.selected_nodes.is_empty() {
                             let indices: Vec<usize> =
                                 state.selected_nodes.iter().copied().collect();
                             let node_ids = self.translate_node_ids(&indices);
@@ -1394,8 +1362,6 @@ where
                             shell.capture_event();
                             shell.request_redraw();
                         }
-                    }
-                }
 
                 // Only process mouse events if cursor is within our bounds
                 if !screen_cursor.is_over(layout.bounds()) {
@@ -1433,8 +1399,8 @@ where
                         state.left_mouse_down = true;
 
                         // Ctrl+Click: Edge cut tool
-                        if state.modifiers.command() {
-                            if let Some(cursor_position) = world_cursor.position() {
+                        if state.modifiers.command()
+                            && let Some(cursor_position) = world_cursor.position() {
                                 // Check if click is near any edge
                                 for (from_ref, to_ref, _style) in &self.edges {
                                     // Resolve user IDs to indices
@@ -1504,7 +1470,6 @@ where
                                     }
                                 }
                             }
-                        }
 
                         if let Some(cursor_position) = world_cursor.position() {
                             // check bounds for pins

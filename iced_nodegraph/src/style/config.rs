@@ -548,7 +548,7 @@ impl StrokeConfig {
             end_color: self.end_color.or(other.end_color),
             pattern: self.pattern.clone().or(other.pattern.clone()),
             cap: self.cap.or(other.cap),
-            dash_cap: self.dash_cap.clone().or(other.dash_cap.clone()),
+            dash_cap: self.dash_cap.or(other.dash_cap),
         }
     }
 }

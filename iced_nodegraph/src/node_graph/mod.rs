@@ -499,12 +499,11 @@ where
     ///
     /// Returns `true` if the node was found and updated, `false` otherwise.
     pub fn update_node_position(&mut self, node_id: &N, position: Point) -> bool {
-        if let Some(idx) = self.id_maps.node_index(node_id) {
-            if let Some((pos, _, _)) = self.nodes.get_mut(idx) {
+        if let Some(idx) = self.id_maps.node_index(node_id)
+            && let Some((pos, _, _)) = self.nodes.get_mut(idx) {
                 *pos = position;
                 return true;
             }
-        }
         false
     }
 

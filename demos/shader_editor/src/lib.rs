@@ -468,11 +468,10 @@ impl Application {
             event::listen_with(|event, _status, _id| {
                 if let Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event {
                     // Ctrl+Space or Ctrl+Space to toggle palette
-                    if modifiers.command() {
-                        if key == keyboard::Key::Named(Named::Space) {
+                    if modifiers.command()
+                        && key == keyboard::Key::Named(Named::Space) {
                             return Some(Message::ToggleCommandPalette);
                         }
-                    }
 
                     // When palette is open, handle navigation
                     match key {

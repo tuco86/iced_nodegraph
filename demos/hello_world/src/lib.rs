@@ -299,7 +299,7 @@ impl ComputedStyle {
             config = config.pattern(pattern.clone());
         }
         if let Some(ref dash_cap) = self.edge_dash_cap {
-            config = config.dash_cap(dash_cap.clone());
+            config = config.dash_cap(*dash_cap);
         }
         if let Some(ref border) = self.edge_border {
             config.border = Some(border.clone());
@@ -589,12 +589,11 @@ impl Application {
 
         // Create out/ directory if it doesn't exist
         let out_dir = std::path::Path::new("out");
-        if !out_dir.exists() {
-            if let Err(e) = std::fs::create_dir(out_dir) {
+        if !out_dir.exists()
+            && let Err(e) = std::fs::create_dir(out_dir) {
                 eprintln!("Failed to create out/ directory: {}", e);
                 return;
             }
-        }
 
         // Generate random filename
         let filename = Self::generate_random_name();
@@ -740,7 +739,7 @@ impl Application {
         self.pending_configs.clear();
 
         // Phase 1: Reset all config node and math node inputs to defaults
-        for (_, (_, node_type)) in &mut self.nodes {
+        for (_, node_type) in self.nodes.values_mut() {
             match node_type {
                 NodeType::Config(config) => match config {
                     ConfigNodeType::NodeConfig(inputs) => *inputs = NodeConfigInputs::default(),
@@ -804,12 +803,11 @@ impl Application {
                                     state.input_a = Some(float_val);
                                     changed = true;
                                 }
-                            } else if edge.to_pin == pin_math::B {
-                                if state.input_b != Some(float_val) {
+                            } else if edge.to_pin == pin_math::B
+                                && state.input_b != Some(float_val) {
                                     state.input_b = Some(float_val);
                                     changed = true;
                                 }
-                            }
                         }
                     }
                 }
@@ -820,23 +818,20 @@ impl Application {
                     .get(&edge.to_node)
                     .and_then(|(_, t)| t.output_value());
 
-                if let Some(value) = source_value {
-                    if let Some((_, NodeType::Math(state))) = self.nodes.get_mut(&edge.from_node) {
-                        if let Some(float_val) = value.as_float() {
+                if let Some(value) = source_value
+                    && let Some((_, NodeType::Math(state))) = self.nodes.get_mut(&edge.from_node)
+                        && let Some(float_val) = value.as_float() {
                             if edge.from_pin == pin_math::A {
                                 if state.input_a != Some(float_val) {
                                     state.input_a = Some(float_val);
                                     changed = true;
                                 }
-                            } else if edge.from_pin == pin_math::B {
-                                if state.input_b != Some(float_val) {
+                            } else if edge.from_pin == pin_math::B
+                                && state.input_b != Some(float_val) {
                                     state.input_b = Some(float_val);
                                     changed = true;
                                 }
-                            }
                         }
-                    }
-                }
             }
 
             if !changed {
@@ -863,19 +858,17 @@ impl Application {
                     self.apply_value_to_config_node(&edge.from_node, &edge.from_pin, &value);
                 }
                 // Handle Math → Config connections
-                if let (NodeType::Math(state), NodeType::Config(_)) = (&from_type, &to_type) {
-                    if let Some(result) = state.result() {
+                if let (NodeType::Math(state), NodeType::Config(_)) = (&from_type, &to_type)
+                    && let Some(result) = state.result() {
                         let value = NodeValue::Float(result);
                         self.apply_value_to_config_node(&edge.to_node, &edge.to_pin, &value);
                     }
-                }
                 // Handle Config → Math connections (reverse direction)
-                if let (NodeType::Config(_), NodeType::Math(state)) = (&from_type, &to_type) {
-                    if let Some(result) = state.result() {
+                if let (NodeType::Config(_), NodeType::Math(state)) = (&from_type, &to_type)
+                    && let Some(result) = state.result() {
                         let value = NodeValue::Float(result);
                         self.apply_value_to_config_node(&edge.from_node, &edge.from_pin, &value);
                     }
-                }
             }
         }
 
@@ -891,25 +884,21 @@ impl Application {
                     NodeType::Config(ConfigNodeType::ShadowConfig(shadow_inputs)),
                     NodeType::Config(ConfigNodeType::NodeConfig(_)),
                 ) = (&from_type, &to_type)
-                {
-                    if edge.from_pin == pin_config::CONFIG && edge.to_pin == pin_config::SHADOW {
+                    && edge.from_pin == pin_config::CONFIG && edge.to_pin == pin_config::SHADOW {
                         let shadow_config = shadow_inputs.build();
                         let value = NodeValue::ShadowConfig(shadow_config);
                         self.apply_value_to_config_node(&edge.to_node, &edge.to_pin, &value);
                     }
-                }
                 // Reverse: NodeConfig ← ShadowConfig
                 if let (
                     NodeType::Config(ConfigNodeType::NodeConfig(_)),
                     NodeType::Config(ConfigNodeType::ShadowConfig(shadow_inputs)),
                 ) = (&from_type, &to_type)
-                {
-                    if edge.to_pin == pin_config::CONFIG && edge.from_pin == pin_config::SHADOW {
+                    && edge.to_pin == pin_config::CONFIG && edge.from_pin == pin_config::SHADOW {
                         let shadow_config = shadow_inputs.build();
                         let value = NodeValue::ShadowConfig(shadow_config);
                         self.apply_value_to_config_node(&edge.from_node, &edge.from_pin, &value);
                     }
-                }
             }
         }
 
@@ -985,11 +974,10 @@ impl Application {
                     inputs.corner_radius = value.as_float();
                 } else if *pin_label == pin::OPACITY {
                     inputs.opacity = value.as_float();
-                } else if *pin_label == pin::SHADOW {
-                    if let Some(shadow) = value.as_shadow_config() {
+                } else if *pin_label == pin::SHADOW
+                    && let Some(shadow) = value.as_shadow_config() {
                         inputs.shadow = Some(shadow.clone());
                     }
-                }
             }
             ConfigNodeType::EdgeConfig(inputs) => {
                 // EdgeConfig pin labels
@@ -1143,11 +1131,10 @@ impl Application {
                 if matches!(&built_config, Some(ConfigOutput::Pin(_))) {
                     *has_pin_config = true;
                 }
-            } else if *apply_pin_label == pin::BACKGROUND_CONFIG {
-                if matches!(&built_config, Some(ConfigOutput::Background(_))) {
+            } else if *apply_pin_label == pin::BACKGROUND_CONFIG
+                && matches!(&built_config, Some(ConfigOutput::Background(_))) {
                     *has_background_config = true;
                 }
-            }
         }
 
         // Store the config for later application
@@ -1169,8 +1156,7 @@ impl Application {
                 has_pin_config,
                 has_background_config,
             }) = node_type
-            {
-                if let Some(configs) = self.pending_configs.get(node_id) {
+                && let Some(configs) = self.pending_configs.get(node_id) {
                     for (_, config) in configs {
                         match config {
                             ConfigOutput::Node(node_config) => {
@@ -1207,7 +1193,7 @@ impl Application {
                                             computed.edge_pattern = Some(p.clone());
                                         }
                                         if let Some(ref dc) = stroke.dash_cap {
-                                            computed.edge_dash_cap = Some(dc.clone());
+                                            computed.edge_dash_cap = Some(*dc);
                                         }
                                     }
                                     if let Some(curve) = edge_config.curve {
@@ -1252,7 +1238,6 @@ impl Application {
                         }
                     }
                 }
-            }
         }
         // Clear pending configs after application
         self.pending_configs.clear();
@@ -1360,8 +1345,8 @@ impl Application {
                 }
                 self.palette_selected_index = new_index;
 
-                if let PaletteView::Submenu(ref submenu) = self.palette_view {
-                    if submenu == "themes" {
+                if let PaletteView::Submenu(ref submenu) = self.palette_view
+                    && submenu == "themes" {
                         let (_, commands) = self.build_palette_commands();
                         if let Some(original_idx) = get_filtered_command_index(
                             &self.command_input,
@@ -1374,7 +1359,6 @@ impl Application {
                             }
                         }
                     }
-                }
                 Task::none()
             }
             ApplicationMessage::CommandPaletteNavigateUp => {
@@ -2050,7 +2034,6 @@ impl Application {
                 ApplicationMessage::CommandPaletteNavigate,
                 || ApplicationMessage::CommandPaletteCancel,
             )
-            .into()
         } else {
             // Invisible placeholder to maintain widget tree structure
             container(text("")).width(0).height(0).into()

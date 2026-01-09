@@ -779,8 +779,10 @@ impl DashMotion {
 /// Supports solid, dashed, dotted, and custom patterns with optional animation.
 /// All lengths are in world-space units.
 #[derive(Debug, Clone, PartialEq)]
+#[derive(Default)]
 pub enum StrokePattern {
     /// Continuous solid line (default)
+    #[default]
     Solid,
 
     /// Dashed line with configurable dash and gap lengths
@@ -849,11 +851,6 @@ pub enum StrokePattern {
     },
 }
 
-impl Default for StrokePattern {
-    fn default() -> Self {
-        Self::Solid
-    }
-}
 
 impl StrokePattern {
     /// Returns the GPU pattern type ID.
@@ -1143,8 +1140,7 @@ impl StrokeStyle {
             cap: config.cap.unwrap_or(self.cap),
             dash_cap: config
                 .dash_cap
-                .clone()
-                .unwrap_or_else(|| self.dash_cap.clone()),
+                .unwrap_or(self.dash_cap),
         }
     }
 }
@@ -1620,7 +1616,7 @@ impl EdgeStyle {
         let border = match (&self.border, &config.border) {
             (_, Some(cfg)) if cfg.enabled == Some(false) => None,
             (Some(base), Some(cfg)) => Some(base.with_config(cfg)),
-            (Some(base), None) => Some(base.clone()),
+            (Some(base), None) => Some(*base),
             (None, Some(cfg)) if cfg.enabled != Some(false) => {
                 Some(BorderStyle::default().with_config(cfg))
             }

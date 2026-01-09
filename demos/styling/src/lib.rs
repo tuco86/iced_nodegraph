@@ -277,13 +277,12 @@ impl Application {
     }
 
     fn apply_style_to_selected(&mut self) {
-        if let Some(index) = self.selected_node {
-            if let Some((_, _, style)) = self.nodes.get_mut(index) {
+        if let Some(index) = self.selected_node
+            && let Some((_, _, style)) = self.nodes.get_mut(index) {
                 style.corner_radius = self.corner_radius;
                 style.opacity = self.opacity;
                 style.border_width = self.border_width;
             }
-        }
     }
 
     fn view(&self) -> Element<'_, Message> {
