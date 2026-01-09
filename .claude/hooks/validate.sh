@@ -4,9 +4,6 @@
 
 cd "$CLAUDE_PROJECT_DIR" || exit 0
 
-# Format (silent, just fix)
-cargo fmt --all 2>/dev/null
-
 # Check native - capture output
 check_output=$(cargo check -p iced_nodegraph 2>&1)
 check_status=$?

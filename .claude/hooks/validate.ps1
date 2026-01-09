@@ -5,9 +5,6 @@ if ($env:CLAUDE_PROJECT_DIR) {
     Set-Location $env:CLAUDE_PROJECT_DIR -ErrorAction SilentlyContinue
 }
 
-# Format (silent)
-cargo fmt --all 2>$null | Out-Null
-
 # Check - capture output
 $checkOutput = cargo check -p iced_nodegraph 2>&1
 $checkStatus = $LASTEXITCODE
