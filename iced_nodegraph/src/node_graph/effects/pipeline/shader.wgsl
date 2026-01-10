@@ -1574,11 +1574,10 @@ fn vs_pin(@builtin(instance_index) instance: u32,
         }
     }
 
-    var is_valid_target = false;
-    if (uniforms.overlay_type == 3u || uniforms.overlay_type == 4u) {
-        is_valid_target = is_valid_drop_target(pin);
-    }
+    // Valid target flag is set by Rust when edge-dragging over compatible pins
+    let is_valid_target = is_valid_drop_target(pin);
 
+    // Pulse animation for valid drop targets
     var anim_scale = 1.0;
     if (is_valid_target) {
         let pulse = sin(uniforms.time * 6.0) * 0.5 + 0.5;
@@ -1637,11 +1636,10 @@ fn fs_pin(in: PinVertexOutput) -> @location(0) vec4<f32> {
     let pin = pins[in.instance_id];
     let pin_center = in.world_uv - pin.position;
 
-    var is_valid_target = false;
-    if (uniforms.overlay_type == 3u || uniforms.overlay_type == 4u) {
-        is_valid_target = is_valid_drop_target(pin);
-    }
+    // Valid target flag is set by Rust when edge-dragging over compatible pins
+    let is_valid_target = is_valid_drop_target(pin);
 
+    // Pulse animation for valid drop targets
     var anim_scale = 1.0;
     if (is_valid_target) {
         let pulse = sin(uniforms.time * 6.0) * 0.5 + 0.5;
