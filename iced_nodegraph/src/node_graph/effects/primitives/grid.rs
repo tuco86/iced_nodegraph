@@ -163,8 +163,6 @@ impl Primitive for GridPrimitive {
             dragging_edge_from_origin: glam::Vec2::ZERO,
             dragging_edge_to_node: 0,
             dragging_edge_to_pin: 0,
-            dragging_edge_start_color: glam::Vec4::ZERO,
-            dragging_edge_end_color: glam::Vec4::ZERO,
             grid_color: glam::Vec4::ZERO,
             hover_glow_color: glam::Vec4::ZERO,
             selection_box_color: glam::Vec4::ZERO,

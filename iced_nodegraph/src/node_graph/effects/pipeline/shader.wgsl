@@ -30,10 +30,6 @@ struct Uniforms {
     dragging_edge_to_node: u32,
     dragging_edge_to_pin: u32,
 
-    // Dragging edge gradient colors (resolved in Rust from pin colors)
-    dragging_edge_start_color: vec4<f32>,  // Color at source pin end
-    dragging_edge_end_color: vec4<f32>,    // Color at cursor/target end
-
     // Theme-derived visual parameters (computed in Rust, no hardcodes in shader)
     grid_color: vec4<f32>,           // Pre-computed grid line color
     hover_glow_color: vec4<f32>,     // Node hover glow color

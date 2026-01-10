@@ -679,26 +679,6 @@ impl Pipeline {
             }
         };
 
-        // Compute dragging edge color (solid color from connected pin)
-        let (dragging_edge_start_color, dragging_edge_end_color) = match dragging {
-            Dragging::Edge(from_node, from_pin, _) => {
-                // Dragging from pin: use solid pin color
-                let pin_color = &nodes[*from_node].pins[*from_pin].color;
-                let color = glam::Vec4::new(pin_color.r, pin_color.g, pin_color.b, pin_color.a);
-                (color, color)
-            }
-            Dragging::EdgeOver(from_node, from_pin, _to_node, _to_pin) => {
-                // Over valid target: still use source pin color (solid)
-                let pin_color = &nodes[*from_node].pins[*from_pin].color;
-                let color = glam::Vec4::new(pin_color.r, pin_color.g, pin_color.b, 1.0);
-                (color, color)
-            }
-            _ => {
-                // Not dragging edge: use defaults (won't be rendered anyway)
-                (edge_color, edge_color)
-            }
-        };
-
         let scale = viewport.scale_factor();
         let uniforms = types::Uniforms {
             os_scale_factor: scale,
@@ -724,8 +704,6 @@ impl Pipeline {
             ),
             dragging_edge_to_node,
             dragging_edge_to_pin,
-            dragging_edge_start_color,
-            dragging_edge_end_color,
             // Theme-derived visual parameters (computed in Rust, no hardcodes in shader)
             grid_color: glam::Vec4::new(
                 border_color.x * 1.3,

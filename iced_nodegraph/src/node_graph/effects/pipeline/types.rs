@@ -33,10 +33,6 @@ pub struct Uniforms {
     pub dragging_edge_to_node: u32,
     pub dragging_edge_to_pin: u32,
 
-    // Dragging edge gradient colors (resolved in Rust from pin colors)
-    pub dragging_edge_start_color: glam::Vec4, // Color at source pin end
-    pub dragging_edge_end_color: glam::Vec4,   // Color at cursor/target end
-
     // Theme-derived visual parameters (computed in Rust, no hardcodes in shader)
     pub grid_color: glam::Vec4, // Pre-computed grid line color (legacy, kept for compatibility)
     pub hover_glow_color: glam::Vec4, // Node hover glow color
