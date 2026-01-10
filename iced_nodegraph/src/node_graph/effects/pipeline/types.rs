@@ -26,8 +26,8 @@ pub struct Uniforms {
     pub num_edges: u32,
     pub time: f32, // Time in seconds for animations
 
-    pub dragging: u32,
-    pub dragging_edge_from_origin: glam::Vec2,
+    pub overlay_type: u32,
+    pub overlay_start: glam::Vec2,
 
     // Theme-derived visual parameters (computed in Rust, no hardcodes in shader)
     pub grid_color: glam::Vec4, // Pre-computed grid line color (legacy, kept for compatibility)

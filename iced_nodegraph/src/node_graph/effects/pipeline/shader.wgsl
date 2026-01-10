@@ -22,9 +22,9 @@ struct Uniforms {
     num_edges: u32,
     time: f32,
 
-    dragging: u32,
+    overlay_type: u32,
     // implicit padding for vec2 alignment
-    dragging_edge_from_origin: vec2<f32>,
+    overlay_start: vec2<f32>,
 
     // Theme-derived visual parameters (computed in Rust, no hardcodes in shader)
     grid_color: vec4<f32>,           // Pre-computed grid line color
@@ -1305,7 +1305,7 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
     if ((edge.flags & 8u) != 0u) {
         // Check if this is a pending cut (during edge cutting mode)
         // If dragging type is edge cutting (7), show red pulsing
-        if (uniforms.dragging == 7u) {
+        if (uniforms.overlay_type == 7u) {
             // Red pulsing for pending cut
             let pulse = sin(uniforms.time * 6.0) * 0.3 + 0.7;
             return vec4(1.0, 0.2, 0.2, alpha * pulse);
@@ -1575,7 +1575,7 @@ fn vs_pin(@builtin(instance_index) instance: u32,
     }
 
     var is_valid_target = false;
-    if (uniforms.dragging == 3u || uniforms.dragging == 4u) {
+    if (uniforms.overlay_type == 3u || uniforms.overlay_type == 4u) {
         is_valid_target = is_valid_drop_target(pin);
     }
 
@@ -1638,7 +1638,7 @@ fn fs_pin(in: PinVertexOutput) -> @location(0) vec4<f32> {
     let pin_center = in.world_uv - pin.position;
 
     var is_valid_target = false;
-    if (uniforms.dragging == 3u || uniforms.dragging == 4u) {
+    if (uniforms.overlay_type == 3u || uniforms.overlay_type == 4u) {
         is_valid_target = is_valid_drop_target(pin);
     }
 
@@ -1695,15 +1695,15 @@ fn fs_pin(in: PinVertexOutput) -> @location(0) vec4<f32> {
 // ============================================================================
 
 @vertex
-fn vs_dragging(@builtin(vertex_index) vertex: u32) -> EdgeVertexOutput {
+fn vs_overlay(@builtin(vertex_index) vertex: u32) -> EdgeVertexOutput {
     // Build a bounding box for the overlay operation
-    let p0 = uniforms.dragging_edge_from_origin;
+    let p0 = uniforms.overlay_start;
     let p3 = uniforms.cursor_position;
 
     // EdgeCutting (7) uses world-space padding for thick cutting line
     // BoxSelect (5) uses screen-space padding
     var padding = 100.0 / uniforms.camera_zoom;
-    if (uniforms.dragging == 7u) {
+    if (uniforms.overlay_type == 7u) {
         padding = 50.0;  // World-space padding for cutting line
     }
     let bbox_min = min(p0, p3) - vec2(padding);
@@ -1724,13 +1724,13 @@ fn vs_dragging(@builtin(vertex_index) vertex: u32) -> EdgeVertexOutput {
 }
 
 @fragment
-fn fs_dragging(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
+fn fs_overlay(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
     let aa = 1.0 / uniforms.camera_zoom;
 
     // === BoxSelect (5): Draw selection rectangle ===
-    if (uniforms.dragging == 5u) {
-        let box_min = min(uniforms.dragging_edge_from_origin, uniforms.cursor_position);
-        let box_max = max(uniforms.dragging_edge_from_origin, uniforms.cursor_position);
+    if (uniforms.overlay_type == 5u) {
+        let box_min = min(uniforms.overlay_start, uniforms.cursor_position);
+        let box_max = max(uniforms.overlay_start, uniforms.cursor_position);
 
         let p = in.world_uv;
 
@@ -1763,8 +1763,8 @@ fn fs_dragging(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
     }
 
     // === EdgeCutting (7): Draw cutting line ===
-    if (uniforms.dragging == 7u) {
-        let p0 = uniforms.dragging_edge_from_origin;
+    if (uniforms.overlay_type == 7u) {
+        let p0 = uniforms.overlay_start;
         let p1 = uniforms.cursor_position;
         let p = in.world_uv;
 
@@ -1801,6 +1801,6 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> @builtin(position) vec4<
 
 @fragment
 fn fs_foreground(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<f32> {
-    // Legacy - use fs_dragging instead
+    // Legacy - use fs_overlay instead
     return vec4(0.0);
 }

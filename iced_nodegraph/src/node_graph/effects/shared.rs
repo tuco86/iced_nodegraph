@@ -57,8 +57,8 @@ pub struct SharedNodeGraphResources {
     pub pin_pipeline: RenderPipeline,
     /// Edge rendering
     pub edge_pipeline: RenderPipeline,
-    /// Dragging edge / box select / edge cutting
-    pub dragging_pipeline: RenderPipeline,
+    /// Overlay rendering: box select / edge cutting
+    pub overlay_pipeline: RenderPipeline,
 }
 
 impl SharedNodeGraphResources {
@@ -159,14 +159,14 @@ impl SharedNodeGraphResources {
             "edges",
         );
 
-        let dragging_pipeline = create_render_pipeline(
+        let overlay_pipeline = create_render_pipeline(
             device,
             format,
             &pipeline_layout,
             &shader_module,
-            "vs_dragging",
-            "fs_dragging",
-            "dragging",
+            "vs_overlay",
+            "fs_overlay",
+            "overlay",
         );
 
         Self {
@@ -178,7 +178,7 @@ impl SharedNodeGraphResources {
             node_border_pipeline,
             pin_pipeline,
             edge_pipeline,
-            dragging_pipeline,
+            overlay_pipeline,
         }
     }
 }

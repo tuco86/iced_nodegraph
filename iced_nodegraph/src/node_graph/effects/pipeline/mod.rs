@@ -168,7 +168,7 @@ pub struct Pipeline {
     #[allow(dead_code)] // Kept for potential future use, borders now rendered by NodePrimitive
     pipeline_nodes_border: RenderPipeline,
     pipeline_pins: RenderPipeline,
-    pipeline_dragging: RenderPipeline,
+    pipeline_overlay: RenderPipeline,
 
     bind_group_layout: BindGroupLayout,
     bind_group: BindGroup,
@@ -275,14 +275,14 @@ impl Pipeline {
         );
         let pipeline_pins =
             create_pipeline_custom(device, format, &layout, &module, "vs_pin", "fs_pin", "pins");
-        let pipeline_dragging = create_pipeline_custom(
+        let pipeline_overlay = create_pipeline_custom(
             device,
             format,
             &layout,
             &module,
-            "vs_dragging",
-            "fs_dragging",
-            "dragging",
+            "vs_overlay",
+            "fs_overlay",
+            "overlay",
         );
 
         Self {
@@ -295,7 +295,7 @@ impl Pipeline {
             pipeline_nodes_fill,
             pipeline_nodes_border,
             pipeline_pins,
-            pipeline_dragging,
+            pipeline_overlay,
             bind_group_layout,
             bind_group,
             bind_group_generations: (0, 0, 0),
@@ -675,8 +675,8 @@ impl Pipeline {
             num_pins,
             num_edges,
             time,
-            dragging: dragging_type,
-            dragging_edge_from_origin: glam::Vec2::new(
+            overlay_type: dragging_type,
+            overlay_start: glam::Vec2::new(
                 dragging_edge_from_origin.x,
                 dragging_edge_from_origin.y,
             ),
@@ -813,10 +813,10 @@ impl Pipeline {
             }
             Layer::Foreground => {
                 // NOTE: Node borders are now rendered by the new NodePrimitive system.
-                // This old primitive is only used for drag overlays (edge, box select, edge cutting).
+                // This old primitive is only used for overlays (box select, edge cutting).
 
-                // Draw dragging edge / box select / edge cutting overlay
-                pass.set_pipeline(&self.pipeline_dragging);
+                // Draw box select / edge cutting overlay
+                pass.set_pipeline(&self.pipeline_overlay);
                 pass.draw(0..6, 0..1);
             }
         }
