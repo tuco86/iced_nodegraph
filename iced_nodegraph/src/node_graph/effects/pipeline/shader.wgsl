@@ -1300,30 +1300,12 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
         alpha = alpha * (0.5 + pulse * 0.5);
     }
 
-    // === PARTICLES EFFECT (bit 3) ===
-    // Creates multiple flowing dots along the edge
+    // === PENDING CUT EFFECT (bit 3) ===
+    // Red pulsing highlight for edges pending deletion during edge cutting
+    // Flag is set by Rust when edge intersects the cutting line
     if ((edge.flags & 8u) != 0u) {
-        // Check if this is a pending cut (during edge cutting mode)
-        // If dragging type is edge cutting (7), show red pulsing
-        if (uniforms.overlay_type == 7u) {
-            // Red pulsing for pending cut
-            let pulse = sin(uniforms.time * 6.0) * 0.3 + 0.7;
-            return vec4(1.0, 0.2, 0.2, alpha * pulse);
-        }
-        // Otherwise show particle flow effect
-        let num_particles = 5.0;
-        let particle_spacing = 1.0 / num_particles;
-        var particle_intensity = 0.0;
-
-        for (var i = 0.0; i < num_particles; i = i + 1.0) {
-            let particle_t = fract(t * num_particles - i - uniforms.time * edge.flow_speed * 0.01);
-            let particle = smoothstep(0.0, 0.1, particle_t) * smoothstep(0.3, 0.1, particle_t);
-            particle_intensity = max(particle_intensity, particle);
-        }
-
-        // Brighter particles on top of edge
-        edge_color = mix(edge_color, vec3(1.0), particle_intensity * 0.5);
-        alpha = alpha * (0.7 + particle_intensity * 0.3);
+        let pulse = sin(uniforms.time * 6.0) * 0.3 + 0.7;
+        return vec4(1.0, 0.2, 0.2, alpha * pulse);
     }
 
     // === RAINBOW EFFECT (bit 4) ===
