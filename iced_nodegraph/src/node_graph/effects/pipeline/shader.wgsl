@@ -23,12 +23,8 @@ struct Uniforms {
     time: f32,
 
     dragging: u32,
-    dragging_edge_from_node: u32,
-    dragging_edge_from_pin: u32,
     // implicit padding for vec2 alignment
     dragging_edge_from_origin: vec2<f32>,
-    dragging_edge_to_node: u32,
-    dragging_edge_to_pin: u32,
 
     // Theme-derived visual parameters (computed in Rust, no hardcodes in shader)
     grid_color: vec4<f32>,           // Pre-computed grid line color
@@ -1693,38 +1689,19 @@ fn fs_pin(in: PinVertexOutput) -> @location(0) vec4<f32> {
 }
 
 // ============================================================================
-// DRAGGING SHADER (Edge dragging, Box Selection, Edge Cutting)
-// Dragging types: 3=Edge, 4=EdgeOver, 5=BoxSelect, 7=EdgeCutting
+// OVERLAY SHADER (Box Selection, Edge Cutting)
+// Overlay types: 5=BoxSelect, 7=EdgeCutting
+// Note: Edge dragging is rendered via EdgesPrimitive, not here.
 // ============================================================================
 
 @vertex
 fn vs_dragging(@builtin(vertex_index) vertex: u32) -> EdgeVertexOutput {
-    // Build a bounding box for the dragging operation
-    var p0 = vec2(0.0);
-    var p3 = vec2(0.0);
-
-    // Edge dragging (3, 4)
-    if (uniforms.dragging == 3u || uniforms.dragging == 4u) {
-        let from_node = nodes[uniforms.dragging_edge_from_node];
-        let from_pin = pins[from_node.pin_start + uniforms.dragging_edge_from_pin];
-        p0 = from_pin.position;
-
-        if (uniforms.dragging == 4u) {
-            let to_node = nodes[uniforms.dragging_edge_to_node];
-            let to_pin = pins[to_node.pin_start + uniforms.dragging_edge_to_pin];
-            p3 = to_pin.position;
-        } else {
-            p3 = uniforms.cursor_position;
-        }
-    }
-    // BoxSelect (5) or EdgeCutting (7): from_origin to cursor
-    else if (uniforms.dragging == 5u || uniforms.dragging == 7u) {
-        p0 = uniforms.dragging_edge_from_origin;
-        p3 = uniforms.cursor_position;
-    }
+    // Build a bounding box for the overlay operation
+    let p0 = uniforms.dragging_edge_from_origin;
+    let p3 = uniforms.cursor_position;
 
     // EdgeCutting (7) uses world-space padding for thick cutting line
-    // Other dragging modes use screen-space padding
+    // BoxSelect (5) uses screen-space padding
     var padding = 100.0 / uniforms.camera_zoom;
     if (uniforms.dragging == 7u) {
         padding = 50.0;  // World-space padding for cutting line
@@ -1804,9 +1781,7 @@ fn fs_dragging(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
         return vec4(uniforms.edge_cutting_color.rgb, alpha * 0.8);
     }
 
-    // === Edge dragging (3, 4) ===
-    // NOTE: Edge dragging is now rendered via EdgesPrimitive for consistent styling.
-    // This shader no longer handles edge dragging - only BoxSelect (5) and EdgeCutting (7).
+    // No overlay active
     return vec4(0.0);
 }
 

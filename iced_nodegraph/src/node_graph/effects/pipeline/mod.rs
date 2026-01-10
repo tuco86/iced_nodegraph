@@ -650,33 +650,13 @@ impl Pipeline {
             Dragging::EdgeCutting { .. } => 7,
         };
 
-        let (
-            dragging_edge_from_node,
-            dragging_edge_from_pin,
-            dragging_edge_from_origin,
-            dragging_edge_to_node,
-            dragging_edge_to_pin,
-        ) = {
-            match dragging {
-                Dragging::Edge(from_node, from_pin, position) => {
-                    (*from_node as _, *from_pin as _, *position, 0, 0)
-                }
-                Dragging::EdgeOver(from_node, from_pin, to_node, to_pin) => (
-                    *from_node as _,
-                    *from_pin as _,
-                    WorldPoint::zero(),
-                    *to_node as _,
-                    *to_pin as _,
-                ),
-                // BoxSelect: start point in from_origin, end point is cursor_position
-                Dragging::BoxSelect(start, _end) => (0, 0, *start, 0, 0),
-                // EdgeCutting: first trail point in from_origin
-                Dragging::EdgeCutting { trail, .. } => {
-                    let origin = trail.first().copied().unwrap_or(WorldPoint::zero());
-                    (0, 0, origin, 0, 0)
-                }
-                _ => (0, 0, WorldPoint::zero(), 0, 0),
+        // Only BoxSelect and EdgeCutting need the origin point for overlay rendering
+        let dragging_edge_from_origin = match dragging {
+            Dragging::BoxSelect(start, _end) => *start,
+            Dragging::EdgeCutting { trail, .. } => {
+                trail.first().copied().unwrap_or(WorldPoint::zero())
             }
+            _ => WorldPoint::zero(),
         };
 
         let scale = viewport.scale_factor();
@@ -696,14 +676,10 @@ impl Pipeline {
             num_edges,
             time,
             dragging: dragging_type,
-            dragging_edge_from_node,
-            dragging_edge_from_pin,
             dragging_edge_from_origin: glam::Vec2::new(
                 dragging_edge_from_origin.x,
                 dragging_edge_from_origin.y,
             ),
-            dragging_edge_to_node,
-            dragging_edge_to_pin,
             // Theme-derived visual parameters (computed in Rust, no hardcodes in shader)
             grid_color: glam::Vec4::new(
                 border_color.x * 1.3,
