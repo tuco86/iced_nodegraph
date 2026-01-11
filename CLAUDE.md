@@ -2,20 +2,34 @@
 
 This document provides essential context for Claude Code when working on the iced_nodegraph project.
 
-## Post-Implementation Cleanup
+## Development Workflow
 
-**Automatic (via SubagentStop hook):**
-When a subagent/task completes, `.claude/hooks/validate.sh` runs automatically:
-- `cargo fmt --all` - formats code
+**Phases:**
+1. **MVP** - Implement minimal working version of the feature
+2. **Fix** - Address all observed errors and issues
+3. **Refactor** - Improve code quality, structure, and readability
+4. **Commit** - Once code is clean, create a commit
+5. **Push** - Only after all checks pass
+
+**Pre-Push Checklist (all must pass):**
+- `cargo test -p iced_nodegraph` - unit tests
+- `cargo check -p iced_nodegraph` - native compilation
+- `cargo check -p iced_nodegraph --target wasm32-unknown-unknown` - WASM compilation
+- `cargo clippy -p iced_nodegraph -- -D warnings` - lints
+- `cargo build -p iced_nodegraph` - full build
+
+A task is only complete when all checks pass and code is pushed.
+
+## Automatic Validation
+
+**Via SubagentStop hook:**
+When a subagent/task completes, `.claude/hooks/validate.ps1` runs:
 - `cargo check -p iced_nodegraph` - reports native compile errors
-- `cargo check -p iced_nodegraph --target wasm32-unknown-unknown` - reports WASM compile errors
 - `cargo test -p iced_nodegraph` - reports test failures
 
-The script only outputs on errors to avoid filling context. Exit code 2 = errors shown to Claude for fixing.
+The script only outputs on errors to avoid filling context.
 
-**Additional manual checks for releases:**
-- `cargo clippy -- -D warnings` for lints
-- `cargo doc --no-deps` for doc warnings
+**Note:** Run `cargo fmt --all` manually before committing if desired.
 
 Use the `code-reviewer` agent for reviewing significant code changes before committing.
 
