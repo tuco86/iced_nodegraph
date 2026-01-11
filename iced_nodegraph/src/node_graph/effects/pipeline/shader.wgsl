@@ -8,18 +8,11 @@ struct Uniforms {
     camera_zoom: f32,
     camera_position: vec2<f32>,
 
-    border_color: vec4<f32>,
-    fill_color: vec4<f32>,
-    edge_color: vec4<f32>,
     background_color: vec4<f32>,
-    drag_edge_color: vec4<f32>,
-    drag_edge_valid_color: vec4<f32>,
 
     cursor_position: vec2<f32>,
 
     num_nodes: u32,
-    num_pins: u32,
-    num_edges: u32,
     time: f32,
 
     overlay_type: u32,
@@ -27,16 +20,12 @@ struct Uniforms {
     overlay_start: vec2<f32>,
 
     // Theme-derived visual parameters (computed in Rust, no hardcodes in shader)
-    grid_color: vec4<f32>,           // Pre-computed grid line color
     hover_glow_color: vec4<f32>,     // Node hover glow color
     selection_box_color: vec4<f32>,  // Box selection fill/border color
     edge_cutting_color: vec4<f32>,   // Edge cutting line color
     hover_glow_radius: f32,          // Node hover glow radius in world units
-    edge_thickness: f32,             // Default edge thickness for dragging
-    render_mode: u32,                // 0=background (fill only), 1=foreground (border only)
     // implicit padding for vec2 alignment
 
-    viewport_size: vec2<f32>,
     bounds_origin: vec2<f32>,  // widget bounds origin in physical pixels
     bounds_size: vec2<f32>,    // widget bounds size in physical pixels
 

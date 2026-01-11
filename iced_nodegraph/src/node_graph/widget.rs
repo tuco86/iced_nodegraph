@@ -178,7 +178,7 @@ where
         // Resolve styles
         let resolved_graph = resolve_graph_style(self.graph_style.as_ref(), theme);
         let resolved_pin_defaults = resolve_pin_style(self.pin_defaults.as_ref(), theme);
-        let resolved_edge_defaults = EdgeStyle::from_theme(theme);
+        let _resolved_edge_defaults = EdgeStyle::from_theme(theme);
 
         let selection_style = &resolved_graph.selection_style;
         let selection_border_color = selection_style.selected_border_color;
@@ -610,25 +610,9 @@ where
                     })
                     .collect(),
                 edges: vec![],
-                edge_color: glam::Vec4::ZERO,
                 background_color: glam::Vec4::ZERO,
-                border_color: glam::Vec4::ZERO,
-                fill_color: glam::Vec4::ZERO,
-                drag_edge_color: glam::vec4(
-                    resolved_graph.drag_edge_color.r,
-                    resolved_graph.drag_edge_color.g,
-                    resolved_graph.drag_edge_color.b,
-                    resolved_graph.drag_edge_color.a,
-                ),
-                drag_edge_valid_color: glam::vec4(
-                    resolved_graph.drag_edge_valid_color.r,
-                    resolved_graph.drag_edge_valid_color.g,
-                    resolved_graph.drag_edge_valid_color.b,
-                    resolved_graph.drag_edge_valid_color.a,
-                ),
                 selected_nodes: state.selected_nodes.clone(),
                 selected_edge_color,
-                edge_thickness: resolved_edge_defaults.get_width(),
                 valid_drop_targets: state.valid_drop_targets.clone(),
                 background_style: resolved_graph.background.clone(),
             };

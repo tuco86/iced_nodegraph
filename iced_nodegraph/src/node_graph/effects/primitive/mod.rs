@@ -47,18 +47,11 @@ pub struct NodeGraphPrimitive {
     pub dragging: Dragging,
     pub nodes: Vec<Node>,
     pub edges: Vec<EdgeData>,
-    pub edge_color: glam::Vec4,
     pub background_color: glam::Vec4,
-    pub border_color: glam::Vec4,
-    pub fill_color: glam::Vec4,
-    pub drag_edge_color: glam::Vec4,
-    pub drag_edge_valid_color: glam::Vec4,
     /// Currently selected nodes (for edge highlighting)
     pub selected_nodes: HashSet<usize>,
     /// Color for edges between selected nodes
     pub selected_edge_color: glam::Vec4,
-    /// Default edge thickness (for dragging edge)
-    pub edge_thickness: f32,
     /// Valid drop targets for edge dragging (computed at drag-start).
     /// Contains (node_index, pin_index) pairs that are valid connection targets.
     pub valid_drop_targets: HashSet<(usize, usize)>,
@@ -89,15 +82,9 @@ impl Primitive for NodeGraphPrimitive {
             &self.dragging,
             &self.nodes,
             &self.edges,
-            self.edge_color,
             self.background_color,
-            self.border_color,
-            self.fill_color,
-            self.drag_edge_color,
-            self.drag_edge_valid_color,
             &self.selected_nodes,
             self.selected_edge_color,
-            self.edge_thickness,
             self.layer,
             &self.valid_drop_targets,
             &self.background_style,

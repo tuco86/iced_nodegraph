@@ -12,33 +12,22 @@ pub struct Uniforms {
     pub camera_zoom: f32,
     pub camera_position: glam::Vec2,
 
-    pub border_color: glam::Vec4,          // RGBA for node border
-    pub fill_color: glam::Vec4,            // RGBA for node fill
-    pub edge_color: glam::Vec4,            // RGBA for edges
-    pub background_color: glam::Vec4,      // RGBA for background
-    pub drag_edge_color: glam::Vec4,       // RGBA for dragging edge (warning color)
-    pub drag_edge_valid_color: glam::Vec4, // RGBA for valid connection (success color)
+    pub background_color: glam::Vec4, // RGBA for background
 
     pub cursor_position: glam::Vec2, // in world coordinates
 
     pub num_nodes: u32,
-    pub num_pins: u32,
-    pub num_edges: u32,
     pub time: f32, // Time in seconds for animations
 
     pub overlay_type: u32,
     pub overlay_start: glam::Vec2,
 
     // Theme-derived visual parameters (computed in Rust, no hardcodes in shader)
-    pub grid_color: glam::Vec4, // Pre-computed grid line color (legacy, kept for compatibility)
-    pub hover_glow_color: glam::Vec4, // Node hover glow color
+    pub hover_glow_color: glam::Vec4,    // Node hover glow color
     pub selection_box_color: glam::Vec4, // Box selection fill/border color
-    pub edge_cutting_color: glam::Vec4, // Edge cutting line color
-    pub hover_glow_radius: f32, // Node hover glow radius in world units
-    pub edge_thickness: f32,    // Default edge thickness for dragging
-    pub render_mode: u32,       // 0=background (fill only), 1=foreground (border only)
+    pub edge_cutting_color: glam::Vec4,  // Edge cutting line color
+    pub hover_glow_radius: f32,          // Node hover glow radius in world units
 
-    pub viewport_size: glam::Vec2, // viewport size for clip space transform
     pub bounds_origin: glam::Vec2, // widget bounds origin in physical pixels
     pub bounds_size: glam::Vec2,   // widget bounds size in physical pixels
 

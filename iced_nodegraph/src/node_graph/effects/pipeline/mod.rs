@@ -302,6 +302,7 @@ impl Pipeline {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn update_new(
         &mut self,
         device: &Device,
@@ -315,15 +316,9 @@ impl Pipeline {
         dragging: &Dragging,
         nodes: &[Node],
         edges: &[EdgeData],
-        edge_color: glam::Vec4,
         background_color: glam::Vec4,
-        border_color: glam::Vec4,
-        fill_color: glam::Vec4,
-        drag_edge_color: glam::Vec4,
-        drag_edge_valid_color: glam::Vec4,
         selected_nodes: &std::collections::HashSet<usize>,
         selected_edge_color: glam::Vec4,
-        edge_thickness: f32,
         layer: Layer,
         valid_drop_targets: &std::collections::HashSet<(usize, usize)>,
         background_style: &crate::style::BackgroundStyle,
@@ -381,7 +376,7 @@ impl Pipeline {
             Dragging::Edge(_, _, _) | Dragging::EdgeOver(_, _, _, _)
         );
 
-        let num_pins = self.pins.update(
+        let _num_pins = self.pins.update(
             device,
             queue,
             nodes
@@ -445,7 +440,7 @@ impl Pipeline {
             None
         };
 
-        let num_edges = self.edges.update(
+        let _num_edges = self.edges.update(
             device,
             queue,
             edges.iter().enumerate().map(|(edge_idx, edge_data)| {
@@ -660,20 +655,14 @@ impl Pipeline {
         };
 
         let scale = viewport.scale_factor();
+        let _ = layer; // Layer is used to select pipeline in render_pass(), not needed in uniforms
         let uniforms = types::Uniforms {
             os_scale_factor: scale,
             camera_zoom,
             camera_position: glam::Vec2::new(camera_position.x, camera_position.y),
-            border_color,
-            fill_color,
-            edge_color,
             background_color,
-            drag_edge_color,
-            drag_edge_valid_color,
             cursor_position: glam::Vec2::new(cursor_position.x, cursor_position.y),
             num_nodes,
-            num_pins,
-            num_edges,
             time,
             overlay_type: dragging_type,
             overlay_start: glam::Vec2::new(
@@ -681,25 +670,10 @@ impl Pipeline {
                 dragging_edge_from_origin.y,
             ),
             // Theme-derived visual parameters (computed in Rust, no hardcodes in shader)
-            grid_color: glam::Vec4::new(
-                border_color.x * 1.3,
-                border_color.y * 1.3,
-                border_color.z * 1.3,
-                1.0,
-            ),
             hover_glow_color: glam::Vec4::new(0.5, 0.7, 1.0, 1.0), // Soft blue glow
             selection_box_color: glam::Vec4::new(0.3, 0.6, 1.0, 1.0), // Selection blue
             edge_cutting_color: glam::Vec4::new(1.0, 0.3, 0.3, 1.0), // Warning red
             hover_glow_radius: 6.0,
-            edge_thickness,
-            render_mode: match layer {
-                Layer::Background => 0,
-                Layer::Foreground => 1,
-            },
-            viewport_size: glam::Vec2::new(
-                viewport.physical_width() as f32,
-                viewport.physical_height() as f32,
-            ),
             bounds_origin: glam::Vec2::new(bounds.x * scale, bounds.y * scale),
             bounds_size: glam::Vec2::new(bounds.width * scale, bounds.height * scale),
 

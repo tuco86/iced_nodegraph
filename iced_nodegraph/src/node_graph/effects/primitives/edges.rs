@@ -166,7 +166,7 @@ impl Primitive for EdgesPrimitive {
         viewport: &Viewport,
     ) {
         // Update edge buffer
-        let num_edges = pipeline.edges.update(
+        let _num_edges = pipeline.edges.update(
             device,
             queue,
             self.edges.iter().map(|edge| {
@@ -332,30 +332,16 @@ impl Primitive for EdgesPrimitive {
             os_scale_factor: scale,
             camera_zoom: self.camera_zoom,
             camera_position: glam::Vec2::new(self.camera_position.x, self.camera_position.y),
-            border_color: glam::Vec4::ZERO,
-            fill_color: glam::Vec4::ZERO,
-            edge_color: glam::Vec4::ZERO,
             background_color: glam::Vec4::ZERO,
-            drag_edge_color: glam::Vec4::ZERO,
-            drag_edge_valid_color: glam::Vec4::ZERO,
             cursor_position: glam::Vec2::ZERO,
             num_nodes: 0,
-            num_pins: 0,
-            num_edges,
             time: self.time,
             overlay_type: 0,
             overlay_start: glam::Vec2::ZERO,
-            grid_color: glam::Vec4::ZERO,
             hover_glow_color: glam::Vec4::ZERO,
             selection_box_color: glam::Vec4::ZERO,
             edge_cutting_color: glam::Vec4::ZERO,
             hover_glow_radius: 0.0,
-            edge_thickness: 2.0,
-            render_mode: 0,
-            viewport_size: glam::Vec2::new(
-                viewport.physical_width() as f32,
-                viewport.physical_height() as f32,
-            ),
             bounds_origin: glam::Vec2::new(bounds.x * scale, bounds.y * scale),
             bounds_size: glam::Vec2::new(bounds.width * scale, bounds.height * scale),
             bg_pattern_type: 0,
