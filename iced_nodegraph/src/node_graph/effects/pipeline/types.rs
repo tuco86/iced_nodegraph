@@ -6,13 +6,14 @@ use encase::ShaderType;
 // Pin flag constants
 pub const PIN_FLAG_VALID_TARGET: u32 = 1; // bit 0: valid drop target during edge dragging
 
+/// Global uniforms shared by all primitives.
+///
+/// Contains camera, viewport, and timing data needed by all shader passes.
 #[derive(Clone, Debug, ShaderType)]
 pub struct Uniforms {
     pub os_scale_factor: f32, // e.g. 1.0, 1.5
     pub camera_zoom: f32,
     pub camera_position: glam::Vec2,
-
-    pub background_color: glam::Vec4, // RGBA for background
 
     pub cursor_position: glam::Vec2, // in world coordinates
 
@@ -22,40 +23,41 @@ pub struct Uniforms {
     pub overlay_type: u32,
     pub overlay_start: glam::Vec2,
 
-    // Theme-derived visual parameters (computed in Rust, no hardcodes in shader)
-    pub hover_glow_color: glam::Vec4,    // Node hover glow color
-    pub selection_box_color: glam::Vec4, // Box selection fill/border color
-    pub edge_cutting_color: glam::Vec4,  // Edge cutting line color
-    pub hover_glow_radius: f32,          // Node hover glow radius in world units
+    pub overlay_color: glam::Vec4, // Color for active overlay (box select, edge cutting, etc.)
 
     pub bounds_origin: glam::Vec2, // widget bounds origin in physical pixels
     pub bounds_size: glam::Vec2,   // widget bounds size in physical pixels
+}
 
-    // === Background Pattern Configuration ===
+/// Grid background configuration.
+///
+/// Read from storage buffer by the grid shader pass.
+#[derive(Clone, Debug, ShaderType)]
+pub struct Grid {
     /// Pattern type: 0=None, 1=Grid, 2=Hex, 3=Triangle, 4=Dots, 5=Lines, 6=Crosshatch
-    pub bg_pattern_type: u32,
-    /// Adaptive zoom flags: bit 0 = enabled, bit 1 = hex_pointy_top
-    pub bg_flags: u32,
+    pub pattern_type: u32,
+    /// Flags: bit 0 = adaptive_zoom, bit 1 = hex_pointy_top
+    pub flags: u32,
     /// Minor spacing in world-space pixels
-    pub bg_minor_spacing: f32,
+    pub minor_spacing: f32,
     /// Major spacing ratio (major_spacing / minor_spacing), 0 = no major grid
-    pub bg_major_ratio: f32,
+    pub major_ratio: f32,
 
     /// Line widths: (minor_width, major_width)
-    pub bg_line_widths: glam::Vec2,
+    pub line_widths: glam::Vec2,
     /// Opacities: (minor_opacity, major_opacity)
-    pub bg_opacities: glam::Vec2,
+    pub opacities: glam::Vec2,
 
-    /// Primary pattern color
-    pub bg_primary_color: glam::Vec4,
-    /// Secondary pattern color
-    pub bg_secondary_color: glam::Vec4,
+    /// Primary pattern color (background fill)
+    pub primary_color: glam::Vec4,
+    /// Secondary pattern color (grid lines)
+    pub secondary_color: glam::Vec4,
 
     /// Pattern-specific params: (dot_radius, line_angle, crosshatch_angle, _padding)
-    pub bg_pattern_params: glam::Vec4,
+    pub pattern_params: glam::Vec4,
 
     /// Adaptive zoom thresholds: (min_spacing, max_spacing, fade_range, _padding)
-    pub bg_adaptive_params: glam::Vec4,
+    pub adaptive_params: glam::Vec4,
 }
 
 #[derive(Clone, Debug, ShaderType)]
@@ -72,11 +74,12 @@ pub struct Node {
     pub fill_color: glam::Vec4,
     pub border_color: glam::Vec4,
     pub shadow_color: glam::Vec4,
-    pub flags: u32, // bit 0: hovered, bit 1: selected
-    // Padding for 16-byte array stride alignment (112 bytes total)
+    pub glow_color: glam::Vec4,   // Hover glow color (set when hovered)
+    pub flags: u32,               // bit 0: hovered, bit 1: selected
+    pub glow_radius: f32,         // Hover glow radius in world units
+    // Padding for 16-byte array stride alignment (128 bytes total)
     pub _pad0: u32,
     pub _pad1: u32,
-    pub _pad2: u32,
 }
 
 #[derive(Clone, Debug, ShaderType)]
@@ -145,8 +148,8 @@ mod tests {
 
     #[test]
     fn test_node_shader_size() {
-        // WGSL Node struct is 112 bytes (28 x 4-byte fields)
-        assert_eq!(Node::SHADER_SIZE.get(), 112, "Node size mismatch");
+        // WGSL Node struct is 128 bytes (32 x 4-byte fields)
+        assert_eq!(Node::SHADER_SIZE.get(), 128, "Node size mismatch");
     }
 
     #[test]
@@ -183,10 +186,11 @@ mod tests {
             fill_color: glam::Vec4::new(0.2, 0.2, 0.2, 1.0),
             border_color: glam::Vec4::new(0.5, 0.5, 0.5, 1.0),
             shadow_color: glam::Vec4::new(0.0, 0.0, 0.0, 0.5),
+            glow_color: glam::Vec4::new(0.3, 0.6, 1.0, 0.3),
             flags: id,
+            glow_radius: 8.0,
             _pad0: 0,
             _pad1: 0,
-            _pad2: 0,
         }
     }
 
@@ -217,7 +221,7 @@ mod tests {
         ];
         let bytes = serialize_items(&nodes);
 
-        // Each node is 112 bytes. For 3 nodes we expect 336 bytes.
+        // Each node is 128 bytes. For 3 nodes we expect 384 bytes.
         let expected_size = 3 * Node::SHADER_SIZE.get() as usize;
         assert_eq!(
             bytes.len(),
@@ -259,14 +263,14 @@ mod tests {
             create_test_node(2),
         ];
         let bytes = serialize_items(&nodes);
-        let stride = Node::SHADER_SIZE.get() as usize; // 112 bytes
+        let stride = Node::SHADER_SIZE.get() as usize; // 128 bytes
 
         // Calculate flags offset within Node struct:
         // position: 8, size: 8, corner_radius: 4, border_width: 4, opacity: 4,
         // pin_start: 4, pin_count: 4, shadow_blur: 4, shadow_offset: 8,
-        // fill_color: 16, border_color: 16, shadow_color: 16
-        // = 8+8+4+4+4+4+4+4+8+16+16+16 = 96 bytes, then flags at 96
-        let flags_offset_in_struct = 96;
+        // fill_color: 16, border_color: 16, shadow_color: 16, glow_color: 16
+        // = 8+8+4+4+4+4+4+4+8+16+16+16+16 = 112 bytes, then flags at 112
+        let flags_offset_in_struct = 112;
 
         for (i, node) in nodes.iter().enumerate() {
             let offset = i * stride + flags_offset_in_struct;

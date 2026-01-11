@@ -2081,9 +2081,9 @@ impl GraphStyle {
     }
 }
 
-/// Style configuration for node selection highlighting.
+/// Style configuration for node selection and hover highlighting.
 ///
-/// Controls the visual appearance of selected nodes and the box selection rectangle.
+/// Controls the visual appearance of selected/hovered nodes and the box selection rectangle.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelectionStyle {
     /// Border color for selected nodes
@@ -2094,6 +2094,12 @@ pub struct SelectionStyle {
     pub box_select_fill: Color,
     /// Border color for the box selection rectangle
     pub box_select_border: Color,
+    /// Color for the edge cutting line
+    pub edge_cutting_color: Color,
+    /// Color for hover glow effect on nodes
+    pub hover_glow_color: Color,
+    /// Radius for hover glow effect in world units
+    pub hover_glow_radius: f32,
 }
 
 impl Default for SelectionStyle {
@@ -2103,6 +2109,9 @@ impl Default for SelectionStyle {
             selected_border_width: 2.5,
             box_select_fill: Color::from_rgba(0.3, 0.6, 1.0, 0.15),
             box_select_border: Color::from_rgba(0.3, 0.6, 1.0, 0.6),
+            edge_cutting_color: Color::from_rgb(1.0, 0.3, 0.3),
+            hover_glow_color: Color::from_rgb(0.5, 0.7, 1.0),
+            hover_glow_radius: 6.0,
         }
     }
 }
@@ -2137,6 +2146,18 @@ impl SelectionStyle {
         self
     }
 
+    /// Sets the hover glow color.
+    pub fn hover_glow_color(mut self, color: Color) -> Self {
+        self.hover_glow_color = color;
+        self
+    }
+
+    /// Sets the hover glow radius.
+    pub fn hover_glow_radius(mut self, radius: f32) -> Self {
+        self.hover_glow_radius = radius;
+        self
+    }
+
     /// Creates a selection style derived from an iced Theme.
     pub fn from_theme(theme: &Theme) -> Self {
         let palette = theme.extended_palette();
@@ -2148,6 +2169,13 @@ impl SelectionStyle {
                 selected_border_width: 2.5,
                 box_select_fill: Color::from_rgba(primary.r, primary.g, primary.b, 0.15),
                 box_select_border: Color::from_rgba(primary.r, primary.g, primary.b, 0.6),
+                edge_cutting_color: Color::from_rgb(1.0, 0.3, 0.3),
+                hover_glow_color: Color::from_rgb(
+                    primary.r * 0.7 + 0.3,
+                    primary.g * 0.7 + 0.3,
+                    primary.b * 0.9 + 0.1,
+                ),
+                hover_glow_radius: 6.0,
             }
         } else {
             Self {
@@ -2155,6 +2183,13 @@ impl SelectionStyle {
                 selected_border_width: 2.5,
                 box_select_fill: Color::from_rgba(primary.r, primary.g, primary.b, 0.12),
                 box_select_border: Color::from_rgba(primary.r, primary.g, primary.b, 0.5),
+                edge_cutting_color: Color::from_rgb(0.9, 0.2, 0.2),
+                hover_glow_color: Color::from_rgb(
+                    primary.r * 0.8,
+                    primary.g * 0.8,
+                    primary.b * 0.9,
+                ),
+                hover_glow_radius: 5.0,
             }
         }
     }

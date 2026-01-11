@@ -78,6 +78,8 @@ pub struct EdgesPipeline {
     dummy_pins: Buffer,
     /// Edge storage buffer
     edges: buffer::Buffer<types::Edge>,
+    /// Dummy grids buffer (required by bind group layout)
+    dummy_grids: Buffer,
     /// Bind group for rendering
     bind_group: BindGroup,
     /// Bind group generation for recreation tracking
@@ -118,6 +120,14 @@ impl Pipeline for EdgesPipeline {
             BufferUsages::STORAGE | BufferUsages::COPY_DST,
         );
 
+        // Create minimal dummy grids buffer
+        let dummy_grids = device.create_buffer(&BufferDescriptor {
+            label: Some("edges_dummy_grids"),
+            size: <types::Grid as ShaderSize>::SHADER_SIZE.get(),
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         // Create bind group
         let bind_group = device.create_bind_group(&BindGroupDescriptor {
             label: Some("edges_bind_group"),
@@ -139,6 +149,10 @@ impl Pipeline for EdgesPipeline {
                     binding: 3,
                     resource: edges.as_entire_binding(),
                 },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: dummy_grids.as_entire_binding(),
+                },
             ],
         });
 
@@ -148,6 +162,7 @@ impl Pipeline for EdgesPipeline {
             dummy_nodes,
             dummy_pins,
             edges,
+            dummy_grids,
             bind_group,
             bind_group_generation: 0,
         }
@@ -332,28 +347,14 @@ impl Primitive for EdgesPrimitive {
             os_scale_factor: scale,
             camera_zoom: self.camera_zoom,
             camera_position: glam::Vec2::new(self.camera_position.x, self.camera_position.y),
-            background_color: glam::Vec4::ZERO,
             cursor_position: glam::Vec2::ZERO,
             num_nodes: 0,
             time: self.time,
             overlay_type: 0,
             overlay_start: glam::Vec2::ZERO,
-            hover_glow_color: glam::Vec4::ZERO,
-            selection_box_color: glam::Vec4::ZERO,
-            edge_cutting_color: glam::Vec4::ZERO,
-            hover_glow_radius: 0.0,
+            overlay_color: glam::Vec4::ZERO,
             bounds_origin: glam::Vec2::new(bounds.x * scale, bounds.y * scale),
             bounds_size: glam::Vec2::new(bounds.width * scale, bounds.height * scale),
-            bg_pattern_type: 0,
-            bg_flags: 0,
-            bg_minor_spacing: 0.0,
-            bg_major_ratio: 0.0,
-            bg_line_widths: glam::Vec2::ZERO,
-            bg_opacities: glam::Vec2::ZERO,
-            bg_primary_color: glam::Vec4::ZERO,
-            bg_secondary_color: glam::Vec4::ZERO,
-            bg_pattern_params: glam::Vec4::ZERO,
-            bg_adaptive_params: glam::Vec4::ZERO,
         };
 
         let mut uniform_buffer = encase::UniformBuffer::new(Vec::new());
@@ -384,6 +385,10 @@ impl Primitive for EdgesPrimitive {
                     BindGroupEntry {
                         binding: 3,
                         resource: pipeline.edges.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 4,
+                        resource: pipeline.dummy_grids.as_entire_binding(),
                     },
                 ],
             });

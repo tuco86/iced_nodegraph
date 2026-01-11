@@ -1,103 +1,104 @@
-//! Grid background primitive for NodeGraph.
+//! Edge cutting tool primitive for NodeGraph.
 //!
-//! Renders the background pattern (grid, dots, hex, etc.) behind all other elements.
+//! Renders the cutting line during edge cutting mode.
 
 use std::sync::Arc;
 
 use encase::ShaderSize;
-use iced::Rectangle;
 use iced::wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, Buffer, BufferDescriptor, BufferUsages, Device,
     Queue, TextureFormat,
 };
+use iced::{Color, Rectangle};
 use iced_wgpu::graphics::Viewport;
 use iced_wgpu::primitive::{Pipeline, Primitive};
 
 use crate::node_graph::euclid::WorldPoint;
-use crate::style::BackgroundStyle;
 
 use super::super::pipeline::types;
 use super::super::shared::SharedNodeGraphResources;
 
-/// Primitive for rendering the background grid pattern.
+/// Primitive for rendering the edge cutting line.
 #[derive(Debug, Clone)]
-pub struct GridPrimitive {
+pub struct CuttingToolPrimitive {
+    /// Start point of cutting line (in world coordinates)
+    pub start: WorldPoint,
+    /// End point of cutting line (in world coordinates)
+    pub end: WorldPoint,
+    /// Cutting line color
+    pub color: Color,
     /// Camera zoom level
     pub camera_zoom: f32,
     /// Camera position in world coordinates
     pub camera_position: WorldPoint,
-    /// Background style configuration
-    pub background_style: BackgroundStyle,
 }
 
-/// Pipeline for GridPrimitive rendering.
-///
-/// Holds shared GPU resources and grid-specific buffers.
-pub struct GridPipeline {
+/// Pipeline for CuttingToolPrimitive rendering.
+pub struct CuttingToolPipeline {
     /// Shared resources (shader, pipelines, layouts)
     shared: Arc<SharedNodeGraphResources>,
     /// Uniform buffer
     uniforms: Buffer,
-    /// Grid storage buffer
-    grids: Buffer,
-    /// Dummy node buffer (required by bind group layout but not read)
+    /// Dummy node buffer (required by bind group layout)
     #[allow(dead_code)]
     dummy_nodes: Buffer,
-    /// Dummy pin buffer (required by bind group layout but not read)
+    /// Dummy pin buffer (required by bind group layout)
     #[allow(dead_code)]
     dummy_pins: Buffer,
-    /// Dummy edge buffer (required by bind group layout but not read)
+    /// Dummy edge buffer (required by bind group layout)
     #[allow(dead_code)]
     dummy_edges: Buffer,
+    /// Dummy grids buffer (required by bind group layout)
+    #[allow(dead_code)]
+    dummy_grids: Buffer,
     /// Bind group for rendering
     bind_group: BindGroup,
 }
 
-impl Pipeline for GridPipeline {
+impl Pipeline for CuttingToolPipeline {
     fn new(device: &Device, _queue: &Queue, format: TextureFormat) -> Self {
         let shared = SharedNodeGraphResources::get_or_init(device, format);
 
         // Create uniform buffer
         let uniforms = device.create_buffer(&BufferDescriptor {
-            label: Some("grid_uniforms"),
+            label: Some("cutting_tool_uniforms"),
             size: <types::Uniforms as ShaderSize>::SHADER_SIZE.get(),
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        // Create grids storage buffer
-        let grids = device.create_buffer(&BufferDescriptor {
-            label: Some("grid_grids_buffer"),
-            size: <types::Grid as ShaderSize>::SHADER_SIZE.get(),
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        // Create minimal dummy buffers (required by bind group layout but not used)
+        // Create minimal dummy buffers (required by bind group layout)
         let dummy_nodes = device.create_buffer(&BufferDescriptor {
-            label: Some("grid_dummy_nodes"),
+            label: Some("cutting_tool_dummy_nodes"),
             size: <types::Node as ShaderSize>::SHADER_SIZE.get() * 10,
             usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let dummy_pins = device.create_buffer(&BufferDescriptor {
-            label: Some("grid_dummy_pins"),
+            label: Some("cutting_tool_dummy_pins"),
             size: <types::Pin as ShaderSize>::SHADER_SIZE.get() * 10,
             usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let dummy_edges = device.create_buffer(&BufferDescriptor {
-            label: Some("grid_dummy_edges"),
+            label: Some("cutting_tool_dummy_edges"),
             size: <types::Edge as ShaderSize>::SHADER_SIZE.get() * 10,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let dummy_grids = device.create_buffer(&BufferDescriptor {
+            label: Some("cutting_tool_dummy_grids"),
+            size: <types::Grid as ShaderSize>::SHADER_SIZE.get(),
             usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         // Create bind group
         let bind_group = device.create_bind_group(&BindGroupDescriptor {
-            label: Some("grid_bind_group"),
+            label: Some("cutting_tool_bind_group"),
             layout: &shared.bind_group_layout,
             entries: &[
                 BindGroupEntry {
@@ -118,7 +119,7 @@ impl Pipeline for GridPipeline {
                 },
                 BindGroupEntry {
                     binding: 4,
-                    resource: grids.as_entire_binding(),
+                    resource: dummy_grids.as_entire_binding(),
                 },
             ],
         });
@@ -126,17 +127,17 @@ impl Pipeline for GridPipeline {
         Self {
             shared,
             uniforms,
-            grids,
             dummy_nodes,
             dummy_pins,
             dummy_edges,
+            dummy_grids,
             bind_group,
         }
     }
 }
 
-impl Primitive for GridPrimitive {
-    type Pipeline = GridPipeline;
+impl Primitive for CuttingToolPrimitive {
+    type Pipeline = CuttingToolPipeline;
 
     fn prepare(
         &self,
@@ -147,72 +148,31 @@ impl Primitive for GridPrimitive {
         viewport: &Viewport,
     ) {
         let scale = viewport.scale_factor();
-        let style = &self.background_style;
 
-        // Build uniforms (global data only)
         let uniforms = types::Uniforms {
             os_scale_factor: scale,
             camera_zoom: self.camera_zoom,
             camera_position: glam::Vec2::new(self.camera_position.x, self.camera_position.y),
-            cursor_position: glam::Vec2::ZERO,
+            cursor_position: glam::Vec2::new(self.end.x, self.end.y),
             num_nodes: 0,
             time: 0.0,
-            overlay_type: 0,
-            overlay_start: glam::Vec2::ZERO,
-            overlay_color: glam::Vec4::ZERO,
+            overlay_type: 7, // EdgeCutting
+            overlay_start: glam::Vec2::new(self.start.x, self.start.y),
+            overlay_color: glam::Vec4::new(
+                self.color.r,
+                self.color.g,
+                self.color.b,
+                self.color.a,
+            ),
             bounds_origin: glam::Vec2::new(bounds.x * scale, bounds.y * scale),
             bounds_size: glam::Vec2::new(bounds.width * scale, bounds.height * scale),
         };
 
-        // Write uniforms using encase
         let mut uniform_buffer = encase::UniformBuffer::new(Vec::new());
         uniform_buffer
             .write(&uniforms)
             .expect("Failed to write uniforms");
         queue.write_buffer(&pipeline.uniforms, 0, uniform_buffer.as_ref());
-
-        // Build grid data
-        let grid = types::Grid {
-            pattern_type: style.pattern.type_id(),
-            flags: (if style.adaptive_zoom { 1u32 } else { 0 })
-                | (if style.hex_pointy_top { 2u32 } else { 0 }),
-            minor_spacing: style.minor_spacing,
-            major_ratio: style
-                .major_spacing
-                .map(|m| m / style.minor_spacing)
-                .unwrap_or(0.0),
-            line_widths: glam::Vec2::new(style.minor_width, style.major_width),
-            opacities: glam::Vec2::new(style.minor_opacity, style.major_opacity),
-            primary_color: glam::Vec4::new(
-                style.primary_color.r,
-                style.primary_color.g,
-                style.primary_color.b,
-                style.primary_color.a,
-            ),
-            secondary_color: glam::Vec4::new(
-                style.secondary_color.r,
-                style.secondary_color.g,
-                style.secondary_color.b,
-                style.secondary_color.a,
-            ),
-            pattern_params: glam::Vec4::new(
-                style.dot_radius,
-                style.line_angle,
-                style.crosshatch_angle,
-                0.0,
-            ),
-            adaptive_params: glam::Vec4::new(
-                style.adaptive_min_spacing,
-                style.adaptive_max_spacing,
-                style.adaptive_fade_range,
-                0.0,
-            ),
-        };
-
-        // Write grid data using encase
-        let mut grid_buffer = encase::StorageBuffer::new(Vec::new());
-        grid_buffer.write(&grid).expect("Failed to write grid");
-        queue.write_buffer(&pipeline.grids, 0, grid_buffer.as_ref());
     }
 
     fn draw(
@@ -220,9 +180,9 @@ impl Primitive for GridPrimitive {
         pipeline: &Self::Pipeline,
         render_pass: &mut iced::wgpu::RenderPass<'_>,
     ) -> bool {
-        render_pass.set_pipeline(&pipeline.shared.grid_pipeline);
+        render_pass.set_pipeline(&pipeline.shared.overlay_pipeline);
         render_pass.set_bind_group(0, &pipeline.bind_group, &[]);
-        render_pass.draw(0..3, 0..1); // Fullscreen triangle
+        render_pass.draw(0..6, 0..1); // Fullscreen quad
         true
     }
 }

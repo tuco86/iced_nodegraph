@@ -9,7 +9,7 @@ use web_time::Instant;
 use super::{
     DragInfo, NodeGraph, NodeGraphMessage,
     effects::{
-        self, EdgeRenderData, EdgesPrimitive, GridPrimitive, Layer, NodeLayer, NodePrimitive,
+        self, EdgeRenderData, EdgesPrimitive, GridPrimitive, NodeLayer, NodePrimitive,
         PinRenderData,
     },
     euclid::{IntoIced, WorldVector},
@@ -383,6 +383,7 @@ where
             .enumerate()
         {
             let is_selected = state.selected_nodes.contains(&node_index);
+            let is_hovered = state.hovered_node == Some(node_index);
 
             // Compute drag offset
             let offset = {
@@ -467,6 +468,9 @@ where
                 shadow_blur,
                 shadow_color,
                 is_selected,
+                is_hovered,
+                hover_glow_color: resolved_graph.selection_style.hover_glow_color,
+                hover_glow_radius: resolved_graph.selection_style.hover_glow_radius,
                 pins: pins.clone(),
                 camera_zoom: camera.zoom(),
                 camera_position: camera.position(),
@@ -530,95 +534,48 @@ where
         }
 
         // ========================================
-        // Layer N+1: Dragging Edge / Selection Box / Edge Cutting
-        // Use old primitive for these overlay elements for now
+        // Layer N+1: Box Selection Overlay
         // ========================================
-        if matches!(
-            state.dragging,
-            Dragging::Edge(_, _, _)
-                | Dragging::EdgeOver(_, _, _, _)
-                | Dragging::BoxSelect(_, _)
-                | Dragging::EdgeCutting { .. }
-        ) {
-            // For dragging overlay, fall back to the old primitive approach
-            // This handles the dragging edge, selection box, and edge cutting visuals
-            let drag_primitive = effects::NodeGraphPrimitive {
-                layer: Layer::Foreground,
+        if let Dragging::BoxSelect(start, _end) = &state.dragging {
+            let cursor_world = cursor
+                .position()
+                .map(|p| camera.screen_to_world().transform_point(p.into_euclid()))
+                .unwrap_or(*start);
+
+            let select_primitive = effects::BoxSelectPrimitive {
+                start: *start,
+                end: cursor_world,
+                color: resolved_graph.selection_style.box_select_border,
                 camera_zoom: camera.zoom(),
                 camera_position: camera.position(),
-                cursor_position: camera
-                    .screen_to_world()
-                    .transform_point(cursor.position().unwrap_or(Point::ORIGIN).into_euclid()),
-                time,
-                dragging: state.dragging.clone(),
-                nodes: self
-                    .nodes
-                    .iter()
-                    .zip(&tree.children)
-                    .zip(layout.children())
-                    .enumerate()
-                    .map(|(node_index, ((_, node_tree), node_layout))| {
-                        let is_selected = state.selected_nodes.contains(&node_index);
-                        let offset = {
-                            let mut offset = WorldVector::zero();
-                            if let (Dragging::Node(drag_idx, origin), Some(cursor_pos)) =
-                                (state.dragging.clone(), cursor.position())
-                                && drag_idx == node_index {
-                                    let cursor_world: WorldPoint = camera
-                                        .screen_to_world()
-                                        .transform_point(cursor_pos.into_euclid());
-                                    offset = cursor_world - origin;
-                                }
-                            if let (Dragging::GroupMove(origin), Some(cursor_pos)) =
-                                (state.dragging.clone(), cursor.position())
-                                && is_selected {
-                                    let cursor_world: WorldPoint = camera
-                                        .screen_to_world()
-                                        .transform_point(cursor_pos.into_euclid());
-                                    offset = cursor_world - origin;
-                                }
-                            offset
-                        };
-
-                        effects::Node {
-                            position: node_layout.bounds().position().into_euclid().to_vector()
-                                + offset,
-                            size: node_layout.bounds().size().into_euclid(),
-                            corner_radius: 8.0,
-                            border_width: 2.0,
-                            opacity: 1.0,
-                            fill_color: iced::Color::TRANSPARENT,
-                            border_color: iced::Color::TRANSPARENT,
-                            pins: find_pins(node_tree, node_layout)
-                                .iter()
-                                .map(|(_, pin_state, (a, _))| effects::Pin {
-                                    side: pin_state.side.into(),
-                                    offset: a.into_euclid().to_vector() + offset,
-                                    radius: resolved_pin_defaults.radius,
-                                    color: pin_state.color,
-                                    direction: pin_state.direction,
-                                    shape: resolved_pin_defaults.shape,
-                                    border_color: iced::Color::TRANSPARENT,
-                                    border_width: 0.0,
-                                })
-                                .collect(),
-                            shadow_offset: (0.0, 0.0),
-                            shadow_blur: 0.0,
-                            shadow_color: iced::Color::TRANSPARENT,
-                            flags: 0,
-                        }
-                    })
-                    .collect(),
-                edges: vec![],
-                background_color: glam::Vec4::ZERO,
-                selected_nodes: state.selected_nodes.clone(),
-                selected_edge_color,
-                valid_drop_targets: state.valid_drop_targets.clone(),
-                background_style: resolved_graph.background.clone(),
             };
 
             renderer.with_layer(layout.bounds(), |renderer| {
-                renderer.draw_primitive(layout.bounds(), drag_primitive);
+                renderer.draw_primitive(layout.bounds(), select_primitive);
+            });
+        }
+
+        // ========================================
+        // Layer N+2: Edge Cutting Overlay
+        // ========================================
+        if let Dragging::EdgeCutting { trail, .. } = &state.dragging
+            && let Some(start) = trail.first()
+        {
+            let cursor_world = cursor
+                .position()
+                .map(|p| camera.screen_to_world().transform_point(p.into_euclid()))
+                .unwrap_or(*start);
+
+            let cutting_primitive = effects::CuttingToolPrimitive {
+                start: *start,
+                end: cursor_world,
+                color: resolved_graph.selection_style.edge_cutting_color,
+                camera_zoom: camera.zoom(),
+                camera_position: camera.position(),
+            };
+
+            renderer.with_layer(layout.bounds(), |renderer| {
+                renderer.draw_primitive(layout.bounds(), cutting_primitive);
             });
         }
     }

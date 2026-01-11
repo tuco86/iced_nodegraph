@@ -1,13 +1,17 @@
-pub use primitive::Node;
-pub use primitive::Pin;
-pub use primitive::{EdgeData, Layer, NodeGraphPrimitive};
+//! GPU rendering effects for NodeGraph.
+//!
+//! Each primitive type participates in Iced's layer system for correct compositing:
+//! - `GridPrimitive` - Background grid pattern
+//! - `NodePrimitive` - Node with background/foreground layer support (includes pins)
+//! - `EdgesPrimitive` - Batched edge rendering
+//! - `BoxSelectPrimitive` - Box selection overlay
+//! - `CuttingToolPrimitive` - Edge cutting line overlay
 
-// New separate primitives for correct layer compositing
 pub use primitives::{
-    EdgeRenderData, EdgesPrimitive, GridPrimitive, NodeLayer, NodePrimitive, PinRenderData,
+    BoxSelectPrimitive, CuttingToolPrimitive, EdgeRenderData, EdgesPrimitive, GridPrimitive,
+    NodeLayer, NodePrimitive, PinRenderData,
 };
 
 pub(crate) mod pipeline;
-mod primitive;
 pub mod primitives;
 pub(crate) mod shared;

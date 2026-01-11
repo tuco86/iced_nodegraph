@@ -83,6 +83,12 @@ pub struct NodePrimitive {
     pub shadow_color: Color,
     /// Is node selected?
     pub is_selected: bool,
+    /// Is node hovered?
+    pub is_hovered: bool,
+    /// Hover glow color
+    pub hover_glow_color: Color,
+    /// Hover glow radius in world units
+    pub hover_glow_radius: f32,
     /// Node's pins
     pub pins: Vec<PinRenderData>,
     /// Camera zoom level
@@ -105,6 +111,8 @@ pub struct NodePipeline {
     pins: buffer::Buffer<types::Pin>,
     /// Dummy edge buffer (required by bind group layout)
     dummy_edges: Buffer,
+    /// Dummy grids buffer (required by bind group layout)
+    dummy_grids: Buffer,
     /// Bind group for rendering
     bind_group: BindGroup,
     /// Bind group generation for recreation tracking
@@ -153,6 +161,14 @@ impl Pipeline for NodePipeline {
             mapped_at_creation: false,
         });
 
+        // Create minimal dummy grids buffer
+        let dummy_grids = device.create_buffer(&BufferDescriptor {
+            label: Some("node_dummy_grids"),
+            size: <types::Grid as ShaderSize>::SHADER_SIZE.get(),
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         // Create bind group
         let bind_group = device.create_bind_group(&BindGroupDescriptor {
             label: Some("node_bind_group"),
@@ -174,6 +190,10 @@ impl Pipeline for NodePipeline {
                     binding: 3,
                     resource: dummy_edges.as_entire_binding(),
                 },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: dummy_grids.as_entire_binding(),
+                },
             ],
         });
 
@@ -183,6 +203,7 @@ impl Pipeline for NodePipeline {
             nodes,
             pins,
             dummy_edges,
+            dummy_grids,
             bind_group,
             bind_group_generations: (0, 0),
             prepare_slot: 0,
@@ -222,8 +243,11 @@ impl Primitive for NodePrimitive {
 
         // Build node flags
         let mut node_flags = 0u32;
+        if self.is_hovered {
+            node_flags |= 1 << 0; // HOVERED flag (bit 0)
+        }
         if self.is_selected {
-            node_flags |= 1 << 1; // SELECTED flag
+            node_flags |= 1 << 1; // SELECTED flag (bit 1)
         }
 
         // Push node to buffer
@@ -258,10 +282,16 @@ impl Primitive for NodePrimitive {
                     self.shadow_color.b,
                     self.shadow_color.a,
                 ),
+                glow_color: glam::Vec4::new(
+                    self.hover_glow_color.r,
+                    self.hover_glow_color.g,
+                    self.hover_glow_color.b,
+                    self.hover_glow_color.a,
+                ),
                 flags: node_flags,
+                glow_radius: self.hover_glow_radius,
                 _pad0: 0,
                 _pad1: 0,
-                _pad2: 0,
             },
         );
 
@@ -315,28 +345,14 @@ impl Primitive for NodePrimitive {
             os_scale_factor: scale,
             camera_zoom: self.camera_zoom,
             camera_position: glam::Vec2::new(self.camera_position.x, self.camera_position.y),
-            background_color: glam::Vec4::ZERO,
             cursor_position: glam::Vec2::ZERO,
             num_nodes: pipeline.nodes.len() as u32,
             time: self.time,
             overlay_type: 0,
             overlay_start: glam::Vec2::ZERO,
-            hover_glow_color: glam::Vec4::new(0.5, 0.7, 1.0, 1.0),
-            selection_box_color: glam::Vec4::ZERO,
-            edge_cutting_color: glam::Vec4::ZERO,
-            hover_glow_radius: 6.0,
+            overlay_color: glam::Vec4::ZERO,
             bounds_origin: glam::Vec2::new(bounds.x * scale, bounds.y * scale),
             bounds_size: glam::Vec2::new(bounds.width * scale, bounds.height * scale),
-            bg_pattern_type: 0,
-            bg_flags: 0,
-            bg_minor_spacing: 0.0,
-            bg_major_ratio: 0.0,
-            bg_line_widths: glam::Vec2::ZERO,
-            bg_opacities: glam::Vec2::ZERO,
-            bg_primary_color: glam::Vec4::ZERO,
-            bg_secondary_color: glam::Vec4::ZERO,
-            bg_pattern_params: glam::Vec4::ZERO,
-            bg_adaptive_params: glam::Vec4::ZERO,
         };
 
         let mut uniform_buffer = encase::UniformBuffer::new(Vec::new());
@@ -367,6 +383,10 @@ impl Primitive for NodePrimitive {
                     BindGroupEntry {
                         binding: 3,
                         resource: pipeline.dummy_edges.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 4,
+                        resource: pipeline.dummy_grids.as_entire_binding(),
                     },
                 ],
             });

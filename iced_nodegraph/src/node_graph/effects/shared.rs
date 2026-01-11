@@ -243,6 +243,20 @@ fn create_bind_group_layout(device: &Device) -> BindGroupLayout {
                 },
                 count: None,
             },
+            // Binding 4: Grids (storage buffer, read-only)
+            BindGroupLayoutEntry {
+                binding: 4,
+                visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(
+                        NonZeroU64::new(<types::Grid as ShaderSize>::SHADER_SIZE.get())
+                            .expect("Grid SHADER_SIZE must be non-zero"),
+                    ),
+                },
+                count: None,
+            },
         ],
     })
 }

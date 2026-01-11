@@ -2,13 +2,11 @@
 // UNIFORMS AND STORAGE BUFFERS
 // ============================================================================
 
-// Layout follows encase std140 alignment rules - no explicit padding needed
+// Global uniforms shared by all primitives
 struct Uniforms {
     os_scale_factor: f32,
     camera_zoom: f32,
     camera_position: vec2<f32>,
-
-    background_color: vec4<f32>,
 
     cursor_position: vec2<f32>,
 
@@ -19,30 +17,27 @@ struct Uniforms {
     // implicit padding for vec2 alignment
     overlay_start: vec2<f32>,
 
-    // Theme-derived visual parameters (computed in Rust, no hardcodes in shader)
-    hover_glow_color: vec4<f32>,     // Node hover glow color
-    selection_box_color: vec4<f32>,  // Box selection fill/border color
-    edge_cutting_color: vec4<f32>,   // Edge cutting line color
-    hover_glow_radius: f32,          // Node hover glow radius in world units
-    // implicit padding for vec2 alignment
+    overlay_color: vec4<f32>,  // Color for active overlay (box select, edge cutting, etc.)
 
     bounds_origin: vec2<f32>,  // widget bounds origin in physical pixels
     bounds_size: vec2<f32>,    // widget bounds size in physical pixels
+};
 
-    // === Background Pattern Configuration ===
-    bg_pattern_type: u32,      // 0=None, 1=Grid, 2=Hex, 3=Triangle, 4=Dots, 5=Lines, 6=Crosshatch
-    bg_flags: u32,             // bit 0 = adaptive_zoom, bit 1 = hex_pointy_top
-    bg_minor_spacing: f32,     // Minor spacing in world-space pixels
-    bg_major_ratio: f32,       // major_spacing / minor_spacing, 0 = no major grid
+// Grid background configuration (read from storage buffer)
+struct Grid {
+    pattern_type: u32,      // 0=None, 1=Grid, 2=Hex, 3=Triangle, 4=Dots, 5=Lines, 6=Crosshatch
+    flags: u32,             // bit 0 = adaptive_zoom, bit 1 = hex_pointy_top
+    minor_spacing: f32,     // Minor spacing in world-space pixels
+    major_ratio: f32,       // major_spacing / minor_spacing, 0 = no major grid
 
-    bg_line_widths: vec2<f32>,   // (minor_width, major_width)
-    bg_opacities: vec2<f32>,     // (minor_opacity, major_opacity)
+    line_widths: vec2<f32>,   // (minor_width, major_width)
+    opacities: vec2<f32>,     // (minor_opacity, major_opacity)
 
-    bg_primary_color: vec4<f32>,   // Major lines/elements color
-    bg_secondary_color: vec4<f32>, // Minor lines/elements color
+    primary_color: vec4<f32>,   // Background fill color
+    secondary_color: vec4<f32>, // Grid lines color
 
-    bg_pattern_params: vec4<f32>,  // (dot_radius, line_angle, crosshatch_angle, _padding)
-    bg_adaptive_params: vec4<f32>, // (min_spacing, max_spacing, fade_range, _padding)
+    pattern_params: vec4<f32>,  // (dot_radius, line_angle, crosshatch_angle, _padding)
+    adaptive_params: vec4<f32>, // (min_spacing, max_spacing, fade_range, _padding)
 };
 
 struct Node {
@@ -58,11 +53,12 @@ struct Node {
     fill_color: vec4<f32>,
     border_color: vec4<f32>,
     shadow_color: vec4<f32>,
-    flags: u32,        // bit 0: hovered, bit 1: selected
-    // Padding to match encase std430 layout (112 bytes total, 16-byte aligned)
-    _pad_flags0: u32,
-    _pad_flags1: u32,
-    _pad_flags2: u32,
+    glow_color: vec4<f32>,   // Hover glow color
+    flags: u32,              // bit 0: hovered, bit 1: selected
+    glow_radius: f32,        // Hover glow radius in world units
+    // Padding to match encase std430 layout (128 bytes total, 16-byte aligned)
+    _pad0: u32,
+    _pad1: u32,
 };
 
 // Node flag constants
@@ -140,6 +136,9 @@ var<storage, read> pins: array<Pin>;
 
 @group(0) @binding(3)
 var<storage, read> edges: array<Edge>;
+
+@group(0) @binding(4)
+var<storage, read> grids: array<Grid>;
 
 // ============================================================================
 // VERTEX OUTPUT STRUCTS
@@ -694,8 +693,9 @@ fn compute_fade_factor(screen_spacing: f32, min_screen: f32, max_screen: f32, fa
 
 // Grid pattern with major/minor lines
 fn pattern_grid(uv: vec2<f32>, minor: f32, major: f32, zoom: f32) -> vec2<f32> {
-    let minor_width = uniforms.bg_line_widths.x;
-    let major_width = uniforms.bg_line_widths.y;
+    let grid = grids[0];
+    let minor_width = grid.line_widths.x;
+    let major_width = grid.line_widths.y;
 
     let coord_minor = abs(uv % minor);
     let dist_minor_x = min(coord_minor.x, minor - coord_minor.x);
@@ -743,7 +743,7 @@ fn pattern_hex(uv: vec2<f32>, size: f32, pointy_top: bool) -> f32 {
     let rel = abs(p - hex_center);
     let dist = max(rel.x, rel.y * 0.866 + rel.x * 0.5) - size * 0.866;
 
-    let line_width = uniforms.bg_line_widths.x;
+    let line_width = grids[0].line_widths.x;
     let aa = 1.0 / uniforms.camera_zoom;
 
     return 1.0 - smoothstep(0.0, line_width + aa, abs(dist));
@@ -766,7 +766,7 @@ fn pattern_triangle(uv: vec2<f32>, size: f32) -> f32 {
     let d2 = abs(size - local.x - local.y * 0.577) * 0.866;
     dist = min(dist, min(d1, d2));
 
-    let line_width = uniforms.bg_line_widths.x;
+    let line_width = grids[0].line_widths.x;
     let aa = 1.0 / uniforms.camera_zoom;
 
     return 1.0 - smoothstep(0.0, line_width + aa, dist);
@@ -778,7 +778,7 @@ fn pattern_dots(uv: vec2<f32>, spacing: f32) -> f32 {
     let center = (cell + 0.5) * spacing;
     let dist = length(uv - center);
 
-    let radius = uniforms.bg_pattern_params.x;
+    let radius = grids[0].pattern_params.x;
     let aa = 1.0 / uniforms.camera_zoom;
 
     return 1.0 - smoothstep(radius - aa, radius + aa, dist);
@@ -793,7 +793,7 @@ fn pattern_lines(uv: vec2<f32>, spacing: f32, angle: f32) -> f32 {
     let dist = abs(rotated.y % spacing);
     let line_dist = min(dist, spacing - dist);
 
-    let line_width = uniforms.bg_line_widths.x;
+    let line_width = grids[0].line_widths.x;
     let aa = 1.0 / uniforms.camera_zoom;
 
     return 1.0 - smoothstep(0.0, line_width + aa, line_dist);
@@ -808,35 +808,36 @@ fn pattern_crosshatch(uv: vec2<f32>, spacing: f32, angle1: f32, angle2: f32) -> 
 
 // Main pattern dispatcher
 fn compute_background_pattern(uv: vec2<f32>) -> vec4<f32> {
-    let pattern_type = uniforms.bg_pattern_type;
-    let minor_spacing = uniforms.bg_minor_spacing;
+    let grid = grids[0];
+    let pattern_type = grid.pattern_type;
+    let minor_spacing = grid.minor_spacing;
     let zoom = uniforms.camera_zoom;
 
     // Adaptive zoom calculation
     var effective_spacing = minor_spacing;
     var fade = 1.0;
 
-    if ((uniforms.bg_flags & 1u) != 0u) {
+    if ((grid.flags & 1u) != 0u) {
         let adaptive = compute_adaptive_spacing(
             minor_spacing,
             zoom,
-            uniforms.bg_adaptive_params.x,
-            uniforms.bg_adaptive_params.y
+            grid.adaptive_params.x,
+            grid.adaptive_params.y
         );
         effective_spacing = adaptive.x;
 
         let screen_spacing = effective_spacing * zoom;
         fade = compute_fade_factor(
             screen_spacing,
-            uniforms.bg_adaptive_params.x,
-            uniforms.bg_adaptive_params.y,
-            uniforms.bg_adaptive_params.z
+            grid.adaptive_params.x,
+            grid.adaptive_params.y,
+            grid.adaptive_params.z
         );
     }
 
-    let major_spacing = effective_spacing * uniforms.bg_major_ratio;
-    let minor_opacity = uniforms.bg_opacities.x * fade;
-    let major_opacity = uniforms.bg_opacities.y;
+    let major_spacing = effective_spacing * grid.major_ratio;
+    let minor_opacity = grid.opacities.x * fade;
+    let major_opacity = grid.opacities.y;
 
     var intensity = 0.0;
     var is_major = false;
@@ -844,21 +845,21 @@ fn compute_background_pattern(uv: vec2<f32>) -> vec4<f32> {
     switch (pattern_type) {
         case 0u: {
             // None - solid background
-            return uniforms.background_color;
+            return grid.primary_color;
         }
         case 1u: {
             // Grid
-            let grid = pattern_grid(uv, effective_spacing, major_spacing, zoom);
-            if (grid.y > 0.01) {
-                intensity = grid.y;
+            let grid_pattern = pattern_grid(uv, effective_spacing, major_spacing, zoom);
+            if (grid_pattern.y > 0.01) {
+                intensity = grid_pattern.y;
                 is_major = true;
             } else {
-                intensity = grid.x;
+                intensity = grid_pattern.x;
             }
         }
         case 2u: {
             // Hex - use primary color (single-layer pattern)
-            let pointy = (uniforms.bg_flags & 2u) != 0u;
+            let pointy = (grid.flags & 2u) != 0u;
             intensity = pattern_hex(uv, effective_spacing, pointy);
             is_major = true;
         }
@@ -874,7 +875,7 @@ fn compute_background_pattern(uv: vec2<f32>) -> vec4<f32> {
         }
         case 5u: {
             // Lines - use primary color (single-layer pattern)
-            intensity = pattern_lines(uv, effective_spacing, uniforms.bg_pattern_params.y);
+            intensity = pattern_lines(uv, effective_spacing, grid.pattern_params.y);
             is_major = true;
         }
         case 6u: {
@@ -882,22 +883,22 @@ fn compute_background_pattern(uv: vec2<f32>) -> vec4<f32> {
             intensity = pattern_crosshatch(
                 uv,
                 effective_spacing,
-                uniforms.bg_pattern_params.y,
-                uniforms.bg_pattern_params.z
+                grid.pattern_params.y,
+                grid.pattern_params.z
             );
             is_major = true;
         }
         default: {
-            return uniforms.background_color;
+            return grid.primary_color;
         }
     }
 
     // Apply opacity and blend
     let opacity = select(minor_opacity, major_opacity, is_major);
-    let color = select(uniforms.bg_secondary_color, uniforms.bg_primary_color, is_major);
+    let color = select(grid.secondary_color, grid.primary_color, is_major);
 
     let pattern_alpha = color.a * intensity * opacity;
-    let bg = uniforms.background_color;
+    let bg = grid.primary_color;
     let result_rgb = bg.rgb * (1.0 - pattern_alpha) + color.rgb * pattern_alpha;
 
     return vec4(result_rgb, 1.0);
@@ -1409,7 +1410,7 @@ fn vs_node(@builtin(instance_index) instance: u32,
     let is_hovered = (node.flags & NODE_FLAG_HOVERED) != 0u;
     var glow_padding = 0.0;
     if (is_hovered) {
-        glow_padding = uniforms.hover_glow_radius;
+        glow_padding = node.glow_radius;
     }
 
     let total_padding = border_padding + glow_padding;
@@ -1463,9 +1464,9 @@ fn fs_node_fill(in: NodeVertexOutput) -> @location(0) vec4<f32> {
 
     // Render hover glow (subtle outer glow when hovered)
     if (is_hovered && d > 0.0) {
-        let glow_alpha = (1.0 - smoothstep(0.0, uniforms.hover_glow_radius, d)) * 0.3 * node_opacity;
+        let glow_alpha = (1.0 - smoothstep(0.0, node.glow_radius, d)) * 0.3 * node_opacity;
         if (glow_alpha > alpha) {
-            col = uniforms.hover_glow_color.rgb;
+            col = node.glow_color.rgb;
             alpha = glow_alpha;
         }
     }
@@ -1713,11 +1714,11 @@ fn fs_overlay(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
         // Border
         let border_width = 1.5 / uniforms.camera_zoom;
         let border_alpha = 1.0 - smoothstep(-border_width, -border_width + aa, dist);
-        let border_color = vec4(uniforms.selection_box_color.rgb, 0.8);
+        let border_color = vec4(uniforms.overlay_color.rgb, 0.8);
 
         // Fill (inside the rectangle)
         let fill_alpha = 1.0 - smoothstep(-aa, 0.0, dist);
-        let fill_color = vec4(uniforms.selection_box_color.rgb, 0.15);
+        let fill_color = vec4(uniforms.overlay_color.rgb, 0.15);
 
         // Combine: fill inside, border on edge
         if (dist < 0.0) {
@@ -1747,7 +1748,7 @@ fn fs_overlay(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
         let alpha = 1.0 - smoothstep(line_width, line_width + aa, dist);
 
         // Edge cutting line
-        return vec4(uniforms.edge_cutting_color.rgb, alpha * 0.8);
+        return vec4(uniforms.overlay_color.rgb, alpha * 0.8);
     }
 
     // No overlay active
