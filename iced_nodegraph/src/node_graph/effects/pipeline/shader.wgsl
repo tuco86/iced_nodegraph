@@ -53,31 +53,24 @@ struct Node {
     fill_color: vec4<f32>,
     border_color: vec4<f32>,
     shadow_color: vec4<f32>,
-    glow_color: vec4<f32>,   // Hover glow color
-    flags: u32,              // bit 0: hovered, bit 1: selected
-    glow_radius: f32,        // Hover glow radius in world units
+    glow_color: vec4<f32>,
+    glow_radius: f32,    // Pre-computed: 0.0 = no glow, >0.0 = glow radius
     // Padding to match encase std430 layout (128 bytes total, 16-byte aligned)
     _pad0: u32,
     _pad1: u32,
+    _pad2: u32,
 };
-
-// Node flag constants
-const NODE_FLAG_HOVERED: u32 = 1u;
-const NODE_FLAG_SELECTED: u32 = 2u;
-
-// Pin flag constants (computed in Rust)
-const PIN_FLAG_VALID_TARGET: u32 = 1u;
 
 struct Pin {
     position: vec2<f32>,
     side: u32,
-    radius: f32,
+    radius: f32,         // Pre-computed: includes animation scale for valid targets
     color: vec4<f32>,
     border_color: vec4<f32>,
     direction: u32,
     shape: u32,          // 0=Circle, 1=Square, 2=Diamond, 3=Triangle
     border_width: f32,
-    flags: u32,
+    _pad0: u32,          // Padding for 64-byte alignment
 };
 
 // Edge with resolved world positions (no index lookups needed)
@@ -108,8 +101,8 @@ struct Edge {
     dash_cap_angle: f32,        // Angle in radians for angled caps @ 88
     pattern_angle: f32,         // Angle in radians for Arrowed pattern @ 92
 
-    // Flags and border params (16 bytes)
-    flags: u32,                 // bit 0: animated, bit 1: glow, bit 2: pulse, bit 3: pending cut @ 96
+    // Animation and border params (16 bytes)
+    animation_type: u32,        // 0=None, 1=Flow, 2=Glow, 3=Pulse, 4=Rainbow @ 96
     border_width: f32,          // Border/outline thickness @ 100
     border_gap: f32,            // Gap between stroke and border @ 104
     shadow_blur: f32,           // Shadow blur radius @ 108
@@ -637,11 +630,6 @@ fn get_pin_direction(side: u32) -> vec2<f32> {
     }
 }
 
-// Valid drop target is now computed in Rust and stored in pin.flags
-fn is_valid_drop_target(pin: Pin) -> bool {
-    return (pin.flags & PIN_FLAG_VALID_TARGET) != 0u;
-}
-
 // Convert world position to clip space, accounting for widget bounds offset
 fn world_to_clip(world_pos: vec2<f32>) -> vec4<f32> {
     let screen = (world_pos + uniforms.camera_position) * uniforms.camera_zoom * uniforms.os_scale_factor;
@@ -1084,8 +1072,8 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
         s = t * curve_length;
     }
 
-    // Animation: shift pattern with time (bit 0 = animated)
-    if ((edge.flags & 1u) != 0u) {
+    // Flow animation: shift pattern with time (animation_type == 1)
+    if (edge.animation_type == 1u) {
         s = s + uniforms.time * edge.flow_speed;
     }
 
@@ -1276,31 +1264,23 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
         border_alpha = inner_mask * outer_mask * edge.border_color.a;
     }
 
-    // === GLOW EFFECT (bit 1) ===
-    if ((edge.flags & 2u) != 0u) {
+    // === GLOW EFFECT (animation_type == 2) ===
+    if (edge.animation_type == 2u) {
         let flow_t = fract(t - uniforms.time * 0.5);
         let glow = smoothstep(0.0, 0.2, flow_t) * smoothstep(0.5, 0.3, flow_t);
         // Additive glow
         return vec4(edge_color + vec3(glow * 0.3), alpha);
     }
 
-    // === PULSE EFFECT (bit 2) ===
-    if ((edge.flags & 4u) != 0u) {
+    // === PULSE EFFECT (animation_type == 3) ===
+    if (edge.animation_type == 3u) {
         let pulse = sin(uniforms.time * 3.0) * 0.5 + 0.5;
         alpha = alpha * (0.5 + pulse * 0.5);
     }
 
-    // === PENDING CUT EFFECT (bit 3) ===
-    // Red pulsing highlight for edges pending deletion during edge cutting
-    // Flag is set by Rust when edge intersects the cutting line
-    if ((edge.flags & 8u) != 0u) {
-        let pulse = sin(uniforms.time * 6.0) * 0.3 + 0.7;
-        return vec4(1.0, 0.2, 0.2, alpha * pulse);
-    }
-
-    // === RAINBOW EFFECT (bit 4) ===
+    // === RAINBOW EFFECT (animation_type == 4) ===
     // HSV-based color cycling along the edge
-    if ((edge.flags & 16u) != 0u) {
+    if (edge.animation_type == 4u) {
         // Hue shifts along the edge and with time
         let hue = fract(t + uniforms.time * 0.1);
 
@@ -1406,12 +1386,8 @@ fn vs_node(@builtin(instance_index) instance: u32,
         vec2(0.0)
     );
 
-    // Hover glow adds extra padding
-    let is_hovered = (node.flags & NODE_FLAG_HOVERED) != 0u;
-    var glow_padding = 0.0;
-    if (is_hovered) {
-        glow_padding = node.glow_radius;
-    }
+    // Glow padding from pre-computed glow_radius (0.0 = no glow)
+    let glow_padding = node.glow_radius;
 
     let total_padding = border_padding + glow_padding;
     let bbox_min = node.position - vec2(total_padding) - max(shadow_extend, vec2(0.0)) + min(node.shadow_offset, vec2(0.0));
@@ -1449,7 +1425,7 @@ fn compute_node_sdf(in: NodeVertexOutput) -> f32 {
     return d;
 }
 
-// Background layer: renders shadow, hover glow, and fill (no border)
+// Background layer: renders shadow, glow, and fill (no border)
 @fragment
 fn fs_node_fill(in: NodeVertexOutput) -> @location(0) vec4<f32> {
     let node = nodes[in.instance_id];
@@ -1457,13 +1433,13 @@ fn fs_node_fill(in: NodeVertexOutput) -> @location(0) vec4<f32> {
 
     let aa = 0.5 / uniforms.camera_zoom;
     let node_opacity = node.opacity;
-    let is_hovered = (node.flags & NODE_FLAG_HOVERED) != 0u;
+    let has_glow = node.glow_radius > 0.0;
 
     var col = vec3(0.0);
     var alpha = 0.0;
 
-    // Render hover glow (subtle outer glow when hovered)
-    if (is_hovered && d > 0.0) {
+    // Render glow (pre-computed: glow_radius > 0 when active)
+    if (has_glow && d > 0.0) {
         let glow_alpha = (1.0 - smoothstep(0.0, node.glow_radius, d)) * 0.3 * node_opacity;
         if (glow_alpha > alpha) {
             col = node.glow_color.rgb;
@@ -1546,17 +1522,8 @@ fn vs_pin(@builtin(instance_index) instance: u32,
         }
     }
 
-    // Valid target flag is set by Rust when edge-dragging over compatible pins
-    let is_valid_target = is_valid_drop_target(pin);
-
-    // Pulse animation for valid drop targets
-    var anim_scale = 1.0;
-    if (is_valid_target) {
-        let pulse = sin(uniforms.time * 6.0) * 0.5 + 0.5;
-        anim_scale = 1.0 + pulse * 0.5;
-    }
-
-    let indicator_radius = pin.radius * 0.4 * anim_scale;
+    // Pin radius is pre-computed with animation scale by widget
+    let indicator_radius = pin.radius * 0.4;
     let padding = indicator_radius + 2.0 / uniforms.camera_zoom;
 
     let bbox_min = pin.position - vec2(padding);
@@ -1608,17 +1575,8 @@ fn fs_pin(in: PinVertexOutput) -> @location(0) vec4<f32> {
     let pin = pins[in.instance_id];
     let pin_center = in.world_uv - pin.position;
 
-    // Valid target flag is set by Rust when edge-dragging over compatible pins
-    let is_valid_target = is_valid_drop_target(pin);
-
-    // Pulse animation for valid drop targets
-    var anim_scale = 1.0;
-    if (is_valid_target) {
-        let pulse = sin(uniforms.time * 6.0) * 0.5 + 0.5;
-        anim_scale = 1.0 + pulse * 0.5;
-    }
-
-    let indicator_radius = pin.radius * 0.4 * anim_scale;
+    // Pin radius is pre-computed with animation scale by widget
+    let indicator_radius = pin.radius * 0.4;
     let aa = 0.5 / uniforms.camera_zoom;
 
     var fill_alpha = 0.0;

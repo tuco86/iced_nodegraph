@@ -40,7 +40,7 @@ pub struct PinRenderData {
     pub offset: WorldPoint,
     /// Pin side (0=Left, 1=Right, 2=Top, 3=Bottom)
     pub side: u32,
-    /// Pin radius
+    /// Pin radius (pre-computed with animation scale by widget)
     pub radius: f32,
     /// Pin color
     pub color: Color,
@@ -52,8 +52,6 @@ pub struct PinRenderData {
     pub border_color: Color,
     /// Border width
     pub border_width: f32,
-    /// Is this pin a valid drop target?
-    pub is_valid_target: bool,
 }
 
 /// Primitive for rendering a single node.
@@ -81,14 +79,10 @@ pub struct NodePrimitive {
     pub shadow_blur: f32,
     /// Shadow color
     pub shadow_color: Color,
-    /// Is node selected?
-    pub is_selected: bool,
-    /// Is node hovered?
-    pub is_hovered: bool,
-    /// Hover glow color
-    pub hover_glow_color: Color,
-    /// Hover glow radius in world units
-    pub hover_glow_radius: f32,
+    /// Glow color (set when node has active glow effect)
+    pub glow_color: Color,
+    /// Glow radius in world units (0.0 = no glow)
+    pub glow_radius: f32,
     /// Node's pins
     pub pins: Vec<PinRenderData>,
     /// Camera zoom level
@@ -241,15 +235,6 @@ impl Primitive for NodePrimitive {
         pipeline.pin_starts.push(pin_start);
         pipeline.pin_counts.push(self.pins.len());
 
-        // Build node flags
-        let mut node_flags = 0u32;
-        if self.is_hovered {
-            node_flags |= 1 << 0; // HOVERED flag (bit 0)
-        }
-        if self.is_selected {
-            node_flags |= 1 << 1; // SELECTED flag (bit 1)
-        }
-
         // Push node to buffer
         let _node_slot = pipeline.nodes.push(
             device,
@@ -283,15 +268,15 @@ impl Primitive for NodePrimitive {
                     self.shadow_color.a,
                 ),
                 glow_color: glam::Vec4::new(
-                    self.hover_glow_color.r,
-                    self.hover_glow_color.g,
-                    self.hover_glow_color.b,
-                    self.hover_glow_color.a,
+                    self.glow_color.r,
+                    self.glow_color.g,
+                    self.glow_color.b,
+                    self.glow_color.a,
                 ),
-                flags: node_flags,
-                glow_radius: self.hover_glow_radius,
+                glow_radius: self.glow_radius,
                 _pad0: 0,
                 _pad1: 0,
+                _pad2: 0,
             },
         );
 
@@ -301,12 +286,6 @@ impl Primitive for NodePrimitive {
                 PinDirection::Input => 0,
                 PinDirection::Output => 1,
                 PinDirection::Both => 2,
-            };
-
-            let flags = if pin.is_valid_target {
-                types::PIN_FLAG_VALID_TARGET
-            } else {
-                0
             };
 
             let _ = pipeline.pins.push(
@@ -322,7 +301,7 @@ impl Primitive for NodePrimitive {
                         pin.border_color.a,
                     ),
                     side: pin.side,
-                    radius: pin.radius,
+                    radius: pin.radius, // Pre-computed with animation scale by widget
                     direction: pin_direction,
                     shape: match pin.shape {
                         PinShape::Circle => 0,
@@ -331,7 +310,7 @@ impl Primitive for NodePrimitive {
                         PinShape::Triangle => 3,
                     },
                     border_width: pin.border_width,
-                    flags,
+                    _pad0: 0,
                 },
             );
         }

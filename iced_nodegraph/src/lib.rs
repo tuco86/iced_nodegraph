@@ -222,8 +222,12 @@ pub use style::{
     NodeStyle,
     PinConfig,
     PinShape,
+    PinStatus,
     PinStyle,
     STANDARD_THEMES,
+    // Status enums for widget-side styling
+    EdgeStatus,
+    NodeStatus,
     SelectionConfig,
     SelectionStyle,
     ShadowConfig,

@@ -260,11 +260,16 @@ impl Primitive for EdgesPrimitive {
                 let end_vec = glam::Vec2::new(edge.end_pos.x, edge.end_pos.y);
                 let curve_length = (end_vec - start_vec).length();
 
-                // Build flags
-                let mut flags = style.flags();
-                if edge.is_pending_cut {
-                    flags |= 8; // bit 3 for pending cut highlight
-                }
+                // Determine animation type
+                // Pending cut overrides other animations with pulse effect
+                // Otherwise use flow animation if edge has motion
+                let animation_type = if edge.is_pending_cut {
+                    3 // Pulse (for pending cut visual feedback)
+                } else if style.has_motion() {
+                    1 // Flow (animated pattern)
+                } else {
+                    0 // None
+                };
 
                 // Extract border layer info
                 let (border_width, border_gap, border_color) = style
@@ -328,7 +333,7 @@ impl Primitive for EdgesPrimitive {
                     dash_cap,
                     dash_cap_angle,
                     pattern_angle,
-                    flags,
+                    animation_type,
                     border_width,
                     border_gap,
                     shadow_blur,

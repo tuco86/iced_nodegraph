@@ -20,7 +20,7 @@ use crate::{
     ids::{EdgeId, NodeId, PinId},
     node_graph::euclid::{IntoEuclid, ScreenPoint, WorldPoint},
     node_pin::NodePinState,
-    style::{EdgeConfig, EdgeStyle, GraphStyle, NodeConfig, NodeStyle, PinConfig, PinStyle},
+    style::{EdgeConfig, EdgeStyle, GraphStyle, NodeConfig, NodeStyle, PinConfig, PinStatus, PinStyle},
 };
 
 // Click detection threshold (in world-space pixels)
@@ -383,7 +383,6 @@ where
             .enumerate()
         {
             let is_selected = state.selected_nodes.contains(&node_index);
-            let is_hovered = state.hovered_node == Some(node_index);
 
             // Compute drag offset
             let offset = {
@@ -434,10 +433,21 @@ where
                 .map(|(pin_idx, (_pin_index, pin_state, (pin_pos, _)))| {
                     let is_valid_target = is_edge_dragging
                         && state.valid_drop_targets.contains(&(node_index, pin_idx));
+
+                    // Compute pin status for animation
+                    let pin_status = if is_valid_target {
+                        PinStatus::ValidTarget
+                    } else {
+                        PinStatus::Idle
+                    };
+
+                    // Pre-compute radius with animation scale
+                    let radius = resolved_pin_defaults.scaled_radius(pin_status, time);
+
                     PinRenderData {
                         offset: (pin_pos.into_euclid().to_vector() + offset).to_point(),
                         side: pin_state.side.into(),
-                        radius: resolved_pin_defaults.radius,
+                        radius,
                         color: pin_state.color,
                         direction: pin_state.direction,
                         shape: resolved_pin_defaults.shape,
@@ -445,7 +455,6 @@ where
                             .border_color
                             .unwrap_or(iced::Color::TRANSPARENT),
                         border_width: resolved_pin_defaults.border_width,
-                        is_valid_target,
                     }
                 })
                 .collect();
@@ -455,6 +464,7 @@ where
             let node_size = node_layout.bounds().size();
 
             // Build NodePrimitive data (will be used for both layers)
+            // Note: Hover glow was removed. Glow is set to 0.0/TRANSPARENT.
             let node_primitive = NodePrimitive {
                 layer: NodeLayer::Background, // Will be overwritten
                 position: node_position,
@@ -467,10 +477,8 @@ where
                 shadow_offset,
                 shadow_blur,
                 shadow_color,
-                is_selected,
-                is_hovered,
-                hover_glow_color: resolved_graph.selection_style.hover_glow_color,
-                hover_glow_radius: resolved_graph.selection_style.hover_glow_radius,
+                glow_color: iced::Color::TRANSPARENT,
+                glow_radius: 0.0,
                 pins: pins.clone(),
                 camera_zoom: camera.zoom(),
                 camera_position: camera.position(),
@@ -749,42 +757,17 @@ where
             .update_with(viewport, screen_cursor, |viewport, world_cursor| {
                 let state = tree.state.downcast_mut::<NodeGraphState>();
 
-                if state.dragging != Dragging::None {
-                    if let Event::Mouse(mouse::Event::CursorMoved { .. }) = event {
-                        // Emit drag update event with current cursor position
-                        if let Some(cursor_position) = world_cursor.position()
-                            && let Some(handler) = self.on_drag_update_handler() {
-                                shell.publish(handler(cursor_position.x, cursor_position.y));
-                            }
-                        shell.capture_event();
-                        shell.request_redraw();
+                if state.dragging != Dragging::None
+                    && let Event::Mouse(mouse::Event::CursorMoved { .. }) = event
+                {
+                    // Emit drag update event with current cursor position
+                    if let Some(cursor_position) = world_cursor.position()
+                        && let Some(handler) = self.on_drag_update_handler()
+                    {
+                        shell.publish(handler(cursor_position.x, cursor_position.y));
                     }
-                }
-
-                // Update hover state when cursor moves
-                if let Some(cursor_point) = world_cursor.position() {
-                    let mut found_hover = None;
-
-                    // Check nodes in reverse order (top-most first)
-                    for (node_index, node_layout) in layout.children().enumerate().rev() {
-                        let bounds = node_layout.bounds();
-                        if bounds.contains(cursor_point) {
-                            found_hover = Some(node_index);
-                            break;
-                        }
-                    }
-
-                    // Update hover state if changed
-                    if state.hovered_node != found_hover {
-                        state.hovered_node = found_hover;
-                        shell.request_redraw();
-                    }
-                } else {
-                    // Cursor left the widget, clear hover
-                    if state.hovered_node.is_some() {
-                        state.hovered_node = None;
-                        shell.request_redraw();
-                    }
+                    shell.capture_event();
+                    shell.request_redraw();
                 }
 
                 match state.dragging.clone() {

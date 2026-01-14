@@ -31,8 +31,6 @@ pub(super) struct NodeGraphState {
     pub(super) modifiers: keyboard::Modifiers,
     /// Tracks if left mouse button is pressed (for Fruit Ninja edge cutting)
     pub(super) left_mouse_down: bool,
-    /// Currently hovered node index (for hover effects)
-    pub(super) hovered_node: Option<usize>,
     /// Valid drop targets computed at edge drag start.
     /// Contains (node_index, pin_index) pairs that are valid connection targets.
     /// Only populated during Edge/EdgeOver dragging states.
@@ -49,7 +47,6 @@ impl Default for NodeGraphState {
             selected_nodes: HashSet::new(),
             modifiers: keyboard::Modifiers::default(),
             left_mouse_down: false,
-            hovered_node: None,
             valid_drop_targets: HashSet::new(),
         }
     }

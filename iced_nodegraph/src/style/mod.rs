@@ -51,6 +51,49 @@ pub enum PinShape {
     Triangle = 3,
 }
 
+// ============================================================================
+// Status Enums for Widget-Side Styling
+// ============================================================================
+
+/// Node status for styling purposes.
+///
+/// Used by the widget to determine visual appearance based on interaction state.
+/// The widget computes the status and passes resolved style values to the shader.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NodeStatus {
+    /// Normal state, not selected
+    #[default]
+    Idle,
+    /// Node is part of the current selection
+    Selected,
+}
+
+/// Pin status for styling purposes.
+///
+/// Used by the widget to determine visual appearance based on interaction state.
+/// When ValidTarget, the widget pre-computes an animated radius for the shader.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PinStatus {
+    /// Normal state
+    #[default]
+    Idle,
+    /// Pin is a valid drop target during edge dragging
+    ValidTarget,
+}
+
+/// Edge status for styling purposes.
+///
+/// Used by the widget to determine visual appearance based on interaction state.
+/// When PendingCut, the widget sets animation_type to Pulse with red color.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EdgeStatus {
+    /// Normal state
+    #[default]
+    Idle,
+    /// Edge is pending deletion (during edge cutting)
+    PendingCut,
+}
+
 /// Style configuration for pins.
 ///
 /// Controls the rendering of connection points on nodes.
@@ -194,6 +237,25 @@ impl PinStyle {
                 shape: PinShape::Circle,
                 border_color: Some(Color::from_rgba(text.r, text.g, text.b, 0.3)),
                 border_width: 1.0,
+            }
+        }
+    }
+
+    /// Returns the scaled radius for the given status.
+    ///
+    /// When ValidTarget, returns an animated pulsing radius.
+    /// The widget calls this to pre-compute the radius before rendering.
+    ///
+    /// # Arguments
+    /// * `status` - Current pin status
+    /// * `time` - Animation time in seconds (from uniforms.time)
+    pub fn scaled_radius(&self, status: PinStatus, time: f32) -> f32 {
+        match status {
+            PinStatus::Idle => self.radius,
+            PinStatus::ValidTarget => {
+                // Pulse animation: 1.0 to 1.5 scale at 6 rad/s
+                let pulse = (time * 6.0).sin() * 0.5 + 0.5;
+                self.radius * (1.0 + pulse * 0.5)
             }
         }
     }
@@ -588,6 +650,22 @@ impl NodeStyle {
                     blur_radius: 6.0,
                     color: Color::from_rgba(0.0, 0.0, 0.0, 0.12),
                 }),
+            }
+        }
+    }
+
+    /// Returns a modified style for the given status.
+    ///
+    /// Applies selection styling when the node is selected.
+    /// The widget calls this to compute the final style before rendering.
+    pub fn for_status(&self, status: NodeStatus, selection: &SelectionStyle) -> Self {
+        match status {
+            NodeStatus::Idle => self.clone(),
+            NodeStatus::Selected => {
+                let mut s = self.clone();
+                s.border_color = selection.selected_border_color;
+                s.border_width = selection.selected_border_width;
+                s
             }
         }
     }
@@ -1566,18 +1644,23 @@ impl EdgeStyle {
             .unwrap_or(1.0)
     }
 
-    /// Returns GPU flags for this edge style.
-    /// - bit 0: has motion (animated pattern)
-    /// Note: bit 1/2/3 reserved for glow/pulse/pending_cut (set by shader pipeline)
-    /// Border rendering is controlled by border_width > 0, not by a flag.
-    pub fn flags(&self) -> u32 {
-        let mut flags = 0u32;
-        if self.has_motion() {
-            flags |= 1;
+    /// Returns a modified style for the given status.
+    ///
+    /// When PendingCut, sets the stroke color to red for visual feedback.
+    /// The widget calls this to compute the final style before rendering.
+    pub fn for_status(&self, status: EdgeStatus) -> Self {
+        match status {
+            EdgeStatus::Idle => self.clone(),
+            EdgeStatus::PendingCut => {
+                let mut s = self.clone();
+                // Set red color for pending cut feedback
+                if let Some(ref mut stroke) = s.stroke {
+                    stroke.start_color = Color::from_rgb(1.0, 0.2, 0.2);
+                    stroke.end_color = Color::from_rgb(1.0, 0.2, 0.2);
+                }
+                s
+            }
         }
-        // Note: border is NOT a flag - it's rendered when border_width > 0.0
-        // Setting bit 1 here would incorrectly trigger the GLOW effect in shader.
-        flags
     }
 
     // === Getter Methods ===
