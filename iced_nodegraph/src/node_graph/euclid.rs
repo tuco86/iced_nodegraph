@@ -1,3 +1,31 @@
+//! Type-safe coordinate space conversions.
+//!
+//! This module provides phantom types and conversion traits for working with
+//! two distinct coordinate spaces:
+//!
+//! - **Screen space** - Pixel coordinates from user input (mouse position, viewport)
+//! - **World space** - Virtual canvas coordinates where nodes exist
+//!
+//! Using the [`euclid`](https://docs.rs/euclid) crate's phantom types prevents
+//! accidental mixing of coordinate spaces at compile time.
+//!
+//! ## Type Aliases
+//!
+//! | Type | Description |
+//! |------|-------------|
+//! | [`WorldPoint`] | A point in world coordinates |
+//! | [`ScreenPoint`] | A point in screen coordinates |
+//! | [`WorldVector`] | A displacement vector in world space |
+//! | [`ScreenToWorld`] | Transform matrix from screen to world |
+//!
+//! ## Conversion Traits
+//!
+//! - [`IntoIced`] - Convert euclid types to iced types (for rendering)
+//! - [`IntoEuclid`] - Convert iced types to euclid types (from input)
+//!
+//! These custom traits are used instead of `From`/`Into` to work around
+//! orphan rules and provide symmetric, discoverable API.
+
 use euclid::{Point2D, Rect, Size2D, Transform2D, Vector2D};
 use iced::{Point, Rectangle, Size, Vector};
 

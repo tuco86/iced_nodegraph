@@ -1,3 +1,12 @@
+//! Internal state management for the node graph widget.
+//!
+//! This module contains the persistent state that lives between frames:
+//! - Camera position and zoom
+//! - Current drag operation (node, edge, selection box, etc.)
+//! - Animation timing
+//! - Selection state
+//! - Keyboard modifier tracking
+
 use super::camera::Camera2D;
 use super::euclid::WorldPoint;
 use iced::keyboard;

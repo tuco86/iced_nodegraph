@@ -1,3 +1,37 @@
+//! Pin widget for node graph connection points.
+//!
+//! This module provides the [`NodePin`] widget that wraps content and acts as
+//! a connection point for edges. Pins are placed within nodes and can be
+//! connected to other pins via dragging.
+//!
+//! ## Usage
+//!
+//! Pins are typically created using the [`pin!`] macro for convenience:
+//!
+//! ```ignore
+//! use iced_nodegraph::pin;
+//!
+//! // Simple pin with just a label
+//! pin!(Left, 0, text("Input"), Input)
+//!
+//! // Pin with data type and color
+//! pin!(Right, 1, text("Output"), Output, MyDataType, Color::from_rgb(0.2, 0.8, 0.2))
+//! ```
+//!
+//! ## Pin Properties
+//!
+//! - [`PinSide`] - Which edge of the node the pin attaches to (Left, Right, Top, Bottom)
+//! - [`PinDirection`] - Whether the pin is an input or output
+//! - Data type - Optional type identifier for connection validation
+//! - Color - Visual color of the pin indicator
+//!
+//! ## Connection Behavior
+//!
+//! When users drag from a pin, the widget tracks valid drop targets based on:
+//! - Pin direction (inputs connect to outputs)
+//! - Data type compatibility (if types are specified)
+//! - Visual feedback via pulsing animation on valid targets
+
 use crate::ids::PinId;
 use iced::{Color, Element, Event, Length, Point, Rectangle, Size};
 use iced_widget::core::{

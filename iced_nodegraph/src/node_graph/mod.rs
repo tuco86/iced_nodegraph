@@ -1,3 +1,44 @@
+//! Node graph widget and core types.
+//!
+//! This module provides the main [`NodeGraph`] widget for building interactive
+//! node-based editors. It handles rendering, user interaction, and event dispatch.
+//!
+//! ## Quick Start
+//!
+//! ```ignore
+//! use iced_nodegraph::{node_graph, PinRef};
+//!
+//! let mut ng = node_graph()
+//!     .on_connect(|from, to| Message::Connected { from, to })
+//!     .on_move(|node_id, pos| Message::NodeMoved { node_id, pos });
+//!
+//! ng.push_node(0, Point::new(100.0, 100.0), my_node_content);
+//! ng.push_edge(PinRef::new(0, 0), PinRef::new(1, 0));
+//! ```
+//!
+//! ## Architecture
+//!
+//! - [`NodeGraph`] - The main widget container
+//! - [`PinRef`] - Type-safe reference to a pin (generic over ID types)
+//! - [`NodeGraphMessage`] - Internal message type for generic ID support
+//! - [`NodeGraphEvent`] - Simplified event enum using `usize` indices
+//! - [`Camera2D`](camera::Camera2D) - Zoom and pan state management
+//!
+//! ## Event Handling
+//!
+//! The widget supports two patterns for event handling:
+//!
+//! 1. **Individual callbacks** - `on_connect()`, `on_move()`, `on_select()`, etc.
+//! 2. **Unified event handler** - `on_event()` receives all events as [`NodeGraphMessage`]
+//!
+//! ## Styling
+//!
+//! Visual appearance is controlled through:
+//! - [`graph_style()`](NodeGraph::graph_style) - Overall graph appearance
+//! - [`node_style()`](NodeGraph::node_style) - Per-status node styling
+//! - [`edge_style()`](NodeGraph::edge_style) - Per-status edge styling
+//! - [`pin_style()`](NodeGraph::pin_style) - Per-status pin styling
+
 use std::collections::HashSet;
 use std::fmt::Debug;
 use std::hash::Hash;
@@ -493,26 +534,45 @@ where
         self
     }
 
+    /// Sets a callback for when a node is moved to a new position.
+    ///
+    /// The callback receives the node ID and its new position in world coordinates.
     pub fn on_move(mut self, f: impl Fn(N, Point) -> Message + 'a) -> Self {
         self.on_move = Some(Box::new(f));
         self
     }
 
+    /// Sets a callback for when the selection changes.
+    ///
+    /// The callback receives the list of currently selected node IDs.
+    /// Fires on click-select, box-select, and Shift+click multi-select.
     pub fn on_select(mut self, f: impl Fn(Vec<N>) -> Message + 'a) -> Self {
         self.on_select = Some(Box::new(f));
         self
     }
 
+    /// Sets a callback for when the user requests to clone selected nodes (Ctrl+D).
+    ///
+    /// The callback receives the list of node IDs to clone.
+    /// The application is responsible for creating the actual clones.
     pub fn on_clone(mut self, f: impl Fn(Vec<N>) -> Message + 'a) -> Self {
         self.on_clone = Some(Box::new(f));
         self
     }
 
+    /// Sets a callback for when the user requests to delete selected nodes (Delete key).
+    ///
+    /// The callback receives the list of node IDs to delete.
+    /// The application is responsible for removing the nodes from its data model.
     pub fn on_delete(mut self, f: impl Fn(Vec<N>) -> Message + 'a) -> Self {
         self.on_delete = Some(Box::new(f));
         self
     }
 
+    /// Sets a callback for when multiple selected nodes are moved together.
+    ///
+    /// The callback receives the list of moved node IDs and the movement delta vector.
+    /// This fires instead of individual `on_move` callbacks when dragging a selection.
     pub fn on_group_move(mut self, f: impl Fn(Vec<N>, Vector) -> Message + 'a) -> Self {
         self.on_group_move = Some(Box::new(f));
         self
@@ -587,19 +647,24 @@ where
         self
     }
 
+    /// Sets the width of the node graph widget.
     pub fn width(mut self, width: impl Into<Length>) -> Self {
         self.size.width = width.into();
         self
     }
 
+    /// Sets the height of the node graph widget.
     pub fn height(mut self, height: impl Into<Length>) -> Self {
         self.size.height = height.into();
         self
     }
 
+    /// Returns the number of nodes in the graph.
     pub fn node_count(&self) -> usize {
         self.nodes.len()
     }
+
+    /// Returns the number of edges in the graph.
     pub fn edge_count(&self) -> usize {
         self.edges.len()
     }

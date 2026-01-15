@@ -1,3 +1,20 @@
+//! Widget implementation for NodeGraph.
+//!
+//! This module implements the Iced `Widget` trait for [`NodeGraph`], handling:
+//! - Layout computation for nodes and their content
+//! - Event processing (mouse, keyboard)
+//! - GPU-accelerated rendering via custom WGPU primitives
+//!
+//! ## Rendering Layers
+//!
+//! The widget renders in multiple layers for correct z-ordering:
+//! 1. Background grid
+//! 2. Edges (behind nodes)
+//! 3. Node fills and shadows
+//! 4. Node content (Iced widgets)
+//! 5. Node borders and pins
+//! 6. Selection box / cutting tool overlays
+
 use iced::{Element, Event, Length, Point, Rectangle, Size, Theme, Vector, keyboard};
 use iced_widget::core::{
     Clipboard, Layout, Shell, layout, mouse, renderer,
