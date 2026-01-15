@@ -128,17 +128,6 @@ impl FloatSliderConfig {
         Self::new("Pin Radius").range(2.0, 20.0)
     }
 
-    /// Named constructor for animation speed
-    pub fn animation_speed() -> Self {
-        Self {
-            min: 0.0,
-            max: 100.0,
-            step: 5.0,
-            label: "Speed".to_string(),
-            ..Default::default()
-        }
-    }
-
     /// Named constructor for dash length
     pub fn dash_length() -> Self {
         Self {

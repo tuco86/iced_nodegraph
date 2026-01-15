@@ -13,19 +13,17 @@ use iced::wgpu::{
 use iced_wgpu::graphics::Viewport;
 use iced_wgpu::primitive::{Pipeline, Primitive};
 
-use crate::node_graph::euclid::WorldPoint;
 use crate::style::BackgroundStyle;
 
 use super::super::pipeline::types;
 use super::super::shared::SharedNodeGraphResources;
+use super::RenderContext;
 
 /// Primitive for rendering the background grid pattern.
 #[derive(Debug, Clone)]
 pub struct GridPrimitive {
-    /// Camera zoom level
-    pub camera_zoom: f32,
-    /// Camera position in world coordinates
-    pub camera_position: WorldPoint,
+    /// Shared rendering context
+    pub context: RenderContext,
     /// Background style configuration
     pub background_style: BackgroundStyle,
 }
@@ -152,11 +150,14 @@ impl Primitive for GridPrimitive {
         // Build uniforms (global data only)
         let uniforms = types::Uniforms {
             os_scale_factor: scale,
-            camera_zoom: self.camera_zoom,
-            camera_position: glam::Vec2::new(self.camera_position.x, self.camera_position.y),
+            camera_zoom: self.context.camera_zoom,
+            camera_position: glam::Vec2::new(
+                self.context.camera_position.x,
+                self.context.camera_position.y,
+            ),
             cursor_position: glam::Vec2::ZERO,
             num_nodes: 0,
-            time: 0.0,
+            time: self.context.time,
             overlay_type: 0,
             overlay_start: glam::Vec2::ZERO,
             overlay_color: glam::Vec4::ZERO,

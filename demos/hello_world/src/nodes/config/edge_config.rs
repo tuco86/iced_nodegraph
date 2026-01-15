@@ -8,8 +8,8 @@ use iced::{
     widget::{column, container, row, text},
 };
 use iced_nodegraph::{
-    BorderConfig, DashCap, DashMotion, EdgeConfig, EdgeCurve, EdgeShadowConfig, MotionDirection,
-    NodeContentStyle, StrokeConfig, StrokePattern, pin,
+    BorderConfig, DashCap, EdgeConfig, EdgeCurve, EdgeShadowConfig, NodeContentStyle, StrokeConfig,
+    StrokePattern, pin,
 };
 
 use crate::nodes::{colors, node_title_bar, pins};
@@ -45,8 +45,7 @@ pub struct EdgeConfigInputs {
     pub gap_length: Option<f32>,
     pub pattern_angle: Option<f32>, // Angle in radians for Arrowed/Angled patterns
     pub dot_radius: Option<f32>,    // Dot radius for Dotted pattern
-    /// Animation settings
-    pub animated: Option<bool>,
+    /// Animation speed (0.0 = no animation, > 0.0 = animated)
     pub animation_speed: Option<f32>,
     /// Border settings (outline with gap around stroke)
     pub border_enabled: Option<bool>,
@@ -74,8 +73,7 @@ impl EdgeConfigInputs {
         let has_stroke_overrides = self.start_color.is_some()
             || self.end_color.is_some()
             || self.thickness.is_some()
-            || self.pattern_type.is_some()
-            || self.animated.is_some();
+            || self.pattern_type.is_some();
 
         // Set dash_cap to Angled for PatternType::Angled
         let dash_cap = if self.pattern_type == Some(PatternType::Angled) {
@@ -156,19 +154,18 @@ impl EdgeConfigInputs {
 
     /// Builds the StrokePattern from individual inputs
     fn build_pattern(&self, parent_stroke: &StrokeConfig) -> Option<StrokePattern> {
+        use iced_nodegraph::DashMotion;
+
         let pattern_type = self.pattern_type.unwrap_or(PatternType::Solid);
         let dash = self.dash_length.unwrap_or(12.0);
         let gap = self.gap_length.unwrap_or(6.0);
         let angle = self.pattern_angle.unwrap_or(std::f32::consts::FRAC_PI_4); // 45 degrees default
         let dot_radius = self.dot_radius.unwrap_or(2.0);
-        let animated = self.animated.unwrap_or(false);
-        let speed = self.animation_speed.unwrap_or(30.0);
+        let speed = self.animation_speed.unwrap_or(0.0);
 
-        let motion = if animated {
-            Some(DashMotion {
-                speed,
-                direction: MotionDirection::Forward,
-            })
+        // Animation enabled if speed != 0.0 (negative = reverse)
+        let motion = if speed != 0.0 {
+            Some(DashMotion::new(speed))
         } else {
             None
         };
@@ -475,28 +472,7 @@ where
     ]
     .align_y(iced::Alignment::Center);
 
-    // Animated toggle row
-    let animated_label = match inputs.animated {
-        Some(true) => "yes",
-        Some(false) => "no",
-        None => "--",
-    };
-    let animated_row = row![
-        pin!(
-            Left,
-            pins::config::ANIMATED,
-            text("animated").size(10),
-            Input,
-            pins::Bool,
-            colors::PIN_BOOL
-        ),
-        container(text(animated_label).size(9))
-            .width(Length::Fill)
-            .align_x(Horizontal::Right),
-    ]
-    .align_y(iced::Alignment::Center);
-
-    // Animation speed row
+    // Animation speed row (0 = off, > 0 = animated)
     let speed_row = row![
         pin!(
             Left,
@@ -510,7 +486,7 @@ where
             text(
                 inputs
                     .animation_speed
-                    .map_or("--".to_string(), |v| format!("{:.0}", v))
+                    .map_or("0".to_string(), |v| format!("{:.0}", v))
             )
             .size(9)
         )
@@ -730,8 +706,6 @@ where
         dash_row,
         gap_row,
         angle_row,
-        make_separator(),
-        animated_row,
         speed_row,
         make_separator(),
         border_enabled_row,

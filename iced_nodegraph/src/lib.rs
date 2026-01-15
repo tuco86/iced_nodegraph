@@ -1,3 +1,8 @@
+// Pre-existing warnings allowed at crate level (not part of current refactoring)
+#![allow(clippy::type_complexity)]
+#![allow(clippy::borrowed_box)]
+#![allow(clippy::should_implement_trait)]
+
 //! # iced_nodegraph
 //!
 //! A high-performance node graph editor widget for the [Iced](https://github.com/iced-rs/iced) GUI framework,
@@ -215,15 +220,18 @@ pub use style::{
     EdgeShadowConfig,
     EdgeShadowStyle,
     EdgeStyle,
+    // Style function types (Iced Toggler pattern)
+    EdgeStyleFn,
     GraphConfig,
     GraphStyle,
-    MotionDirection,
     NodeConfig,
     NodeStyle,
+    NodeStyleFn,
     PinConfig,
     PinShape,
     PinStatus,
     PinStyle,
+    PinStyleFn,
     STANDARD_THEMES,
     // Status enums for widget-side styling
     EdgeStatus,

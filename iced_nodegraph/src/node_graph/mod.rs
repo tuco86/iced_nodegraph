@@ -7,7 +7,9 @@ use iced::{Color, Length, Point, Size, Vector};
 
 use crate::ids::{EdgeId, IdMaps, NodeId, PinId};
 use crate::node_pin::PinReference;
-use crate::style::{EdgeConfig, GraphStyle, NodeConfig, PinConfig};
+use crate::style::{
+    EdgeConfig, EdgeStyleFn, GraphStyle, NodeConfig, NodeStyleFn, PinConfig, PinStyleFn,
+};
 
 pub mod camera;
 pub(crate) mod effects;
@@ -231,6 +233,22 @@ pub struct NodeGraph<
     /// Global edge style defaults.
     /// Applied to all edges (including dragging edge) unless overridden per-edge.
     pub(super) edge_defaults: Option<EdgeConfig>,
+    /// Style callback for edges (Iced Toggler pattern).
+    /// When set, called with EdgeStatus to get the resolved style.
+    /// Takes precedence over edge_defaults.
+    pub(super) edge_style_fn: Option<EdgeStyleFn<'a, Theme>>,
+    /// Style callback for nodes (Iced Toggler pattern).
+    /// When set, called with NodeStatus to get the resolved style.
+    pub(super) node_style_fn: Option<NodeStyleFn<'a, Theme>>,
+    /// Style callback for pins (Iced Toggler pattern).
+    /// When set, called with PinStatus to get the resolved style.
+    pub(super) pin_style_fn: Option<PinStyleFn<'a, Theme>>,
+    /// Style callback for box selection overlay.
+    /// Returns (fill_color, border_color).
+    pub(super) box_select_style_fn: Option<Box<dyn Fn(&Theme) -> (iced::Color, iced::Color) + 'a>>,
+    /// Style callback for edge cutting tool overlay.
+    /// Returns the line color.
+    pub(super) cutting_tool_style_fn: Option<Box<dyn Fn(&Theme) -> iced::Color + 'a>>,
     /// Phantom data for unused type parameter (E is only used in callbacks)
     _phantom: PhantomData<E>,
 }
@@ -265,6 +283,11 @@ where
             on_camera_change: None,
             pin_defaults: None,
             edge_defaults: None,
+            edge_style_fn: None,
+            node_style_fn: None,
+            pin_style_fn: None,
+            box_select_style_fn: None,
+            cutting_tool_style_fn: None,
             _phantom: PhantomData,
         }
     }
@@ -351,6 +374,110 @@ where
     /// Per-edge styles set via `push_edge_styled()` take precedence.
     pub fn edge_defaults(mut self, config: EdgeConfig) -> Self {
         self.edge_defaults = Some(config);
+        self
+    }
+
+    /// Sets a style callback for edges (Iced Toggler pattern).
+    ///
+    /// The callback receives the theme, edge status, and the resolved base style.
+    /// The base style comes from per-edge styling (via `push_edge_styled()`) or `edge_defaults`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// node_graph()
+    ///     .edge_style(|_theme, status, base| {
+    ///         match status {
+    ///             EdgeStatus::PendingCut => base.stroke(StrokeStyle::new().color(Color::RED)),
+    ///             EdgeStatus::Idle => base,
+    ///         }
+    ///     })
+    /// ```
+    pub fn edge_style(
+        mut self,
+        f: impl Fn(&Theme, crate::style::EdgeStatus, crate::style::EdgeStyle) -> crate::style::EdgeStyle + 'a,
+    ) -> Self {
+        self.edge_style_fn = Some(Box::new(f));
+        self
+    }
+
+    /// Sets a style callback for nodes (Iced Toggler pattern).
+    ///
+    /// The callback receives the theme, node status, and the resolved base style.
+    /// The base style comes from per-node styling (via `push_node_styled()`) or theme defaults.
+    ///
+    /// # Example
+    /// ```ignore
+    /// node_graph()
+    ///     .node_style(|_theme, status, base| {
+    ///         match status {
+    ///             NodeStatus::Selected => base
+    ///                 .border_color(Color::from_rgb(0.3, 0.6, 1.0))
+    ///                 .border_width(2.5),
+    ///             NodeStatus::Idle => base,
+    ///         }
+    ///     })
+    /// ```
+    pub fn node_style(
+        mut self,
+        f: impl Fn(&Theme, crate::style::NodeStatus, crate::style::NodeStyle) -> crate::style::NodeStyle + 'a,
+    ) -> Self {
+        self.node_style_fn = Some(Box::new(f));
+        self
+    }
+
+    /// Sets a style callback for pins (Iced Toggler pattern).
+    ///
+    /// The callback receives the theme, pin status, and the resolved base style.
+    /// The base style comes from `pin_defaults` or theme defaults.
+    ///
+    /// # Example
+    /// ```ignore
+    /// node_graph()
+    ///     .pin_style(|_theme, status, base| {
+    ///         match status {
+    ///             PinStatus::ValidTarget => base.radius(8.0),
+    ///             PinStatus::Idle => base,
+    ///         }
+    ///     })
+    /// ```
+    pub fn pin_style(
+        mut self,
+        f: impl Fn(&Theme, crate::style::PinStatus, crate::style::PinStyle) -> crate::style::PinStyle + 'a,
+    ) -> Self {
+        self.pin_style_fn = Some(Box::new(f));
+        self
+    }
+
+    /// Sets a style callback for the box selection overlay.
+    ///
+    /// The callback receives the theme and returns (fill_color, border_color).
+    ///
+    /// # Example
+    /// ```ignore
+    /// node_graph()
+    ///     .box_select_style(|theme| {
+    ///         (Color::from_rgba(0.3, 0.6, 1.0, 0.2), Color::from_rgb(0.3, 0.6, 1.0))
+    ///     })
+    /// ```
+    pub fn box_select_style(
+        mut self,
+        f: impl Fn(&Theme) -> (iced::Color, iced::Color) + 'a,
+    ) -> Self {
+        self.box_select_style_fn = Some(Box::new(f));
+        self
+    }
+
+    /// Sets a style callback for the edge cutting tool overlay.
+    ///
+    /// The callback receives the theme and returns the line color.
+    ///
+    /// # Example
+    /// ```ignore
+    /// node_graph()
+    ///     .cutting_tool_style(|theme| Color::from_rgb(1.0, 0.3, 0.3))
+    /// ```
+    pub fn cutting_tool_style(mut self, f: impl Fn(&Theme) -> iced::Color + 'a) -> Self {
+        self.cutting_tool_style_fn = Some(Box::new(f));
         self
     }
 

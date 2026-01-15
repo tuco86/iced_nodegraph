@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 //! State persistence for the hello_world demo.
 //!
 //! Saves graph state to OS-appropriate directories:
@@ -163,7 +165,6 @@ pub fn to_static_pin_label(label: &str) -> &'static str {
         s if s == config::DASH => config::DASH,
         s if s == config::GAP => config::GAP,
         s if s == config::ANGLE => config::ANGLE,
-        s if s == config::ANIMATED => config::ANIMATED,
         s if s == config::SPEED => config::SPEED,
         // Border config pins
         s if s == config::BORDER => config::BORDER,

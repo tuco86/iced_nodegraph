@@ -1,3 +1,6 @@
+// Pre-existing warnings allowed (not part of StyleFn refactoring)
+#![allow(clippy::large_enum_variant)]
+
 //! # Hello World Demo
 //!
 //! Basic node graph with command palette (Cmd/Ctrl+Space) for adding nodes and changing themes.
@@ -998,8 +1001,6 @@ impl Application {
                 } else if *pin_label == pin::ANGLE {
                     // Convert degrees from slider to radians for pattern angle
                     inputs.pattern_angle = value.as_float().map(|deg| deg.to_radians());
-                } else if *pin_label == pin::ANIMATED {
-                    inputs.animated = value.as_bool();
                 } else if *pin_label == pin::SPEED {
                     inputs.animation_speed = value.as_float();
                 // Border settings
@@ -1837,7 +1838,40 @@ impl Application {
             .on_delete(ApplicationMessage::DeleteNodes)
             .on_group_move(|node_ids, delta| ApplicationMessage::GroupMoved { node_ids, delta })
             .on_camera_change(|position, zoom| ApplicationMessage::CameraChanged { position, zoom })
-            .pin_defaults(pin_defaults);
+            .pin_defaults(pin_defaults)
+            // Style callbacks - user controls appearance based on status
+            // The base style comes from per-element config or theme defaults
+            .node_style(|_theme, status, base| {
+                use iced_nodegraph::NodeStatus;
+                match status {
+                    NodeStatus::Selected => base
+                        .border_color(iced::Color::from_rgb(0.3, 0.6, 1.0))
+                        .border_width(2.5),
+                    NodeStatus::Idle => base,
+                }
+            })
+            .pin_style(|_theme, _status, base| {
+                // Pin animation (pulsing) is handled internally via scaled_radius()
+                base
+            })
+            .edge_style(|_theme, status, base| {
+                use iced_nodegraph::{EdgeStatus, StrokeStyle};
+                match status {
+                    EdgeStatus::PendingCut => {
+                        // Override stroke color to red for edges being cut
+                        let cut_stroke = StrokeStyle::new().color(iced::Color::from_rgb(1.0, 0.3, 0.3));
+                        base.stroke(cut_stroke)
+                    }
+                    EdgeStatus::Idle => base,
+                }
+            })
+            .box_select_style(|_theme| {
+                (
+                    iced::Color::from_rgba(0.3, 0.6, 1.0, 0.15), // fill
+                    iced::Color::from_rgb(0.3, 0.6, 1.0),        // border
+                )
+            })
+            .cutting_tool_style(|_theme| iced::Color::from_rgb(1.0, 0.3, 0.3));
 
         // Add all nodes from state (in order)
         for node_id in &self.node_order {

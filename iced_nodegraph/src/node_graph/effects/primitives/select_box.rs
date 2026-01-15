@@ -17,20 +17,19 @@ use crate::node_graph::euclid::WorldPoint;
 
 use super::super::pipeline::types;
 use super::super::shared::SharedNodeGraphResources;
+use super::RenderContext;
 
 /// Primitive for rendering the box selection rectangle.
 #[derive(Debug, Clone)]
 pub struct BoxSelectPrimitive {
+    /// Shared rendering context
+    pub context: RenderContext,
     /// Start corner of selection box (in world coordinates)
     pub start: WorldPoint,
     /// End corner of selection box (in world coordinates)
     pub end: WorldPoint,
     /// Selection box color (border and fill)
     pub color: Color,
-    /// Camera zoom level
-    pub camera_zoom: f32,
-    /// Camera position in world coordinates
-    pub camera_position: WorldPoint,
 }
 
 /// Pipeline for BoxSelectPrimitive rendering.
@@ -151,11 +150,14 @@ impl Primitive for BoxSelectPrimitive {
 
         let uniforms = types::Uniforms {
             os_scale_factor: scale,
-            camera_zoom: self.camera_zoom,
-            camera_position: glam::Vec2::new(self.camera_position.x, self.camera_position.y),
+            camera_zoom: self.context.camera_zoom,
+            camera_position: glam::Vec2::new(
+                self.context.camera_position.x,
+                self.context.camera_position.y,
+            ),
             cursor_position: glam::Vec2::new(self.end.x, self.end.y),
             num_nodes: 0,
-            time: 0.0,
+            time: self.context.time,
             overlay_type: 5, // BoxSelect
             overlay_start: glam::Vec2::new(self.start.x, self.start.y),
             overlay_color: glam::Vec4::new(

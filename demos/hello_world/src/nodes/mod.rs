@@ -1,3 +1,5 @@
+#![allow(clippy::large_enum_variant)]
+
 mod bool_toggle;
 mod calendar;
 mod color_picker;

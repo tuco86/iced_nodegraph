@@ -145,10 +145,7 @@ pub mod config {
     /// Angle input pin
     pub const ANGLE: &str = "angle";
 
-    /// Animation toggle input pin
-    pub const ANIMATED: &str = "animated";
-
-    /// Animation speed input pin
+    /// Animation speed input pin (0 = off, > 0 = animated)
     pub const SPEED: &str = "speed";
 
     // === Border Config Pins ===

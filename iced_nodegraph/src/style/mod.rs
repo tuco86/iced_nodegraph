@@ -94,6 +94,48 @@ pub enum EdgeStatus {
     PendingCut,
 }
 
+// ============================================================================
+// Style Function Types (Iced Toggler Pattern)
+// ============================================================================
+
+/// Style callback for nodes.
+///
+/// Receives the current theme, node status, and the resolved base style.
+/// The base style comes from per-node styling or theme defaults.
+///
+/// # Example
+/// ```ignore
+/// let style_fn: NodeStyleFn<'_, Theme> = Box::new(|_theme, status, base| {
+///     match status {
+///         NodeStatus::Selected => base.border_color(Color::from_rgb(0.3, 0.5, 1.0)),
+///         NodeStatus::Idle => base,
+///     }
+/// });
+/// ```
+pub type NodeStyleFn<'a, Theme> = Box<dyn Fn(&Theme, NodeStatus, NodeStyle) -> NodeStyle + 'a>;
+
+/// Style callback for pins.
+///
+/// Receives the current theme, pin status, and the resolved base style.
+/// The base style comes from per-pin styling or theme defaults.
+pub type PinStyleFn<'a, Theme> = Box<dyn Fn(&Theme, PinStatus, PinStyle) -> PinStyle + 'a>;
+
+/// Style callback for edges.
+///
+/// Receives the current theme, edge status, and the resolved base style.
+/// The base style comes from per-edge styling (via push_edge_styled) or theme defaults.
+///
+/// # Example
+/// ```ignore
+/// let style_fn: EdgeStyleFn<'_, Theme> = Box::new(|_theme, status, base| {
+///     match status {
+///         EdgeStatus::PendingCut => base.stroke(StrokeStyle::new().color(Color::RED)),
+///         EdgeStatus::Idle => base,
+///     }
+/// });
+/// ```
+pub type EdgeStyleFn<'a, Theme> = Box<dyn Fn(&Theme, EdgeStatus, EdgeStyle) -> EdgeStyle + 'a>;
+
 /// Style configuration for pins.
 ///
 /// Controls the rendering of connection points on nodes.
@@ -784,67 +826,22 @@ impl DashCap {
 // Dash Motion
 // ============================================================================
 
-/// Direction of dash pattern motion along the edge.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum MotionDirection {
-    /// Motion from source to target pin (default)
-    #[default]
-    Forward,
-    /// Motion from target to source pin
-    Backward,
-}
-
-impl MotionDirection {
-    /// Returns the sign multiplier for motion calculations.
-    pub fn sign(&self) -> f32 {
-        match self {
-            MotionDirection::Forward => 1.0,
-            MotionDirection::Backward => -1.0,
-        }
-    }
-}
-
 /// Animation configuration for dash pattern motion.
 ///
 /// Controls how dashed/dotted patterns animate along the edge.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Positive speed = forward (source to target), negative = backward.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct DashMotion {
-    /// Speed in world-space units per second
+    /// Speed in world-space units per second.
+    /// Positive = forward (source to target), negative = backward.
     pub speed: f32,
-    /// Direction of motion along the edge
-    pub direction: MotionDirection,
-}
-
-impl Default for DashMotion {
-    fn default() -> Self {
-        Self {
-            speed: 30.0,
-            direction: MotionDirection::Forward,
-        }
-    }
 }
 
 impl DashMotion {
-    /// Creates a new motion with forward direction.
-    pub fn forward(speed: f32) -> Self {
-        Self {
-            speed,
-            direction: MotionDirection::Forward,
-        }
-    }
-
-    /// Creates a new motion with backward direction.
-    pub fn backward(speed: f32) -> Self {
-        Self {
-            speed,
-            direction: MotionDirection::Backward,
-        }
-    }
-
-    /// Sets the direction of motion.
-    pub fn with_direction(mut self, direction: MotionDirection) -> Self {
-        self.direction = direction;
-        self
+    /// Creates a new motion with the given speed.
+    /// Positive = forward, negative = backward.
+    pub fn new(speed: f32) -> Self {
+        Self { speed }
     }
 }
 
@@ -995,29 +992,16 @@ impl StrokePattern {
             dash: 6.0,
             gap: 4.0,
             phase: 0.0,
-            motion: Some(DashMotion::forward(30.0)),
+            motion: Some(DashMotion::new(30.0)),
         }
     }
 
     /// Adds motion animation to the pattern.
+    /// Positive speed = forward (source to target), negative = backward.
     pub fn with_motion(mut self, speed: f32) -> Self {
-        let motion = DashMotion::forward(speed);
+        let motion = DashMotion::new(speed);
         match &mut self {
             Self::Solid => {} // No effect on solid
-            Self::Dashed { motion: m, .. } => *m = Some(motion),
-            Self::Arrowed { motion: m, .. } => *m = Some(motion),
-            Self::Dotted { motion: m, .. } => *m = Some(motion),
-            Self::DashDotted { motion: m, .. } => *m = Some(motion),
-            Self::Custom { motion: m, .. } => *m = Some(motion),
-        }
-        self
-    }
-
-    /// Adds motion with specific direction.
-    pub fn with_motion_dir(mut self, speed: f32, direction: MotionDirection) -> Self {
-        let motion = DashMotion { speed, direction };
-        match &mut self {
-            Self::Solid => {}
             Self::Dashed { motion: m, .. } => *m = Some(motion),
             Self::Arrowed { motion: m, .. } => *m = Some(motion),
             Self::Dotted { motion: m, .. } => *m = Some(motion),
@@ -1640,7 +1624,7 @@ impl EdgeStyle {
         self.stroke
             .as_ref()
             .and_then(|s| s.pattern.motion())
-            .map(|m| m.direction.sign())
+            .map(|m| if m.speed >= 0.0 { 1.0 } else { -1.0 })
             .unwrap_or(1.0)
     }
 

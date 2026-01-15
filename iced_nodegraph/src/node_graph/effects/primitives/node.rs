@@ -23,6 +23,7 @@ use crate::style::PinShape;
 
 use super::super::pipeline::{buffer, types};
 use super::super::shared::SharedNodeGraphResources;
+use super::RenderContext;
 
 /// Layer for two-phase node rendering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +58,8 @@ pub struct PinRenderData {
 /// Primitive for rendering a single node.
 #[derive(Debug, Clone)]
 pub struct NodePrimitive {
+    /// Shared rendering context
+    pub context: RenderContext,
     /// Which layer to render (Background or Foreground)
     pub layer: NodeLayer,
     /// Node position in world coordinates
@@ -85,12 +88,6 @@ pub struct NodePrimitive {
     pub glow_radius: f32,
     /// Node's pins
     pub pins: Vec<PinRenderData>,
-    /// Camera zoom level
-    pub camera_zoom: f32,
-    /// Camera position
-    pub camera_position: WorldPoint,
-    /// Time for animations
-    pub time: f32,
 }
 
 /// Pipeline for NodePrimitive rendering.
@@ -322,11 +319,14 @@ impl Primitive for NodePrimitive {
         let scale = viewport.scale_factor();
         let uniforms = types::Uniforms {
             os_scale_factor: scale,
-            camera_zoom: self.camera_zoom,
-            camera_position: glam::Vec2::new(self.camera_position.x, self.camera_position.y),
+            camera_zoom: self.context.camera_zoom,
+            camera_position: glam::Vec2::new(
+                self.context.camera_position.x,
+                self.context.camera_position.y,
+            ),
             cursor_position: glam::Vec2::ZERO,
             num_nodes: pipeline.nodes.len() as u32,
-            time: self.time,
+            time: self.context.time,
             overlay_type: 0,
             overlay_start: glam::Vec2::ZERO,
             overlay_color: glam::Vec4::ZERO,

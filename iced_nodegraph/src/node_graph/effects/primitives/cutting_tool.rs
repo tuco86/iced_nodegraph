@@ -17,20 +17,19 @@ use crate::node_graph::euclid::WorldPoint;
 
 use super::super::pipeline::types;
 use super::super::shared::SharedNodeGraphResources;
+use super::RenderContext;
 
 /// Primitive for rendering the edge cutting line.
 #[derive(Debug, Clone)]
 pub struct CuttingToolPrimitive {
+    /// Shared rendering context
+    pub context: RenderContext,
     /// Start point of cutting line (in world coordinates)
     pub start: WorldPoint,
     /// End point of cutting line (in world coordinates)
     pub end: WorldPoint,
     /// Cutting line color
     pub color: Color,
-    /// Camera zoom level
-    pub camera_zoom: f32,
-    /// Camera position in world coordinates
-    pub camera_position: WorldPoint,
 }
 
 /// Pipeline for CuttingToolPrimitive rendering.
@@ -151,11 +150,14 @@ impl Primitive for CuttingToolPrimitive {
 
         let uniforms = types::Uniforms {
             os_scale_factor: scale,
-            camera_zoom: self.camera_zoom,
-            camera_position: glam::Vec2::new(self.camera_position.x, self.camera_position.y),
+            camera_zoom: self.context.camera_zoom,
+            camera_position: glam::Vec2::new(
+                self.context.camera_position.x,
+                self.context.camera_position.y,
+            ),
             cursor_position: glam::Vec2::new(self.end.x, self.end.y),
             num_nodes: 0,
-            time: 0.0,
+            time: self.context.time,
             overlay_type: 7, // EdgeCutting
             overlay_start: glam::Vec2::new(self.start.x, self.start.y),
             overlay_color: glam::Vec4::new(

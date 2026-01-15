@@ -9,8 +9,7 @@ use web_time::Instant;
 use super::{
     DragInfo, NodeGraph, NodeGraphMessage,
     effects::{
-        self, EdgeRenderData, EdgesPrimitive, GridPrimitive, NodeLayer, NodePrimitive,
-        PinRenderData,
+        self, EdgePrimitive, GridPrimitive, NodeLayer, NodePrimitive, PinRenderData, RenderContext,
     },
     euclid::{IntoIced, WorldVector},
     state::{Dragging, NodeGraphState},
@@ -20,7 +19,7 @@ use crate::{
     ids::{EdgeId, NodeId, PinId},
     node_graph::euclid::{IntoEuclid, ScreenPoint, WorldPoint},
     node_pin::NodePinState,
-    style::{EdgeConfig, EdgeStyle, GraphStyle, NodeConfig, NodeStyle, PinConfig, PinStatus, PinStyle},
+    style::{EdgeConfig, EdgeStatus, EdgeStyle, GraphStyle, NodeConfig, NodeStatus, NodeStyle, PinConfig, PinStatus, PinStyle},
 };
 
 // Click detection threshold (in world-space pixels)
@@ -164,16 +163,28 @@ where
             }
         };
 
+        // Create RenderContext (will be finalized after camera panning is applied)
+        let mut render_context = RenderContext {
+            camera_zoom: state.camera.zoom(),
+            camera_position: state.camera.position(),
+            time,
+        };
+
         // Handle panning when dragging the graph
         if let Dragging::Graph(origin) = state.dragging
-            && let Some(cursor_position) = cursor.position() {
-                let cursor_position: ScreenPoint = cursor_position.into_euclid();
-                let cursor_position: WorldPoint = state
-                    .camera
-                    .screen_to_world()
-                    .transform_point(cursor_position);
-                camera = camera.move_by(cursor_position - origin);
-            }
+            && let Some(cursor_position) = cursor.position()
+        {
+            let cursor_position: ScreenPoint = cursor_position.into_euclid();
+            let cursor_position: WorldPoint = state
+                .camera
+                .screen_to_world()
+                .transform_point(cursor_position);
+            camera = camera.move_by(cursor_position - origin);
+        }
+
+        // Update render context with final camera state
+        render_context.camera_zoom = camera.zoom();
+        render_context.camera_position = camera.position();
 
         // Resolve styles
         let resolved_graph = resolve_graph_style(self.graph_style.as_ref(), theme);
@@ -181,14 +192,6 @@ where
         let _resolved_edge_defaults = EdgeStyle::from_theme(theme);
 
         let selection_style = &resolved_graph.selection_style;
-        let selection_border_color = selection_style.selected_border_color;
-        let selection_border_width = selection_style.selected_border_width;
-        let selected_edge_color = glam::vec4(
-            selection_border_color.r,
-            selection_border_color.g,
-            selection_border_color.b,
-            selection_border_color.a,
-        );
 
         // Check if we're edge dragging
         let is_edge_dragging = matches!(
@@ -203,8 +206,7 @@ where
             renderer.draw_primitive(
                 layout.bounds(),
                 GridPrimitive {
-                    camera_zoom: camera.zoom(),
-                    camera_position: camera.position(),
+                    context: render_context,
                     background_style: resolved_graph.background.clone(),
                 },
             );
@@ -241,19 +243,39 @@ where
             offset
         };
 
-        let static_edges: Vec<EdgeRenderData> = self
-            .edges
-            .iter()
-            .filter_map(|(from, to, edge_config)| {
+        // ========================================
+        // Layer 2: Edges (behind nodes)
+        // ========================================
+        renderer.with_layer(layout.bounds(), |renderer| {
+            // Extract pending_cuts if in EdgeCutting mode
+            let pending_cuts = match &state.dragging {
+                Dragging::EdgeCutting { pending_cuts, .. } => Some(pending_cuts),
+                _ => None,
+            };
+
+            // Render static edges
+            for (edge_idx, (from, to, edge_config)) in self.edges.iter().enumerate() {
                 // Resolve node IDs to indices
-                let from_node_idx = self.id_maps.nodes.index(&from.node_id)?;
-                let to_node_idx = self.id_maps.nodes.index(&to.node_id)?;
+                let Some(from_node_idx) = self.id_maps.nodes.index(&from.node_id) else {
+                    continue;
+                };
+                let Some(to_node_idx) = self.id_maps.nodes.index(&to.node_id) else {
+                    continue;
+                };
 
                 // Get tree/layout for each node
-                let from_node_tree = tree.children.get(from_node_idx)?;
-                let from_node_layout = layout.children().nth(from_node_idx)?;
-                let to_node_tree = tree.children.get(to_node_idx)?;
-                let to_node_layout = layout.children().nth(to_node_idx)?;
+                let Some(from_node_tree) = tree.children.get(from_node_idx) else {
+                    continue;
+                };
+                let Some(from_node_layout) = layout.children().nth(from_node_idx) else {
+                    continue;
+                };
+                let Some(to_node_tree) = tree.children.get(to_node_idx) else {
+                    continue;
+                };
+                let Some(to_node_layout) = layout.children().nth(to_node_idx) else {
+                    continue;
+                };
 
                 // Compute drag offsets for both nodes
                 let from_offset = compute_node_offset(from_node_idx);
@@ -262,83 +284,102 @@ where
                 // Find pins by matching pin_id hash
                 let from_pin_hash = compute_pin_hash(&from.pin_id);
                 let from_pins = find_pins(from_node_tree, from_node_layout);
-                let (_, from_pin_state, (from_pin_pos, _)) = from_pins
+                let Some((_, from_pin_state, (from_pin_pos, _))) = from_pins
                     .iter()
-                    .find(|(_, state, _)| state.pin_id_hash == from_pin_hash)?;
+                    .find(|(_, state, _)| state.pin_id_hash == from_pin_hash)
+                else {
+                    continue;
+                };
 
                 let to_pin_hash = compute_pin_hash(&to.pin_id);
                 let to_pins = find_pins(to_node_tree, to_node_layout);
-                let (_, to_pin_state, (to_pin_pos, _)) = to_pins
+                let Some((_, to_pin_state, (to_pin_pos, _))) = to_pins
                     .iter()
-                    .find(|(_, state, _)| state.pin_id_hash == to_pin_hash)?;
-
-                let is_selected = state.selected_nodes.contains(&from_node_idx)
-                    && state.selected_nodes.contains(&to_node_idx);
+                    .find(|(_, state, _)| state.pin_id_hash == to_pin_hash)
+                else {
+                    continue;
+                };
 
                 // Apply drag offsets to pin positions
                 let start_pos = (from_pin_pos.into_euclid().to_vector() + from_offset).to_point();
                 let end_pos = (to_pin_pos.into_euclid().to_vector() + to_offset).to_point();
 
-                Some(EdgeRenderData {
-                    start_pos,
-                    end_pos,
-                    start_side: from_pin_state.side.into(),
-                    end_side: to_pin_state.side.into(),
-                    start_direction: from_pin_state.direction,
-                    end_direction: to_pin_state.direction,
-                    style: resolve_edge_style(edge_config, theme),
-                    is_selected,
-                    is_pending_cut: false,
-                    start_pin_color: from_pin_state.color,
-                    end_pin_color: to_pin_state.color,
-                })
-            })
-            .collect();
+                // Determine edge status (PendingCut if in cutting mode and intersecting)
+                let edge_status = if pending_cuts.is_some_and(|cuts| cuts.contains(&edge_idx)) {
+                    EdgeStatus::PendingCut
+                } else {
+                    EdgeStatus::Idle
+                };
 
-        // Add dragging edge if actively dragging (but not when snapped - EdgeOver)
-        let mut all_edges = static_edges;
-        if let Dragging::Edge(from_node_idx, from_pin_idx, _) = &state.dragging
-            && let Some(cursor_pos) = cursor.position() {
-                // Get source pin info
-                if let (Some(from_tree), Some(from_layout)) = (
+                // Resolve base style from config, then apply style_fn for status-based modifications
+                let base_style = resolve_edge_style(edge_config, theme);
+                let edge_style = if let Some(ref style_fn) = self.edge_style_fn {
+                    style_fn(theme, edge_status, base_style)
+                } else {
+                    base_style
+                };
+
+                renderer.draw_primitive(
+                    layout.bounds(),
+                    EdgePrimitive {
+                        context: render_context,
+                        start_pos,
+                        end_pos,
+                        start_side: from_pin_state.side.into(),
+                        end_side: to_pin_state.side.into(),
+                        start_direction: from_pin_state.direction,
+                        end_direction: to_pin_state.direction,
+                        style: edge_style,
+                        start_pin_color: from_pin_state.color,
+                        end_pin_color: to_pin_state.color,
+                    },
+                );
+            }
+
+            // Render dragging edge if actively dragging (but not when snapped - EdgeOver)
+            if let Dragging::Edge(from_node_idx, from_pin_idx, _) = &state.dragging
+                && let Some(cursor_pos) = cursor.position()
+                && let (Some(from_tree), Some(from_layout)) = (
                     tree.children.get(*from_node_idx),
                     layout.children().nth(*from_node_idx),
-                ) {
-                    let from_pins = find_pins(from_tree, from_layout);
-                    if let Some((_, from_pin_state, (from_pin_pos, _))) =
-                        from_pins.get(*from_pin_idx)
-                    {
-                        // Apply drag offset to source pin
-                        let from_offset = compute_node_offset(*from_node_idx);
-                        let start_pos =
-                            (from_pin_pos.into_euclid().to_vector() + from_offset).to_point();
+                )
+            {
+                let from_pins = find_pins(from_tree, from_layout);
+                if let Some((_, from_pin_state, (from_pin_pos, _))) = from_pins.get(*from_pin_idx) {
+                    // Apply drag offset to source pin
+                    let from_offset = compute_node_offset(*from_node_idx);
+                    let start_pos =
+                        (from_pin_pos.into_euclid().to_vector() + from_offset).to_point();
 
-                        // End position is cursor in world coordinates
-                        let end_pos: WorldPoint = camera
-                            .screen_to_world()
-                            .transform_point(cursor_pos.into_euclid());
+                    // End position is cursor in world coordinates
+                    let end_pos: WorldPoint = camera
+                        .screen_to_world()
+                        .transform_point(cursor_pos.into_euclid());
 
-                        // Use global edge_defaults if set, otherwise fall back to EdgeConfig::default()
-                        let drag_edge_config = self.edge_defaults.clone().unwrap_or_default();
-                        let drag_edge_style = resolve_edge_style(&drag_edge_config, theme);
+                    // Use global edge_defaults if set, otherwise fall back to EdgeConfig::default()
+                    let drag_edge_config = self.edge_defaults.clone().unwrap_or_default();
+                    let drag_edge_style = resolve_edge_style(&drag_edge_config, theme);
 
-                        // Compute opposite side for end
-                        let end_side: u32 = match from_pin_state.side {
-                            PinSide::Left => 1,   // Right
-                            PinSide::Right => 0,  // Left
-                            PinSide::Top => 3,    // Bottom
-                            PinSide::Bottom => 2, // Top
-                            PinSide::Row => 1,    // Default to Right
-                        };
+                    // Compute opposite side for end
+                    let end_side: u32 = match from_pin_state.side {
+                        PinSide::Left => 1,   // Right
+                        PinSide::Right => 0,  // Left
+                        PinSide::Top => 3,    // Bottom
+                        PinSide::Bottom => 2, // Top
+                        PinSide::Row => 1,    // Default to Right
+                    };
 
-                        // Compute opposite direction for end
-                        let end_direction = match from_pin_state.direction {
-                            PinDirection::Input => PinDirection::Output,
-                            PinDirection::Output => PinDirection::Input,
-                            PinDirection::Both => PinDirection::Both,
-                        };
+                    // Compute opposite direction for end
+                    let end_direction = match from_pin_state.direction {
+                        PinDirection::Input => PinDirection::Output,
+                        PinDirection::Output => PinDirection::Input,
+                        PinDirection::Both => PinDirection::Both,
+                    };
 
-                        all_edges.push(EdgeRenderData {
+                    renderer.draw_primitive(
+                        layout.bounds(),
+                        EdgePrimitive {
+                            context: render_context,
                             start_pos,
                             end_pos,
                             start_side: from_pin_state.side.into(),
@@ -346,29 +387,12 @@ where
                             start_direction: from_pin_state.direction,
                             end_direction,
                             style: drag_edge_style,
-                            is_selected: false,
-                            is_pending_cut: false,
                             start_pin_color: from_pin_state.color,
                             end_pin_color: from_pin_state.color,
-                        });
-                    }
+                        },
+                    );
                 }
             }
-
-        // ========================================
-        // Layer 2: Static Edges (behind nodes)
-        // ========================================
-        renderer.with_layer(layout.bounds(), |renderer| {
-            renderer.draw_primitive(
-                layout.bounds(),
-                EdgesPrimitive {
-                    edges: all_edges,
-                    camera_zoom: camera.zoom(),
-                    camera_position: camera.position(),
-                    time,
-                    selected_edge_color,
-                },
-            );
         });
 
         // ========================================
@@ -411,8 +435,22 @@ where
                 offset
             };
 
-            // Resolve node style
-            let resolved = resolve_node_style(node_style, theme);
+            // Determine node status
+            let node_status = if is_selected {
+                NodeStatus::Selected
+            } else {
+                NodeStatus::Idle
+            };
+
+            // Resolve base style from config, then apply style_fn for status-based modifications
+            let base_style = resolve_node_style(node_style, theme);
+            let resolved = if let Some(ref style_fn) = self.node_style_fn {
+                style_fn(theme, node_status, base_style)
+            } else {
+                // Fallback: apply selection styling from graph style
+                base_style.for_status(node_status, selection_style)
+            };
+
             let (shadow_offset, shadow_blur, shadow_color) = if let Some(shadow) = &resolved.shadow
             {
                 (shadow.offset, shadow.blur_radius, shadow.color)
@@ -420,11 +458,8 @@ where
                 ((0.0, 0.0), 0.0, iced::Color::TRANSPARENT)
             };
 
-            let (border_color, border_width) = if is_selected {
-                (selection_border_color, selection_border_width)
-            } else {
-                (resolved.border_color, resolved.border_width)
-            };
+            let border_color = resolved.border_color;
+            let border_width = resolved.border_width;
 
             // Collect pins for this node
             let pins: Vec<PinRenderData> = find_pins(node_tree, node_layout)
@@ -434,15 +469,22 @@ where
                     let is_valid_target = is_edge_dragging
                         && state.valid_drop_targets.contains(&(node_index, pin_idx));
 
-                    // Compute pin status for animation
+                    // Compute pin status for styling
                     let pin_status = if is_valid_target {
                         PinStatus::ValidTarget
                     } else {
                         PinStatus::Idle
                     };
 
-                    // Pre-compute radius with animation scale
-                    let radius = resolved_pin_defaults.scaled_radius(pin_status, time);
+                    // Resolve pin style: apply style_fn for status-based modifications
+                    let pin_style = if let Some(ref style_fn) = self.pin_style_fn {
+                        style_fn(theme, pin_status, resolved_pin_defaults)
+                    } else {
+                        resolved_pin_defaults
+                    };
+
+                    // Compute radius with animation scale
+                    let radius = pin_style.scaled_radius(pin_status, time);
 
                     PinRenderData {
                         offset: (pin_pos.into_euclid().to_vector() + offset).to_point(),
@@ -450,11 +492,11 @@ where
                         radius,
                         color: pin_state.color,
                         direction: pin_state.direction,
-                        shape: resolved_pin_defaults.shape,
-                        border_color: resolved_pin_defaults
+                        shape: pin_style.shape,
+                        border_color: pin_style
                             .border_color
                             .unwrap_or(iced::Color::TRANSPARENT),
-                        border_width: resolved_pin_defaults.border_width,
+                        border_width: pin_style.border_width,
                     }
                 })
                 .collect();
@@ -466,6 +508,7 @@ where
             // Build NodePrimitive data (will be used for both layers)
             // Note: Hover glow was removed. Glow is set to 0.0/TRANSPARENT.
             let node_primitive = NodePrimitive {
+                context: render_context,
                 layer: NodeLayer::Background, // Will be overwritten
                 position: node_position,
                 size: node_size,
@@ -480,9 +523,6 @@ where
                 glow_color: iced::Color::TRANSPARENT,
                 glow_radius: 0.0,
                 pins: pins.clone(),
-                camera_zoom: camera.zoom(),
-                camera_position: camera.position(),
-                time,
             };
 
             // Layer 3a: Node Background (fill + shadow)
@@ -550,12 +590,21 @@ where
                 .map(|p| camera.screen_to_world().transform_point(p.into_euclid()))
                 .unwrap_or(*start);
 
+            // Resolve box select colors: use callback if provided, otherwise use selection_style
+            let (_fill_color, border_color) = if let Some(ref style_fn) = self.box_select_style_fn {
+                style_fn(theme)
+            } else {
+                (
+                    resolved_graph.selection_style.box_select_fill,
+                    resolved_graph.selection_style.box_select_border,
+                )
+            };
+
             let select_primitive = effects::BoxSelectPrimitive {
+                context: render_context,
                 start: *start,
                 end: cursor_world,
-                color: resolved_graph.selection_style.box_select_border,
-                camera_zoom: camera.zoom(),
-                camera_position: camera.position(),
+                color: border_color,
             };
 
             renderer.with_layer(layout.bounds(), |renderer| {
@@ -574,12 +623,18 @@ where
                 .map(|p| camera.screen_to_world().transform_point(p.into_euclid()))
                 .unwrap_or(*start);
 
+            // Resolve cutting tool color: use callback if provided, otherwise use selection_style
+            let cutting_color = if let Some(ref style_fn) = self.cutting_tool_style_fn {
+                style_fn(theme)
+            } else {
+                resolved_graph.selection_style.edge_cutting_color
+            };
+
             let cutting_primitive = effects::CuttingToolPrimitive {
+                context: render_context,
                 start: *start,
                 end: cursor_world,
-                color: resolved_graph.selection_style.edge_cutting_color,
-                camera_zoom: camera.zoom(),
-                camera_position: camera.position(),
+                color: cutting_color,
             };
 
             renderer.with_layer(layout.bounds(), |renderer| {
