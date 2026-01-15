@@ -261,7 +261,6 @@ impl Camera2D {
         Renderer: renderer::Renderer,
         F: FnOnce(&mut Renderer, &iced::Rectangle, mouse::Cursor),
     {
-        let _zoom = self.zoom;
         let offset = self.position;
 
         let transformed_cursor = self.cursor_screen_to_world(cursor);

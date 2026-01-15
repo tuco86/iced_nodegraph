@@ -233,7 +233,7 @@ impl Primitive for NodePrimitive {
         pipeline.pin_counts.push(self.pins.len());
 
         // Push node to buffer
-        let _node_slot = pipeline.nodes.push(
+        let _ = pipeline.nodes.push(
             device,
             queue,
             types::Node {

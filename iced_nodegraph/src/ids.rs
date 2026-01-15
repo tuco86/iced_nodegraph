@@ -23,7 +23,7 @@ use std::hash::Hash;
 ///
 /// impl NodeId for MyNodeId {}
 /// ```
-pub trait NodeId: Clone + Eq + Hash + Debug {}
+pub trait NodeId: Clone + Eq + Hash + Debug + Send + Sync {}
 
 /// Trait for user-defined pin identifiers.
 ///
@@ -47,7 +47,7 @@ pub trait PinId: Clone + Eq + Hash + Debug + Send + Sync {}
 ///
 /// Edge IDs are optional - you can use the library's auto-generated
 /// indices if you don't need custom edge tracking.
-pub trait EdgeId: Clone + Eq + Hash + Debug {}
+pub trait EdgeId: Clone + Eq + Hash + Debug + Send + Sync {}
 
 // Blanket implementations for common types
 

@@ -189,7 +189,6 @@ where
         // Resolve styles
         let resolved_graph = resolve_graph_style(self.graph_style.as_ref(), theme);
         let resolved_pin_defaults = resolve_pin_style(self.pin_defaults.as_ref(), theme);
-        let _resolved_edge_defaults = EdgeStyle::from_theme(theme);
 
         let selection_style = &resolved_graph.selection_style;
 

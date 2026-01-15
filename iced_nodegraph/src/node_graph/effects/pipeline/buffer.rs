@@ -60,11 +60,6 @@ impl<T> Buffer<T> {
         self.buffer_vec.len()
     }
 
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.buffer_vec.is_empty()
-    }
-
     /// Push a single item to the buffer and write it to GPU.
     ///
     /// Returns the index (slot) where the item was placed.

@@ -299,15 +299,19 @@ where
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
-        let content_tree = &tree.children[0];
-        let content_layout = layout.children().next().unwrap();
-        self.content.as_widget().mouse_interaction(
-            content_tree,
-            content_layout,
-            cursor,
-            viewport,
-            renderer,
-        )
+        if let Some((content_tree, content_layout)) =
+            tree.children.first().zip(layout.children().next())
+        {
+            self.content.as_widget().mouse_interaction(
+                content_tree,
+                content_layout,
+                cursor,
+                viewport,
+                renderer,
+            )
+        } else {
+            mouse::Interaction::default()
+        }
     }
 
     fn size_hint(&self) -> Size<Length> {

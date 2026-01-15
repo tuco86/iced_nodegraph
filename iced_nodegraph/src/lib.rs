@@ -191,16 +191,13 @@
 //! }
 //! ```
 
-pub use content::{
-    ContentPosition, NodeContentStyle, get_text_color, is_theme_dark, node_content_container,
-    node_footer, node_header, node_label, node_separator, simple_node,
-};
+pub use content::{NodeContentStyle, node_footer, node_header, simple_node};
 pub use helpers::{
     CloneResult, DeleteResult, NodeHandle, PinHandle, SelectionHelper, clone_nodes, delete_nodes,
 };
 pub use ids::{EdgeId, IdMap, IdMaps, NodeId, PinId};
 pub use node_graph::{
-    DragInfo, NodeGraph, NodeGraphEvent, NodeGraphMessage, PinRef, RemoteDrag, RemoteUserState,
+    NodeGraph, NodeGraphEvent, NodeGraphMessage, PinRef,
     camera::Camera2D, widget::node_graph,
 };
 pub use node_pin::{NodePin, PinDirection, PinReference, PinSide, node_pin};
@@ -252,11 +249,9 @@ pub use style::{
 pub mod content;
 pub mod helpers;
 pub mod ids;
-mod macros;
-mod node;
 mod node_graph;
 mod node_pin;
 pub mod style;
 
-// Re-export iced for macro usage
+// Re-export iced for downstream crates
 pub use iced;

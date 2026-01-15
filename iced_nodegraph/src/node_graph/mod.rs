@@ -762,10 +762,6 @@ where
         self.on_camera_change.as_ref()
     }
 
-    pub fn needs_animation(&self) -> bool {
-        false
-    }
-
     /// Translates a list of internal node indices to user IDs.
     /// Returns empty vec if any translation fails.
     pub(super) fn translate_node_ids(&self, indices: &[usize]) -> Vec<N> {
