@@ -91,6 +91,7 @@ impl EdgeConfigInputs {
                 pattern,
                 cap: parent_stroke.cap,
                 dash_cap,
+                outline: None,
             })
         } else {
             parent.stroke.clone()
@@ -111,7 +112,10 @@ impl EdgeConfigInputs {
                 Some(BorderConfig {
                     width: self.border_width.or(parent_border.width),
                     gap: self.border_gap.or(parent_border.gap),
-                    color: self.border_color.or(parent_border.color),
+                    start_color: self.border_color.or(parent_border.start_color),
+                    end_color: self.border_color.or(parent_border.end_color),
+                    inner_outline: None,
+                    outer_outline: None,
                     enabled: self.border_enabled.or(parent_border.enabled),
                 })
             }

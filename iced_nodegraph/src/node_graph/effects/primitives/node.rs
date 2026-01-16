@@ -74,8 +74,30 @@ pub struct NodePrimitive {
     pub opacity: f32,
     /// Fill color
     pub fill_color: Color,
-    /// Border color
-    pub border_color: Color,
+    /// Border gradient start color
+    pub border_start_color: Color,
+    /// Border gradient end color
+    pub border_end_color: Color,
+    /// Border pattern type (0=solid, 1=dashed, 2=dotted, 3=arrowed)
+    pub border_pattern_type: u32,
+    /// Border dash length (for dashed/dotted patterns)
+    pub border_dash_length: f32,
+    /// Border gap length (for dashed/dotted patterns)
+    pub border_gap_length: f32,
+    /// Border animation flow speed (positive = clockwise)
+    pub border_flow_speed: f32,
+    /// Inner outline width (between fill and border)
+    pub inner_outline_width: f32,
+    /// Inner outline gradient start color
+    pub inner_outline_start_color: Color,
+    /// Inner outline gradient end color
+    pub inner_outline_end_color: Color,
+    /// Outer outline width (outside border)
+    pub outer_outline_width: f32,
+    /// Outer outline gradient start color
+    pub outer_outline_start_color: Color,
+    /// Outer outline gradient end color
+    pub outer_outline_end_color: Color,
     /// Shadow offset
     pub shadow_offset: (f32, f32),
     /// Shadow blur
@@ -252,11 +274,17 @@ impl Primitive for NodePrimitive {
                     self.fill_color.b,
                     self.fill_color.a,
                 ),
-                border_color: glam::Vec4::new(
-                    self.border_color.r,
-                    self.border_color.g,
-                    self.border_color.b,
-                    self.border_color.a,
+                border_start_color: glam::Vec4::new(
+                    self.border_start_color.r,
+                    self.border_start_color.g,
+                    self.border_start_color.b,
+                    self.border_start_color.a,
+                ),
+                border_end_color: glam::Vec4::new(
+                    self.border_end_color.r,
+                    self.border_end_color.g,
+                    self.border_end_color.b,
+                    self.border_end_color.a,
                 ),
                 shadow_color: glam::Vec4::new(
                     self.shadow_color.r,
@@ -271,6 +299,36 @@ impl Primitive for NodePrimitive {
                     self.glow_color.a,
                 ),
                 glow_radius: self.glow_radius,
+                border_pattern_type: self.border_pattern_type,
+                border_dash_length: self.border_dash_length,
+                border_gap_length: self.border_gap_length,
+                border_flow_speed: self.border_flow_speed,
+                inner_outline_width: self.inner_outline_width,
+                inner_outline_start_color: glam::Vec4::new(
+                    self.inner_outline_start_color.r,
+                    self.inner_outline_start_color.g,
+                    self.inner_outline_start_color.b,
+                    self.inner_outline_start_color.a,
+                ),
+                inner_outline_end_color: glam::Vec4::new(
+                    self.inner_outline_end_color.r,
+                    self.inner_outline_end_color.g,
+                    self.inner_outline_end_color.b,
+                    self.inner_outline_end_color.a,
+                ),
+                outer_outline_width: self.outer_outline_width,
+                outer_outline_start_color: glam::Vec4::new(
+                    self.outer_outline_start_color.r,
+                    self.outer_outline_start_color.g,
+                    self.outer_outline_start_color.b,
+                    self.outer_outline_start_color.a,
+                ),
+                outer_outline_end_color: glam::Vec4::new(
+                    self.outer_outline_end_color.r,
+                    self.outer_outline_end_color.g,
+                    self.outer_outline_end_color.b,
+                    self.outer_outline_end_color.a,
+                ),
                 _pad0: 0,
                 _pad1: 0,
                 _pad2: 0,

@@ -56,11 +56,27 @@ fn compute_pin_hash<P: PinId>(pin_id: &P) -> u64 {
 
 /// Resolves a NodeConfig to a complete NodeStyle using theme defaults.
 fn resolve_node_style(config: &NodeConfig, theme: &Theme) -> NodeStyle {
+    use crate::style::NodeBorderStyle;
+
     let base = NodeStyle::from_theme(theme);
+
+    // Resolve border: merge config overrides with base
+    let border = if config.border_color.is_some() || config.border_width.is_some() {
+        // Config has border overrides
+        let base_border = base.border.unwrap_or_default();
+        Some(NodeBorderStyle {
+            width: config.border_width.unwrap_or(base_border.width),
+            start_color: config.border_color.unwrap_or(base_border.start_color),
+            end_color: config.border_color.unwrap_or(base_border.end_color),
+            ..base_border
+        })
+    } else {
+        base.border
+    };
+
     NodeStyle {
         fill_color: config.fill_color.unwrap_or(base.fill_color),
-        border_color: config.border_color.unwrap_or(base.border_color),
-        border_width: config.border_width.unwrap_or(base.border_width),
+        border,
         corner_radius: config.corner_radius.unwrap_or(base.corner_radius),
         opacity: config.opacity.unwrap_or(base.opacity),
         shadow: config
@@ -474,8 +490,68 @@ where
                 ((0.0, 0.0), 0.0, iced::Color::TRANSPARENT)
             };
 
-            let border_color = resolved.border_color;
-            let border_width = resolved.border_width;
+            // Extract all border fields for NodePrimitive
+            let (
+                border_width,
+                border_start_color,
+                border_end_color,
+                border_pattern_type,
+                border_dash_length,
+                border_gap_length,
+                border_flow_speed,
+                inner_outline_width,
+                inner_outline_start_color,
+                inner_outline_end_color,
+                outer_outline_width,
+                outer_outline_start_color,
+                outer_outline_end_color,
+            ) = if let Some(b) = &resolved.border {
+                let pattern_type = match &b.pattern {
+                    crate::style::StrokePattern::Solid => 0u32,
+                    crate::style::StrokePattern::Dashed { .. } => 1u32,
+                    crate::style::StrokePattern::Dotted { .. } => 2u32,
+                    crate::style::StrokePattern::Arrowed { .. } => 3u32,
+                    crate::style::StrokePattern::DashDotted { .. } => 4u32,
+                    crate::style::StrokePattern::Custom { .. } => 5u32,
+                };
+                let (inner_w, inner_start, inner_end) = b.inner_outline.as_ref()
+                    .map(|o| (o.width, o.start_color, o.end_color))
+                    .unwrap_or((0.0, iced::Color::TRANSPARENT, iced::Color::TRANSPARENT));
+                let (outer_w, outer_start, outer_end) = b.outer_outline.as_ref()
+                    .map(|o| (o.width, o.start_color, o.end_color))
+                    .unwrap_or((0.0, iced::Color::TRANSPARENT, iced::Color::TRANSPARENT));
+                (
+                    b.width,
+                    b.start_color,
+                    b.end_color,
+                    pattern_type,
+                    b.dash_length,
+                    b.gap_length,
+                    b.flow_speed,
+                    inner_w,
+                    inner_start,
+                    inner_end,
+                    outer_w,
+                    outer_start,
+                    outer_end,
+                )
+            } else {
+                (
+                    0.0,
+                    iced::Color::TRANSPARENT,
+                    iced::Color::TRANSPARENT,
+                    0u32, // solid
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    iced::Color::TRANSPARENT,
+                    iced::Color::TRANSPARENT,
+                    0.0,
+                    iced::Color::TRANSPARENT,
+                    iced::Color::TRANSPARENT,
+                )
+            };
 
             // Collect pins for this node
             let pins: Vec<PinRenderData> = find_pins(node_tree, node_layout)
@@ -532,7 +608,18 @@ where
                 border_width,
                 opacity: resolved.opacity,
                 fill_color: resolved.fill_color,
-                border_color,
+                border_start_color,
+                border_end_color,
+                border_pattern_type,
+                border_dash_length,
+                border_gap_length,
+                border_flow_speed,
+                inner_outline_width,
+                inner_outline_start_color,
+                inner_outline_end_color,
+                outer_outline_width,
+                outer_outline_start_color,
+                outer_outline_end_color,
                 shadow_offset,
                 shadow_blur,
                 shadow_color,

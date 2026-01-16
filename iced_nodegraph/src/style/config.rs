@@ -6,8 +6,8 @@
 use iced::Color;
 
 use super::{
-    BackgroundPattern, BackgroundStyle, BorderStyle, DashCap, EdgeCurve, PinShape, StrokeCap,
-    StrokePattern, StrokeStyle,
+    BackgroundPattern, BackgroundStyle, BorderStyle, DashCap, EdgeCurve, OutlineStyle, PinShape,
+    StrokeCap, StrokePattern, StrokeStyle,
 };
 
 /// Partial node configuration for cascading style overrides.
@@ -461,6 +461,106 @@ impl From<BackgroundStyle> for BackgroundConfig {
     }
 }
 
+/// Partial outline configuration.
+///
+/// All fields are optional - only set fields will override the base style.
+/// Outlines have NO pin color inheritance.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct OutlineConfig {
+    /// Outline width in world-space pixels
+    pub width: Option<f32>,
+    /// Color at the source pin (t=0). NO inheritance - transparent = invisible.
+    pub start_color: Option<Color>,
+    /// Color at the target pin (t=1). NO inheritance - transparent = invisible.
+    pub end_color: Option<Color>,
+    /// Explicitly enable/disable the outline
+    pub enabled: Option<bool>,
+}
+
+impl OutlineConfig {
+    /// Creates an empty config with no overrides.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the outline width override.
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = Some(width);
+        self
+    }
+
+    /// Sets a solid color (both start and end).
+    pub fn color(mut self, color: impl Into<Color>) -> Self {
+        let c = color.into();
+        self.start_color = Some(c);
+        self.end_color = Some(c);
+        self
+    }
+
+    /// Sets the start color.
+    pub fn start_color(mut self, color: impl Into<Color>) -> Self {
+        self.start_color = Some(color.into());
+        self
+    }
+
+    /// Sets the end color.
+    pub fn end_color(mut self, color: impl Into<Color>) -> Self {
+        self.end_color = Some(color.into());
+        self
+    }
+
+    /// Sets a gradient color (start to end).
+    pub fn gradient(mut self, start: impl Into<Color>, end: impl Into<Color>) -> Self {
+        self.start_color = Some(start.into());
+        self.end_color = Some(end.into());
+        self
+    }
+
+    /// Explicitly enables or disables the outline.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = Some(enabled);
+        self
+    }
+
+    /// Returns true if this config has any overrides set.
+    pub fn has_overrides(&self) -> bool {
+        self.width.is_some()
+            || self.start_color.is_some()
+            || self.end_color.is_some()
+            || self.enabled.is_some()
+    }
+
+    /// Merges two outline configs. Self takes priority, other fills gaps.
+    pub fn merge(&self, other: &Self) -> Self {
+        Self {
+            width: self.width.or(other.width),
+            start_color: self.start_color.or(other.start_color),
+            end_color: self.end_color.or(other.end_color),
+            enabled: self.enabled.or(other.enabled),
+        }
+    }
+
+    /// Resolves this config to an OutlineStyle using defaults.
+    pub fn resolve(&self) -> OutlineStyle {
+        OutlineStyle {
+            width: self.width.unwrap_or(1.0),
+            start_color: self.start_color.unwrap_or(Color::BLACK),
+            end_color: self.end_color.unwrap_or(Color::BLACK),
+        }
+    }
+}
+
+impl From<OutlineStyle> for OutlineConfig {
+    fn from(style: OutlineStyle) -> Self {
+        Self {
+            width: Some(style.width),
+            start_color: Some(style.start_color),
+            end_color: Some(style.end_color),
+            enabled: Some(true),
+        }
+    }
+}
+
 /// Partial stroke configuration for edge styling.
 ///
 /// All fields are optional - only set fields will override the base style.
@@ -478,6 +578,8 @@ pub struct StrokeConfig {
     pub cap: Option<StrokeCap>,
     /// Cap style for individual dash segments
     pub dash_cap: Option<DashCap>,
+    /// Outline around the stroke. NO pin color inheritance.
+    pub outline: Option<OutlineConfig>,
 }
 
 impl StrokeConfig {
@@ -530,6 +632,13 @@ impl StrokeConfig {
         self
     }
 
+    /// Sets the stroke outline configuration.
+    /// Stroke outlines have NO pin color inheritance.
+    pub fn outline(mut self, outline: OutlineConfig) -> Self {
+        self.outline = Some(outline);
+        self
+    }
+
     /// Returns true if this config has any overrides set.
     pub fn has_overrides(&self) -> bool {
         self.width.is_some()
@@ -538,6 +647,7 @@ impl StrokeConfig {
             || self.pattern.is_some()
             || self.cap.is_some()
             || self.dash_cap.is_some()
+            || self.outline.is_some()
     }
 
     /// Merges two stroke configs. Self takes priority, other fills gaps.
@@ -549,6 +659,12 @@ impl StrokeConfig {
             pattern: self.pattern.clone().or(other.pattern.clone()),
             cap: self.cap.or(other.cap),
             dash_cap: self.dash_cap.or(other.dash_cap),
+            outline: match (&self.outline, &other.outline) {
+                (Some(s), Some(o)) => Some(s.merge(o)),
+                (Some(s), None) => Some(s.clone()),
+                (None, Some(o)) => Some(o.clone()),
+                (None, None) => None,
+            },
         }
     }
 }
@@ -562,6 +678,7 @@ impl From<StrokeStyle> for StrokeConfig {
             pattern: Some(style.pattern),
             cap: Some(style.cap),
             dash_cap: Some(style.dash_cap),
+            outline: style.outline.map(|o| o.into()),
         }
     }
 }
@@ -569,14 +686,21 @@ impl From<StrokeStyle> for StrokeConfig {
 /// Partial border configuration for edge styling.
 ///
 /// All fields are optional - only set fields will override the base style.
+/// Border colors inherit from pin colors if TRANSPARENT (alpha < 0.01).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct BorderConfig {
     /// Border width in world-space pixels
     pub width: Option<f32>,
     /// Radial gap between stroke and border
     pub gap: Option<f32>,
-    /// Border color
-    pub color: Option<Color>,
+    /// Color at the source pin (t=0). TRANSPARENT = use source pin color.
+    pub start_color: Option<Color>,
+    /// Color at the target pin (t=1). TRANSPARENT = use target pin color.
+    pub end_color: Option<Color>,
+    /// Inner outline configuration (between gap and border). NO pin inheritance.
+    pub inner_outline: Option<OutlineConfig>,
+    /// Outer outline configuration (outside the border). NO pin inheritance.
+    pub outer_outline: Option<OutlineConfig>,
     /// Explicit enabled flag (None = inherit, Some(false) = force disable)
     pub enabled: Option<bool>,
 }
@@ -599,9 +723,46 @@ impl BorderConfig {
         self
     }
 
-    /// Sets the border color override.
+    /// Sets a solid color (both start and end).
+    /// This overrides pin color inheritance.
     pub fn color(mut self, color: impl Into<Color>) -> Self {
-        self.color = Some(color.into());
+        let c = color.into();
+        self.start_color = Some(c);
+        self.end_color = Some(c);
+        self
+    }
+
+    /// Sets the start color (at source pin).
+    pub fn start_color(mut self, color: impl Into<Color>) -> Self {
+        self.start_color = Some(color.into());
+        self
+    }
+
+    /// Sets the end color (at target pin).
+    pub fn end_color(mut self, color: impl Into<Color>) -> Self {
+        self.end_color = Some(color.into());
+        self
+    }
+
+    /// Sets a gradient color (start to end).
+    /// This overrides pin color inheritance.
+    pub fn gradient(mut self, start: impl Into<Color>, end: impl Into<Color>) -> Self {
+        self.start_color = Some(start.into());
+        self.end_color = Some(end.into());
+        self
+    }
+
+    /// Sets the inner outline configuration.
+    /// Inner outlines have NO pin color inheritance.
+    pub fn inner_outline(mut self, outline: OutlineConfig) -> Self {
+        self.inner_outline = Some(outline);
+        self
+    }
+
+    /// Sets the outer outline configuration.
+    /// Outer outlines have NO pin color inheritance.
+    pub fn outer_outline(mut self, outline: OutlineConfig) -> Self {
+        self.outer_outline = Some(outline);
         self
     }
 
@@ -613,7 +774,13 @@ impl BorderConfig {
 
     /// Returns true if this config has any overrides set.
     pub fn has_overrides(&self) -> bool {
-        self.width.is_some() || self.gap.is_some() || self.color.is_some() || self.enabled.is_some()
+        self.width.is_some()
+            || self.gap.is_some()
+            || self.start_color.is_some()
+            || self.end_color.is_some()
+            || self.inner_outline.is_some()
+            || self.outer_outline.is_some()
+            || self.enabled.is_some()
     }
 
     /// Merges two border configs. Self takes priority, other fills gaps.
@@ -621,7 +788,20 @@ impl BorderConfig {
         Self {
             width: self.width.or(other.width),
             gap: self.gap.or(other.gap),
-            color: self.color.or(other.color),
+            start_color: self.start_color.or(other.start_color),
+            end_color: self.end_color.or(other.end_color),
+            inner_outline: match (&self.inner_outline, &other.inner_outline) {
+                (Some(s), Some(o)) => Some(s.merge(o)),
+                (Some(s), None) => Some(s.clone()),
+                (None, Some(o)) => Some(o.clone()),
+                (None, None) => None,
+            },
+            outer_outline: match (&self.outer_outline, &other.outer_outline) {
+                (Some(s), Some(o)) => Some(s.merge(o)),
+                (Some(s), None) => Some(s.clone()),
+                (None, Some(o)) => Some(o.clone()),
+                (None, None) => None,
+            },
             enabled: self.enabled.or(other.enabled),
         }
     }
@@ -632,7 +812,10 @@ impl From<BorderStyle> for BorderConfig {
         Self {
             width: Some(style.width),
             gap: Some(style.gap),
-            color: Some(style.color),
+            start_color: Some(style.start_color),
+            end_color: Some(style.end_color),
+            inner_outline: style.inner_outline.map(|o| o.into()),
+            outer_outline: style.outer_outline.map(|o| o.into()),
             enabled: Some(true),
         }
     }
@@ -1106,10 +1289,14 @@ impl SelectionConfig {
 impl From<super::NodeStyle> for NodeConfig {
     /// Converts a complete NodeStyle to NodeConfig, setting all fields.
     fn from(style: super::NodeStyle) -> Self {
+        let (border_color, border_width) = style.border.as_ref()
+            .map(|b| (Some(b.start_color), Some(b.width)))
+            .unwrap_or((None, None));
+
         Self {
             fill_color: Some(style.fill_color),
-            border_color: Some(style.border_color),
-            border_width: Some(style.border_width),
+            border_color,
+            border_width,
             corner_radius: Some(style.corner_radius),
             opacity: Some(style.opacity),
             shadow: style.shadow.map(|s| ShadowConfig {
@@ -1225,7 +1412,8 @@ mod tests {
         let specific = BorderConfig::new().color(Color::BLACK);
         let merged = specific.merge(&defaults);
 
-        assert_eq!(merged.color, Some(Color::BLACK));
+        assert_eq!(merged.start_color, Some(Color::BLACK));
+        assert_eq!(merged.end_color, Some(Color::BLACK));
         assert_eq!(merged.width, Some(1.5));
         assert_eq!(merged.gap, Some(0.5));
     }

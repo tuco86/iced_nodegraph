@@ -221,9 +221,13 @@ pub use style::{
     EdgeStyleFn,
     GraphConfig,
     GraphStyle,
+    NodeBorderStyle,
     NodeConfig,
     NodeStyle,
     NodeStyleFn,
+    // Outline style types (NO pin color inheritance)
+    OutlineConfig,
+    OutlineStyle,
     PinConfig,
     PinShape,
     PinStatus,

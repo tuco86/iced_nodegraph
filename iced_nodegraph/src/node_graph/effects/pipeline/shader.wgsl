@@ -41,21 +41,48 @@ struct Grid {
 };
 
 struct Node {
+    // Basic geometry (16 bytes)
     position: vec2<f32>,
     size: vec2<f32>,
+
+    // Node properties (16 bytes)
     corner_radius: f32,
     border_width: f32,
     opacity: f32,
     pin_start: u32,
+
+    // Pin count and shadow (16 bytes)
     pin_count: u32,
     shadow_blur: f32,
     shadow_offset: vec2<f32>,
+
+    // Colors (64 bytes)
     fill_color: vec4<f32>,
-    border_color: vec4<f32>,
+    border_start_color: vec4<f32>,  // Border gradient start
+    border_end_color: vec4<f32>,    // Border gradient end
     shadow_color: vec4<f32>,
+
+    // Glow (32 bytes)
     glow_color: vec4<f32>,
     glow_radius: f32,    // Pre-computed: 0.0 = no glow, >0.0 = glow radius
-    // Padding to match encase std430 layout (128 bytes total, 16-byte aligned)
+
+    // Border pattern and animation (16 bytes)
+    border_pattern_type: u32,  // 0=solid, 1=dashed, 2=dotted, 3=arrowed, 4=dash-dotted, 5=custom
+    border_dash_length: f32,
+    border_gap_length: f32,
+    border_flow_speed: f32,    // Animation speed (positive = clockwise)
+
+    // Inner outline (48 bytes)
+    inner_outline_width: f32,
+    inner_outline_start_color: vec4<f32>,
+    inner_outline_end_color: vec4<f32>,
+
+    // Outer outline (48 bytes)
+    outer_outline_width: f32,
+    outer_outline_start_color: vec4<f32>,
+    outer_outline_end_color: vec4<f32>,
+
+    // Padding for 16-byte alignment
     _pad0: u32,
     _pad1: u32,
     _pad2: u32,
@@ -107,13 +134,29 @@ struct Edge {
     border_gap: f32,            // Gap between stroke and border @ 104
     shadow_blur: f32,           // Shadow blur radius @ 108
 
-    // Border color (16 bytes)
-    border_color: vec4<f32>,    // @ 112
+    // Border gradient colors (32 bytes)
+    border_start_color: vec4<f32>,  // @ 112
+    border_end_color: vec4<f32>,    // @ 128
+
+    // Stroke outline - NO pin color inheritance (auto-aligned by WGSL)
+    stroke_outline_width: f32,
+    stroke_outline_start_color: vec4<f32>,
+    stroke_outline_end_color: vec4<f32>,
+
+    // Border inner outline - NO pin color inheritance
+    border_inner_outline_width: f32,
+    border_inner_outline_start_color: vec4<f32>,
+    border_inner_outline_end_color: vec4<f32>,
+
+    // Border outer outline - NO pin color inheritance
+    border_outer_outline_width: f32,
+    border_outer_outline_start_color: vec4<f32>,
+    border_outer_outline_end_color: vec4<f32>,
 
     // Shadow
     shadow_color: vec4<f32>,
     shadow_offset: vec2<f32>,
-    // Padding to match encase std430 layout (160 bytes total, 16-byte aligned)
+    // Padding to match encase std430 layout (320 bytes total)
     _pad0: f32,
     _pad1: f32,
 }
@@ -619,6 +662,98 @@ fn smoothStepPathLength(p0: vec2<f32>, p3: vec2<f32>, dir_from: vec2<f32>, corne
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
+
+// Compute perimeter parameter t in [0, 1] for a point near a rounded rectangle border
+// local_pos: position relative to node center
+// half_size: half width and height of the node
+// r: corner radius
+// Returns t starting from bottom-left corner, going clockwise
+fn compute_rounded_rect_perimeter_t(local_pos: vec2<f32>, half_size: vec2<f32>, r: f32) -> f32 {
+    let PI = 3.14159265359;
+    let w = half_size.x;
+    let h = half_size.y;
+
+    // Clamp corner radius to valid range
+    let corner_r = min(r, min(w, h));
+    let arc_quarter = corner_r * PI * 0.5;
+
+    // Segment lengths (clockwise from bottom-left corner)
+    let bottom_len = 2.0 * (w - corner_r);
+    let right_len = 2.0 * (h - corner_r);
+    let top_len = 2.0 * (w - corner_r);
+    let left_len = 2.0 * (h - corner_r);
+
+    // Total perimeter
+    let perimeter = bottom_len + right_len + top_len + left_len + 4.0 * arc_quarter;
+
+    // Cumulative distances at segment boundaries
+    let d0 = 0.0;                                    // Start: bottom-left corner arc
+    let d1 = d0 + arc_quarter;                       // After BL corner: bottom edge
+    let d2 = d1 + bottom_len;                        // After bottom: BR corner
+    let d3 = d2 + arc_quarter;                       // After BR corner: right edge
+    let d4 = d3 + right_len;                         // After right: TR corner
+    let d5 = d4 + arc_quarter;                       // After TR corner: top edge
+    let d6 = d5 + top_len;                           // After top: TL corner
+    let d7 = d6 + arc_quarter;                       // After TL corner: left edge
+
+    var dist_along = 0.0;
+    let p = local_pos;
+
+    // Determine which segment we're on based on position
+    // Bottom edge: y ≈ -h, x ∈ [-w+r, w-r]
+    // Right edge: x ≈ w, y ∈ [-h+r, h-r]
+    // Top edge: y ≈ h, x ∈ [-w+r, w-r]
+    // Left edge: x ≈ -w, y ∈ [-h+r, h-r]
+    // Corners: in the corner regions
+
+    let inner_w = w - corner_r;
+    let inner_h = h - corner_r;
+
+    // Check which region we're in
+    if (p.x >= -inner_w && p.x <= inner_w && p.y < -inner_h) {
+        // Bottom edge
+        dist_along = d1 + (p.x + inner_w);
+    } else if (p.x > inner_w && p.y >= -inner_h && p.y <= inner_h) {
+        // Right edge
+        dist_along = d3 + (p.y + inner_h);
+    } else if (p.x >= -inner_w && p.x <= inner_w && p.y > inner_h) {
+        // Top edge
+        dist_along = d5 + (inner_w - p.x);
+    } else if (p.x < -inner_w && p.y >= -inner_h && p.y <= inner_h) {
+        // Left edge
+        dist_along = d7 + (inner_h - p.y);
+    } else if (p.x > inner_w && p.y < -inner_h) {
+        // Bottom-right corner
+        let corner_center = vec2(inner_w, -inner_h);
+        let angle = atan2(p.y - corner_center.y, p.x - corner_center.x);
+        // Angle goes from -PI/2 (bottom) to 0 (right)
+        let normalized_angle = (angle + PI * 0.5) / (PI * 0.5);
+        dist_along = d2 + normalized_angle * arc_quarter;
+    } else if (p.x > inner_w && p.y > inner_h) {
+        // Top-right corner
+        let corner_center = vec2(inner_w, inner_h);
+        let angle = atan2(p.y - corner_center.y, p.x - corner_center.x);
+        // Angle goes from 0 (right) to PI/2 (top)
+        let normalized_angle = angle / (PI * 0.5);
+        dist_along = d4 + normalized_angle * arc_quarter;
+    } else if (p.x < -inner_w && p.y > inner_h) {
+        // Top-left corner
+        let corner_center = vec2(-inner_w, inner_h);
+        let angle = atan2(p.y - corner_center.y, p.x - corner_center.x);
+        // Angle goes from PI/2 (top) to PI (left)
+        let normalized_angle = (angle - PI * 0.5) / (PI * 0.5);
+        dist_along = d6 + normalized_angle * arc_quarter;
+    } else {
+        // Bottom-left corner (starting point)
+        let corner_center = vec2(-inner_w, -inner_h);
+        let angle = atan2(p.y - corner_center.y, p.x - corner_center.x);
+        // Angle goes from -PI (left) to -PI/2 (bottom)
+        let normalized_angle = (angle + PI) / (PI * 0.5);
+        dist_along = d0 + normalized_angle * arc_quarter;
+    }
+
+    return dist_along / perimeter;
+}
 
 fn get_pin_direction(side: u32) -> vec2<f32> {
     switch (side) {
@@ -1248,20 +1383,65 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
     }
     // else: solid (pattern_type == 0), keep base alpha
 
-    // === BORDER RENDERING (outline with gap) ===
-    // Border is rendered behind the stroke, with a gap between
-    var border_alpha = 0.0;
-    if (edge.border_width > 0.0 && edge.border_color.a > 0.0) {
-        // Border ring: starts at (stroke_half_width + gap), extends by border_width
-        let stroke_half = edge_thickness;
-        let border_inner = stroke_half + edge.border_gap;
-        let border_outer = border_inner + edge.border_width;
+    // === LAYER GEOMETRY CALCULATION ===
+    // From inside to outside: stroke, stroke_outline, gap, border_inner_outline, border, border_outer_outline, shadow
+    let stroke_half = edge_thickness;
 
-        // SDF-based border mask: 1.0 if in border ring, 0.0 otherwise
-        // Inside border ring: dist >= border_inner && dist <= border_outer
+    // Stroke outline (around stroke)
+    let stroke_outline_inner = stroke_half;
+    let stroke_outline_outer = stroke_half + edge.stroke_outline_width;
+
+    // Gap starts after stroke outline
+    let gap_inner = stroke_outline_outer;
+    let gap_outer = gap_inner + edge.border_gap;
+
+    // Border inner outline (before border)
+    let border_inner_outline_inner = gap_outer;
+    let border_inner_outline_outer = gap_outer + edge.border_inner_outline_width;
+
+    // Border (the main border ring)
+    let border_inner = border_inner_outline_outer;
+    let border_outer = border_inner + edge.border_width;
+
+    // Border outer outline (after border)
+    let border_outer_outline_inner = border_outer;
+    let border_outer_outline_outer = border_outer + edge.border_outer_outline_width;
+
+    // === COMPUTE LAYER ALPHAS ===
+    // Stroke outline (gradient, no pin inheritance)
+    var stroke_outline_alpha = 0.0;
+    var stroke_outline_color = mix(edge.stroke_outline_start_color, edge.stroke_outline_end_color, t);
+    if (edge.stroke_outline_width > 0.0 && stroke_outline_color.a > 0.0) {
+        let inner_mask = smoothstep(stroke_outline_inner - aa, stroke_outline_inner + aa, dist);
+        let outer_mask = 1.0 - smoothstep(stroke_outline_outer - aa, stroke_outline_outer + aa, dist);
+        stroke_outline_alpha = inner_mask * outer_mask * stroke_outline_color.a;
+    }
+
+    // Border inner outline (gradient, no pin inheritance)
+    var border_inner_outline_alpha = 0.0;
+    var border_inner_outline_color = mix(edge.border_inner_outline_start_color, edge.border_inner_outline_end_color, t);
+    if (edge.border_inner_outline_width > 0.0 && border_inner_outline_color.a > 0.0) {
+        let inner_mask = smoothstep(border_inner_outline_inner - aa, border_inner_outline_inner + aa, dist);
+        let outer_mask = 1.0 - smoothstep(border_inner_outline_outer - aa, border_inner_outline_outer + aa, dist);
+        border_inner_outline_alpha = inner_mask * outer_mask * border_inner_outline_color.a;
+    }
+
+    // Border (gradient, inherits from pin colors if transparent)
+    var border_alpha = 0.0;
+    var border_color = mix(edge.border_start_color, edge.border_end_color, t);
+    if (edge.border_width > 0.0 && border_color.a > 0.0) {
         let inner_mask = smoothstep(border_inner - aa, border_inner + aa, dist);
         let outer_mask = 1.0 - smoothstep(border_outer - aa, border_outer + aa, dist);
-        border_alpha = inner_mask * outer_mask * edge.border_color.a;
+        border_alpha = inner_mask * outer_mask * border_color.a;
+    }
+
+    // Border outer outline (gradient, no pin inheritance)
+    var border_outer_outline_alpha = 0.0;
+    var border_outer_outline_color = mix(edge.border_outer_outline_start_color, edge.border_outer_outline_end_color, t);
+    if (edge.border_outer_outline_width > 0.0 && border_outer_outline_color.a > 0.0) {
+        let inner_mask = smoothstep(border_outer_outline_inner - aa, border_outer_outline_inner + aa, dist);
+        let outer_mask = 1.0 - smoothstep(border_outer_outline_outer - aa, border_outer_outline_outer + aa, dist);
+        border_outer_outline_alpha = inner_mask * outer_mask * border_outer_outline_color.a;
     }
 
     // === GLOW EFFECT (animation_type == 2) ===
@@ -1336,27 +1516,56 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
                      * edge.shadow_color.a;
     }
 
-    // === COMPOSITE: stroke over border over shadow ===
-    // Layering order: shadow (back) -> border -> stroke (front)
+    // === COMPOSITE: 7-layer rendering (back to front) ===
+    // Order: shadow -> border_outer_outline -> border -> border_inner_outline -> (gap) -> stroke_outline -> stroke
     var result_rgb = vec3(0.0);
     var result_alpha = 0.0;
 
-    // Start with shadow
+    // Layer 7: Shadow (back)
     if (shadow_alpha > 0.0) {
         result_rgb = edge.shadow_color.rgb;
         result_alpha = shadow_alpha;
     }
 
-    // Composite border over shadow
-    if (border_alpha > 0.0) {
-        let new_alpha = border_alpha + result_alpha * (1.0 - border_alpha);
+    // Layer 6: Border outer outline
+    if (border_outer_outline_alpha > 0.0) {
+        let new_alpha = border_outer_outline_alpha + result_alpha * (1.0 - border_outer_outline_alpha);
         if (new_alpha > 0.001) {
-            result_rgb = (edge.border_color.rgb * border_alpha + result_rgb * result_alpha * (1.0 - border_alpha)) / new_alpha;
+            result_rgb = (border_outer_outline_color.rgb * border_outer_outline_alpha + result_rgb * result_alpha * (1.0 - border_outer_outline_alpha)) / new_alpha;
             result_alpha = new_alpha;
         }
     }
 
-    // Composite stroke over border+shadow
+    // Layer 5: Border
+    if (border_alpha > 0.0) {
+        let new_alpha = border_alpha + result_alpha * (1.0 - border_alpha);
+        if (new_alpha > 0.001) {
+            result_rgb = (border_color.rgb * border_alpha + result_rgb * result_alpha * (1.0 - border_alpha)) / new_alpha;
+            result_alpha = new_alpha;
+        }
+    }
+
+    // Layer 4: Border inner outline
+    if (border_inner_outline_alpha > 0.0) {
+        let new_alpha = border_inner_outline_alpha + result_alpha * (1.0 - border_inner_outline_alpha);
+        if (new_alpha > 0.001) {
+            result_rgb = (border_inner_outline_color.rgb * border_inner_outline_alpha + result_rgb * result_alpha * (1.0 - border_inner_outline_alpha)) / new_alpha;
+            result_alpha = new_alpha;
+        }
+    }
+
+    // Layer 3: Gap (empty - no rendering)
+
+    // Layer 2: Stroke outline
+    if (stroke_outline_alpha > 0.0) {
+        let new_alpha = stroke_outline_alpha + result_alpha * (1.0 - stroke_outline_alpha);
+        if (new_alpha > 0.001) {
+            result_rgb = (stroke_outline_color.rgb * stroke_outline_alpha + result_rgb * result_alpha * (1.0 - stroke_outline_alpha)) / new_alpha;
+            result_alpha = new_alpha;
+        }
+    }
+
+    // Layer 1: Stroke (front)
     if (alpha > 0.0) {
         let new_alpha = alpha + result_alpha * (1.0 - alpha);
         if (new_alpha > 0.001) {
@@ -1475,7 +1684,7 @@ fn fs_node_fill(in: NodeVertexOutput) -> @location(0) vec4<f32> {
     return vec4(col, alpha);
 }
 
-// Foreground layer: renders border only
+// Foreground layer: renders border with gradient, patterns, and animation
 @fragment
 fn fs_node(in: NodeVertexOutput) -> @location(0) vec4<f32> {
     let node = nodes[in.instance_id];
@@ -1488,14 +1697,104 @@ fn fs_node(in: NodeVertexOutput) -> @location(0) vec4<f32> {
     var col = vec3(0.0);
     var alpha = 0.0;
 
-    // Render border only (the ring between d=0 and d=-border_width)
-    if (d < 0.0 && d > -border_width) {
-        col = node.border_color.xyz;
-        alpha = node_opacity;
-    } else if (d >= 0.0 && d < aa) {
-        // Anti-aliased outer edge of border
-        col = node.border_color.xyz;
-        alpha = (1.0 - smoothstep(0.0, aa, d)) * node_opacity;
+    // Compute local position relative to node center for perimeter calculation
+    let node_half_size = node.size * 0.5;
+    let local_pos = in.world_uv - (node.position + node_half_size);
+
+    // Get perimeter parameter t for gradient interpolation
+    let t = compute_rounded_rect_perimeter_t(local_pos, node_half_size, node.corner_radius);
+
+    // Compute perimeter length for pattern calculation
+    let PI = 3.14159265359;
+    let corner_r = min(node.corner_radius, min(node_half_size.x, node_half_size.y));
+    let perimeter = 2.0 * (node.size.x + node.size.y) - 8.0 * corner_r + 2.0 * PI * corner_r;
+
+    // Animate position along perimeter
+    let animated_t = fract(t + uniforms.time * node.border_flow_speed * 0.1);
+    let perimeter_pos = animated_t * perimeter;
+
+    // Interpolate border color along perimeter gradient
+    let border_color = mix(node.border_start_color, node.border_end_color, t);
+
+    // Check if pixel is in border region
+    let in_border = (d < 0.0 && d > -border_width) || (d >= 0.0 && d < aa);
+
+    if (in_border) {
+        // Apply pattern based on border_pattern_type
+        var pattern_alpha = 1.0;
+
+        switch (node.border_pattern_type) {
+            case 1u: {
+                // Dashed pattern
+                let dash = node.border_dash_length;
+                let gap = node.border_gap_length;
+                if (dash > 0.0 && gap > 0.0) {
+                    let period = dash + gap;
+                    let pos_in_period = fract(perimeter_pos / period) * period;
+                    if (pos_in_period > dash) {
+                        pattern_alpha = 0.0;
+                    }
+                }
+            }
+            case 2u: {
+                // Dotted pattern
+                let dash = max(node.border_dash_length, border_width);
+                let gap = node.border_gap_length;
+                if (gap > 0.0) {
+                    let period = dash + gap;
+                    let pos_in_period = fract(perimeter_pos / period) * period;
+                    if (pos_in_period > dash) {
+                        pattern_alpha = 0.0;
+                    }
+                }
+            }
+            case 3u: {
+                // Arrowed pattern (chevrons)
+                let dash = node.border_dash_length;
+                let gap = node.border_gap_length;
+                if (dash > 0.0 && gap > 0.0) {
+                    let period = dash + gap;
+                    let pos_in_period = fract(perimeter_pos / period) * period;
+                    // Create arrow shape by varying alpha
+                    let arrow_progress = pos_in_period / dash;
+                    if (pos_in_period > dash) {
+                        pattern_alpha = 0.0;
+                    } else {
+                        // Fade along arrow direction
+                        pattern_alpha = arrow_progress;
+                    }
+                }
+            }
+            case 4u: {
+                // Dash-dotted pattern
+                let dash = node.border_dash_length;
+                let gap = node.border_gap_length;
+                let dot_size = border_width;
+                if (dash > 0.0 && gap > 0.0) {
+                    let period = dash + gap + dot_size + gap;
+                    let pos_in_period = fract(perimeter_pos / period) * period;
+                    if (pos_in_period > dash && pos_in_period < dash + gap) {
+                        pattern_alpha = 0.0;
+                    } else if (pos_in_period > dash + gap + dot_size) {
+                        pattern_alpha = 0.0;
+                    }
+                }
+            }
+            default: {
+                // Solid (pattern_type 0) or Custom (5) - no pattern modification
+            }
+        }
+
+        // Apply border color with pattern
+        col = border_color.xyz;
+
+        // Calculate alpha based on SDF distance
+        if (d < 0.0 && d > -border_width) {
+            alpha = node_opacity * border_color.a * pattern_alpha;
+        } else if (d >= 0.0 && d < aa) {
+            // Anti-aliased outer edge of border
+            alpha = (1.0 - smoothstep(0.0, aa, d)) * node_opacity * border_color.a * pattern_alpha;
+        }
     }
 
     return vec4(col, alpha);

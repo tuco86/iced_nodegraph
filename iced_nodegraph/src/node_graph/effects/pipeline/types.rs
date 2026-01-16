@@ -59,21 +59,48 @@ pub struct Grid {
 
 #[derive(Clone, Debug, ShaderType)]
 pub struct Node {
+    // Basic geometry (16 bytes)
     pub position: glam::Vec2,
     pub size: glam::Vec2,
+
+    // Node properties (16 bytes)
     pub corner_radius: f32,
     pub border_width: f32,
     pub opacity: f32,
     pub pin_start: u32,
+
+    // Pin count and shadow (16 bytes)
     pub pin_count: u32,
     pub shadow_blur: f32,
     pub shadow_offset: glam::Vec2,
+
+    // Colors (64 bytes)
     pub fill_color: glam::Vec4,
-    pub border_color: glam::Vec4,
+    pub border_start_color: glam::Vec4, // Border gradient start
+    pub border_end_color: glam::Vec4,   // Border gradient end
     pub shadow_color: glam::Vec4,
+
+    // Glow (32 bytes)
     pub glow_color: glam::Vec4,
     pub glow_radius: f32, // Pre-computed: 0.0 = no glow, >0.0 = glow radius
-    // Padding for 16-byte array stride alignment (128 bytes total)
+
+    // Border pattern and animation (16 bytes)
+    pub border_pattern_type: u32, // 0=solid, 1=dashed, 2=dotted, 3=arrowed
+    pub border_dash_length: f32,
+    pub border_gap_length: f32,
+    pub border_flow_speed: f32, // Animation speed (positive = clockwise)
+
+    // Inner outline (48 bytes with alignment)
+    pub inner_outline_width: f32,
+    pub inner_outline_start_color: glam::Vec4,
+    pub inner_outline_end_color: glam::Vec4,
+
+    // Outer outline (48 bytes with alignment)
+    pub outer_outline_width: f32,
+    pub outer_outline_start_color: glam::Vec4,
+    pub outer_outline_end_color: glam::Vec4,
+
+    // Padding for 16-byte alignment
     pub _pad0: u32,
     pub _pad1: u32,
     pub _pad2: u32,
@@ -97,7 +124,7 @@ pub struct Pin {
 /// Pattern type IDs: 0=Solid, 1=Dashed, 2=Angled, 3=Dotted, 4=DashDotted, 5=Custom
 #[derive(Clone, Debug, ShaderType)]
 pub struct Edge {
-    // Positions and directions
+    // Positions and directions (32 bytes)
     pub start: glam::Vec2,
     pub end: glam::Vec2,
     pub start_direction: u32, // PinSide: 0=Left, 1=Right, 2=Top, 3=Bottom
@@ -105,35 +132,51 @@ pub struct Edge {
     pub edge_type: u32,    // 0=Bezier, 1=Straight, 2=SmoothStep, 3=Step
     pub pattern_type: u32, // 0=solid, 1=dashed, 2=angled, 3=dotted, 4=dash-dotted
 
-    // Stroke colors
+    // Stroke colors (32 bytes)
     pub start_color: glam::Vec4, // color at source (t=0)
     pub end_color: glam::Vec4,   // color at target (t=1)
 
-    // Stroke parameters
+    // Stroke parameters (16 bytes)
     pub thickness: f32,
     pub curve_length: f32, // pre-computed arc length for proper parameterization
     pub dash_length: f32,  // dashed/angled: segment, dotted: spacing
     pub gap_length: f32,   // dashed/angled: gap, dotted: radius
 
-    // Animation and pattern
+    // Animation and pattern (16 bytes)
     pub flow_speed: f32,     // world units per second, 0.0 = no animation
     pub dash_cap: u32,       // 0=butt, 1=round, 2=square, 3=angled
     pub dash_cap_angle: f32, // angle in radians for angled caps
     pub pattern_angle: f32,  // angle in radians for Angled pattern
 
-    // Animation and border params
+    // Animation and border params (16 bytes)
     pub animation_type: u32, // 0=None, 1=Flow, 2=Glow, 3=Pulse, 4=Rainbow
     pub border_width: f32,   // border/outline thickness
-    pub border_gap: f32, // gap between stroke and border
-    pub shadow_blur: f32, // shadow blur radius
+    pub border_gap: f32,     // gap between stroke and border
+    pub shadow_blur: f32,    // shadow blur radius
 
-    // Border color
-    pub border_color: glam::Vec4,
+    // Border gradient colors (32 bytes)
+    pub border_start_color: glam::Vec4, // border color at source (t=0)
+    pub border_end_color: glam::Vec4,   // border color at target (t=1)
 
-    // Shadow
+    // Stroke outline (36 bytes - NO pin color inheritance)
+    pub stroke_outline_width: f32,
+    pub stroke_outline_start_color: glam::Vec4,
+    pub stroke_outline_end_color: glam::Vec4,
+
+    // Border inner outline (36 bytes - NO pin color inheritance)
+    pub border_inner_outline_width: f32,
+    pub border_inner_outline_start_color: glam::Vec4,
+    pub border_inner_outline_end_color: glam::Vec4,
+
+    // Border outer outline (36 bytes - NO pin color inheritance)
+    pub border_outer_outline_width: f32,
+    pub border_outer_outline_start_color: glam::Vec4,
+    pub border_outer_outline_end_color: glam::Vec4,
+
+    // Shadow (32 bytes)
     pub shadow_color: glam::Vec4,
     pub shadow_offset: glam::Vec2,
-    // Padding for 16-byte array stride alignment (160 bytes total)
+    // Padding for 16-byte array stride alignment (288 bytes total)
     pub _pad0: f32,
     pub _pad1: f32,
 }
@@ -145,8 +188,8 @@ mod tests {
 
     #[test]
     fn test_node_shader_size() {
-        // WGSL Node struct is 128 bytes (32 x 4-byte fields)
-        assert_eq!(Node::SHADER_SIZE.get(), 128, "Node size mismatch");
+        // WGSL Node struct is 256 bytes with border gradient, pattern, animation, and outlines
+        assert_eq!(Node::SHADER_SIZE.get(), 256, "Node size mismatch");
     }
 
     #[test]
@@ -157,8 +200,12 @@ mod tests {
 
     #[test]
     fn test_edge_shader_size() {
-        // WGSL Edge struct is 160 bytes (40 x 4-byte fields)
-        assert_eq!(Edge::SHADER_SIZE.get(), 160, "Edge size mismatch");
+        // Edge struct with all outline layers (320 bytes)
+        // Verify it's properly 16-byte aligned for GPU
+        let size = Edge::SHADER_SIZE.get();
+        assert!(size > 0, "Edge size should be positive");
+        assert!(size % 16 == 0, "Edge size should be 16-byte aligned");
+        assert_eq!(size, 320, "Edge size should be 320 bytes");
     }
 
     #[test]
@@ -181,10 +228,21 @@ mod tests {
             shadow_blur: 10.0,
             shadow_offset: glam::Vec2::new(2.0, 2.0),
             fill_color: glam::Vec4::new(0.2, 0.2, 0.2, 1.0),
-            border_color: glam::Vec4::new(0.5, 0.5, 0.5, 1.0),
+            border_start_color: glam::Vec4::new(0.5, 0.5, 0.5, 1.0),
+            border_end_color: glam::Vec4::new(0.5, 0.5, 0.5, 1.0),
             shadow_color: glam::Vec4::new(0.0, 0.0, 0.0, 0.5),
             glow_color: glam::Vec4::new(0.3, 0.6, 1.0, 0.3),
             glow_radius: 8.0,
+            border_pattern_type: 0, // solid
+            border_dash_length: 0.0,
+            border_gap_length: 0.0,
+            border_flow_speed: 0.0,
+            inner_outline_width: 0.0,
+            inner_outline_start_color: glam::Vec4::new(0.0, 0.0, 0.0, 0.0),
+            inner_outline_end_color: glam::Vec4::new(0.0, 0.0, 0.0, 0.0),
+            outer_outline_width: 0.0,
+            outer_outline_start_color: glam::Vec4::new(0.0, 0.0, 0.0, 0.0),
+            outer_outline_end_color: glam::Vec4::new(0.0, 0.0, 0.0, 0.0),
             _pad0: 0,
             _pad1: 0,
             _pad2: 0,
@@ -260,14 +318,14 @@ mod tests {
             create_test_node(2),
         ];
         let bytes = serialize_items(&nodes);
-        let stride = Node::SHADER_SIZE.get() as usize; // 128 bytes
+        let stride = Node::SHADER_SIZE.get() as usize; // 256 bytes
 
         // Calculate glow_radius offset within Node struct:
         // position: 8, size: 8, corner_radius: 4, border_width: 4, opacity: 4,
         // pin_start: 4, pin_count: 4, shadow_blur: 4, shadow_offset: 8,
-        // fill_color: 16, border_color: 16, shadow_color: 16, glow_color: 16
-        // = 8+8+4+4+4+4+4+4+8+16+16+16+16 = 112 bytes, then glow_radius at 112
-        let glow_radius_offset_in_struct = 112;
+        // fill_color: 16, border_start_color: 16, border_end_color: 16, shadow_color: 16, glow_color: 16
+        // = 8+8+4+4+4+4+4+4+8+16+16+16+16+16 = 128 bytes, then glow_radius at 128
+        let glow_radius_offset_in_struct = 128;
 
         for (i, node) in nodes.iter().enumerate() {
             let offset = i * stride + glow_radius_offset_in_struct;
@@ -339,7 +397,17 @@ mod tests {
             border_width: 0.0,
             border_gap: 0.0,
             shadow_blur: 0.0,
-            border_color: glam::Vec4::ZERO,
+            border_start_color: glam::Vec4::ZERO,
+            border_end_color: glam::Vec4::ZERO,
+            stroke_outline_width: 0.0,
+            stroke_outline_start_color: glam::Vec4::ZERO,
+            stroke_outline_end_color: glam::Vec4::ZERO,
+            border_inner_outline_width: 0.0,
+            border_inner_outline_start_color: glam::Vec4::ZERO,
+            border_inner_outline_end_color: glam::Vec4::ZERO,
+            border_outer_outline_width: 0.0,
+            border_outer_outline_start_color: glam::Vec4::ZERO,
+            border_outer_outline_end_color: glam::Vec4::ZERO,
             shadow_color: glam::Vec4::ZERO,
             shadow_offset: glam::Vec2::ZERO,
             _pad0: 0.0,
@@ -351,9 +419,10 @@ mod tests {
     fn test_edge_array_serialization() {
         let edges = vec![create_test_edge(0), create_test_edge(1)];
         let bytes = serialize_items(&edges);
-        let stride = Edge::SHADER_SIZE.get() as usize; // 160 bytes
+        let stride = Edge::SHADER_SIZE.get() as usize;
 
-        assert_eq!(bytes.len(), 2 * 160, "2 edges should be 320 bytes");
+        // Size with outline fields: 288 bytes (padded to 16-byte alignment)
+        assert_eq!(bytes.len(), 2 * stride, "2 edges should match stride * 2");
 
         // Check start.x for each edge
         for (i, edge) in edges.iter().enumerate() {

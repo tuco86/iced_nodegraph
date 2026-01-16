@@ -17,8 +17,9 @@ where
 {
     // Use actual NodeStyle defaults for precise corner calculation
     let node_defaults = NodeStyle::default();
+    let border_width = node_defaults.border.as_ref().map(|b| b.width).unwrap_or(1.0);
     let style = NodeContentStyle::process(theme)
-        .with_geometry(node_defaults.corner_radius, node_defaults.border_width);
+        .with_geometry(node_defaults.corner_radius, border_width);
 
     let pin_list = row![
         container(pin!(

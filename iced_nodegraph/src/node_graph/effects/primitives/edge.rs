@@ -236,18 +236,41 @@ impl Primitive for EdgePrimitive {
         // Animation type comes from style (already resolved by widget)
         let animation_type = if style.has_motion() { 1 } else { 0 };
 
-        // Extract border layer info
-        let (border_width, border_gap, border_color) = style
+        // Extract border layer info with pin color inheritance
+        let (border_width, border_gap, border_start_color, border_end_color) = style
             .border
             .as_ref()
             .map(|b| {
-                (
-                    b.width,
-                    b.gap,
-                    glam::Vec4::new(b.color.r, b.color.g, b.color.b, b.color.a),
-                )
+                // Border start color: explicit or inherit from source pin
+                let start = if b.start_color.a > 0.01 {
+                    glam::Vec4::new(
+                        b.start_color.r,
+                        b.start_color.g,
+                        b.start_color.b,
+                        b.start_color.a,
+                    )
+                } else {
+                    glam::Vec4::new(
+                        self.start_pin_color.r,
+                        self.start_pin_color.g,
+                        self.start_pin_color.b,
+                        self.start_pin_color.a,
+                    )
+                };
+                // Border end color: explicit or inherit from target pin
+                let end = if b.end_color.a > 0.01 {
+                    glam::Vec4::new(b.end_color.r, b.end_color.g, b.end_color.b, b.end_color.a)
+                } else {
+                    glam::Vec4::new(
+                        self.end_pin_color.r,
+                        self.end_pin_color.g,
+                        self.end_pin_color.b,
+                        self.end_pin_color.a,
+                    )
+                };
+                (b.width, b.gap, start, end)
             })
-            .unwrap_or((0.0, 0.0, glam::Vec4::ZERO));
+            .unwrap_or((0.0, 0.0, glam::Vec4::ZERO, glam::Vec4::ZERO));
 
         // Extract shadow layer info
         let (shadow_blur, shadow_color, shadow_offset) = style
@@ -261,6 +284,46 @@ impl Primitive for EdgePrimitive {
                 )
             })
             .unwrap_or((0.0, glam::Vec4::ZERO, glam::Vec2::ZERO));
+
+        // Extract stroke outline (NO pin inheritance)
+        let (stroke_outline_width, stroke_outline_start_color, stroke_outline_end_color) = stroke
+            .and_then(|s| s.outline.as_ref())
+            .map(|o| {
+                (
+                    o.width,
+                    glam::Vec4::new(o.start_color.r, o.start_color.g, o.start_color.b, o.start_color.a),
+                    glam::Vec4::new(o.end_color.r, o.end_color.g, o.end_color.b, o.end_color.a),
+                )
+            })
+            .unwrap_or((0.0, glam::Vec4::ZERO, glam::Vec4::ZERO));
+
+        // Extract border inner outline (NO pin inheritance)
+        let (border_inner_outline_width, border_inner_outline_start_color, border_inner_outline_end_color) = style
+            .border
+            .as_ref()
+            .and_then(|b| b.inner_outline.as_ref())
+            .map(|o| {
+                (
+                    o.width,
+                    glam::Vec4::new(o.start_color.r, o.start_color.g, o.start_color.b, o.start_color.a),
+                    glam::Vec4::new(o.end_color.r, o.end_color.g, o.end_color.b, o.end_color.a),
+                )
+            })
+            .unwrap_or((0.0, glam::Vec4::ZERO, glam::Vec4::ZERO));
+
+        // Extract border outer outline (NO pin inheritance)
+        let (border_outer_outline_width, border_outer_outline_start_color, border_outer_outline_end_color) = style
+            .border
+            .as_ref()
+            .and_then(|b| b.outer_outline.as_ref())
+            .map(|o| {
+                (
+                    o.width,
+                    glam::Vec4::new(o.start_color.r, o.start_color.g, o.start_color.b, o.start_color.a),
+                    glam::Vec4::new(o.end_color.r, o.end_color.g, o.end_color.b, o.end_color.a),
+                )
+            })
+            .unwrap_or((0.0, glam::Vec4::ZERO, glam::Vec4::ZERO));
 
         // Determine if edge is "reversed" (from Input to Output instead of Output to Input)
         let is_reversed = matches!(
@@ -306,7 +369,17 @@ impl Primitive for EdgePrimitive {
                 border_width,
                 border_gap,
                 shadow_blur,
-                border_color,
+                border_start_color,
+                border_end_color,
+                stroke_outline_width,
+                stroke_outline_start_color,
+                stroke_outline_end_color,
+                border_inner_outline_width,
+                border_inner_outline_start_color,
+                border_inner_outline_end_color,
+                border_outer_outline_width,
+                border_outer_outline_start_color,
+                border_outer_outline_end_color,
                 shadow_color,
                 shadow_offset,
                 _pad0: 0.0,

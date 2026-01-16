@@ -31,7 +31,7 @@ mod config;
 // Re-export config types
 pub use config::{
     BackgroundConfig, BorderConfig, EdgeConfig, EdgeShadowConfig, GraphConfig, NodeConfig,
-    PinConfig, SelectionConfig, ShadowConfig, StrokeConfig,
+    OutlineConfig, PinConfig, SelectionConfig, ShadowConfig, StrokeConfig,
 };
 
 /// Shape of a pin indicator.
@@ -392,10 +392,8 @@ impl ShadowStyle {
 pub struct NodeStyle {
     /// Fill color for the node body
     pub fill_color: Color,
-    /// Border color
-    pub border_color: Color,
-    /// Border width in world-space pixels
-    pub border_width: f32,
+    /// Border style (pattern, gradient, animation, outlines)
+    pub border: Option<NodeBorderStyle>,
     /// Corner radius for rounded corners
     pub corner_radius: f32,
     /// Node opacity (0.0 to 1.0)
@@ -408,8 +406,7 @@ impl Default for NodeStyle {
     fn default() -> Self {
         Self {
             fill_color: Color::from_rgb(0.14, 0.14, 0.16),
-            border_color: Color::from_rgb(0.20, 0.20, 0.22),
-            border_width: 1.0,
+            border: Some(NodeBorderStyle::default()),
             corner_radius: 8.0,
             opacity: 0.75,
             shadow: Some(ShadowStyle::subtle()),
@@ -429,15 +426,42 @@ impl NodeStyle {
         self
     }
 
-    /// Sets the border color.
-    pub fn border_color(mut self, color: Color) -> Self {
-        self.border_color = color;
+    /// Sets the border style.
+    pub fn border(mut self, border: NodeBorderStyle) -> Self {
+        self.border = Some(border);
         self
     }
 
-    /// Sets the border width.
+    /// Sets a simple border with color and width (convenience method).
+    pub fn simple_border(mut self, color: Color, width: f32) -> Self {
+        self.border = Some(NodeBorderStyle::new().color(color).width(width));
+        self
+    }
+
+    /// Removes the border.
+    pub fn no_border(mut self) -> Self {
+        self.border = None;
+        self
+    }
+
+    /// Sets the border color (convenience, modifies existing border).
+    pub fn border_color(mut self, color: Color) -> Self {
+        if let Some(ref mut border) = self.border {
+            border.start_color = color;
+            border.end_color = color;
+        } else {
+            self.border = Some(NodeBorderStyle::new().color(color));
+        }
+        self
+    }
+
+    /// Sets the border width (convenience, modifies existing border).
     pub fn border_width(mut self, width: f32) -> Self {
-        self.border_width = width;
+        if let Some(ref mut border) = self.border {
+            border.width = width;
+        } else {
+            self.border = Some(NodeBorderStyle::new().width(width));
+        }
         self
     }
 
@@ -469,8 +493,9 @@ impl NodeStyle {
     pub fn input() -> Self {
         Self {
             fill_color: Color::from_rgb(0.15, 0.20, 0.30),
-            border_color: Color::from_rgb(0.30, 0.45, 0.70),
-            border_width: 1.5,
+            border: Some(NodeBorderStyle::new()
+                .color(Color::from_rgb(0.30, 0.45, 0.70))
+                .width(1.5)),
             corner_radius: 6.0,
             opacity: 0.85,
             shadow: Some(ShadowStyle::medium()),
@@ -481,8 +506,9 @@ impl NodeStyle {
     pub fn process() -> Self {
         Self {
             fill_color: Color::from_rgb(0.18, 0.28, 0.18),
-            border_color: Color::from_rgb(0.35, 0.60, 0.35),
-            border_width: 1.5,
+            border: Some(NodeBorderStyle::new()
+                .color(Color::from_rgb(0.35, 0.60, 0.35))
+                .width(1.5)),
             corner_radius: 4.0,
             opacity: 0.80,
             shadow: Some(ShadowStyle::medium()),
@@ -493,8 +519,9 @@ impl NodeStyle {
     pub fn output() -> Self {
         Self {
             fill_color: Color::from_rgb(0.30, 0.22, 0.15),
-            border_color: Color::from_rgb(0.75, 0.55, 0.30),
-            border_width: 2.0,
+            border: Some(NodeBorderStyle::new()
+                .color(Color::from_rgb(0.75, 0.55, 0.30))
+                .width(2.0)),
             corner_radius: 8.0,
             opacity: 0.85,
             shadow: Some(ShadowStyle::strong()),
@@ -505,8 +532,9 @@ impl NodeStyle {
     pub fn comment() -> Self {
         Self {
             fill_color: Color::from_rgba(0.20, 0.20, 0.22, 0.5),
-            border_color: Color::from_rgba(0.40, 0.40, 0.44, 0.5),
-            border_width: 1.0,
+            border: Some(NodeBorderStyle::new()
+                .color(Color::from_rgba(0.40, 0.40, 0.44, 0.5))
+                .width(1.0)),
             corner_radius: 3.0,
             opacity: 0.60,
             shadow: None, // Comments are subtle, no shadow
@@ -527,8 +555,9 @@ impl NodeStyle {
                     bg.b + (primary.b - bg.b) * 0.15,
                     1.0,
                 ),
-                border_color: Color::from_rgba(primary.r, primary.g, primary.b, 0.6),
-                border_width: 1.5,
+                border: Some(NodeBorderStyle::new()
+                    .color(Color::from_rgba(primary.r, primary.g, primary.b, 0.6))
+                    .width(1.5)),
                 corner_radius: 6.0,
                 opacity: 0.85,
                 shadow: Some(ShadowStyle::medium()),
@@ -541,8 +570,9 @@ impl NodeStyle {
                     1.0 - (1.0 - primary.b) * 0.08,
                     1.0,
                 ),
-                border_color: Color::from_rgba(primary.r, primary.g, primary.b, 0.5),
-                border_width: 1.5,
+                border: Some(NodeBorderStyle::new()
+                    .color(Color::from_rgba(primary.r, primary.g, primary.b, 0.5))
+                    .width(1.5)),
                 corner_radius: 6.0,
                 opacity: 0.90,
                 shadow: Some(ShadowStyle::subtle()),
@@ -564,8 +594,9 @@ impl NodeStyle {
                     bg.b + (success.b - bg.b) * 0.12,
                     1.0,
                 ),
-                border_color: Color::from_rgba(success.r, success.g, success.b, 0.5),
-                border_width: 1.5,
+                border: Some(NodeBorderStyle::new()
+                    .color(Color::from_rgba(success.r, success.g, success.b, 0.5))
+                    .width(1.5)),
                 corner_radius: 4.0,
                 opacity: 0.80,
                 shadow: Some(ShadowStyle::medium()),
@@ -578,8 +609,9 @@ impl NodeStyle {
                     1.0 - (1.0 - success.b) * 0.06,
                     1.0,
                 ),
-                border_color: Color::from_rgba(success.r, success.g, success.b, 0.4),
-                border_width: 1.5,
+                border: Some(NodeBorderStyle::new()
+                    .color(Color::from_rgba(success.r, success.g, success.b, 0.4))
+                    .width(1.5)),
                 corner_radius: 4.0,
                 opacity: 0.88,
                 shadow: Some(ShadowStyle::subtle()),
@@ -601,8 +633,9 @@ impl NodeStyle {
                     bg.b + (secondary.b - bg.b) * 0.15,
                     1.0,
                 ),
-                border_color: Color::from_rgba(secondary.r, secondary.g, secondary.b, 0.7),
-                border_width: 2.0,
+                border: Some(NodeBorderStyle::new()
+                    .color(Color::from_rgba(secondary.r, secondary.g, secondary.b, 0.7))
+                    .width(2.0)),
                 corner_radius: 8.0,
                 opacity: 0.85,
                 shadow: Some(ShadowStyle::strong()),
@@ -615,8 +648,9 @@ impl NodeStyle {
                     1.0 - (1.0 - secondary.b) * 0.10,
                     1.0,
                 ),
-                border_color: Color::from_rgba(secondary.r, secondary.g, secondary.b, 0.6),
-                border_width: 2.0,
+                border: Some(NodeBorderStyle::new()
+                    .color(Color::from_rgba(secondary.r, secondary.g, secondary.b, 0.6))
+                    .width(2.0)),
                 corner_radius: 8.0,
                 opacity: 0.90,
                 shadow: Some(ShadowStyle::medium()),
@@ -631,8 +665,9 @@ impl NodeStyle {
 
         Self {
             fill_color: Color::from_rgba(weak.r, weak.g, weak.b, 0.5),
-            border_color: Color::from_rgba(weak.r * 1.2, weak.g * 1.2, weak.b * 1.2, 0.4),
-            border_width: 1.0,
+            border: Some(NodeBorderStyle::new()
+                .color(Color::from_rgba(weak.r * 1.2, weak.g * 1.2, weak.b * 1.2, 0.4))
+                .width(1.0)),
             corner_radius: 3.0,
             opacity: 0.60,
             shadow: None,
@@ -662,8 +697,7 @@ impl NodeStyle {
 
             Self {
                 fill_color: node_fill,
-                border_color: node_border,
-                border_width: 1.0,
+                border: Some(NodeBorderStyle::new().color(node_border).width(1.0)),
                 corner_radius: 5.0,
                 opacity: 0.75,
                 shadow: Some(ShadowStyle::subtle()),
@@ -683,8 +717,7 @@ impl NodeStyle {
 
             Self {
                 fill_color: node_fill,
-                border_color: node_border,
-                border_width: 1.0,
+                border: Some(NodeBorderStyle::new().color(node_border).width(1.0)),
                 corner_radius: 5.0,
                 opacity: 0.85,
                 shadow: Some(ShadowStyle {
@@ -705,8 +738,12 @@ impl NodeStyle {
             NodeStatus::Idle => self.clone(),
             NodeStatus::Selected => {
                 let mut s = self.clone();
-                s.border_color = selection.selected_border_color;
-                s.border_width = selection.selected_border_width;
+                // Update or create border with selection styling
+                s.border = Some(
+                    s.border.unwrap_or_default()
+                        .color(selection.selected_border_color)
+                        .width(selection.selected_border_width)
+                );
                 s
             }
         }
@@ -1098,6 +1135,8 @@ pub struct StrokeStyle {
     pub cap: StrokeCap,
     /// Cap style for individual dash segments (when using patterns)
     pub dash_cap: DashCap,
+    /// Outline around the stroke. NO pin color inheritance.
+    pub outline: Option<OutlineStyle>,
 }
 
 impl Default for StrokeStyle {
@@ -1109,6 +1148,7 @@ impl Default for StrokeStyle {
             pattern: StrokePattern::Solid,
             cap: StrokeCap::Round,
             dash_cap: DashCap::Butt,
+            outline: None,
         }
     }
 }
@@ -1188,6 +1228,13 @@ impl StrokeStyle {
         self
     }
 
+    /// Sets the stroke outline.
+    /// Stroke outlines have NO pin color inheritance.
+    pub fn outline(mut self, outline: OutlineStyle) -> Self {
+        self.outline = Some(outline);
+        self
+    }
+
     /// Applies a StrokeConfig, returning a new StrokeStyle.
     /// Config values override base values.
     pub fn with_config(&self, config: &crate::style::config::StrokeConfig) -> Self {
@@ -1200,10 +1247,81 @@ impl StrokeStyle {
                 .clone()
                 .unwrap_or_else(|| self.pattern.clone()),
             cap: config.cap.unwrap_or(self.cap),
-            dash_cap: config
-                .dash_cap
-                .unwrap_or(self.dash_cap),
+            dash_cap: config.dash_cap.unwrap_or(self.dash_cap),
+            outline: config
+                .outline
+                .as_ref()
+                .map(|c| c.resolve())
+                .or(self.outline),
         }
+    }
+}
+
+// ============================================================================
+// Outline Style
+// ============================================================================
+
+/// Outline style for comic-book style effects.
+///
+/// Used for stroke outlines and border inner/outer outlines.
+/// Outlines have NO pin color inheritance - colors must be explicitly set.
+/// TRANSPARENT colors will render as invisible (not inherit from pins).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OutlineStyle {
+    /// Outline width in world-space pixels
+    pub width: f32,
+    /// Color at start of edge (t=0). NO inheritance - transparent = invisible.
+    pub start_color: Color,
+    /// Color at end of edge (t=1). NO inheritance - transparent = invisible.
+    pub end_color: Color,
+}
+
+impl Default for OutlineStyle {
+    fn default() -> Self {
+        Self {
+            width: 1.0,
+            start_color: Color::BLACK,
+            end_color: Color::BLACK,
+        }
+    }
+}
+
+impl OutlineStyle {
+    /// Creates a new outline with default values.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the outline width.
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = width;
+        self
+    }
+
+    /// Sets a solid color (both start and end).
+    pub fn color(mut self, color: Color) -> Self {
+        self.start_color = color;
+        self.end_color = color;
+        self
+    }
+
+    /// Sets a gradient color (start to end).
+    pub fn gradient(mut self, start: Color, end: Color) -> Self {
+        self.start_color = start;
+        self.end_color = end;
+        self
+    }
+
+    /// Sets the start color.
+    pub fn start_color(mut self, color: Color) -> Self {
+        self.start_color = color;
+        self
+    }
+
+    /// Sets the end color.
+    pub fn end_color(mut self, color: Color) -> Self {
+        self.end_color = color;
+        self
     }
 }
 
@@ -1215,14 +1333,23 @@ impl StrokeStyle {
 ///
 /// Draws an outer ring around the stroke for emphasis or contrast.
 /// The border is rendered behind the stroke.
+///
+/// Border colors inherit from pin colors if TRANSPARENT (alpha < 0.01).
+/// Use explicit colors to override pin inheritance.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BorderStyle {
     /// Border width in world-space pixels
     pub width: f32,
     /// Radial gap between stroke outer edge and border inner edge
     pub gap: f32,
-    /// Border color
-    pub color: Color,
+    /// Color at start of edge (t=0). TRANSPARENT = use source pin color.
+    pub start_color: Color,
+    /// Color at end of edge (t=1). TRANSPARENT = use target pin color.
+    pub end_color: Color,
+    /// Inner outline (between gap and border). NO pin inheritance.
+    pub inner_outline: Option<OutlineStyle>,
+    /// Outer outline (outside border). NO pin inheritance.
+    pub outer_outline: Option<OutlineStyle>,
 }
 
 impl Default for BorderStyle {
@@ -1230,7 +1357,10 @@ impl Default for BorderStyle {
         Self {
             width: 1.0,
             gap: 0.5,
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.5),
+            start_color: Color::TRANSPARENT, // Inherits from pin
+            end_color: Color::TRANSPARENT,   // Inherits from pin
+            inner_outline: None,
+            outer_outline: None,
         }
     }
 }
@@ -1253,9 +1383,45 @@ impl BorderStyle {
         self
     }
 
-    /// Sets the border color.
+    /// Sets a solid color (both start and end).
+    /// This overrides pin color inheritance.
     pub fn color(mut self, color: Color) -> Self {
-        self.color = color;
+        self.start_color = color;
+        self.end_color = color;
+        self
+    }
+
+    /// Sets a gradient color (start to end).
+    /// This overrides pin color inheritance.
+    pub fn gradient(mut self, start: Color, end: Color) -> Self {
+        self.start_color = start;
+        self.end_color = end;
+        self
+    }
+
+    /// Sets the start color (at source pin).
+    pub fn start_color(mut self, color: Color) -> Self {
+        self.start_color = color;
+        self
+    }
+
+    /// Sets the end color (at target pin).
+    pub fn end_color(mut self, color: Color) -> Self {
+        self.end_color = color;
+        self
+    }
+
+    /// Sets the inner outline (between gap and border).
+    /// Inner outlines have NO pin color inheritance.
+    pub fn inner_outline(mut self, outline: OutlineStyle) -> Self {
+        self.inner_outline = Some(outline);
+        self
+    }
+
+    /// Sets the outer outline (outside the border).
+    /// Outer outlines have NO pin color inheritance.
+    pub fn outer_outline(mut self, outline: OutlineStyle) -> Self {
+        self.outer_outline = Some(outline);
         self
     }
 
@@ -1265,8 +1431,162 @@ impl BorderStyle {
         Self {
             width: config.width.unwrap_or(self.width),
             gap: config.gap.unwrap_or(self.gap),
-            color: config.color.unwrap_or(self.color),
+            start_color: config.start_color.unwrap_or(self.start_color),
+            end_color: config.end_color.unwrap_or(self.end_color),
+            inner_outline: config
+                .inner_outline
+                .as_ref()
+                .map(|c| c.resolve())
+                .or(self.inner_outline),
+            outer_outline: config
+                .outer_outline
+                .as_ref()
+                .map(|c| c.resolve())
+                .or(self.outer_outline),
         }
+    }
+}
+
+// ============================================================================
+// Node Border Style
+// ============================================================================
+
+/// Border style for nodes with pattern, animation, and outline support.
+///
+/// Unlike edges, node borders have NO pin color inheritance - all colors must be explicit.
+/// The border follows the rounded rectangle perimeter of the node.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NodeBorderStyle {
+    /// Border width in world-space pixels
+    pub width: f32,
+    /// Color at perimeter start (t=0). NO inheritance.
+    pub start_color: Color,
+    /// Color at perimeter end (t=1). NO inheritance.
+    pub end_color: Color,
+    /// Pattern type (Solid, Dashed, Dotted, Angled)
+    pub pattern: StrokePattern,
+    /// Dash/segment length for patterned borders
+    pub dash_length: f32,
+    /// Gap length for patterned borders
+    pub gap_length: f32,
+    /// Animation speed (positive = clockwise, negative = counter-clockwise)
+    pub flow_speed: f32,
+    /// Inner outline (between fill and border). NO inheritance.
+    pub inner_outline: Option<OutlineStyle>,
+    /// Outer outline (outside border). NO inheritance.
+    pub outer_outline: Option<OutlineStyle>,
+}
+
+impl Default for NodeBorderStyle {
+    fn default() -> Self {
+        Self {
+            width: 1.0,
+            start_color: Color::from_rgb(0.20, 0.20, 0.22),
+            end_color: Color::from_rgb(0.20, 0.20, 0.22),
+            pattern: StrokePattern::Solid,
+            dash_length: 10.0,
+            gap_length: 5.0,
+            flow_speed: 0.0,
+            inner_outline: None,
+            outer_outline: None,
+        }
+    }
+}
+
+impl NodeBorderStyle {
+    /// Creates a new node border with default values.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the border width.
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = width;
+        self
+    }
+
+    /// Sets a solid color (same at start and end).
+    pub fn color(mut self, color: Color) -> Self {
+        self.start_color = color;
+        self.end_color = color;
+        self
+    }
+
+    /// Sets gradient colors along the perimeter.
+    pub fn gradient(mut self, start: Color, end: Color) -> Self {
+        self.start_color = start;
+        self.end_color = end;
+        self
+    }
+
+    /// Sets the border pattern.
+    pub fn pattern(mut self, pattern: StrokePattern) -> Self {
+        self.pattern = pattern;
+        self
+    }
+
+    /// Sets dashed pattern with dash and gap lengths.
+    pub fn dashed(mut self, dash: f32, gap: f32) -> Self {
+        self.pattern = StrokePattern::Dashed {
+            dash,
+            gap,
+            phase: 0.0,
+            motion: if self.flow_speed != 0.0 {
+                Some(DashMotion::new(self.flow_speed))
+            } else {
+                None
+            },
+        };
+        self.dash_length = dash;
+        self.gap_length = gap;
+        self
+    }
+
+    /// Sets dotted pattern with spacing.
+    pub fn dotted(mut self, spacing: f32, radius: f32) -> Self {
+        self.pattern = StrokePattern::Dotted {
+            spacing,
+            radius,
+            phase: 0.0,
+            motion: if self.flow_speed != 0.0 {
+                Some(DashMotion::new(self.flow_speed))
+            } else {
+                None
+            },
+        };
+        self.dash_length = spacing;
+        self.gap_length = radius;
+        self
+    }
+
+    /// Sets animation flow speed (positive = clockwise).
+    pub fn flow_speed(mut self, speed: f32) -> Self {
+        self.flow_speed = speed;
+        self
+    }
+
+    /// Enables clockwise animation at given speed.
+    pub fn animate_clockwise(mut self, speed: f32) -> Self {
+        self.flow_speed = speed.abs();
+        self
+    }
+
+    /// Enables counter-clockwise animation at given speed.
+    pub fn animate_counter_clockwise(mut self, speed: f32) -> Self {
+        self.flow_speed = -speed.abs();
+        self
+    }
+
+    /// Sets the inner outline (between fill and border).
+    pub fn inner_outline(mut self, outline: OutlineStyle) -> Self {
+        self.inner_outline = Some(outline);
+        self
+    }
+
+    /// Sets the outer outline (outside the border).
+    pub fn outer_outline(mut self, outline: OutlineStyle) -> Self {
+        self.outer_outline = Some(outline);
+        self
     }
 }
 

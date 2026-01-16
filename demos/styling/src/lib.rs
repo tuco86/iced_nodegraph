@@ -39,7 +39,7 @@ use iced::{
     widget::{button, column, container, pick_list, row, slider, stack, text},
     window,
 };
-use iced_nodegraph::{NodeStyle, PinRef, node_graph};
+use iced_nodegraph::{NodeBorderStyle, NodeStyle, PinRef, node_graph};
 use nodes::styled_node;
 use std::collections::HashSet;
 
@@ -247,7 +247,7 @@ impl Application {
                 if let Some((_, _, style)) = self.nodes.get(index) {
                     self.corner_radius = style.corner_radius;
                     self.opacity = style.opacity;
-                    self.border_width = style.border_width;
+                    self.border_width = style.border.as_ref().map(|b| b.width).unwrap_or(1.0);
                 }
             }
             Message::ApplyPreset(preset) => {
@@ -262,7 +262,7 @@ impl Application {
                         *style = new_style.clone();
                         self.corner_radius = new_style.corner_radius;
                         self.opacity = new_style.opacity;
-                        self.border_width = new_style.border_width;
+                        self.border_width = new_style.border.as_ref().map(|b| b.width).unwrap_or(1.0);
                     }
                 }
             }
@@ -281,7 +281,12 @@ impl Application {
             && let Some((_, _, style)) = self.nodes.get_mut(index) {
                 style.corner_radius = self.corner_radius;
                 style.opacity = self.opacity;
-                style.border_width = self.border_width;
+                // Update border width in the border field
+                if let Some(ref mut border) = style.border {
+                    border.width = self.border_width;
+                } else {
+                    style.border = Some(NodeBorderStyle::new().width(self.border_width));
+                }
             }
     }
 
