@@ -17,11 +17,71 @@ use std::path::PathBuf;
 
 use crate::ids::{EdgeId, NodeId};
 use crate::nodes::{
-    BackgroundConfigInputs, BoolToggleConfig, ConfigNodeType, EdgeConfigInputs, FloatSliderConfig,
-    InputNodeType, IntSliderConfig, MathNodeState, MathOperation, NodeConfigInputs, NodeType,
-    PatternType, PatternTypeSelection, PinConfigInputs, ShadowConfigInputs,
+    BackgroundConfigInputs, BoolToggleConfig, ConfigNodeType, EdgeConfigInputs, EdgeSections,
+    FloatSliderConfig, InputNodeType, IntSliderConfig, MathNodeState, MathOperation,
+    NodeConfigInputs, NodeSections, NodeType, PatternType, PatternTypeSelection, PinConfigInputs,
+    ShadowConfigInputs,
 };
 use iced_nodegraph::{EdgeCurve, PinShape};
+
+/// Saved section expansion state for EdgeConfig nodes.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SavedEdgeSections {
+    pub stroke: bool,
+    pub pattern: bool,
+    pub border: bool,
+    pub shadow: bool,
+}
+
+impl From<&EdgeSections> for SavedEdgeSections {
+    fn from(s: &EdgeSections) -> Self {
+        Self {
+            stroke: s.stroke,
+            pattern: s.pattern,
+            border: s.border,
+            shadow: s.shadow,
+        }
+    }
+}
+
+impl SavedEdgeSections {
+    fn to_edge_sections(&self) -> EdgeSections {
+        EdgeSections {
+            stroke: self.stroke,
+            pattern: self.pattern,
+            border: self.border,
+            shadow: self.shadow,
+        }
+    }
+}
+
+/// Saved section expansion state for NodeConfig nodes.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SavedNodeSections {
+    pub fill: bool,
+    pub border: bool,
+    pub shadow: bool,
+}
+
+impl From<&NodeSections> for SavedNodeSections {
+    fn from(s: &NodeSections) -> Self {
+        Self {
+            fill: s.fill,
+            border: s.border,
+            shadow: s.shadow,
+        }
+    }
+}
+
+impl SavedNodeSections {
+    fn to_node_sections(&self) -> NodeSections {
+        NodeSections {
+            fill: self.fill,
+            border: self.border,
+            shadow: self.shadow,
+        }
+    }
+}
 
 /// Saved state format for persistence.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,6 +97,15 @@ pub struct SavedState {
     /// Window size (width, height) - None for old save files
     #[serde(default)]
     pub window_size: Option<(u32, u32)>,
+    /// Section expansion states for EdgeConfig nodes
+    #[serde(default)]
+    pub edge_config_sections: HashMap<NodeId, SavedEdgeSections>,
+    /// Section expansion states for NodeConfig nodes
+    #[serde(default)]
+    pub node_config_sections: HashMap<NodeId, SavedNodeSections>,
+    /// Whether window was maximized - None for old save files
+    #[serde(default)]
+    pub window_maximized: Option<bool>,
 }
 
 /// Saved node with ID, position, and type.
@@ -221,6 +290,9 @@ impl SavedState {
         camera_zoom: f32,
         window_position: Option<(i32, i32)>,
         window_size: Option<(u32, u32)>,
+        edge_config_sections: &HashMap<NodeId, EdgeSections>,
+        node_config_sections: &HashMap<NodeId, NodeSections>,
+        window_maximized: Option<bool>,
     ) -> Self {
         Self {
             nodes: node_order
@@ -251,6 +323,15 @@ impl SavedState {
             camera_zoom,
             window_position,
             window_size,
+            edge_config_sections: edge_config_sections
+                .iter()
+                .map(|(id, s)| (id.clone(), SavedEdgeSections::from(s)))
+                .collect(),
+            node_config_sections: node_config_sections
+                .iter()
+                .map(|(id, s)| (id.clone(), SavedNodeSections::from(s)))
+                .collect(),
+            window_maximized,
         }
     }
 
@@ -270,6 +351,9 @@ impl SavedState {
         f32,
         Option<(i32, i32)>,
         Option<(u32, u32)>,
+        HashMap<NodeId, EdgeSections>,
+        HashMap<NodeId, NodeSections>,
+        Option<bool>,
     ) {
         let mut nodes = HashMap::new();
         let mut node_order = Vec::new();
@@ -301,6 +385,18 @@ impl SavedState {
         let theme = string_to_theme(&self.theme);
         let camera_pos = Point::new(self.camera_position.0, self.camera_position.1);
 
+        let edge_config_sections = self
+            .edge_config_sections
+            .iter()
+            .map(|(id, s)| (id.clone(), s.to_edge_sections()))
+            .collect();
+
+        let node_config_sections = self
+            .node_config_sections
+            .iter()
+            .map(|(id, s)| (id.clone(), s.to_node_sections()))
+            .collect();
+
         (
             nodes,
             node_order,
@@ -311,6 +407,9 @@ impl SavedState {
             self.camera_zoom,
             self.window_position,
             self.window_size,
+            edge_config_sections,
+            node_config_sections,
+            self.window_maximized,
         )
     }
 }

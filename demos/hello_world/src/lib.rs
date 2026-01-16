@@ -97,9 +97,9 @@ pub fn main() -> iced::Result {
     #[cfg(not(target_arch = "wasm32"))]
     let window_settings = {
         // Try to load saved window settings
-        let (position, size) = persistence::load_state()
-            .map(|s| (s.window_position, s.window_size))
-            .unwrap_or((None, None));
+        let (position, size, maximized) = persistence::load_state()
+            .map(|s| (s.window_position, s.window_size, s.window_maximized))
+            .unwrap_or((None, None, None));
 
         iced::window::Settings {
             position: position
@@ -108,6 +108,7 @@ pub fn main() -> iced::Result {
             size: size
                 .map(|(w, h)| iced::Size::new(w as f32, h as f32))
                 .unwrap_or(iced::Size::new(1280.0, 800.0)),
+            maximized: maximized.unwrap_or(false),
             ..Default::default()
         }
     };
@@ -161,6 +162,7 @@ enum ApplicationMessage {
     },
     WindowResized(iced::Size),
     WindowMoved(Point),
+    WindowMaximizedChanged(bool),
     NavigateToSubmenu(String),
     NavigateBack,
     Tick,
@@ -382,6 +384,8 @@ struct Application {
     window_position: Option<(i32, i32)>,
     /// Window size (width, height) for persistence
     window_size: Option<(u32, u32)>,
+    /// Whether window is maximized
+    window_maximized: Option<bool>,
 }
 
 impl Default for Application {
@@ -510,6 +514,7 @@ impl Default for Application {
             camera_zoom: 1.0,
             window_position: None,
             window_size: None,
+            window_maximized: None,
         }
     }
 }
@@ -531,6 +536,9 @@ impl Application {
                         camera_zoom,
                         window_pos,
                         window_size,
+                        edge_config_sections,
+                        node_config_sections,
+                        window_maximized,
                     ) = saved.to_app();
                     println!(
                         "Loaded saved state: {} nodes, {} edges",
@@ -547,6 +555,9 @@ impl Application {
                         camera_zoom,
                         window_position: window_pos,
                         window_size,
+                        edge_config_sections,
+                        node_config_sections,
+                        window_maximized,
                         ..Self::default()
                     };
                     // Apply computed styles from config nodes immediately
@@ -574,6 +585,9 @@ impl Application {
             self.camera_zoom,
             self.window_position,
             self.window_size,
+            &self.edge_config_sections,
+            &self.node_config_sections,
+            self.window_maximized,
         );
         if let Err(e) = persistence::save_state(&saved) {
             eprintln!("Failed to save state: {}", e);
@@ -1491,11 +1505,18 @@ impl Application {
             ApplicationMessage::WindowResized(size) => {
                 self.viewport_size = size;
                 self.window_size = Some((size.width as u32, size.height as u32));
-                self.save_state();
-                Task::none()
+                // Query maximize state on resize - it may have changed
+                window::oldest()
+                    .and_then(window::is_maximized)
+                    .map(ApplicationMessage::WindowMaximizedChanged)
             }
             ApplicationMessage::WindowMoved(position) => {
                 self.window_position = Some((position.x as i32, position.y as i32));
+                self.save_state();
+                Task::none()
+            }
+            ApplicationMessage::WindowMaximizedChanged(maximized) => {
+                self.window_maximized = Some(maximized);
                 self.save_state();
                 Task::none()
             }

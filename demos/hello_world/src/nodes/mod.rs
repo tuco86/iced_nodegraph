@@ -34,7 +34,7 @@ pub use int_slider::{IntSliderConfig, int_slider_node};
 pub use math::math_node;
 
 use iced::{
-    Color, Padding, Theme,
+    Color, Length, Padding, Theme,
     widget::{Container, container, text},
 };
 use iced_nodegraph::{
@@ -447,40 +447,97 @@ where
     )
 }
 
-/// Creates a collapsible section header for config nodes.
-/// Returns a row with expand/collapse indicator and title that can be clicked.
-pub fn section_header<'a, Message: Clone + 'a>(
+/// Creates a collapsible section header with optional collapsed pins inline.
+/// Format when expanded: "──── Label - ────"
+/// Format when collapsed with pins: "[pins] ── Label + ──"
+pub fn section_header_with_pins<'a, Message: Clone + 'a>(
     title: &'a str,
     expanded: bool,
     on_toggle: Message,
+    collapsed_pins: Option<iced::Element<'a, Message>>,
 ) -> iced::widget::Button<'a, Message, Theme, iced::Renderer> {
     use iced::widget::{button, row};
 
-    let indicator = if expanded { "v" } else { ">" };
+    let indicator = if expanded { "-" } else { "+" };
+    let label_text = format!("{} {}", title, indicator);
 
-    button(
-        row![
-            text(indicator).size(10).color(colors::TEXT_MUTED),
-            text(title).size(10).color(colors::TEXT_PRIMARY),
-        ]
-        .spacing(4)
-        .align_y(iced::Alignment::Center),
-    )
-    .on_press(on_toggle)
-    .padding([2, 4])
-    .style(|_theme: &Theme, status| {
-        let background = match status {
-            button::Status::Hovered | button::Status::Pressed => {
-                Some(iced::Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.05)))
-            }
-            _ => None,
-        };
-        button::Style {
-            background,
-            text_color: colors::TEXT_PRIMARY,
-            border: iced::Border::default(),
-            shadow: iced::Shadow::default(),
-            snap: false,
+    // Separator line style
+    let separator_style = |_: &_| container::Style {
+        background: Some(iced::Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.1))),
+        ..Default::default()
+    };
+
+    // Build the row content based on whether we have collapsed pins
+    let row_content: iced::Element<'a, Message> = if !expanded {
+        if let Some(pins) = collapsed_pins {
+            // Collapsed with pins: [pins] ── Label + ──
+            row![
+                pins,
+                container(text(""))
+                    .width(Length::Fill)
+                    .height(1)
+                    .style(separator_style),
+                text(label_text).size(9).color(colors::TEXT_MUTED),
+                container(text(""))
+                    .width(Length::Fill)
+                    .height(1)
+                    .style(separator_style),
+            ]
+            .spacing(6)
+            .align_y(iced::Alignment::Center)
+            .into()
+        } else {
+            // Collapsed without pins: ──── Label + ────
+            row![
+                container(text(""))
+                    .width(Length::Fill)
+                    .height(1)
+                    .style(separator_style),
+                text(label_text).size(9).color(colors::TEXT_MUTED),
+                container(text(""))
+                    .width(Length::Fill)
+                    .height(1)
+                    .style(separator_style),
+            ]
+            .spacing(6)
+            .align_y(iced::Alignment::Center)
+            .into()
         }
-    })
+    } else {
+        // Expanded: ──── Label - ────
+        row![
+            container(text(""))
+                .width(Length::Fill)
+                .height(1)
+                .style(separator_style),
+            text(label_text).size(9).color(colors::TEXT_MUTED),
+            container(text(""))
+                .width(Length::Fill)
+                .height(1)
+                .style(separator_style),
+        ]
+        .spacing(6)
+        .align_y(iced::Alignment::Center)
+        .into()
+    };
+
+    button(row_content)
+        .width(Length::Fill)
+        .on_press(on_toggle)
+        .padding([4, 0])
+        .style(|_theme: &Theme, status| {
+            let background = match status {
+                button::Status::Hovered | button::Status::Pressed => {
+                    Some(iced::Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.03)))
+                }
+                _ => None,
+            };
+            button::Style {
+                background,
+                text_color: colors::TEXT_MUTED,
+                border: iced::Border::default(),
+                shadow: iced::Shadow::default(),
+                snap: false,
+            }
+        })
 }

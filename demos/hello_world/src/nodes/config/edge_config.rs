@@ -12,7 +12,7 @@ use iced_nodegraph::{
     StrokePattern, pin,
 };
 
-use crate::nodes::{colors, node_title_bar, pins, section_header};
+use crate::nodes::{colors, node_title_bar, pins, section_header_with_pins};
 
 /// Section expansion state for EdgeConfig nodes
 #[derive(Debug, Clone, Default)]
@@ -292,19 +292,6 @@ where
         ),
     ]
     .align_y(iced::Alignment::Center);
-
-    // Helper to create separator lines
-    let make_separator = || {
-        container(text(""))
-            .width(Length::Fill)
-            .height(1)
-            .style(|_: &_| container::Style {
-                background: Some(iced::Background::Color(Color::from_rgba(
-                    1.0, 1.0, 1.0, 0.1,
-                ))),
-                ..Default::default()
-            })
-    };
 
     // Get stroke values for display
     let stroke = result.stroke.as_ref();
@@ -732,19 +719,9 @@ where
     // Build content with collapsible sections
     let mut content_items: Vec<iced::Element<'_, Message>> = vec![config_row.into()];
 
-    // Stroke section
-    content_items.push(make_separator().into());
-    content_items.push(
-        section_header("Stroke", sections.stroke, on_toggle(EdgeSection::Stroke)).into(),
-    );
-    if sections.stroke {
-        content_items.push(start_row.into());
-        content_items.push(end_row.into());
-        content_items.push(thick_row.into());
-        content_items.push(curve_row.into());
-    } else {
-        // Collapsed: show disabled pins stacked
-        content_items.push(
+    // Stroke section - pins inline when collapsed
+    let stroke_collapsed_pins: Option<iced::Element<'_, Message>> = if !sections.stroke {
+        Some(
             row![
                 pin!(Left, pins::config::START, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
                 pin!(Left, pins::config::END, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
@@ -753,23 +730,29 @@ where
             ]
             .spacing(2)
             .into(),
-        );
+        )
+    } else {
+        None
+    };
+    content_items.push(
+        section_header_with_pins(
+            "Stroke",
+            sections.stroke,
+            on_toggle(EdgeSection::Stroke),
+            stroke_collapsed_pins,
+        )
+        .into(),
+    );
+    if sections.stroke {
+        content_items.push(start_row.into());
+        content_items.push(end_row.into());
+        content_items.push(thick_row.into());
+        content_items.push(curve_row.into());
     }
 
-    // Pattern section
-    content_items.push(make_separator().into());
-    content_items.push(
-        section_header("Pattern", sections.pattern, on_toggle(EdgeSection::Pattern)).into(),
-    );
-    if sections.pattern {
-        content_items.push(pattern_row.into());
-        content_items.push(dash_row.into());
-        content_items.push(gap_row.into());
-        content_items.push(angle_row.into());
-        content_items.push(speed_row.into());
-    } else {
-        // Collapsed: show disabled pins stacked
-        content_items.push(
+    // Pattern section - pins inline when collapsed
+    let pattern_collapsed_pins: Option<iced::Element<'_, Message>> = if !sections.pattern {
+        Some(
             row![
                 pin!(Left, pins::config::PATTERN, text("").size(1), Input, pins::PatternTypeData, colors::PIN_ANY).disable_interactions(),
                 pin!(Left, pins::config::DASH, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
@@ -779,22 +762,30 @@ where
             ]
             .spacing(2)
             .into(),
-        );
+        )
+    } else {
+        None
+    };
+    content_items.push(
+        section_header_with_pins(
+            "Pattern",
+            sections.pattern,
+            on_toggle(EdgeSection::Pattern),
+            pattern_collapsed_pins,
+        )
+        .into(),
+    );
+    if sections.pattern {
+        content_items.push(pattern_row.into());
+        content_items.push(dash_row.into());
+        content_items.push(gap_row.into());
+        content_items.push(angle_row.into());
+        content_items.push(speed_row.into());
     }
 
-    // Border section
-    content_items.push(make_separator().into());
-    content_items.push(
-        section_header("Border", sections.border, on_toggle(EdgeSection::Border)).into(),
-    );
-    if sections.border {
-        content_items.push(border_enabled_row.into());
-        content_items.push(border_width_row.into());
-        content_items.push(border_gap_row.into());
-        content_items.push(border_color_row.into());
-    } else {
-        // Collapsed: show disabled pins stacked
-        content_items.push(
+    // Border section - pins inline when collapsed
+    let border_collapsed_pins: Option<iced::Element<'_, Message>> = if !sections.border {
+        Some(
             row![
                 pin!(Left, pins::config::BORDER, text("").size(1), Input, pins::Bool, colors::PIN_BOOL).disable_interactions(),
                 pin!(Left, pins::config::BORDER_WIDTH, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
@@ -803,22 +794,29 @@ where
             ]
             .spacing(2)
             .into(),
-        );
+        )
+    } else {
+        None
+    };
+    content_items.push(
+        section_header_with_pins(
+            "Border",
+            sections.border,
+            on_toggle(EdgeSection::Border),
+            border_collapsed_pins,
+        )
+        .into(),
+    );
+    if sections.border {
+        content_items.push(border_enabled_row.into());
+        content_items.push(border_width_row.into());
+        content_items.push(border_gap_row.into());
+        content_items.push(border_color_row.into());
     }
 
-    // Shadow section
-    content_items.push(make_separator().into());
-    content_items.push(
-        section_header("Shadow", sections.shadow, on_toggle(EdgeSection::Shadow)).into(),
-    );
-    if sections.shadow {
-        content_items.push(shadow_enabled_row.into());
-        content_items.push(shadow_blur_row.into());
-        content_items.push(shadow_offset_row.into());
-        content_items.push(shadow_color_row.into());
-    } else {
-        // Collapsed: show disabled pins stacked
-        content_items.push(
+    // Shadow section - pins inline when collapsed
+    let shadow_collapsed_pins: Option<iced::Element<'_, Message>> = if !sections.shadow {
+        Some(
             row![
                 pin!(Left, pins::config::SHADOW, text("").size(1), Input, pins::Bool, colors::PIN_BOOL).disable_interactions(),
                 pin!(Left, pins::config::SHADOW_BLUR, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
@@ -827,7 +825,24 @@ where
             ]
             .spacing(2)
             .into(),
-        );
+        )
+    } else {
+        None
+    };
+    content_items.push(
+        section_header_with_pins(
+            "Shadow",
+            sections.shadow,
+            on_toggle(EdgeSection::Shadow),
+            shadow_collapsed_pins,
+        )
+        .into(),
+    );
+    if sections.shadow {
+        content_items.push(shadow_enabled_row.into());
+        content_items.push(shadow_blur_row.into());
+        content_items.push(shadow_offset_row.into());
+        content_items.push(shadow_color_row.into());
     }
 
     let content = iced::widget::Column::with_children(content_items).spacing(4);

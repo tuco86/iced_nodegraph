@@ -9,7 +9,7 @@ use iced::{
 };
 use iced_nodegraph::{NodeConfig, NodeContentStyle, ShadowConfig, pin};
 
-use crate::nodes::{colors, node_title_bar, pins, section_header};
+use crate::nodes::{colors, node_title_bar, pins, section_header_with_pins};
 
 /// Section expansion state for NodeConfig nodes
 #[derive(Debug, Clone, Default)]
@@ -101,19 +101,6 @@ where
         ),
     ]
     .align_y(iced::Alignment::Center);
-
-    // Helper to create separator lines
-    let make_separator = || {
-        container(text(""))
-            .width(Length::Fill)
-            .height(1)
-            .style(|_: &_| container::Style {
-                background: Some(iced::Background::Color(Color::from_rgba(
-                    1.0, 1.0, 1.0, 0.1,
-                ))),
-                ..Default::default()
-            })
-    };
 
     // Fill color row
     let fill_display: iced::Element<'a, Message> = if let Some(c) = result.fill_color {
@@ -267,53 +254,76 @@ where
     .align_y(iced::Alignment::Center);
 
     // Build content with collapsible sections
-    let mut content = column![config_row, make_separator()].spacing(4);
+    let mut content = column![config_row].spacing(4);
 
-    // Fill section
-    content = content.push(section_header("Fill", sections.fill, on_toggle(NodeSection::Fill)));
-    if sections.fill {
-        content = content.push(fill_row);
-        content = content.push(radius_row);
-        content = content.push(opacity_row);
-    } else {
-        // Collapsed: show disabled pins stacked
-        content = content.push(
+    // Fill section - pins inline when collapsed
+    let fill_collapsed_pins: Option<iced::Element<'_, Message>> = if !sections.fill {
+        Some(
             row![
                 pin!(Left, pins::config::BG_COLOR, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
                 pin!(Left, pins::config::RADIUS, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
                 pin!(Left, pins::config::OPACITY, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
             ]
-            .spacing(2),
-        );
-    }
-    content = content.push(make_separator());
-
-    // Border section
-    content = content.push(section_header("Border", sections.border, on_toggle(NodeSection::Border)));
-    if sections.border {
-        content = content.push(border_row);
-        content = content.push(width_row);
+            .spacing(2)
+            .into(),
+        )
     } else {
-        // Collapsed: show disabled pins stacked
-        content = content.push(
+        None
+    };
+    content = content.push(section_header_with_pins(
+        "Fill",
+        sections.fill,
+        on_toggle(NodeSection::Fill),
+        fill_collapsed_pins,
+    ));
+    if sections.fill {
+        content = content.push(fill_row);
+        content = content.push(radius_row);
+        content = content.push(opacity_row);
+    }
+
+    // Border section - pins inline when collapsed
+    let border_collapsed_pins: Option<iced::Element<'_, Message>> = if !sections.border {
+        Some(
             row![
                 pin!(Left, pins::config::COLOR, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
                 pin!(Left, pins::config::WIDTH, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
             ]
-            .spacing(2),
-        );
+            .spacing(2)
+            .into(),
+        )
+    } else {
+        None
+    };
+    content = content.push(section_header_with_pins(
+        "Border",
+        sections.border,
+        on_toggle(NodeSection::Border),
+        border_collapsed_pins,
+    ));
+    if sections.border {
+        content = content.push(border_row);
+        content = content.push(width_row);
     }
-    content = content.push(make_separator());
 
-    // Shadow section
-    content = content.push(section_header("Shadow", sections.shadow, on_toggle(NodeSection::Shadow)));
+    // Shadow section - pin inline when collapsed
+    let shadow_collapsed_pins: Option<iced::Element<'_, Message>> = if !sections.shadow {
+        Some(
+            pin!(Left, pins::config::SHADOW, text("").size(1), Input, pins::ShadowConfigData, colors::PIN_CONFIG)
+                .disable_interactions()
+                .into(),
+        )
+    } else {
+        None
+    };
+    content = content.push(section_header_with_pins(
+        "Shadow",
+        sections.shadow,
+        on_toggle(NodeSection::Shadow),
+        shadow_collapsed_pins,
+    ));
     if sections.shadow {
         content = content.push(shadow_row);
-    } else {
-        // Collapsed: show disabled pin
-        content = content.push(
-            pin!(Left, pins::config::SHADOW, text("").size(1), Input, pins::ShadowConfigData, colors::PIN_CONFIG).disable_interactions(),
-        );
     }
 
     column![
