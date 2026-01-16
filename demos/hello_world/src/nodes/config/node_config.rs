@@ -275,6 +275,16 @@ where
         content = content.push(fill_row);
         content = content.push(radius_row);
         content = content.push(opacity_row);
+    } else {
+        // Collapsed: show disabled pins stacked
+        content = content.push(
+            row![
+                pin!(Left, pins::config::BG_COLOR, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
+                pin!(Left, pins::config::RADIUS, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
+                pin!(Left, pins::config::OPACITY, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
+            ]
+            .spacing(2),
+        );
     }
     content = content.push(make_separator());
 
@@ -283,6 +293,15 @@ where
     if sections.border {
         content = content.push(border_row);
         content = content.push(width_row);
+    } else {
+        // Collapsed: show disabled pins stacked
+        content = content.push(
+            row![
+                pin!(Left, pins::config::COLOR, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
+                pin!(Left, pins::config::WIDTH, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
+            ]
+            .spacing(2),
+        );
     }
     content = content.push(make_separator());
 
@@ -290,6 +309,11 @@ where
     content = content.push(section_header("Shadow", sections.shadow, on_toggle(NodeSection::Shadow)));
     if sections.shadow {
         content = content.push(shadow_row);
+    } else {
+        // Collapsed: show disabled pin
+        content = content.push(
+            pin!(Left, pins::config::SHADOW, text("").size(1), Input, pins::ShadowConfigData, colors::PIN_CONFIG).disable_interactions(),
+        );
     }
 
     column![

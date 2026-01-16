@@ -120,6 +120,7 @@ where
     pub data_type: TypeId,
     pub color: Color,
     pub content: Element<'a, Message, Theme, Renderer>,
+    interactions_disabled: bool,
 }
 
 impl<'a, P, Message, Theme, Renderer> NodePin<'a, P, Message, Theme, Renderer>
@@ -139,6 +140,7 @@ where
             data_type: TypeId::of::<()>(), // Default: untyped
             color: Color::from_rgb(0.5, 0.5, 0.5),
             content: content.into(),
+            interactions_disabled: false,
         }
     }
 
@@ -162,6 +164,16 @@ where
 
     pub fn color(mut self, color: Color) -> Self {
         self.color = color;
+        self
+    }
+
+    /// Disables all interactions (drag, drop) for this pin.
+    ///
+    /// The pin remains visible and edges stay connected, but the user
+    /// cannot start new connections or unplug existing ones.
+    /// Useful for collapsed sections where pins should be visible but inactive.
+    pub fn disable_interactions(mut self) -> Self {
+        self.interactions_disabled = true;
         self
     }
 }
@@ -206,6 +218,8 @@ pub(super) struct NodePinState {
     pub data_type: TypeId,
     pub color: Color,
     pub position: Point,
+    /// When true, pin cannot be dragged from or dropped onto
+    pub interactions_disabled: bool,
 }
 
 impl<'a, P, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
@@ -234,6 +248,7 @@ where
             data_type: self.data_type,
             color: self.color,
             position: Point::new(0.0, 0.0),
+            interactions_disabled: self.interactions_disabled,
         })
     }
 
@@ -287,6 +302,7 @@ where
             state.data_type = self.data_type;
             state.color = self.color;
             state.position = layout.bounds().center();
+            state.interactions_disabled = self.interactions_disabled;
         }
         if let Some((child_layout, child_tree)) = layout.children().zip(&mut tree.children).next() {
             self.content.as_widget_mut().update(

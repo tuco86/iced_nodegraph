@@ -742,6 +742,18 @@ where
         content_items.push(end_row.into());
         content_items.push(thick_row.into());
         content_items.push(curve_row.into());
+    } else {
+        // Collapsed: show disabled pins stacked
+        content_items.push(
+            row![
+                pin!(Left, pins::config::START, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
+                pin!(Left, pins::config::END, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
+                pin!(Left, pins::config::THICK, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
+                pin!(Left, pins::config::CURVE, text("").size(1), Input, pins::EdgeCurveData, colors::PIN_ANY).disable_interactions(),
+            ]
+            .spacing(2)
+            .into(),
+        );
     }
 
     // Pattern section
@@ -755,6 +767,19 @@ where
         content_items.push(gap_row.into());
         content_items.push(angle_row.into());
         content_items.push(speed_row.into());
+    } else {
+        // Collapsed: show disabled pins stacked
+        content_items.push(
+            row![
+                pin!(Left, pins::config::PATTERN, text("").size(1), Input, pins::PatternTypeData, colors::PIN_ANY).disable_interactions(),
+                pin!(Left, pins::config::DASH, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
+                pin!(Left, pins::config::GAP, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
+                pin!(Left, pins::config::ANGLE, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
+                pin!(Left, pins::config::SPEED, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
+            ]
+            .spacing(2)
+            .into(),
+        );
     }
 
     // Border section
@@ -767,6 +792,18 @@ where
         content_items.push(border_width_row.into());
         content_items.push(border_gap_row.into());
         content_items.push(border_color_row.into());
+    } else {
+        // Collapsed: show disabled pins stacked
+        content_items.push(
+            row![
+                pin!(Left, pins::config::BORDER, text("").size(1), Input, pins::Bool, colors::PIN_BOOL).disable_interactions(),
+                pin!(Left, pins::config::BORDER_WIDTH, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
+                pin!(Left, pins::config::BORDER_GAP, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
+                pin!(Left, pins::config::BORDER_COLOR, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
+            ]
+            .spacing(2)
+            .into(),
+        );
     }
 
     // Shadow section
@@ -779,6 +816,18 @@ where
         content_items.push(shadow_blur_row.into());
         content_items.push(shadow_offset_row.into());
         content_items.push(shadow_color_row.into());
+    } else {
+        // Collapsed: show disabled pins stacked
+        content_items.push(
+            row![
+                pin!(Left, pins::config::SHADOW, text("").size(1), Input, pins::Bool, colors::PIN_BOOL).disable_interactions(),
+                pin!(Left, pins::config::SHADOW_BLUR, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
+                pin!(Left, pins::config::SHADOW_OFFSET, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
+                pin!(Left, pins::config::SHADOW_COLOR, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
+            ]
+            .spacing(2)
+            .into(),
+        );
     }
 
     let content = iced::widget::Column::with_children(content_items).spacing(4);

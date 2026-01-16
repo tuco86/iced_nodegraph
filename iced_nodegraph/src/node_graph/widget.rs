@@ -1573,7 +1573,9 @@ where
                                         .distance(cursor_position)
                                         .min(b.distance(cursor_position));
 
-                                    if distance < PIN_CLICK_THRESHOLD {
+                                    if distance < PIN_CLICK_THRESHOLD
+                                        && !pin_state.interactions_disabled
+                                    {
                                         // Check if this pin has existing connections
                                         // If it does, "unplug" the clicked end (like pulling a cable)
                                         for (from_ref, to_ref, _style) in &self.edges {
@@ -2000,6 +2002,11 @@ where
         for (pin_index, pin_state, _) in find_pins(node_tree, node_layout) {
             // Skip source pin
             if node_index == from_node && pin_index == from_pin {
+                continue;
+            }
+
+            // Skip pins with disabled interactions
+            if pin_state.interactions_disabled {
                 continue;
             }
 
