@@ -9,7 +9,33 @@ use iced::{
 };
 use iced_nodegraph::{NodeConfig, NodeContentStyle, ShadowConfig, pin};
 
-use crate::nodes::{colors, node_title_bar, pins};
+use crate::nodes::{colors, node_title_bar, pins, section_header};
+
+/// Section expansion state for NodeConfig nodes
+#[derive(Debug, Clone, Default)]
+pub struct NodeSections {
+    pub fill: bool,
+    pub border: bool,
+    pub shadow: bool,
+}
+
+impl NodeSections {
+    pub fn new_all_expanded() -> Self {
+        Self {
+            fill: true,
+            border: true,
+            shadow: true,
+        }
+    }
+}
+
+/// Identifies which section to toggle in NodeConfig
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeSection {
+    Fill,
+    Border,
+    Shadow,
+}
 
 /// Collected inputs for NodeConfigNode
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -41,10 +67,12 @@ impl NodeConfigInputs {
     }
 }
 
-/// Creates a NodeConfig configuration node with all field inputs
+/// Creates a NodeConfig configuration node with all field inputs and collapsible sections
 pub fn node_config_node<'a, Message>(
     theme: &'a iced::Theme,
     inputs: &NodeConfigInputs,
+    sections: &NodeSections,
+    on_toggle: impl Fn(NodeSection) -> Message + 'a,
 ) -> iced::Element<'a, Message>
 where
     Message: Clone + 'a,
@@ -74,16 +102,18 @@ where
     ]
     .align_y(iced::Alignment::Center);
 
-    // Separator line
-    let separator = container(text(""))
-        .width(Length::Fill)
-        .height(1)
-        .style(|_: &_| container::Style {
-            background: Some(iced::Background::Color(Color::from_rgba(
-                1.0, 1.0, 1.0, 0.1,
-            ))),
-            ..Default::default()
-        });
+    // Helper to create separator lines
+    let make_separator = || {
+        container(text(""))
+            .width(Length::Fill)
+            .height(1)
+            .style(|_: &_| container::Style {
+                background: Some(iced::Background::Color(Color::from_rgba(
+                    1.0, 1.0, 1.0, 0.1,
+                ))),
+                ..Default::default()
+            })
+    };
 
     // Fill color row
     let fill_display: iced::Element<'a, Message> = if let Some(c) = result.fill_color {
@@ -236,17 +266,31 @@ where
     ]
     .align_y(iced::Alignment::Center);
 
-    let content = column![
-        config_row,
-        separator,
-        fill_row,
-        border_row,
-        width_row,
-        radius_row,
-        opacity_row,
-        shadow_row,
-    ]
-    .spacing(4);
+    // Build content with collapsible sections
+    let mut content = column![config_row, make_separator()].spacing(4);
+
+    // Fill section
+    content = content.push(section_header("Fill", sections.fill, on_toggle(NodeSection::Fill)));
+    if sections.fill {
+        content = content.push(fill_row);
+        content = content.push(radius_row);
+        content = content.push(opacity_row);
+    }
+    content = content.push(make_separator());
+
+    // Border section
+    content = content.push(section_header("Border", sections.border, on_toggle(NodeSection::Border)));
+    if sections.border {
+        content = content.push(border_row);
+        content = content.push(width_row);
+    }
+    content = content.push(make_separator());
+
+    // Shadow section
+    content = content.push(section_header("Shadow", sections.shadow, on_toggle(NodeSection::Shadow)));
+    if sections.shadow {
+        content = content.push(shadow_row);
+    }
 
     column![
         node_title_bar("Node Config", style),

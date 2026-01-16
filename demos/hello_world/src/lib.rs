@@ -53,14 +53,14 @@ use iced_palette::{
 };
 use ids::{EdgeId, NodeId, PinLabel, generate_edge_id, generate_node_id};
 use nodes::{
-    BackgroundConfigInputs, BoolToggleConfig, ConfigNodeType, EdgeConfigInputs, FloatSliderConfig,
-    InputNodeType, IntSliderConfig, MathNodeState, MathOperation, NodeConfigInputs, NodeType,
-    NodeValue, PatternType, PatternTypeSelection, PinConfigInputs, ShadowConfigInputs,
-    apply_to_graph_node, apply_to_node_node, background_config_node,
-    background_pattern_selector_node, bool_toggle_node, color_picker_node, color_preset_node,
-    edge_config_node, edge_curve_selector_node, float_slider_node, int_slider_node, math_node,
-    node, node_config_node, pattern_type_selector_node, pin_config_node, pin_shape_selector_node,
-    shadow_config_node,
+    BackgroundConfigInputs, BoolToggleConfig, ConfigNodeType, EdgeConfigInputs, EdgeSection,
+    EdgeSections, FloatSliderConfig, InputNodeType, IntSliderConfig, MathNodeState, MathOperation,
+    NodeConfigInputs, NodeSection, NodeSections, NodeType, NodeValue, PatternType,
+    PatternTypeSelection, PinConfigInputs, ShadowConfigInputs, apply_to_graph_node,
+    apply_to_node_node, background_config_node, background_pattern_selector_node, bool_toggle_node,
+    color_picker_node, color_preset_node, edge_config_node, edge_curve_selector_node,
+    float_slider_node, int_slider_node, math_node, node, node_config_node,
+    pattern_type_selector_node, pin_config_node, pin_shape_selector_node, shadow_config_node,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use persistence::EdgeData;
@@ -219,6 +219,15 @@ enum ApplicationMessage {
         node_id: NodeId,
         config: IntSliderConfig,
     },
+    // Config section collapse/expand
+    ToggleEdgeSection {
+        node_id: NodeId,
+        section: EdgeSection,
+    },
+    ToggleNodeSection {
+        node_id: NodeId,
+        section: NodeSection,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -348,6 +357,10 @@ struct Application {
     selected_nodes: HashSet<NodeId>,
     /// Nodes with expanded options panels
     expanded_nodes: HashSet<NodeId>,
+    /// Section expansion state for EdgeConfig nodes
+    edge_config_sections: HashMap<NodeId, EdgeSections>,
+    /// Section expansion state for NodeConfig nodes
+    node_config_sections: HashMap<NodeId, NodeSections>,
     command_palette_open: bool,
     command_input: String,
     current_theme: Theme,
@@ -481,6 +494,8 @@ impl Default for Application {
             edge_order,
             selected_nodes: HashSet::new(),
             expanded_nodes: HashSet::new(),
+            edge_config_sections: HashMap::new(),
+            node_config_sections: HashMap::new(),
             command_palette_open: false,
             command_input: String::new(),
             current_theme: Theme::CatppuccinFrappe,
@@ -1707,6 +1722,29 @@ impl Application {
                 }
                 Task::none()
             }
+            ApplicationMessage::ToggleEdgeSection { node_id, section } => {
+                let sections = self.edge_config_sections
+                    .entry(node_id)
+                    .or_insert_with(EdgeSections::new_all_expanded);
+                match section {
+                    EdgeSection::Stroke => sections.stroke = !sections.stroke,
+                    EdgeSection::Pattern => sections.pattern = !sections.pattern,
+                    EdgeSection::Border => sections.border = !sections.border,
+                    EdgeSection::Shadow => sections.shadow = !sections.shadow,
+                }
+                Task::none()
+            }
+            ApplicationMessage::ToggleNodeSection { node_id, section } => {
+                let sections = self.node_config_sections
+                    .entry(node_id)
+                    .or_insert_with(NodeSections::new_all_expanded);
+                match section {
+                    NodeSection::Fill => sections.fill = !sections.fill,
+                    NodeSection::Border => sections.border = !sections.border,
+                    NodeSection::Shadow => sections.shadow = !sections.shadow,
+                }
+                Task::none()
+            }
         }
     }
 
@@ -1997,8 +2035,26 @@ impl Application {
                     }
                 },
                 NodeType::Config(config) => match config {
-                    ConfigNodeType::NodeConfig(inputs) => node_config_node(theme, inputs),
-                    ConfigNodeType::EdgeConfig(inputs) => edge_config_node(theme, inputs),
+                    ConfigNodeType::NodeConfig(inputs) => {
+                        let id = node_id_clone.clone();
+                        let sections = self.node_config_sections
+                            .get(&id)
+                            .cloned()
+                            .unwrap_or_else(NodeSections::new_all_expanded);
+                        node_config_node(theme, inputs, &sections, move |section| {
+                            ApplicationMessage::ToggleNodeSection { node_id: id.clone(), section }
+                        })
+                    }
+                    ConfigNodeType::EdgeConfig(inputs) => {
+                        let id = node_id_clone.clone();
+                        let sections = self.edge_config_sections
+                            .get(&id)
+                            .cloned()
+                            .unwrap_or_else(EdgeSections::new_all_expanded);
+                        edge_config_node(theme, inputs, &sections, move |section| {
+                            ApplicationMessage::ToggleEdgeSection { node_id: id.clone(), section }
+                        })
+                    }
                     ConfigNodeType::ShadowConfig(inputs) => shadow_config_node(theme, inputs),
                     ConfigNodeType::PinConfig(inputs) => pin_config_node(theme, inputs),
                     ConfigNodeType::BackgroundConfig(inputs) => {

@@ -17,10 +17,10 @@ pub use bool_toggle::{BoolToggleConfig, bool_toggle_node};
 pub use calendar::calendar_node;
 pub use color_picker::{color_picker_node, color_preset_node};
 pub use config::{
-    BackgroundConfigInputs, EdgeConfigInputs, NodeConfigInputs, PatternType, PatternTypeSelection,
-    PinConfigInputs, ShadowConfigInputs, apply_to_graph_node, apply_to_node_node,
-    background_config_node, edge_config_node, node_config_node, pin_config_node,
-    shadow_config_node,
+    BackgroundConfigInputs, EdgeConfigInputs, EdgeSection, EdgeSections, NodeConfigInputs,
+    NodeSection, NodeSections, PatternType, PatternTypeSelection, PinConfigInputs,
+    ShadowConfigInputs, apply_to_graph_node, apply_to_node_node, background_config_node,
+    edge_config_node, node_config_node, pin_config_node, shadow_config_node,
 };
 pub use email_parser::email_parser_node;
 pub use email_trigger::email_trigger_node;
@@ -445,4 +445,42 @@ where
         style.corner_radius,
         style.border_width,
     )
+}
+
+/// Creates a collapsible section header for config nodes.
+/// Returns a row with expand/collapse indicator and title that can be clicked.
+pub fn section_header<'a, Message: Clone + 'a>(
+    title: &'a str,
+    expanded: bool,
+    on_toggle: Message,
+) -> iced::widget::Button<'a, Message, Theme, iced::Renderer> {
+    use iced::widget::{button, row};
+
+    let indicator = if expanded { "v" } else { ">" };
+
+    button(
+        row![
+            text(indicator).size(10).color(colors::TEXT_MUTED),
+            text(title).size(10).color(colors::TEXT_PRIMARY),
+        ]
+        .spacing(4)
+        .align_y(iced::Alignment::Center),
+    )
+    .on_press(on_toggle)
+    .padding([2, 4])
+    .style(|_theme: &Theme, status| {
+        let background = match status {
+            button::Status::Hovered | button::Status::Pressed => {
+                Some(iced::Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.05)))
+            }
+            _ => None,
+        };
+        button::Style {
+            background,
+            text_color: colors::TEXT_PRIMARY,
+            border: iced::Border::default(),
+            shadow: iced::Shadow::default(),
+            snap: false,
+        }
+    })
 }

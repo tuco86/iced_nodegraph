@@ -12,7 +12,36 @@ use iced_nodegraph::{
     StrokePattern, pin,
 };
 
-use crate::nodes::{colors, node_title_bar, pins};
+use crate::nodes::{colors, node_title_bar, pins, section_header};
+
+/// Section expansion state for EdgeConfig nodes
+#[derive(Debug, Clone, Default)]
+pub struct EdgeSections {
+    pub stroke: bool,
+    pub pattern: bool,
+    pub border: bool,
+    pub shadow: bool,
+}
+
+impl EdgeSections {
+    pub fn new_all_expanded() -> Self {
+        Self {
+            stroke: true,
+            pattern: true,
+            border: true,
+            shadow: true,
+        }
+    }
+}
+
+/// Identifies which section to toggle in EdgeConfig
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeSection {
+    Stroke,
+    Pattern,
+    Border,
+    Shadow,
+}
 
 /// Pattern type for simple selection (maps to StrokePattern)
 /// IDs: 0=Solid, 1=Dashed, 2=Arrowed, 3=Angled, 4=Dotted, 5=DashDotted
@@ -229,10 +258,12 @@ impl EdgeConfigInputs {
     }
 }
 
-/// Creates an EdgeConfig configuration node with all field inputs
+/// Creates an EdgeConfig configuration node with all field inputs and collapsible sections
 pub fn edge_config_node<'a, Message>(
     theme: &'a iced::Theme,
     inputs: &EdgeConfigInputs,
+    sections: &EdgeSections,
+    on_toggle: impl Fn(EdgeSection) -> Message + 'a,
 ) -> iced::Element<'a, Message>
 where
     Message: Clone + 'a,
@@ -698,31 +729,59 @@ where
     ]
     .align_y(iced::Alignment::Center);
 
-    let content = column![
-        config_row,
-        make_separator(),
-        start_row,
-        end_row,
-        thick_row,
-        curve_row,
-        make_separator(),
-        pattern_row,
-        dash_row,
-        gap_row,
-        angle_row,
-        speed_row,
-        make_separator(),
-        border_enabled_row,
-        border_width_row,
-        border_gap_row,
-        border_color_row,
-        make_separator(),
-        shadow_enabled_row,
-        shadow_blur_row,
-        shadow_offset_row,
-        shadow_color_row,
-    ]
-    .spacing(4);
+    // Build content with collapsible sections
+    let mut content_items: Vec<iced::Element<'_, Message>> = vec![config_row.into()];
+
+    // Stroke section
+    content_items.push(make_separator().into());
+    content_items.push(
+        section_header("Stroke", sections.stroke, on_toggle(EdgeSection::Stroke)).into(),
+    );
+    if sections.stroke {
+        content_items.push(start_row.into());
+        content_items.push(end_row.into());
+        content_items.push(thick_row.into());
+        content_items.push(curve_row.into());
+    }
+
+    // Pattern section
+    content_items.push(make_separator().into());
+    content_items.push(
+        section_header("Pattern", sections.pattern, on_toggle(EdgeSection::Pattern)).into(),
+    );
+    if sections.pattern {
+        content_items.push(pattern_row.into());
+        content_items.push(dash_row.into());
+        content_items.push(gap_row.into());
+        content_items.push(angle_row.into());
+        content_items.push(speed_row.into());
+    }
+
+    // Border section
+    content_items.push(make_separator().into());
+    content_items.push(
+        section_header("Border", sections.border, on_toggle(EdgeSection::Border)).into(),
+    );
+    if sections.border {
+        content_items.push(border_enabled_row.into());
+        content_items.push(border_width_row.into());
+        content_items.push(border_gap_row.into());
+        content_items.push(border_color_row.into());
+    }
+
+    // Shadow section
+    content_items.push(make_separator().into());
+    content_items.push(
+        section_header("Shadow", sections.shadow, on_toggle(EdgeSection::Shadow)).into(),
+    );
+    if sections.shadow {
+        content_items.push(shadow_enabled_row.into());
+        content_items.push(shadow_blur_row.into());
+        content_items.push(shadow_offset_row.into());
+        content_items.push(shadow_color_row.into());
+    }
+
+    let content = iced::widget::Column::with_children(content_items).spacing(4);
 
     column![
         node_title_bar("Edge Config", style),

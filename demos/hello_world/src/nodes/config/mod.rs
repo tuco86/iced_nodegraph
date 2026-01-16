@@ -15,7 +15,7 @@ pub mod shadow_config;
 
 pub use apply::{apply_to_graph_node, apply_to_node_node};
 pub use background_config::{BackgroundConfigInputs, PatternTypeSelection, background_config_node};
-pub use edge_config::{EdgeConfigInputs, PatternType, edge_config_node};
-pub use node_config::{NodeConfigInputs, node_config_node};
+pub use edge_config::{EdgeConfigInputs, EdgeSection, EdgeSections, PatternType, edge_config_node};
+pub use node_config::{NodeConfigInputs, NodeSection, NodeSections, node_config_node};
 pub use pin_config::{PinConfigInputs, pin_config_node};
 pub use shadow_config::{ShadowConfigInputs, shadow_config_node};
