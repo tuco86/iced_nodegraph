@@ -30,6 +30,8 @@ pub struct SavedEdgeSections {
     pub stroke: bool,
     pub pattern: bool,
     pub border: bool,
+    #[serde(default)]
+    pub outline: bool,
     pub shadow: bool,
 }
 
@@ -39,6 +41,7 @@ impl From<&EdgeSections> for SavedEdgeSections {
             stroke: s.stroke,
             pattern: s.pattern,
             border: s.border,
+            outline: s.outline,
             shadow: s.shadow,
         }
     }
@@ -50,6 +53,7 @@ impl SavedEdgeSections {
             stroke: self.stroke,
             pattern: self.pattern,
             border: self.border,
+            outline: self.outline,
             shadow: self.shadow,
         }
     }
@@ -239,7 +243,15 @@ pub fn to_static_pin_label(label: &str) -> &'static str {
         s if s == config::BORDER => config::BORDER,
         s if s == config::BORDER_WIDTH => config::BORDER_WIDTH,
         s if s == config::BORDER_GAP => config::BORDER_GAP,
-        s if s == config::BORDER_COLOR => config::BORDER_COLOR,
+        s if s == config::BORDER_START_COLOR => config::BORDER_START_COLOR,
+        s if s == config::BORDER_END_COLOR => config::BORDER_END_COLOR,
+        // Outline config pins
+        s if s == config::INNER_OUTLINE => config::INNER_OUTLINE,
+        s if s == config::INNER_OUTLINE_WIDTH => config::INNER_OUTLINE_WIDTH,
+        s if s == config::INNER_OUTLINE_COLOR => config::INNER_OUTLINE_COLOR,
+        s if s == config::OUTER_OUTLINE => config::OUTER_OUTLINE,
+        s if s == config::OUTER_OUTLINE_WIDTH => config::OUTER_OUTLINE_WIDTH,
+        s if s == config::OUTER_OUTLINE_COLOR => config::OUTER_OUTLINE_COLOR,
         // Shadow config pins
         s if s == config::SHADOW => config::SHADOW,
         s if s == config::SHADOW_BLUR => config::SHADOW_BLUR,

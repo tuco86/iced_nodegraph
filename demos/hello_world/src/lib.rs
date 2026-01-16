@@ -1039,8 +1039,23 @@ impl Application {
                     inputs.border_width = value.as_float();
                 } else if *pin_label == pin::BORDER_GAP {
                     inputs.border_gap = value.as_float();
-                } else if *pin_label == pin::BORDER_COLOR {
-                    inputs.border_color = value.as_color();
+                } else if *pin_label == pin::BORDER_START_COLOR {
+                    inputs.border_start_color = value.as_color();
+                } else if *pin_label == pin::BORDER_END_COLOR {
+                    inputs.border_end_color = value.as_color();
+                // Outline settings
+                } else if *pin_label == pin::INNER_OUTLINE {
+                    inputs.inner_outline_enabled = value.as_bool();
+                } else if *pin_label == pin::INNER_OUTLINE_WIDTH {
+                    inputs.inner_outline_width = value.as_float();
+                } else if *pin_label == pin::INNER_OUTLINE_COLOR {
+                    inputs.inner_outline_color = value.as_color();
+                } else if *pin_label == pin::OUTER_OUTLINE {
+                    inputs.outer_outline_enabled = value.as_bool();
+                } else if *pin_label == pin::OUTER_OUTLINE_WIDTH {
+                    inputs.outer_outline_width = value.as_float();
+                } else if *pin_label == pin::OUTER_OUTLINE_COLOR {
+                    inputs.outer_outline_color = value.as_color();
                 // Shadow settings
                 } else if *pin_label == pin::SHADOW {
                     inputs.shadow_enabled = value.as_bool();
@@ -1751,6 +1766,7 @@ impl Application {
                     EdgeSection::Stroke => sections.stroke = !sections.stroke,
                     EdgeSection::Pattern => sections.pattern = !sections.pattern,
                     EdgeSection::Border => sections.border = !sections.border,
+                    EdgeSection::Outline => sections.outline = !sections.outline,
                     EdgeSection::Shadow => sections.shadow = !sections.shadow,
                 }
                 Task::none()

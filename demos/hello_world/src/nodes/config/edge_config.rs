@@ -8,8 +8,8 @@ use iced::{
     widget::{column, container, row, text},
 };
 use iced_nodegraph::{
-    BorderConfig, DashCap, EdgeConfig, EdgeCurve, EdgeShadowConfig, NodeContentStyle, StrokeConfig,
-    StrokePattern, pin,
+    BorderConfig, DashCap, EdgeConfig, EdgeCurve, EdgeShadowConfig, NodeContentStyle, OutlineConfig,
+    StrokeConfig, StrokePattern, pin,
 };
 
 use crate::nodes::{colors, node_title_bar, pins, section_header_with_pins};
@@ -20,6 +20,7 @@ pub struct EdgeSections {
     pub stroke: bool,
     pub pattern: bool,
     pub border: bool,
+    pub outline: bool,
     pub shadow: bool,
 }
 
@@ -29,6 +30,7 @@ impl EdgeSections {
             stroke: true,
             pattern: true,
             border: true,
+            outline: true,
             shadow: true,
         }
     }
@@ -40,6 +42,7 @@ pub enum EdgeSection {
     Stroke,
     Pattern,
     Border,
+    Outline,
     Shadow,
 }
 
@@ -76,11 +79,19 @@ pub struct EdgeConfigInputs {
     pub dot_radius: Option<f32>,    // Dot radius for Dotted pattern
     /// Animation speed (0.0 = no animation, > 0.0 = animated)
     pub animation_speed: Option<f32>,
-    /// Border settings (outline with gap around stroke)
+    /// Border settings (colored band around stroke with gap)
     pub border_enabled: Option<bool>,
     pub border_width: Option<f32>,
     pub border_gap: Option<f32>,
-    pub border_color: Option<Color>,
+    pub border_start_color: Option<Color>,
+    pub border_end_color: Option<Color>,
+    /// Outline settings (thin lines around border)
+    pub inner_outline_enabled: Option<bool>,
+    pub inner_outline_width: Option<f32>,
+    pub inner_outline_color: Option<Color>,
+    pub outer_outline_enabled: Option<bool>,
+    pub outer_outline_width: Option<f32>,
+    pub outer_outline_color: Option<Color>,
     /// Shadow settings
     pub shadow_enabled: Option<bool>,
     pub shadow_blur: Option<f32>,
@@ -126,11 +137,53 @@ impl EdgeConfigInputs {
             parent.stroke.clone()
         };
 
+        // Build outline configs if any outline settings provided
+        let has_inner_outline = self.inner_outline_enabled.is_some()
+            || self.inner_outline_width.is_some()
+            || self.inner_outline_color.is_some();
+
+        let inner_outline = if has_inner_outline {
+            if self.inner_outline_enabled == Some(false) {
+                None
+            } else {
+                Some(OutlineConfig {
+                    width: self.inner_outline_width,
+                    start_color: self.inner_outline_color,
+                    end_color: self.inner_outline_color,
+                    enabled: self.inner_outline_enabled,
+                })
+            }
+        } else {
+            None
+        };
+
+        let has_outer_outline = self.outer_outline_enabled.is_some()
+            || self.outer_outline_width.is_some()
+            || self.outer_outline_color.is_some();
+
+        let outer_outline = if has_outer_outline {
+            if self.outer_outline_enabled == Some(false) {
+                None
+            } else {
+                Some(OutlineConfig {
+                    width: self.outer_outline_width,
+                    start_color: self.outer_outline_color,
+                    end_color: self.outer_outline_color,
+                    enabled: self.outer_outline_enabled,
+                })
+            }
+        } else {
+            None
+        };
+
         // Build border config if any border settings provided
         let has_border_overrides = self.border_enabled.is_some()
             || self.border_width.is_some()
             || self.border_gap.is_some()
-            || self.border_color.is_some();
+            || self.border_start_color.is_some()
+            || self.border_end_color.is_some()
+            || has_inner_outline
+            || has_outer_outline;
 
         let border_config = if has_border_overrides {
             let parent_border = parent.border.clone().unwrap_or_default();
@@ -141,10 +194,10 @@ impl EdgeConfigInputs {
                 Some(BorderConfig {
                     width: self.border_width.or(parent_border.width),
                     gap: self.border_gap.or(parent_border.gap),
-                    start_color: self.border_color.or(parent_border.start_color),
-                    end_color: self.border_color.or(parent_border.end_color),
-                    inner_outline: None,
-                    outer_outline: None,
+                    start_color: self.border_start_color.or(parent_border.start_color),
+                    end_color: self.border_end_color.or(parent_border.end_color),
+                    inner_outline: inner_outline.or(parent_border.inner_outline),
+                    outer_outline: outer_outline.or(parent_border.outer_outline),
                     enabled: self.border_enabled.or(parent_border.enabled),
                 })
             }
@@ -584,8 +637,42 @@ where
     ]
     .align_y(iced::Alignment::Center);
 
-    // Border color row
-    let border_color_display: iced::Element<'a, Message> = if let Some(c) = inputs.border_color {
+    // Border start color row
+    let border_start_display: iced::Element<'a, Message> =
+        if let Some(c) = inputs.border_start_color {
+            container(text(""))
+                .width(20)
+                .height(12)
+                .style(move |_: &_| container::Style {
+                    background: Some(iced::Background::Color(c)),
+                    border: iced::Border {
+                        color: colors::PIN_ANY,
+                        width: 1.0,
+                        radius: 2.0.into(),
+                    },
+                    ..Default::default()
+                })
+                .into()
+        } else {
+            text("--").size(9).into()
+        };
+    let border_start_row = row![
+        pin!(
+            Left,
+            pins::config::BORDER_START_COLOR,
+            text("b.start").size(10),
+            Input,
+            pins::ColorData,
+            colors::PIN_COLOR
+        ),
+        container(border_start_display)
+            .width(Length::Fill)
+            .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center);
+
+    // Border end color row
+    let border_end_display: iced::Element<'a, Message> = if let Some(c) = inputs.border_end_color {
         container(text(""))
             .width(20)
             .height(12)
@@ -602,16 +689,172 @@ where
     } else {
         text("--").size(9).into()
     };
-    let border_color_row = row![
+    let border_end_row = row![
         pin!(
             Left,
-            pins::config::BORDER_COLOR,
-            text("b.color").size(10),
+            pins::config::BORDER_END_COLOR,
+            text("b.end").size(10),
             Input,
             pins::ColorData,
             colors::PIN_COLOR
         ),
-        container(border_color_display)
+        container(border_end_display)
+            .width(Length::Fill)
+            .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center);
+
+    // Inner outline enabled row
+    let inner_outline_label = match inputs.inner_outline_enabled {
+        Some(true) => "yes",
+        Some(false) => "no",
+        None => "--",
+    };
+    let inner_outline_enabled_row = row![
+        pin!(
+            Left,
+            pins::config::INNER_OUTLINE,
+            text("in.ol").size(10),
+            Input,
+            pins::Bool,
+            colors::PIN_BOOL
+        ),
+        container(text(inner_outline_label).size(9))
+            .width(Length::Fill)
+            .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center);
+
+    // Inner outline width row
+    let inner_outline_width_row = row![
+        pin!(
+            Left,
+            pins::config::INNER_OUTLINE_WIDTH,
+            text("in.w").size(10),
+            Input,
+            pins::Float,
+            colors::PIN_NUMBER
+        ),
+        container(
+            text(
+                inputs
+                    .inner_outline_width
+                    .map_or("--".to_string(), |v| format!("{:.1}", v))
+            )
+            .size(9)
+        )
+        .width(Length::Fill)
+        .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center);
+
+    // Inner outline color row
+    let inner_outline_color_display: iced::Element<'a, Message> =
+        if let Some(c) = inputs.inner_outline_color {
+            container(text(""))
+                .width(20)
+                .height(12)
+                .style(move |_: &_| container::Style {
+                    background: Some(iced::Background::Color(c)),
+                    border: iced::Border {
+                        color: colors::PIN_ANY,
+                        width: 1.0,
+                        radius: 2.0.into(),
+                    },
+                    ..Default::default()
+                })
+                .into()
+        } else {
+            text("--").size(9).into()
+        };
+    let inner_outline_color_row = row![
+        pin!(
+            Left,
+            pins::config::INNER_OUTLINE_COLOR,
+            text("in.c").size(10),
+            Input,
+            pins::ColorData,
+            colors::PIN_COLOR
+        ),
+        container(inner_outline_color_display)
+            .width(Length::Fill)
+            .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center);
+
+    // Outer outline enabled row
+    let outer_outline_label = match inputs.outer_outline_enabled {
+        Some(true) => "yes",
+        Some(false) => "no",
+        None => "--",
+    };
+    let outer_outline_enabled_row = row![
+        pin!(
+            Left,
+            pins::config::OUTER_OUTLINE,
+            text("out.ol").size(10),
+            Input,
+            pins::Bool,
+            colors::PIN_BOOL
+        ),
+        container(text(outer_outline_label).size(9))
+            .width(Length::Fill)
+            .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center);
+
+    // Outer outline width row
+    let outer_outline_width_row = row![
+        pin!(
+            Left,
+            pins::config::OUTER_OUTLINE_WIDTH,
+            text("out.w").size(10),
+            Input,
+            pins::Float,
+            colors::PIN_NUMBER
+        ),
+        container(
+            text(
+                inputs
+                    .outer_outline_width
+                    .map_or("--".to_string(), |v| format!("{:.1}", v))
+            )
+            .size(9)
+        )
+        .width(Length::Fill)
+        .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center);
+
+    // Outer outline color row
+    let outer_outline_color_display: iced::Element<'a, Message> =
+        if let Some(c) = inputs.outer_outline_color {
+            container(text(""))
+                .width(20)
+                .height(12)
+                .style(move |_: &_| container::Style {
+                    background: Some(iced::Background::Color(c)),
+                    border: iced::Border {
+                        color: colors::PIN_ANY,
+                        width: 1.0,
+                        radius: 2.0.into(),
+                    },
+                    ..Default::default()
+                })
+                .into()
+        } else {
+            text("--").size(9).into()
+        };
+    let outer_outline_color_row = row![
+        pin!(
+            Left,
+            pins::config::OUTER_OUTLINE_COLOR,
+            text("out.c").size(10),
+            Input,
+            pins::ColorData,
+            colors::PIN_COLOR
+        ),
+        container(outer_outline_color_display)
             .width(Length::Fill)
             .align_x(Horizontal::Right),
     ]
@@ -790,7 +1033,8 @@ where
                 pin!(Left, pins::config::BORDER, text("").size(1), Input, pins::Bool, colors::PIN_BOOL).disable_interactions(),
                 pin!(Left, pins::config::BORDER_WIDTH, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
                 pin!(Left, pins::config::BORDER_GAP, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
-                pin!(Left, pins::config::BORDER_COLOR, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
+                pin!(Left, pins::config::BORDER_START_COLOR, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
+                pin!(Left, pins::config::BORDER_END_COLOR, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
             ]
             .spacing(2)
             .into(),
@@ -811,7 +1055,43 @@ where
         content_items.push(border_enabled_row.into());
         content_items.push(border_width_row.into());
         content_items.push(border_gap_row.into());
-        content_items.push(border_color_row.into());
+        content_items.push(border_start_row.into());
+        content_items.push(border_end_row.into());
+    }
+
+    // Outline section - pins inline when collapsed
+    let outline_collapsed_pins: Option<iced::Element<'_, Message>> = if !sections.outline {
+        Some(
+            row![
+                pin!(Left, pins::config::INNER_OUTLINE, text("").size(1), Input, pins::Bool, colors::PIN_BOOL).disable_interactions(),
+                pin!(Left, pins::config::INNER_OUTLINE_WIDTH, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
+                pin!(Left, pins::config::INNER_OUTLINE_COLOR, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
+                pin!(Left, pins::config::OUTER_OUTLINE, text("").size(1), Input, pins::Bool, colors::PIN_BOOL).disable_interactions(),
+                pin!(Left, pins::config::OUTER_OUTLINE_WIDTH, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
+                pin!(Left, pins::config::OUTER_OUTLINE_COLOR, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
+            ]
+            .spacing(2)
+            .into(),
+        )
+    } else {
+        None
+    };
+    content_items.push(
+        section_header_with_pins(
+            "Outline",
+            sections.outline,
+            on_toggle(EdgeSection::Outline),
+            outline_collapsed_pins,
+        )
+        .into(),
+    );
+    if sections.outline {
+        content_items.push(inner_outline_enabled_row.into());
+        content_items.push(inner_outline_width_row.into());
+        content_items.push(inner_outline_color_row.into());
+        content_items.push(outer_outline_enabled_row.into());
+        content_items.push(outer_outline_width_row.into());
+        content_items.push(outer_outline_color_row.into());
     }
 
     // Shadow section - pins inline when collapsed

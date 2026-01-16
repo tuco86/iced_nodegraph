@@ -159,8 +159,31 @@ pub mod config {
     /// Border gap input pin
     pub const BORDER_GAP: &str = "b.gap";
 
-    /// Border color input pin
-    pub const BORDER_COLOR: &str = "b.color";
+    /// Border start color input pin
+    pub const BORDER_START_COLOR: &str = "b.start";
+
+    /// Border end color input pin
+    pub const BORDER_END_COLOR: &str = "b.end";
+
+    // === Outline Config Pins ===
+
+    /// Inner outline toggle
+    pub const INNER_OUTLINE: &str = "in.ol";
+
+    /// Inner outline width
+    pub const INNER_OUTLINE_WIDTH: &str = "in.w";
+
+    /// Inner outline color
+    pub const INNER_OUTLINE_COLOR: &str = "in.c";
+
+    /// Outer outline toggle
+    pub const OUTER_OUTLINE: &str = "out.ol";
+
+    /// Outer outline width
+    pub const OUTER_OUTLINE_WIDTH: &str = "out.w";
+
+    /// Outer outline color
+    pub const OUTER_OUTLINE_COLOR: &str = "out.c";
 
     // === Shadow Config Pins ===
 
