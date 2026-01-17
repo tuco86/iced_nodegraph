@@ -464,17 +464,35 @@ impl From<BackgroundStyle> for BackgroundConfig {
 /// Partial outline configuration.
 ///
 /// All fields are optional - only set fields will override the base style.
-/// Outlines have NO pin color inheritance.
+///
+/// **Pin color inheritance:**
+/// - For edge outlines (EdgeConfig.outline): TRANSPARENT = inherit from pin colors.
+/// - For node outlines (NodeBorderStyle): TRANSPARENT = invisible (no inheritance).
+///
+/// **Outline positions (edge outlines only):**
+/// - `stroke`: Outline around the stroke pattern (each dash, dot, arrow)
+/// - `border_inner`: Outline at the inner edge of the border ring
+/// - `border_outer`: Outline at the outer edge of the border ring
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct OutlineConfig {
     /// Outline width in world-space pixels
     pub width: Option<f32>,
-    /// Color at the source pin (t=0). NO inheritance - transparent = invisible.
+    /// Color at the source pin (t=0).
+    /// For edge outlines: TRANSPARENT = inherit from source pin color.
+    /// For node outlines: TRANSPARENT = invisible.
     pub start_color: Option<Color>,
-    /// Color at the target pin (t=1). NO inheritance - transparent = invisible.
+    /// Color at the target pin (t=1).
+    /// For edge outlines: TRANSPARENT = inherit from target pin color.
+    /// For node outlines: TRANSPARENT = invisible.
     pub end_color: Option<Color>,
     /// Explicitly enable/disable the outline
     pub enabled: Option<bool>,
+    /// Enable outline around stroke pattern (default: true)
+    pub stroke: Option<bool>,
+    /// Enable outline at border inner edge (default: true)
+    pub border_inner: Option<bool>,
+    /// Enable outline at border outer edge (default: true)
+    pub border_outer: Option<bool>,
 }
 
 impl OutlineConfig {
@@ -522,12 +540,33 @@ impl OutlineConfig {
         self
     }
 
+    /// Enables or disables outline around stroke pattern.
+    pub fn stroke(mut self, enabled: bool) -> Self {
+        self.stroke = Some(enabled);
+        self
+    }
+
+    /// Enables or disables outline at border inner edge.
+    pub fn border_inner(mut self, enabled: bool) -> Self {
+        self.border_inner = Some(enabled);
+        self
+    }
+
+    /// Enables or disables outline at border outer edge.
+    pub fn border_outer(mut self, enabled: bool) -> Self {
+        self.border_outer = Some(enabled);
+        self
+    }
+
     /// Returns true if this config has any overrides set.
     pub fn has_overrides(&self) -> bool {
         self.width.is_some()
             || self.start_color.is_some()
             || self.end_color.is_some()
             || self.enabled.is_some()
+            || self.stroke.is_some()
+            || self.border_inner.is_some()
+            || self.border_outer.is_some()
     }
 
     /// Merges two outline configs. Self takes priority, other fills gaps.
@@ -537,15 +576,21 @@ impl OutlineConfig {
             start_color: self.start_color.or(other.start_color),
             end_color: self.end_color.or(other.end_color),
             enabled: self.enabled.or(other.enabled),
+            stroke: self.stroke.or(other.stroke),
+            border_inner: self.border_inner.or(other.border_inner),
+            border_outer: self.border_outer.or(other.border_outer),
         }
     }
 
     /// Resolves this config to an OutlineStyle using defaults.
     pub fn resolve(&self) -> OutlineStyle {
         OutlineStyle {
-            width: self.width.unwrap_or(1.0),
+            width: self.width.unwrap_or(0.0),
             start_color: self.start_color.unwrap_or(Color::BLACK),
             end_color: self.end_color.unwrap_or(Color::BLACK),
+            stroke: self.stroke.unwrap_or(false),
+            border_inner: self.border_inner.unwrap_or(false),
+            border_outer: self.border_outer.unwrap_or(false),
         }
     }
 }
@@ -557,6 +602,9 @@ impl From<OutlineStyle> for OutlineConfig {
             start_color: Some(style.start_color),
             end_color: Some(style.end_color),
             enabled: Some(true),
+            stroke: Some(style.stroke),
+            border_inner: Some(style.border_inner),
+            border_outer: Some(style.border_outer),
         }
     }
 }
@@ -578,8 +626,6 @@ pub struct StrokeConfig {
     pub cap: Option<StrokeCap>,
     /// Cap style for individual dash segments
     pub dash_cap: Option<DashCap>,
-    /// Outline around the stroke. NO pin color inheritance.
-    pub outline: Option<OutlineConfig>,
 }
 
 impl StrokeConfig {
@@ -632,13 +678,6 @@ impl StrokeConfig {
         self
     }
 
-    /// Sets the stroke outline configuration.
-    /// Stroke outlines have NO pin color inheritance.
-    pub fn outline(mut self, outline: OutlineConfig) -> Self {
-        self.outline = Some(outline);
-        self
-    }
-
     /// Returns true if this config has any overrides set.
     pub fn has_overrides(&self) -> bool {
         self.width.is_some()
@@ -647,7 +686,6 @@ impl StrokeConfig {
             || self.pattern.is_some()
             || self.cap.is_some()
             || self.dash_cap.is_some()
-            || self.outline.is_some()
     }
 
     /// Merges two stroke configs. Self takes priority, other fills gaps.
@@ -659,12 +697,6 @@ impl StrokeConfig {
             pattern: self.pattern.clone().or(other.pattern.clone()),
             cap: self.cap.or(other.cap),
             dash_cap: self.dash_cap.or(other.dash_cap),
-            outline: match (&self.outline, &other.outline) {
-                (Some(s), Some(o)) => Some(s.merge(o)),
-                (Some(s), None) => Some(s.clone()),
-                (None, Some(o)) => Some(o.clone()),
-                (None, None) => None,
-            },
         }
     }
 }
@@ -678,7 +710,6 @@ impl From<StrokeStyle> for StrokeConfig {
             pattern: Some(style.pattern),
             cap: Some(style.cap),
             dash_cap: Some(style.dash_cap),
-            outline: style.outline.map(|o| o.into()),
         }
     }
 }
@@ -939,6 +970,9 @@ pub struct EdgeConfig {
     pub shadow: Option<EdgeShadowConfig>,
     /// Edge curve type
     pub curve: Option<EdgeCurve>,
+    /// Unified outline that wraps entire edge (comic book effect).
+    /// TRANSPARENT colors = inherit from pin colors.
+    pub outline: Option<OutlineConfig>,
 }
 
 impl EdgeConfig {
@@ -989,6 +1023,22 @@ impl EdgeConfig {
         self
     }
 
+    /// Sets the unified outline configuration (comic book effect).
+    /// TRANSPARENT colors = inherit from pin colors.
+    pub fn outline(mut self, outline: OutlineConfig) -> Self {
+        self.outline = Some(outline);
+        self
+    }
+
+    /// Explicitly disables the outline.
+    pub fn no_outline(mut self) -> Self {
+        self.outline = Some(OutlineConfig {
+            enabled: Some(false),
+            ..Default::default()
+        });
+        self
+    }
+
     // === Convenience Methods ===
 
     /// Sets a solid color (shorthand for stroke color).
@@ -1032,6 +1082,7 @@ impl EdgeConfig {
             || self.border.is_some()
             || self.shadow.is_some()
             || self.curve.is_some()
+            || self.outline.is_some()
     }
 
     /// Merges two edge configs. Self takes priority, other fills gaps.
@@ -1056,6 +1107,12 @@ impl EdgeConfig {
                 (None, None) => None,
             },
             curve: self.curve.or(other.curve),
+            outline: match (&self.outline, &other.outline) {
+                (Some(s), Some(o)) => Some(s.merge(o)),
+                (Some(s), None) => Some(s.clone()),
+                (None, Some(o)) => Some(o.clone()),
+                (None, None) => None,
+            },
         }
     }
 }
@@ -1317,6 +1374,7 @@ impl From<super::EdgeStyle> for EdgeConfig {
             border: style.border.map(|b| b.into()),
             shadow: style.shadow.map(|s| s.into()),
             curve: Some(style.curve),
+            outline: style.outline.map(|o| o.into()),
         }
     }
 }

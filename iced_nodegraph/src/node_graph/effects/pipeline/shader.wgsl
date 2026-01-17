@@ -101,7 +101,7 @@ struct Pin {
 };
 
 // Edge with resolved world positions (no index lookups needed)
-// Layout: 160 bytes, must match Rust Edge struct exactly
+// Layout: 224 bytes, must match Rust Edge struct exactly
 // Pattern type IDs: 0=Solid, 1=Dashed, 2=Arrowed, 3=Dotted, 4=DashDotted
 struct Edge {
     // Positions and directions (32 bytes)
@@ -138,27 +138,18 @@ struct Edge {
     border_start_color: vec4<f32>,  // @ 112
     border_end_color: vec4<f32>,    // @ 128
 
-    // Stroke outline - NO pin color inheritance (auto-aligned by WGSL)
-    stroke_outline_width: f32,
-    stroke_outline_start_color: vec4<f32>,
-    stroke_outline_end_color: vec4<f32>,
-
-    // Border inner outline - NO pin color inheritance
-    border_inner_outline_width: f32,
-    border_inner_outline_start_color: vec4<f32>,
-    border_inner_outline_end_color: vec4<f32>,
-
-    // Border outer outline - NO pin color inheritance
-    border_outer_outline_width: f32,
-    border_outer_outline_start_color: vec4<f32>,
-    border_outer_outline_end_color: vec4<f32>,
+    // Unified outline - wraps entire edge (TRANSPARENT = inherit from pins)
+    outline_width: f32,
+    outline_start_color: vec4<f32>,
+    outline_end_color: vec4<f32>,
 
     // Shadow
     shadow_color: vec4<f32>,
     shadow_offset: vec2<f32>,
-    // Padding to match encase std430 layout (320 bytes total)
+    // Outline mask: bit 0 = stroke outline, bit 1 = border inner outline, bit 2 = border outer outline
+    outline_mask: u32,
+    // Padding to match encase std430 layout (224 bytes total)
     _pad0: f32,
-    _pad1: f32,
 }
 
 @group(0) @binding(0)
@@ -1088,12 +1079,14 @@ fn vs_edge(@builtin(instance_index) instance: u32,
         }
     }
 
-    // Use actual edge thickness (world space) plus border plus shadow plus AA padding
+    // Use actual edge thickness (world space) plus border plus outline plus shadow plus AA padding
     // Border extends beyond stroke by: gap + border_width
     let border_extend = select(0.0, edge.border_gap + edge.border_width, edge.border_width > 0.0);
+    // Outline extends beyond the outermost edge (stroke or border)
+    let outline_extend = edge.outline_width;
     // Shadow extends by: blur radius + offset (in both directions to cover offset direction)
     let shadow_extend = select(0.0, edge.shadow_blur + max(abs(edge.shadow_offset.x), abs(edge.shadow_offset.y)), edge.shadow_blur > 0.0);
-    let edge_padding = edge.thickness + max(border_extend, shadow_extend) + 2.0 / uniforms.camera_zoom;
+    let edge_padding = edge.thickness + border_extend + outline_extend + shadow_extend + 2.0 / uniforms.camera_zoom;
     let bbox = vec4(bbox_min - vec2(edge_padding), bbox_max + vec2(edge_padding));
 
     let corners = array<vec2<f32>, 4>(
@@ -1212,14 +1205,17 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
         s = s + uniforms.time * edge.flow_speed;
     }
 
-    // Base alpha from distance to curve centerline
-    var alpha = 1.0 - smoothstep(edge_thickness, edge_thickness + aa, dist);
+    // === PATTERN SDF CALCULATION ===
+    // Compute the signed distance to the pattern shape (used for both stroke and outline)
+    // pattern_sdf < 0 means inside the shape, > 0 means outside
+    // outline_sdf is computed separately for patterns that need special handling (angled/arrowed)
+    var pattern_sdf: f32 = dist - edge_thickness; // Default: solid stroke
+    var outline_sdf: f32 = dist - edge_thickness - edge.outline_width; // Default: expanded solid
+    var use_separate_outline_sdf: bool = false; // Flag for patterns needing special outline
 
-    // === PATTERN RENDERING ===
     // pattern_type: 0=solid, 1=dashed, 2=arrowed, 3=dotted, 4=dash-dotted
     if (edge.pattern_type == 1u) {
         // === DASHED PATTERN ===
-        // Pure SDF approach: compute actual distance to nearest dash shape
         let dash = edge.dash_length;
         let gap = edge.gap_length;
         let period = dash + gap;
@@ -1239,27 +1235,28 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
         }
 
         // Apply dash cap style - all using true SDF
-        var dash_sdf: f32;
         switch (edge.dash_cap) {
             case 1u: {
                 // Round caps: stadium/capsule shape
-                // Clamp position to dash body, then compute distance to that point
                 let clamped_along = clamp(dist_along, -half_dash, half_dash);
-                dash_sdf = length(vec2(dist_along - clamped_along, dist)) - edge_thickness;
+                pattern_sdf = length(vec2(dist_along - clamped_along, dist)) - edge_thickness;
+                // Outline: same shape, larger radius
+                outline_sdf = length(vec2(dist_along - clamped_along, dist)) - edge_thickness - edge.outline_width;
             }
             case 2u: {
                 // Square caps: extend dash by thickness
                 let effective_half = half_dash + edge_thickness;
-                dash_sdf = sd_box_2d(vec2(dist_along, dist), vec2(effective_half, edge_thickness));
+                pattern_sdf = sd_box_2d(vec2(dist_along, dist), vec2(effective_half, edge_thickness));
+                // Outline: expanded box
+                outline_sdf = sd_box_2d(vec2(dist_along, dist), vec2(effective_half + edge.outline_width, edge_thickness + edge.outline_width));
+                use_separate_outline_sdf = true;
             }
             case 3u: {
-                // Angled caps: parallelogram shape
-                // Shift position based on signed perpendicular distance
+                // Angled caps: parallelogram shape - needs special outline handling
                 let angle = edge.dash_cap_angle;
                 let tan_angle = tan(angle);
                 let shifted_along = dist_along - signed_dist * tan_angle;
 
-                // Find nearest dash with shifted coordinates
                 var nearest_shifted = shifted_along;
                 if (abs(nearest_shifted + period) < abs(nearest_shifted)) {
                     nearest_shifted = nearest_shifted + period;
@@ -1268,21 +1265,22 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
                     nearest_shifted = nearest_shifted - period;
                 }
 
-                // Box SDF with shifted position
-                dash_sdf = sd_box_2d(vec2(nearest_shifted, dist), vec2(half_dash, edge_thickness));
+                pattern_sdf = sd_box_2d(vec2(nearest_shifted, dist), vec2(half_dash, edge_thickness));
+                // Outline: same skewed coordinates, expanded dimensions
+                outline_sdf = sd_box_2d(vec2(nearest_shifted, dist), vec2(half_dash + edge.outline_width, edge_thickness + edge.outline_width));
+                use_separate_outline_sdf = true;
             }
             default: {
                 // Butt caps (0): simple rectangle
-                dash_sdf = sd_box_2d(vec2(dist_along, dist), vec2(half_dash, edge_thickness));
+                pattern_sdf = sd_box_2d(vec2(dist_along, dist), vec2(half_dash, edge_thickness));
+                // Outline: expanded box
+                outline_sdf = sd_box_2d(vec2(dist_along, dist), vec2(half_dash + edge.outline_width, edge_thickness + edge.outline_width));
+                use_separate_outline_sdf = true;
             }
         }
 
-        // Apply SDF with anti-aliasing
-        alpha = 1.0 - smoothstep(-aa, aa, dash_sdf);
-
     } else if (edge.pattern_type == 2u) {
-        // === ARROWED PATTERN ===
-        // Chevron/arrow segments: use abs(dist) so both sides shift same direction
+        // === ARROWED PATTERN === (needs special outline handling)
         let segment = edge.dash_length;
         let gap = edge.gap_length;
         let angle = edge.pattern_angle;
@@ -1290,15 +1288,12 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
         let half_seg = segment * 0.5;
         let tan_angle = tan(angle);
 
-        // Shift position based on absolute perpendicular distance (creates chevron)
         let shifted_s = s - abs(dist) * tan_angle;
 
-        // Find nearest segment center
         let period_index = floor(shifted_s / period);
         let pos_in_period = shifted_s - period_index * period;
         var dist_along = pos_in_period - half_seg;
 
-        // Check adjacent segments
         if (abs(dist_along + period) < abs(dist_along)) {
             dist_along = dist_along + period;
         }
@@ -1306,52 +1301,39 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
             dist_along = dist_along - period;
         }
 
-        // True SDF: 2D box distance
-        let seg_sdf = sd_box_2d(vec2(dist_along, dist), vec2(half_seg, edge_thickness));
-
-        // Apply SDF with anti-aliasing
-        alpha = 1.0 - smoothstep(-aa, aa, seg_sdf);
+        pattern_sdf = sd_box_2d(vec2(dist_along, dist), vec2(half_seg, edge_thickness));
+        // Outline: same skewed coordinates, expanded dimensions
+        outline_sdf = sd_box_2d(vec2(dist_along, dist), vec2(half_seg + edge.outline_width, edge_thickness + edge.outline_width));
+        use_separate_outline_sdf = true;
 
     } else if (edge.pattern_type == 3u) {
         // === DOTTED PATTERN ===
-        let spacing = edge.dash_length;   // Distance between dot centers
-        let dot_radius = edge.gap_length; // Radius of each dot
+        let spacing = edge.dash_length;
+        let dot_radius = edge.gap_length;
 
-        // Find nearest dot center
         let dot_index = round(s / spacing);
         let dot_center_s = dot_index * spacing;
-
-        // Distance from current point to nearest dot center (along curve)
         let dist_along = abs(s - dot_center_s);
 
-        // 2D distance to dot center (combining along-curve and perpendicular distances)
-        let dot_sdf = length(vec2(dist_along, dist)) - dot_radius;
-
-        // Apply SDF with anti-aliasing
-        alpha = 1.0 - smoothstep(-aa, aa, dot_sdf);
+        pattern_sdf = length(vec2(dist_along, dist)) - dot_radius;
+        // Outline: larger circle
+        outline_sdf = length(vec2(dist_along, dist)) - dot_radius - edge.outline_width;
 
     } else if (edge.pattern_type == 4u) {
         // === DASH-DOTTED PATTERN ===
-        // Pure SDF: compute distance to nearest dash OR dot, take minimum
         let dash = edge.dash_length;
         let gap = edge.gap_length;
         let dot_radius = edge_thickness * 0.8;
         let dot_gap = gap * 0.5;
         let half_dash = dash * 0.5;
 
-        // Pattern period: dash + gap + dot_diameter + dot_gap
         let period = dash + gap + dot_radius * 2.0 + dot_gap;
-
-        // Dash center is at half_dash within each period
         let dash_center_in_period = half_dash;
-        // Dot center is at dash + gap + dot_radius
         let dot_center_in_period = dash + gap + dot_radius;
 
-        // Find which period we're in
         let period_index = floor(s / period);
         let pos_in_period = s - period_index * period;
 
-        // Distance to dash center (check current and adjacent periods)
         var dist_to_dash = pos_in_period - dash_center_in_period;
         if (abs(dist_to_dash + period) < abs(dist_to_dash)) {
             dist_to_dash = dist_to_dash + period;
@@ -1360,7 +1342,6 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
             dist_to_dash = dist_to_dash - period;
         }
 
-        // Distance to dot center (check current and adjacent periods)
         var dist_to_dot = pos_in_period - dot_center_in_period;
         if (abs(dist_to_dot + period) < abs(dist_to_dot)) {
             dist_to_dot = dist_to_dot + period;
@@ -1369,64 +1350,37 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
             dist_to_dot = dist_to_dot - period;
         }
 
-        // SDF to dash (box)
         let dash_sdf = sd_box_2d(vec2(dist_to_dash, dist), vec2(half_dash, edge_thickness));
-
-        // SDF to dot (circle)
         let dot_sdf = length(vec2(dist_to_dot, dist)) - dot_radius;
+        pattern_sdf = min(dash_sdf, dot_sdf);
 
-        // Union: take minimum of both SDFs
-        let pattern_sdf = min(dash_sdf, dot_sdf);
-
-        // Apply SDF with anti-aliasing
-        alpha = 1.0 - smoothstep(-aa, aa, pattern_sdf);
+        // Outline: expanded versions
+        let dash_outline_sdf = sd_box_2d(vec2(dist_to_dash, dist), vec2(half_dash + edge.outline_width, edge_thickness + edge.outline_width));
+        let dot_outline_sdf = length(vec2(dist_to_dot, dist)) - dot_radius - edge.outline_width;
+        outline_sdf = min(dash_outline_sdf, dot_outline_sdf);
+        use_separate_outline_sdf = true;
     }
-    // else: solid (pattern_type == 0), keep base alpha
+    // else: solid (pattern_type == 0), pattern_sdf already set to dist - edge_thickness
+
+    // Base stroke alpha from pattern SDF
+    var alpha = 1.0 - smoothstep(-aa, aa, pattern_sdf);
 
     // === LAYER GEOMETRY CALCULATION ===
-    // From inside to outside: stroke, stroke_outline, gap, border_inner_outline, border, border_outer_outline, shadow
+    // Border uses simple distance from centerline (not pattern-aware)
     let stroke_half = edge_thickness;
 
-    // Stroke outline (around stroke)
-    let stroke_outline_inner = stroke_half;
-    let stroke_outline_outer = stroke_half + edge.stroke_outline_width;
-
-    // Gap starts after stroke outline
-    let gap_inner = stroke_outline_outer;
+    // Gap starts after stroke
+    let gap_inner = stroke_half;
     let gap_outer = gap_inner + edge.border_gap;
 
-    // Border inner outline (before border)
-    let border_inner_outline_inner = gap_outer;
-    let border_inner_outline_outer = gap_outer + edge.border_inner_outline_width;
-
     // Border (the main border ring)
-    let border_inner = border_inner_outline_outer;
+    let border_inner = gap_outer;
     let border_outer = border_inner + edge.border_width;
 
-    // Border outer outline (after border)
-    let border_outer_outline_inner = border_outer;
-    let border_outer_outline_outer = border_outer + edge.border_outer_outline_width;
-
     // === COMPUTE LAYER ALPHAS ===
-    // Stroke outline (gradient, no pin inheritance)
-    var stroke_outline_alpha = 0.0;
-    var stroke_outline_color = mix(edge.stroke_outline_start_color, edge.stroke_outline_end_color, t);
-    if (edge.stroke_outline_width > 0.0 && stroke_outline_color.a > 0.0) {
-        let inner_mask = smoothstep(stroke_outline_inner - aa, stroke_outline_inner + aa, dist);
-        let outer_mask = 1.0 - smoothstep(stroke_outline_outer - aa, stroke_outline_outer + aa, dist);
-        stroke_outline_alpha = inner_mask * outer_mask * stroke_outline_color.a;
-    }
-
-    // Border inner outline (gradient, no pin inheritance)
-    var border_inner_outline_alpha = 0.0;
-    var border_inner_outline_color = mix(edge.border_inner_outline_start_color, edge.border_inner_outline_end_color, t);
-    if (edge.border_inner_outline_width > 0.0 && border_inner_outline_color.a > 0.0) {
-        let inner_mask = smoothstep(border_inner_outline_inner - aa, border_inner_outline_inner + aa, dist);
-        let outer_mask = 1.0 - smoothstep(border_inner_outline_outer - aa, border_inner_outline_outer + aa, dist);
-        border_inner_outline_alpha = inner_mask * outer_mask * border_inner_outline_color.a;
-    }
 
     // Border (gradient, inherits from pin colors if transparent)
+    // Border wraps around the entire edge shape (not pattern-aware)
     var border_alpha = 0.0;
     var border_color = mix(edge.border_start_color, edge.border_end_color, t);
     if (edge.border_width > 0.0 && border_color.a > 0.0) {
@@ -1435,13 +1389,62 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
         border_alpha = inner_mask * outer_mask * border_color.a;
     }
 
-    // Border outer outline (gradient, no pin inheritance)
+    // === OUTLINE COMPUTATION (proper SDF chain) ===
+    // Three outline positions:
+    // - Stroke outline (bit 0): wraps around pattern_sdf (each dash, dot, arrow)
+    // - Border inner outline (bit 1): at inner edge of border ring
+    // - Border outer outline (bit 2): at outer edge of border ring
+
+    // Resolve outline colors with pin inheritance
+    var outline_start = edge.outline_start_color;
+    var outline_end = edge.outline_end_color;
+    if (outline_start.a < 0.01) {
+        outline_start = vec4(edge.start_color.rgb, 1.0);
+    }
+    if (outline_end.a < 0.01) {
+        outline_end = vec4(edge.end_color.rgb, 1.0);
+    }
+    let outline_color = mix(outline_start, outline_end, t);
+    let ol_width = edge.outline_width;
+
+    // Stroke outline (wraps around pattern shape)
+    var stroke_outline_alpha = 0.0;
+    if (ol_width > 0.0 && (edge.outline_mask & 1u) != 0u) {
+        // Use separate outline_sdf for patterns that computed it specially,
+        // otherwise fall back to simple SDF expansion
+        var expanded_sdf: f32;
+        if (use_separate_outline_sdf) {
+            expanded_sdf = outline_sdf;
+        } else {
+            expanded_sdf = pattern_sdf - ol_width;
+        }
+        // Outline ring: inside expanded but outside original
+        let in_expanded = 1.0 - smoothstep(-aa, aa, expanded_sdf);
+        let outside_original = smoothstep(-aa, aa, pattern_sdf);
+        stroke_outline_alpha = in_expanded * outside_original * outline_color.a;
+    }
+
+    // Border inner outline (at inner edge of border ring)
+    var border_inner_outline_alpha = 0.0;
+    if (ol_width > 0.0 && edge.border_width > 0.0 && (edge.outline_mask & 2u) != 0u) {
+        // Inner edge SDF: negative inside border, positive outside (toward stroke)
+        // dist = border_inner means we're at the inner edge
+        let inner_edge_sdf = border_inner - dist;  // positive outside border (toward stroke), negative inside
+        // Outline ring: from inner_edge_sdf = 0 to inner_edge_sdf = ol_width
+        let in_outline = smoothstep(-aa, aa, inner_edge_sdf);
+        let outside_outline = 1.0 - smoothstep(ol_width - aa, ol_width + aa, inner_edge_sdf);
+        border_inner_outline_alpha = in_outline * outside_outline * outline_color.a;
+    }
+
+    // Border outer outline (at outer edge of border ring)
     var border_outer_outline_alpha = 0.0;
-    var border_outer_outline_color = mix(edge.border_outer_outline_start_color, edge.border_outer_outline_end_color, t);
-    if (edge.border_outer_outline_width > 0.0 && border_outer_outline_color.a > 0.0) {
-        let inner_mask = smoothstep(border_outer_outline_inner - aa, border_outer_outline_inner + aa, dist);
-        let outer_mask = 1.0 - smoothstep(border_outer_outline_outer - aa, border_outer_outline_outer + aa, dist);
-        border_outer_outline_alpha = inner_mask * outer_mask * border_outer_outline_color.a;
+    if (ol_width > 0.0 && edge.border_width > 0.0 && (edge.outline_mask & 4u) != 0u) {
+        // Outer edge SDF: positive outside border (away from centerline)
+        let outer_edge_sdf = dist - border_outer;  // positive outside border
+        // Outline ring: from outer_edge_sdf = 0 to outer_edge_sdf = ol_width
+        let in_outline = smoothstep(-aa, aa, outer_edge_sdf);
+        let outside_outline = 1.0 - smoothstep(ol_width - aa, ol_width + aa, outer_edge_sdf);
+        border_outer_outline_alpha = in_outline * outside_outline * outline_color.a;
     }
 
     // === GLOW EFFECT (animation_type == 2) ===
@@ -1531,12 +1534,12 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
     if (border_outer_outline_alpha > 0.0) {
         let new_alpha = border_outer_outline_alpha + result_alpha * (1.0 - border_outer_outline_alpha);
         if (new_alpha > 0.001) {
-            result_rgb = (border_outer_outline_color.rgb * border_outer_outline_alpha + result_rgb * result_alpha * (1.0 - border_outer_outline_alpha)) / new_alpha;
+            result_rgb = (outline_color.rgb * border_outer_outline_alpha + result_rgb * result_alpha * (1.0 - border_outer_outline_alpha)) / new_alpha;
             result_alpha = new_alpha;
         }
     }
 
-    // Layer 5: Border
+    // Layer 5: Border fill
     if (border_alpha > 0.0) {
         let new_alpha = border_alpha + result_alpha * (1.0 - border_alpha);
         if (new_alpha > 0.001) {
@@ -1549,23 +1552,23 @@ fn fs_edge(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
     if (border_inner_outline_alpha > 0.0) {
         let new_alpha = border_inner_outline_alpha + result_alpha * (1.0 - border_inner_outline_alpha);
         if (new_alpha > 0.001) {
-            result_rgb = (border_inner_outline_color.rgb * border_inner_outline_alpha + result_rgb * result_alpha * (1.0 - border_inner_outline_alpha)) / new_alpha;
+            result_rgb = (outline_color.rgb * border_inner_outline_alpha + result_rgb * result_alpha * (1.0 - border_inner_outline_alpha)) / new_alpha;
             result_alpha = new_alpha;
         }
     }
 
     // Layer 3: Gap (empty - no rendering)
 
-    // Layer 2: Stroke outline
+    // Layer 2: Stroke outline (comic book effect around each dash/dot)
     if (stroke_outline_alpha > 0.0) {
         let new_alpha = stroke_outline_alpha + result_alpha * (1.0 - stroke_outline_alpha);
         if (new_alpha > 0.001) {
-            result_rgb = (stroke_outline_color.rgb * stroke_outline_alpha + result_rgb * result_alpha * (1.0 - stroke_outline_alpha)) / new_alpha;
+            result_rgb = (outline_color.rgb * stroke_outline_alpha + result_rgb * result_alpha * (1.0 - stroke_outline_alpha)) / new_alpha;
             result_alpha = new_alpha;
         }
     }
 
-    // Layer 1: Stroke (front)
+    // Layer 1: Stroke fill (front)
     if (alpha > 0.0) {
         let new_alpha = alpha + result_alpha * (1.0 - alpha);
         if (new_alpha > 0.001) {

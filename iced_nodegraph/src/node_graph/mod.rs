@@ -290,6 +290,9 @@ pub struct NodeGraph<
     /// Style callback for edge cutting tool overlay.
     /// Returns the line color.
     pub(super) cutting_tool_style_fn: Option<Box<dyn Fn(&Theme) -> iced::Color + 'a>>,
+    /// Initial camera position and zoom to restore on first render.
+    /// Applied once when the widget state is created, then controlled by user interaction.
+    pub(super) initial_camera: Option<(Point, f32)>,
     /// Phantom data for unused type parameter (E is only used in callbacks)
     _phantom: PhantomData<E>,
 }
@@ -329,6 +332,7 @@ where
             pin_style_fn: None,
             box_select_style_fn: None,
             cutting_tool_style_fn: None,
+            initial_camera: None,
             _phantom: PhantomData,
         }
     }
@@ -341,6 +345,15 @@ where
     E: EdgeId + 'static,
     Renderer: iced_widget::core::renderer::Renderer,
 {
+    /// Sets the initial camera position and zoom level.
+    ///
+    /// This is used to restore camera state from persistence.
+    /// Applied once when the widget state is created, then controlled by user interaction.
+    pub fn initial_camera(mut self, position: Point, zoom: f32) -> Self {
+        self.initial_camera = Some((position, zoom));
+        self
+    }
+
     /// Adds a node with the given ID and default styling.
     ///
     /// The node will use theme defaults from `NodeStyle::from_theme()`.

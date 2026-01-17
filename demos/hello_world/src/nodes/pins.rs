@@ -165,25 +165,28 @@ pub mod config {
     /// Border end color input pin
     pub const BORDER_END_COLOR: &str = "b.end";
 
-    // === Outline Config Pins ===
+    // === Outline Config Pins (unified edge outline) ===
 
-    /// Inner outline toggle
-    pub const INNER_OUTLINE: &str = "in.ol";
+    /// Outline toggle
+    pub const OUTLINE: &str = "ol";
 
-    /// Inner outline width
-    pub const INNER_OUTLINE_WIDTH: &str = "in.w";
+    /// Outline width
+    pub const OUTLINE_WIDTH: &str = "ol.w";
 
-    /// Inner outline color
-    pub const INNER_OUTLINE_COLOR: &str = "in.c";
+    /// Outline start color (TRANSPARENT = inherit from source pin)
+    pub const OUTLINE_START_COLOR: &str = "ol.sc";
 
-    /// Outer outline toggle
-    pub const OUTER_OUTLINE: &str = "out.ol";
+    /// Outline end color (TRANSPARENT = inherit from target pin)
+    pub const OUTLINE_END_COLOR: &str = "ol.ec";
 
-    /// Outer outline width
-    pub const OUTER_OUTLINE_WIDTH: &str = "out.w";
+    /// Outline stroke toggle (outline around pattern/dashes)
+    pub const OUTLINE_STROKE: &str = "ol.str";
 
-    /// Outer outline color
-    pub const OUTER_OUTLINE_COLOR: &str = "out.c";
+    /// Outline border inner toggle (at border inner edge)
+    pub const OUTLINE_BORDER_INNER: &str = "ol.bi";
+
+    /// Outline border outer toggle (at border outer edge)
+    pub const OUTLINE_BORDER_OUTER: &str = "ol.bo";
 
     // === Shadow Config Pins ===
 

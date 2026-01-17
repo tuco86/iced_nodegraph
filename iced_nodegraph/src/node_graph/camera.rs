@@ -184,8 +184,9 @@ impl Camera2D {
         }
     }
 
-    /// Create a camera with custom zoom and position (for testing)
-    #[cfg(test)]
+    /// Create a camera with custom zoom and position.
+    ///
+    /// Used for restoring camera state from persistence and testing.
     pub fn with_zoom_and_position(zoom: f32, position: WorldPoint) -> Self {
         Self {
             zoom: Scale::new(zoom),

@@ -793,6 +793,17 @@ where
     ) {
         let state = tree.state.downcast_mut::<NodeGraphState>();
 
+        // Apply initial camera from persistence (only once)
+        if !state.camera_initialized {
+            if let Some((position, zoom)) = self.initial_camera {
+                state.camera = super::camera::Camera2D::with_zoom_and_position(
+                    zoom,
+                    WorldPoint::new(position.x, position.y),
+                );
+            }
+            state.camera_initialized = true;
+        }
+
         // Synchronize external selection with internal state
         if let Some(external) = self.get_external_selection()
             && state.selected_nodes != *external {

@@ -261,8 +261,9 @@ struct ComputedStyle {
     edge_curve: Option<EdgeCurve>,
     edge_pattern: Option<iced_nodegraph::StrokePattern>,
     edge_dash_cap: Option<iced_nodegraph::DashCap>,
-    // Edge border and shadow
+    // Edge border, outline, and shadow
     edge_border: Option<iced_nodegraph::BorderConfig>,
+    edge_outline: Option<iced_nodegraph::OutlineConfig>,
     edge_shadow: Option<iced_nodegraph::EdgeShadowConfig>,
     // Pin config values
     pin_color: Option<Color>,
@@ -317,6 +318,9 @@ impl ComputedStyle {
         }
         if let Some(ref border) = self.edge_border {
             config.border = Some(border.clone());
+        }
+        if let Some(ref outline) = self.edge_outline {
+            config.outline = Some(outline.clone());
         }
         if let Some(ref shadow) = self.edge_shadow {
             config.shadow = Some(shadow.clone());
@@ -1032,9 +1036,7 @@ impl Application {
                     inputs.pattern_angle = value.as_float().map(|deg| deg.to_radians());
                 } else if *pin_label == pin::SPEED {
                     inputs.animation_speed = value.as_float();
-                // Border settings
-                } else if *pin_label == pin::BORDER {
-                    inputs.border_enabled = value.as_bool();
+                // Border settings (width > 0 enables border)
                 } else if *pin_label == pin::BORDER_WIDTH {
                     inputs.border_width = value.as_float();
                 } else if *pin_label == pin::BORDER_GAP {
@@ -1043,22 +1045,20 @@ impl Application {
                     inputs.border_start_color = value.as_color();
                 } else if *pin_label == pin::BORDER_END_COLOR {
                     inputs.border_end_color = value.as_color();
-                // Outline settings
-                } else if *pin_label == pin::INNER_OUTLINE {
-                    inputs.inner_outline_enabled = value.as_bool();
-                } else if *pin_label == pin::INNER_OUTLINE_WIDTH {
-                    inputs.inner_outline_width = value.as_float();
-                } else if *pin_label == pin::INNER_OUTLINE_COLOR {
-                    inputs.inner_outline_color = value.as_color();
-                } else if *pin_label == pin::OUTER_OUTLINE {
-                    inputs.outer_outline_enabled = value.as_bool();
-                } else if *pin_label == pin::OUTER_OUTLINE_WIDTH {
-                    inputs.outer_outline_width = value.as_float();
-                } else if *pin_label == pin::OUTER_OUTLINE_COLOR {
-                    inputs.outer_outline_color = value.as_color();
-                // Shadow settings
-                } else if *pin_label == pin::SHADOW {
-                    inputs.shadow_enabled = value.as_bool();
+                // Unified outline settings (width > 0 enables outline)
+                } else if *pin_label == pin::OUTLINE_WIDTH {
+                    inputs.outline_width = value.as_float();
+                } else if *pin_label == pin::OUTLINE_START_COLOR {
+                    inputs.outline_start_color = value.as_color();
+                } else if *pin_label == pin::OUTLINE_END_COLOR {
+                    inputs.outline_end_color = value.as_color();
+                } else if *pin_label == pin::OUTLINE_STROKE {
+                    inputs.outline_stroke = value.as_bool();
+                } else if *pin_label == pin::OUTLINE_BORDER_INNER {
+                    inputs.outline_border_inner = value.as_bool();
+                } else if *pin_label == pin::OUTLINE_BORDER_OUTER {
+                    inputs.outline_border_outer = value.as_bool();
+                // Shadow settings (blur > 0 enables shadow)
                 } else if *pin_label == pin::SHADOW_BLUR {
                     inputs.shadow_blur = value.as_float();
                 } else if *pin_label == pin::SHADOW_OFFSET {
@@ -1247,6 +1247,10 @@ impl Application {
                                     // Apply border config
                                     if let Some(ref border) = edge_config.border {
                                         computed.edge_border = Some(border.clone());
+                                    }
+                                    // Apply outline config (comic book effect)
+                                    if let Some(ref outline) = edge_config.outline {
+                                        computed.edge_outline = Some(outline.clone());
                                     }
                                     // Apply shadow config
                                     if let Some(ref shadow) = edge_config.shadow {
@@ -1515,6 +1519,7 @@ impl Application {
             ApplicationMessage::CameraChanged { position, zoom } => {
                 self.camera_position = position;
                 self.camera_zoom = zoom;
+                self.save_state();
                 Task::none()
             }
             ApplicationMessage::WindowResized(size) => {
@@ -1913,6 +1918,7 @@ impl Application {
             .on_delete(ApplicationMessage::DeleteNodes)
             .on_group_move(|node_ids, delta| ApplicationMessage::GroupMoved { node_ids, delta })
             .on_camera_change(|position, zoom| ApplicationMessage::CameraChanged { position, zoom })
+            .initial_camera(self.camera_position, self.camera_zoom)
             .pin_defaults(pin_defaults)
             // Style callbacks - user controls appearance based on status
             // The base style comes from per-element config or theme defaults

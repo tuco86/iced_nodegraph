@@ -44,6 +44,9 @@ pub(super) struct NodeGraphState {
     /// Contains (node_index, pin_index) pairs that are valid connection targets.
     /// Only populated during Edge/EdgeOver dragging states.
     pub(super) valid_drop_targets: HashSet<(usize, usize)>,
+    /// Tracks if the initial camera has been applied from the widget config.
+    /// Once true, camera is controlled by user interaction only.
+    pub(super) camera_initialized: bool,
 }
 
 impl Default for NodeGraphState {
@@ -57,6 +60,7 @@ impl Default for NodeGraphState {
             modifiers: keyboard::Modifiers::default(),
             left_mouse_down: false,
             valid_drop_targets: HashSet::new(),
+            camera_initialized: false,
         }
     }
 }

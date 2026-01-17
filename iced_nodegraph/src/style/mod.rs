@@ -1135,8 +1135,6 @@ pub struct StrokeStyle {
     pub cap: StrokeCap,
     /// Cap style for individual dash segments (when using patterns)
     pub dash_cap: DashCap,
-    /// Outline around the stroke. NO pin color inheritance.
-    pub outline: Option<OutlineStyle>,
 }
 
 impl Default for StrokeStyle {
@@ -1148,7 +1146,6 @@ impl Default for StrokeStyle {
             pattern: StrokePattern::Solid,
             cap: StrokeCap::Round,
             dash_cap: DashCap::Butt,
-            outline: None,
         }
     }
 }
@@ -1228,13 +1225,6 @@ impl StrokeStyle {
         self
     }
 
-    /// Sets the stroke outline.
-    /// Stroke outlines have NO pin color inheritance.
-    pub fn outline(mut self, outline: OutlineStyle) -> Self {
-        self.outline = Some(outline);
-        self
-    }
-
     /// Applies a StrokeConfig, returning a new StrokeStyle.
     /// Config values override base values.
     pub fn with_config(&self, config: &crate::style::config::StrokeConfig) -> Self {
@@ -1248,11 +1238,6 @@ impl StrokeStyle {
                 .unwrap_or_else(|| self.pattern.clone()),
             cap: config.cap.unwrap_or(self.cap),
             dash_cap: config.dash_cap.unwrap_or(self.dash_cap),
-            outline: config
-                .outline
-                .as_ref()
-                .map(|c| c.resolve())
-                .or(self.outline),
         }
     }
 }
@@ -1263,25 +1248,45 @@ impl StrokeStyle {
 
 /// Outline style for comic-book style effects.
 ///
-/// Used for stroke outlines and border inner/outer outlines.
-/// Outlines have NO pin color inheritance - colors must be explicitly set.
-/// TRANSPARENT colors will render as invisible (not inherit from pins).
+/// Used for edge outlines (unified) and node border inner/outer outlines.
+///
+/// **Pin color inheritance:**
+/// - For edge outlines (EdgeStyle.outline): TRANSPARENT = inherit from pin colors.
+/// - For node outlines (NodeBorderStyle): TRANSPARENT = invisible (no inheritance).
+///
+/// **Outline positions (edge outlines only):**
+/// - `stroke`: Outline around the stroke pattern (each dash, dot, arrow)
+/// - `border_inner`: Outline at the inner edge of the border ring
+/// - `border_outer`: Outline at the outer edge of the border ring
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OutlineStyle {
     /// Outline width in world-space pixels
     pub width: f32,
-    /// Color at start of edge (t=0). NO inheritance - transparent = invisible.
+    /// Color at start of edge (t=0).
+    /// For edge outlines: TRANSPARENT = inherit from source pin color.
+    /// For node outlines: TRANSPARENT = invisible.
     pub start_color: Color,
-    /// Color at end of edge (t=1). NO inheritance - transparent = invisible.
+    /// Color at end of edge (t=1).
+    /// For edge outlines: TRANSPARENT = inherit from target pin color.
+    /// For node outlines: TRANSPARENT = invisible.
     pub end_color: Color,
+    /// Enable outline around stroke pattern (default: true)
+    pub stroke: bool,
+    /// Enable outline at border inner edge (default: true)
+    pub border_inner: bool,
+    /// Enable outline at border outer edge (default: true)
+    pub border_outer: bool,
 }
 
 impl Default for OutlineStyle {
     fn default() -> Self {
         Self {
-            width: 1.0,
+            width: 0.0,
             start_color: Color::BLACK,
             end_color: Color::BLACK,
+            stroke: false,
+            border_inner: false,
+            border_outer: false,
         }
     }
 }
@@ -1323,6 +1328,40 @@ impl OutlineStyle {
         self.end_color = color;
         self
     }
+
+    /// Enables or disables outline around stroke pattern.
+    pub fn stroke(mut self, enabled: bool) -> Self {
+        self.stroke = enabled;
+        self
+    }
+
+    /// Enables or disables outline at border inner edge.
+    pub fn border_inner(mut self, enabled: bool) -> Self {
+        self.border_inner = enabled;
+        self
+    }
+
+    /// Enables or disables outline at border outer edge.
+    pub fn border_outer(mut self, enabled: bool) -> Self {
+        self.border_outer = enabled;
+        self
+    }
+
+    /// Computes the outline mask bitfield for GPU.
+    /// bit 0 = stroke, bit 1 = border_inner, bit 2 = border_outer
+    pub fn mask(&self) -> u32 {
+        let mut mask = 0u32;
+        if self.stroke {
+            mask |= 1;
+        }
+        if self.border_inner {
+            mask |= 2;
+        }
+        if self.border_outer {
+            mask |= 4;
+        }
+        mask
+    }
 }
 
 // ============================================================================
@@ -1355,7 +1394,7 @@ pub struct BorderStyle {
 impl Default for BorderStyle {
     fn default() -> Self {
         Self {
-            width: 1.0,
+            width: 0.0,
             gap: 0.5,
             start_color: Color::TRANSPARENT, // Inherits from pin
             end_color: Color::TRANSPARENT,   // Inherits from pin
@@ -1697,11 +1736,12 @@ impl EdgeShadowStyle {
 /// - **Stroke**: The main visible line with color, pattern, and caps
 /// - **Border**: An outer ring around the stroke for emphasis/contrast
 /// - **Shadow**: Soft shadow for depth
+/// - **Outline**: Unified comic-book style outline wrapping the entire edge
 /// - **Curve**: The path shape (bezier, orthogonal, line)
 ///
 /// # Example
 /// ```rust
-/// use iced_nodegraph::style::{EdgeStyle, StrokeStyle, BorderStyle, EdgeCurve, StrokePattern};
+/// use iced_nodegraph::style::{EdgeStyle, StrokeStyle, BorderStyle, EdgeCurve, StrokePattern, OutlineStyle};
 /// use iced::Color;
 ///
 /// // Simple solid edge using pin colors
@@ -1714,10 +1754,10 @@ impl EdgeShadowStyle {
 ///         .color(Color::WHITE)
 ///         .pattern(StrokePattern::dashed(12.0, 6.0)));
 ///
-/// // Edge with border for emphasis
-/// let emphasized = EdgeStyle::new()
-///     .stroke(StrokeStyle::new().width(2.5).color(Color::from_rgb(0.3, 0.6, 1.0)))
-///     .border(BorderStyle::new().width(1.5).color(Color::from_rgba(0.0, 0.0, 0.0, 0.5)));
+/// // Edge with comic-book outline (inherits pin colors)
+/// let comic = EdgeStyle::new()
+///     .stroke(StrokeStyle::new().width(3.0))
+///     .outline(OutlineStyle::new().width(2.0)); // TRANSPARENT = inherit from pins
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct EdgeStyle {
@@ -1729,6 +1769,9 @@ pub struct EdgeStyle {
     pub shadow: Option<EdgeShadowStyle>,
     /// Path shape for the edge
     pub curve: EdgeCurve,
+    /// Unified outline wrapping entire edge (comic book effect).
+    /// TRANSPARENT colors = inherit from pin colors.
+    pub outline: Option<OutlineStyle>,
 }
 
 impl Default for EdgeStyle {
@@ -1738,6 +1781,7 @@ impl Default for EdgeStyle {
             border: None,
             shadow: None,
             curve: EdgeCurve::default(),
+            outline: None,
         }
     }
 }
@@ -1755,6 +1799,7 @@ impl EdgeStyle {
             border: None,
             shadow: None,
             curve: EdgeCurve::BezierCubic,
+            outline: None,
         }
     }
 
@@ -1797,6 +1842,19 @@ impl EdgeStyle {
     /// Sets the curve type.
     pub fn curve(mut self, curve: EdgeCurve) -> Self {
         self.curve = curve;
+        self
+    }
+
+    /// Sets the unified outline layer (comic book effect).
+    /// TRANSPARENT colors = inherit from pin colors.
+    pub fn outline(mut self, outline: OutlineStyle) -> Self {
+        self.outline = Some(outline);
+        self
+    }
+
+    /// Removes the outline layer.
+    pub fn no_outline(mut self) -> Self {
+        self.outline = None;
         self
     }
 
@@ -2020,11 +2078,19 @@ impl EdgeStyle {
             (None, _) => None,
         };
 
+        let outline = match (&self.outline, &config.outline) {
+            (_, Some(cfg)) if cfg.enabled == Some(false) => None,
+            (_, Some(cfg)) => Some(cfg.resolve()),
+            (Some(base), None) => Some(*base),
+            (None, None) => None,
+        };
+
         Self {
             stroke,
             border,
             shadow,
             curve: config.curve.unwrap_or(self.curve),
+            outline,
         }
     }
 

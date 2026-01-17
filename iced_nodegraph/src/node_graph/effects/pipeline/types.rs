@@ -158,27 +158,18 @@ pub struct Edge {
     pub border_start_color: glam::Vec4, // border color at source (t=0)
     pub border_end_color: glam::Vec4,   // border color at target (t=1)
 
-    // Stroke outline (36 bytes - NO pin color inheritance)
-    pub stroke_outline_width: f32,
-    pub stroke_outline_start_color: glam::Vec4,
-    pub stroke_outline_end_color: glam::Vec4,
-
-    // Border inner outline (36 bytes - NO pin color inheritance)
-    pub border_inner_outline_width: f32,
-    pub border_inner_outline_start_color: glam::Vec4,
-    pub border_inner_outline_end_color: glam::Vec4,
-
-    // Border outer outline (36 bytes - NO pin color inheritance)
-    pub border_outer_outline_width: f32,
-    pub border_outer_outline_start_color: glam::Vec4,
-    pub border_outer_outline_end_color: glam::Vec4,
+    // Unified outline (36 bytes - wraps entire edge, TRANSPARENT = inherit from pins)
+    pub outline_width: f32,
+    pub outline_start_color: glam::Vec4,
+    pub outline_end_color: glam::Vec4,
 
     // Shadow (32 bytes)
     pub shadow_color: glam::Vec4,
     pub shadow_offset: glam::Vec2,
-    // Padding for 16-byte array stride alignment (288 bytes total)
+    // Outline mask: bit 0 = stroke outline, bit 1 = border inner outline, bit 2 = border outer outline
+    pub outline_mask: u32,
+    // Padding for 16-byte array stride alignment (224 bytes total)
     pub _pad0: f32,
-    pub _pad1: f32,
 }
 
 #[cfg(test)]
@@ -200,12 +191,12 @@ mod tests {
 
     #[test]
     fn test_edge_shader_size() {
-        // Edge struct with all outline layers (320 bytes)
+        // Edge struct with unified outline (224 bytes)
         // Verify it's properly 16-byte aligned for GPU
         let size = Edge::SHADER_SIZE.get();
         assert!(size > 0, "Edge size should be positive");
         assert!(size % 16 == 0, "Edge size should be 16-byte aligned");
-        assert_eq!(size, 320, "Edge size should be 320 bytes");
+        assert_eq!(size, 224, "Edge size should be 224 bytes");
     }
 
     #[test]
@@ -399,19 +390,13 @@ mod tests {
             shadow_blur: 0.0,
             border_start_color: glam::Vec4::ZERO,
             border_end_color: glam::Vec4::ZERO,
-            stroke_outline_width: 0.0,
-            stroke_outline_start_color: glam::Vec4::ZERO,
-            stroke_outline_end_color: glam::Vec4::ZERO,
-            border_inner_outline_width: 0.0,
-            border_inner_outline_start_color: glam::Vec4::ZERO,
-            border_inner_outline_end_color: glam::Vec4::ZERO,
-            border_outer_outline_width: 0.0,
-            border_outer_outline_start_color: glam::Vec4::ZERO,
-            border_outer_outline_end_color: glam::Vec4::ZERO,
+            outline_width: 0.0,
+            outline_start_color: glam::Vec4::ZERO,
+            outline_end_color: glam::Vec4::ZERO,
             shadow_color: glam::Vec4::ZERO,
             shadow_offset: glam::Vec2::ZERO,
+            outline_mask: 0,
             _pad0: 0.0,
-            _pad1: 0.0,
         }
     }
 

@@ -80,20 +80,19 @@ pub struct EdgeConfigInputs {
     /// Animation speed (0.0 = no animation, > 0.0 = animated)
     pub animation_speed: Option<f32>,
     /// Border settings (colored band around stroke with gap)
-    pub border_enabled: Option<bool>,
     pub border_width: Option<f32>,
     pub border_gap: Option<f32>,
     pub border_start_color: Option<Color>,
     pub border_end_color: Option<Color>,
-    /// Outline settings (thin lines around border)
-    pub inner_outline_enabled: Option<bool>,
-    pub inner_outline_width: Option<f32>,
-    pub inner_outline_color: Option<Color>,
-    pub outer_outline_enabled: Option<bool>,
-    pub outer_outline_width: Option<f32>,
-    pub outer_outline_color: Option<Color>,
+    /// Unified outline settings (comic book effect, wraps entire edge)
+    pub outline_width: Option<f32>,
+    pub outline_start_color: Option<Color>,
+    pub outline_end_color: Option<Color>,
+    /// Outline position toggles
+    pub outline_stroke: Option<bool>,       // Outline around stroke pattern (each dash, dot)
+    pub outline_border_inner: Option<bool>, // Outline at border inner edge
+    pub outline_border_outer: Option<bool>, // Outline at border outer edge
     /// Shadow settings
-    pub shadow_enabled: Option<bool>,
     pub shadow_blur: Option<f32>,
     pub shadow_offset_x: Option<f32>,
     pub shadow_offset_y: Option<f32>,
@@ -131,103 +130,72 @@ impl EdgeConfigInputs {
                 pattern,
                 cap: parent_stroke.cap,
                 dash_cap,
-                outline: None,
             })
         } else {
             parent.stroke.clone()
         };
 
-        // Build outline configs if any outline settings provided
-        let has_inner_outline = self.inner_outline_enabled.is_some()
-            || self.inner_outline_width.is_some()
-            || self.inner_outline_color.is_some();
-
-        let inner_outline = if has_inner_outline {
-            if self.inner_outline_enabled == Some(false) {
-                None
-            } else {
-                Some(OutlineConfig {
-                    width: self.inner_outline_width,
-                    start_color: self.inner_outline_color,
-                    end_color: self.inner_outline_color,
-                    enabled: self.inner_outline_enabled,
-                })
-            }
-        } else {
-            None
-        };
-
-        let has_outer_outline = self.outer_outline_enabled.is_some()
-            || self.outer_outline_width.is_some()
-            || self.outer_outline_color.is_some();
-
-        let outer_outline = if has_outer_outline {
-            if self.outer_outline_enabled == Some(false) {
-                None
-            } else {
-                Some(OutlineConfig {
-                    width: self.outer_outline_width,
-                    start_color: self.outer_outline_color,
-                    end_color: self.outer_outline_color,
-                    enabled: self.outer_outline_enabled,
-                })
-            }
-        } else {
-            None
-        };
-
-        // Build border config if any border settings provided
-        let has_border_overrides = self.border_enabled.is_some()
-            || self.border_width.is_some()
+        // Build border config if any border settings provided (width > 0 enables border)
+        let has_border_overrides = self.border_width.is_some()
             || self.border_gap.is_some()
             || self.border_start_color.is_some()
-            || self.border_end_color.is_some()
-            || has_inner_outline
-            || has_outer_outline;
+            || self.border_end_color.is_some();
 
         let border_config = if has_border_overrides {
             let parent_border = parent.border.clone().unwrap_or_default();
-            // If border explicitly disabled, return None
-            if self.border_enabled == Some(false) {
-                None
-            } else {
-                Some(BorderConfig {
-                    width: self.border_width.or(parent_border.width),
-                    gap: self.border_gap.or(parent_border.gap),
-                    start_color: self.border_start_color.or(parent_border.start_color),
-                    end_color: self.border_end_color.or(parent_border.end_color),
-                    inner_outline: inner_outline.or(parent_border.inner_outline),
-                    outer_outline: outer_outline.or(parent_border.outer_outline),
-                    enabled: self.border_enabled.or(parent_border.enabled),
-                })
-            }
+            Some(BorderConfig {
+                width: self.border_width.or(parent_border.width),
+                gap: self.border_gap.or(parent_border.gap),
+                start_color: self.border_start_color.or(parent_border.start_color),
+                end_color: self.border_end_color.or(parent_border.end_color),
+                inner_outline: parent_border.inner_outline,
+                outer_outline: parent_border.outer_outline,
+                enabled: parent_border.enabled,
+            })
         } else {
             parent.border.clone()
         };
 
-        // Build shadow config if any shadow settings provided
-        let has_shadow_overrides = self.shadow_enabled.is_some()
-            || self.shadow_blur.is_some()
+        // Build shadow config if any shadow settings provided (blur > 0 enables shadow)
+        let has_shadow_overrides = self.shadow_blur.is_some()
             || self.shadow_offset_x.is_some()
             || self.shadow_offset_y.is_some()
             || self.shadow_color.is_some();
 
         let shadow_config = if has_shadow_overrides {
             let parent_shadow = parent.shadow.clone().unwrap_or_default();
-            // If shadow explicitly disabled, return None
-            if self.shadow_enabled == Some(false) {
-                None
-            } else {
-                Some(EdgeShadowConfig {
-                    blur: self.shadow_blur.or(parent_shadow.blur),
-                    color: self.shadow_color.or(parent_shadow.color),
-                    offset_x: self.shadow_offset_x.or(parent_shadow.offset_x),
-                    offset_y: self.shadow_offset_y.or(parent_shadow.offset_y),
-                    enabled: self.shadow_enabled.or(parent_shadow.enabled),
-                })
-            }
+            Some(EdgeShadowConfig {
+                blur: self.shadow_blur.or(parent_shadow.blur),
+                color: self.shadow_color.or(parent_shadow.color),
+                offset_x: self.shadow_offset_x.or(parent_shadow.offset_x),
+                offset_y: self.shadow_offset_y.or(parent_shadow.offset_y),
+                enabled: parent_shadow.enabled,
+            })
         } else {
             parent.shadow.clone()
+        };
+
+        // Build unified outline config if any outline settings provided (width > 0 enables outline)
+        let has_outline_overrides = self.outline_width.is_some()
+            || self.outline_start_color.is_some()
+            || self.outline_end_color.is_some()
+            || self.outline_stroke.is_some()
+            || self.outline_border_inner.is_some()
+            || self.outline_border_outer.is_some();
+
+        let outline_config = if has_outline_overrides {
+            let parent_outline = parent.outline.clone().unwrap_or_default();
+            Some(OutlineConfig {
+                width: self.outline_width.or(parent_outline.width),
+                start_color: self.outline_start_color.or(parent_outline.start_color),
+                end_color: self.outline_end_color.or(parent_outline.end_color),
+                enabled: parent_outline.enabled,
+                stroke: self.outline_stroke.or(parent_outline.stroke),
+                border_inner: self.outline_border_inner.or(parent_outline.border_inner),
+                border_outer: self.outline_border_outer.or(parent_outline.border_outer),
+            })
+        } else {
+            parent.outline.clone()
         };
 
         EdgeConfig {
@@ -235,6 +203,7 @@ impl EdgeConfigInputs {
             border: border_config,
             shadow: shadow_config,
             curve: self.curve.or(parent.curve),
+            outline: outline_config,
         }
     }
 
@@ -570,27 +539,6 @@ where
     ]
     .align_y(iced::Alignment::Center);
 
-    // Border enabled row
-    let border_label = match inputs.border_enabled {
-        Some(true) => "yes",
-        Some(false) => "no",
-        None => "--",
-    };
-    let border_enabled_row = row![
-        pin!(
-            Left,
-            pins::config::BORDER,
-            text("border").size(10),
-            Input,
-            pins::Bool,
-            colors::PIN_BOOL
-        ),
-        container(text(border_label).size(9))
-            .width(Length::Fill)
-            .align_x(Horizontal::Right),
-    ]
-    .align_y(iced::Alignment::Center);
-
     // Border width row
     let border_width_row = row![
         pin!(
@@ -704,33 +652,12 @@ where
     ]
     .align_y(iced::Alignment::Center);
 
-    // Inner outline enabled row
-    let inner_outline_label = match inputs.inner_outline_enabled {
-        Some(true) => "yes",
-        Some(false) => "no",
-        None => "--",
-    };
-    let inner_outline_enabled_row = row![
+    // Outline width row
+    let outline_width_row = row![
         pin!(
             Left,
-            pins::config::INNER_OUTLINE,
-            text("in.ol").size(10),
-            Input,
-            pins::Bool,
-            colors::PIN_BOOL
-        ),
-        container(text(inner_outline_label).size(9))
-            .width(Length::Fill)
-            .align_x(Horizontal::Right),
-    ]
-    .align_y(iced::Alignment::Center);
-
-    // Inner outline width row
-    let inner_outline_width_row = row![
-        pin!(
-            Left,
-            pins::config::INNER_OUTLINE_WIDTH,
-            text("in.w").size(10),
+            pins::config::OUTLINE_WIDTH,
+            text("ol.w").size(10),
             Input,
             pins::Float,
             colors::PIN_NUMBER
@@ -738,7 +665,7 @@ where
         container(
             text(
                 inputs
-                    .inner_outline_width
+                    .outline_width
                     .map_or("--".to_string(), |v| format!("{:.1}", v))
             )
             .size(9)
@@ -748,9 +675,9 @@ where
     ]
     .align_y(iced::Alignment::Center);
 
-    // Inner outline color row
-    let inner_outline_color_display: iced::Element<'a, Message> =
-        if let Some(c) = inputs.inner_outline_color {
+    // Outline start color row
+    let outline_start_display: iced::Element<'a, Message> =
+        if let Some(c) = inputs.outline_start_color {
             container(text(""))
                 .width(20)
                 .height(12)
@@ -765,70 +692,26 @@ where
                 })
                 .into()
         } else {
-            text("--").size(9).into()
+            text("pin").size(9).into() // TRANSPARENT = inherit from pin
         };
-    let inner_outline_color_row = row![
+    let outline_start_row = row![
         pin!(
             Left,
-            pins::config::INNER_OUTLINE_COLOR,
-            text("in.c").size(10),
+            pins::config::OUTLINE_START_COLOR,
+            text("ol.sc").size(10),
             Input,
             pins::ColorData,
             colors::PIN_COLOR
         ),
-        container(inner_outline_color_display)
+        container(outline_start_display)
             .width(Length::Fill)
             .align_x(Horizontal::Right),
     ]
     .align_y(iced::Alignment::Center);
 
-    // Outer outline enabled row
-    let outer_outline_label = match inputs.outer_outline_enabled {
-        Some(true) => "yes",
-        Some(false) => "no",
-        None => "--",
-    };
-    let outer_outline_enabled_row = row![
-        pin!(
-            Left,
-            pins::config::OUTER_OUTLINE,
-            text("out.ol").size(10),
-            Input,
-            pins::Bool,
-            colors::PIN_BOOL
-        ),
-        container(text(outer_outline_label).size(9))
-            .width(Length::Fill)
-            .align_x(Horizontal::Right),
-    ]
-    .align_y(iced::Alignment::Center);
-
-    // Outer outline width row
-    let outer_outline_width_row = row![
-        pin!(
-            Left,
-            pins::config::OUTER_OUTLINE_WIDTH,
-            text("out.w").size(10),
-            Input,
-            pins::Float,
-            colors::PIN_NUMBER
-        ),
-        container(
-            text(
-                inputs
-                    .outer_outline_width
-                    .map_or("--".to_string(), |v| format!("{:.1}", v))
-            )
-            .size(9)
-        )
-        .width(Length::Fill)
-        .align_x(Horizontal::Right),
-    ]
-    .align_y(iced::Alignment::Center);
-
-    // Outer outline color row
-    let outer_outline_color_display: iced::Element<'a, Message> =
-        if let Some(c) = inputs.outer_outline_color {
+    // Outline end color row
+    let outline_end_display: iced::Element<'a, Message> =
+        if let Some(c) = inputs.outline_end_color {
             container(text(""))
                 .width(20)
                 .height(12)
@@ -843,39 +726,81 @@ where
                 })
                 .into()
         } else {
-            text("--").size(9).into()
+            text("pin").size(9).into() // TRANSPARENT = inherit from pin
         };
-    let outer_outline_color_row = row![
+    let outline_end_row = row![
         pin!(
             Left,
-            pins::config::OUTER_OUTLINE_COLOR,
-            text("out.c").size(10),
+            pins::config::OUTLINE_END_COLOR,
+            text("ol.ec").size(10),
             Input,
             pins::ColorData,
             colors::PIN_COLOR
         ),
-        container(outer_outline_color_display)
+        container(outline_end_display)
             .width(Length::Fill)
             .align_x(Horizontal::Right),
     ]
     .align_y(iced::Alignment::Center);
 
-    // Shadow enabled row
-    let shadow_label = match inputs.shadow_enabled {
+    // Outline stroke toggle row (outline around pattern/dashes)
+    let outline_stroke_label = match inputs.outline_stroke {
         Some(true) => "yes",
         Some(false) => "no",
-        None => "--",
+        None => "no", // Default is false
     };
-    let shadow_enabled_row = row![
+    let outline_stroke_row = row![
         pin!(
             Left,
-            pins::config::SHADOW,
-            text("shadow").size(10),
+            pins::config::OUTLINE_STROKE,
+            text("ol.str").size(10),
             Input,
             pins::Bool,
             colors::PIN_BOOL
         ),
-        container(text(shadow_label).size(9))
+        container(text(outline_stroke_label).size(9))
+            .width(Length::Fill)
+            .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center);
+
+    // Outline border inner toggle row
+    let outline_border_inner_label = match inputs.outline_border_inner {
+        Some(true) => "yes",
+        Some(false) => "no",
+        None => "no", // Default is false
+    };
+    let outline_border_inner_row = row![
+        pin!(
+            Left,
+            pins::config::OUTLINE_BORDER_INNER,
+            text("ol.bi").size(10),
+            Input,
+            pins::Bool,
+            colors::PIN_BOOL
+        ),
+        container(text(outline_border_inner_label).size(9))
+            .width(Length::Fill)
+            .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center);
+
+    // Outline border outer toggle row
+    let outline_border_outer_label = match inputs.outline_border_outer {
+        Some(true) => "yes",
+        Some(false) => "no",
+        None => "no", // Default is false
+    };
+    let outline_border_outer_row = row![
+        pin!(
+            Left,
+            pins::config::OUTLINE_BORDER_OUTER,
+            text("ol.bo").size(10),
+            Input,
+            pins::Bool,
+            colors::PIN_BOOL
+        ),
+        container(text(outline_border_outer_label).size(9))
             .width(Length::Fill)
             .align_x(Horizontal::Right),
     ]
@@ -1030,7 +955,6 @@ where
     let border_collapsed_pins: Option<iced::Element<'_, Message>> = if !sections.border {
         Some(
             row![
-                pin!(Left, pins::config::BORDER, text("").size(1), Input, pins::Bool, colors::PIN_BOOL).disable_interactions(),
                 pin!(Left, pins::config::BORDER_WIDTH, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
                 pin!(Left, pins::config::BORDER_GAP, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
                 pin!(Left, pins::config::BORDER_START_COLOR, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
@@ -1052,7 +976,6 @@ where
         .into(),
     );
     if sections.border {
-        content_items.push(border_enabled_row.into());
         content_items.push(border_width_row.into());
         content_items.push(border_gap_row.into());
         content_items.push(border_start_row.into());
@@ -1063,12 +986,12 @@ where
     let outline_collapsed_pins: Option<iced::Element<'_, Message>> = if !sections.outline {
         Some(
             row![
-                pin!(Left, pins::config::INNER_OUTLINE, text("").size(1), Input, pins::Bool, colors::PIN_BOOL).disable_interactions(),
-                pin!(Left, pins::config::INNER_OUTLINE_WIDTH, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
-                pin!(Left, pins::config::INNER_OUTLINE_COLOR, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
-                pin!(Left, pins::config::OUTER_OUTLINE, text("").size(1), Input, pins::Bool, colors::PIN_BOOL).disable_interactions(),
-                pin!(Left, pins::config::OUTER_OUTLINE_WIDTH, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
-                pin!(Left, pins::config::OUTER_OUTLINE_COLOR, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
+                pin!(Left, pins::config::OUTLINE_WIDTH, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
+                pin!(Left, pins::config::OUTLINE_START_COLOR, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
+                pin!(Left, pins::config::OUTLINE_END_COLOR, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
+                pin!(Left, pins::config::OUTLINE_STROKE, text("").size(1), Input, pins::Bool, colors::PIN_BOOL).disable_interactions(),
+                pin!(Left, pins::config::OUTLINE_BORDER_INNER, text("").size(1), Input, pins::Bool, colors::PIN_BOOL).disable_interactions(),
+                pin!(Left, pins::config::OUTLINE_BORDER_OUTER, text("").size(1), Input, pins::Bool, colors::PIN_BOOL).disable_interactions(),
             ]
             .spacing(2)
             .into(),
@@ -1086,19 +1009,18 @@ where
         .into(),
     );
     if sections.outline {
-        content_items.push(inner_outline_enabled_row.into());
-        content_items.push(inner_outline_width_row.into());
-        content_items.push(inner_outline_color_row.into());
-        content_items.push(outer_outline_enabled_row.into());
-        content_items.push(outer_outline_width_row.into());
-        content_items.push(outer_outline_color_row.into());
+        content_items.push(outline_width_row.into());
+        content_items.push(outline_start_row.into());
+        content_items.push(outline_end_row.into());
+        content_items.push(outline_stroke_row.into());
+        content_items.push(outline_border_inner_row.into());
+        content_items.push(outline_border_outer_row.into());
     }
 
     // Shadow section - pins inline when collapsed
     let shadow_collapsed_pins: Option<iced::Element<'_, Message>> = if !sections.shadow {
         Some(
             row![
-                pin!(Left, pins::config::SHADOW, text("").size(1), Input, pins::Bool, colors::PIN_BOOL).disable_interactions(),
                 pin!(Left, pins::config::SHADOW_BLUR, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
                 pin!(Left, pins::config::SHADOW_OFFSET, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
                 pin!(Left, pins::config::SHADOW_COLOR, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
@@ -1119,7 +1041,6 @@ where
         .into(),
     );
     if sections.shadow {
-        content_items.push(shadow_enabled_row.into());
         content_items.push(shadow_blur_row.into());
         content_items.push(shadow_offset_row.into());
         content_items.push(shadow_color_row.into());

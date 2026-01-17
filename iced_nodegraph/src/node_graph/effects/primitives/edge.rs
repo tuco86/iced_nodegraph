@@ -285,45 +285,24 @@ impl Primitive for EdgePrimitive {
             })
             .unwrap_or((0.0, glam::Vec4::ZERO, glam::Vec2::ZERO));
 
-        // Extract stroke outline (NO pin inheritance)
-        let (stroke_outline_width, stroke_outline_start_color, stroke_outline_end_color) = stroke
-            .and_then(|s| s.outline.as_ref())
-            .map(|o| {
-                (
-                    o.width,
-                    glam::Vec4::new(o.start_color.r, o.start_color.g, o.start_color.b, o.start_color.a),
-                    glam::Vec4::new(o.end_color.r, o.end_color.g, o.end_color.b, o.end_color.a),
-                )
-            })
-            .unwrap_or((0.0, glam::Vec4::ZERO, glam::Vec4::ZERO));
-
-        // Extract border inner outline (NO pin inheritance)
-        let (border_inner_outline_width, border_inner_outline_start_color, border_inner_outline_end_color) = style
-            .border
+        // Extract unified outline (TRANSPARENT = inherit from pin colors, handled in shader)
+        let (outline_width, outline_start_color, outline_end_color, outline_mask) = style
+            .outline
             .as_ref()
-            .and_then(|b| b.inner_outline.as_ref())
             .map(|o| {
                 (
                     o.width,
-                    glam::Vec4::new(o.start_color.r, o.start_color.g, o.start_color.b, o.start_color.a),
+                    glam::Vec4::new(
+                        o.start_color.r,
+                        o.start_color.g,
+                        o.start_color.b,
+                        o.start_color.a,
+                    ),
                     glam::Vec4::new(o.end_color.r, o.end_color.g, o.end_color.b, o.end_color.a),
+                    o.mask(),
                 )
             })
-            .unwrap_or((0.0, glam::Vec4::ZERO, glam::Vec4::ZERO));
-
-        // Extract border outer outline (NO pin inheritance)
-        let (border_outer_outline_width, border_outer_outline_start_color, border_outer_outline_end_color) = style
-            .border
-            .as_ref()
-            .and_then(|b| b.outer_outline.as_ref())
-            .map(|o| {
-                (
-                    o.width,
-                    glam::Vec4::new(o.start_color.r, o.start_color.g, o.start_color.b, o.start_color.a),
-                    glam::Vec4::new(o.end_color.r, o.end_color.g, o.end_color.b, o.end_color.a),
-                )
-            })
-            .unwrap_or((0.0, glam::Vec4::ZERO, glam::Vec4::ZERO));
+            .unwrap_or((0.0, glam::Vec4::ZERO, glam::Vec4::ZERO, 0));
 
         // Determine if edge is "reversed" (from Input to Output instead of Output to Input)
         let is_reversed = matches!(
@@ -371,19 +350,13 @@ impl Primitive for EdgePrimitive {
                 shadow_blur,
                 border_start_color,
                 border_end_color,
-                stroke_outline_width,
-                stroke_outline_start_color,
-                stroke_outline_end_color,
-                border_inner_outline_width,
-                border_inner_outline_start_color,
-                border_inner_outline_end_color,
-                border_outer_outline_width,
-                border_outer_outline_start_color,
-                border_outer_outline_end_color,
+                outline_width,
+                outline_start_color,
+                outline_end_color,
                 shadow_color,
                 shadow_offset,
+                outline_mask,
                 _pad0: 0.0,
-                _pad1: 0.0,
             },
         );
 

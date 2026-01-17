@@ -245,13 +245,14 @@ pub fn to_static_pin_label(label: &str) -> &'static str {
         s if s == config::BORDER_GAP => config::BORDER_GAP,
         s if s == config::BORDER_START_COLOR => config::BORDER_START_COLOR,
         s if s == config::BORDER_END_COLOR => config::BORDER_END_COLOR,
-        // Outline config pins
-        s if s == config::INNER_OUTLINE => config::INNER_OUTLINE,
-        s if s == config::INNER_OUTLINE_WIDTH => config::INNER_OUTLINE_WIDTH,
-        s if s == config::INNER_OUTLINE_COLOR => config::INNER_OUTLINE_COLOR,
-        s if s == config::OUTER_OUTLINE => config::OUTER_OUTLINE,
-        s if s == config::OUTER_OUTLINE_WIDTH => config::OUTER_OUTLINE_WIDTH,
-        s if s == config::OUTER_OUTLINE_COLOR => config::OUTER_OUTLINE_COLOR,
+        // Unified outline config pins
+        s if s == config::OUTLINE => config::OUTLINE,
+        s if s == config::OUTLINE_WIDTH => config::OUTLINE_WIDTH,
+        s if s == config::OUTLINE_START_COLOR => config::OUTLINE_START_COLOR,
+        s if s == config::OUTLINE_END_COLOR => config::OUTLINE_END_COLOR,
+        s if s == config::OUTLINE_STROKE => config::OUTLINE_STROKE,
+        s if s == config::OUTLINE_BORDER_INNER => config::OUTLINE_BORDER_INNER,
+        s if s == config::OUTLINE_BORDER_OUTER => config::OUTLINE_BORDER_OUTER,
         // Shadow config pins
         s if s == config::SHADOW => config::SHADOW,
         s if s == config::SHADOW_BLUR => config::SHADOW_BLUR,
