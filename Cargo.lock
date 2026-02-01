@@ -1418,6 +1418,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "iced_sdf"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "encase",
+ "glam",
+ "iced",
+ "iced_wgpu",
+]
+
+[[package]]
 name = "iced_tiny_skia"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

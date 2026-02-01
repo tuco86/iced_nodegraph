@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "iced_nodegraph",
+    "iced_sdf",
     "demos/hello_world",
     "demos/styling",
     "demos/interaction",
@@ -17,8 +18,9 @@ license = "MIT"
 repository = "https://github.com/tuco86/iced_nodegraph"
 
 [workspace.dependencies]
-# Core library
+# Core libraries
 iced_nodegraph = { path = "iced_nodegraph" }
+iced_sdf = { path = "iced_sdf" }
 
 # Iced framework
 iced = "0.14"

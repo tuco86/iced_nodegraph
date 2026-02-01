@@ -1,0 +1,21 @@
+[package]
+name = "iced_sdf"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Generic SDF renderer for Iced with combinable primitives and CSG operations"
+repository.workspace = true
+license.workspace = true
+keywords = ["iced", "sdf", "signed-distance-field", "csg", "gpu"]
+categories = ["gui", "graphics", "rendering"]
+
+[dependencies]
+bytemuck.workspace = true
+glam.workspace = true
+encase.workspace = true
+iced_wgpu.workspace = true
+iced = { workspace = true, features = ["advanced", "wgpu"] }
+
+# WASM: Enable WebGL in iced_wgpu for fallback support
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+iced_wgpu = { workspace = true, features = ["webgl"] }
