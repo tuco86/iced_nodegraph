@@ -28,6 +28,7 @@ wasm = [
 iced_sdf.workspace = true
 iced = { workspace = true, features = ["advanced", "wgpu"] }
 iced_wgpu.workspace = true
+glam.workspace = true
 web-time.workspace = true
 
 # WASM-specific dependencies
