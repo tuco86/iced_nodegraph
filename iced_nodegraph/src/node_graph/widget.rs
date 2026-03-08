@@ -1979,7 +1979,7 @@ fn validate_pin_direction(from_pin: &NodePinState, to_pin: &NodePinState) -> boo
 /// 2. Direction is compatible (Output->Input, etc.)
 /// 3. TypeId matches (same data type)
 fn compute_valid_targets<N, P, E, Message, Renderer>(
-    _graph: &NodeGraph<'_, N, P, E, Message, iced::Theme, Renderer>,
+    graph: &NodeGraph<'_, N, P, E, Message, iced::Theme, Renderer>,
     tree: &Tree,
     layout: Layout<'_>,
     from_node: usize,
@@ -2007,6 +2007,13 @@ where
         return valid_targets;
     };
 
+    // Resolve source pin to user IDs for can_connect callback
+    let from_pin_ref = graph.can_connect.as_ref().and_then(|_| {
+        let node_id = graph.id_maps.node_id(from_node)?.clone();
+        let pin_id = from_state.pin_id.downcast_ref::<P>()?.clone();
+        Some(PinRef::new(node_id, pin_id))
+    });
+
     // Iterate all pins in all nodes
     for (node_index, (node_layout, node_tree)) in layout.children().zip(&tree.children).enumerate()
     {
@@ -2026,8 +2033,27 @@ where
                 continue;
             }
 
-            // Check TypeId compatibility - only same types can connect
-            if from_state.data_type != pin_state.data_type {
+            // Type compatibility: use can_connect callback if set, else TypeId matching
+            if let (Some(can_connect), Some(from_ref)) =
+                (&graph.can_connect, &from_pin_ref)
+            {
+                let to_ref = graph
+                    .id_maps
+                    .node_id(node_index)
+                    .and_then(|n| {
+                        pin_state
+                            .pin_id
+                            .downcast_ref::<P>()
+                            .map(|p| PinRef::new(n.clone(), p.clone()))
+                    });
+                if let Some(to_ref) = to_ref {
+                    if !can_connect(from_ref.clone(), to_ref) {
+                        continue;
+                    }
+                } else {
+                    continue;
+                }
+            } else if from_state.data_type != pin_state.data_type {
                 continue;
             }
 

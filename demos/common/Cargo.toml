@@ -1,0 +1,11 @@
+[package]
+name = "demo_common"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+iced = { workspace = true, features = ["advanced", "wgpu", "tokio"] }
+png = "0.17"

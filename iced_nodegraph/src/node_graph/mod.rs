@@ -293,6 +293,10 @@ pub struct NodeGraph<
     /// Initial camera position and zoom to restore on first render.
     /// Applied once when the widget state is created, then controlled by user interaction.
     pub(super) initial_camera: Option<(Point, f32)>,
+    /// Custom validation callback for pin connection compatibility.
+    /// When set, replaces the built-in TypeId matching in `compute_valid_targets`.
+    /// Direction checks still apply before this callback is called.
+    pub(super) can_connect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> bool + 'a>>,
     /// Phantom data for unused type parameter (E is only used in callbacks)
     _phantom: PhantomData<E>,
 }
@@ -333,6 +337,7 @@ where
             box_select_style_fn: None,
             cutting_tool_style_fn: None,
             initial_camera: None,
+            can_connect: None,
             _phantom: PhantomData,
         }
     }
@@ -532,6 +537,18 @@ where
     /// ```
     pub fn cutting_tool_style(mut self, f: impl Fn(&Theme) -> iced::Color + 'a) -> Self {
         self.cutting_tool_style_fn = Some(Box::new(f));
+        self
+    }
+
+    /// Sets a validation callback for pin connection compatibility.
+    ///
+    /// When set, this replaces the built-in TypeId matching. The callback receives
+    /// both pins as `PinRef<N, P>` and returns `true` if they can connect.
+    /// Direction checks (Input/Output/Both) still apply before this callback.
+    ///
+    /// When not set, pins connect only if they share the same `data_type::<T>()`.
+    pub fn can_connect(mut self, f: impl Fn(PinRef<N, P>, PinRef<N, P>) -> bool + 'a) -> Self {
+        self.can_connect = Some(Box::new(f));
         self
     }
 
