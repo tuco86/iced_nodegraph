@@ -1,106 +1,87 @@
 /**
  * SDF Shape Doc Loader
  *
- * Embeds the SDF gallery WASM app into iced_sdf::Sdf struct documentation.
- * One app instance is loaded and moved between shape slots as the user scrolls.
+ * Embeds SDF gallery WASM instances into iced_sdf::Sdf struct documentation.
+ * Lazy load-in-view: visible slots get their own isolated WASM instance,
+ * slots leaving the viewport get torn down and their target div recreated.
  *
- * Each Sdf method has a <div class="sdf-shape-slot" data-shape="<slug>">
- * placeholder. This script:
- *   1. Loads the gallery WASM once
- *   2. Captures the canvas iced/winit creates (it lands in <body>)
- *   3. Reparents it into the active slot
- *   4. IntersectionObserver moves it between slots on scroll
- *   5. Sets window.__sdf_shape so the gallery app switches shape
+ * Each import uses a unique query param so the browser creates a fresh
+ * JS module scope (and thus a fresh WASM instance) per slot.
  */
 
-(async function () {
+(function () {
   const slots = document.querySelectorAll(".sdf-shape-slot");
   if (slots.length === 0) return;
 
-  const container = document.getElementById("sdf-demo-container");
-  if (!container) return;
+  const scriptUrl = import.meta.url;
+  const baseUrl = scriptUrl.substring(0, scriptUrl.lastIndexOf("/"));
 
-  // Track active slot
-  let currentSlot = null;
-  window.__sdf_shape = slots[0].dataset.shape;
+  // Track active instances: slot -> { shape, targetId }
+  const active = new Map();
+  // Track slots currently loading to avoid double-init
+  const loading = new Set();
 
-  function moveToSlot(slot) {
-    if (currentSlot === slot) return;
-    currentSlot = slot;
-    slot.appendChild(container);
-    container.style.display = "block";
-    window.__sdf_shape = slot.dataset.shape;
-    window.dispatchEvent(new Event("resize"));
-  }
+  async function activate(slot) {
+    if (active.has(slot) || loading.has(slot)) return;
 
-  moveToSlot(slots[0]);
+    const shape = slot.dataset.shape;
+    const targetId = `sdf-target-${shape}`;
 
-  try {
-    const scriptUrl = import.meta.url;
-    const baseUrl = scriptUrl.substring(0, scriptUrl.lastIndexOf("/"));
-    const demo = await import(`${baseUrl}/sdf_gallery.js`);
-    await demo.default();
-
-    const loadingEl = document.getElementById("sdf-demo-loading");
-    if (loadingEl) loadingEl.style.display = "none";
-
-    demo.run_demo();
-
-    // iced/winit creates the canvas in <body>. We need to capture it
-    // and move it into our container. Poll until it appears.
-    function captureCanvas() {
-      // winit creates a canvas directly in body
-      const canvas = document.querySelector("body > canvas");
-      if (canvas) {
-        // Move canvas into our container
-        const canvasContainer = document.getElementById("demo-canvas-container");
-        if (canvasContainer) {
-          canvasContainer.appendChild(canvas);
-        } else {
-          container.appendChild(canvas);
-        }
-        canvas.style.width = "100%";
-        canvas.style.height = "100%";
-        canvas.setAttribute("tabindex", "0");
-        window.dispatchEvent(new Event("resize"));
-        return;
-      }
-      // Not there yet, retry
-      requestAnimationFrame(captureCanvas);
+    // Ensure target div exists
+    if (!document.getElementById(targetId)) {
+      const div = document.createElement("div");
+      div.id = targetId;
+      div.className = "sdf-target";
+      slot.appendChild(div);
     }
-    requestAnimationFrame(captureCanvas);
-  } catch (error) {
-    console.error("SDF gallery load error:", error);
-    const errorEl = document.getElementById("sdf-demo-error");
-    if (errorEl) errorEl.style.display = "block";
-    const loadingEl = document.getElementById("sdf-demo-loading");
-    if (loadingEl) loadingEl.style.display = "none";
-    return;
+
+    loading.add(slot);
+
+    try {
+      // Unique URL = fresh JS module = fresh WASM instance
+      const uid = `${shape}_${Date.now()}`;
+      const demo = await import(`${baseUrl}/sdf_gallery.js?s=${uid}`);
+      await demo.default();
+
+      // Slot may have left viewport during async load
+      if (!loading.has(slot)) return;
+
+      demo.run_demo_in(targetId, shape);
+      active.set(slot, { shape, targetId });
+    } catch (error) {
+      console.error(`SDF load error (${shape}):`, error);
+    } finally {
+      loading.delete(slot);
+    }
   }
 
-  // IntersectionObserver: move canvas to the most visible slot
-  const visibilityMap = new Map();
+  function deactivate(slot) {
+    // Cancel pending load
+    loading.delete(slot);
+
+    const info = active.get(slot);
+    if (!info) return;
+
+    // Remove canvas and all iced-generated content
+    const target = document.getElementById(info.targetId);
+    if (target) {
+      target.remove();
+    }
+
+    active.delete(slot);
+  }
 
   const observer = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {
-        visibilityMap.set(entry.target, entry.intersectionRatio);
-      }
-
-      let bestSlot = null;
-      let bestRatio = 0;
-      for (const [slot, ratio] of visibilityMap) {
-        if (ratio > bestRatio) {
-          bestRatio = ratio;
-          bestSlot = slot;
+        if (entry.isIntersecting) {
+          activate(entry.target);
+        } else {
+          deactivate(entry.target);
         }
       }
-
-      if (bestSlot && bestRatio > 0.2) {
-        moveToSlot(bestSlot);
-      }
     },
-    { threshold: [0, 0.2, 0.5, 0.8, 1.0] }
+    { rootMargin: "200px" }
   );
 
   slots.forEach((slot) => observer.observe(slot));

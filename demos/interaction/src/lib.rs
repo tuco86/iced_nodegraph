@@ -2,6 +2,36 @@
 //!
 //! Demonstrates connection validation with typed pins, directional flow,
 //! and user feedback messages.
+//!
+//! ## Interactive Demo
+//!
+//! <link rel="stylesheet" href="pkg/demo.css">
+//! <div id="demo-container">
+//!   <div id="demo-loading">
+//!     <div class="demo-spinner"></div>
+//!     <p>Loading demo...</p>
+//!   </div>
+//!   <div id="demo-canvas-container"></div>
+//!   <div id="demo-error">
+//!     <strong>Failed to load demo.</strong> WebGPU required.
+//!   </div>
+//! </div>
+//! <script type="module" src="pkg/demo-loader.js"></script>
+//!
+//! ## Controls
+//!
+//! - **Drag from pins** - Create connections between nodes
+//! - **Drag nodes** - Move nodes around the canvas
+//! - **Scroll** - Zoom in/out
+//! - **Middle-drag** - Pan the canvas
+//!
+//! ## Connection Rules
+//!
+//! - Output pins connect to Input pins (directional)
+//! - Bidirectional pins connect to any direction
+//! - Type-compatible pins only (Integer, Float, String, Any)
+//! - Integer implicitly converts to Float
+//! - Single-connection pins reject additional connections
 
 use demo_common::{ScreenshotHelper, ScreenshotMessage};
 use iced::{

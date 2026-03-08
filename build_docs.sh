@@ -79,8 +79,10 @@ for demo_config in "${DEMOS[@]}"; do
         # Copy static assets into pkg folder alongside WASM files
         cp demos/static/demo.css "$out_dir/"
         cp demos/static/demo-loader.js "$out_dir/"
-        # Copy shape loader for sdf_gallery
-        [ -f demos/static/sdf-shape-loader.js ] && cp demos/static/sdf-shape-loader.js "$out_dir/"
+        # Copy shape loader only for sdf_gallery
+        if [ "$name" = "sdf_gallery" ] && [ -f demos/static/sdf-shape-loader.js ]; then
+            cp demos/static/sdf-shape-loader.js "$out_dir/"
+        fi
         echo -e "${GREEN}  Built $name${NC}"
     else
         echo -e "${RED}  Failed to build $name${NC}"
@@ -93,4 +95,4 @@ done
 echo -e "${GREEN}Build complete!${NC}"
 echo ""
 echo "Documentation: target/doc/index.html"
-echo "WASM demos:    target/doc/demo_*/pkg/"
+echo "WASM demos:    target/doc/*/pkg/"

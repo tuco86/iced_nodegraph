@@ -106,8 +106,8 @@ foreach ($demo in $demos) {
         # Copy static assets into pkg folder alongside WASM files
         Copy-Item "demos/static/demo.css" -Destination $outDir
         Copy-Item "demos/static/demo-loader.js" -Destination $outDir
-        # Copy shape loader for sdf_gallery
-        if (Test-Path "demos/static/sdf-shape-loader.js") {
+        # Copy shape loader only for sdf_gallery
+        if ($demo.Name -eq "sdf_gallery" -and (Test-Path "demos/static/sdf-shape-loader.js")) {
             Copy-Item "demos/static/sdf-shape-loader.js" -Destination $outDir
         }
 
@@ -123,4 +123,4 @@ foreach ($demo in $demos) {
 Write-Host "Build complete!" -ForegroundColor Green
 Write-Host ""
 Write-Host "Documentation: target/doc/index.html"
-Write-Host "WASM demos:    target/doc/demo_*/pkg/"
+Write-Host "WASM demos:    target/doc/*/pkg/"

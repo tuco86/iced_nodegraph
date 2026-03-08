@@ -119,28 +119,14 @@ pub enum SdfNode {
 /// Builder for SDF shapes with method chaining.
 ///
 /// Each shape method below includes a live GPU-rendered preview powered by the
-/// [SDF Gallery](../../sdf_gallery/index.html). As you scroll, the preview
-/// moves to the currently visible shape.
+/// [SDF Gallery](../../sdf_gallery/index.html). Each visible shape gets its
+/// own WebGPU-rendered instance.
 ///
-/// <link rel="stylesheet" href="../../sdf_gallery/pkg/demo.css">
 /// <style>
 ///   .sdf-shape-slot { position: relative; background: #1e1e2e; border-radius: 8px; overflow: hidden; margin: 0.5em 0; }
-///   #sdf-demo-container { position: relative; width: 100%; height: 100%; }
-///   #demo-canvas-container { position: absolute !important; top: 0 !important; left: 0 !important; width: 100% !important; height: 100% !important; }
-///   #demo-canvas-container canvas { display: block !important; width: 100% !important; height: 100% !important; }
-///   #sdf-demo-loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; color: #89b4fa; z-index: 10; }
-///   #sdf-demo-error { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); padding: 1rem; background: #f38ba8; color: #1e1e2e; border-radius: 8px; z-index: 10; }
+///   .sdf-target { width: 100%; height: 100%; }
+///   .sdf-target canvas { display: block !important; width: 100% !important; height: 100% !important; }
 /// </style>
-/// <div id="sdf-demo-container" style="display:none;">
-///   <div id="sdf-demo-loading">
-///     <div class="demo-spinner"></div>
-///     <p>Loading SDF preview...</p>
-///   </div>
-///   <div id="demo-canvas-container"></div>
-///   <div id="sdf-demo-error">
-///     <strong>Failed to load preview.</strong> WebGPU required.
-///   </div>
-/// </div>
 /// <script type="module" src="../../sdf_gallery/pkg/sdf-shape-loader.js"></script>
 #[derive(Clone, Debug)]
 pub struct Sdf {
@@ -165,7 +151,7 @@ impl Sdf {
     /// let shape = Sdf::circle([0.0, 0.0], 50.0);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="circle" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="circle" style="height:300px"><div id="sdf-target-circle" class="sdf-target"></div></div>
     pub fn circle(center: impl Into<Vec2>, radius: f32) -> Self {
         Self {
             root: SdfNode::Circle {
@@ -188,7 +174,7 @@ impl Sdf {
     /// let shape = Sdf::rect([0.0, 0.0], [100.0, 60.0]);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="box" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="box" style="height:300px"><div id="sdf-target-box" class="sdf-target"></div></div>
     pub fn rect(center: impl Into<Vec2>, half_size: impl Into<Vec2>) -> Self {
         Self {
             root: SdfNode::Box {
@@ -211,7 +197,7 @@ impl Sdf {
     /// let shape = Sdf::rounded_box([0.0, 0.0], [100.0, 60.0], 16.0);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="rounded_box" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="rounded_box" style="height:300px"><div id="sdf-target-rounded_box" class="sdf-target"></div></div>
     pub fn rounded_box(
         center: impl Into<Vec2>,
         half_size: impl Into<Vec2>,
@@ -239,7 +225,7 @@ impl Sdf {
     /// let shape = Sdf::line([-80.0, -40.0], [80.0, 40.0]);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="segment" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="segment" style="height:300px"><div id="sdf-target-segment" class="sdf-target"></div></div>
     pub fn line(a: impl Into<Vec2>, b: impl Into<Vec2>) -> Self {
         Self {
             root: SdfNode::Line {
@@ -262,7 +248,7 @@ impl Sdf {
     /// let shape = Sdf::bezier([-100.0, 50.0], [-30.0, -80.0], [30.0, 80.0], [100.0, -50.0]);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="bezier" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="bezier" style="height:300px"><div id="sdf-target-bezier" class="sdf-target"></div></div>
     pub fn bezier(
         p0: impl Into<Vec2>,
         p1: impl Into<Vec2>,
@@ -292,7 +278,7 @@ impl Sdf {
     /// let shape = Sdf::quad_bezier([-80.0, 50.0], [0.0, -60.0], [80.0, 50.0]);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="quad_bezier" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="quad_bezier" style="height:300px"><div id="sdf-target-quad_bezier" class="sdf-target"></div></div>
     pub fn quad_bezier(
         p0: impl Into<Vec2>,
         p1: impl Into<Vec2>,
@@ -320,7 +306,7 @@ impl Sdf {
     /// let shape = Sdf::ellipse([100.0, 60.0]);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="ellipse" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="ellipse" style="height:300px"><div id="sdf-target-ellipse" class="sdf-target"></div></div>
     pub fn ellipse(ab: impl Into<Vec2>) -> Self {
         Self {
             root: SdfNode::Ellipse { ab: ab.into() },
@@ -340,7 +326,7 @@ impl Sdf {
     /// let shape = Sdf::triangle([0.0, -70.0], [-80.0, 50.0], [80.0, 50.0]);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="triangle" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="triangle" style="height:300px"><div id="sdf-target-triangle" class="sdf-target"></div></div>
     pub fn triangle(
         p0: impl Into<Vec2>,
         p1: impl Into<Vec2>,
@@ -368,7 +354,7 @@ impl Sdf {
     /// let shape = Sdf::equilateral_triangle(80.0);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="equilateral_triangle" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="equilateral_triangle" style="height:300px"><div id="sdf-target-equilateral_triangle" class="sdf-target"></div></div>
     pub fn equilateral_triangle(radius: f32) -> Self {
         Self {
             root: SdfNode::EquilateralTriangle { radius },
@@ -388,7 +374,7 @@ impl Sdf {
     /// let shape = Sdf::isosceles_triangle([60.0, 80.0]);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="isosceles_triangle" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="isosceles_triangle" style="height:300px"><div id="sdf-target-isosceles_triangle" class="sdf-target"></div></div>
     pub fn isosceles_triangle(q: impl Into<Vec2>) -> Self {
         Self {
             root: SdfNode::IsoscelesTriangle { q: q.into() },
@@ -408,7 +394,7 @@ impl Sdf {
     /// let shape = Sdf::rhombus([80.0, 60.0]);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="rhombus" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="rhombus" style="height:300px"><div id="sdf-target-rhombus" class="sdf-target"></div></div>
     pub fn rhombus(b: impl Into<Vec2>) -> Self {
         Self {
             root: SdfNode::Rhombus { b: b.into() },
@@ -428,7 +414,7 @@ impl Sdf {
     /// let shape = Sdf::trapezoid(80.0, 50.0, 50.0);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="trapezoid" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="trapezoid" style="height:300px"><div id="sdf-target-trapezoid" class="sdf-target"></div></div>
     pub fn trapezoid(r1: f32, r2: f32, he: f32) -> Self {
         Self {
             root: SdfNode::Trapezoid { r1, r2, he },
@@ -448,7 +434,7 @@ impl Sdf {
     /// let shape = Sdf::parallelogram(80.0, 50.0, 30.0);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="parallelogram" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="parallelogram" style="height:300px"><div id="sdf-target-parallelogram" class="sdf-target"></div></div>
     pub fn parallelogram(wi: f32, he: f32, sk: f32) -> Self {
         Self {
             root: SdfNode::Parallelogram { wi, he, sk },
@@ -468,7 +454,7 @@ impl Sdf {
     /// let shape = Sdf::pentagon(80.0);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="pentagon" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="pentagon" style="height:300px"><div id="sdf-target-pentagon" class="sdf-target"></div></div>
     pub fn pentagon(radius: f32) -> Self {
         Self {
             root: SdfNode::Pentagon { radius },
@@ -488,7 +474,7 @@ impl Sdf {
     /// let shape = Sdf::hexagon(80.0);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="hexagon" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="hexagon" style="height:300px"><div id="sdf-target-hexagon" class="sdf-target"></div></div>
     pub fn hexagon(radius: f32) -> Self {
         Self {
             root: SdfNode::Hexagon { radius },
@@ -508,7 +494,7 @@ impl Sdf {
     /// let shape = Sdf::octagon(80.0);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="octagon" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="octagon" style="height:300px"><div id="sdf-target-octagon" class="sdf-target"></div></div>
     pub fn octagon(radius: f32) -> Self {
         Self {
             root: SdfNode::Octagon { radius },
@@ -528,7 +514,7 @@ impl Sdf {
     /// let shape = Sdf::hexagram(60.0);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="hexagram" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="hexagram" style="height:300px"><div id="sdf-target-hexagram" class="sdf-target"></div></div>
     pub fn hexagram(radius: f32) -> Self {
         Self {
             root: SdfNode::Hexagram { radius },
@@ -548,7 +534,7 @@ impl Sdf {
     /// let shape = Sdf::star(80.0, 5, 3.0);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="star_5" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="star_5" style="height:300px"><div id="sdf-target-star_5" class="sdf-target"></div></div>
     pub fn star(radius: f32, n: u32, m: f32) -> Self {
         Self {
             root: SdfNode::Star { radius, n, m },
@@ -568,7 +554,7 @@ impl Sdf {
     /// let shape = Sdf::pie(std::f32::consts::FRAC_PI_4, 80.0);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="pie" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="pie" style="height:300px"><div id="sdf-target-pie" class="sdf-target"></div></div>
     pub fn pie(angle: f32, radius: f32) -> Self {
         Self {
             root: SdfNode::Pie { angle, radius },
@@ -588,7 +574,7 @@ impl Sdf {
     /// let shape = Sdf::arc(std::f32::consts::FRAC_PI_3, 70.0, 8.0);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="arc" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="arc" style="height:300px"><div id="sdf-target-arc" class="sdf-target"></div></div>
     pub fn arc(angle: f32, ra: f32, rb: f32) -> Self {
         Self {
             root: SdfNode::Arc { angle, ra, rb },
@@ -608,7 +594,7 @@ impl Sdf {
     /// let shape = Sdf::cut_disk(80.0, 30.0);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="cut_disk" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="cut_disk" style="height:300px"><div id="sdf-target-cut_disk" class="sdf-target"></div></div>
     pub fn cut_disk(radius: f32, h: f32) -> Self {
         Self {
             root: SdfNode::CutDisk { radius, h },
@@ -628,7 +614,7 @@ impl Sdf {
     /// let shape = Sdf::heart();
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="heart" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="heart" style="height:300px"><div id="sdf-target-heart" class="sdf-target"></div></div>
     pub fn heart() -> Self {
         Self {
             root: SdfNode::Heart,
@@ -648,7 +634,7 @@ impl Sdf {
     /// let shape = Sdf::egg(60.0, 15.0);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="egg" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="egg" style="height:300px"><div id="sdf-target-egg" class="sdf-target"></div></div>
     pub fn egg(ra: f32, rb: f32) -> Self {
         Self {
             root: SdfNode::Egg { ra, rb },
@@ -668,7 +654,7 @@ impl Sdf {
     /// let shape = Sdf::moon(40.0, 70.0, 60.0);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="moon" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="moon" style="height:300px"><div id="sdf-target-moon" class="sdf-target"></div></div>
     pub fn moon(d: f32, ra: f32, rb: f32) -> Self {
         Self {
             root: SdfNode::Moon { d, ra, rb },
@@ -688,7 +674,7 @@ impl Sdf {
     /// let shape = Sdf::vesica(80.0, 40.0);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="vesica" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="vesica" style="height:300px"><div id="sdf-target-vesica" class="sdf-target"></div></div>
     pub fn vesica(r: f32, d: f32) -> Self {
         Self {
             root: SdfNode::Vesica { r, d },
@@ -708,7 +694,7 @@ impl Sdf {
     /// let shape = Sdf::uneven_capsule(25.0, 15.0, 80.0);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="uneven_capsule" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="uneven_capsule" style="height:300px"><div id="sdf-target-uneven_capsule" class="sdf-target"></div></div>
     pub fn uneven_capsule(r1: f32, r2: f32, h: f32) -> Self {
         Self {
             root: SdfNode::UnevenCapsule { r1, r2, h },
@@ -728,7 +714,7 @@ impl Sdf {
     /// let shape = Sdf::oriented_box([-60.0, -30.0], [60.0, 30.0], 20.0);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="oriented_box" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="oriented_box" style="height:300px"><div id="sdf-target-oriented_box" class="sdf-target"></div></div>
     pub fn oriented_box(a: impl Into<Vec2>, b: impl Into<Vec2>, thickness: f32) -> Self {
         Self {
             root: SdfNode::OrientedBox {
@@ -752,7 +738,7 @@ impl Sdf {
     /// let shape = Sdf::horseshoe(1.3, 60.0, [20.0, 8.0]);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="horseshoe" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="horseshoe" style="height:300px"><div id="sdf-target-horseshoe" class="sdf-target"></div></div>
     pub fn horseshoe(angle: f32, radius: f32, w: impl Into<Vec2>) -> Self {
         Self {
             root: SdfNode::Horseshoe {
@@ -776,7 +762,7 @@ impl Sdf {
     /// let shape = Sdf::rounded_x(80.0, 12.0);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="rounded_x" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="rounded_x" style="height:300px"><div id="sdf-target-rounded_x" class="sdf-target"></div></div>
     pub fn rounded_x(w: f32, r: f32) -> Self {
         Self {
             root: SdfNode::RoundedX { w, r },
@@ -796,7 +782,7 @@ impl Sdf {
     /// let shape = Sdf::cross([80.0, 30.0], 0.0);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="cross" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="cross" style="height:300px"><div id="sdf-target-cross" class="sdf-target"></div></div>
     pub fn cross(b: impl Into<Vec2>, r: f32) -> Self {
         Self {
             root: SdfNode::Cross { b: b.into(), r },
@@ -816,7 +802,7 @@ impl Sdf {
     /// let shape = Sdf::parabola(0.01);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="parabola" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="parabola" style="height:300px"><div id="sdf-target-parabola" class="sdf-target"></div></div>
     pub fn parabola(k: f32) -> Self {
         Self {
             root: SdfNode::Parabola { k },
@@ -836,7 +822,7 @@ impl Sdf {
     /// let shape = Sdf::cool_s();
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="cool_s" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="cool_s" style="height:300px"><div id="sdf-target-cool_s" class="sdf-target"></div></div>
     pub fn cool_s() -> Self {
         Self {
             root: SdfNode::CoolS,
@@ -856,7 +842,7 @@ impl Sdf {
     /// let shape = Sdf::blobby_cross(1.0);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="blobby_cross" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="blobby_cross" style="height:300px"><div id="sdf-target-blobby_cross" class="sdf-target"></div></div>
     pub fn blobby_cross(he: f32) -> Self {
         Self {
             root: SdfNode::BlobbyCross { he },
@@ -881,7 +867,7 @@ impl Sdf {
     /// // or equivalently: Sdf::circle([-40.0, 0.0], 60.0) | Sdf::circle([40.0, 0.0], 60.0)
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="union" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="union" style="height:300px"><div id="sdf-target-union" class="sdf-target"></div></div>
     pub fn union(self, other: Sdf) -> Self {
         Self {
             root: SdfNode::Union(Box::new(self.root), Box::new(other.root)),
@@ -902,7 +888,7 @@ impl Sdf {
     /// // or equivalently: Sdf::rect([0.0, 0.0], [80.0, 80.0]) - Sdf::circle([0.0, 0.0], 50.0)
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="subtract" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="subtract" style="height:300px"><div id="sdf-target-subtract" class="sdf-target"></div></div>
     pub fn subtract(self, other: Sdf) -> Self {
         Self {
             root: SdfNode::Subtract(Box::new(self.root), Box::new(other.root)),
@@ -922,7 +908,7 @@ impl Sdf {
     /// let shape = Sdf::circle([-30.0, 0.0], 60.0).intersect(Sdf::circle([30.0, 0.0], 60.0));
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="intersect" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="intersect" style="height:300px"><div id="sdf-target-intersect" class="sdf-target"></div></div>
     pub fn intersect(self, other: Sdf) -> Self {
         Self {
             root: SdfNode::Intersect(Box::new(self.root), Box::new(other.root)),
@@ -944,7 +930,7 @@ impl Sdf {
     ///     .union_smooth(Sdf::circle([40.0, 0.0], 50.0), 20.0);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="smooth_union" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="smooth_union" style="height:300px"><div id="sdf-target-smooth_union" class="sdf-target"></div></div>
     pub fn union_smooth(self, other: Sdf, k: f32) -> Self {
         Self {
             root: SdfNode::SmoothUnion {
@@ -969,7 +955,7 @@ impl Sdf {
     ///     .subtract_smooth(Sdf::circle([30.0, 0.0], 50.0), 15.0);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="smooth_subtract" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="smooth_subtract" style="height:300px"><div id="sdf-target-smooth_subtract" class="sdf-target"></div></div>
     pub fn subtract_smooth(self, other: Sdf, k: f32) -> Self {
         Self {
             root: SdfNode::SmoothSubtract {
@@ -997,7 +983,7 @@ impl Sdf {
     /// let shape = Sdf::rect([0.0, 0.0], [60.0, 30.0]).round(15.0);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="round" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="round" style="height:300px"><div id="sdf-target-round" class="sdf-target"></div></div>
     pub fn round(self, radius: f32) -> Self {
         Self {
             root: SdfNode::Round {
@@ -1021,7 +1007,7 @@ impl Sdf {
     /// let shape = Sdf::circle([0.0, 0.0], 70.0).onion(8.0);
     /// ```
     ///
-    /// <div class="sdf-shape-slot" data-shape="onion" style="height:300px"></div>
+    /// <div class="sdf-shape-slot" data-shape="onion" style="height:300px"><div id="sdf-target-onion" class="sdf-target"></div></div>
     pub fn onion(self, thickness: f32) -> Self {
         Self {
             root: SdfNode::Onion {
