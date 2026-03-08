@@ -2629,6 +2629,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sdf_gallery"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "iced",
+ "iced_sdf",
+ "iced_wgpu",
+ "wasm-bindgen",
+ "web-sys",
+ "web-time",
+]
+
+[[package]]
 name = "self_cell"
 version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

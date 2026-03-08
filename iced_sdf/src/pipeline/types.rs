@@ -10,18 +10,23 @@ use encase::ShaderType;
 /// Global uniforms for the SDF shader.
 #[derive(Clone, Debug, ShaderType)]
 pub struct Uniforms {
-    /// Viewport size in pixels.
-    pub viewport_size: glam::Vec2,
+    /// Widget bounds origin in physical pixels.
+    pub bounds_origin: glam::Vec2,
+    /// Widget bounds size in physical pixels.
+    pub bounds_size: glam::Vec2,
     /// Camera position (pan offset).
     pub camera_position: glam::Vec2,
     /// Camera zoom factor.
     pub camera_zoom: f32,
+    /// OS scale factor (logical to physical pixel ratio).
+    pub scale_factor: f32,
     /// Time in seconds for animations.
     pub time: f32,
     /// Total number of SDF operations in the buffer.
     pub num_ops: u32,
     /// Total number of layers in the buffer.
     pub num_layers: u32,
+    pub _pad: u32,
 }
 
 /// A single shape instance in the batch.

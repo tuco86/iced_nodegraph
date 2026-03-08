@@ -98,12 +98,6 @@ pub struct SdfPipeline {
     prepare_slot: u32,
     /// Atomic slot counter for draw() to match prepare order.
     draw_slot: AtomicU32,
-    /// Uniforms are written once per frame (by the first prepare call).
-    uniforms_written: bool,
-    /// Cached uniform values from the most recent prepare.
-    last_viewport_size: (f32, f32),
-    last_camera: (f32, f32, f32),
-    last_time: f32,
 }
 
 impl Pipeline for SdfPipeline {
@@ -168,10 +162,6 @@ impl Pipeline for SdfPipeline {
             bind_group_generations: (0, 0, 0),
             prepare_slot: 0,
             draw_slot: AtomicU32::new(0),
-            uniforms_written: false,
-            last_viewport_size: (0.0, 0.0),
-            last_camera: (0.0, 0.0, 1.0),
-            last_time: 0.0,
         }
     }
 
@@ -181,7 +171,6 @@ impl Pipeline for SdfPipeline {
         self.layers_buffer.clear();
         self.prepare_slot = 0;
         self.draw_slot.store(0, Ordering::Relaxed);
-        self.uniforms_written = false;
     }
 }
 
@@ -233,40 +222,28 @@ impl Primitive for SdfPrimitive {
 
         pipeline.prepare_slot += 1;
 
-        // Write uniforms (update every prepare to capture latest values)
+        // Write uniforms every prepare (bounds may change per-primitive)
         let scale = viewport.scale_factor();
-        let vp_size = (bounds.width * scale, bounds.height * scale);
-        let cam = (
-            self.camera_position.0,
-            self.camera_position.1,
-            self.camera_zoom,
-        );
+        let uniforms = types::Uniforms {
+            bounds_origin: glam::Vec2::new(bounds.x * scale, bounds.y * scale),
+            bounds_size: glam::Vec2::new(bounds.width * scale, bounds.height * scale),
+            camera_position: glam::Vec2::new(
+                self.camera_position.0,
+                self.camera_position.1,
+            ),
+            camera_zoom: self.camera_zoom,
+            scale_factor: scale,
+            time: self.time,
+            num_ops: pipeline.ops_buffer.len() as u32,
+            num_layers: pipeline.layers_buffer.len() as u32,
+            _pad: 0,
+        };
 
-        if !pipeline.uniforms_written
-            || vp_size != pipeline.last_viewport_size
-            || cam != pipeline.last_camera
-            || self.time != pipeline.last_time
-        {
-            let uniforms = types::Uniforms {
-                viewport_size: glam::Vec2::new(vp_size.0, vp_size.1),
-                camera_position: glam::Vec2::new(cam.0, cam.1),
-                camera_zoom: cam.2,
-                time: self.time,
-                num_ops: pipeline.ops_buffer.len() as u32,
-                num_layers: pipeline.layers_buffer.len() as u32,
-            };
-
-            let mut uniform_buffer = encase::UniformBuffer::new(Vec::new());
-            uniform_buffer
-                .write(&uniforms)
-                .expect("Failed to write uniforms");
-            queue.write_buffer(&pipeline.uniform_buffer, 0, uniform_buffer.as_ref());
-
-            pipeline.last_viewport_size = vp_size;
-            pipeline.last_camera = cam;
-            pipeline.last_time = self.time;
-            pipeline.uniforms_written = true;
-        }
+        let mut uniform_buffer = encase::UniformBuffer::new(Vec::new());
+        uniform_buffer
+            .write(&uniforms)
+            .expect("Failed to write uniforms");
+        queue.write_buffer(&pipeline.uniform_buffer, 0, uniform_buffer.as_ref());
 
         // Recreate bind group if any buffer was resized
         let current_generations = (

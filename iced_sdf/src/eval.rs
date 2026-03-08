@@ -45,6 +45,99 @@ pub fn evaluate(node: &SdfNode, point: Vec2) -> SdfResult {
         SdfNode::Line { a, b } => sd_line(point, *a, *b),
         SdfNode::Bezier { p0, p1, p2, p3 } => sd_bezier(point, *p0, *p1, *p2, *p3),
 
+        // New primitives - CPU eval returns approximate distance for hit-testing.
+        // Full precision is on GPU only.
+        SdfNode::Ellipse { ab } => {
+            let p = point.abs();
+            // Approximate: treat as scaled circle
+            let r = ab.x.max(ab.y);
+            SdfResult::new(p.length() - r, 0.0)
+        }
+        SdfNode::Triangle { p0, p1, p2 } => {
+            // Distance to closest edge
+            let d0 = sd_line(point, *p0, *p1).dist;
+            let d1 = sd_line(point, *p1, *p2).dist;
+            let d2 = sd_line(point, *p2, *p0).dist;
+            let e0 = *p1 - *p0;
+            let e2 = *p0 - *p2;
+            let s = (e0.x * e2.y - e0.y * e2.x).signum();
+            let v0 = point - *p0;
+            let inside = s * (v0.x * e0.y - v0.y * e0.x) >= 0.0;
+            let min_d = d0.min(d1).min(d2);
+            SdfResult::new(if inside { -min_d } else { min_d }, 0.0)
+        }
+        SdfNode::QuadBezier { p0, p1, p2 } => {
+            // Approximate with line segments
+            let d0 = sd_line(point, *p0, *p1).dist;
+            let d1 = sd_line(point, *p1, *p2).dist;
+            SdfResult::new(d0.min(d1), 0.0)
+        }
+        // For remaining new primitives, use a simple bounding approximation
+        SdfNode::EquilateralTriangle { radius }
+        | SdfNode::Pentagon { radius }
+        | SdfNode::Hexagon { radius }
+        | SdfNode::Octagon { radius }
+        | SdfNode::Hexagram { radius } => {
+            SdfResult::new(point.length() - radius, 0.0)
+        }
+        SdfNode::IsoscelesTriangle { q } => {
+            SdfResult::new(point.length() - q.length(), 0.0)
+        }
+        SdfNode::Rhombus { b } => {
+            let p = point.abs();
+            SdfResult::new(p.x / b.x + p.y / b.y - 1.0, 0.0)
+        }
+        SdfNode::Trapezoid { r1, r2, he } => {
+            let r = r1.max(*r2);
+            SdfResult::new(point.abs().x.max(point.abs().y) - r.max(*he), 0.0)
+        }
+        SdfNode::Parallelogram { wi, he, .. } => {
+            SdfResult::new(point.abs().x.max(point.abs().y) - wi.max(*he), 0.0)
+        }
+        SdfNode::Star { radius, .. } => {
+            SdfResult::new(point.length() - radius, 0.0)
+        }
+        SdfNode::Pie { radius, .. } | SdfNode::CutDisk { radius, .. } => {
+            SdfResult::new(point.length() - radius, 0.0)
+        }
+        SdfNode::Arc { ra, rb, .. } => {
+            SdfResult::new(point.length() - ra - rb, 0.0)
+        }
+        SdfNode::Heart => {
+            SdfResult::new(point.length() - 1.0, 0.0)
+        }
+        SdfNode::Egg { ra, rb } => {
+            SdfResult::new(point.length() - ra - rb, 0.0)
+        }
+        SdfNode::Moon { ra, .. } => {
+            SdfResult::new(point.length() - ra, 0.0)
+        }
+        SdfNode::Vesica { r, .. } => {
+            SdfResult::new(point.length() - r, 0.0)
+        }
+        SdfNode::UnevenCapsule { r1, r2, h } => {
+            SdfResult::new(point.length() - r1.max(*r2).max(*h), 0.0)
+        }
+        SdfNode::OrientedBox { a, b, thickness } => {
+            let center = (*a + *b) * 0.5;
+            let half_len = (*b - *a).length() * 0.5;
+            SdfResult::new((point - center).length() - half_len.max(*thickness), 0.0)
+        }
+        SdfNode::Horseshoe { radius, .. } => {
+            SdfResult::new(point.length() - radius, 0.0)
+        }
+        SdfNode::RoundedX { w, r } => {
+            let q = point.abs();
+            SdfResult::new((q - Vec2::splat(*w * 0.5).min(q)).length() - r, 0.0)
+        }
+        SdfNode::Cross { b, r } => {
+            let p = point.abs();
+            SdfResult::new(p.x.max(p.y) - b.x.max(b.y) + r, 0.0)
+        }
+        SdfNode::Parabola { .. } | SdfNode::CoolS | SdfNode::BlobbyCross { .. } => {
+            SdfResult::new(point.length() - 1.0, 0.0)
+        }
+
         SdfNode::Union(a, b) => {
             let ra = evaluate(a, point);
             let rb = evaluate(b, point);

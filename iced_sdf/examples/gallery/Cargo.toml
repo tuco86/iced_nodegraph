@@ -1,0 +1,38 @@
+[package]
+name = "sdf_gallery"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "gallery"
+path = "src/main.rs"
+doc = false
+
+[features]
+default = []
+wasm = [
+    "wasm-bindgen",
+    "web-sys",
+    "console_error_panic_hook",
+    "iced/fira-sans",
+]
+
+[dependencies]
+iced_sdf.workspace = true
+iced = { workspace = true, features = ["advanced", "wgpu"] }
+iced_wgpu.workspace = true
+web-time.workspace = true
+
+# WASM-specific dependencies
+wasm-bindgen = { workspace = true, optional = true }
+web-sys = { workspace = true, features = ["Window", "Document"], optional = true }
+console_error_panic_hook = { workspace = true, optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+iced = { workspace = true, features = ["advanced", "wgpu", "webgl", "fira-sans"] }

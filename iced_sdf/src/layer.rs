@@ -11,6 +11,7 @@ use crate::pipeline::types::SdfLayer;
 const FLAG_GRADIENT: u32 = 1;
 const FLAG_GRADIENT_U: u32 = 2;
 const FLAG_HAS_PATTERN: u32 = 4;
+const FLAG_DISTANCE_FIELD: u32 = 8;
 
 /// A rendering layer for SDF shapes.
 ///
@@ -32,6 +33,8 @@ pub struct Layer {
     pub blur: f32,
     /// Optional pattern for stroke rendering.
     pub pattern: Option<Pattern>,
+    /// Distance field visualization mode (IQ style).
+    pub distance_field: bool,
 }
 
 impl Layer {
@@ -45,6 +48,7 @@ impl Layer {
             expand: 0.0,
             blur: 0.0,
             pattern: None,
+            distance_field: false,
         }
     }
 
@@ -58,6 +62,7 @@ impl Layer {
             expand: 0.0,
             blur: 0.0,
             pattern: None,
+            distance_field: false,
         }
     }
 
@@ -71,6 +76,24 @@ impl Layer {
             expand: 0.0,
             blur: 0.0,
             pattern: None,
+            distance_field: false,
+        }
+    }
+
+    /// Create a distance field visualization layer (IQ/Shadertoy style).
+    ///
+    /// Shows the raw distance field with color bands, boundary highlight,
+    /// and inside/outside coloring. Useful for debugging and visualization.
+    pub fn distance_field(outside: Color, inside: Color) -> Self {
+        Self {
+            color: outside,
+            gradient_color: Some(inside),
+            gradient_along_u: false,
+            gradient_angle: 0.0,
+            expand: 0.0,
+            blur: 0.0,
+            pattern: None,
+            distance_field: true,
         }
     }
 
@@ -84,6 +107,7 @@ impl Layer {
             expand: 0.0,
             blur: 0.0,
             pattern: Some(pattern),
+            distance_field: false,
         }
     }
 
@@ -108,8 +132,13 @@ impl Layer {
     /// Convert to GPU representation.
     pub fn to_gpu(&self) -> SdfLayer {
         let mut flags = 0u32;
+        if self.distance_field {
+            flags |= FLAG_DISTANCE_FIELD;
+        }
         let gradient_color = if let Some(gc) = self.gradient_color {
-            flags |= FLAG_GRADIENT;
+            if !self.distance_field {
+                flags |= FLAG_GRADIENT;
+            }
             if self.gradient_along_u {
                 flags |= FLAG_GRADIENT_U;
             }
@@ -147,6 +176,17 @@ impl Layer {
 impl Default for Layer {
     fn default() -> Self {
         Self::solid(Color::WHITE)
+    }
+}
+
+/// Default IQ-style distance field colors (warm outside, cool inside).
+impl Layer {
+    /// IQ-style distance field with default colors.
+    pub fn distance_field_default() -> Self {
+        Self::distance_field(
+            Color::from_rgb(0.9, 0.6, 0.3),
+            Color::from_rgb(0.65, 0.85, 1.0),
+        )
     }
 }
 
