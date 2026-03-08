@@ -209,7 +209,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
                 let pin_r = Sdf::circle([100.0, 0.0], 6.0);
                 body - pin_l1 - pin_l2 - pin_r
             },
-            layers: node_layers,
+            layers: default_layers,
             extent: 110.0,
         },
         ShapeEntry {
@@ -551,18 +551,3 @@ fn stroke_layers() -> Vec<Layer> {
     vec![Layer::distance_field_default()]
 }
 
-fn node_layers() -> Vec<Layer> {
-    vec![
-        // Shadow
-        Layer::solid(Color::from_rgba(0.0, 0.0, 0.0, 0.35))
-            .expand(5.0)
-            .blur(8.0),
-        // Fill
-        Layer::solid(Color::from_rgb(0.18, 0.18, 0.22)),
-        // Border
-        Layer::stroke(
-            Color::from_rgb(0.4, 0.4, 0.5),
-            Pattern::solid(1.5),
-        ),
-    ]
-}
