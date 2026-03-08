@@ -7,9 +7,11 @@
 /target/wasm-build
 
 /.claude/settings.local.json
+/.claude/worktrees/
 
 # Local cargo config with path patches (not for CI)
 /.cargo/config.toml
 
 # Claude Code temp files
 tmpclaude-*
+nul
