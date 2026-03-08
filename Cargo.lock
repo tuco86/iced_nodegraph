@@ -2702,6 +2702,7 @@ dependencies = [
  "iced",
  "iced_sdf",
  "iced_wgpu",
+ "js-sys",
  "wasm-bindgen",
  "web-sys",
  "web-time",

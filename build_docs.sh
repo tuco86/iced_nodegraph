@@ -51,10 +51,12 @@ declare -a DEMOS=(
     "demo_styling:demos/styling:demo_styling:wasm"
     "demo_500_nodes:demos/500_nodes:demo_500_nodes:wasm"
     "demo_shader_editor:demos/shader_editor:demo_shader_editor:wasm"
+    "sdf_gallery:iced_sdf/examples/gallery:sdf_gallery:wasm:../../../"
 )
 
 for demo_config in "${DEMOS[@]}"; do
-    IFS=':' read -r name path out_name features <<< "$demo_config"
+    IFS=':' read -r name path out_name features out_prefix <<< "$demo_config"
+    out_prefix="${out_prefix:-../../}"
 
     echo -e "${YELLOW}Building $name...${NC}"
 
@@ -69,7 +71,7 @@ for demo_config in "${DEMOS[@]}"; do
         features_flag=""
     fi
 
-    build_cmd="wasm-pack build $path --release --target web --out-dir ../../$out_dir --out-name $out_name $features_flag"
+    build_cmd="wasm-pack build $path --release --target web --out-dir ${out_prefix}$out_dir --out-name $out_name $features_flag"
 
     echo -e "${GRAY}  $build_cmd${NC}"
 
@@ -77,6 +79,8 @@ for demo_config in "${DEMOS[@]}"; do
         # Copy static assets into pkg folder alongside WASM files
         cp demos/static/demo.css "$out_dir/"
         cp demos/static/demo-loader.js "$out_dir/"
+        # Copy shape loader for sdf_gallery
+        [ -f demos/static/sdf-shape-loader.js ] && cp demos/static/sdf-shape-loader.js "$out_dir/"
         echo -e "${GREEN}  Built $name${NC}"
     else
         echo -e "${RED}  Failed to build $name${NC}"

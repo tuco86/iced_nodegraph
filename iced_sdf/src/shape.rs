@@ -117,15 +117,55 @@ pub enum SdfNode {
 }
 
 /// Builder for SDF shapes with method chaining.
+///
+/// Each shape method below includes a live GPU-rendered preview powered by the
+/// [SDF Gallery](../../sdf_gallery/index.html). As you scroll, the preview
+/// moves to the currently visible shape.
+///
+/// <link rel="stylesheet" href="../../sdf_gallery/pkg/demo.css">
+/// <style>
+///   .sdf-shape-slot { position: relative; background: #1e1e2e; border-radius: 8px; overflow: hidden; margin: 0.5em 0; }
+///   #sdf-demo-container { position: relative; width: 100%; height: 100%; }
+///   #demo-canvas-container { position: absolute !important; top: 0 !important; left: 0 !important; width: 100% !important; height: 100% !important; }
+///   #demo-canvas-container canvas { display: block !important; width: 100% !important; height: 100% !important; }
+///   #sdf-demo-loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; color: #89b4fa; z-index: 10; }
+///   #sdf-demo-error { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); padding: 1rem; background: #f38ba8; color: #1e1e2e; border-radius: 8px; z-index: 10; }
+/// </style>
+/// <div id="sdf-demo-container" style="display:none;">
+///   <div id="sdf-demo-loading">
+///     <div class="demo-spinner"></div>
+///     <p>Loading SDF preview...</p>
+///   </div>
+///   <div id="demo-canvas-container"></div>
+///   <div id="sdf-demo-error">
+///     <strong>Failed to load preview.</strong> WebGPU required.
+///   </div>
+/// </div>
+/// <script type="module" src="../../sdf_gallery/pkg/sdf-shape-loader.js"></script>
 #[derive(Clone, Debug)]
 pub struct Sdf {
     root: SdfNode,
 }
 
 impl Sdf {
+    // ================================================================
     // Primitive constructors
+    // ================================================================
 
     /// Create a circle SDF.
+    ///
+    /// `sdCircle(p, r)` -- signed distance from point to circle boundary.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::circle([0.0, 0.0], 50.0);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="circle" style="height:300px"></div>
     pub fn circle(center: impl Into<Vec2>, radius: f32) -> Self {
         Self {
             root: SdfNode::Circle {
@@ -136,6 +176,19 @@ impl Sdf {
     }
 
     /// Create a box SDF (axis-aligned rectangle).
+    ///
+    /// `sdBox(p, b)` -- signed distance from point to axis-aligned box.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::rect([0.0, 0.0], [100.0, 60.0]);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="box" style="height:300px"></div>
     pub fn rect(center: impl Into<Vec2>, half_size: impl Into<Vec2>) -> Self {
         Self {
             root: SdfNode::Box {
@@ -146,6 +199,19 @@ impl Sdf {
     }
 
     /// Create a rounded box SDF.
+    ///
+    /// `sdRoundBox(p, b, r)` -- box with rounded corners.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::rounded_box([0.0, 0.0], [100.0, 60.0], 16.0);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="rounded_box" style="height:300px"></div>
     pub fn rounded_box(
         center: impl Into<Vec2>,
         half_size: impl Into<Vec2>,
@@ -161,6 +227,19 @@ impl Sdf {
     }
 
     /// Create a line segment SDF.
+    ///
+    /// `sdSegment(p, a, b)` -- distance from point to line segment.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::line([-80.0, -40.0], [80.0, 40.0]);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="segment" style="height:300px"></div>
     pub fn line(a: impl Into<Vec2>, b: impl Into<Vec2>) -> Self {
         Self {
             root: SdfNode::Line {
@@ -171,6 +250,19 @@ impl Sdf {
     }
 
     /// Create a cubic bezier curve SDF.
+    ///
+    /// Cubic bezier with 4 control points `p0..p3`.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::bezier([-100.0, 50.0], [-30.0, -80.0], [30.0, 80.0], [100.0, -50.0]);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="bezier" style="height:300px"></div>
     pub fn bezier(
         p0: impl Into<Vec2>,
         p1: impl Into<Vec2>,
@@ -188,6 +280,19 @@ impl Sdf {
     }
 
     /// Create a quadratic bezier curve SDF.
+    ///
+    /// `sdBezier(p, A, B, C)` -- unsigned distance to quadratic bezier.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::quad_bezier([-80.0, 50.0], [0.0, -60.0], [80.0, 50.0]);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="quad_bezier" style="height:300px"></div>
     pub fn quad_bezier(
         p0: impl Into<Vec2>,
         p1: impl Into<Vec2>,
@@ -203,6 +308,19 @@ impl Sdf {
     }
 
     /// Create an ellipse SDF.
+    ///
+    /// `sdEllipse(p, ab)` -- signed distance to ellipse with semi-axes `ab`.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::ellipse([100.0, 60.0]);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="ellipse" style="height:300px"></div>
     pub fn ellipse(ab: impl Into<Vec2>) -> Self {
         Self {
             root: SdfNode::Ellipse { ab: ab.into() },
@@ -210,6 +328,19 @@ impl Sdf {
     }
 
     /// Create an arbitrary triangle SDF from 3 vertices.
+    ///
+    /// `sdTriangle(p, p0, p1, p2)` -- signed distance to triangle.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::triangle([0.0, -70.0], [-80.0, 50.0], [80.0, 50.0]);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="triangle" style="height:300px"></div>
     pub fn triangle(
         p0: impl Into<Vec2>,
         p1: impl Into<Vec2>,
@@ -225,6 +356,19 @@ impl Sdf {
     }
 
     /// Create an equilateral triangle SDF.
+    ///
+    /// `sdEquilateralTriangle(p, r)` -- regular equilateral triangle with circumradius.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::equilateral_triangle(80.0);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="equilateral_triangle" style="height:300px"></div>
     pub fn equilateral_triangle(radius: f32) -> Self {
         Self {
             root: SdfNode::EquilateralTriangle { radius },
@@ -232,6 +376,19 @@ impl Sdf {
     }
 
     /// Create an isosceles triangle SDF.
+    ///
+    /// `sdTriangleIsosceles(p, q)` -- isosceles triangle with half-width and height.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::isosceles_triangle([60.0, 80.0]);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="isosceles_triangle" style="height:300px"></div>
     pub fn isosceles_triangle(q: impl Into<Vec2>) -> Self {
         Self {
             root: SdfNode::IsoscelesTriangle { q: q.into() },
@@ -239,6 +396,19 @@ impl Sdf {
     }
 
     /// Create a rhombus (diamond) SDF.
+    ///
+    /// `sdRhombus(p, b)` -- diamond shape with half-diagonals.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::rhombus([80.0, 60.0]);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="rhombus" style="height:300px"></div>
     pub fn rhombus(b: impl Into<Vec2>) -> Self {
         Self {
             root: SdfNode::Rhombus { b: b.into() },
@@ -246,6 +416,19 @@ impl Sdf {
     }
 
     /// Create a trapezoid SDF.
+    ///
+    /// `sdTrapezoid(p, r1, r2, he)` -- isosceles trapezoid with top/bottom half-widths and half-height.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::trapezoid(80.0, 50.0, 50.0);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="trapezoid" style="height:300px"></div>
     pub fn trapezoid(r1: f32, r2: f32, he: f32) -> Self {
         Self {
             root: SdfNode::Trapezoid { r1, r2, he },
@@ -253,6 +436,19 @@ impl Sdf {
     }
 
     /// Create a parallelogram SDF.
+    ///
+    /// `sdParallelogram(p, wi, he, sk)` -- skewed rectangle with width, height, and skew.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::parallelogram(80.0, 50.0, 30.0);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="parallelogram" style="height:300px"></div>
     pub fn parallelogram(wi: f32, he: f32, sk: f32) -> Self {
         Self {
             root: SdfNode::Parallelogram { wi, he, sk },
@@ -260,6 +456,19 @@ impl Sdf {
     }
 
     /// Create a regular pentagon SDF.
+    ///
+    /// `sdPentagon(p, r)` -- regular pentagon with circumradius.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::pentagon(80.0);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="pentagon" style="height:300px"></div>
     pub fn pentagon(radius: f32) -> Self {
         Self {
             root: SdfNode::Pentagon { radius },
@@ -267,6 +476,19 @@ impl Sdf {
     }
 
     /// Create a regular hexagon SDF.
+    ///
+    /// `sdHexagon(p, r)` -- regular hexagon with circumradius.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::hexagon(80.0);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="hexagon" style="height:300px"></div>
     pub fn hexagon(radius: f32) -> Self {
         Self {
             root: SdfNode::Hexagon { radius },
@@ -274,6 +496,19 @@ impl Sdf {
     }
 
     /// Create a regular octagon SDF.
+    ///
+    /// `sdOctogon(p, r)` -- regular octagon with circumradius.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::octagon(80.0);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="octagon" style="height:300px"></div>
     pub fn octagon(radius: f32) -> Self {
         Self {
             root: SdfNode::Octagon { radius },
@@ -281,6 +516,19 @@ impl Sdf {
     }
 
     /// Create a hexagram (Star of David) SDF.
+    ///
+    /// `sdHexagram(p, r)` -- six-pointed star.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::hexagram(60.0);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="hexagram" style="height:300px"></div>
     pub fn hexagram(radius: f32) -> Self {
         Self {
             root: SdfNode::Hexagram { radius },
@@ -288,20 +536,59 @@ impl Sdf {
     }
 
     /// Create an n-pointed star SDF.
+    ///
+    /// `sdStar(p, r, n, m)` -- star with `n` points and inner ratio `m`.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::star(80.0, 5, 3.0);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="star_5" style="height:300px"></div>
     pub fn star(radius: f32, n: u32, m: f32) -> Self {
         Self {
             root: SdfNode::Star { radius, n, m },
         }
     }
 
-    /// Create a pie/sector SDF. Angle is the half-aperture in radians.
+    /// Create a pie/sector SDF.
+    ///
+    /// `sdPie(p, c, r)` -- pie shape with half-aperture `angle` in radians.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::pie(std::f32::consts::FRAC_PI_4, 80.0);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="pie" style="height:300px"></div>
     pub fn pie(angle: f32, radius: f32) -> Self {
         Self {
             root: SdfNode::Pie { angle, radius },
         }
     }
 
-    /// Create an arc SDF. Angle is the half-aperture in radians.
+    /// Create an arc SDF.
+    ///
+    /// `sdArc(p, sc, ra, rb)` -- arc with half-aperture `angle`, outer radius `ra`, thickness `rb`.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::arc(std::f32::consts::FRAC_PI_3, 70.0, 8.0);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="arc" style="height:300px"></div>
     pub fn arc(angle: f32, ra: f32, rb: f32) -> Self {
         Self {
             root: SdfNode::Arc { angle, ra, rb },
@@ -309,6 +596,19 @@ impl Sdf {
     }
 
     /// Create a cut disk SDF.
+    ///
+    /// `sdCutDisk(p, r, h)` -- disk with a horizontal flat cut at height `h`.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::cut_disk(80.0, 30.0);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="cut_disk" style="height:300px"></div>
     pub fn cut_disk(radius: f32, h: f32) -> Self {
         Self {
             root: SdfNode::CutDisk { radius, h },
@@ -316,6 +616,19 @@ impl Sdf {
     }
 
     /// Create a heart shape SDF (unit-sized, use round/expand to scale).
+    ///
+    /// `sdHeart(p)` -- heart shape at unit scale.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::heart();
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="heart" style="height:300px"></div>
     pub fn heart() -> Self {
         Self {
             root: SdfNode::Heart,
@@ -323,6 +636,19 @@ impl Sdf {
     }
 
     /// Create an egg shape SDF.
+    ///
+    /// `sdEgg(p, ra, rb)` -- egg with body radius `ra` and top radius `rb`.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::egg(60.0, 15.0);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="egg" style="height:300px"></div>
     pub fn egg(ra: f32, rb: f32) -> Self {
         Self {
             root: SdfNode::Egg { ra, rb },
@@ -330,6 +656,19 @@ impl Sdf {
     }
 
     /// Create a crescent moon SDF.
+    ///
+    /// `sdMoon(p, d, ra, rb)` -- moon with displacement `d`, outer radius `ra`, inner radius `rb`.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::moon(40.0, 70.0, 60.0);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="moon" style="height:300px"></div>
     pub fn moon(d: f32, ra: f32, rb: f32) -> Self {
         Self {
             root: SdfNode::Moon { d, ra, rb },
@@ -337,6 +676,19 @@ impl Sdf {
     }
 
     /// Create a vesica piscis (lens) SDF.
+    ///
+    /// `sdVesica(p, r, d)` -- lens shape with radius `r` and half-separation `d`.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::vesica(80.0, 40.0);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="vesica" style="height:300px"></div>
     pub fn vesica(r: f32, d: f32) -> Self {
         Self {
             root: SdfNode::Vesica { r, d },
@@ -344,6 +696,19 @@ impl Sdf {
     }
 
     /// Create an uneven capsule SDF.
+    ///
+    /// `sdUnevenCapsule(p, r1, r2, h)` -- capsule with different end radii.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::uneven_capsule(25.0, 15.0, 80.0);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="uneven_capsule" style="height:300px"></div>
     pub fn uneven_capsule(r1: f32, r2: f32, h: f32) -> Self {
         Self {
             root: SdfNode::UnevenCapsule { r1, r2, h },
@@ -351,6 +716,19 @@ impl Sdf {
     }
 
     /// Create an oriented (rotated) box SDF.
+    ///
+    /// `sdOrientedBox(p, a, b, th)` -- rectangle defined by endpoints and thickness.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::oriented_box([-60.0, -30.0], [60.0, 30.0], 20.0);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="oriented_box" style="height:300px"></div>
     pub fn oriented_box(a: impl Into<Vec2>, b: impl Into<Vec2>, thickness: f32) -> Self {
         Self {
             root: SdfNode::OrientedBox {
@@ -361,7 +739,20 @@ impl Sdf {
         }
     }
 
-    /// Create a horseshoe SDF. Angle is the half-aperture in radians.
+    /// Create a horseshoe SDF.
+    ///
+    /// `sdHorseshoe(p, c, r, w)` -- horseshoe/arc with half-aperture `angle`, radius, and width.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::horseshoe(1.3, 60.0, [20.0, 8.0]);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="horseshoe" style="height:300px"></div>
     pub fn horseshoe(angle: f32, radius: f32, w: impl Into<Vec2>) -> Self {
         Self {
             root: SdfNode::Horseshoe {
@@ -373,6 +764,19 @@ impl Sdf {
     }
 
     /// Create a rounded X SDF.
+    ///
+    /// `sdRoundedX(p, w, r)` -- X shape with arm width `w` and corner radius `r`.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::rounded_x(80.0, 12.0);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="rounded_x" style="height:300px"></div>
     pub fn rounded_x(w: f32, r: f32) -> Self {
         Self {
             root: SdfNode::RoundedX { w, r },
@@ -380,13 +784,39 @@ impl Sdf {
     }
 
     /// Create a cross/plus SDF.
+    ///
+    /// `sdCross(p, b, r)` -- cross shape with half-size `b` and corner radius `r`.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::cross([80.0, 30.0], 0.0);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="cross" style="height:300px"></div>
     pub fn cross(b: impl Into<Vec2>, r: f32) -> Self {
         Self {
             root: SdfNode::Cross { b: b.into(), r },
         }
     }
 
-    /// Create a parabola SDF (y = k*x^2).
+    /// Create a parabola SDF.
+    ///
+    /// `sdParabola(p, k)` -- parabola `y = k*x^2`.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::parabola(0.01);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="parabola" style="height:300px"></div>
     pub fn parabola(k: f32) -> Self {
         Self {
             root: SdfNode::Parabola { k },
@@ -394,6 +824,19 @@ impl Sdf {
     }
 
     /// Create a Cool S shape SDF (unit-sized).
+    ///
+    /// `sdfCoolS(p)` -- the classic "Cool S" / "Super S" shape at unit scale.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::cool_s();
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="cool_s" style="height:300px"></div>
     pub fn cool_s() -> Self {
         Self {
             root: SdfNode::CoolS,
@@ -401,15 +844,44 @@ impl Sdf {
     }
 
     /// Create a blobby cross SDF.
+    ///
+    /// `sdBlobbyCross(p, he)` -- cross shape with curved bulging sides.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::blobby_cross(1.0);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="blobby_cross" style="height:300px"></div>
     pub fn blobby_cross(he: f32) -> Self {
         Self {
             root: SdfNode::BlobbyCross { he },
         }
     }
 
+    // ================================================================
     // Boolean operations
+    // ================================================================
 
-    /// Union with another shape.
+    /// Union with another shape -- keeps the closest surface of either shape.
+    ///
+    /// `opUnion(a, b)` -- equivalent to `min(d1, d2)`. Also available as `a | b`.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::circle([-40.0, 0.0], 60.0).union(Sdf::circle([40.0, 0.0], 60.0));
+    /// // or equivalently: Sdf::circle([-40.0, 0.0], 60.0) | Sdf::circle([40.0, 0.0], 60.0)
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="union" style="height:300px"></div>
     pub fn union(self, other: Sdf) -> Self {
         Self {
             root: SdfNode::Union(Box::new(self.root), Box::new(other.root)),
@@ -417,20 +889,62 @@ impl Sdf {
     }
 
     /// Subtract another shape from this one.
+    ///
+    /// `opSubtract(a, b)` -- equivalent to `max(d1, -d2)`. Also available as `a - b`.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::rect([0.0, 0.0], [80.0, 80.0]).subtract(Sdf::circle([0.0, 0.0], 50.0));
+    /// // or equivalently: Sdf::rect([0.0, 0.0], [80.0, 80.0]) - Sdf::circle([0.0, 0.0], 50.0)
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="subtract" style="height:300px"></div>
     pub fn subtract(self, other: Sdf) -> Self {
         Self {
             root: SdfNode::Subtract(Box::new(self.root), Box::new(other.root)),
         }
     }
 
-    /// Intersect with another shape.
+    /// Intersect with another shape -- keeps only the overlapping region.
+    ///
+    /// `opIntersect(a, b)` -- equivalent to `max(d1, d2)`.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::circle([-30.0, 0.0], 60.0).intersect(Sdf::circle([30.0, 0.0], 60.0));
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="intersect" style="height:300px"></div>
     pub fn intersect(self, other: Sdf) -> Self {
         Self {
             root: SdfNode::Intersect(Box::new(self.root), Box::new(other.root)),
         }
     }
 
-    /// Smooth union with blend factor k.
+    /// Smooth union with blend factor `k`.
+    ///
+    /// `opSmoothUnion(a, b, k)` -- blends two shapes smoothly at the seam.
+    /// Larger `k` produces a wider blend region.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::circle([-40.0, 0.0], 50.0)
+    ///     .union_smooth(Sdf::circle([40.0, 0.0], 50.0), 20.0);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="smooth_union" style="height:300px"></div>
     pub fn union_smooth(self, other: Sdf, k: f32) -> Self {
         Self {
             root: SdfNode::SmoothUnion {
@@ -441,7 +955,21 @@ impl Sdf {
         }
     }
 
-    /// Smooth subtraction with blend factor k.
+    /// Smooth subtraction with blend factor `k`.
+    ///
+    /// `opSmoothSubtract(a, b, k)` -- smoothly cuts one shape from another.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::rounded_box([0.0, 0.0], [80.0, 80.0], 8.0)
+    ///     .subtract_smooth(Sdf::circle([30.0, 0.0], 50.0), 15.0);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="smooth_subtract" style="height:300px"></div>
     pub fn subtract_smooth(self, other: Sdf, k: f32) -> Self {
         Self {
             root: SdfNode::SmoothSubtract {
@@ -452,9 +980,24 @@ impl Sdf {
         }
     }
 
+    // ================================================================
     // Modifiers
+    // ================================================================
 
-    /// Round the shape by expanding its boundary.
+    /// Round the shape by expanding its boundary outward by `radius`.
+    ///
+    /// `opRound(sdf, r)` -- offsets the distance field, rounding sharp corners.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::rect([0.0, 0.0], [60.0, 30.0]).round(15.0);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="round" style="height:300px"></div>
     pub fn round(self, radius: f32) -> Self {
         Self {
             root: SdfNode::Round {
@@ -465,6 +1008,20 @@ impl Sdf {
     }
 
     /// Create an outline (hollow) version of the shape.
+    ///
+    /// `opOnion(sdf, t)` -- converts a filled shape into a ring/outline of thickness `t`.
+    /// Can be chained for concentric rings.
+    ///
+    /// [IQ reference](https://iquilezles.org/articles/distfunctions2d/)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::circle([0.0, 0.0], 70.0).onion(8.0);
+    /// ```
+    ///
+    /// <div class="sdf-shape-slot" data-shape="onion" style="height:300px"></div>
     pub fn onion(self, thickness: f32) -> Self {
         Self {
             root: SdfNode::Onion {

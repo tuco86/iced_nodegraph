@@ -10,6 +10,10 @@ use iced_sdf::{Layer, Pattern, Sdf};
 pub struct ShapeEntry {
     pub name: &'static str,
     pub description: &'static str,
+    /// URL slug for deep-linking (e.g., `?shape=circle`).
+    /// Used on wasm32 targets for URL parameter matching.
+    #[allow(dead_code)]
+    pub slug: &'static str,
     /// Builds the SDF shape.
     pub build: fn() -> Sdf,
     /// Builds the rendering layers.
@@ -27,6 +31,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Circle",
             description: "sdCircle(p, r) - Basic circle with radius.",
+            slug: "circle",
             build: || Sdf::circle([0.0, 0.0], 80.0),
             layers: default_layers,
             extent: 80.0,
@@ -34,6 +39,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Box",
             description: "sdBox(p, b) - Axis-aligned rectangle.",
+            slug: "box",
             build: || Sdf::rect([0.0, 0.0], [100.0, 60.0]),
             layers: default_layers,
             extent: 100.0,
@@ -41,6 +47,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Rounded Box",
             description: "sdRoundBox(p, b, r) - Rectangle with rounded corners.",
+            slug: "rounded_box",
             build: || Sdf::rounded_box([0.0, 0.0], [100.0, 60.0], 16.0),
             layers: default_layers,
             extent: 100.0,
@@ -48,6 +55,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Segment",
             description: "sdSegment(p, a, b) - Line segment between two points.",
+            slug: "segment",
             build: || Sdf::line([-80.0, -40.0], [80.0, 40.0]),
             layers: stroke_layers,
             extent: 90.0,
@@ -55,6 +63,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Bezier",
             description: "Cubic bezier curve with 4 control points.",
+            slug: "bezier",
             build: || {
                 Sdf::bezier(
                     [-100.0, 50.0],
@@ -72,6 +81,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Union",
             description: "opUnion(a, b) - Combine two shapes (a | b).",
+            slug: "union",
             build: || Sdf::circle([-40.0, 0.0], 60.0) | Sdf::circle([40.0, 0.0], 60.0),
             layers: default_layers,
             extent: 100.0,
@@ -79,6 +89,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Subtract",
             description: "opSubtract(a, b) - Cut shape b from shape a (a - b).",
+            slug: "subtract",
             build: || {
                 Sdf::rounded_box([0.0, 0.0], [80.0, 80.0], 8.0)
                     - Sdf::circle([0.0, 0.0], 50.0)
@@ -89,6 +100,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Intersect",
             description: "opIntersect(a, b) - Keep only the overlapping region.",
+            slug: "intersect",
             build: || {
                 Sdf::circle([-30.0, 0.0], 60.0).intersect(Sdf::circle([30.0, 0.0], 60.0))
             },
@@ -98,6 +110,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Smooth Union",
             description: "opSmoothUnion(a, b, k) - Blend two shapes together smoothly.",
+            slug: "smooth_union",
             build: || {
                 Sdf::circle([-40.0, 0.0], 50.0)
                     .union_smooth(Sdf::circle([40.0, 0.0], 50.0), 20.0)
@@ -108,6 +121,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Smooth Subtract",
             description: "opSmoothSubtract(a, b, k) - Smooth boolean subtraction.",
+            slug: "smooth_subtract",
             build: || {
                 Sdf::rounded_box([0.0, 0.0], [80.0, 80.0], 8.0)
                     .subtract_smooth(Sdf::circle([30.0, 0.0], 50.0), 15.0)
@@ -121,6 +135,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Round",
             description: "opRound(sdf, r) - Expand shape boundary by radius.",
+            slug: "round",
             build: || Sdf::rect([0.0, 0.0], [60.0, 30.0]).round(15.0),
             layers: default_layers,
             extent: 75.0,
@@ -128,6 +143,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Onion",
             description: "opOnion(sdf, t) - Create hollow outline from shape.",
+            slug: "onion",
             build: || Sdf::circle([0.0, 0.0], 70.0).onion(8.0),
             layers: default_layers,
             extent: 78.0,
@@ -135,6 +151,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Nested Onion",
             description: "Multiple onion layers creating concentric rings.",
+            slug: "nested_onion",
             build: || Sdf::circle([0.0, 0.0], 80.0).onion(12.0).onion(4.0),
             layers: default_layers,
             extent: 96.0,
@@ -145,6 +162,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Capsule",
             description: "Line segment with round modifier (pill shape).",
+            slug: "capsule",
             build: || Sdf::line([-50.0, 0.0], [50.0, 0.0]).round(25.0),
             layers: default_layers,
             extent: 75.0,
@@ -152,6 +170,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Cross",
             description: "Union of two rectangles forming a plus shape.",
+            slug: "cross_composed",
             build: || {
                 Sdf::rect([0.0, 0.0], [80.0, 25.0])
                     .union_smooth(Sdf::rect([0.0, 0.0], [25.0, 80.0]), 8.0)
@@ -162,6 +181,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Rounded X",
             description: "Two diagonal capsules forming an X shape.",
+            slug: "rounded_x_composed",
             build: || {
                 let arm1 = Sdf::line([-50.0, -50.0], [50.0, 50.0]).round(10.0);
                 let arm2 = Sdf::line([-50.0, 50.0], [50.0, -50.0]).round(10.0);
@@ -173,6 +193,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Node (Nodegraph)",
             description: "Typical node graph node: rounded box with shadow, border, and pins.",
+            slug: "node",
             build: || {
                 let body = Sdf::rounded_box([0.0, 0.0], [100.0, 60.0], 8.0);
                 let pin_l1 = Sdf::circle([-100.0, -25.0], 6.0);
@@ -186,6 +207,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Dashed Circle",
             description: "Circle outline with dashed stroke pattern.",
+            slug: "dashed_circle",
             build: || Sdf::circle([0.0, 0.0], 70.0),
             layers: || {
                 vec![Layer::stroke(
@@ -198,6 +220,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Dotted Box",
             description: "Rounded box with dotted stroke pattern.",
+            slug: "dotted_box",
             build: || Sdf::rounded_box([0.0, 0.0], [90.0, 60.0], 12.0),
             layers: || {
                 vec![Layer::stroke(
@@ -210,6 +233,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Animated Flow",
             description: "Bezier curve with animated dashed flow pattern.",
+            slug: "animated_flow",
             build: || {
                 Sdf::bezier(
                     [-100.0, 40.0],
@@ -235,6 +259,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Shadow Layers",
             description: "Shape with multiple shadow layers demonstrating expand + blur.",
+            slug: "shadow_layers",
             build: || Sdf::rounded_box([0.0, 0.0], [80.0, 50.0], 12.0),
             layers: || {
                 vec![
@@ -253,6 +278,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Gradient Border",
             description: "Shape with gradient fill along arc-length.",
+            slug: "gradient_border",
             build: || Sdf::rounded_box([0.0, 0.0], [90.0, 60.0], 10.0).onion(3.0),
             layers: || {
                 vec![Layer::gradient_u(
@@ -268,6 +294,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Ellipse",
             description: "sdEllipse(p, ab) - Ellipse with semi-axes.",
+            slug: "ellipse",
             build: || Sdf::ellipse([100.0, 60.0]),
             layers: default_layers,
             extent: 100.0,
@@ -275,6 +302,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Triangle",
             description: "sdTriangle(p, p0, p1, p2) - Arbitrary triangle.",
+            slug: "triangle",
             build: || Sdf::triangle([0.0, -70.0], [-80.0, 50.0], [80.0, 50.0]),
             layers: default_layers,
             extent: 90.0,
@@ -282,6 +310,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Equilateral Triangle",
             description: "sdEquilateralTriangle(p, r) - Regular equilateral triangle.",
+            slug: "equilateral_triangle",
             build: || Sdf::equilateral_triangle(80.0),
             layers: default_layers,
             extent: 80.0,
@@ -289,6 +318,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Isosceles Triangle",
             description: "sdTriangleIsosceles(p, q) - Isosceles triangle.",
+            slug: "isosceles_triangle",
             build: || Sdf::isosceles_triangle([60.0, 80.0]),
             layers: default_layers,
             extent: 85.0,
@@ -296,6 +326,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Rhombus",
             description: "sdRhombus(p, b) - Diamond/rhombus shape.",
+            slug: "rhombus",
             build: || Sdf::rhombus([80.0, 60.0]),
             layers: default_layers,
             extent: 80.0,
@@ -303,6 +334,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Trapezoid",
             description: "sdTrapezoid(p, r1, r2, he) - Isosceles trapezoid.",
+            slug: "trapezoid",
             build: || Sdf::trapezoid(80.0, 50.0, 50.0),
             layers: default_layers,
             extent: 85.0,
@@ -310,6 +342,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Parallelogram",
             description: "sdParallelogram(p, wi, he, sk) - Skewed rectangle.",
+            slug: "parallelogram",
             build: || Sdf::parallelogram(80.0, 50.0, 30.0),
             layers: default_layers,
             extent: 90.0,
@@ -317,6 +350,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Pentagon",
             description: "sdPentagon(p, r) - Regular pentagon.",
+            slug: "pentagon",
             build: || Sdf::pentagon(80.0),
             layers: default_layers,
             extent: 80.0,
@@ -324,6 +358,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Hexagon",
             description: "sdHexagon(p, r) - Regular hexagon.",
+            slug: "hexagon",
             build: || Sdf::hexagon(80.0),
             layers: default_layers,
             extent: 80.0,
@@ -331,6 +366,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Octagon",
             description: "sdOctogon(p, r) - Regular octagon.",
+            slug: "octagon",
             build: || Sdf::octagon(80.0),
             layers: default_layers,
             extent: 80.0,
@@ -341,6 +377,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Hexagram",
             description: "sdHexagram(p, r) - Six-pointed star (Star of David).",
+            slug: "hexagram",
             build: || Sdf::hexagram(60.0),
             layers: default_layers,
             extent: 70.0,
@@ -348,6 +385,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Star (5-point)",
             description: "sdStar(p, r, n, m) - Five-pointed star.",
+            slug: "star_5",
             build: || Sdf::star(80.0, 5, 3.0),
             layers: default_layers,
             extent: 85.0,
@@ -355,6 +393,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Star (8-point)",
             description: "sdStar(p, r, n, m) - Eight-pointed star.",
+            slug: "star_8",
             build: || Sdf::star(80.0, 8, 5.0),
             layers: default_layers,
             extent: 85.0,
@@ -365,6 +404,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Pie",
             description: "sdPie(p, c, r) - Pie/sector shape.",
+            slug: "pie",
             build: || Sdf::pie(std::f32::consts::FRAC_PI_4, 80.0),
             layers: default_layers,
             extent: 85.0,
@@ -372,6 +412,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Arc",
             description: "sdArc(p, sc, ra, rb) - Arc segment.",
+            slug: "arc",
             build: || Sdf::arc(std::f32::consts::FRAC_PI_3, 70.0, 8.0),
             layers: default_layers,
             extent: 85.0,
@@ -379,6 +420,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Cut Disk",
             description: "sdCutDisk(p, r, h) - Disk with flat cut.",
+            slug: "cut_disk",
             build: || Sdf::cut_disk(80.0, 30.0),
             layers: default_layers,
             extent: 85.0,
@@ -389,6 +431,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Heart",
             description: "sdHeart(p) - Heart shape (unit-scale, zoomed to fit).",
+            slug: "heart",
             build: || Sdf::heart(),
             layers: default_layers,
             extent: 1.2,
@@ -396,6 +439,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Egg",
             description: "sdEgg(p, ra, rb) - Egg shape.",
+            slug: "egg",
             build: || Sdf::egg(60.0, 15.0),
             layers: default_layers,
             extent: 80.0,
@@ -403,6 +447,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Moon",
             description: "sdMoon(p, d, ra, rb) - Crescent moon.",
+            slug: "moon",
             build: || Sdf::moon(40.0, 70.0, 60.0),
             layers: default_layers,
             extent: 75.0,
@@ -410,6 +455,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Vesica",
             description: "sdVesica(p, r, d) - Vesica piscis (lens shape).",
+            slug: "vesica",
             build: || Sdf::vesica(80.0, 40.0),
             layers: default_layers,
             extent: 85.0,
@@ -417,6 +463,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Uneven Capsule",
             description: "sdUnevenCapsule(p, r1, r2, h) - Capsule with different end radii.",
+            slug: "uneven_capsule",
             build: || Sdf::uneven_capsule(25.0, 15.0, 80.0),
             layers: default_layers,
             extent: 85.0,
@@ -424,6 +471,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Oriented Box",
             description: "sdOrientedBox(p, a, b, th) - Rotated rectangle.",
+            slug: "oriented_box",
             build: || Sdf::oriented_box([-60.0, -30.0], [60.0, 30.0], 20.0),
             layers: default_layers,
             extent: 85.0,
@@ -431,6 +479,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Horseshoe",
             description: "sdHorseshoe(p, c, r, w) - Horseshoe/arc segment.",
+            slug: "horseshoe",
             build: || Sdf::horseshoe(1.3, 60.0, [20.0, 8.0]),
             layers: default_layers,
             extent: 85.0,
@@ -438,6 +487,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Rounded X (SDF)",
             description: "sdRoundedX(p, w, r) - Dedicated rounded X SDF.",
+            slug: "rounded_x",
             build: || Sdf::rounded_x(80.0, 12.0),
             layers: default_layers,
             extent: 65.0,
@@ -445,6 +495,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Cross (SDF)",
             description: "sdCross(p, b, r) - Dedicated cross/plus SDF.",
+            slug: "cross",
             build: || Sdf::cross([80.0, 30.0], 0.0),
             layers: default_layers,
             extent: 85.0,
@@ -452,6 +503,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Quad Bezier",
             description: "sdBezier(p, A, B, C) - Quadratic bezier (unsigned distance).",
+            slug: "quad_bezier",
             build: || Sdf::quad_bezier([-80.0, 50.0], [0.0, -60.0], [80.0, 50.0]),
             layers: stroke_layers,
             extent: 90.0,
@@ -459,6 +511,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Parabola",
             description: "sdParabola(p, k) - Parabola y = k*x^2.",
+            slug: "parabola",
             build: || Sdf::parabola(0.01),
             layers: default_layers,
             extent: 100.0,
@@ -466,6 +519,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Cool S",
             description: "sdfCoolS(p) - The classic 'Cool S' shape (unit-scale).",
+            slug: "cool_s",
             build: || Sdf::cool_s(),
             layers: default_layers,
             extent: 2.0,
@@ -473,6 +527,7 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
         ShapeEntry {
             name: "Blobby Cross",
             description: "sdBlobbyCross(p, he) - Cross with curved bulging sides.",
+            slug: "blobby_cross",
             build: || Sdf::blobby_cross(1.0),
             layers: default_layers,
             extent: 1.2,
