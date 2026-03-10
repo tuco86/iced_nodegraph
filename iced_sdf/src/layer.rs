@@ -67,12 +67,15 @@ impl Layer {
     }
 
     /// Create a layer with a gradient along the shape's arc-length.
+    ///
+    /// Default scale is 0.01 (one full gradient cycle per 100 world units).
+    /// Use `.gradient_scale()` to normalize to a specific arc-length.
     pub fn gradient_u(start: Color, end: Color) -> Self {
         Self {
             color: start,
             gradient_color: Some(end),
             gradient_along_u: true,
-            gradient_angle: 0.0,
+            gradient_angle: 0.01,
             expand: 0.0,
             blur: 0.0,
             pattern: None,
@@ -120,6 +123,15 @@ impl Layer {
     /// Set blur amount.
     pub fn blur(mut self, amount: f32) -> Self {
         self.blur = amount;
+        self
+    }
+
+    /// Set arc-length gradient scale (used with `gradient_u`).
+    ///
+    /// Pass `1.0 / total_arc_length` to normalize the gradient to 0..1
+    /// along the full shape.
+    pub fn gradient_scale(mut self, scale: f32) -> Self {
+        self.gradient_angle = scale;
         self
     }
 

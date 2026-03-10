@@ -7,9 +7,7 @@
 //!
 //! Overlays (box selection, edge cutting) use `iced_sdf::SdfPrimitive` directly.
 
-pub use primitives::{
-    EdgePrimitive, GridPrimitive, NodeLayer, NodePrimitive, PinRenderData, RenderContext,
-};
+pub use primitives::{GridPrimitive, NodeLayer, NodePrimitive, PinRenderData, RenderContext};
 
 pub(crate) mod pipeline;
 pub mod primitives;

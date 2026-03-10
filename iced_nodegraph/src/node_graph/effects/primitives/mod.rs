@@ -9,7 +9,6 @@
 
 use crate::node_graph::euclid::WorldPoint;
 
-mod edge;
 mod grid;
 mod node;
 
@@ -21,6 +20,5 @@ pub struct RenderContext {
     pub time: f32,
 }
 
-pub use edge::EdgePrimitive;
 pub use grid::GridPrimitive;
 pub use node::{NodeLayer, NodePrimitive, PinRenderData};

@@ -1026,7 +1026,7 @@ fn render_layer(sdf: SdfResult, layer: SdfLayer) -> vec4<f32> {
     if (layer.flags & LAYER_FLAG_GRADIENT) != 0u {
         var t: f32;
         if (layer.flags & LAYER_FLAG_GRADIENT_U) != 0u {
-            t = fract(sdf.u * 0.01);
+            t = clamp(sdf.u * layer.gradient_angle, 0.0, 1.0);
         } else {
             t = 0.5;
         }

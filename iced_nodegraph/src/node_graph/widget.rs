@@ -25,9 +25,7 @@ use web_time::Instant;
 
 use super::{
     DragInfo, NodeGraph, NodeGraphMessage,
-    effects::{
-        EdgePrimitive, GridPrimitive, NodeLayer, NodePrimitive, PinRenderData, RenderContext,
-    },
+    effects::{GridPrimitive, NodeLayer, NodePrimitive, PinRenderData, RenderContext},
     euclid::{IntoIced, WorldVector},
     state::{Dragging, NodeGraphState},
 };
@@ -71,6 +69,261 @@ fn world_bbox_to_screen_bounds(
         screen_max_x - screen_min_x,
         screen_max_y - screen_min_y,
     ]
+}
+
+/// Returns the tangent direction vector for a pin side.
+/// Left=(-1,0), Right=(1,0), Top=(0,-1), Bottom=(0,1)
+fn pin_side_direction(side: u32) -> [f32; 2] {
+    match side {
+        0 => [-1.0, 0.0], // Left
+        1 => [1.0, 0.0],  // Right
+        2 => [0.0, -1.0], // Top
+        3 => [0.0, 1.0],  // Bottom
+        _ => [1.0, 0.0],  // Default (Row)
+    }
+}
+
+/// Construct an SDF shape for an edge based on curve type and pin sides.
+fn edge_sdf(
+    start: &WorldPoint,
+    end: &WorldPoint,
+    start_side: u32,
+    end_side: u32,
+    curve: &crate::style::EdgeCurve,
+) -> Sdf {
+    let p0 = [start.x, start.y];
+    let p1 = [end.x, end.y];
+
+    match curve {
+        crate::style::EdgeCurve::Line => Sdf::line(p0, p1),
+        _ => {
+            // Bezier: compute control points from pin tangent directions
+            let seg_len = 80.0_f32;
+            let dir_from = pin_side_direction(start_side);
+            let dir_to = pin_side_direction(end_side);
+            let cp0 = [p0[0] + dir_from[0] * seg_len, p0[1] + dir_from[1] * seg_len];
+            let cp1 = [p1[0] + dir_to[0] * seg_len, p1[1] + dir_to[1] * seg_len];
+            Sdf::bezier(p0, cp0, cp1, p1)
+        }
+    }
+}
+
+/// Compute screen-space bounding box for a bezier edge.
+fn edge_screen_bounds(
+    start: &WorldPoint,
+    end: &WorldPoint,
+    start_side: u32,
+    end_side: u32,
+    curve: &crate::style::EdgeCurve,
+    style: &crate::style::EdgeStyle,
+    ctx: &RenderContext,
+) -> [f32; 4] {
+    let seg_len = 80.0_f32;
+    let dir_from = pin_side_direction(start_side);
+    let dir_to = pin_side_direction(end_side);
+
+    // Compute bounding box of all control points
+    let (min_x, min_y, max_x, max_y) = match curve {
+        crate::style::EdgeCurve::Line => (
+            start.x.min(end.x),
+            start.y.min(end.y),
+            start.x.max(end.x),
+            start.y.max(end.y),
+        ),
+        _ => {
+            let cp0x = start.x + dir_from[0] * seg_len;
+            let cp0y = start.y + dir_from[1] * seg_len;
+            let cp1x = end.x + dir_to[0] * seg_len;
+            let cp1y = end.y + dir_to[1] * seg_len;
+            (
+                start.x.min(end.x).min(cp0x).min(cp1x),
+                start.y.min(end.y).min(cp0y).min(cp1y),
+                start.x.max(end.x).max(cp0x).max(cp1x),
+                start.y.max(end.y).max(cp0y).max(cp1y),
+            )
+        }
+    };
+
+    // Compute total padding from style layers
+    let stroke_width = style
+        .stroke
+        .as_ref()
+        .map(|s| s.width)
+        .unwrap_or(2.0);
+    let border_extend = style
+        .border
+        .as_ref()
+        .map(|b| b.gap + b.width)
+        .unwrap_or(0.0);
+    let outline_extend = style
+        .outline
+        .as_ref()
+        .map(|o| o.width)
+        .unwrap_or(0.0);
+    let shadow_extend = style
+        .shadow
+        .as_ref()
+        .map(|s| s.blur + s.offset.0.abs().max(s.offset.1.abs()))
+        .unwrap_or(0.0);
+    let padding = stroke_width + border_extend + outline_extend + shadow_extend
+        + 4.0 / ctx.camera_zoom;
+
+    world_bbox_to_screen_bounds(
+        min_x - padding,
+        min_y - padding,
+        max_x + padding,
+        max_y + padding,
+        0.0,
+        ctx,
+    )
+}
+
+/// Resolve an edge color, falling back to pin color when transparent.
+fn resolve_edge_color(color: iced::Color, pin_color: iced::Color) -> iced::Color {
+    if color.a > 0.01 { color } else { pin_color }
+}
+
+/// Build SDF layers from an EdgeStyle, resolving pin color inheritance.
+fn edge_sdf_layers(
+    style: &crate::style::EdgeStyle,
+    start_pin_color: iced::Color,
+    end_pin_color: iced::Color,
+    start_direction: PinDirection,
+    end_direction: PinDirection,
+    arc_length: f32,
+) -> Vec<Layer> {
+    let mut layers = Vec::with_capacity(4);
+    let gradient_scale = if arc_length > 0.001 {
+        1.0 / arc_length
+    } else {
+        0.01
+    };
+
+    // Determine if edge is "reversed" (from Input to Output)
+    let is_reversed = matches!(
+        (start_direction, end_direction),
+        (PinDirection::Input, PinDirection::Output)
+    );
+
+    // Shadow layer (behind everything)
+    if let Some(shadow) = &style.shadow
+        && shadow.color.a > 0.0
+    {
+        let stroke_width = style.stroke.as_ref().map(|s| s.width).unwrap_or(2.0);
+        layers.push(
+            Layer::solid(shadow.color)
+                .expand(stroke_width + shadow.blur)
+                .blur(shadow.blur),
+        );
+    }
+
+    // Border layer (behind stroke)
+    if let Some(border) = &style.border
+        && border.width > 0.0
+    {
+        let stroke_width = style.stroke.as_ref().map(|s| s.width).unwrap_or(2.0);
+        let total_width = stroke_width + border.gap + border.width;
+        let border_start = resolve_edge_color(border.start_color, start_pin_color);
+        let border_end = resolve_edge_color(border.end_color, end_pin_color);
+        let (c0, c1) = if is_reversed {
+            (border_end, border_start)
+        } else {
+            (border_start, border_end)
+        };
+        layers.push(
+            Layer::gradient_u(c0, c1)
+                .gradient_scale(gradient_scale)
+                .with_pattern(Pattern::solid(total_width)),
+        );
+    }
+
+    // Stroke layer (front)
+    if let Some(stroke) = &style.stroke {
+        let stroke_start = resolve_edge_color(stroke.start_color, start_pin_color);
+        let stroke_end = resolve_edge_color(stroke.end_color, end_pin_color);
+        let (c0, c1) = if is_reversed {
+            (stroke_end, stroke_start)
+        } else {
+            (stroke_start, stroke_end)
+        };
+
+        let base_speed = style.motion_speed();
+        let flow_speed = if is_reversed { base_speed } else { -base_speed };
+
+        let pattern = match &stroke.pattern {
+            crate::style::StrokePattern::Solid => Pattern::solid(stroke.width),
+            crate::style::StrokePattern::Dashed { dash, gap, .. } => {
+                Pattern::dashed(stroke.width, *dash, *gap)
+            }
+            crate::style::StrokePattern::Arrowed {
+                segment,
+                gap,
+                angle,
+                ..
+            } => {
+                let a = if is_reversed { -*angle } else { *angle };
+                Pattern::arrowed(stroke.width, *segment, *gap, a)
+            }
+            crate::style::StrokePattern::Dotted {
+                spacing, radius, ..
+            } => Pattern::dotted(*spacing, *radius),
+            // DashDotted and Custom fall back to dashed approximation
+            crate::style::StrokePattern::DashDotted { dash, gap, .. } => {
+                Pattern::dashed(stroke.width, *dash, *gap)
+            }
+            crate::style::StrokePattern::Custom { .. } => Pattern::solid(stroke.width),
+        };
+
+        let pattern = if flow_speed.abs() > 0.001 {
+            pattern.flow(flow_speed)
+        } else {
+            pattern
+        };
+
+        layers.push(
+            Layer::gradient_u(c0, c1)
+                .gradient_scale(gradient_scale)
+                .with_pattern(pattern),
+        );
+    }
+
+    layers
+}
+
+/// Estimate the arc length of an edge for gradient normalization.
+fn estimate_edge_arc_length(
+    start: &WorldPoint,
+    end: &WorldPoint,
+    start_side: u32,
+    end_side: u32,
+    curve: &crate::style::EdgeCurve,
+) -> f32 {
+    match curve {
+        crate::style::EdgeCurve::Line => {
+            let dx = end.x - start.x;
+            let dy = end.y - start.y;
+            (dx * dx + dy * dy).sqrt()
+        }
+        _ => {
+            // Approximate bezier arc length using control polygon
+            let seg_len = 80.0_f32;
+            let dir_from = pin_side_direction(start_side);
+            let dir_to = pin_side_direction(end_side);
+            let cp0 = [start.x + dir_from[0] * seg_len, start.y + dir_from[1] * seg_len];
+            let cp1 = [end.x + dir_to[0] * seg_len, end.y + dir_to[1] * seg_len];
+
+            // Approximate arc length as average of chord and control polygon
+            let chord = ((end.x - start.x).powi(2) + (end.y - start.y).powi(2)).sqrt();
+            let poly = segment_len(start.x, start.y, cp0[0], cp0[1])
+                + segment_len(cp0[0], cp0[1], cp1[0], cp1[1])
+                + segment_len(cp1[0], cp1[1], end.x, end.y);
+            (chord + poly) * 0.5
+        }
+    }
+}
+
+fn segment_len(x0: f32, y0: f32, x1: f32, y1: f32) -> f32 {
+    ((x1 - x0).powi(2) + (y1 - y0).powi(2)).sqrt()
 }
 
 // Hysteresis thresholds for edge snap/unsnap (prevents jitter at boundary)
@@ -382,20 +635,36 @@ where
                     base_style
                 };
 
+                let from_side: u32 = from_pin_state.side.into();
+                let to_side: u32 = to_pin_state.side.into();
+                let arc_len = estimate_edge_arc_length(
+                    &start_pos, &end_pos, from_side, to_side, &edge_style.curve,
+                );
+                let sdf_layers = edge_sdf_layers(
+                    &edge_style,
+                    from_pin_state.color,
+                    to_pin_state.color,
+                    from_pin_state.direction,
+                    to_pin_state.direction,
+                    arc_len,
+                );
+                let shape = edge_sdf(&start_pos, &end_pos, from_side, to_side, &edge_style.curve);
+                let bounds = edge_screen_bounds(
+                    &start_pos, &end_pos, from_side, to_side, &edge_style.curve,
+                    &edge_style, &render_context,
+                );
+
                 renderer.draw_primitive(
                     layout.bounds(),
-                    EdgePrimitive {
-                        context: render_context,
-                        start_pos,
-                        end_pos,
-                        start_side: from_pin_state.side.into(),
-                        end_side: to_pin_state.side.into(),
-                        start_direction: from_pin_state.direction,
-                        end_direction: to_pin_state.direction,
-                        style: edge_style,
-                        start_pin_color: from_pin_state.color,
-                        end_pin_color: to_pin_state.color,
-                    },
+                    SdfPrimitive::new(shape)
+                        .layers(sdf_layers)
+                        .screen_bounds(bounds)
+                        .camera(
+                            render_context.camera_position.x,
+                            render_context.camera_position.y,
+                            render_context.camera_zoom,
+                        )
+                        .time(render_context.time),
                 );
             }
 
@@ -439,20 +708,37 @@ where
                         PinDirection::Both => PinDirection::Both,
                     };
 
+                    let from_side: u32 = from_pin_state.side.into();
+                    let arc_len = estimate_edge_arc_length(
+                        &start_pos, &end_pos, from_side, end_side, &drag_edge_style.curve,
+                    );
+                    let sdf_layers = edge_sdf_layers(
+                        &drag_edge_style,
+                        from_pin_state.color,
+                        from_pin_state.color,
+                        from_pin_state.direction,
+                        end_direction,
+                        arc_len,
+                    );
+                    let shape = edge_sdf(
+                        &start_pos, &end_pos, from_side, end_side, &drag_edge_style.curve,
+                    );
+                    let bounds = edge_screen_bounds(
+                        &start_pos, &end_pos, from_side, end_side, &drag_edge_style.curve,
+                        &drag_edge_style, &render_context,
+                    );
+
                     renderer.draw_primitive(
                         layout.bounds(),
-                        EdgePrimitive {
-                            context: render_context,
-                            start_pos,
-                            end_pos,
-                            start_side: from_pin_state.side.into(),
-                            end_side,
-                            start_direction: from_pin_state.direction,
-                            end_direction,
-                            style: drag_edge_style,
-                            start_pin_color: from_pin_state.color,
-                            end_pin_color: from_pin_state.color,
-                        },
+                        SdfPrimitive::new(shape)
+                            .layers(sdf_layers)
+                            .screen_bounds(bounds)
+                            .camera(
+                                render_context.camera_position.x,
+                                render_context.camera_position.y,
+                                render_context.camera_zoom,
+                            )
+                            .time(render_context.time),
                     );
                 }
             }

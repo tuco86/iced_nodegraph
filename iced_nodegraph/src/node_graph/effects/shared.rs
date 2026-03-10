@@ -55,8 +55,6 @@ pub struct SharedNodeGraphResources {
     pub node_border_pipeline: RenderPipeline,
     /// Pin indicators
     pub pin_pipeline: RenderPipeline,
-    /// Edge rendering
-    pub edge_pipeline: RenderPipeline,
 }
 
 impl SharedNodeGraphResources {
@@ -147,16 +145,6 @@ impl SharedNodeGraphResources {
             "pins",
         );
 
-        let edge_pipeline = create_render_pipeline(
-            device,
-            format,
-            &pipeline_layout,
-            &shader_module,
-            "vs_edge",
-            "fs_edge",
-            "edges",
-        );
-
         Self {
             shader_module,
             bind_group_layout,
@@ -165,7 +153,6 @@ impl SharedNodeGraphResources {
             node_fill_pipeline,
             node_border_pipeline,
             pin_pipeline,
-            edge_pipeline,
         }
     }
 }
