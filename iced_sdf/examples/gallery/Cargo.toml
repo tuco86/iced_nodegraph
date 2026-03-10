@@ -30,6 +30,7 @@ iced = { workspace = true, features = ["advanced", "wgpu"] }
 iced_wgpu.workspace = true
 glam.workspace = true
 web-time.workspace = true
+demo_common.workspace = true
 
 # WASM-specific dependencies
 wasm-bindgen = { workspace = true, optional = true }

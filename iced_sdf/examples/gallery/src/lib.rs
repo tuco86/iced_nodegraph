@@ -31,6 +31,9 @@ use iced::window;
 use iced::{Color, Element, Fill, Subscription, Theme};
 use web_time::Instant;
 
+#[cfg(not(target_arch = "wasm32"))]
+use demo_common::{ScreenshotHelper, ScreenshotMessage};
+
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
@@ -80,10 +83,30 @@ pub fn main_with_target(target: String, shape: Option<String>, embed: bool) -> i
 }
 
 pub fn main() -> iced::Result {
-    #[allow(unused_mut)]
+    #[allow(unused_mut, unused_assignments)]
     let mut shape = None;
-    #[allow(unused_mut)]
+    #[allow(unused_mut, unused_assignments)]
     let mut embed = false;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut args = std::env::args().skip(1);
+        while let Some(arg) = args.next() {
+            match arg.as_str() {
+                "--shape" => {
+                    shape = args.next();
+                }
+                "--list-shapes" => {
+                    let entries = shapes::all_shapes();
+                    for entry in &entries {
+                        println!("{}", entry.slug);
+                    }
+                    std::process::exit(0);
+                }
+                _ => {}
+            }
+        }
+    }
 
     #[cfg(target_arch = "wasm32")]
     {
@@ -114,12 +137,23 @@ struct App {
     selected: usize,
     embed: bool,
     start_time: Instant,
+    #[cfg(not(target_arch = "wasm32"))]
+    screenshot: ScreenshotHelper,
 }
 
 #[derive(Debug, Clone)]
 enum Message {
     Select(usize),
     Tick,
+    #[cfg(not(target_arch = "wasm32"))]
+    Screenshot(demo_common::ScreenshotMessage),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl From<ScreenshotMessage> for Message {
+    fn from(msg: ScreenshotMessage) -> Self {
+        Message::Screenshot(msg)
+    }
 }
 
 impl App {
@@ -129,19 +163,31 @@ impl App {
                 selected,
                 embed,
                 start_time: Instant::now(),
+                #[cfg(not(target_arch = "wasm32"))]
+                screenshot: ScreenshotHelper::from_args(),
             },
             iced::Task::none(),
         )
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        window::frames().map(|_| Message::Tick)
+        #[cfg(not(target_arch = "wasm32"))]
+        let screenshot_sub = self.screenshot.subscription().map(Message::Screenshot);
+        #[cfg(target_arch = "wasm32")]
+        let screenshot_sub = Subscription::none();
+
+        Subscription::batch([
+            window::frames().map(|_| Message::Tick),
+            screenshot_sub,
+        ])
     }
 
     fn update(&mut self, message: Message) -> iced::Task<Message> {
         match message {
             Message::Select(idx) => self.selected = idx,
             Message::Tick => {}
+            #[cfg(not(target_arch = "wasm32"))]
+            Message::Screenshot(msg) => return self.screenshot.update(msg),
         }
         iced::Task::none()
     }

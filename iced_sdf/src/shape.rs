@@ -89,6 +89,26 @@ pub enum SdfNode {
     /// Blobbycross shape.
     BlobbyCross { he: f32 },
 
+    // Pattern modifiers
+    /// Dash pattern along shape contour.
+    Dash {
+        node: Box<SdfNode>,
+        dash: f32,
+        gap: f32,
+        thickness: f32,
+        angle: f32,
+        speed: f32,
+    },
+    /// Arrow (angled slash) pattern along shape contour.
+    Arrow {
+        node: Box<SdfNode>,
+        segment: f32,
+        gap: f32,
+        thickness: f32,
+        angle: f32,
+        speed: f32,
+    },
+
     // Boolean operations
     /// Union of two shapes (min distance).
     Union(Box<SdfNode>, Box<SdfNode>),
@@ -1017,6 +1037,65 @@ impl Sdf {
         }
     }
 
+    /// Apply a repeating dash pattern along the shape contour.
+    ///
+    /// Creates dashes of length `dash` separated by `gap`, with `thickness`
+    /// controlling the stroke width. `angle` (radians) shears the dash caps
+    /// for a parallelogram effect (0 = perpendicular caps). `speed` animates
+    /// the pattern along the contour (world units/sec, 0 = static).
+    ///
+    /// For closed curves (circle, box, etc.), the period is automatically
+    /// quantized to tile seamlessly around the perimeter.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::circle([0.0, 0.0], 80.0).dash(20.0, 10.0, 4.0, 0.0, 0.0);
+    /// ```
+    pub fn dash(self, dash: f32, gap: f32, thickness: f32, angle: f32, speed: f32) -> Self {
+        Self {
+            root: SdfNode::Dash {
+                node: Box::new(self.root),
+                dash,
+                gap,
+                thickness,
+                angle,
+                speed,
+            },
+        }
+    }
+
+    /// Apply an arrow (angled slash) pattern along the shape contour.
+    ///
+    /// Creates repeating slashes that cross the shape at `angle` (radians).
+    /// `segment` is the slash length, `gap` the spacing, and `thickness` the
+    /// stroke width. Unlike `dash`, the shear uses absolute perpendicular
+    /// distance for symmetric crossing slashes. `speed` animates the pattern
+    /// (world units/sec, 0 = static).
+    ///
+    /// For closed curves (circle, box, etc.), the period is automatically
+    /// quantized to tile seamlessly around the perimeter.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use iced_sdf::Sdf;
+    /// let shape = Sdf::line([0.0, 0.0], [100.0, 0.0]).arrow(15.0, 10.0, 4.0, 0.7, 0.0);
+    /// ```
+    pub fn arrow(self, segment: f32, gap: f32, thickness: f32, angle: f32, speed: f32) -> Self {
+        Self {
+            root: SdfNode::Arrow {
+                node: Box::new(self.root),
+                segment,
+                gap,
+                thickness,
+                angle,
+                speed,
+            },
+        }
+    }
+
     /// Consume the builder and return the root node.
     pub fn into_node(self) -> SdfNode {
         self.root
@@ -1045,6 +1124,30 @@ impl Sub for Sdf {
     /// Subtraction operator: `a - b`
     fn sub(self, rhs: Sdf) -> Sdf {
         self.subtract(rhs)
+    }
+}
+
+impl SdfNode {
+    /// Returns the contour perimeter if this is a known closed curve.
+    ///
+    /// Used by Dash/Arrow to automatically quantize the repeat period
+    /// so the pattern tiles seamlessly. Returns `None` for open curves
+    /// (line, bezier) and CSG composites where perimeter is ambiguous.
+    pub fn perimeter(&self) -> Option<f32> {
+        use std::f32::consts::PI;
+        match self {
+            SdfNode::Circle { radius, .. } => Some(2.0 * PI * radius),
+            SdfNode::Box { half_size, .. } => Some(4.0 * (half_size.x + half_size.y)),
+            // u comes from sd_box, so perimeter matches the unrounded box
+            SdfNode::RoundedBox { half_size, .. } => Some(4.0 * (half_size.x + half_size.y)),
+            // Modifiers pass through the child's u unchanged
+            SdfNode::Round { node, .. }
+            | SdfNode::Onion { node, .. }
+            | SdfNode::Dash { node, .. }
+            | SdfNode::Arrow { node, .. } => node.perimeter(),
+            // Open curves and CSG composites: no automatic quantization
+            _ => None,
+        }
     }
 }
 

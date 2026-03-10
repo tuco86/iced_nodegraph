@@ -213,6 +213,59 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
             extent: 110.0,
         },
         ShapeEntry {
+            name: "Node (Arrowed)",
+            description: "Node shape with animated arrow pattern applied.",
+            slug: "node_arrowed",
+            build: |_t| {
+                let body = Sdf::rounded_box([0.0, 0.0], [100.0, 60.0], 8.0);
+                let pin_l1 = Sdf::circle([-100.0, -25.0], 6.0);
+                let pin_l2 = Sdf::circle([-100.0, 25.0], 6.0);
+                let pin_r = Sdf::circle([100.0, 0.0], 6.0);
+                (body - pin_l1 - pin_l2 - pin_r).arrow(10.0, 6.0, 4.0, 0.6, 30.0)
+            },
+            layers: default_layers,
+            extent: 120.0,
+        },
+        ShapeEntry {
+            name: "Edge (Arrowed)",
+            description: "Animated arrowed bezier edge between two node pins.",
+            slug: "edge_arrowed",
+            build: |_t| {
+                // Typical node graph edge: horizontal bezier from output to input
+                let from = [-120.0, -40.0];
+                let to = [120.0, 40.0];
+                let offset = 80.0;
+                Sdf::bezier(
+                    from,
+                    [from[0] + offset, from[1]],
+                    [to[0] - offset, to[1]],
+                    to,
+                )
+                .arrow(10.0, 6.0, 4.0, 0.6, 40.0)
+            },
+            layers: default_layers,
+            extent: 140.0,
+        },
+        ShapeEntry {
+            name: "Edge (Dashed)",
+            description: "Animated dashed bezier edge between two node pins.",
+            slug: "edge_dashed",
+            build: |_t| {
+                let from = [-120.0, -40.0];
+                let to = [120.0, 40.0];
+                let offset = 80.0;
+                Sdf::bezier(
+                    from,
+                    [from[0] + offset, from[1]],
+                    [to[0] - offset, to[1]],
+                    to,
+                )
+                .dash(18.0, 10.0, 4.0, 0.0, 50.0)
+            },
+            layers: default_layers,
+            extent: 140.0,
+        },
+        ShapeEntry {
             name: "Dashed Circle",
             description: "Circle outline with dashed stroke pattern.",
             slug: "dashed_circle",
@@ -536,9 +589,82 @@ pub fn all_shapes() -> Vec<ShapeEntry> {
             name: "Blobby Cross",
             description: "sdBlobbyCross(p, he) - Cross with curved bulging sides.",
             slug: "blobby_cross",
-            build: |_t| Sdf::blobby_cross(1.0),
+            build: |_t| Sdf::blobby_cross(0.5),
             layers: default_layers,
-            extent: 1.2,
+            extent: 1.0,
+        },
+        // ================================================================
+        // Pattern Operations
+        // ================================================================
+        ShapeEntry {
+            name: "Dashed Circle",
+            description: "opDash - Repeating dashes along a circle contour.",
+            slug: "dash_circle",
+            build: |_t| Sdf::circle([0.0, 0.0], 80.0).dash(30.0, 15.0, 6.0, 0.0, 0.0),
+            layers: default_layers,
+            extent: 100.0,
+        },
+        ShapeEntry {
+            name: "Dashed Angled",
+            description: "opDash(angle) - Dashes with angled parallelogram caps.",
+            slug: "dash_angled",
+            build: |_t| Sdf::circle([0.0, 0.0], 80.0).dash(30.0, 15.0, 6.0, 0.5, 0.0),
+            layers: default_layers,
+            extent: 100.0,
+        },
+        ShapeEntry {
+            name: "Dashed Animated",
+            description: "opDash(speed) - Animated dashes flowing along contour.",
+            slug: "dash_animated",
+            build: |_t| Sdf::circle([0.0, 0.0], 80.0).dash(30.0, 15.0, 6.0, 0.0, 50.0),
+            layers: default_layers,
+            extent: 100.0,
+        },
+        ShapeEntry {
+            name: "Dashed Bezier",
+            description: "opDash on bezier - Dashes along a cubic bezier curve.",
+            slug: "dash_bezier",
+            build: |_t| {
+                Sdf::bezier([-100.0, 50.0], [-30.0, -80.0], [30.0, 80.0], [100.0, -50.0])
+                    .dash(25.0, 12.0, 5.0, 0.0, 0.0)
+            },
+            layers: default_layers,
+            extent: 120.0,
+        },
+        ShapeEntry {
+            name: "Arrow Line",
+            description: "opArrow - Angled slashes crossing a line segment.",
+            slug: "arrow_line",
+            build: |_t| Sdf::line([-100.0, 0.0], [100.0, 0.0]).arrow(15.0, 10.0, 6.0, 0.7, 0.0),
+            layers: default_layers,
+            extent: 120.0,
+        },
+        ShapeEntry {
+            name: "Arrow Animated",
+            description: "opArrow(speed) - Animated arrow slashes flowing along contour.",
+            slug: "arrow_animated",
+            build: |_t| Sdf::circle([0.0, 0.0], 80.0).arrow(12.0, 8.0, 5.0, 0.7, 40.0),
+            layers: default_layers,
+            extent: 100.0,
+        },
+        ShapeEntry {
+            name: "Arrow Bezier",
+            description: "opArrow on bezier - Angled slashes along a cubic bezier.",
+            slug: "arrow_bezier",
+            build: |_t| {
+                Sdf::bezier([-100.0, 50.0], [-30.0, -80.0], [30.0, 80.0], [100.0, -50.0])
+                    .arrow(12.0, 8.0, 5.0, 0.6, 0.0)
+            },
+            layers: default_layers,
+            extent: 120.0,
+        },
+        ShapeEntry {
+            name: "Dashed Box",
+            description: "opDash on box - Dashed outline of a rectangle.",
+            slug: "dash_box",
+            build: |_t| Sdf::rect([0.0, 0.0], [80.0, 50.0]).onion(2.0).dash(20.0, 10.0, 4.0, 0.3, 0.0),
+            layers: default_layers,
+            extent: 100.0,
         },
     ]
 }

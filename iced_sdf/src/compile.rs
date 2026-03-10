@@ -61,6 +61,10 @@ pub enum OpType {
     Parabola = 37,
     CoolS = 38,
     BlobbyCross = 39,
+
+    // Pattern modifiers (40+)
+    Dash = 40,
+    Arrow = 41,
 }
 
 /// Compile an SDF tree into RPN format for GPU evaluation.
@@ -529,6 +533,46 @@ fn compile_node(node: &SdfNode, ops: &mut Vec<SdfOp>) {
                 flags: 0,
                 param0: Vec4::new(*thickness, 0.0, 0.0, 0.0),
                 param1: Vec4::ZERO,
+                param2: Vec4::ZERO,
+                ..Default::default()
+            });
+        }
+
+        SdfNode::Dash {
+            node,
+            dash,
+            gap,
+            thickness,
+            angle,
+            speed,
+        } => {
+            let perimeter = node.perimeter().unwrap_or(0.0);
+            compile_node(node, ops);
+            ops.push(SdfOp {
+                op_type: OpType::Dash as u32,
+                flags: 0,
+                param0: Vec4::new(*dash, *gap, *thickness, *angle),
+                param1: Vec4::new(*speed, perimeter, 0.0, 0.0),
+                param2: Vec4::ZERO,
+                ..Default::default()
+            });
+        }
+
+        SdfNode::Arrow {
+            node,
+            segment,
+            gap,
+            thickness,
+            angle,
+            speed,
+        } => {
+            let perimeter = node.perimeter().unwrap_or(0.0);
+            compile_node(node, ops);
+            ops.push(SdfOp {
+                op_type: OpType::Arrow as u32,
+                flags: 0,
+                param0: Vec4::new(*segment, *gap, *thickness, *angle),
+                param1: Vec4::new(*speed, perimeter, 0.0, 0.0),
                 param2: Vec4::ZERO,
                 ..Default::default()
             });

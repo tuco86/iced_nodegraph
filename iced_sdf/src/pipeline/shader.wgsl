@@ -54,6 +54,8 @@ const OP_QUAD_BEZIER: u32 = 36u;
 const OP_PARABOLA: u32 = 37u;
 const OP_COOL_S: u32 = 38u;
 const OP_BLOBBY_CROSS: u32 = 39u;
+const OP_DASH: u32 = 40u;
+const OP_ARROW: u32 = 41u;
 
 // Layer flags
 const LAYER_FLAG_GRADIENT: u32 = 1u;
@@ -456,7 +458,7 @@ fn sd_heart(p_in: vec2<f32>) -> f32 {
 
 fn sd_egg(p_in: vec2<f32>, ra: f32, rb: f32) -> f32 {
     let k = sqrt(3.0);
-    var p = p_in;
+    var p = vec2(p_in.x, -p_in.y);
     p.x = abs(p.x);
     let r = ra - rb;
     if p.y < 0.0 {
@@ -896,6 +898,74 @@ fn evaluate_sdf(p: vec2<f32>, shape: ShapeInstance) -> SdfResult {
             case OP_ONION: {
                 sp--; let a = stack[sp];
                 stack[sp] = op_onion(a, op.param0.x);
+                sp++;
+            }
+            case OP_DASH: {
+                // param0: (dash, gap, thickness, angle), param1: (speed, perimeter)
+                sp--; let a = stack[sp];
+                let dash = op.param0.x;
+                let gap_d = op.param0.y;
+                let thickness = op.param0.z;
+                let angle_d = op.param0.w;
+                let speed_d = op.param1.x;
+                let perimeter_d = op.param1.y;
+                let period = dash + gap_d;
+                var actual_period = period;
+                var actual_dash = dash;
+                if perimeter_d > 0.0 {
+                    let n = round(perimeter_d / period);
+                    if n > 0.0 {
+                        actual_period = perimeter_d / n;
+                        actual_dash = actual_period * (dash / period);
+                    }
+                }
+                let half_dash = actual_dash * 0.5;
+                let half_thick = thickness * 0.5;
+                let tan_angle = tan(angle_d);
+                var u_d = a.u;
+                if speed_d != 0.0 {
+                    u_d = u_d + uniforms.time * speed_d;
+                }
+                let shifted_u = u_d - a.dist * tan_angle;
+                let nearest = round(shifted_u / actual_period) * actual_period;
+                let dist_along = shifted_u - nearest;
+                let dd = abs(vec2(dist_along, a.dist)) - vec2(half_dash, half_thick);
+                let d = length(max(dd, vec2(0.0))) + min(max(dd.x, dd.y), 0.0);
+                stack[sp] = SdfResult(d, a.u);
+                sp++;
+            }
+            case OP_ARROW: {
+                // param0: (segment, gap, thickness, angle), param1: (speed, perimeter)
+                sp--; let a = stack[sp];
+                let seg = op.param0.x;
+                let gap_a = op.param0.y;
+                let thickness_a = op.param0.z;
+                let angle_a = op.param0.w;
+                let speed_a = op.param1.x;
+                let perimeter_a = op.param1.y;
+                let period_a = seg + gap_a;
+                var actual_period_a = period_a;
+                var actual_seg = seg;
+                if perimeter_a > 0.0 {
+                    let n_a = round(perimeter_a / period_a);
+                    if n_a > 0.0 {
+                        actual_period_a = perimeter_a / n_a;
+                        actual_seg = actual_period_a * (seg / period_a);
+                    }
+                }
+                let half_seg = actual_seg * 0.5;
+                let half_thick_a = thickness_a * 0.5;
+                let tan_angle_a = tan(angle_a);
+                var u_a = a.u;
+                if speed_a != 0.0 {
+                    u_a = u_a + uniforms.time * speed_a;
+                }
+                let shifted_u_a = u_a - abs(a.dist) * tan_angle_a;
+                let nearest_a = round(shifted_u_a / actual_period_a) * actual_period_a;
+                let dist_along_a = shifted_u_a - nearest_a;
+                let dd_a = abs(vec2(dist_along_a, a.dist)) - vec2(half_seg, half_thick_a);
+                let d_a = length(max(dd_a, vec2(0.0))) + min(max(dd_a.x, dd_a.y), 0.0);
+                stack[sp] = SdfResult(d_a, a.u);
                 sp++;
             }
             default: {}
