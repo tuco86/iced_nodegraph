@@ -8,19 +8,13 @@ struct Uniforms {
     camera_zoom: f32,
     camera_position: vec2<f32>,
 
-    cursor_position: vec2<f32>,
-
     num_nodes: u32,
     time: f32,
 
-    overlay_type: u32,
-    // implicit padding for vec2 alignment
-    overlay_start: vec2<f32>,
-
-    overlay_color: vec4<f32>,  // Color for active overlay (box select, edge cutting, etc.)
-
     bounds_origin: vec2<f32>,  // widget bounds origin in physical pixels
     bounds_size: vec2<f32>,    // widget bounds size in physical pixels
+
+    _pad0: vec2<f32>,
 };
 
 // Grid background configuration (read from storage buffer)
@@ -1918,119 +1912,4 @@ fn fs_pin(in: PinVertexOutput) -> @location(0) vec4<f32> {
     return vec4(result_rgb, result_alpha);
 }
 
-// ============================================================================
-// OVERLAY SHADER (Box Selection, Edge Cutting)
-// Overlay types: 5=BoxSelect, 7=EdgeCutting
-// Note: Edge dragging is rendered via EdgesPrimitive, not here.
-// ============================================================================
-
-@vertex
-fn vs_overlay(@builtin(vertex_index) vertex: u32) -> EdgeVertexOutput {
-    // Build a bounding box for the overlay operation
-    let p0 = uniforms.overlay_start;
-    let p3 = uniforms.cursor_position;
-
-    // EdgeCutting (7) uses world-space padding for thick cutting line
-    // BoxSelect (5) uses screen-space padding
-    var padding = 100.0 / uniforms.camera_zoom;
-    if (uniforms.overlay_type == 7u) {
-        padding = 50.0;  // World-space padding for cutting line
-    }
-    let bbox_min = min(p0, p3) - vec2(padding);
-    let bbox_max = max(p0, p3) + vec2(padding);
-
-    let corners = array<vec2<f32>, 4>(
-        bbox_min,
-        vec2(bbox_max.x, bbox_min.y),
-        vec2(bbox_min.x, bbox_max.y),
-        bbox_max
-    );
-    let indices = array<u32, 6>(0, 1, 2, 1, 3, 2);
-    let world_pos = corners[indices[vertex]];
-
-    let clip = world_to_clip(world_pos);
-
-    return EdgeVertexOutput(clip, world_pos, 0u);
-}
-
-@fragment
-fn fs_overlay(in: EdgeVertexOutput) -> @location(0) vec4<f32> {
-    let aa = 1.0 / uniforms.camera_zoom;
-
-    // === BoxSelect (5): Draw selection rectangle ===
-    if (uniforms.overlay_type == 5u) {
-        let box_min = min(uniforms.overlay_start, uniforms.cursor_position);
-        let box_max = max(uniforms.overlay_start, uniforms.cursor_position);
-
-        let p = in.world_uv;
-
-        // Distance to rectangle edges
-        let dx = max(box_min.x - p.x, p.x - box_max.x);
-        let dy = max(box_min.y - p.y, p.y - box_max.y);
-        let dist_outside = length(max(vec2(dx, dy), vec2(0.0)));
-        let dist_inside = min(max(dx, dy), 0.0);
-        let dist = dist_outside + dist_inside;
-
-        // Border
-        let border_width = 1.5 / uniforms.camera_zoom;
-        let border_alpha = 1.0 - smoothstep(-border_width, -border_width + aa, dist);
-        let border_color = vec4(uniforms.overlay_color.rgb, 0.8);
-
-        // Fill (inside the rectangle)
-        let fill_alpha = 1.0 - smoothstep(-aa, 0.0, dist);
-        let fill_color = vec4(uniforms.overlay_color.rgb, 0.15);
-
-        // Combine: fill inside, border on edge
-        if (dist < 0.0) {
-            // Inside: show fill + border near edge
-            let edge_dist = -dist;
-            if (edge_dist < border_width + aa) {
-                return vec4(border_color.rgb, border_alpha * border_color.a);
-            }
-            return vec4(fill_color.rgb, fill_alpha * fill_color.a);
-        }
-        return vec4(0.0);
-    }
-
-    // === EdgeCutting (7): Draw cutting line ===
-    if (uniforms.overlay_type == 7u) {
-        let p0 = uniforms.overlay_start;
-        let p1 = uniforms.cursor_position;
-        let p = in.world_uv;
-
-        // Distance to line segment
-        let pa = p - p0;
-        let ba = p1 - p0;
-        let h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
-        let dist = length(pa - ba * h);
-
-        let line_width = 3.0;  // World space - scales with zoom
-        let alpha = 1.0 - smoothstep(line_width, line_width + aa, dist);
-
-        // Edge cutting line
-        return vec4(uniforms.overlay_color.rgb, alpha * 0.8);
-    }
-
-    // No overlay active
-    return vec4(0.0);
-}
-
-// ============================================================================
-// LEGACY SHADERS (Keep for compatibility, but won't be used)
-// ============================================================================
-
-@vertex
-fn vs_main(@builtin(vertex_index) vertex_index: u32) -> @builtin(position) vec4<f32> {
-    var positions = array<vec2<f32>, 3>(
-        vec2<f32>(-1.0, -1.0),
-        vec2<f32>(3.0, -1.0),
-        vec2<f32>(-1.0, 3.0)
-    );
-    return vec4<f32>(positions[vertex_index], 0.0, 1.0);
-}
-
-@fragment
-fn fs_foreground(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<f32> {
-    // Legacy - use fs_overlay instead
-    return vec4(0.0);
-}
+// Overlay rendering (box selection, edge cutting) has been migrated to iced_sdf.

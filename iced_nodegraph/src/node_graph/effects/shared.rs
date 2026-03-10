@@ -57,8 +57,6 @@ pub struct SharedNodeGraphResources {
     pub pin_pipeline: RenderPipeline,
     /// Edge rendering
     pub edge_pipeline: RenderPipeline,
-    /// Overlay rendering: box select / edge cutting
-    pub overlay_pipeline: RenderPipeline,
 }
 
 impl SharedNodeGraphResources {
@@ -159,16 +157,6 @@ impl SharedNodeGraphResources {
             "edges",
         );
 
-        let overlay_pipeline = create_render_pipeline(
-            device,
-            format,
-            &pipeline_layout,
-            &shader_module,
-            "vs_overlay",
-            "fs_overlay",
-            "overlay",
-        );
-
         Self {
             shader_module,
             bind_group_layout,
@@ -178,7 +166,6 @@ impl SharedNodeGraphResources {
             node_border_pipeline,
             pin_pipeline,
             edge_pipeline,
-            overlay_pipeline,
         }
     }
 }

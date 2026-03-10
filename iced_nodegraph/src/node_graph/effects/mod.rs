@@ -4,12 +4,11 @@
 //! - `GridPrimitive` - Background grid pattern
 //! - `NodePrimitive` - Node with background/foreground layer support (includes pins)
 //! - `EdgePrimitive` - Single edge rendering
-//! - `BoxSelectPrimitive` - Box selection overlay
-//! - `CuttingToolPrimitive` - Edge cutting line overlay
+//!
+//! Overlays (box selection, edge cutting) use `iced_sdf::SdfPrimitive` directly.
 
 pub use primitives::{
-    BoxSelectPrimitive, CuttingToolPrimitive, EdgePrimitive, GridPrimitive, NodeLayer,
-    NodePrimitive, PinRenderData, RenderContext,
+    EdgePrimitive, GridPrimitive, NodeLayer, NodePrimitive, PinRenderData, RenderContext,
 };
 
 pub(crate) mod pipeline;

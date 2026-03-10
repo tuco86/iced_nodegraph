@@ -26,7 +26,7 @@ use web_time::Instant;
 use super::{
     DragInfo, NodeGraph, NodeGraphMessage,
     effects::{
-        self, EdgePrimitive, GridPrimitive, NodeLayer, NodePrimitive, PinRenderData, RenderContext,
+        EdgePrimitive, GridPrimitive, NodeLayer, NodePrimitive, PinRenderData, RenderContext,
     },
     euclid::{IntoIced, WorldVector},
     state::{Dragging, NodeGraphState},
@@ -38,9 +38,40 @@ use crate::{
     node_pin::NodePinState,
     style::{EdgeConfig, EdgeStatus, EdgeStyle, GraphStyle, NodeConfig, NodeStatus, NodeStyle, PinConfig, PinStatus, PinStyle},
 };
+use iced_sdf::{Layer, Pattern, Sdf, SdfPrimitive};
 
 // Click detection threshold (in world-space pixels)
 const PIN_CLICK_THRESHOLD: f32 = 8.0;
+
+/// Convert a world-space bounding box to screen-space bounds for SdfPrimitive.
+///
+/// Formula: screen = (world + camera_position) * zoom
+/// Returns [x, y, width, height] in screen pixels.
+fn world_bbox_to_screen_bounds(
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+    padding: f32,
+    ctx: &RenderContext,
+) -> [f32; 4] {
+    let min_x = x0.min(x1) - padding;
+    let min_y = y0.min(y1) - padding;
+    let max_x = x0.max(x1) + padding;
+    let max_y = y0.max(y1) + padding;
+
+    let screen_min_x = (min_x + ctx.camera_position.x) * ctx.camera_zoom;
+    let screen_min_y = (min_y + ctx.camera_position.y) * ctx.camera_zoom;
+    let screen_max_x = (max_x + ctx.camera_position.x) * ctx.camera_zoom;
+    let screen_max_y = (max_y + ctx.camera_position.y) * ctx.camera_zoom;
+
+    [
+        screen_min_x,
+        screen_min_y,
+        screen_max_x - screen_min_x,
+        screen_max_y - screen_min_y,
+    ]
+}
 
 // Hysteresis thresholds for edge snap/unsnap (prevents jitter at boundary)
 const SNAP_THRESHOLD: f32 = 10.0; // Distance to enter snap zone
@@ -694,7 +725,7 @@ where
                 .unwrap_or(*start);
 
             // Resolve box select colors: use callback if provided, otherwise use selection_style
-            let (_fill_color, border_color) = if let Some(ref style_fn) = self.box_select_style_fn {
+            let (fill_color, border_color) = if let Some(ref style_fn) = self.box_select_style_fn {
                 style_fn(theme)
             } else {
                 (
@@ -703,12 +734,35 @@ where
                 )
             };
 
-            let select_primitive = effects::BoxSelectPrimitive {
-                context: render_context,
-                start: *start,
-                end: cursor_world,
-                color: border_color,
-            };
+            let center = [
+                (start.x + cursor_world.x) * 0.5,
+                (start.y + cursor_world.y) * 0.5,
+            ];
+            let half_size = [
+                ((cursor_world.x - start.x) * 0.5).abs(),
+                ((cursor_world.y - start.y) * 0.5).abs(),
+            ];
+            let border_width = 1.5 / camera.zoom();
+
+            let select_primitive = SdfPrimitive::new(Sdf::rect(center, half_size))
+                .layers(vec![
+                    Layer::solid(fill_color),
+                    Layer::stroke(border_color, Pattern::solid(border_width)),
+                ])
+                .screen_bounds(world_bbox_to_screen_bounds(
+                    start.x,
+                    start.y,
+                    cursor_world.x,
+                    cursor_world.y,
+                    border_width + 2.0 / camera.zoom(),
+                    &render_context,
+                ))
+                .camera(
+                    render_context.camera_position.x,
+                    render_context.camera_position.y,
+                    render_context.camera_zoom,
+                )
+                .time(render_context.time);
 
             renderer.with_layer(layout.bounds(), |renderer| {
                 renderer.draw_primitive(layout.bounds(), select_primitive);
@@ -733,12 +787,26 @@ where
                 resolved_graph.selection_style.edge_cutting_color
             };
 
-            let cutting_primitive = effects::CuttingToolPrimitive {
-                context: render_context,
-                start: *start,
-                end: cursor_world,
-                color: cutting_color,
-            };
+            let line_width = 3.0;
+            let cutting_primitive = SdfPrimitive::new(Sdf::line(
+                [start.x, start.y],
+                [cursor_world.x, cursor_world.y],
+            ))
+            .layers(vec![Layer::stroke(cutting_color, Pattern::solid(line_width))])
+            .screen_bounds(world_bbox_to_screen_bounds(
+                start.x,
+                start.y,
+                cursor_world.x,
+                cursor_world.y,
+                line_width + 2.0 / render_context.camera_zoom,
+                &render_context,
+            ))
+            .camera(
+                render_context.camera_position.x,
+                render_context.camera_position.y,
+                render_context.camera_zoom,
+            )
+            .time(render_context.time);
 
             renderer.with_layer(layout.bounds(), |renderer| {
                 renderer.draw_primitive(layout.bounds(), cutting_primitive);

@@ -12,18 +12,13 @@ pub struct Uniforms {
     pub camera_zoom: f32,
     pub camera_position: glam::Vec2,
 
-    pub cursor_position: glam::Vec2, // in world coordinates
-
     pub num_nodes: u32,
     pub time: f32, // Time in seconds for animations
 
-    pub overlay_type: u32,
-    pub overlay_start: glam::Vec2,
-
-    pub overlay_color: glam::Vec4, // Color for active overlay (box select, edge cutting, etc.)
-
     pub bounds_origin: glam::Vec2, // widget bounds origin in physical pixels
     pub bounds_size: glam::Vec2,   // widget bounds size in physical pixels
+
+    pub _pad0: glam::Vec2, // padding for 16-byte uniform alignment
 }
 
 /// Grid background configuration.

@@ -155,14 +155,11 @@ impl Primitive for GridPrimitive {
                 self.context.camera_position.x,
                 self.context.camera_position.y,
             ),
-            cursor_position: glam::Vec2::ZERO,
             num_nodes: 0,
             time: self.context.time,
-            overlay_type: 0,
-            overlay_start: glam::Vec2::ZERO,
-            overlay_color: glam::Vec4::ZERO,
             bounds_origin: glam::Vec2::new(bounds.x * scale, bounds.y * scale),
             bounds_size: glam::Vec2::new(bounds.width * scale, bounds.height * scale),
+            _pad0: glam::Vec2::ZERO,
         };
 
         // Write uniforms using encase

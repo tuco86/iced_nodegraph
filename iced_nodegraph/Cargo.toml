@@ -12,6 +12,7 @@ categories = ["gui", "graphics", "visualization"]
 
 [dependencies]
 euclid.workspace = true
+iced_sdf.workspace = true
 bytemuck.workspace = true
 glam.workspace = true
 encase.workspace = true
