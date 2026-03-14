@@ -1,8 +1,8 @@
-// Batched SDF Renderer Shader
+// SDF Renderer Shader
 //
-// Renders multiple SDF shapes in a single draw call using instanced quads.
-// Each instance has its own RPN ops and layers, referenced by offset into
-// flat storage buffers.
+// Fullscreen triangle per draw call. Fragment shader loops over shapes
+// with per-pixel AABB filtering and full SDF evaluation.
+// Compute entry point (cs_build_index) will be added here for spatial indexing.
 
 // ============================================================================
 // Constants
@@ -79,14 +79,33 @@ const MAX_STACK: u32 = 16u;
 // ============================================================================
 
 struct DrawData {
+    bounds_origin: vec2<f32>,
     camera_position: vec2<f32>,
     camera_zoom: f32,
     scale_factor: f32,
     time: f32,
     debug_flags: u32,
+    grid_cols: u32,
+    grid_rows: u32,
+    tile_base: u32,
+    _pad0: u32,
+}
+
+struct ComputeUniforms {
+    bounds_origin: vec2<f32>,
+    camera_position: vec2<f32>,
+    camera_zoom: f32,
+    scale_factor: f32,
+    grid_cols: u32,
+    grid_rows: u32,
+    tile_size: f32,
+    tile_base: u32,
     shape_start: u32,
     shape_count: u32,
 }
+
+const MAX_SHAPES_PER_TILE: u32 = 64u;
+const TILE_SIZE: f32 = 16.0;
 
 struct ShapeInstance {
     bounds: vec4<f32>,  // screen-space: x, y, width, height (logical pixels)
@@ -136,6 +155,8 @@ struct SdfResult {
     v: f32,
 }
 
+
+
 // ============================================================================
 // Bindings
 // ============================================================================
@@ -145,10 +166,19 @@ var<private> current_camera_zoom: f32;
 var<private> current_scale_factor: f32;
 var<private> current_time: f32;
 
+// Group 0: Shared data (render reads all, compute reads shapes+ops only)
 @group(0) @binding(0) var<storage, read> draws: array<DrawData>;
 @group(0) @binding(1) var<storage, read> shapes: array<ShapeInstance>;
 @group(0) @binding(2) var<storage, read> ops: array<SdfOp>;
 @group(0) @binding(3) var<storage, read> layers: array<SdfLayer>;
+@group(0) @binding(4) var<storage, read> tile_counts: array<u32>;
+@group(0) @binding(5) var<storage, read> tile_shapes: array<u32>;
+
+// Group 1: Compute-only (spatial index construction)
+@group(1) @binding(0) var<uniform> cs_uniforms: ComputeUniforms;
+@group(1) @binding(1) var<storage, read_write> cs_tile_counts: array<u32>;
+@group(1) @binding(2) var<storage, read_write> cs_tile_shapes: array<u32>;
+
 
 // ============================================================================
 // SDF Primitives
@@ -694,94 +724,6 @@ fn op_onion(a: SdfResult, thickness: f32) -> SdfResult {
 }
 
 // ============================================================================
-// Pattern Evaluation
-// ============================================================================
-
-fn apply_pattern(sdf: SdfResult, layer: SdfLayer) -> f32 {
-    let dist = sdf.dist - layer.expand;
-    let thickness = layer.thickness;
-
-    var u = sdf.u;
-    if layer.flow_speed != 0.0 {
-        u = u - current_time * layer.flow_speed;
-    }
-
-    switch layer.pattern_type {
-        case PATTERN_SOLID: {
-            return abs(dist) - thickness * 0.5;
-        }
-        case PATTERN_DASHED: {
-            let dash = layer.pattern_param0;
-            let gap = layer.pattern_param1;
-            let angle = layer.pattern_param2;
-            let period = dash + gap;
-            let shifted_u = u + sdf.v * tan(angle);
-            let nearest = round(shifted_u / period) * period;
-            let dist_along = shifted_u - nearest;
-            // Box SDF for square-cap dashes (angle=0 gives straight caps)
-            let dd = abs(vec2(dist_along, dist)) - vec2(dash * 0.5, thickness * 0.5);
-            return length(max(dd, vec2(0.0))) + min(max(dd.x, dd.y), 0.0);
-        }
-        case PATTERN_ARROWED: {
-            // Symmetric crossing slashes (///) - uses abs(v) for symmetric shear
-            let segment = layer.pattern_param0;
-            let gap = layer.pattern_param1;
-            let angle = layer.pattern_param2;
-            let period = segment + gap;
-            let shifted_u = u + abs(sdf.v) * tan(angle);
-            let nearest = round(shifted_u / period) * period;
-            let dist_along = shifted_u - nearest;
-            let dd = abs(vec2(dist_along, dist)) - vec2(segment * 0.5, thickness * 0.5);
-            return length(max(dd, vec2(0.0))) + min(max(dd.x, dd.y), 0.0);
-        }
-        case PATTERN_DOTTED: {
-            let spacing = layer.pattern_param0;
-            let radius = layer.pattern_param1;
-            let nearest = round(u / spacing) * spacing;
-            let dist_to_center = abs(u - nearest);
-            return length(vec2(dist_to_center, dist)) - radius;
-        }
-        case PATTERN_DASH_DOTTED: {
-            // param0 = dash, param1 = gap, param2 = dot_radius
-            let dash = layer.pattern_param0;
-            let gap = layer.pattern_param1;
-            let dot_radius = layer.pattern_param2;
-            // Period: dash + gap + dot_diameter + gap
-            let period = dash + gap + dot_radius * 2.0 + gap;
-            let nearest = round(u / period) * period;
-            let local_u = u - nearest;
-            // Dash centered at 0, dot centered at dash/2 + gap + dot_radius
-            let dash_center = 0.0;
-            let dot_center = dash * 0.5 + gap + dot_radius;
-            // Dash SDF (box)
-            let dd = abs(vec2(local_u - dash_center, dist)) - vec2(dash * 0.5, thickness * 0.5);
-            let d_dash = length(max(dd, vec2(0.0))) + min(max(dd.x, dd.y), 0.0);
-            // Dot SDF (circle) - check both positive and negative offset
-            let d_dot_pos = length(vec2(local_u - dot_center, dist)) - dot_radius;
-            let d_dot_neg = length(vec2(local_u + dot_center, dist)) - dot_radius;
-            let d_dot = min(d_dot_pos, d_dot_neg);
-            return min(d_dash, d_dot);
-        }
-        case PATTERN_DASH_CAPPED: {
-            // Round-cap dashes using capsule SDF
-            let dash = layer.pattern_param0;
-            let gap = layer.pattern_param1;
-            let angle = layer.pattern_param2;
-            let period = dash + gap;
-            let shifted_u = u + sdf.v * tan(angle);
-            let nearest = round(shifted_u / period) * period;
-            let dist_along = shifted_u - nearest;
-            // Capsule SDF: clamp along dash then measure distance
-            let clamped = clamp(dist_along, -dash * 0.5, dash * 0.5);
-            return length(vec2(dist_along - clamped, dist)) - thickness * 0.5;
-        }
-        default: {
-            return dist;
-        }
-    }
-}
-
-// ============================================================================
 // SDF Evaluation (Stack-based RPN, per-shape)
 // ============================================================================
 
@@ -1045,6 +987,94 @@ fn evaluate_sdf(p: vec2<f32>, shape: ShapeInstance) -> SdfResult {
 }
 
 // ============================================================================
+// Pattern Evaluation
+// ============================================================================
+
+fn apply_pattern(sdf: SdfResult, layer: SdfLayer) -> f32 {
+    let dist = sdf.dist - layer.expand;
+    let thickness = layer.thickness;
+
+    var u = sdf.u;
+    if layer.flow_speed != 0.0 {
+        u = u - current_time * layer.flow_speed;
+    }
+
+    switch layer.pattern_type {
+        case PATTERN_SOLID: {
+            return abs(dist) - thickness * 0.5;
+        }
+        case PATTERN_DASHED: {
+            let dash = layer.pattern_param0;
+            let gap = layer.pattern_param1;
+            let angle = layer.pattern_param2;
+            let period = dash + gap;
+            let shifted_u = u + sdf.v * tan(angle);
+            let nearest = round(shifted_u / period) * period;
+            let dist_along = shifted_u - nearest;
+            // Box SDF for square-cap dashes (angle=0 gives straight caps)
+            let dd = abs(vec2(dist_along, dist)) - vec2(dash * 0.5, thickness * 0.5);
+            return length(max(dd, vec2(0.0))) + min(max(dd.x, dd.y), 0.0);
+        }
+        case PATTERN_ARROWED: {
+            // Symmetric crossing slashes (///) - uses abs(v) for symmetric shear
+            let segment = layer.pattern_param0;
+            let gap = layer.pattern_param1;
+            let angle = layer.pattern_param2;
+            let period = segment + gap;
+            let shifted_u = u + abs(sdf.v) * tan(angle);
+            let nearest = round(shifted_u / period) * period;
+            let dist_along = shifted_u - nearest;
+            let dd = abs(vec2(dist_along, dist)) - vec2(segment * 0.5, thickness * 0.5);
+            return length(max(dd, vec2(0.0))) + min(max(dd.x, dd.y), 0.0);
+        }
+        case PATTERN_DOTTED: {
+            let spacing = layer.pattern_param0;
+            let radius = layer.pattern_param1;
+            let nearest = round(u / spacing) * spacing;
+            let dist_to_center = abs(u - nearest);
+            return length(vec2(dist_to_center, dist)) - radius;
+        }
+        case PATTERN_DASH_DOTTED: {
+            // param0 = dash, param1 = gap, param2 = dot_radius
+            let dash = layer.pattern_param0;
+            let gap = layer.pattern_param1;
+            let dot_radius = layer.pattern_param2;
+            // Period: dash + gap + dot_diameter + gap
+            let period = dash + gap + dot_radius * 2.0 + gap;
+            let nearest = round(u / period) * period;
+            let local_u = u - nearest;
+            // Dash centered at 0, dot centered at dash/2 + gap + dot_radius
+            let dash_center = 0.0;
+            let dot_center = dash * 0.5 + gap + dot_radius;
+            // Dash SDF (box)
+            let dd = abs(vec2(local_u - dash_center, dist)) - vec2(dash * 0.5, thickness * 0.5);
+            let d_dash = length(max(dd, vec2(0.0))) + min(max(dd.x, dd.y), 0.0);
+            // Dot SDF (circle) - check both positive and negative offset
+            let d_dot_pos = length(vec2(local_u - dot_center, dist)) - dot_radius;
+            let d_dot_neg = length(vec2(local_u + dot_center, dist)) - dot_radius;
+            let d_dot = min(d_dot_pos, d_dot_neg);
+            return min(d_dash, d_dot);
+        }
+        case PATTERN_DASH_CAPPED: {
+            // Round-cap dashes using capsule SDF
+            let dash = layer.pattern_param0;
+            let gap = layer.pattern_param1;
+            let angle = layer.pattern_param2;
+            let period = dash + gap;
+            let shifted_u = u + sdf.v * tan(angle);
+            let nearest = round(shifted_u / period) * period;
+            let dist_along = shifted_u - nearest;
+            // Capsule SDF: clamp along dash then measure distance
+            let clamped = clamp(dist_along, -dash * 0.5, dash * 0.5);
+            return length(vec2(dist_along - clamped, dist)) - thickness * 0.5;
+        }
+        default: {
+            return dist;
+        }
+    }
+}
+
+// ============================================================================
 // Layer Rendering
 // ============================================================================
 
@@ -1152,7 +1182,7 @@ fn vs_main(
 }
 
 // ============================================================================
-// Fragment Shader - Direct Shape Loop with AABB Filtering
+// Fragment Shader - Spatial Index Lookup
 // ============================================================================
 
 @fragment
@@ -1165,17 +1195,35 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     current_scale_factor = draw.scale_factor;
     current_time = draw.time;
 
+    // Tile coordinates: subtract viewport origin to get local position
+    let local_px = screen_pos - draw.bounds_origin;
+    let tile_col = u32(local_px.x / TILE_SIZE);
+    let tile_row = u32(local_px.y / TILE_SIZE);
+
+    if tile_col >= draw.grid_cols || tile_row >= draw.grid_rows {
+        discard;
+    }
+
+    let local_tile_idx = tile_row * draw.grid_cols + tile_col;
+    let tile_idx = draw.tile_base + local_tile_idx;
+    let count = tile_counts[tile_idx];
+
+    if count == 0u {
+        discard;
+    }
+
     // Convert fragment position to world coordinates
     let world_pos = screen_pos / (draw.camera_zoom * draw.scale_factor) - draw.camera_position;
 
-    // Loop over this draw's shapes with AABB early-out
+    // Composite shapes from spatial index
     var color = vec4(0.0);
-    let shape_end = draw.shape_start + draw.shape_count;
+    let base = tile_idx * MAX_SHAPES_PER_TILE;
 
-    for (var i: u32 = draw.shape_start; i < shape_end; i++) {
-        let shape = shapes[i];
+    for (var i: u32 = 0u; i < count; i++) {
+        let shape_idx = tile_shapes[base + i];
+        let shape = shapes[shape_idx];
 
-        // AABB check: skip if fragment is outside shape's screen bounds
+        // Per-pixel AABB check
         let shape_min = shape.bounds.xy * current_scale_factor;
         let shape_max = (shape.bounds.xy + shape.bounds.zw) * current_scale_factor;
         if screen_pos.x < shape_min.x || screen_pos.x > shape_max.x ||
@@ -1203,4 +1251,73 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     return color;
+}
+
+// ============================================================================
+// Compute Shader - Spatial Index Builder
+// ============================================================================
+
+@compute @workgroup_size(16, 16, 1)
+fn cs_build_index(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let col = gid.x;
+    let row = gid.y;
+
+    if col >= cs_uniforms.grid_cols || row >= cs_uniforms.grid_rows {
+        return;
+    }
+
+    let local_tile_idx = row * cs_uniforms.grid_cols + col;
+    let global_tile_idx = cs_uniforms.tile_base + local_tile_idx;
+    let tile_size = cs_uniforms.tile_size;
+
+    // Tile center in physical pixels (viewport-relative + bounds_origin)
+    let local_px = vec2(
+        (f32(col) + 0.5) * tile_size,
+        (f32(row) + 0.5) * tile_size,
+    );
+    let screen_px = local_px + cs_uniforms.bounds_origin;
+
+    // Convert to world coordinates
+    let world_pos = screen_px / (cs_uniforms.camera_zoom * cs_uniforms.scale_factor) - cs_uniforms.camera_position;
+
+    // Half-diagonal of tile in world space (conservative culling radius)
+    let tile_half_diag = tile_size * 0.70710678 / (cs_uniforms.camera_zoom * cs_uniforms.scale_factor);
+
+    var count: u32 = 0u;
+    let base = global_tile_idx * MAX_SHAPES_PER_TILE;
+
+    // Iterate only this prepare scope's shapes
+    let shape_end = cs_uniforms.shape_start + cs_uniforms.shape_count;
+    for (var i: u32 = cs_uniforms.shape_start; i < shape_end; i++) {
+        let shape = shapes[i];
+
+        // AABB pre-test in physical pixels
+        let shape_min_px = shape.bounds.xy * cs_uniforms.scale_factor;
+        let shape_max_px = (shape.bounds.xy + shape.bounds.zw) * cs_uniforms.scale_factor;
+        let tile_min_px = cs_uniforms.bounds_origin + vec2(f32(col) * tile_size, f32(row) * tile_size);
+        let tile_max_px = tile_min_px + vec2(tile_size);
+
+        if shape_max_px.x < tile_min_px.x || shape_min_px.x > tile_max_px.x ||
+           shape_max_px.y < tile_min_px.y || shape_min_px.y > tile_max_px.y {
+            continue;
+        }
+
+        // Full SDF evaluation at tile center (no approximations)
+        let result = evaluate_sdf(world_pos, shape);
+        let dist = result.dist;
+
+        var cull_dist = dist;
+        if shape.has_fill == 0u {
+            cull_dist = abs(dist);
+        }
+
+        if cull_dist - tile_half_diag <= shape.max_radius {
+            if count < MAX_SHAPES_PER_TILE {
+                cs_tile_shapes[base + count] = i;
+                count++;
+            }
+        }
+    }
+
+    cs_tile_counts[global_tile_idx] = count;
 }

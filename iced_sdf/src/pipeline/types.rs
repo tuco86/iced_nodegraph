@@ -10,9 +10,11 @@ use encase::ShaderType;
 /// Per-draw parameters stored in a storage buffer.
 ///
 /// Indexed by `instance_index` in the fragment shader so each
-/// draw call reads its own camera, shape range, and settings.
+/// draw call reads its own camera, shape range, and tile region.
 #[derive(Clone, Debug, ShaderType)]
 pub struct DrawData {
+    /// Widget bounds origin in physical pixels.
+    pub bounds_origin: glam::Vec2,
     /// Camera position (pan offset).
     pub camera_position: glam::Vec2,
     /// Camera zoom factor.
@@ -23,9 +25,37 @@ pub struct DrawData {
     pub time: f32,
     /// Debug flags.
     pub debug_flags: u32,
-    /// First shape index in the shapes buffer for this draw.
+    /// Tile grid columns for this draw.
+    pub grid_cols: u32,
+    /// Tile grid rows for this draw.
+    pub grid_rows: u32,
+    /// Offset into tile_counts/tile_shapes arrays.
+    pub tile_base: u32,
+    pub _pad0: u32,
+}
+
+/// Compute shader uniforms for spatial index construction.
+#[derive(Clone, Debug, ShaderType)]
+pub struct ComputeUniforms {
+    /// Widget bounds origin in physical pixels.
+    pub bounds_origin: glam::Vec2,
+    /// Camera position (pan offset).
+    pub camera_position: glam::Vec2,
+    /// Camera zoom factor.
+    pub camera_zoom: f32,
+    /// OS scale factor.
+    pub scale_factor: f32,
+    /// Tile grid columns.
+    pub grid_cols: u32,
+    /// Tile grid rows.
+    pub grid_rows: u32,
+    /// Tile size in physical pixels.
+    pub tile_size: f32,
+    /// Offset into tile_counts/tile_shapes for this dispatch.
+    pub tile_base: u32,
+    /// First shape index for this dispatch.
     pub shape_start: u32,
-    /// Number of shapes for this draw.
+    /// Number of shapes for this dispatch.
     pub shape_count: u32,
 }
 
@@ -173,13 +203,16 @@ impl Default for SdfLayer {
 impl Default for DrawData {
     fn default() -> Self {
         Self {
+            bounds_origin: glam::Vec2::ZERO,
             camera_position: glam::Vec2::ZERO,
             camera_zoom: 1.0,
             scale_factor: 1.0,
             time: 0.0,
             debug_flags: 0,
-            shape_start: 0,
-            shape_count: 0,
+            grid_cols: 0,
+            grid_rows: 0,
+            tile_base: 0,
+            _pad0: 0,
         }
     }
 }

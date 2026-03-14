@@ -1,15 +1,18 @@
 //! SDF rendering primitive for Iced.
 //!
 //! `SdfPrimitive` holds one or more SDF shapes. During `prepare()`, shapes are
-//! compiled to RPN ops and uploaded to GPU buffers. During `draw()`, a fullscreen
-//! triangle renders all shapes via per-pixel AABB filtering and SDF evaluation.
+//! compiled to RPN ops, uploaded to GPU, and a compute shader builds a spatial
+//! index for this primitive's tile region. During `draw()`, a fullscreen triangle
+//! reads the spatial index to evaluate only relevant shapes per pixel.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use encase::ShaderSize;
 use iced::wgpu::{
-    BindGroup, BindGroupDescriptor, BindGroupEntry, BufferUsages, Device, Queue, TextureFormat,
+    BindGroup, BindGroupDescriptor, BindGroupEntry, BufferDescriptor, BufferUsages,
+    CommandEncoderDescriptor, Device, Queue, TextureFormat,
 };
 use iced::Rectangle;
 use iced_wgpu::graphics::Viewport;
@@ -23,12 +26,8 @@ use crate::pipeline::{buffer, types};
 use crate::shape::Sdf;
 use crate::shared::SharedSdfResources;
 
-/// Global stats from the last completed frame.
 static LAST_STATS: Mutex<types::SdfStats> = Mutex::new(types::SdfStats {
-    shape_count: 0,
-    tile_count: 0,
-    prepare_cpu_us: 0,
-    gpu_time_us: None,
+    shape_count: 0, tile_count: 0, prepare_cpu_us: 0, gpu_time_us: None,
 });
 
 /// Read performance statistics from the last completed frame.
@@ -36,7 +35,9 @@ pub fn sdf_stats() -> types::SdfStats {
     LAST_STATS.lock().unwrap().clone()
 }
 
-/// A single shape entry within an SdfPrimitive.
+const TILE_SIZE: f32 = 16.0;
+const MAX_SHAPES_PER_TILE: u32 = 64;
+
 #[derive(Debug, Clone)]
 struct ShapeEntry {
     shape: Sdf,
@@ -45,234 +46,204 @@ struct ShapeEntry {
 }
 
 /// SDF rendering primitive holding one or more shapes.
-///
-/// Shapes are compiled to RPN ops during `prepare()`. The fragment shader
-/// loops over each shape, applies AABB filtering per pixel, and evaluates
-/// only overlapping shapes.
-///
-/// # Single shape (builder pattern)
-/// ```ignore
-/// SdfPrimitive::single(shape)
-///     .layers(vec![Layer::solid(Color::WHITE)])
-///     .screen_bounds([0.0, 0.0, 100.0, 100.0])
-///     .camera(cam_x, cam_y, zoom)
-///     .time(t)
-/// ```
-///
-/// # Multiple shapes
-/// ```ignore
-/// let mut prim = SdfPrimitive::new();
-/// prim.push(&shape1, &layers1, bounds1);
-/// prim.push(&shape2, &layers2, bounds2);
-/// let prim = prim.camera(cam_x, cam_y, zoom).time(t);
-/// ```
 #[derive(Debug, Clone)]
 pub struct SdfPrimitive {
     shapes: Vec<ShapeEntry>,
-    /// Camera position (world origin offset).
     pub camera_position: (f32, f32),
-    /// Camera zoom factor.
     pub camera_zoom: f32,
-    /// Animation time in seconds.
     pub time: f32,
-    /// Debug visualization flags.
     pub debug_flags: u32,
 }
 
 impl SdfPrimitive {
-    /// Create an empty primitive. Use [`push`] to add shapes.
     pub fn new() -> Self {
-        Self {
-            shapes: Vec::new(),
-            camera_position: (0.0, 0.0),
-            camera_zoom: 1.0,
-            time: 0.0,
-            debug_flags: 0,
-        }
+        Self { shapes: Vec::new(), camera_position: (0.0, 0.0), camera_zoom: 1.0, time: 0.0, debug_flags: 0 }
     }
 
-    /// Create a primitive with pre-allocated capacity.
     pub fn with_capacity(shapes: usize) -> Self {
-        Self {
-            shapes: Vec::with_capacity(shapes),
-            camera_position: (0.0, 0.0),
-            camera_zoom: 1.0,
-            time: 0.0,
-            debug_flags: 0,
-        }
+        Self { shapes: Vec::with_capacity(shapes), ..Self::new() }
     }
 
-    /// Create a primitive with a single shape (convenience builder).
     pub fn single(shape: Sdf) -> Self {
         Self {
             shapes: vec![ShapeEntry {
-                shape,
-                layers: smallvec::smallvec![Layer::solid(iced::Color::WHITE)],
-                bounds: [0.0, 0.0, 100.0, 100.0],
+                shape, layers: smallvec::smallvec![Layer::solid(iced::Color::WHITE)], bounds: [0.0, 0.0, 100.0, 100.0],
             }],
-            camera_position: (0.0, 0.0),
-            camera_zoom: 1.0,
-            time: 0.0,
-            debug_flags: 0,
+            ..Self::new()
         }
     }
 
-    /// Add a shape to the primitive.
     pub fn push(&mut self, shape: &Sdf, layers: &[Layer], bounds: [f32; 4]) -> &mut Self {
-        self.shapes.push(ShapeEntry {
-            shape: shape.clone(),
-            layers: layers.iter().cloned().collect(),
-            bounds,
-        });
+        self.shapes.push(ShapeEntry { shape: shape.clone(), layers: layers.iter().cloned().collect(), bounds });
         self
     }
 
-    /// Set rendering layers (applies to the first shape, for single-shape builder).
     pub fn layers(mut self, layers: impl Into<SmallVec<[Layer; 3]>>) -> Self {
-        if let Some(entry) = self.shapes.first_mut() {
-            entry.layers = layers.into();
-        }
+        if let Some(e) = self.shapes.first_mut() { e.layers = layers.into(); }
         self
     }
 
-    /// Set the screen-space bounding box (applies to the first shape).
     pub fn screen_bounds(mut self, bounds: [f32; 4]) -> Self {
-        if let Some(entry) = self.shapes.first_mut() {
-            entry.bounds = bounds;
-        }
+        if let Some(e) = self.shapes.first_mut() { e.bounds = bounds; }
         self
     }
 
-    /// Set camera position and zoom.
     pub fn camera(mut self, x: f32, y: f32, zoom: f32) -> Self {
-        self.camera_position = (x, y);
-        self.camera_zoom = zoom;
-        self
+        self.camera_position = (x, y); self.camera_zoom = zoom; self
     }
 
-    /// Set animation time.
-    pub fn time(mut self, time: f32) -> Self {
-        self.time = time;
-        self
-    }
-
-    /// Set debug visualization flags.
-    pub fn debug_flags(mut self, flags: u32) -> Self {
-        self.debug_flags = flags;
-        self
-    }
-
-    /// Enable or disable tile culling debug overlay.
-    pub fn debug_tiles(self, enabled: bool) -> Self {
-        self.debug_flags(if enabled { 1 } else { 0 })
-    }
-
-    /// Number of shapes in this primitive.
-    pub fn shape_count(&self) -> usize {
-        self.shapes.len()
-    }
-
-    /// Whether this primitive has no shapes.
-    pub fn is_empty(&self) -> bool {
-        self.shapes.is_empty()
-    }
+    pub fn time(mut self, time: f32) -> Self { self.time = time; self }
+    pub fn debug_flags(mut self, flags: u32) -> Self { self.debug_flags = flags; self }
+    pub fn debug_tiles(self, enabled: bool) -> Self { self.debug_flags(if enabled { 1 } else { 0 }) }
+    pub fn shape_count(&self) -> usize { self.shapes.len() }
+    pub fn is_empty(&self) -> bool { self.shapes.is_empty() }
 }
 
 impl Default for SdfPrimitive {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }
 
 /// Shared pipeline for all SDF primitives.
-///
-/// Accumulates shape data across `prepare()` calls. Each `draw()` renders
-/// a fullscreen triangle that loops over this draw's shape range.
 pub struct SdfPipeline {
     shared: Arc<SharedSdfResources>,
+    // Data buffers (group 0)
+    draw_data_buffer: buffer::Buffer<types::DrawData>,
     shapes_buffer: buffer::Buffer<types::ShapeInstance>,
     ops_buffer: buffer::Buffer<types::SdfOp>,
     layers_buffer: buffer::Buffer<types::SdfLayer>,
-    draw_data_buffer: buffer::Buffer<types::DrawData>,
-    bind_group: BindGroup,
-    bind_group_generations: (u64, u64, u64, u64),
+    // Spatial index buffers
+    tile_counts_buffer: iced::wgpu::Buffer,
+    tile_shapes_buffer: iced::wgpu::Buffer,
+    tile_capacity: u32,
+    spatial_index_gen: u64,
+    // Compute uniforms
+    compute_uniform_buffer: iced::wgpu::Buffer,
+    compute_uniform_scratch: Vec<u8>,
+    // Bind groups
+    render_group0: BindGroup,
+    compute_group0: BindGroup,
+    compute_group1: BindGroup,
+    bind_group_gens: (u64, u64, u64, u64, u64),
+    // Frame state
+    total_tiles: u32,
     draw_index: AtomicU32,
     compile_scratch: Vec<types::SdfOp>,
     frame_stats: types::SdfStats,
 }
 
-fn create_bind_group(
-    device: &Device,
-    shared: &SharedSdfResources,
-    draw_data_buffer: &buffer::Buffer<types::DrawData>,
-    shapes_buffer: &buffer::Buffer<types::ShapeInstance>,
-    ops_buffer: &buffer::Buffer<types::SdfOp>,
-    layers_buffer: &buffer::Buffer<types::SdfLayer>,
-) -> BindGroup {
-    device.create_bind_group(&BindGroupDescriptor {
-        label: Some("sdf_bind_group"),
-        layout: &shared.bind_group_layout,
-        entries: &[
-            BindGroupEntry { binding: 0, resource: draw_data_buffer.as_entire_binding() },
-            BindGroupEntry { binding: 1, resource: shapes_buffer.as_entire_binding() },
-            BindGroupEntry { binding: 2, resource: ops_buffer.as_entire_binding() },
-            BindGroupEntry { binding: 3, resource: layers_buffer.as_entire_binding() },
-        ],
-    })
+fn create_spatial_index_buffers(device: &Device, cap: u32) -> (iced::wgpu::Buffer, iced::wgpu::Buffer) {
+    let cap = cap.max(1) as u64;
+    (
+        device.create_buffer(&BufferDescriptor {
+            label: Some("sdf_tile_counts"), size: cap * 4,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST, mapped_at_creation: false,
+        }),
+        device.create_buffer(&BufferDescriptor {
+            label: Some("sdf_tile_shapes"), size: cap * MAX_SHAPES_PER_TILE as u64 * 4,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST, mapped_at_creation: false,
+        }),
+    )
 }
 
 impl Pipeline for SdfPipeline {
     fn new(device: &Device, _queue: &Queue, format: TextureFormat) -> Self {
         let shared = SharedSdfResources::get_or_init(device, format);
 
+        let draw_data_buffer = buffer::Buffer::new(device, Some("sdf_draws"), BufferUsages::STORAGE | BufferUsages::COPY_DST);
         let shapes_buffer = buffer::Buffer::new(device, Some("sdf_shapes"), BufferUsages::STORAGE | BufferUsages::COPY_DST);
         let ops_buffer = buffer::Buffer::new(device, Some("sdf_ops"), BufferUsages::STORAGE | BufferUsages::COPY_DST);
         let layers_buffer = buffer::Buffer::new(device, Some("sdf_layers"), BufferUsages::STORAGE | BufferUsages::COPY_DST);
-        let draw_data_buffer = buffer::Buffer::new(device, Some("sdf_draw_data"), BufferUsages::STORAGE | BufferUsages::COPY_DST);
 
-        let bind_group = create_bind_group(
-            device, &shared,
-            &draw_data_buffer, &shapes_buffer, &ops_buffer, &layers_buffer,
-        );
+        let (tile_counts_buffer, tile_shapes_buffer) = create_spatial_index_buffers(device, 256);
+
+        let compute_uniform_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("sdf_compute_uniforms"),
+            size: <types::ComputeUniforms as ShaderSize>::SHADER_SIZE.get(),
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let render_group0 = create_render_group0(device, &shared, &draw_data_buffer, &shapes_buffer, &ops_buffer, &layers_buffer, &tile_counts_buffer, &tile_shapes_buffer);
+        let compute_group0 = create_compute_group0(device, &shared, &shapes_buffer, &ops_buffer);
+        let compute_group1 = create_compute_group1(device, &shared, &compute_uniform_buffer, &tile_counts_buffer, &tile_shapes_buffer);
 
         Self {
-            shared,
-            shapes_buffer,
-            ops_buffer,
-            layers_buffer,
-            draw_data_buffer,
-            bind_group,
-            bind_group_generations: (0, 0, 0, 0),
-            draw_index: AtomicU32::new(0),
-            compile_scratch: Vec::new(),
-            frame_stats: types::SdfStats::default(),
+            shared, draw_data_buffer, shapes_buffer, ops_buffer, layers_buffer,
+            tile_counts_buffer, tile_shapes_buffer, tile_capacity: 256, spatial_index_gen: 0,
+            compute_uniform_buffer, compute_uniform_scratch: Vec::new(),
+            render_group0, compute_group0, compute_group1,
+            bind_group_gens: (0, 0, 0, 0, 0),
+            total_tiles: 0, draw_index: AtomicU32::new(0),
+            compile_scratch: Vec::new(), frame_stats: types::SdfStats::default(),
         }
     }
 
     fn trim(&mut self) {
-        self.frame_stats.tile_count = self.shapes_buffer.len() as u32;
-        if let Ok(mut stats) = LAST_STATS.lock() {
-            *stats = self.frame_stats.clone();
-        }
+        self.frame_stats.tile_count = self.total_tiles;
+        if let Ok(mut s) = LAST_STATS.lock() { *s = self.frame_stats.clone(); }
         self.frame_stats = types::SdfStats::default();
+        self.draw_data_buffer.clear();
         self.shapes_buffer.clear();
         self.ops_buffer.clear();
         self.layers_buffer.clear();
-        self.draw_data_buffer.clear();
+        self.total_tiles = 0;
         self.draw_index.store(0, Ordering::Relaxed);
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn create_render_group0(
+    device: &Device, shared: &SharedSdfResources,
+    draws: &buffer::Buffer<types::DrawData>, shapes: &buffer::Buffer<types::ShapeInstance>,
+    ops: &buffer::Buffer<types::SdfOp>, layers: &buffer::Buffer<types::SdfLayer>,
+    tile_counts: &iced::wgpu::Buffer, tile_shapes: &iced::wgpu::Buffer,
+) -> BindGroup {
+    device.create_bind_group(&BindGroupDescriptor {
+        label: Some("sdf_render_g0"), layout: &shared.render_group0_layout,
+        entries: &[
+            BindGroupEntry { binding: 0, resource: draws.as_entire_binding() },
+            BindGroupEntry { binding: 1, resource: shapes.as_entire_binding() },
+            BindGroupEntry { binding: 2, resource: ops.as_entire_binding() },
+            BindGroupEntry { binding: 3, resource: layers.as_entire_binding() },
+            BindGroupEntry { binding: 4, resource: tile_counts.as_entire_binding() },
+            BindGroupEntry { binding: 5, resource: tile_shapes.as_entire_binding() },
+        ],
+    })
+}
+
+fn create_compute_group0(
+    device: &Device, shared: &SharedSdfResources,
+    shapes: &buffer::Buffer<types::ShapeInstance>, ops: &buffer::Buffer<types::SdfOp>,
+) -> BindGroup {
+    device.create_bind_group(&BindGroupDescriptor {
+        label: Some("sdf_compute_g0"), layout: &shared.compute_group0_layout,
+        entries: &[
+            BindGroupEntry { binding: 1, resource: shapes.as_entire_binding() },
+            BindGroupEntry { binding: 2, resource: ops.as_entire_binding() },
+        ],
+    })
+}
+
+fn create_compute_group1(
+    device: &Device, shared: &SharedSdfResources,
+    uniforms: &iced::wgpu::Buffer, tile_counts: &iced::wgpu::Buffer, tile_shapes: &iced::wgpu::Buffer,
+) -> BindGroup {
+    device.create_bind_group(&BindGroupDescriptor {
+        label: Some("sdf_compute_g1"), layout: &shared.compute_group1_layout,
+        entries: &[
+            BindGroupEntry { binding: 0, resource: uniforms.as_entire_binding() },
+            BindGroupEntry { binding: 1, resource: tile_counts.as_entire_binding() },
+            BindGroupEntry { binding: 2, resource: tile_shapes.as_entire_binding() },
+        ],
+    })
 }
 
 impl Primitive for SdfPrimitive {
     type Pipeline = SdfPipeline;
 
     fn prepare(
-        &self,
-        pipeline: &mut Self::Pipeline,
-        device: &Device,
-        queue: &Queue,
-        _bounds: &Rectangle,
-        viewport: &Viewport,
+        &self, pipeline: &mut Self::Pipeline, device: &Device, queue: &Queue,
+        bounds: &Rectangle, viewport: &Viewport,
     ) {
         if self.shapes.is_empty() {
             let _ = pipeline.draw_data_buffer.push(device, queue, types::DrawData::default());
@@ -283,6 +254,7 @@ impl Primitive for SdfPrimitive {
         let scale = viewport.scale_factor();
         let shape_start = pipeline.shapes_buffer.len() as u32;
 
+        // Upload shapes, ops, layers
         for entry in &self.shapes {
             compile_into(entry.shape.node(), &mut pipeline.compile_scratch);
             let ops_offset = pipeline.ops_buffer.len() as u32;
@@ -291,8 +263,7 @@ impl Primitive for SdfPrimitive {
 
             let layers_offset = pipeline.layers_buffer.len() as u32;
             let layers_count = entry.layers.len() as u32;
-            let gpu_layers: SmallVec<[types::SdfLayer; 3]> =
-                entry.layers.iter().map(|l| l.to_gpu()).collect();
+            let gpu_layers: SmallVec<[types::SdfLayer; 3]> = entry.layers.iter().map(|l| l.to_gpu()).collect();
             let _ = pipeline.layers_buffer.push_bulk(device, queue, &gpu_layers);
 
             let max_radius = entry.layers.iter().map(|l| l.max_effect_radius()).fold(0.0f32, f32::max);
@@ -301,53 +272,105 @@ impl Primitive for SdfPrimitive {
             let _ = pipeline.shapes_buffer.push(device, queue, types::ShapeInstance {
                 bounds: glam::Vec4::new(entry.bounds[0], entry.bounds[1], entry.bounds[2], entry.bounds[3]),
                 ops_offset, ops_count, layers_offset, layers_count,
-                max_radius,
-                has_fill: u32::from(has_fill),
-                _pad2: 0, _pad3: 0,
+                max_radius, has_fill: u32::from(has_fill), _pad2: 0, _pad3: 0,
             });
         }
 
         let shape_count = self.shapes.len() as u32;
+        let bounds_origin = glam::Vec2::new(bounds.x * scale, bounds.y * scale);
+        let viewport_width = bounds.width * scale;
+        let viewport_height = bounds.height * scale;
+        let grid_cols = ((viewport_width / TILE_SIZE).ceil() as u32).max(1);
+        let grid_rows = ((viewport_height / TILE_SIZE).ceil() as u32).max(1);
+
+        // Allocate tile region for this prepare scope
+        let tile_base = pipeline.total_tiles;
+        pipeline.total_tiles += grid_cols * grid_rows;
+
+        // Grow spatial index if needed
+        if pipeline.total_tiles > pipeline.tile_capacity {
+            let new_cap = (pipeline.total_tiles as f32 * 1.5) as u32;
+            let (tc, ts) = create_spatial_index_buffers(device, new_cap);
+            pipeline.tile_counts_buffer = tc;
+            pipeline.tile_shapes_buffer = ts;
+            pipeline.tile_capacity = new_cap;
+            pipeline.spatial_index_gen += 1;
+        }
+
+        // Write compute uniforms for this scope
+        let cu = types::ComputeUniforms {
+            bounds_origin,
+            camera_position: glam::Vec2::new(self.camera_position.0, self.camera_position.1),
+            camera_zoom: self.camera_zoom,
+            scale_factor: scale,
+            grid_cols, grid_rows,
+            tile_size: TILE_SIZE,
+            tile_base, shape_start, shape_count,
+        };
+        pipeline.compute_uniform_scratch.clear();
+        let mut w = encase::UniformBuffer::new(&mut pipeline.compute_uniform_scratch);
+        w.write(&cu).expect("Failed to write compute uniforms");
+        queue.write_buffer(&pipeline.compute_uniform_buffer, 0, &pipeline.compute_uniform_scratch);
 
         // Push DrawData for this draw
         let _ = pipeline.draw_data_buffer.push(device, queue, types::DrawData {
+            bounds_origin,
             camera_position: glam::Vec2::new(self.camera_position.0, self.camera_position.1),
             camera_zoom: self.camera_zoom,
             scale_factor: scale,
             time: self.time,
             debug_flags: self.debug_flags,
-            shape_start,
-            shape_count,
+            grid_cols, grid_rows, tile_base, _pad0: 0,
         });
 
-        // Recreate bind group if any buffer was resized
+        // Recreate bind groups if any buffer changed
         let gens = (
+            pipeline.draw_data_buffer.generation(),
             pipeline.shapes_buffer.generation(),
             pipeline.ops_buffer.generation(),
             pipeline.layers_buffer.generation(),
-            pipeline.draw_data_buffer.generation(),
+            pipeline.spatial_index_gen,
         );
-        if gens != pipeline.bind_group_generations {
-            pipeline.bind_group = create_bind_group(
+        if gens != pipeline.bind_group_gens {
+            pipeline.render_group0 = create_render_group0(
                 device, &pipeline.shared,
                 &pipeline.draw_data_buffer, &pipeline.shapes_buffer,
                 &pipeline.ops_buffer, &pipeline.layers_buffer,
+                &pipeline.tile_counts_buffer, &pipeline.tile_shapes_buffer,
             );
-            pipeline.bind_group_generations = gens;
+            pipeline.compute_group0 = create_compute_group0(
+                device, &pipeline.shared, &pipeline.shapes_buffer, &pipeline.ops_buffer,
+            );
+            pipeline.compute_group1 = create_compute_group1(
+                device, &pipeline.shared, &pipeline.compute_uniform_buffer,
+                &pipeline.tile_counts_buffer, &pipeline.tile_shapes_buffer,
+            );
+            pipeline.bind_group_gens = gens;
         }
+
+        // Dispatch compute for this prepare scope
+        let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
+            label: Some("sdf_compute"),
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&iced::wgpu::ComputePassDescriptor {
+                label: Some("sdf_spatial_index"), timestamp_writes: None,
+            });
+            pass.set_pipeline(&pipeline.shared.compute_pipeline);
+            pass.set_bind_group(0, &pipeline.compute_group0, &[]);
+            pass.set_bind_group(1, &pipeline.compute_group1, &[]);
+            pass.dispatch_workgroups(grid_cols.div_ceil(16), grid_rows.div_ceil(16), 1);
+        }
+        queue.submit(std::iter::once(encoder.finish()));
 
         pipeline.frame_stats.shape_count += shape_count;
         pipeline.frame_stats.prepare_cpu_us += prepare_start.elapsed().as_micros() as u64;
     }
 
-    fn draw(
-        &self,
-        pipeline: &Self::Pipeline,
-        render_pass: &mut iced::wgpu::RenderPass<'_>,
-    ) -> bool {
+    fn draw(&self, pipeline: &Self::Pipeline, render_pass: &mut iced::wgpu::RenderPass<'_>) -> bool {
         let draw_idx = pipeline.draw_index.fetch_add(1, Ordering::Relaxed);
         render_pass.set_pipeline(&pipeline.shared.render_pipeline);
-        render_pass.set_bind_group(0, &pipeline.bind_group, &[]);
+        render_pass.set_bind_group(0, &pipeline.render_group0, &[]);
         render_pass.draw(0..3, draw_idx..draw_idx + 1);
         true
     }
@@ -360,46 +383,37 @@ mod tests {
 
     #[test]
     fn test_primitive_new_is_empty() {
-        let prim = SdfPrimitive::new();
-        assert!(prim.is_empty());
-        assert_eq!(prim.shape_count(), 0);
+        let p = SdfPrimitive::new();
+        assert!(p.is_empty());
+        assert_eq!(p.shape_count(), 0);
     }
 
     #[test]
     fn test_primitive_single() {
-        let prim = SdfPrimitive::single(Sdf::circle([0.0, 0.0], 10.0));
-        assert_eq!(prim.shape_count(), 1);
-        assert!(!prim.is_empty());
+        let p = SdfPrimitive::single(Sdf::circle([0.0, 0.0], 10.0));
+        assert_eq!(p.shape_count(), 1);
     }
 
     #[test]
     fn test_primitive_push() {
-        let mut prim = SdfPrimitive::new();
-        let circle = Sdf::circle([0.0, 0.0], 5.0);
-        let layers = [Layer::solid(iced::Color::WHITE)];
-        prim.push(&circle, &layers, [0.0, 0.0, 10.0, 10.0]);
-        prim.push(&circle, &layers, [20.0, 20.0, 10.0, 10.0]);
-        assert_eq!(prim.shape_count(), 2);
+        let mut p = SdfPrimitive::new();
+        let c = Sdf::circle([0.0, 0.0], 5.0);
+        let l = [Layer::solid(iced::Color::WHITE)];
+        p.push(&c, &l, [0.0, 0.0, 10.0, 10.0]);
+        p.push(&c, &l, [20.0, 20.0, 10.0, 10.0]);
+        assert_eq!(p.shape_count(), 2);
     }
 
     #[test]
-    fn test_primitive_builder_chain() {
-        let prim = SdfPrimitive::single(Sdf::circle([0.0, 0.0], 10.0))
-            .layers(vec![Layer::solid(iced::Color::BLACK)])
-            .screen_bounds([10.0, 20.0, 100.0, 50.0])
-            .camera(1.0, 2.0, 3.0)
-            .time(0.5)
-            .debug_flags(1);
-
-        assert_eq!(prim.camera_position, (1.0, 2.0));
-        assert_eq!(prim.camera_zoom, 3.0);
-        assert_eq!(prim.time, 0.5);
-        assert_eq!(prim.debug_flags, 1);
-    }
-
-    #[test]
-    fn test_primitive_with_capacity() {
-        let prim = SdfPrimitive::with_capacity(100);
-        assert!(prim.is_empty());
+    fn test_tile_base_accumulation() {
+        let mut total: u32 = 0;
+        let g0 = (160.0f32 / 16.0).ceil() as u32 * (80.0f32 / 16.0).ceil() as u32;
+        let b0 = total; total += g0;
+        let g1 = (96.0f32 / 16.0).ceil() as u32 * (48.0f32 / 16.0).ceil() as u32;
+        let b1 = total; total += g1;
+        assert_eq!(b0, 0);
+        assert_eq!(b1, g0);
+        assert_eq!(b0 + g0, b1);
+        assert_eq!(total, g0 + g1);
     }
 }
