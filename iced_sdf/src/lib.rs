@@ -57,5 +57,5 @@ pub use batch::SdfBatch;
 pub use eval::{evaluate, SdfResult};
 pub use layer::Layer;
 pub use pattern::Pattern;
-pub use primitive::SdfPrimitive;
+pub use primitive::{SdfBatchPrimitive, SdfPrimitive};
 pub use shape::{Sdf, SdfNode};

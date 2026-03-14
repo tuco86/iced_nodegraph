@@ -18,6 +18,7 @@ use iced_wgpu::primitive::{Pipeline, Primitive};
 
 use smallvec::SmallVec;
 
+use crate::batch::SdfBatch;
 use crate::compile::compile_into;
 use crate::eval;
 use crate::layer::Layer;
@@ -428,6 +429,164 @@ impl Primitive for SdfPrimitive {
         render_pass.set_pipeline(&pipeline.shared.render_pipeline);
         render_pass.set_bind_group(0, &pipeline.bind_group, &[]);
         // Draw all tiles for this shape as instanced quads
+        render_pass.draw(0..6, slot..slot + tile_count);
+
+        true
+    }
+}
+
+/// A batch of SDF shapes rendered in a single draw call.
+///
+/// Uses the same [`SdfPipeline`] as [`SdfPrimitive`], sharing GPU buffers.
+/// All shapes in the batch are drawn with one instanced draw call, avoiding
+/// per-shape pipeline/bind-group overhead.
+#[derive(Debug)]
+pub struct SdfBatchPrimitive {
+    /// The collected batch of shapes.
+    pub batch: SdfBatch,
+    /// Camera position (world origin offset).
+    pub camera_position: (f32, f32),
+    /// Camera zoom factor.
+    pub camera_zoom: f32,
+    /// Animation time in seconds.
+    pub time: f32,
+    /// Debug visualization flags.
+    pub debug_flags: u32,
+}
+
+impl SdfBatchPrimitive {
+    /// Create a new batch primitive.
+    pub fn new(batch: SdfBatch) -> Self {
+        Self {
+            batch,
+            camera_position: (0.0, 0.0),
+            camera_zoom: 1.0,
+            time: 0.0,
+            debug_flags: 0,
+        }
+    }
+
+    /// Set camera position and zoom.
+    pub fn camera(mut self, x: f32, y: f32, zoom: f32) -> Self {
+        self.camera_position = (x, y);
+        self.camera_zoom = zoom;
+        self
+    }
+
+    /// Set animation time.
+    pub fn time(mut self, time: f32) -> Self {
+        self.time = time;
+        self
+    }
+}
+
+impl Primitive for SdfBatchPrimitive {
+    type Pipeline = SdfPipeline;
+
+    fn prepare(
+        &self,
+        pipeline: &mut Self::Pipeline,
+        device: &Device,
+        queue: &Queue,
+        bounds: &Rectangle,
+        viewport: &Viewport,
+    ) {
+        let shape_count = self.batch.shape_count() as u32;
+
+        if shape_count == 0 {
+            pipeline.tile_counts.push(0);
+            return;
+        }
+
+        // Upload batch to shared pipeline buffers (handles offset adjustment)
+        self.batch.upload(
+            &mut pipeline.shapes_buffer,
+            &mut pipeline.ops_buffer,
+            &mut pipeline.layers_buffer,
+            device,
+            queue,
+        );
+
+        // Each shape = 1 instance (no tiling in batch mode)
+        pipeline.tile_counts.push(shape_count);
+
+        // Write uniforms
+        let scale = viewport.scale_factor();
+        let uniforms = types::Uniforms {
+            bounds_origin: glam::Vec2::new(bounds.x * scale, bounds.y * scale),
+            bounds_size: glam::Vec2::new(bounds.width * scale, bounds.height * scale),
+            camera_position: glam::Vec2::new(
+                self.camera_position.0,
+                self.camera_position.1,
+            ),
+            camera_zoom: self.camera_zoom,
+            scale_factor: scale,
+            time: self.time,
+            num_ops: pipeline.ops_buffer.len() as u32,
+            num_layers: pipeline.layers_buffer.len() as u32,
+            debug_flags: self.debug_flags,
+        };
+
+        pipeline.uniform_scratch.clear();
+        let mut uniform_writer = encase::UniformBuffer::new(&mut pipeline.uniform_scratch);
+        uniform_writer
+            .write(&uniforms)
+            .expect("Failed to write uniforms");
+        queue.write_buffer(&pipeline.uniform_buffer, 0, &pipeline.uniform_scratch);
+
+        // Recreate bind group if any buffer was resized
+        let current_generations = (
+            pipeline.shapes_buffer.generation(),
+            pipeline.ops_buffer.generation(),
+            pipeline.layers_buffer.generation(),
+        );
+        if current_generations != pipeline.bind_group_generations {
+            pipeline.bind_group = device.create_bind_group(&BindGroupDescriptor {
+                label: Some("sdf_bind_group"),
+                layout: &pipeline.shared.bind_group_layout,
+                entries: &[
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: pipeline.uniform_buffer.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 1,
+                        resource: pipeline.shapes_buffer.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 2,
+                        resource: pipeline.ops_buffer.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 3,
+                        resource: pipeline.layers_buffer.as_entire_binding(),
+                    },
+                ],
+            });
+            pipeline.bind_group_generations = current_generations;
+        }
+    }
+
+    fn draw(
+        &self,
+        pipeline: &Self::Pipeline,
+        render_pass: &mut iced::wgpu::RenderPass<'_>,
+    ) -> bool {
+        let index = pipeline.draw_index.fetch_add(1, Ordering::Relaxed) as usize;
+        let tile_count = pipeline
+            .tile_counts
+            .get(index)
+            .copied()
+            .unwrap_or(0);
+
+        if tile_count == 0 {
+            return true;
+        }
+
+        let slot: u32 = pipeline.tile_counts[..index].iter().sum();
+
+        render_pass.set_pipeline(&pipeline.shared.render_pipeline);
+        render_pass.set_bind_group(0, &pipeline.bind_group, &[]);
         render_pass.draw(0..6, slot..slot + tile_count);
 
         true

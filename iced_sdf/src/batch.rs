@@ -124,8 +124,9 @@ impl SdfBatch {
 
     /// Upload the batch contents to GPU pipeline buffers using bulk writes.
     ///
-    /// This is the efficient path for submitting a pre-built batch to the
-    /// pipeline. Uses `push_bulk` for single-write-per-buffer uploads.
+    /// Adjusts shape offsets to account for existing data in the pipeline
+    /// buffers, so batches can be uploaded to non-empty pipelines shared
+    /// with other primitives.
     pub fn upload(
         &self,
         shapes_buffer: &mut crate::pipeline::Buffer<ShapeInstance>,
@@ -137,9 +138,27 @@ impl SdfBatch {
         if self.is_empty() {
             return;
         }
+
+        // Record base offsets before pushing
+        let ops_base = ops_buffer.len() as u32;
+        let layers_base = layers_buffer.len() as u32;
+
         let _ = ops_buffer.push_bulk(device, queue, &self.ops);
         let _ = layers_buffer.push_bulk(device, queue, &self.layers);
-        let _ = shapes_buffer.push_bulk(device, queue, &self.shapes);
+
+        // Adjust shape offsets to pipeline-global positions
+        let adjusted: Vec<ShapeInstance> = self
+            .shapes
+            .iter()
+            .map(|s| ShapeInstance {
+                bounds: s.bounds,
+                ops_offset: s.ops_offset + ops_base,
+                ops_count: s.ops_count,
+                layers_offset: s.layers_offset + layers_base,
+                layers_count: s.layers_count,
+            })
+            .collect();
+        let _ = shapes_buffer.push_bulk(device, queue, &adjusted);
     }
 }
 

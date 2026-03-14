@@ -35,7 +35,7 @@ use crate::{
     node_pin::NodePinState,
     style::{EdgeConfig, EdgeStatus, EdgeStyle, GraphStyle, NodeConfig, NodeStatus, NodeStyle, PinConfig, PinStatus, PinStyle},
 };
-use iced_sdf::{Layer, Pattern, Sdf, SdfPrimitive};
+use iced_sdf::{Layer, Pattern, Sdf, SdfBatch, SdfBatchPrimitive, SdfPrimitive};
 
 use iced::Color;
 
@@ -540,26 +540,22 @@ where
         };
 
         // ========================================
-        // Layer 2: Edges (behind nodes)
+        // Layer 2: Edges (batched into single draw call)
         // ========================================
-        renderer.with_layer(layout.bounds(), |renderer| {
-            // Extract pending_cuts if in EdgeCutting mode
+        let edge_batch = {
+            let mut batch = SdfBatch::with_capacity(self.edges.len(), self.edges.len() * 4, self.edges.len() * 4);
             let pending_cuts = match &state.dragging {
                 Dragging::EdgeCutting { pending_cuts, .. } => Some(pending_cuts),
                 _ => None,
             };
 
-            // Render static edges
             for (edge_idx, (from, to, edge_config)) in self.edges.iter().enumerate() {
-                // Resolve node IDs to indices
                 let Some(from_node_idx) = self.id_maps.nodes.index(&from.node_id) else {
                     continue;
                 };
                 let Some(to_node_idx) = self.id_maps.nodes.index(&to.node_id) else {
                     continue;
                 };
-
-                // Get tree/layout for each node
                 let Some(from_node_tree) = tree.children.get(from_node_idx) else {
                     continue;
                 };
@@ -573,11 +569,9 @@ where
                     continue;
                 };
 
-                // Compute drag offsets for both nodes
                 let from_offset = compute_node_offset(from_node_idx);
                 let to_offset = compute_node_offset(to_node_idx);
 
-                // Find pins by matching pin_id hash
                 let from_pin_hash = compute_pin_hash(&from.pin_id);
                 let from_pins = find_pins(from_node_tree, from_node_layout);
                 let Some((_, from_pin_state, (from_pin_pos, _))) = from_pins
@@ -596,18 +590,15 @@ where
                     continue;
                 };
 
-                // Apply drag offsets to pin positions
                 let start_pos = (from_pin_pos.into_euclid().to_vector() + from_offset).to_point();
                 let end_pos = (to_pin_pos.into_euclid().to_vector() + to_offset).to_point();
 
-                // Determine edge status (PendingCut if in cutting mode and intersecting)
                 let edge_status = if pending_cuts.is_some_and(|cuts| cuts.contains(&edge_idx)) {
                     EdgeStatus::PendingCut
                 } else {
                     EdgeStatus::Idle
                 };
 
-                // Resolve base style from config, then apply style_fn for status-based modifications
                 let base_style = resolve_edge_style(edge_config, theme);
                 let edge_style = if let Some(ref style_fn) = self.edge_style_fn {
                     style_fn(theme, edge_status, base_style)
@@ -634,11 +625,17 @@ where
                     &edge_style, &render_context,
                 );
 
+                batch.push(&shape, &sdf_layers, bounds);
+            }
+            batch
+        };
+
+        renderer.with_layer(layout.bounds(), |renderer| {
+            // Batched static edges (single draw call)
+            if !edge_batch.is_empty() {
                 renderer.draw_primitive(
                     layout.bounds(),
-                    SdfPrimitive::new(shape)
-                        .layers(sdf_layers)
-                        .screen_bounds(bounds)
+                    SdfBatchPrimitive::new(edge_batch)
                         .camera(
                             render_context.camera_position.x,
                             render_context.camera_position.y,
@@ -648,7 +645,7 @@ where
                 );
             }
 
-            // Render dragging edge if actively dragging (but not when snapped - EdgeOver)
+            // Dragging edge (single primitive, only during interaction)
             if let Dragging::Edge(from_node_idx, from_pin_idx, _) = &state.dragging
                 && let Some(cursor_pos) = cursor.position()
                 && let (Some(from_tree), Some(from_layout)) = (
@@ -658,31 +655,24 @@ where
             {
                 let from_pins = find_pins(from_tree, from_layout);
                 if let Some((_, from_pin_state, (from_pin_pos, _))) = from_pins.get(*from_pin_idx) {
-                    // Apply drag offset to source pin
                     let from_offset = compute_node_offset(*from_node_idx);
                     let start_pos =
                         (from_pin_pos.into_euclid().to_vector() + from_offset).to_point();
-
-                    // End position is cursor in world coordinates
                     let end_pos: WorldPoint = camera
                         .screen_to_world()
                         .transform_point(cursor_pos.into_euclid());
 
-                    // Use global edge_defaults if set, otherwise fall back to EdgeConfig::default()
                     let default_edge_config = EdgeConfig::default();
                     let drag_edge_config = self.edge_defaults.as_ref().unwrap_or(&default_edge_config);
                     let drag_edge_style = resolve_edge_style(drag_edge_config, theme);
 
-                    // Compute opposite side for end
                     let end_side: u32 = match from_pin_state.side {
-                        PinSide::Left => 1,   // Right
-                        PinSide::Right => 0,  // Left
-                        PinSide::Top => 3,    // Bottom
-                        PinSide::Bottom => 2, // Top
-                        PinSide::Row => 1,    // Default to Right
+                        PinSide::Left => 1,
+                        PinSide::Right => 0,
+                        PinSide::Top => 3,
+                        PinSide::Bottom => 2,
+                        PinSide::Row => 1,
                     };
-
-                    // Compute opposite direction for end
                     let end_direction = match from_pin_state.direction {
                         PinDirection::Input => PinDirection::Output,
                         PinDirection::Output => PinDirection::Input,
@@ -726,8 +716,78 @@ where
         });
 
         // ========================================
-        // Layers 3..N: Nodes (each node gets 3 sub-layers)
-        // For each node: Background → Widgets → Foreground
+        // Layer 3: Node shadows (batched)
+        // ========================================
+        {
+            let mut shadow_batch = SdfBatch::new();
+            let cam_x = render_context.camera_position.x;
+            let cam_y = render_context.camera_position.y;
+            let cam_zoom = render_context.camera_zoom;
+
+            for (node_index, ((_position, _element, node_style), node_layout)) in self
+                .nodes
+                .iter()
+                .zip(layout.children())
+                .enumerate()
+            {
+                let is_selected = state.selected_nodes.contains(&node_index);
+                let node_status = if is_selected { NodeStatus::Selected } else { NodeStatus::Idle };
+                let base_style = resolve_node_style(node_style, theme);
+                let resolved = if let Some(ref style_fn) = self.node_style_fn {
+                    std::borrow::Cow::Owned(style_fn(theme, node_status, base_style))
+                } else {
+                    base_style.for_status(node_status, selection_style)
+                };
+
+                let Some(shadow) = &resolved.shadow else { continue };
+                if shadow.color.a <= 0.0 || shadow.blur <= 0.0 { continue; }
+
+                let offset = compute_node_offset(node_index);
+                let node_position: WorldPoint =
+                    (node_layout.bounds().position().into_euclid().to_vector() + offset).to_point();
+                let node_size = node_layout.bounds().size();
+                let node_center = [
+                    node_position.x + node_size.width * 0.5,
+                    node_position.y + node_size.height * 0.5,
+                ];
+                let node_half_size = [node_size.width * 0.5, node_size.height * 0.5];
+                let corner_radius = resolved.corner_radius;
+                let opacity = resolved.opacity;
+
+                let sc = [
+                    node_center[0] + shadow.offset.0,
+                    node_center[1] + shadow.offset.1,
+                ];
+                let pad = shadow.blur * 1.5;
+                let sb = world_bbox_to_screen_bounds(
+                    sc[0] - node_half_size[0], sc[1] - node_half_size[1],
+                    sc[0] + node_half_size[0], sc[1] + node_half_size[1],
+                    pad, &render_context,
+                );
+                let shadow_shape = Sdf::rounded_box(sc, node_half_size, corner_radius);
+                let shadow_layers = [
+                    Layer::solid(color_with_opacity(shadow.color, opacity))
+                        .expand(shadow.blur * 0.5)
+                        .blur(shadow.blur),
+                ];
+                shadow_batch.push(&shadow_shape, &shadow_layers, sb);
+            }
+
+            if !shadow_batch.is_empty() {
+                renderer.with_layer(layout.bounds(), |renderer| {
+                    renderer.draw_primitive(
+                        layout.bounds(),
+                        SdfBatchPrimitive::new(shadow_batch)
+                            .camera(cam_x, cam_y, cam_zoom)
+                            .time(render_context.time),
+                    );
+                });
+            }
+        }
+
+        // ========================================
+        // Layers 4..N: Nodes (each node gets 3 sub-layers)
+        // For each node: Fill → Widgets → Foreground (border + pins batched)
         // ========================================
         for (node_index, (((_position, element, node_style), node_tree), node_layout)) in self
             .nodes
@@ -737,58 +797,21 @@ where
             .enumerate()
         {
             let is_selected = state.selected_nodes.contains(&node_index);
+            let offset = compute_node_offset(node_index);
 
-            // Compute drag offset
-            let offset = {
-                let mut offset = WorldVector::zero();
-
-                // Single node drag
-                if let (Dragging::Node(drag_idx, origin), Some(cursor_pos)) =
-                    (&state.dragging, cursor.position())
-                    && *drag_idx == node_index {
-                        let cursor_world: WorldPoint = camera
-                            .screen_to_world()
-                            .transform_point(cursor_pos.into_euclid());
-                        offset = cursor_world - *origin;
-                    }
-
-                // Group move
-                if let (Dragging::GroupMove(origin), Some(cursor_pos)) =
-                    (&state.dragging, cursor.position())
-                    && is_selected {
-                        let cursor_world: WorldPoint = camera
-                            .screen_to_world()
-                            .transform_point(cursor_pos.into_euclid());
-                        offset = cursor_world - *origin;
-                    }
-
-                offset
-            };
-
-            // Determine node status
             let node_status = if is_selected {
                 NodeStatus::Selected
             } else {
                 NodeStatus::Idle
             };
 
-            // Resolve base style from config, then apply style_fn for status-based modifications
             let base_style = resolve_node_style(node_style, theme);
             let resolved = if let Some(ref style_fn) = self.node_style_fn {
                 std::borrow::Cow::Owned(style_fn(theme, node_status, base_style))
             } else {
-                // Fallback: apply selection styling from graph style
                 base_style.for_status(node_status, selection_style)
             };
 
-            let (shadow_offset, shadow_blur, shadow_color) = if let Some(shadow) = &resolved.shadow
-            {
-                (shadow.offset, shadow.blur, shadow.color)
-            } else {
-                ((0.0, 0.0), 0.0, iced::Color::TRANSPARENT)
-            };
-
-            // Extract border thickness for clipping
             let border_width = resolved.border.as_ref()
                 .map(|b| b.pattern.thickness)
                 .unwrap_or(0.0);
@@ -807,35 +830,8 @@ where
             let cam_y = render_context.camera_position.y;
             let cam_zoom = render_context.camera_zoom;
 
-            // Layer 3a: Node Background (shadow + fill)
+            // Layer 4a: Node Fill
             renderer.with_layer(layout.bounds(), |renderer| {
-                // Shadow (separate primitive due to offset)
-                if shadow_color.a > 0.0 && shadow_blur > 0.0 {
-                    let sc = [
-                        node_center[0] + shadow_offset.0,
-                        node_center[1] + shadow_offset.1,
-                    ];
-                    let pad = shadow_blur * 1.5;
-                    let sb = world_bbox_to_screen_bounds(
-                        sc[0] - node_half_size[0], sc[1] - node_half_size[1],
-                        sc[0] + node_half_size[0], sc[1] + node_half_size[1],
-                        pad, &render_context,
-                    );
-                    renderer.draw_primitive(
-                        layout.bounds(),
-                        SdfPrimitive::new(Sdf::rounded_box(sc, node_half_size, corner_radius))
-                            .layers(vec![
-                                Layer::solid(color_with_opacity(shadow_color, opacity))
-                                    .expand(shadow_blur * 0.5)
-                                    .blur(shadow_blur),
-                            ])
-                            .screen_bounds(sb)
-                            .camera(cam_x, cam_y, cam_zoom)
-                            .time(render_context.time),
-                    );
-                }
-
-                // Fill
                 let fill_pad = 2.0 / cam_zoom;
                 let fb = world_bbox_to_screen_bounds(
                     node_position.x, node_position.y,
@@ -854,7 +850,7 @@ where
                 );
             });
 
-            // Layer 3b: Node Widgets
+            // Layer 4b: Node Widgets
             renderer.with_layer(layout.bounds(), |renderer| {
                 camera.draw_with::<_, Renderer>(
                     renderer,
@@ -887,8 +883,14 @@ where
                 );
             });
 
-            // Layer 3c: Node Foreground (border + pins)
-            renderer.with_layer(layout.bounds(), |renderer| {
+            // Layer 4c: Node Foreground (border + pins batched)
+            let pins = find_pins(node_tree, node_layout);
+            let has_border = resolved.border.as_ref().is_some_and(|b| b.pattern.thickness > 0.0);
+            let has_pins = !pins.is_empty();
+
+            if has_border || has_pins {
+                let mut fg_batch = SdfBatch::with_capacity(pins.len() + 1, pins.len() * 2 + 4, pins.len() * 2 + 4);
+
                 // Border
                 if let Some(node_border) = &resolved.border {
                     let bw = node_border.pattern.thickness;
@@ -901,8 +903,6 @@ where
                         );
 
                         let mut border_layers = Vec::new();
-
-                        // Outline (behind border)
                         if let Some((ow, oc)) = node_border.outline
                             && ow > 0.0 && oc.a > 0.0
                         {
@@ -913,8 +913,6 @@ where
                                 ),
                             );
                         }
-
-                        // Border stroke
                         border_layers.push(
                             Layer::stroke(
                                 color_with_opacity(node_border.color, opacity),
@@ -922,20 +920,13 @@ where
                             ),
                         );
 
-                        renderer.draw_primitive(
-                            layout.bounds(),
-                            SdfPrimitive::new(Sdf::rounded_box(node_center, node_half_size, corner_radius).onion(bw * 0.5))
-                                .layers(border_layers)
-                                .screen_bounds(bb)
-                                .camera(cam_x, cam_y, cam_zoom)
-                                .time(render_context.time),
-                        );
+                        let border_shape = Sdf::rounded_box(node_center, node_half_size, corner_radius).onion(bw * 0.5);
+                        fg_batch.push(&border_shape, &border_layers, bb);
                     }
                 }
 
-                // Pins (all shapes positioned in world space, same camera as everything else)
-                for (_pin_idx, (_pin_index, pin_state, (pin_pos, _))) in find_pins(node_tree, node_layout).iter().enumerate() {
-                    let pin_idx = _pin_idx;
+                // Pins
+                for (pin_idx, (_pin_index, pin_state, (pin_pos, _))) in pins.iter().enumerate() {
                     let is_valid_target = is_edge_dragging
                         && state.valid_drop_targets.contains(&(node_index, pin_idx));
                     let pin_status = if is_valid_target { PinStatus::ValidTarget } else { PinStatus::Idle };
@@ -952,14 +943,10 @@ where
                     let pin_color = pin_state.color;
                     let pw = [pin_world.x, pin_world.y];
 
-                    // All shapes positioned at pin's world coordinates
-                    // Diamond/Triangle fall back to circle (no center param in iced_sdf)
                     let pin_shape = match pin_style.shape {
                         crate::style::PinShape::Square => Sdf::rect(pw, [indicator_r * 0.7, indicator_r * 0.7]),
                         _ => Sdf::circle(pw, indicator_r),
                     };
-
-                    // For input pins, make hollow (onion ring)
                     let pin_shape = if pin_state.direction == PinDirection::Input {
                         pin_shape.onion(indicator_r * 0.4)
                     } else {
@@ -967,15 +954,11 @@ where
                     };
 
                     let mut pin_layers = Vec::new();
-
-                    // Border layer (behind fill)
                     if pin_border_color.a > 0.0 && pin_border_width > 0.0 {
                         pin_layers.push(
                             Layer::solid(pin_border_color).expand(pin_border_width),
                         );
                     }
-
-                    // Fill layer
                     pin_layers.push(Layer::solid(pin_color));
 
                     let pin_pad = indicator_r + pin_border_width + 2.0 / cam_zoom;
@@ -985,16 +968,18 @@ where
                         0.0, &render_context,
                     );
 
+                    fg_batch.push(&pin_shape, &pin_layers, pin_bounds);
+                }
+
+                renderer.with_layer(layout.bounds(), |renderer| {
                     renderer.draw_primitive(
                         layout.bounds(),
-                        SdfPrimitive::new(pin_shape)
-                            .layers(pin_layers)
-                            .screen_bounds(pin_bounds)
+                        SdfBatchPrimitive::new(fg_batch)
                             .camera(cam_x, cam_y, cam_zoom)
                             .time(render_context.time),
                     );
-                }
-            });
+                });
+            }
         }
 
         // ========================================
