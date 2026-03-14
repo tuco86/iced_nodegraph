@@ -12,8 +12,8 @@ use crate::shape::Sdf;
 /// A collected batch of SDF shapes ready for GPU submission.
 ///
 /// Shapes are compiled into flat ops/layers buffers with per-shape offsets.
-/// Call [`push`] to add shapes, then pass the batch to an [`SdfBatchPrimitive`]
-/// for rendering.
+/// Call [`push`] to add shapes. Use [`SdfPrimitive::push`] directly for
+/// rendering multiple shapes in one primitive.
 #[derive(Debug, Clone)]
 pub struct SdfBatch {
     /// Per-shape instance data (bounds + buffer offsets).
@@ -98,6 +98,7 @@ impl SdfBatch {
             ops_count,
             layers_offset,
             layers_count,
+            ..Default::default()
         });
 
         index
@@ -197,6 +198,7 @@ impl SdfBatch {
                 ops_count: s.ops_count,
                 layers_offset: s.layers_offset + layers_base,
                 layers_count: s.layers_count,
+                ..*s
             })
             .collect();
         let _ = shapes_buffer.push_bulk(device, queue, &adjusted);

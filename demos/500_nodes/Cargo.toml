@@ -25,6 +25,7 @@ wasm = [
 
 [dependencies]
 iced_nodegraph.workspace = true
+iced_sdf.workspace = true
 # webgl feature adds WebGL2 fallback for browsers without WebGPU (ignored on native)
 iced = { workspace = true, features = ["advanced", "wgpu", "tokio", "webgl"] }
 

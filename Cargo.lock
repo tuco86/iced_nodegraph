@@ -670,6 +670,7 @@ dependencies = [
  "console_error_panic_hook",
  "iced",
  "iced_nodegraph",
+ "iced_sdf",
  "wasm-bindgen",
  "web-sys",
 ]

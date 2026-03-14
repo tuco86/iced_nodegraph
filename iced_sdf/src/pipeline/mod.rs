@@ -6,4 +6,4 @@ pub mod buffer;
 pub mod types;
 
 pub use buffer::Buffer;
-pub use types::{SdfLayer, SdfOp, ShapeInstance, Uniforms};
+pub use types::{DrawData, SdfLayer, SdfOp, ShapeInstance};

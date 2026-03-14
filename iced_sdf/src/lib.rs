@@ -15,7 +15,7 @@
 //! // Each SdfPrimitive is submitted individually via renderer.draw_primitive().
 //! // Iced's pipeline automatically batches them into shared GPU buffers.
 //!
-//! let node = SdfPrimitive::new(
+//! let node = SdfPrimitive::single(
 //!     Sdf::rounded_box([50.0, 25.0], [50.0, 25.0], 8.0),
 //! )
 //! .layers(vec![
@@ -57,5 +57,6 @@ pub use batch::SdfBatch;
 pub use eval::{evaluate, SdfResult};
 pub use layer::Layer;
 pub use pattern::Pattern;
-pub use primitive::{SdfBatchPrimitive, SdfPrimitive};
+pub use pipeline::types::SdfStats;
+pub use primitive::{SdfPrimitive, sdf_stats};
 pub use shape::{Sdf, SdfNode};

@@ -35,7 +35,7 @@ use crate::{
     node_pin::NodePinState,
     style::{EdgeConfig, EdgeStatus, EdgeStyle, GraphStyle, NodeConfig, NodeStatus, NodeStyle, PinConfig, PinStatus, PinStyle},
 };
-use iced_sdf::{Layer, Pattern, Sdf, SdfBatch, SdfBatchPrimitive, SdfPrimitive};
+use iced_sdf::{Layer, Pattern, Sdf, SdfPrimitive};
 
 use iced::Color;
 
@@ -543,7 +543,7 @@ where
         // Layer 2: Edges (batched into single draw call)
         // ========================================
         let edge_batch = {
-            let mut batch = SdfBatch::with_capacity(self.edges.len(), self.edges.len() * 4, self.edges.len() * 4);
+            let mut batch = SdfPrimitive::with_capacity(self.edges.len());
             let pending_cuts = match &state.dragging {
                 Dragging::EdgeCutting { pending_cuts, .. } => Some(pending_cuts),
                 _ => None,
@@ -635,7 +635,7 @@ where
             if !edge_batch.is_empty() {
                 renderer.draw_primitive(
                     layout.bounds(),
-                    SdfBatchPrimitive::new(edge_batch)
+                    edge_batch
                         .camera(
                             render_context.camera_position.x,
                             render_context.camera_position.y,
@@ -701,7 +701,7 @@ where
 
                     renderer.draw_primitive(
                         layout.bounds(),
-                        SdfPrimitive::new(shape)
+                        SdfPrimitive::single(shape)
                             .layers(sdf_layers)
                             .screen_bounds(bounds)
                             .camera(
@@ -719,7 +719,7 @@ where
         // Layer 3: Node shadows (batched)
         // ========================================
         {
-            let mut shadow_batch = SdfBatch::new();
+            let mut shadow_batch = SdfPrimitive::new();
             let cam_x = render_context.camera_position.x;
             let cam_y = render_context.camera_position.y;
             let cam_zoom = render_context.camera_zoom;
@@ -777,7 +777,7 @@ where
                 renderer.with_layer(layout.bounds(), |renderer| {
                     renderer.draw_primitive(
                         layout.bounds(),
-                        SdfBatchPrimitive::new(shadow_batch)
+                        shadow_batch
                             .camera(cam_x, cam_y, cam_zoom)
                             .time(render_context.time),
                     );
@@ -840,7 +840,7 @@ where
                 );
                 renderer.draw_primitive(
                     layout.bounds(),
-                    SdfPrimitive::new(Sdf::rounded_box(node_center, node_half_size, corner_radius))
+                    SdfPrimitive::single(Sdf::rounded_box(node_center, node_half_size, corner_radius))
                         .layers(vec![
                             Layer::solid(color_with_opacity(resolved.fill_color, opacity)),
                         ])
@@ -889,7 +889,7 @@ where
             let has_pins = !pins.is_empty();
 
             if has_border || has_pins {
-                let mut fg_batch = SdfBatch::with_capacity(pins.len() + 1, pins.len() * 2 + 4, pins.len() * 2 + 4);
+                let mut fg_batch = SdfPrimitive::with_capacity(pins.len() + 1);
 
                 // Border
                 if let Some(node_border) = &resolved.border {
@@ -974,7 +974,7 @@ where
                 renderer.with_layer(layout.bounds(), |renderer| {
                     renderer.draw_primitive(
                         layout.bounds(),
-                        SdfBatchPrimitive::new(fg_batch)
+                        fg_batch
                             .camera(cam_x, cam_y, cam_zoom)
                             .time(render_context.time),
                     );
@@ -1011,7 +1011,7 @@ where
             ];
             let border_width = 1.5 / camera.zoom();
 
-            let select_primitive = SdfPrimitive::new(Sdf::rect(center, half_size))
+            let select_primitive = SdfPrimitive::single(Sdf::rect(center, half_size))
                 .layers(vec![
                     Layer::solid(fill_color),
                     Layer::stroke(border_color, Pattern::solid(border_width)),
@@ -1054,7 +1054,7 @@ where
                 resolved_graph.selection_style.edge_cutting_color
             };
 
-            let cutting_primitive = SdfPrimitive::new(Sdf::line(
+            let cutting_primitive = SdfPrimitive::single(Sdf::line(
                 [start.x, start.y],
                 [cursor_world.x, cursor_world.y],
             ))

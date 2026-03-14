@@ -91,7 +91,7 @@ where
         let cam_x = center_x / zoom;
         let cam_y = center_y / zoom;
 
-        let primitive = SdfPrimitive::new(self.shape.clone())
+        let primitive = SdfPrimitive::single(self.shape.clone())
             .layers(self.layers.clone())
             .screen_bounds([bounds.x, bounds.y, bounds.width, bounds.height])
             .camera(cam_x, cam_y, zoom)
@@ -117,7 +117,7 @@ where
 
             // Dot at cursor position (3px radius in screen space)
             let dot_radius = 3.0 / zoom;
-            let dot = SdfPrimitive::new(
+            let dot = SdfPrimitive::single(
                 iced_sdf::Sdf::circle([cursor_world_x, cursor_world_y], dot_radius),
             )
             .layers(vec![Layer::solid(CURSOR_COLOR)])
@@ -130,7 +130,7 @@ where
             // Distance circle (radius = SDF distance, 1.5px outline)
             if dist > dot_radius * 2.0 {
                 let outline_thickness = 1.5 / zoom;
-                let circle = SdfPrimitive::new(
+                let circle = SdfPrimitive::single(
                     iced_sdf::Sdf::circle([cursor_world_x, cursor_world_y], dist)
                         .onion(outline_thickness),
                 )

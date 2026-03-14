@@ -78,24 +78,26 @@ const MAX_STACK: u32 = 16u;
 // Data Structures
 // ============================================================================
 
-struct Uniforms {
-    bounds_origin: vec2<f32>,
-    bounds_size: vec2<f32>,
+struct DrawData {
     camera_position: vec2<f32>,
     camera_zoom: f32,
     scale_factor: f32,
     time: f32,
-    num_ops: u32,
-    num_layers: u32,
     debug_flags: u32,
+    shape_start: u32,
+    shape_count: u32,
 }
 
 struct ShapeInstance {
-    bounds: vec4<f32>,  // screen-space: x, y, width, height
+    bounds: vec4<f32>,  // screen-space: x, y, width, height (logical pixels)
     ops_offset: u32,
     ops_count: u32,
     layers_offset: u32,
     layers_count: u32,
+    max_radius: f32,    // max effect radius for tile culling
+    has_fill: u32,      // 1 if shape has fill layers
+    _pad2: u32,
+    _pad3: u32,
 }
 
 struct SdfOp {
@@ -138,7 +140,12 @@ struct SdfResult {
 // Bindings
 // ============================================================================
 
-@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+// Private per-fragment state set by fs_main before calling render_layer/apply_pattern
+var<private> current_camera_zoom: f32;
+var<private> current_scale_factor: f32;
+var<private> current_time: f32;
+
+@group(0) @binding(0) var<storage, read> draws: array<DrawData>;
 @group(0) @binding(1) var<storage, read> shapes: array<ShapeInstance>;
 @group(0) @binding(2) var<storage, read> ops: array<SdfOp>;
 @group(0) @binding(3) var<storage, read> layers: array<SdfLayer>;
@@ -696,7 +703,7 @@ fn apply_pattern(sdf: SdfResult, layer: SdfLayer) -> f32 {
 
     var u = sdf.u;
     if layer.flow_speed != 0.0 {
-        u = u - uniforms.time * layer.flow_speed;
+        u = u - current_time * layer.flow_speed;
     }
 
     switch layer.pattern_type {
@@ -983,7 +990,7 @@ fn evaluate_sdf(p: vec2<f32>, shape: ShapeInstance) -> SdfResult {
                 let tan_angle = tan(angle_d);
                 var u_d = a.u;
                 if speed_d != 0.0 {
-                    u_d = u_d - uniforms.time * speed_d;
+                    u_d = u_d - current_time * speed_d;
                 }
                 let shifted_u = u_d + a.dist * tan_angle;
                 let nearest = round(shifted_u / actual_period) * actual_period;
@@ -1017,7 +1024,7 @@ fn evaluate_sdf(p: vec2<f32>, shape: ShapeInstance) -> SdfResult {
                 let tan_angle_a = tan(angle_a);
                 var u_a = a.u;
                 if speed_a != 0.0 {
-                    u_a = u_a - uniforms.time * speed_a;
+                    u_a = u_a - current_time * speed_a;
                 }
                 let shifted_u_a = u_a + abs(a.dist) * tan_angle_a;
                 let nearest_a = round(shifted_u_a / actual_period_a) * actual_period_a;
@@ -1050,7 +1057,7 @@ fn render_layer(sdf: SdfResult, layer: SdfLayer) -> vec4<f32> {
 
         // Scale distance to screen pixels, then normalize for band spacing.
         // This ensures consistent band width regardless of world-space scale.
-        let dn = d * uniforms.camera_zoom * uniforms.scale_factor * 0.003;
+        let dn = d * current_camera_zoom * current_scale_factor * 0.003;
 
         // Base color: outside vs inside
         var col = select(inside_col, outside_col, d > 0.0);
@@ -1059,7 +1066,7 @@ fn render_layer(sdf: SdfResult, layer: SdfLayer) -> vec4<f32> {
         // Distance bands
         col *= 0.8 + 0.2 * cos(150.0 * dn);
         // White boundary line (1px wide in screen space)
-        let pixel_dist = abs(d) * uniforms.camera_zoom * uniforms.scale_factor;
+        let pixel_dist = abs(d) * current_camera_zoom * current_scale_factor;
         col = mix(col, vec3(1.0), 1.0 - smoothstep(0.0, 1.5, pixel_dist));
 
         return vec4(col, 1.0);
@@ -1119,14 +1126,12 @@ fn render_layer(sdf: SdfResult, layer: SdfLayer) -> vec4<f32> {
 }
 
 // ============================================================================
-// Vertex/Fragment Shaders (Instanced Quads)
+// Fullscreen Triangle Vertex Shader
 // ============================================================================
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
-    @location(0) world_pos: vec2<f32>,
-    @location(1) @interpolate(flat) instance_id: u32,
-    @location(2) tile_uv: vec2<f32>,
+    @location(0) @interpolate(flat) draw_idx: u32,
 }
 
 @vertex
@@ -1134,73 +1139,65 @@ fn vs_main(
     @builtin(vertex_index) vertex_index: u32,
     @builtin(instance_index) instance_index: u32,
 ) -> VertexOutput {
-    let shape = shapes[instance_index];
-
-    // Quad corners: 2 triangles from 6 vertices
-    var quad = array<vec2<f32>, 6>(
-        vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(0.0, 1.0),
-        vec2(1.0, 0.0), vec2(1.0, 1.0), vec2(0.0, 1.0),
+    // Full-viewport triangle (3 vertices cover entire screen)
+    var pos = array<vec2<f32>, 3>(
+        vec2(-1.0, -1.0),
+        vec2(3.0, -1.0),
+        vec2(-1.0, 3.0),
     );
-    let corner = quad[vertex_index];
-
-    // Shape bounds in logical pixels, convert to physical
-    let screen_pos = (shape.bounds.xy + corner * shape.bounds.zw) * uniforms.scale_factor;
-
-    // NDC relative to widget bounds (Iced sets scissor/viewport to bounds)
-    let ndc = (screen_pos - uniforms.bounds_origin) / uniforms.bounds_size * 2.0 - 1.0;
-
-    // Convert screen position to world coordinates for SDF evaluation
-    let world_pos = screen_pos / (uniforms.camera_zoom * uniforms.scale_factor) - uniforms.camera_position;
-
     var out: VertexOutput;
-    out.position = vec4(ndc.x, -ndc.y, 0.0, 1.0);
-    out.world_pos = world_pos;
-    out.instance_id = instance_index;
-    out.tile_uv = corner;
+    out.position = vec4(pos[vertex_index], 0.0, 1.0);
+    out.draw_idx = instance_index;
     return out;
 }
 
+// ============================================================================
+// Fragment Shader - Direct Shape Loop with AABB Filtering
+// ============================================================================
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let shape = shapes[in.instance_id];
+    let draw = draws[in.draw_idx];
+    let screen_pos = in.position.xy;
 
-    // Use interpolated world position from vertex shader
-    let sdf = evaluate_sdf(in.world_pos, shape);
+    // Set per-fragment state for render_layer/apply_pattern
+    current_camera_zoom = draw.camera_zoom;
+    current_scale_factor = draw.scale_factor;
+    current_time = draw.time;
 
-    // Composite layers (back to front)
+    // Convert fragment position to world coordinates
+    let world_pos = screen_pos / (draw.camera_zoom * draw.scale_factor) - draw.camera_position;
+
+    // Loop over this draw's shapes with AABB early-out
     var color = vec4(0.0);
-    let end = shape.layers_offset + shape.layers_count;
-    for (var i: u32 = shape.layers_offset; i < end; i++) {
-        let layer = layers[i];
-        // Re-evaluate SDF at offset position for shadow layers
-        var layer_sdf = sdf;
-        if layer.offset.x != 0.0 || layer.offset.y != 0.0 {
-            layer_sdf = evaluate_sdf(in.world_pos - layer.offset, shape);
-        }
-        let layer_color = render_layer(layer_sdf, layer);
-        color = color * (1.0 - layer_color.a) + layer_color;
-    }
+    let shape_end = draw.shape_start + draw.shape_count;
 
-    // Debug: tile border overlay
-    if (uniforms.debug_flags & 1u) != 0u {
-        let tile_size_px = shape.bounds.zw * uniforms.scale_factor;
-        let edge = min(
-            min(in.tile_uv.x, in.tile_uv.y),
-            min(1.0 - in.tile_uv.x, 1.0 - in.tile_uv.y),
-        );
-        let edge_px = edge * min(tile_size_px.x, tile_size_px.y);
-        if edge_px < 1.0 {
-            let ba = (1.0 - edge_px) * 0.7;
-            let bc = vec4(0.0, 1.0, 0.0, ba);
-            color = color * (1.0 - bc.a) + bc;
+    for (var i: u32 = draw.shape_start; i < shape_end; i++) {
+        let shape = shapes[i];
+
+        // AABB check: skip if fragment is outside shape's screen bounds
+        let shape_min = shape.bounds.xy * current_scale_factor;
+        let shape_max = (shape.bounds.xy + shape.bounds.zw) * current_scale_factor;
+        if screen_pos.x < shape_min.x || screen_pos.x > shape_max.x ||
+           screen_pos.y < shape_min.y || screen_pos.y > shape_max.y {
+            continue;
         }
-        // Fill: faint tint so culled (absent) tiles are visible by contrast
-        if color.a < 0.001 {
-            return vec4(0.0, 0.15, 0.0, 0.08);
+
+        let sdf = evaluate_sdf(world_pos, shape);
+
+        // Composite this shape's layers
+        let end = shape.layers_offset + shape.layers_count;
+        for (var j: u32 = shape.layers_offset; j < end; j++) {
+            let layer = layers[j];
+            var layer_sdf = sdf;
+            if layer.offset.x != 0.0 || layer.offset.y != 0.0 {
+                layer_sdf = evaluate_sdf(world_pos - layer.offset, shape);
+            }
+            let layer_color = render_layer(layer_sdf, layer);
+            color = color * (1.0 - layer_color.a) + layer_color;
         }
     }
 
-    // Discard fully transparent pixels
     if color.a < 0.001 {
         discard;
     }

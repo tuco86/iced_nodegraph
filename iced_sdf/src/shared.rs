@@ -31,9 +31,6 @@ thread_local! {
 }
 
 /// Shared GPU resources for SDF rendering.
-///
-/// `_shader_module` and `_pipeline_layout` are retained to prevent Drop
-/// while the render pipeline references them.
 pub struct SharedSdfResources {
     _shader_module: ShaderModule,
     pub bind_group_layout: BindGroupLayout,
@@ -64,7 +61,6 @@ impl SharedSdfResources {
 
     /// Create all shared GPU resources.
     fn new(device: &Device, format: TextureFormat) -> Self {
-        // Compile shader module
         let shader_module = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("iced_sdf_shader"),
             source: ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
@@ -72,17 +68,14 @@ impl SharedSdfResources {
             ))),
         });
 
-        // Create bind group layout
         let bind_group_layout = create_bind_group_layout(device);
 
-        // Create pipeline layout
         let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Some("SDF Pipeline Layout"),
             bind_group_layouts: &[&bind_group_layout],
             ..Default::default()
         });
 
-        // Create render pipeline
         let render_pipeline =
             create_render_pipeline(device, format, &pipeline_layout, &shader_module);
 
@@ -95,28 +88,33 @@ impl SharedSdfResources {
     }
 }
 
-/// Create the bind group layout for batched SDF rendering.
+/// Bind group layout: uniforms + shapes + ops + layers + draws.
 fn create_bind_group_layout(device: &Device) -> BindGroupLayout {
     use std::num::NonZeroU64;
 
     device.create_bind_group_layout(&BindGroupLayoutDescriptor {
         label: Some("SDF Bind Group Layout"),
         entries: &[
-            // Binding 0: Uniforms
+            // Binding 0: Per-draw data (indexed by instance_index)
             BindGroupLayoutEntry {
                 binding: 0,
                 visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
                 ty: BindingType::Buffer {
-                    ty: BufferBindingType::Uniform,
+                    ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
-                    min_binding_size: Some(<types::Uniforms as ShaderSize>::SHADER_SIZE),
+                    min_binding_size: Some(
+                        NonZeroU64::new(
+                            <types::DrawData as ShaderSize>::SHADER_SIZE.get(),
+                        )
+                        .expect("DrawData SHADER_SIZE must be non-zero"),
+                    ),
                 },
                 count: None,
             },
-            // Binding 1: Shape instances (read by vertex + fragment)
+            // Binding 1: Shape instances
             BindGroupLayoutEntry {
                 binding: 1,
-                visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
+                visibility: ShaderStages::FRAGMENT,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
@@ -129,7 +127,7 @@ fn create_bind_group_layout(device: &Device) -> BindGroupLayout {
                 },
                 count: None,
             },
-            // Binding 2: SDF Operations (read by fragment)
+            // Binding 2: SDF Operations
             BindGroupLayoutEntry {
                 binding: 2,
                 visibility: ShaderStages::FRAGMENT,
@@ -143,7 +141,7 @@ fn create_bind_group_layout(device: &Device) -> BindGroupLayout {
                 },
                 count: None,
             },
-            // Binding 3: Layers (read by fragment)
+            // Binding 3: Layers
             BindGroupLayoutEntry {
                 binding: 3,
                 visibility: ShaderStages::FRAGMENT,

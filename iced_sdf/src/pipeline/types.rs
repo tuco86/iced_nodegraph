@@ -7,34 +7,33 @@
 
 use encase::ShaderType;
 
-/// Global uniforms for the SDF shader.
+/// Per-draw parameters stored in a storage buffer.
+///
+/// Indexed by `instance_index` in the fragment shader so each
+/// draw call reads its own camera, shape range, and settings.
 #[derive(Clone, Debug, ShaderType)]
-pub struct Uniforms {
-    /// Widget bounds origin in physical pixels.
-    pub bounds_origin: glam::Vec2,
-    /// Widget bounds size in physical pixels.
-    pub bounds_size: glam::Vec2,
+pub struct DrawData {
     /// Camera position (pan offset).
     pub camera_position: glam::Vec2,
     /// Camera zoom factor.
     pub camera_zoom: f32,
     /// OS scale factor (logical to physical pixel ratio).
     pub scale_factor: f32,
-    /// Time in seconds for animations.
+    /// Animation time in seconds.
     pub time: f32,
-    /// Total number of SDF operations in the buffer.
-    pub num_ops: u32,
-    /// Total number of layers in the buffer.
-    pub num_layers: u32,
-    /// Debug visualization flags (bit 0: show tile borders).
+    /// Debug flags.
     pub debug_flags: u32,
+    /// First shape index in the shapes buffer for this draw.
+    pub shape_start: u32,
+    /// Number of shapes for this draw.
+    pub shape_count: u32,
 }
 
-/// A single shape instance in the batch.
+/// A single shape's metadata for the compute/render pipeline.
 ///
 /// Each shape has its own SDF ops and layers, referenced by offset into
 /// the flat ops/layers storage buffers.
-#[derive(Clone, Debug, ShaderType)]
+#[derive(Clone, Copy, Debug, ShaderType)]
 pub struct ShapeInstance {
     /// Screen-space bounding box: (x, y, width, height).
     pub bounds: glam::Vec4,
@@ -46,6 +45,12 @@ pub struct ShapeInstance {
     pub layers_offset: u32,
     /// Number of layers for this shape.
     pub layers_count: u32,
+    /// Max effect radius (expand + blur + outline) for tile culling.
+    pub max_radius: f32,
+    /// Whether this shape has a fill layer (affects cull distance calc).
+    pub has_fill: u32,
+    pub _pad2: u32,
+    pub _pad3: u32,
 }
 
 /// A single SDF operation (primitive or CSG op).
@@ -70,6 +75,22 @@ pub struct SdfOp {
     pub param1: glam::Vec4,
     /// Tertiary parameters (reserved).
     pub param2: glam::Vec4,
+}
+
+impl Default for ShapeInstance {
+    fn default() -> Self {
+        Self {
+            bounds: glam::Vec4::ZERO,
+            ops_offset: 0,
+            ops_count: 0,
+            layers_offset: 0,
+            layers_count: 0,
+            max_radius: 0.0,
+            has_fill: 0,
+            _pad2: 0,
+            _pad3: 0,
+        }
+    }
 }
 
 impl Default for SdfOp {
@@ -149,17 +170,40 @@ impl Default for SdfLayer {
     }
 }
 
+impl Default for DrawData {
+    fn default() -> Self {
+        Self {
+            camera_position: glam::Vec2::ZERO,
+            camera_zoom: 1.0,
+            scale_factor: 1.0,
+            time: 0.0,
+            debug_flags: 0,
+            shape_start: 0,
+            shape_count: 0,
+        }
+    }
+}
+
+/// Performance statistics for the SDF pipeline.
+///
+/// Published at the end of each frame (during `trim()`).
+/// Read via `iced_sdf::sdf_stats()`.
+#[derive(Clone, Debug, Default)]
+pub struct SdfStats {
+    /// Number of shapes submitted this frame.
+    pub shape_count: u32,
+    /// Number of tile instances emitted.
+    pub tile_count: u32,
+    /// CPU time in prepare() (microseconds).
+    pub prepare_cpu_us: u64,
+    /// GPU render time (microseconds). None if timestamp queries unavailable.
+    pub gpu_time_us: Option<u64>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use encase::ShaderSize;
-
-    #[test]
-    fn test_uniforms_size() {
-        let size = Uniforms::SHADER_SIZE.get();
-        assert!(size > 0, "Uniforms size should be positive");
-        assert!(size % 16 == 0, "Uniforms size should be 16-byte aligned");
-    }
 
     #[test]
     fn test_sdf_op_size() {
@@ -173,6 +217,13 @@ mod tests {
         let size = SdfLayer::SHADER_SIZE.get();
         assert!(size > 0, "SdfLayer size should be positive");
         assert!(size % 16 == 0, "SdfLayer size should be 16-byte aligned");
+    }
+
+    #[test]
+    fn test_draw_data_size() {
+        let size = DrawData::SHADER_SIZE.get();
+        assert!(size > 0);
+        assert_eq!(size % 16, 0, "DrawData size {size} not 16-byte aligned");
     }
 
     #[test]

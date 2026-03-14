@@ -186,11 +186,17 @@ impl Application {
             ng.push_edge(*from, *to);
         }
 
-        // Add stats overlay
+        // Add stats overlay with SDF pipeline metrics
+        let sdf = iced_sdf::sdf_stats();
         let stats = container(
             column![
                 text(format!("Nodes: {}", self.nodes.len())).size(14),
                 text(format!("Edges: {}", self.edges.len())).size(14),
+                text(format!(
+                    "SDF: {} shapes, {} tiles, {}us CPU",
+                    sdf.shape_count, sdf.tile_count, sdf.prepare_cpu_us
+                ))
+                .size(12),
                 text("Scroll: Zoom | Middle-drag: Pan").size(12),
             ]
             .spacing(4)
