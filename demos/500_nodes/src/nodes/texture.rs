@@ -30,13 +30,13 @@ where
     Message: Clone + 'a,
 {
     let pins = row![
-        container(pin!(Left, 0usize, text(""), Input, colors::Vec2, PIN_VEC2))
+        container(pin!(Left, 0usize, text("uv"), Input, colors::Vec2, PIN_VEC2))
             .width(Length::FillPortion(1))
             .align_x(Horizontal::Left),
         container(pin!(
             Right,
             1usize,
-            text(""),
+            text("rgba"),
             Output,
             colors::Vec4,
             PIN_VEC4
@@ -57,13 +57,13 @@ where
 {
     let pins = column![
         row![
-            container(pin!(Left, 0usize, text(""), Input, colors::Vec4, PIN_VEC4))
+            container(pin!(Left, 0usize, text("A"), Input, colors::Vec4, PIN_VEC4))
                 .width(Length::FillPortion(1))
                 .align_x(Horizontal::Left),
             container(pin!(
                 Right,
                 1usize,
-                text(""),
+                text("out"),
                 Output,
                 colors::Vec4,
                 PIN_VEC4
@@ -72,7 +72,7 @@ where
             .align_x(Horizontal::Right),
         ]
         .width(Length::Fill),
-        container(pin!(Left, 2usize, text(""), Input, colors::Vec4, PIN_VEC4))
+        container(pin!(Left, 2usize, text("B"), Input, colors::Vec4, PIN_VEC4))
             .width(Length::Fill)
             .align_x(Horizontal::Left),
     ]
@@ -91,7 +91,7 @@ where
         container(pin!(
             Left,
             0usize,
-            text(""),
+            text("t"),
             Input,
             colors::Float,
             PIN_FLOAT
@@ -101,7 +101,7 @@ where
         container(pin!(
             Right,
             1usize,
-            text(""),
+            text("rgba"),
             Output,
             colors::Vec4,
             PIN_VEC4

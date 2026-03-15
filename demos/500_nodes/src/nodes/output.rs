@@ -29,7 +29,7 @@ where
     Message: Clone + 'a,
 {
     let pins =
-        column![pin!(Left, 0usize, text(""), Input, colors::Vec4, PIN_VEC4),].spacing(SPACING_PIN);
+        column![pin!(Left, 0usize, text("rgba"), Input, colors::Vec4, PIN_VEC4),].spacing(SPACING_PIN);
 
     column![
         title_bar("Base Color", theme),
@@ -46,7 +46,7 @@ where
     let pins = column![pin!(
         Left,
         0usize,
-        text(""),
+        text("in"),
         Input,
         colors::Float,
         PIN_GENERIC_OUT
@@ -68,7 +68,7 @@ where
     let pins = column![pin!(
         Left,
         0usize,
-        text(""),
+        text("in"),
         Input,
         colors::Float,
         PIN_GENERIC_OUT
@@ -90,7 +90,7 @@ where
     let pins = column![pin!(
         Left,
         0usize,
-        text(""),
+        text("rgba"),
         Input,
         colors::Vec4,
         PIN_EMISSION
@@ -112,7 +112,7 @@ where
     let pins = column![pin!(
         Left,
         0usize,
-        text(""),
+        text("N"),
         Input,
         colors::Vec3,
         PIN_NORMAL

@@ -31,18 +31,18 @@ where
 {
     let pins = column![
         row![
-            container(pin!(Left, 0usize, text(""), Input, colors::Vec3, PIN_VEC3))
+            container(pin!(Left, 0usize, text("vec"), Input, colors::Vec3, PIN_VEC3))
                 .width(Length::FillPortion(1))
                 .align_x(Horizontal::Left),
-            container(pin!(Right, 1usize, text(""), Output, colors::Float, PIN_X))
+            container(pin!(Right, 1usize, text("x"), Output, colors::Float, PIN_X))
                 .width(Length::FillPortion(1))
                 .align_x(Horizontal::Right),
         ]
         .width(Length::Fill),
-        container(pin!(Right, 2usize, text(""), Output, colors::Float, PIN_Y))
+        container(pin!(Right, 2usize, text("y"), Output, colors::Float, PIN_Y))
             .width(Length::Fill)
             .align_x(Horizontal::Right),
-        container(pin!(Right, 3usize, text(""), Output, colors::Float, PIN_Z))
+        container(pin!(Right, 3usize, text("z"), Output, colors::Float, PIN_Z))
             .width(Length::Fill)
             .align_x(Horizontal::Right),
     ]
@@ -59,13 +59,13 @@ where
 {
     let pins = column![
         row![
-            container(pin!(Left, 0usize, text(""), Input, colors::Float, PIN_X))
+            container(pin!(Left, 0usize, text("x"), Input, colors::Float, PIN_X))
                 .width(Length::FillPortion(1))
                 .align_x(Horizontal::Left),
             container(pin!(
                 Right,
                 1usize,
-                text(""),
+                text("vec"),
                 Output,
                 colors::Vec3,
                 PIN_VEC3
@@ -74,10 +74,10 @@ where
             .align_x(Horizontal::Right),
         ]
         .width(Length::Fill),
-        container(pin!(Left, 2usize, text(""), Input, colors::Float, PIN_Y))
+        container(pin!(Left, 2usize, text("y"), Input, colors::Float, PIN_Y))
             .width(Length::Fill)
             .align_x(Horizontal::Left),
-        container(pin!(Left, 3usize, text(""), Input, colors::Float, PIN_Z))
+        container(pin!(Left, 3usize, text("z"), Input, colors::Float, PIN_Z))
             .width(Length::Fill)
             .align_x(Horizontal::Left),
     ]
@@ -93,13 +93,13 @@ where
     Message: Clone + 'a,
 {
     let pins = row![
-        container(pin!(Left, 0usize, text(""), Input, colors::Vec3, PIN_VEC3))
+        container(pin!(Left, 0usize, text("in"), Input, colors::Vec3, PIN_VEC3))
             .width(Length::FillPortion(1))
             .align_x(Horizontal::Left),
         container(pin!(
             Right,
             1usize,
-            text(""),
+            text("out"),
             Output,
             colors::Vec3,
             PIN_VEC3
@@ -123,13 +123,13 @@ where
 {
     let pins = column![
         row![
-            container(pin!(Left, 0usize, text(""), Input, colors::Vec3, PIN_VEC3))
+            container(pin!(Left, 0usize, text("A"), Input, colors::Vec3, PIN_VEC3))
                 .width(Length::FillPortion(1))
                 .align_x(Horizontal::Left),
             container(pin!(
                 Right,
                 1usize,
-                text(""),
+                text("out"),
                 Output,
                 colors::Float,
                 PIN_GENERIC_OUT
@@ -138,7 +138,7 @@ where
             .align_x(Horizontal::Right),
         ]
         .width(Length::Fill),
-        container(pin!(Left, 2usize, text(""), Input, colors::Vec3, PIN_VEC3))
+        container(pin!(Left, 2usize, text("B"), Input, colors::Vec3, PIN_VEC3))
             .width(Length::Fill)
             .align_x(Horizontal::Left),
     ]
@@ -155,13 +155,13 @@ where
 {
     let pins = column![
         row![
-            container(pin!(Left, 0usize, text(""), Input, colors::Vec3, PIN_VEC3))
+            container(pin!(Left, 0usize, text("A"), Input, colors::Vec3, PIN_VEC3))
                 .width(Length::FillPortion(1))
                 .align_x(Horizontal::Left),
             container(pin!(
                 Right,
                 1usize,
-                text(""),
+                text("out"),
                 Output,
                 colors::Vec3,
                 PIN_VEC3
@@ -170,7 +170,7 @@ where
             .align_x(Horizontal::Right),
         ]
         .width(Length::Fill),
-        container(pin!(Left, 2usize, text(""), Input, colors::Vec3, PIN_VEC3))
+        container(pin!(Left, 2usize, text("B"), Input, colors::Vec3, PIN_VEC3))
             .width(Length::Fill)
             .align_x(Horizontal::Left),
     ]
