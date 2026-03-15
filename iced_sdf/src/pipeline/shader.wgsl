@@ -107,6 +107,7 @@ struct ComputeUniforms {
     shape_count: u32,
 }
 
+// Must match Rust constants in primitive.rs
 const MAX_SHAPES_PER_TILE: u32 = 16u;
 const TILE_SIZE: f32 = 16.0;
 
@@ -1200,6 +1201,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Tile coordinates relative to this primitive's grid origin
     let local_px = screen_pos - draw.bounds_origin;
+    if local_px.x < 0.0 || local_px.y < 0.0 {
+        discard;
+    }
     let tile_col = u32(local_px.x / TILE_SIZE);
     let tile_row = u32(local_px.y / TILE_SIZE);
 

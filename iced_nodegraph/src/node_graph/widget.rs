@@ -1413,9 +1413,13 @@ where
         }
 
         let graph_move_offset = if let Dragging::Graph(origin) = state.dragging {
-            screen_cursor
-                .position()
-                .map(|cursor_position| cursor_position - origin.into_iced())
+            screen_cursor.position().map(|cursor_position| {
+                let cursor_world: WorldPoint = state
+                    .camera
+                    .screen_to_world()
+                    .transform_point(cursor_position.into_euclid());
+                (cursor_world - origin).into_iced()
+            })
         } else {
             None
         }
