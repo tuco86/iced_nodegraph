@@ -1279,62 +1279,60 @@ fn cs_build_index(@builtin(global_invocation_id) gid: vec3<u32>) {
     let col = gid.x;
     let row = gid.y;
 
-    if col >= cs_uniforms.grid_cols || row >= cs_uniforms.grid_rows {
-        return;
-    }
+    if col < cs_uniforms.grid_cols && row < cs_uniforms.grid_rows {
+        let local_tile_idx = row * cs_uniforms.grid_cols + col;
+        let global_tile_idx = cs_uniforms.tile_base + local_tile_idx;
+        let tile_size = cs_uniforms.tile_size;
 
-    let local_tile_idx = row * cs_uniforms.grid_cols + col;
-    let global_tile_idx = cs_uniforms.tile_base + local_tile_idx;
-    let tile_size = cs_uniforms.tile_size;
+        // Tile center in physical pixels (viewport-relative + bounds_origin)
+        let local_px = vec2(
+            (f32(col) + 0.5) * tile_size,
+            (f32(row) + 0.5) * tile_size,
+        );
+        let screen_px = local_px + cs_uniforms.bounds_origin;
 
-    // Tile center in physical pixels (viewport-relative + bounds_origin)
-    let local_px = vec2(
-        (f32(col) + 0.5) * tile_size,
-        (f32(row) + 0.5) * tile_size,
-    );
-    let screen_px = local_px + cs_uniforms.bounds_origin;
+        // Convert to world coordinates
+        let world_pos = screen_px / (cs_uniforms.camera_zoom * cs_uniforms.scale_factor) - cs_uniforms.camera_position;
 
-    // Convert to world coordinates
-    let world_pos = screen_px / (cs_uniforms.camera_zoom * cs_uniforms.scale_factor) - cs_uniforms.camera_position;
+        // Half-diagonal of tile in world space (conservative culling radius)
+        let tile_half_diag = tile_size * 0.70710678 / (cs_uniforms.camera_zoom * cs_uniforms.scale_factor);
 
-    // Half-diagonal of tile in world space (conservative culling radius)
-    let tile_half_diag = tile_size * 0.70710678 / (cs_uniforms.camera_zoom * cs_uniforms.scale_factor);
+        var count: u32 = 0u;
+        let base = global_tile_idx * MAX_SHAPES_PER_TILE;
 
-    var count: u32 = 0u;
-    let base = global_tile_idx * MAX_SHAPES_PER_TILE;
+        // Iterate only this prepare scope's shapes
+        let shape_end = cs_uniforms.shape_start + cs_uniforms.shape_count;
+        for (var i: u32 = cs_uniforms.shape_start; i < shape_end; i++) {
+            let shape = shapes[i];
 
-    // Iterate only this prepare scope's shapes
-    let shape_end = cs_uniforms.shape_start + cs_uniforms.shape_count;
-    for (var i: u32 = cs_uniforms.shape_start; i < shape_end; i++) {
-        let shape = shapes[i];
+            // AABB pre-test in physical pixels
+            let shape_min_px = shape.bounds.xy * cs_uniforms.scale_factor;
+            let shape_max_px = (shape.bounds.xy + shape.bounds.zw) * cs_uniforms.scale_factor;
+            let tile_min_px = cs_uniforms.bounds_origin + vec2(f32(col) * tile_size, f32(row) * tile_size);
+            let tile_max_px = tile_min_px + vec2(tile_size);
 
-        // AABB pre-test in physical pixels
-        let shape_min_px = shape.bounds.xy * cs_uniforms.scale_factor;
-        let shape_max_px = (shape.bounds.xy + shape.bounds.zw) * cs_uniforms.scale_factor;
-        let tile_min_px = cs_uniforms.bounds_origin + vec2(f32(col) * tile_size, f32(row) * tile_size);
-        let tile_max_px = tile_min_px + vec2(tile_size);
+            if shape_max_px.x < tile_min_px.x || shape_min_px.x > tile_max_px.x ||
+               shape_max_px.y < tile_min_px.y || shape_min_px.y > tile_max_px.y {
+                continue;
+            }
 
-        if shape_max_px.x < tile_min_px.x || shape_min_px.x > tile_max_px.x ||
-           shape_max_px.y < tile_min_px.y || shape_min_px.y > tile_max_px.y {
-            continue;
-        }
+            // Full SDF evaluation at tile center (no approximations)
+            let result = evaluate_sdf(world_pos, shape);
+            let dist = result.dist;
 
-        // Full SDF evaluation at tile center (no approximations)
-        let result = evaluate_sdf(world_pos, shape);
-        let dist = result.dist;
+            var cull_dist = dist;
+            if shape.has_fill == 0u {
+                cull_dist = abs(dist);
+            }
 
-        var cull_dist = dist;
-        if shape.has_fill == 0u {
-            cull_dist = abs(dist);
-        }
-
-        if cull_dist - tile_half_diag <= shape.max_radius {
-            if count < MAX_SHAPES_PER_TILE {
-                cs_tile_shapes[base + count] = i;
-                count++;
+            if cull_dist - tile_half_diag <= shape.max_radius {
+                if count < MAX_SHAPES_PER_TILE {
+                    cs_tile_shapes[base + count] = i;
+                    count++;
+                }
             }
         }
-    }
 
-    cs_tile_counts[global_tile_idx] = count;
+        cs_tile_counts[global_tile_idx] = count;
+    }
 }
