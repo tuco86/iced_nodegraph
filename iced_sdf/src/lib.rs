@@ -43,14 +43,14 @@
 //! ```
 
 pub mod batch;
-pub mod compile;
+pub(crate) mod compile;
 pub mod eval;
 pub mod layer;
 pub mod pattern;
-pub mod pipeline;
+pub(crate) mod pipeline;
 pub mod primitive;
 pub mod shape;
-pub mod shared;
+pub(crate) mod shared;
 
 // Public API re-exports
 pub use batch::SdfBatch;

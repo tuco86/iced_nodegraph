@@ -2,6 +2,8 @@
 //!
 //! Adapted from iced_nodegraph's buffer implementation.
 
+#![allow(dead_code)]
+
 use encase::{ShaderSize, ShaderType, internal::WriteInto};
 use iced::wgpu::{self, BindingResource};
 
@@ -15,7 +17,7 @@ const BUFFER_MIN_CAPACITY: usize = 16;
 ///
 /// Tracks a generation counter that increments when the underlying GPU buffer
 /// is recreated, enabling bind group caching.
-pub struct Buffer<T> {
+pub(crate) struct Buffer<T> {
     buffer_wgpu: wgpu::Buffer,
     buffer_vec: Vec<T>,
     /// Scratch buffer for encase serialization

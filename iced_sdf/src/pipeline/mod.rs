@@ -2,8 +2,5 @@
 //!
 //! Contains GPU buffer management, shader types, and the render pipeline.
 
-pub mod buffer;
-pub mod types;
-
-pub use buffer::Buffer;
-pub use types::{ComputeUniforms, DrawData, SdfLayer, SdfOp, ShapeInstance};
+pub(crate) mod buffer;
+pub(crate) mod types;

@@ -18,7 +18,7 @@ const V4_ZERO: GpuVec4 = GpuVec4::ZERO;
 /// Must match the constants in shader.wgsl.
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OpType {
+pub(crate) enum OpType {
     // Primitives
     Circle = 0,
     Box = 1,
@@ -74,10 +74,8 @@ pub enum OpType {
     Arrow = 41,
 }
 
-/// Compile an SDF tree into RPN format for GPU evaluation.
-///
-/// Returns a vector of `SdfOp` structs that can be uploaded to a storage buffer.
-pub fn compile(node: &SdfNode) -> Vec<SdfOp> {
+#[cfg(test)]
+fn compile(node: &SdfNode) -> Vec<SdfOp> {
     let mut ops = Vec::new();
     compile_into(node, &mut ops);
     ops
@@ -86,7 +84,7 @@ pub fn compile(node: &SdfNode) -> Vec<SdfOp> {
 /// Compile an SDF tree into RPN format, reusing the provided Vec.
 ///
 /// Clears `ops` before compiling. Use this to avoid per-frame allocations.
-pub fn compile_into(node: &SdfNode, ops: &mut Vec<SdfOp>) {
+pub(crate) fn compile_into(node: &SdfNode, ops: &mut Vec<SdfOp>) {
     ops.clear();
     compile_node(node, ops);
 }

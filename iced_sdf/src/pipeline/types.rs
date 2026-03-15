@@ -10,12 +10,12 @@ use encase::ShaderType;
 /// WGSL `vec2<f32>` for GPU buffer fields.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Default)]
-pub struct GpuVec2(pub [f32; 2]);
+pub(crate) struct GpuVec2(pub [f32; 2]);
 
 /// WGSL `vec4<f32>` for GPU buffer fields.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Default)]
-pub struct GpuVec4(pub [f32; 4]);
+pub(crate) struct GpuVec4(pub [f32; 4]);
 
 impl GpuVec2 {
     pub const ZERO: Self = Self([0.0; 2]);
@@ -43,7 +43,7 @@ encase::impl_vector!(4, GpuVec4, f32; using AsRef AsMut From);
 /// Indexed by `instance_index` in the fragment shader so each
 /// draw call reads its own camera, shape range, and tile region.
 #[derive(Clone, Debug, ShaderType)]
-pub struct DrawData {
+pub(crate) struct DrawData {
     /// Widget bounds origin in physical pixels.
     pub bounds_origin: GpuVec2,
     /// Camera position (pan offset).
@@ -72,7 +72,7 @@ pub struct DrawData {
 
 /// Compute shader uniforms for spatial index construction.
 #[derive(Clone, Debug, ShaderType)]
-pub struct ComputeUniforms {
+pub(crate) struct ComputeUniforms {
     /// Widget bounds origin in physical pixels.
     pub bounds_origin: GpuVec2,
     /// Camera position (pan offset).
@@ -100,7 +100,7 @@ pub struct ComputeUniforms {
 /// Each shape has its own SDF ops and layers, referenced by offset into
 /// the flat ops/layers storage buffers.
 #[derive(Clone, Copy, Debug, ShaderType)]
-pub struct ShapeInstance {
+pub(crate) struct ShapeInstance {
     /// Screen-space bounding box: (x, y, width, height).
     pub bounds: GpuVec4,
     /// Offset into the ops buffer for this shape's RPN operations.
@@ -124,7 +124,7 @@ pub struct ShapeInstance {
 /// The GPU evaluates these in RPN order using a stack.
 /// Layout: 48 bytes (3 x vec4).
 #[derive(Clone, Debug, ShaderType)]
-pub struct SdfOp {
+pub(crate) struct SdfOp {
     /// Operation type:
     /// - 0-15: Primitives (Circle, Box, RoundedBox, Line, Bezier)
     /// - 16-31: Boolean ops (Union, Subtract, Intersect, SmoothUnion, SmoothSubtract)
@@ -178,7 +178,7 @@ impl Default for SdfOp {
 /// Each layer takes the SDF result and maps it to a color
 /// with optional effects (expand, blur, gradient, pattern).
 #[derive(Clone, Debug, ShaderType)]
-pub struct SdfLayer {
+pub(crate) struct SdfLayer {
     /// Fill color (RGBA).
     pub color: GpuVec4,
     /// Gradient end color (if using gradient).

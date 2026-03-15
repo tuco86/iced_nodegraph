@@ -135,17 +135,20 @@ impl SdfBatch {
     }
 
     /// Access the shape instances.
-    pub fn shapes(&self) -> &[ShapeInstance] {
+    #[allow(dead_code)]
+    pub(crate) fn shapes(&self) -> &[ShapeInstance] {
         &self.shapes
     }
 
     /// Access the flat ops buffer.
-    pub fn ops(&self) -> &[SdfOp] {
+    #[allow(dead_code)]
+    pub(crate) fn ops(&self) -> &[SdfOp] {
         &self.ops
     }
 
     /// Access the flat layers buffer.
-    pub fn gpu_layers(&self) -> &[SdfLayer] {
+    #[allow(dead_code)]
+    pub(crate) fn gpu_layers(&self) -> &[SdfLayer] {
         &self.layers
     }
 
@@ -169,11 +172,12 @@ impl SdfBatch {
     /// Adjusts shape offsets to account for existing data in the pipeline
     /// buffers, so batches can be uploaded to non-empty pipelines shared
     /// with other primitives.
-    pub fn upload(
+    #[allow(dead_code)]
+    pub(crate) fn upload(
         &self,
-        shapes_buffer: &mut crate::pipeline::Buffer<ShapeInstance>,
-        ops_buffer: &mut crate::pipeline::Buffer<SdfOp>,
-        layers_buffer: &mut crate::pipeline::Buffer<SdfLayer>,
+        shapes_buffer: &mut crate::pipeline::buffer::Buffer<ShapeInstance>,
+        ops_buffer: &mut crate::pipeline::buffer::Buffer<SdfOp>,
+        layers_buffer: &mut crate::pipeline::buffer::Buffer<SdfLayer>,
         device: &iced::wgpu::Device,
         queue: &iced::wgpu::Queue,
     ) {

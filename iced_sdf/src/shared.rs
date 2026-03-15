@@ -32,7 +32,7 @@ thread_local! {
 }
 
 /// Shared GPU resources for SDF rendering.
-pub struct SharedSdfResources {
+pub(crate) struct SharedSdfResources {
     _shader_module: ShaderModule,
     /// Group 0: shared data (draws, shapes, ops, layers, tile_counts, tile_shapes)
     pub render_group0_layout: BindGroupLayout,

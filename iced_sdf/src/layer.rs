@@ -219,7 +219,7 @@ impl Layer {
     }
 
     /// Convert to GPU representation.
-    pub fn to_gpu(&self) -> SdfLayer {
+    pub(crate) fn to_gpu(&self) -> SdfLayer {
         let mut flags = 0u32;
         if self.distance_field {
             flags |= FLAG_DISTANCE_FIELD;
