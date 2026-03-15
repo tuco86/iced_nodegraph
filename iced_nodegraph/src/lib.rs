@@ -245,6 +245,7 @@ pub mod helpers;
 pub mod ids;
 mod node_graph;
 mod node_pin;
+pub mod prelude;
 pub mod style;
 
 // Re-export iced for downstream crates
