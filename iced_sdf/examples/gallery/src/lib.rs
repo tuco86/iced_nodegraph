@@ -366,7 +366,17 @@ impl NodeEditorState {
     }
 
     fn build_shape(&self) -> iced_sdf::Sdf {
-        iced_sdf::Sdf::rounded_box([0.0, 0.0], [120.0, 80.0], self.corner_radius)
+        use iced_sdf::Sdf;
+        let node = Sdf::rounded_box([0.0, 0.0], [120.0, 80.0], self.corner_radius);
+        let pin_r = 5.0;
+        let x = 120.0; // half_size.x
+        // 3 input pins on left, 2 output pins on right
+        let pins = Sdf::circle([-x, -25.0], pin_r)
+            | Sdf::circle([-x, 0.0], pin_r)
+            | Sdf::circle([-x, 25.0], pin_r)
+            | Sdf::circle([x, -15.0], pin_r)
+            | Sdf::circle([x, 15.0], pin_r);
+        node - pins
     }
 
     fn extra_shapes(&self) -> Vec<iced_sdf::Sdf> {
