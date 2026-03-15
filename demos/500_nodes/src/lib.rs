@@ -45,10 +45,10 @@ pub fn wasm_init() {
 use graph::generate_procedural_graph;
 use iced::{
     Color, Length, Point, Subscription, Theme, Vector,
-    widget::{column, container, stack, text},
+    widget::{checkbox, column, container, stack, text},
     window,
 };
-use iced_nodegraph::{PinRef, node_graph};
+use iced_nodegraph::{PinRef, SdfDebug, node_graph};
 use nodes::NodeType;
 use std::collections::HashSet;
 
@@ -100,6 +100,10 @@ enum ApplicationMessage {
         delta: Vector,
     },
     Tick,
+    ToggleDebugEdges,
+    ToggleDebugShadows,
+    ToggleDebugFill,
+    ToggleDebugForeground,
 }
 
 struct Application {
@@ -107,6 +111,7 @@ struct Application {
     nodes: Vec<(Point, NodeType)>,
     current_theme: Theme,
     selected_nodes: HashSet<usize>,
+    sdf_debug: SdfDebug,
 }
 
 impl Default for Application {
@@ -117,6 +122,7 @@ impl Default for Application {
             nodes,
             current_theme: Theme::CatppuccinMocha,
             selected_nodes: HashSet::new(),
+            sdf_debug: SdfDebug::default(),
         }
     }
 }
@@ -154,9 +160,11 @@ impl Application {
                     }
                 }
             }
-            ApplicationMessage::Tick => {
-                // Trigger redraw for animations
-            }
+            ApplicationMessage::Tick => {}
+            ApplicationMessage::ToggleDebugEdges => self.sdf_debug.edges = !self.sdf_debug.edges,
+            ApplicationMessage::ToggleDebugShadows => self.sdf_debug.shadows = !self.sdf_debug.shadows,
+            ApplicationMessage::ToggleDebugFill => self.sdf_debug.node_fill = !self.sdf_debug.node_fill,
+            ApplicationMessage::ToggleDebugForeground => self.sdf_debug.node_foreground = !self.sdf_debug.node_foreground,
         }
     }
 
@@ -174,7 +182,8 @@ impl Application {
             })
             .on_select(ApplicationMessage::SelectionChanged)
             .on_group_move(|indices, delta| ApplicationMessage::GroupMoved { indices, delta })
-            .selection(&self.selected_nodes);
+            .selection(&self.selected_nodes)
+            .sdf_debug(self.sdf_debug);
 
         // Add all nodes
         for (index, (position, node_type)) in self.nodes.iter().enumerate() {
@@ -198,6 +207,27 @@ impl Application {
                 ))
                 .size(12),
                 text("Scroll: Zoom | Middle-drag: Pan").size(12),
+                text("Tile Debug").size(12),
+                checkbox(self.sdf_debug.edges)
+                    .label("Edges")
+                    .on_toggle(|_| ApplicationMessage::ToggleDebugEdges)
+                    .size(14)
+                    .text_size(12),
+                checkbox(self.sdf_debug.shadows)
+                    .label("Shadows")
+                    .on_toggle(|_| ApplicationMessage::ToggleDebugShadows)
+                    .size(14)
+                    .text_size(12),
+                checkbox(self.sdf_debug.node_fill)
+                    .label("Node Fill")
+                    .on_toggle(|_| ApplicationMessage::ToggleDebugFill)
+                    .size(14)
+                    .text_size(12),
+                checkbox(self.sdf_debug.node_foreground)
+                    .label("Foreground")
+                    .on_toggle(|_| ApplicationMessage::ToggleDebugForeground)
+                    .size(14)
+                    .text_size(12),
             ]
             .spacing(4)
             .padding(10),

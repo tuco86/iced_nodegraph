@@ -65,6 +65,15 @@ pub(crate) struct RenderContext {
     pub time: f32,
 }
 
+/// Per-layer SDF tile debug toggles.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SdfDebug {
+    pub edges: bool,
+    pub shadows: bool,
+    pub node_fill: bool,
+    pub node_foreground: bool,
+}
+
 #[cfg(test)]
 mod interaction_tests;
 
@@ -304,8 +313,8 @@ pub struct NodeGraph<
     /// When set, replaces the built-in TypeId matching in `compute_valid_targets`.
     /// Direction checks still apply before this callback is called.
     pub(super) can_connect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> bool + 'a>>,
-    /// Enable SDF tile debug visualization on edge primitives.
-    pub(super) debug_tiles: bool,
+    /// Per-layer SDF tile debug visualization.
+    pub(super) sdf_debug: SdfDebug,
     /// Phantom data for unused type parameter (E is only used in callbacks)
     _phantom: PhantomData<E>,
 }
@@ -347,7 +356,7 @@ where
             cutting_tool_style_fn: None,
             initial_camera: None,
             can_connect: None,
-            debug_tiles: false,
+            sdf_debug: SdfDebug::default(),
             _phantom: PhantomData,
         }
     }
@@ -562,9 +571,9 @@ where
         self
     }
 
-    /// Enables SDF tile debug visualization on edge primitives.
-    pub fn debug_tiles(mut self, enabled: bool) -> Self {
-        self.debug_tiles = enabled;
+    /// Enables SDF tile debug visualization per primitive layer.
+    pub fn sdf_debug(mut self, debug: SdfDebug) -> Self {
+        self.sdf_debug = debug;
         self
     }
 

@@ -773,7 +773,7 @@ where
                             render_context.camera_zoom,
                         )
                         .time(render_context.time)
-                        .debug_tiles(self.debug_tiles),
+                        .debug_tiles(self.sdf_debug.edges),
                 );
             }
 
@@ -911,7 +911,8 @@ where
                         layout.bounds(),
                         shadow_batch
                             .camera(cam_x, cam_y, cam_zoom)
-                            .time(render_context.time),
+                            .time(render_context.time)
+                            .debug_tiles(self.sdf_debug.shadows),
                     );
                 });
             }
@@ -979,7 +980,8 @@ where
                             ])
                             .screen_bounds(fb)
                             .camera(cam_x, cam_y, cam_zoom)
-                            .time(render_context.time),
+                            .time(render_context.time)
+                            .debug_tiles(self.sdf_debug.node_fill),
                     );
                 });
             }
@@ -1126,7 +1128,8 @@ where
                             fg_clip,
                             fg_batch
                                 .camera(cam_x, cam_y, cam_zoom)
-                                .time(render_context.time),
+                                .time(render_context.time)
+                                .debug_tiles(self.sdf_debug.node_foreground),
                         );
                     });
                 }

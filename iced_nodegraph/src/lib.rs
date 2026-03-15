@@ -197,7 +197,7 @@ pub use helpers::{
 };
 pub use ids::{EdgeId, IdMap, IdMaps, NodeId, PinId};
 pub use node_graph::{
-    NodeGraph, NodeGraphEvent, NodeGraphMessage, PinRef,
+    NodeGraph, NodeGraphEvent, NodeGraphMessage, PinRef, SdfDebug,
     camera::Camera2D, widget::node_graph,
 };
 pub use node_pin::{NodePin, PinDirection, PinReference, PinSide, node_pin};

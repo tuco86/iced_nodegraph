@@ -2035,7 +2035,14 @@ impl Application {
         let tile_debug = self.nodes.values().any(|(_, nt)| {
             matches!(nt, NodeType::Config(ConfigNodeType::EdgeConfig(inputs)) if inputs.tile_debug)
         });
-        ng = ng.debug_tiles(tile_debug);
+        if tile_debug {
+            ng = ng.sdf_debug(iced_nodegraph::SdfDebug {
+                edges: true,
+                shadows: false,
+                node_fill: false,
+                node_foreground: false,
+            });
+        }
 
         let graph_view: iced::Element<'_, ApplicationMessage> = ng.into();
 
