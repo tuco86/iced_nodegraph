@@ -216,6 +216,7 @@ impl Layer {
             + self.pattern
                 .map(|p| p.thickness * 0.5)
                 .unwrap_or(0.0)
+            + self.offset[0].abs().max(self.offset[1].abs())
     }
 
     /// Convert to GPU representation.
@@ -344,6 +345,12 @@ mod tests {
 
         let layer = Layer::distance_field(Color::WHITE, Color::BLACK);
         assert!(layer.max_effect_radius().is_infinite());
+
+        let layer = Layer::solid(Color::WHITE).offset(4.0, 3.0);
+        assert_eq!(layer.max_effect_radius(), 4.0); // max(|4|, |3|)
+
+        let layer = Layer::solid(Color::WHITE).expand(2.0).blur(1.0).offset(-5.0, 5.0);
+        assert_eq!(layer.max_effect_radius(), 8.0); // 2 + 1 + 5
     }
 
     #[test]
