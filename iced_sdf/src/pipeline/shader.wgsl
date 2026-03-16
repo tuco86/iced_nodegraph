@@ -1225,9 +1225,19 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var color = vec4(0.0);
     let base = tile_idx * MAX_SHAPES_PER_TILE;
 
+    // SDF cache: avoid re-evaluating the same shape for consecutive pairs
+    var cached_shape_idx: u32 = 0xFFFFFFFFu;
+    var cached_sdf: SdfResult;
+
     for (var i: u32 = 0u; i < count; i++) {
-        let shape_idx = tile_shapes[base + i];
+        // Early-out: pixel fully covered
+        if color.a >= 0.999 { break; }
+
+        let pair = tile_shapes[base + i];
+        let shape_idx = pair >> 16u;
+        let layer_idx = pair & 0xFFFFu;
         let shape = shapes[shape_idx];
+        let layer = layers[layer_idx];
 
         // Per-pixel AABB refinement
         let shape_min = shape.bounds.xy * current_scale_factor;
@@ -1237,17 +1247,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             continue;
         }
 
-        let sdf = evaluate_sdf(world_pos, shape);
-        let end = shape.layers_offset + shape.layers_count;
-        for (var j: u32 = shape.layers_offset; j < end; j++) {
-            let layer = layers[j];
-            var layer_sdf = sdf;
-            if layer.offset.x != 0.0 || layer.offset.y != 0.0 {
-                layer_sdf = evaluate_sdf(world_pos - layer.offset, shape);
-            }
-            let layer_color = render_layer(layer_sdf, layer);
-            color = color * (1.0 - layer_color.a) + layer_color;
+        // Evaluate SDF (cached per shape)
+        if shape_idx != cached_shape_idx {
+            cached_sdf = evaluate_sdf(world_pos, shape);
+            cached_shape_idx = shape_idx;
         }
+        var sdf = cached_sdf;
+        if layer.offset.x != 0.0 || layer.offset.y != 0.0 {
+            sdf = evaluate_sdf(world_pos - layer.offset, shape);
+        }
+        let layer_color = render_layer(sdf, layer);
+        color = color * (1.0 - layer_color.a) + layer_color;
     }
 
     // Debug: tile borders with shape count heat map
@@ -1273,6 +1283,27 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 // ============================================================================
 // Compute Shader - Spatial Index Builder
 // ============================================================================
+
+// Per-layer effect radius for tile culling.
+fn layer_effect_radius(layer: SdfLayer) -> f32 {
+    var r = abs(layer.expand) + layer.blur + layer.outline_thickness;
+    if (layer.flags & LAYER_FLAG_HAS_PATTERN) != 0u {
+        r += layer.thickness * 0.5;
+    }
+    r += max(abs(layer.offset.x), abs(layer.offset.y));
+    return r;
+}
+
+// Whether a layer fills the shape interior (no pattern, no distance field).
+fn layer_is_fill(layer: SdfLayer) -> bool {
+    return (layer.flags & LAYER_FLAG_HAS_PATTERN) == 0u
+        && (layer.flags & LAYER_FLAG_DISTANCE_FIELD) == 0u;
+}
+
+// Sort key: small = front (stroke/fill), large = back (shadow).
+fn pair_sort_key(layer: SdfLayer) -> f32 {
+    return abs(layer.expand) + layer.blur;
+}
 
 @compute @workgroup_size(16, 16, 1)
 fn cs_build_index(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -1300,7 +1331,7 @@ fn cs_build_index(@builtin(global_invocation_id) gid: vec3<u32>) {
         var count: u32 = 0u;
         let base = global_tile_idx * MAX_SHAPES_PER_TILE;
 
-        // Iterate only this prepare scope's shapes
+        // Iterate shapes, emit (shape, layer) pairs
         let shape_end = cs_uniforms.shape_start + cs_uniforms.shape_count;
         for (var i: u32 = cs_uniforms.shape_start; i < shape_end; i++) {
             let shape = shapes[i];
@@ -1316,21 +1347,42 @@ fn cs_build_index(@builtin(global_invocation_id) gid: vec3<u32>) {
                 continue;
             }
 
-            // Full SDF evaluation at tile center (no approximations)
+            // Full SDF evaluation at tile center
             let result = evaluate_sdf(world_pos, shape);
             let dist = result.dist;
 
-            var cull_dist = dist;
-            if shape.has_fill == 0u {
-                cull_dist = abs(dist);
-            }
+            // Per-layer culling: each layer has its own effect radius
+            let layer_end = shape.layers_offset + shape.layers_count;
+            for (var j: u32 = shape.layers_offset; j < layer_end; j++) {
+                let layer = layers[j];
+                let radius = layer_effect_radius(layer);
 
-            if cull_dist - tile_half_diag <= shape.max_radius {
-                if count < MAX_SHAPES_PER_TILE {
-                    cs_tile_shapes[base + count] = i;
-                    count++;
+                var cull_dist = dist;
+                if !layer_is_fill(layer) {
+                    cull_dist = abs(dist);
+                }
+
+                if cull_dist - tile_half_diag <= radius {
+                    if count < MAX_SHAPES_PER_TILE {
+                        cs_tile_shapes[base + count] = (i << 16u) | j;
+                        count++;
+                    }
                 }
             }
+        }
+
+        // Insertion sort: front-to-back by expand+blur (strokes first, shadows last)
+        for (var si: u32 = 1u; si < count; si++) {
+            let pair = cs_tile_shapes[base + si];
+            let key = pair_sort_key(layers[pair & 0xFFFFu]);
+            var sj = si;
+            while sj > 0u {
+                let prev = cs_tile_shapes[base + sj - 1u];
+                if pair_sort_key(layers[prev & 0xFFFFu]) <= key { break; }
+                cs_tile_shapes[base + sj] = prev;
+                sj--;
+            }
+            cs_tile_shapes[base + sj] = pair;
         }
 
         cs_tile_counts[global_tile_idx] = count;

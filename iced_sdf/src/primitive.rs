@@ -165,7 +165,7 @@ impl Pipeline for SdfPipeline {
         });
 
         let render_group0 = create_render_group0(device, &shared, &draw_data_buffer, &shapes_buffer, &ops_buffer, &layers_buffer, &tile_counts_buffer, &tile_shapes_buffer);
-        let compute_group0 = create_compute_group0(device, &shared, &shapes_buffer, &ops_buffer);
+        let compute_group0 = create_compute_group0(device, &shared, &shapes_buffer, &ops_buffer, &layers_buffer);
         let compute_group1 = create_compute_group1(device, &shared, &compute_uniform_buffer, &tile_counts_buffer, &tile_shapes_buffer);
 
         Self {
@@ -215,12 +215,14 @@ fn create_render_group0(
 fn create_compute_group0(
     device: &Device, shared: &SharedSdfResources,
     shapes: &buffer::Buffer<types::ShapeInstance>, ops: &buffer::Buffer<types::SdfOp>,
+    layers: &buffer::Buffer<types::SdfLayer>,
 ) -> BindGroup {
     device.create_bind_group(&BindGroupDescriptor {
         label: Some("sdf_compute_g0"), layout: &shared.compute_group0_layout,
         entries: &[
             BindGroupEntry { binding: 1, resource: shapes.as_entire_binding() },
             BindGroupEntry { binding: 2, resource: ops.as_entire_binding() },
+            BindGroupEntry { binding: 3, resource: layers.as_entire_binding() },
         ],
     })
 }
@@ -337,6 +339,7 @@ impl Primitive for SdfPrimitive {
             );
             pipeline.compute_group0 = create_compute_group0(
                 device, &pipeline.shared, &pipeline.shapes_buffer, &pipeline.ops_buffer,
+                &pipeline.layers_buffer,
             );
             pipeline.compute_group1 = create_compute_group1(
                 device, &pipeline.shared, &pipeline.compute_uniform_buffer,

@@ -179,7 +179,7 @@ fn create_render_group0_layout(device: &Device) -> BindGroupLayout {
     })
 }
 
-/// Compute group 0: shapes(read) + ops(read) only (for evaluate_sdf)
+/// Compute group 0: shapes(read) + ops(read) + layers(read) (for evaluate_sdf + per-layer culling)
 fn create_compute_group0_layout(device: &Device) -> BindGroupLayout {
     use std::num::NonZeroU64;
     device.create_bind_group_layout(&BindGroupLayoutDescriptor {
@@ -200,6 +200,15 @@ fn create_compute_group0_layout(device: &Device) -> BindGroupLayout {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
                     min_binding_size: Some(NonZeroU64::new(<types::SdfOp as ShaderSize>::SHADER_SIZE.get()).unwrap()),
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 3, visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(NonZeroU64::new(<types::SdfLayer as ShaderSize>::SHADER_SIZE.get()).unwrap()),
                 },
                 count: None,
             },
