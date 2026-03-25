@@ -24,11 +24,9 @@ const TILING_BIT: u32 = 0x80000000u;
 const FLAG_CLOSED: u32 = 1u;
 
 // style.flags
-const STYLE_FLAG_GRADIENT: u32 = 1u;
-const STYLE_FLAG_ARC_GRADIENT: u32 = 2u;
-const STYLE_FLAG_HAS_PATTERN: u32 = 4u;
-const STYLE_FLAG_DISTANCE_FIELD: u32 = 8u;
-const STYLE_FLAG_CLOSED: u32 = 16u;
+const STYLE_FLAG_HAS_PATTERN: u32 = 1u;
+const STYLE_FLAG_DISTANCE_FIELD: u32 = 2u;
+const STYLE_FLAG_CLOSED: u32 = 4u;
 
 const PATTERN_SOLID: u32 = 0u;
 const PATTERN_DASHED: u32 = 1u;
@@ -80,21 +78,22 @@ struct GpuDrawEntry {
 }
 
 struct GpuStyle {
-    color: vec4<f32>,
-    gradient_color: vec4<f32>,
-    gradient_angle: f32,
+    near_start: vec4<f32>,
+    near_end: vec4<f32>,
+    far_start: vec4<f32>,
+    far_end: vec4<f32>,
+    dist_from: f32,
+    dist_to: f32,
     flags: u32,
-    expand: f32,
-    blur: f32,
     pattern_type: u32,
     pattern_thickness: f32,
     pattern_param0: f32,
     pattern_param1: f32,
     pattern_param2: f32,
     flow_speed: f32,
-    outline_thickness: f32,
     _pad0: f32,
-    outline_color: vec4<f32>,
+    _pad1: f32,
+    _pad2: f32,
 }
 
 struct ComputeUniforms {
@@ -345,52 +344,48 @@ fn eval_single_segment(p: vec2<f32>, seg_idx: u32, style: GpuStyle) -> SdfResult
 // ============================================================================
 
 fn render_style(sdf: SdfResult, style: GpuStyle, draw: DrawData) -> vec4<f32> {
+    // Distance field visualization (special mode)
     if (style.flags & STYLE_FLAG_DISTANCE_FIELD) != 0u {
         return render_distance_field(sdf.dist, style, draw);
     }
 
     var dist = sdf.dist;
-    dist -= style.expand;
 
+    // Apply pattern (modifies effective distance)
     if (style.flags & STYLE_FLAG_HAS_PATTERN) != 0u {
         dist = apply_pattern(dist, sdf, style, draw.time);
     }
 
-    var alpha = 0.0;
-    if style.blur > 0.0 {
-        alpha = 1.0 - smoothstep(-style.blur, style.blur, dist);
+    // Arc-length interpolation (0..1 along curve)
+    let arc_t = clamp(sdf.u, 0.0, 1.0);
+    let near = mix(style.near_start, style.near_end, arc_t);
+    let far = mix(style.far_start, style.far_end, arc_t);
+
+    // Distance interpolation within [dist_from, dist_to]
+    let range = style.dist_to - style.dist_from;
+    var color: vec4<f32>;
+    if range > 0.001 {
+        let dist_t = clamp((dist - style.dist_from) / range, 0.0, 1.0);
+        color = mix(near, far, dist_t);
     } else {
-        alpha = 1.0 - smoothstep(-0.5, 0.5, dist);
+        color = near;
     }
+
+    // fwidth-based anti-aliasing at boundaries (~1px at any zoom)
+    let aa = fwidth(dist) * 0.75;
+    let alpha_from = smoothstep(style.dist_from - aa, style.dist_from + aa, dist);
+    let alpha_to = 1.0 - smoothstep(style.dist_to - aa, style.dist_to + aa, dist);
+    let alpha = color.a * alpha_from * alpha_to;
+
     if alpha < 0.001 { return vec4(0.0); }
 
-    var color = style.color;
-
-    if (style.flags & STYLE_FLAG_GRADIENT) != 0u {
-        var t = 0.0;
-        if (style.flags & STYLE_FLAG_ARC_GRADIENT) != 0u {
-            t = clamp(sdf.u, 0.0, 1.0);
-        }
-        color = mix(color, style.gradient_color, t);
-    }
-
-    if style.outline_thickness > 0.0 {
-        let outline_dist = abs(sdf.dist) - style.outline_thickness * 0.5;
-        let outline_alpha = 1.0 - smoothstep(-0.5, 0.5, outline_dist);
-        if outline_alpha > 0.001 {
-            let oc = style.outline_color;
-            let oa = oc.a * outline_alpha;
-            color = vec4(mix(color.rgb, oc.rgb, oa), max(color.a, oa));
-        }
-    }
-
-    let final_alpha = color.a * alpha;
-    return vec4(color.rgb * final_alpha, final_alpha);
+    // Premultiply
+    return vec4(color.rgb * alpha, alpha);
 }
 
 fn render_distance_field(d: f32, style: GpuStyle, draw: DrawData) -> vec4<f32> {
-    let outside_col = style.color.rgb;
-    let inside_col = style.gradient_color.rgb;
+    let outside_col = style.near_start.rgb;
+    let inside_col = style.far_start.rgb;
     let dn = d * draw.camera_zoom * draw.scale_factor * 0.003;
     var col = select(inside_col, outside_col, d > 0.0);
     col *= 1.0 - exp(-6.0 * abs(dn));
@@ -689,7 +684,7 @@ fn cs_build_index(@builtin(global_invocation_id) gid: vec3<u32>) {
             entry_visible = true; // conservative, per-segment check below
         } else {
             // Fill: visible if any pixel in tile could be inside the fill region
-            entry_visible = (signed_dist - thd - style.expand) < style.blur + 0.5;
+            entry_visible = (signed_dist - thd) < style.dist_to + 0.5;
         }
 
         if !entry_visible { continue; }
@@ -704,7 +699,7 @@ fn cs_build_index(@builtin(global_invocation_id) gid: vec3<u32>) {
                 // Pattern: per-segment culling with pattern evaluation
                 let sdf = cs_eval_segment(world_pos, seg_idx);
                 let eff = apply_pattern(sdf.dist, sdf, style, draw.time);
-                if eff <= thd + style.blur {
+                if eff <= thd {
                     cs_push_slot(slot_base, &count, seg_idx, sty_idx);
                 }
             } else {

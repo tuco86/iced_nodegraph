@@ -81,39 +81,35 @@ pub(crate) struct GpuDrawEntry {
     pub tiling_params: GpuVec4,
 }
 
-/// Rendering style for a draw entry.
-/// 96 bytes (6 x vec4).
+/// Rendering style: 4 corner colors + distance range + pattern.
+/// 128 bytes (8 x vec4).
 #[derive(Clone, Debug, ShaderType)]
 pub(crate) struct GpuStyle {
-    /// Fill color (RGBA).
-    pub color: GpuVec4,
-    /// Gradient end color.
-    pub gradient_color: GpuVec4,
-    /// Gradient angle (radians) or arc-length scale.
-    pub gradient_angle: f32,
-    /// Flags: bit 0=gradient, bit 1=arc_gradient, bit 2=has_pattern.
+    /// Color at (arc=0, dist=from).
+    pub near_start: GpuVec4,
+    /// Color at (arc=1, dist=from).
+    pub near_end: GpuVec4,
+    /// Color at (arc=0, dist=to).
+    pub far_start: GpuVec4,
+    /// Color at (arc=1, dist=to).
+    pub far_end: GpuVec4,
+    /// Inner distance boundary.
+    pub dist_from: f32,
+    /// Outer distance boundary.
+    pub dist_to: f32,
+    /// Flags.
     pub flags: u32,
-    /// Expand/contract amount.
-    pub expand: f32,
-    /// Blur radius.
-    pub blur: f32,
-    /// Pattern type: 0=solid, 1=dashed, 2=arrowed, 3=dotted, 4=dash_dotted, 5=arrow_dotted.
+    /// Pattern type.
     pub pattern_type: u32,
     /// Pattern stroke thickness.
     pub pattern_thickness: f32,
-    /// Pattern param 0 (dash/segment/spacing).
     pub pattern_param0: f32,
-    /// Pattern param 1 (gap/radius).
     pub pattern_param1: f32,
-    /// Pattern param 2 (angle/dot_radius).
     pub pattern_param2: f32,
-    /// Flow animation speed.
     pub flow_speed: f32,
-    /// Outline thickness (0 = no outline).
-    pub outline_thickness: f32,
     pub _pad0: f32,
-    /// Outline color (RGBA).
-    pub outline_color: GpuVec4,
+    pub _pad1: f32,
+    pub _pad2: f32,
 }
 
 /// Per-draw-call parameters.
@@ -180,13 +176,15 @@ impl Default for GpuDrawEntry {
 impl Default for GpuStyle {
     fn default() -> Self {
         Self {
-            color: GpuVec4::new(1.0, 1.0, 1.0, 1.0),
-            gradient_color: GpuVec4::ZERO,
-            gradient_angle: 0.0, flags: 0, expand: 0.0, blur: 0.0,
-            pattern_type: 0, pattern_thickness: 1.0,
+            near_start: GpuVec4::new(1.0, 1.0, 1.0, 1.0),
+            near_end: GpuVec4::new(1.0, 1.0, 1.0, 1.0),
+            far_start: GpuVec4::new(1.0, 1.0, 1.0, 1.0),
+            far_end: GpuVec4::new(1.0, 1.0, 1.0, 1.0),
+            dist_from: -1e6, dist_to: 0.0,
+            flags: 0, pattern_type: 0,
+            pattern_thickness: 1.0,
             pattern_param0: 0.0, pattern_param1: 0.0, pattern_param2: 0.0,
-            flow_speed: 0.0, outline_thickness: 0.0, _pad0: 0.0,
-            outline_color: GpuVec4::ZERO,
+            flow_speed: 0.0, _pad0: 0.0, _pad1: 0.0, _pad2: 0.0,
         }
     }
 }

@@ -162,6 +162,7 @@ struct EdgeEditor {
     shadow_visible: bool,
     shadow_expand: f32,
     shadow_color: [f32; 4],
+    #[allow(dead_code)]
     shadow_color_end: [f32; 4],
     stroke_visible: bool,
 }
@@ -224,11 +225,7 @@ impl EdgeEditor {
         }
         // Shadow (back)
         if self.shadow_visible {
-            styles.push(
-                Style::arc_gradient(rgba(&self.shadow_color), rgba(&self.shadow_color_end))
-                    .expand(self.shadow_expand).blur(self.shadow_expand * 0.8)
-                    .with_pattern(Pattern::solid(self.thickness + self.shadow_expand * 2.0))
-            );
+            styles.push(Style::shadow(rgba(&self.shadow_color), self.shadow_expand));
         }
         styles
     }
@@ -297,10 +294,7 @@ impl NodeEditor {
             styles.push(Style::solid(rgba(&c)));
         }
         if self.shadow_visible {
-            styles.push(
-                Style::solid(rgba(&self.shadow_color))
-                    .expand(4.0).blur(self.shadow_blur)
-            );
+            styles.push(Style::shadow(rgba(&self.shadow_color), self.shadow_blur));
         }
         styles
     }
