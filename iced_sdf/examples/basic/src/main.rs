@@ -55,15 +55,15 @@ fn build_static_entries() -> Vec<StaticEntry> {
             extent: 140.0,
         },
         StaticEntry {
-            name: "Grid",
+            name: "Grid (DF)",
             drawables: vec![Tiling::grid(20.0, 20.0, 0.5)],
-            styles: vec![Style::solid(Color::from_rgba(1.0, 1.0, 1.0, 0.15))],
+            styles: vec![Style::distance_field()],
             extent: 100.0,
         },
         StaticEntry {
-            name: "Dots",
+            name: "Dots (DF)",
             drawables: vec![Tiling::dots(15.0, 15.0, 2.0)],
-            styles: vec![Style::solid(Color::from_rgba(0.4, 0.8, 1.0, 0.3))],
+            styles: vec![Style::distance_field()],
             extent: 60.0,
         },
     ]
