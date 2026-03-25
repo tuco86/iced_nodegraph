@@ -17,6 +17,8 @@ const SEG_POINT: u32 = 3u;
 const ENTRY_CURVE: u32 = 0u;
 const ENTRY_SHAPE: u32 = 1u;
 const ENTRY_TILING: u32 = 2u;
+// Marker bit: slot segment_idx with this bit set = tiling (segment_idx = entry_idx)
+const TILING_BIT: u32 = 0x80000000u;
 
 // entry.flags
 const FLAG_CLOSED: u32 = 1u;
@@ -284,6 +286,37 @@ fn sd_point(p: vec2<f32>, pos: vec2<f32>, heading: f32) -> SdfResult {
     return SdfResult(dist, 0.0, v_val);
 }
 
+// --- Tiling SDF functions ---
+
+const TILING_GRID: u32 = 0u;
+const TILING_DOTS: u32 = 1u;
+
+fn sd_tiling(p: vec2<f32>, tiling_type: u32, params: vec4<f32>) -> SdfResult {
+    let spacing = params.xy;
+    switch tiling_type {
+        case TILING_GRID: {
+            let thickness = params.z;
+            // Distance to nearest grid line (modulo spacing)
+            let mx = abs(((p.x % spacing.x) + spacing.x) % spacing.x - spacing.x * 0.5);
+            let my = abs(((p.y % spacing.y) + spacing.y) % spacing.y - spacing.y * 0.5);
+            let dx = mx - thickness * 0.5;
+            let dy = my - thickness * 0.5;
+            let dist = min(dx, dy);
+            return SdfResult(dist, 0.0, 0.0);
+        }
+        case TILING_DOTS: {
+            let radius = params.z;
+            // Distance to nearest dot center (modulo spacing)
+            let cell = round(p / spacing) * spacing;
+            let dist = length(p - cell) - radius;
+            return SdfResult(dist, 0.0, 0.0);
+        }
+        default: {
+            return SdfResult(1e10, 0.0, 0.0);
+        }
+    }
+}
+
 fn eval_segment(p: vec2<f32>, seg: GpuSegment) -> SdfResult {
     switch seg.segment_type {
         case SEG_LINE: { return sd_line(p, seg.geom0.xy, seg.geom0.zw); }
@@ -485,22 +518,36 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             discard;
         }
 
-        // Each slot = 2 u32s: (segment_idx, style_idx)
+        // Each slot = 2 u32s: (segment_idx_or_tiling, style_idx)
         // Group by style: for same style, find nearest segment per pixel.
         let slot_base = tile_idx * SLOT_STRIDE;
         var i = 0u;
         while i < count {
             if acc.a >= 0.999 { break; }
+            let raw_seg = tile_slots[slot_base + i * 2u];
             let first_sty = tile_slots[slot_base + i * 2u + 1u];
             let style = styles[first_sty];
 
-            // Find nearest segment among consecutive slots with same style
-            var best_sdf = eval_single_segment(world_p, tile_slots[slot_base + i * 2u], style);
+            // Check for tiling marker
+            if (raw_seg & TILING_BIT) != 0u {
+                let entry_idx = raw_seg & ~TILING_BIT;
+                let entry = draw_entries[entry_idx];
+                let sdf = sd_tiling(world_p, entry.tiling_type, entry.tiling_params);
+                let frag = render_style(sdf, style, draw);
+                acc = acc + frag * (1.0 - acc.a);
+                i++;
+                continue;
+            }
+
+            // Regular segments: find nearest among consecutive same-style slots
+            var best_sdf = eval_single_segment(world_p, raw_seg, style);
             var best_abs = abs(best_sdf.dist);
             i++;
 
             while i < count && tile_slots[slot_base + i * 2u + 1u] == first_sty {
-                let sdf = eval_single_segment(world_p, tile_slots[slot_base + i * 2u], style);
+                let next_seg = tile_slots[slot_base + i * 2u];
+                if (next_seg & TILING_BIT) != 0u { break; } // don't group tilings
+                let sdf = eval_single_segment(world_p, next_seg, style);
                 let ad = abs(sdf.dist);
                 if ad < best_abs {
                     best_abs = ad;
@@ -520,11 +567,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             if acc.a >= 0.999 { break; }
             let entry = draw_entries[i];
             let style = styles[entry.style_idx];
-            // Evaluate all segments of this entry
-            for (var s = 0u; s < entry.segment_count; s++) {
-                let sdf = eval_single_segment(world_p, entry.segment_start + s, style);
+            if entry.entry_type == ENTRY_TILING {
+                let sdf = sd_tiling(world_p, entry.tiling_type, entry.tiling_params);
                 let frag = render_style(sdf, style, draw);
                 acc = acc + frag * (1.0 - acc.a);
+            } else {
+                for (var s = 0u; s < entry.segment_count; s++) {
+                    let sdf = eval_single_segment(world_p, entry.segment_start + s, style);
+                    let frag = render_style(sdf, style, draw);
+                    acc = acc + frag * (1.0 - acc.a);
+                }
             }
         }
     }
@@ -602,6 +654,13 @@ fn cs_build_index(@builtin(global_invocation_id) gid: vec3<u32>) {
         let entry = cs_entries[i];
         let style = cs_styles[entry.style_idx];
         let sty_idx = entry.style_idx;
+
+        // Tilings: always include, store entry_idx with TILING_BIT marker
+        if entry.entry_type == ENTRY_TILING {
+            cs_push_slot(slot_base, &count, i | TILING_BIT, sty_idx);
+            continue;
+        }
+
         let has_pattern = (style.flags & STYLE_FLAG_HAS_PATTERN) != 0u;
 
         // Pass 1: find nearest segment to determine inside/outside at tile center

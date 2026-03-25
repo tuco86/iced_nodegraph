@@ -2,7 +2,7 @@ use std::f32::consts::FRAC_PI_2;
 
 use iced::widget::{button, checkbox, column, container, row, text};
 use iced::{Color, Element, Fill, Length, Rectangle, Size, Subscription, Theme};
-use iced_sdf::{Curve, Drawable, Pattern, SdfPrimitive, Style};
+use iced_sdf::{Curve, Drawable, Pattern, SdfPrimitive, Style, Tiling};
 
 fn main() -> iced::Result {
     iced::application(App::default, App::update, App::view)
@@ -147,6 +147,25 @@ fn build_entries() -> Vec<ShapeEntry> {
                 },
             ],
             extent: 140.0,
+        },
+        // --- Tiling ---
+        ShapeEntry {
+            name: "Grid",
+            drawables: vec![Tiling::grid(20.0, 20.0, 0.5)],
+            layers: vec![Layer {
+                drawable_idx: 0,
+                style: Style::solid(Color::from_rgba(1.0, 1.0, 1.0, 0.15)),
+            }],
+            extent: 100.0,
+        },
+        ShapeEntry {
+            name: "Dots",
+            drawables: vec![Tiling::dots(15.0, 15.0, 2.0)],
+            layers: vec![Layer {
+                drawable_idx: 0,
+                style: Style::solid(Color::from_rgba(0.4, 0.8, 1.0, 0.3)),
+            }],
+            extent: 60.0,
         },
         // --- Styled node ---
         ShapeEntry {
