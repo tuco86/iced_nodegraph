@@ -330,10 +330,12 @@ fn eval_segment(p: vec2<f32>, seg: GpuSegment) -> SdfResult {
 fn eval_single_segment(p: vec2<f32>, seg_idx: u32, style: GpuStyle) -> SdfResult {
     let seg = segments[seg_idx];
     var r = eval_segment(p, seg);
-    // Map parametric u (0..1) to arc-length range
+    // Map parametric u (0..1) to normalized arc-length (0..1 over total contour)
     let arc_start = seg.arc_range.x;
     let arc_end = seg.arc_range.y;
-    r.u = arc_start + r.u * (arc_end - arc_start);
+    let total = seg.arc_range.z;
+    let world_u = arc_start + r.u * (arc_end - arc_start);
+    if total > 0.0 { r.u = world_u / total; } else { r.u = 0.0; }
     // Sign from perpendicular: v > 0 = right side in screen Y-down = negative
     r.dist = r.dist * select(1.0, -1.0, r.v > 0.0);
     return r;
@@ -350,18 +352,26 @@ fn render_style(sdf: SdfResult, style: GpuStyle, draw: DrawData) -> vec4<f32> {
     }
 
     var dist = sdf.dist;
+    let arc_t = clamp(sdf.u, 0.0, 1.0);
 
-    // Apply pattern (modifies effective distance)
     if (style.flags & STYLE_FLAG_HAS_PATTERN) != 0u {
+        // Pattern: transforms distance to stroke-edge space (negative=inside, 0=edge)
         dist = apply_pattern(dist, sdf, style, draw.time);
+
+        // Color from arc-length gradient (near only, patterns don't use dist interpolation)
+        let color = mix(style.near_start, style.near_end, arc_t);
+
+        // AA at pattern boundary (dist=0)
+        let aa = fwidth(dist) * 0.75;
+        let alpha = color.a * (1.0 - smoothstep(-aa, aa, dist));
+        if alpha < 0.001 { return vec4(0.0); }
+        return vec4(color.rgb * alpha, alpha);
     }
 
-    // Arc-length interpolation (0..1 along curve)
-    let arc_t = clamp(sdf.u, 0.0, 1.0);
+    // No pattern: 4-color bilinear interpolation over arc-length x distance range
     let near = mix(style.near_start, style.near_end, arc_t);
     let far = mix(style.far_start, style.far_end, arc_t);
 
-    // Distance interpolation within [dist_from, dist_to]
     let range = style.dist_to - style.dist_from;
     var color: vec4<f32>;
     if range > 0.001 {
@@ -371,15 +381,13 @@ fn render_style(sdf: SdfResult, style: GpuStyle, draw: DrawData) -> vec4<f32> {
         color = near;
     }
 
-    // fwidth-based anti-aliasing at boundaries (~1px at any zoom)
+    // fwidth-based AA at distance boundaries
     let aa = fwidth(dist) * 0.75;
     let alpha_from = smoothstep(style.dist_from - aa, style.dist_from + aa, dist);
     let alpha_to = 1.0 - smoothstep(style.dist_to - aa, style.dist_to + aa, dist);
     let alpha = color.a * alpha_from * alpha_to;
 
     if alpha < 0.001 { return vec4(0.0); }
-
-    // Premultiply
     return vec4(color.rgb * alpha, alpha);
 }
 
@@ -609,7 +617,9 @@ fn cs_eval_segment(p: vec2<f32>, seg_idx: u32) -> SdfResult {
     var r = eval_segment(p, seg);
     let arc_start = seg.arc_range.x;
     let arc_end = seg.arc_range.y;
-    r.u = arc_start + r.u * (arc_end - arc_start);
+    let total = seg.arc_range.z;
+    let world_u = arc_start + r.u * (arc_end - arc_start);
+    if total > 0.0 { r.u = world_u / total; } else { r.u = 0.0; }
     r.dist = r.dist * select(1.0, -1.0, r.v > 0.0);
     return r;
 }
@@ -682,9 +692,12 @@ fn cs_build_index(@builtin(global_invocation_id) gid: vec3<u32>) {
         } else if has_pattern {
             // For patterns: visible if any nearby segment has visible pattern
             entry_visible = true; // conservative, per-segment check below
-        } else {
-            // Fill: visible if any pixel in tile could be inside the fill region
+        } else if (style.flags & STYLE_FLAG_CLOSED) != 0u {
+            // Closed fill: visible if any pixel in tile could be inside
             entry_visible = (signed_dist - thd) < style.dist_to + 0.5;
+        } else {
+            // Open curve fill: use unsigned distance (no "inside" concept)
+            entry_visible = (min_unsigned - thd) < style.dist_to + 0.5;
         }
 
         if !entry_visible { continue; }
