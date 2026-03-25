@@ -1,62 +1,44 @@
-//! Generic SDF (Signed Distance Field) renderer for Iced.
+//! Segment-based SDF renderer for Iced.
 //!
-//! This crate provides a GPU-accelerated SDF renderer with:
-//! - Combinable SDF primitives (Circle, Box, RoundedBox, Line, Bezier)
-//! - Boolean operations (Union, Subtract, Intersect)
-//! - Smooth blending operations
-//! - Layer-based rendering with expand, blur, and gradient support
+//! Provides exact distance fields by decomposing shapes into individual
+//! segments (lines, arcs, bezier curves). Front-to-back rendering with
+//! alpha early-out.
 //!
-//! # Example
+//! # Builders
 //!
-//! ```ignore
-//! use iced_sdf::{Sdf, SdfPrimitive, Layer};
-//! use iced::Color;
+//! - [`Curve`] - Disconnected segments (edges, lines, beziers)
+//! - [`Shape`] - Connected contours (nodes with pin cutouts) [Phase 3]
+//! - [`Tiling`] - Infinite repeating backgrounds (grid, dots) [Phase 6]
 //!
-//! // Each SdfPrimitive is submitted individually via renderer.draw_primitive().
-//! // Iced's pipeline automatically batches them into shared GPU buffers.
-//!
-//! let node = SdfPrimitive::single(
-//!     Sdf::rounded_box([50.0, 25.0], [50.0, 25.0], 8.0),
-//! )
-//! .layers(vec![
-//!     Layer::solid(Color::BLACK).expand(6.0).blur(4.0),  // Shadow
-//!     Layer::solid(Color::from_rgb(0.8, 0.8, 0.8)),      // Fill
-//! ])
-//! .screen_bounds([0.0, 0.0, 120.0, 70.0])
-//! .camera(cam_x, cam_y, zoom);
-//!
-//! renderer.draw_primitive(bounds, node);
-//! ```
-//!
-//! # Operators
-//!
-//! For ergonomic API, operators are available:
-//! - `a | b` = union
-//! - `a - b` = subtract
+//! # Rendering
 //!
 //! ```ignore
-//! let combined = Sdf::circle([0.0, 0.0], 20.0)
-//!     | Sdf::circle([30.0, 0.0], 20.0);  // Union
+//! use iced_sdf::{Curve, Style, Pattern, SdfPrimitive};
 //!
-//! let punched = Sdf::rect([0.0, 0.0], [50.0, 50.0])
-//!     - Sdf::circle([0.0, 0.0], 25.0);  // Subtract
+//! let edge = Curve::single_bezier([0, 0], [30, -20], [70, 20], [100, 0]);
+//! let style = Style::stroke(Color::WHITE, Pattern::solid(2.0));
+//!
+//! let mut prim = SdfPrimitive::new();
+//! prim.push(&edge, &style, [0.0, 0.0, 200.0, 100.0]);
+//! let prim = prim.camera(cam_x, cam_y, zoom).time(elapsed);
 //! ```
 
-pub mod batch;
-pub(crate) mod compile;
-pub mod eval;
-pub mod layer;
+pub mod curve;
+pub mod drawable;
 pub mod pattern;
+pub mod style;
+pub mod tiling;
+
+pub(crate) mod compile;
 pub(crate) mod pipeline;
 pub mod primitive;
-pub mod shape;
 pub(crate) mod shared;
 
 // Public API re-exports
-pub use batch::SdfBatch;
-pub use eval::{evaluate, SdfResult};
-pub use layer::Layer;
+pub use curve::{Curve, ShapeBuilder};
+pub use drawable::Drawable;
 pub use pattern::Pattern;
 pub use pipeline::types::SdfStats;
 pub use primitive::{SdfPrimitive, sdf_stats};
-pub use shape::{Sdf, SdfNode};
+pub use style::Style;
+pub use tiling::Tiling;

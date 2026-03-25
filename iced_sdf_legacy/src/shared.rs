@@ -1,6 +1,10 @@
-//! Shared GPU resources for segment-based SDF rendering.
+//! Shared GPU resources for SDF rendering.
 //!
-//! Uses lazy initialization: OnceLock on native, thread_local on WASM.
+//! Uses lazy initialization to ensure shader module and pipelines
+//! are created exactly once.
+//!
+//! On native: Uses `OnceLock<Arc<...>>` for thread-safe global storage.
+//! On WASM: Uses `thread_local!` because WGPU types contain JsValue which is not Send+Sync.
 
 use std::sync::Arc;
 
@@ -16,22 +20,25 @@ use iced::wgpu::{
 
 use crate::pipeline::types;
 
+// Native: Use OnceLock for thread-safe global storage
 #[cfg(not(target_arch = "wasm32"))]
 static SHARED_RESOURCES: std::sync::OnceLock<Arc<SharedSdfResources>> = std::sync::OnceLock::new();
 
+// WASM: Use thread_local because WGPU types contain JsValue (not Send+Sync)
 #[cfg(target_arch = "wasm32")]
 thread_local! {
     static SHARED_RESOURCES: std::cell::RefCell<Option<Arc<SharedSdfResources>>> =
         const { std::cell::RefCell::new(None) };
 }
 
+/// Shared GPU resources for SDF rendering.
 pub(crate) struct SharedSdfResources {
     _shader_module: ShaderModule,
-    /// Render group 0: draws, draw_entries, segments, styles, tile_counts, tile_entries
+    /// Group 0: shared data (draws, shapes, ops, layers, tile_counts, tile_shapes)
     pub render_group0_layout: BindGroupLayout,
-    /// Compute group 0: draw_entries(read), segments(read), styles(read)
+    /// Group 0 for compute: only shapes + ops (subset, no tile conflicts)
     pub compute_group0_layout: BindGroupLayout,
-    /// Compute group 1: uniforms, tile_counts(rw), tile_entries(rw)
+    /// Group 1: compute-only (uniforms, tile_counts_rw, tile_shapes_rw)
     pub compute_group1_layout: BindGroupLayout,
     _render_pipeline_layout: PipelineLayout,
     _compute_pipeline_layout: PipelineLayout,
@@ -108,7 +115,7 @@ impl SharedSdfResources {
     }
 }
 
-/// Render group 0: draws + draw_entries + segments + styles + tile_counts(read) + tile_entries(read)
+/// Render group 0: draws + shapes + ops + layers + tile_counts(read) + tile_shapes(read)
 fn create_render_group0_layout(device: &Device) -> BindGroupLayout {
     use std::num::NonZeroU64;
     device.create_bind_group_layout(&BindGroupLayoutDescriptor {
@@ -119,9 +126,7 @@ fn create_render_group0_layout(device: &Device) -> BindGroupLayout {
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
-                    min_binding_size: Some(NonZeroU64::new(
-                        <types::DrawData as ShaderSize>::SHADER_SIZE.get(),
-                    ).unwrap()),
+                    min_binding_size: Some(NonZeroU64::new(<types::DrawData as ShaderSize>::SHADER_SIZE.get()).unwrap()),
                 },
                 count: None,
             },
@@ -130,9 +135,7 @@ fn create_render_group0_layout(device: &Device) -> BindGroupLayout {
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
-                    min_binding_size: Some(NonZeroU64::new(
-                        <types::GpuDrawEntry as ShaderSize>::SHADER_SIZE.get(),
-                    ).unwrap()),
+                    min_binding_size: Some(NonZeroU64::new(<types::ShapeInstance as ShaderSize>::SHADER_SIZE.get()).unwrap()),
                 },
                 count: None,
             },
@@ -141,9 +144,7 @@ fn create_render_group0_layout(device: &Device) -> BindGroupLayout {
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
-                    min_binding_size: Some(NonZeroU64::new(
-                        <types::GpuSegment as ShaderSize>::SHADER_SIZE.get(),
-                    ).unwrap()),
+                    min_binding_size: Some(NonZeroU64::new(<types::SdfOp as ShaderSize>::SHADER_SIZE.get()).unwrap()),
                 },
                 count: None,
             },
@@ -152,13 +153,10 @@ fn create_render_group0_layout(device: &Device) -> BindGroupLayout {
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
-                    min_binding_size: Some(NonZeroU64::new(
-                        <types::GpuStyle as ShaderSize>::SHADER_SIZE.get(),
-                    ).unwrap()),
+                    min_binding_size: Some(NonZeroU64::new(<types::SdfLayer as ShaderSize>::SHADER_SIZE.get()).unwrap()),
                 },
                 count: None,
             },
-            // binding 4: tile_counts (read)
             BindGroupLayoutEntry {
                 binding: 4, visibility: ShaderStages::FRAGMENT,
                 ty: BindingType::Buffer {
@@ -168,7 +166,6 @@ fn create_render_group0_layout(device: &Device) -> BindGroupLayout {
                 },
                 count: None,
             },
-            // binding 5: tile_entries (read)
             BindGroupLayoutEntry {
                 binding: 5, visibility: ShaderStages::FRAGMENT,
                 ty: BindingType::Buffer {
@@ -182,32 +179,18 @@ fn create_render_group0_layout(device: &Device) -> BindGroupLayout {
     })
 }
 
-/// Compute group 0: draws(read) + draw_entries(read) + segments(read) + styles(read)
-/// Shares the same data buffers as render group 0 (read-only access).
+/// Compute group 0: shapes(read) + ops(read) + layers(read) (for evaluate_sdf + per-layer culling)
 fn create_compute_group0_layout(device: &Device) -> BindGroupLayout {
     use std::num::NonZeroU64;
     device.create_bind_group_layout(&BindGroupLayoutDescriptor {
         label: Some("SDF Compute Group 0"),
         entries: &[
             BindGroupLayoutEntry {
-                binding: 0, visibility: ShaderStages::COMPUTE,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: Some(NonZeroU64::new(
-                        <types::DrawData as ShaderSize>::SHADER_SIZE.get(),
-                    ).unwrap()),
-                },
-                count: None,
-            },
-            BindGroupLayoutEntry {
                 binding: 1, visibility: ShaderStages::COMPUTE,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
-                    min_binding_size: Some(NonZeroU64::new(
-                        <types::GpuDrawEntry as ShaderSize>::SHADER_SIZE.get(),
-                    ).unwrap()),
+                    min_binding_size: Some(NonZeroU64::new(<types::ShapeInstance as ShaderSize>::SHADER_SIZE.get()).unwrap()),
                 },
                 count: None,
             },
@@ -216,9 +199,7 @@ fn create_compute_group0_layout(device: &Device) -> BindGroupLayout {
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
-                    min_binding_size: Some(NonZeroU64::new(
-                        <types::GpuSegment as ShaderSize>::SHADER_SIZE.get(),
-                    ).unwrap()),
+                    min_binding_size: Some(NonZeroU64::new(<types::SdfOp as ShaderSize>::SHADER_SIZE.get()).unwrap()),
                 },
                 count: None,
             },
@@ -227,9 +208,7 @@ fn create_compute_group0_layout(device: &Device) -> BindGroupLayout {
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
-                    min_binding_size: Some(NonZeroU64::new(
-                        <types::GpuStyle as ShaderSize>::SHADER_SIZE.get(),
-                    ).unwrap()),
+                    min_binding_size: Some(NonZeroU64::new(<types::SdfLayer as ShaderSize>::SHADER_SIZE.get()).unwrap()),
                 },
                 count: None,
             },
@@ -237,7 +216,7 @@ fn create_compute_group0_layout(device: &Device) -> BindGroupLayout {
     })
 }
 
-/// Compute group 1: uniforms + tile_counts(rw) + tile_entries(rw)
+/// Compute group 1: uniforms + tile_counts(rw) + tile_shapes(rw)
 fn create_compute_group1_layout(device: &Device) -> BindGroupLayout {
     use std::num::NonZeroU64;
     device.create_bind_group_layout(&BindGroupLayoutDescriptor {
@@ -294,8 +273,7 @@ fn create_render_pipeline(
         fragment: Some(FragmentState {
             module, entry_point: Some("fs_main"),
             targets: &[Some(ColorTargetState {
-                format, blend: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                write_mask: ColorWrites::ALL,
+                format, blend: Some(BlendState::ALPHA_BLENDING), write_mask: ColorWrites::ALL,
             })],
             compilation_options: PipelineCompilationOptions::default(),
         }),

@@ -25,7 +25,7 @@ wasm = [
 ]
 
 [dependencies]
-iced_sdf.workspace = true
+iced_sdf = { package = "iced_sdf_legacy", path = "../.." }
 iced = { workspace = true, features = ["advanced", "wgpu"] }
 iced_wgpu.workspace = true
 glam.workspace = true

@@ -1,0 +1,17 @@
+[package]
+name = "sdf_basic"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "sdf_basic"
+path = "src/main.rs"
+
+[dependencies]
+iced_sdf.workspace = true
+iced = { workspace = true, features = ["advanced", "wgpu"] }
+iced_wgpu.workspace = true
+web-time.workspace = true

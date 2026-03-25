@@ -12,7 +12,7 @@ categories = ["gui", "graphics", "visualization"]
 
 [dependencies]
 euclid.workspace = true
-iced_sdf.workspace = true
+iced_sdf = { package = "iced_sdf_legacy", path = "../iced_sdf_legacy" }
 iced_wgpu.workspace = true
 iced_widget.workspace = true
 # webgl feature adds WebGL2 fallback for browsers without WebGPU (ignored on native)

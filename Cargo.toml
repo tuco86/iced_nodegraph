@@ -2,7 +2,9 @@
 members = [
     "iced_nodegraph",
     "iced_sdf",
-    "iced_sdf/examples/gallery",
+    "iced_sdf/examples/basic",
+    "iced_sdf_legacy",
+    "iced_sdf_legacy/examples/gallery",
     "demos/hello_world",
     "demos/styling",
     "demos/interaction",
@@ -23,6 +25,7 @@ repository = "https://github.com/tuco86/iced_nodegraph"
 # Core libraries
 iced_nodegraph = { path = "iced_nodegraph" }
 iced_sdf = { path = "iced_sdf" }
+iced_sdf_legacy = { path = "iced_sdf_legacy" }
 demo_common = { path = "demos/common" }
 
 # Iced framework

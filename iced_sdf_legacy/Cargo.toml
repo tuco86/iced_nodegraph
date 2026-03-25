@@ -1,12 +1,12 @@
 [package]
-name = "iced_sdf"
+name = "iced_sdf_legacy"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
-description = "Segment-based SDF renderer for Iced with exact distance fields"
+description = "Generic SDF renderer for Iced with combinable primitives and CSG operations"
 repository.workspace = true
 license.workspace = true
-keywords = ["iced", "sdf", "signed-distance-field", "gpu", "segment"]
+keywords = ["iced", "sdf", "signed-distance-field", "csg", "gpu"]
 categories = ["gui", "graphics", "rendering"]
 
 [dependencies]
@@ -15,6 +15,7 @@ glam.workspace = true
 encase.workspace = true
 iced_wgpu.workspace = true
 iced = { workspace = true, features = ["advanced", "wgpu"] }
+smallvec = "1"
 web-time.workspace = true
 
 # WASM: Enable WebGL in iced_wgpu for fallback support

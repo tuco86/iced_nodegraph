@@ -1,343 +1,128 @@
-//! Compiles SDF tree to RPN (Reverse Polish Notation) for GPU evaluation.
-//!
-//! The GPU shader evaluates SDFs using a stack-based approach. This module
-//! converts the tree structure into a linear array of operations.
+//! Compilation: Drawable + Style -> GPU data.
 
-use crate::pipeline::types::SdfOp;
-use crate::shape::SdfNode;
-use crate::pipeline::types::GpuVec4;
+use iced::Color;
 
-#[inline]
-fn v4(x: f32, y: f32, z: f32, w: f32) -> GpuVec4 {
-    GpuVec4::new(x, y, z, w)
-}
+use crate::drawable::Drawable;
+use crate::pipeline::types::{GpuDrawEntry, GpuSegment, GpuStyle, GpuVec4};
+use crate::style::{Fill, Style};
 
-const V4_ZERO: GpuVec4 = GpuVec4::ZERO;
+const FLAG_CLOSED: u32 = 1; // entry.flags
+// style.flags:
+const FLAG_GRADIENT: u32 = 1;
+const FLAG_ARC_GRADIENT: u32 = 2;
+const FLAG_HAS_PATTERN: u32 = 4;
+const FLAG_DISTANCE_FIELD: u32 = 8;
+const STYLE_FLAG_CLOSED: u32 = 16; // propagated from drawable.is_closed
 
-/// Operation types for the shader.
-/// Must match the constants in shader.wgsl.
-#[repr(u32)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum OpType {
-    // Primitives
-    Circle = 0,
-    Box = 1,
-    RoundedBox = 2,
-    Line = 3,
-    Bezier = 4,
-    Ellipse = 5,
-    Triangle = 6,
-    EquilateralTriangle = 7,
-    IsoscelesTriangle = 8,
-    Rhombus = 9,
-    Trapezoid = 10,
-    Parallelogram = 11,
-    Pentagon = 12,
-    Hexagon = 13,
-    Octagon = 14,
-    Hexagram = 15,
-
-    // Operations (16-31)
-    Union = 16,
-    Subtract = 17,
-    Intersect = 18,
-    SmoothUnion = 19,
-    SmoothSubtract = 20,
-
-    // More primitives (21-31)
-    Star = 21,
-    Pie = 22,
-    Arc = 23,
-    CutDisk = 24,
-    Heart = 25,
-    Egg = 26,
-    Moon = 27,
-    Vesica = 28,
-    UnevenCapsule = 29,
-    OrientedBox = 30,
-    Horseshoe = 31,
-
-    // Modifiers (32-33)
-    Round = 32,
-    Onion = 33,
-
-    // More primitives (34+)
-    RoundedX = 34,
-    Cross = 35,
-    QuadBezier = 36,
-    Parabola = 37,
-    CoolS = 38,
-    BlobbyCross = 39,
-
-    // Pattern modifiers (40+)
-    Dash = 40,
-    Arrow = 41,
-}
-
-#[cfg(test)]
-fn compile(node: &SdfNode) -> Vec<SdfOp> {
-    let mut ops = Vec::new();
-    compile_into(node, &mut ops);
-    ops
-}
-
-/// Compile an SDF tree into RPN format, reusing the provided Vec.
+/// Compile a drawable and style into GPU data.
 ///
-/// Clears `ops` before compiling. Use this to avoid per-frame allocations.
-pub(crate) fn compile_into(node: &SdfNode, ops: &mut Vec<SdfOp>) {
-    ops.clear();
-    compile_node(node, ops);
-}
+/// Pushes segments into `out_segments` and returns (draw_entry, style).
+pub(crate) fn compile_drawable(
+    drawable: &Drawable,
+    style: &Style,
+    z_order: u32,
+    segment_base: u32,
+    out_segments: &mut Vec<GpuSegment>,
+) -> (GpuDrawEntry, GpuStyle) {
+    let segment_start = segment_base + out_segments.len() as u32;
 
-/// Push a primitive SdfOp with the given type and parameters.
-macro_rules! push_prim {
-    ($ops:expr, $op:expr, $p0:expr) => {
-        $ops.push(SdfOp {
-            op_type: $op as u32,
-            param0: $p0,
-            ..Default::default()
-        })
+    // Emit segments
+    for seg in &drawable.segments {
+        out_segments.push(GpuSegment {
+            segment_type: seg.segment_type as u32,
+            _pad0: 0, _pad1: 0, _pad2: 0,
+            geom0: GpuVec4(seg.geom0),
+            geom1: GpuVec4(seg.geom1),
+            arc_range: GpuVec4([
+                seg.arc_start,
+                seg.arc_end,
+                drawable.total_arc_length,
+                0.0,
+            ]),
+        });
+    }
+
+    let segment_count = drawable.segments.len() as u32;
+
+    let mut flags = 0u32;
+    if drawable.is_closed { flags |= FLAG_CLOSED; }
+
+    let entry = GpuDrawEntry {
+        entry_type: drawable.drawable_type as u32,
+        style_idx: 0, // Set by caller
+        z_order,
+        flags,
+        bounds: GpuVec4(drawable.bounds),
+        segment_start,
+        segment_count,
+        tiling_type: drawable.tiling_type.map_or(0, |t| t as u32),
+        _pad: 0,
+        tiling_params: GpuVec4(drawable.tiling_params),
     };
-    ($ops:expr, $op:expr, $p0:expr, $p1:expr) => {
-        $ops.push(SdfOp {
-            op_type: $op as u32,
-            param0: $p0,
-            param1: $p1,
-            ..Default::default()
-        })
+
+    let mut gpu_style = compile_style(style);
+    if drawable.is_closed {
+        gpu_style.flags |= STYLE_FLAG_CLOSED;
+    }
+
+    (entry, gpu_style)
+}
+
+fn color_to_vec4(c: Color) -> GpuVec4 {
+    // Pass sRGB values directly (same as legacy), shader operates in sRGB space
+    GpuVec4::new(c.r, c.g, c.b, c.a)
+}
+
+fn compile_style(style: &Style) -> GpuStyle {
+    let mut flags = 0u32;
+
+    let (color, gradient_color, gradient_angle) = match style.fill {
+        Fill::Solid(c) => (color_to_vec4(c), GpuVec4::ZERO, 0.0),
+        Fill::Gradient { start, end, angle } => {
+            flags |= FLAG_GRADIENT;
+            (color_to_vec4(start), color_to_vec4(end), angle)
+        }
+        Fill::ArcLengthGradient { start, end } => {
+            flags |= FLAG_GRADIENT | FLAG_ARC_GRADIENT;
+            (color_to_vec4(start), color_to_vec4(end), 0.0)
+        }
+        Fill::DistanceField => {
+            flags |= FLAG_DISTANCE_FIELD;
+            // IQ default: orange outside, blue inside
+            (color_to_vec4(Color::from_rgb(0.9, 0.6, 0.3)),
+             color_to_vec4(Color::from_rgb(0.65, 0.85, 1.0)),
+             0.0)
+        }
     };
-}
 
-/// Recursively compile a node in postfix order.
-fn compile_node(node: &SdfNode, ops: &mut Vec<SdfOp>) {
-    match node {
-        // Primitives
-        SdfNode::Circle { center, radius } => {
-            push_prim!(ops, OpType::Circle, v4(center.x, center.y, *radius, 0.0));
+    let (pattern_type, pattern_thickness, p0, p1, p2, flow_speed) = match &style.pattern {
+        Some(p) => {
+            flags |= FLAG_HAS_PATTERN;
+            p.as_gpu()
         }
-        SdfNode::Box { center, half_size } => {
-            push_prim!(ops, OpType::Box, v4(center.x, center.y, half_size.x, half_size.y));
-        }
-        SdfNode::RoundedBox { center, half_size, corner_radius } => {
-            push_prim!(ops, OpType::RoundedBox,
-                v4(center.x, center.y, half_size.x, half_size.y),
-                v4(*corner_radius, 0.0, 0.0, 0.0));
-        }
-        SdfNode::Line { a, b } => {
-            push_prim!(ops, OpType::Line, v4(a.x, a.y, b.x, b.y));
-        }
-        SdfNode::Bezier { p0, p1, p2, p3 } => {
-            push_prim!(ops, OpType::Bezier,
-                v4(p0.x, p0.y, p1.x, p1.y),
-                v4(p2.x, p2.y, p3.x, p3.y));
-        }
-        SdfNode::QuadBezier { p0, p1, p2 } => {
-            push_prim!(ops, OpType::QuadBezier,
-                v4(p0.x, p0.y, p1.x, p1.y),
-                v4(p2.x, p2.y, 0.0, 0.0));
-        }
-        SdfNode::Ellipse { ab } => {
-            push_prim!(ops, OpType::Ellipse, v4(ab.x, ab.y, 0.0, 0.0));
-        }
-        SdfNode::Triangle { p0, p1, p2 } => {
-            push_prim!(ops, OpType::Triangle,
-                v4(p0.x, p0.y, p1.x, p1.y),
-                v4(p2.x, p2.y, 0.0, 0.0));
-        }
-        SdfNode::EquilateralTriangle { radius } => {
-            push_prim!(ops, OpType::EquilateralTriangle, v4(*radius, 0.0, 0.0, 0.0));
-        }
-        SdfNode::IsoscelesTriangle { q } => {
-            push_prim!(ops, OpType::IsoscelesTriangle, v4(q.x, q.y, 0.0, 0.0));
-        }
-        SdfNode::Rhombus { b } => {
-            push_prim!(ops, OpType::Rhombus, v4(b.x, b.y, 0.0, 0.0));
-        }
-        SdfNode::Trapezoid { r1, r2, he } => {
-            push_prim!(ops, OpType::Trapezoid, v4(*r1, *r2, *he, 0.0));
-        }
-        SdfNode::Parallelogram { wi, he, sk } => {
-            push_prim!(ops, OpType::Parallelogram, v4(*wi, *he, *sk, 0.0));
-        }
-        SdfNode::Pentagon { radius } => {
-            push_prim!(ops, OpType::Pentagon, v4(*radius, 0.0, 0.0, 0.0));
-        }
-        SdfNode::Hexagon { radius } => {
-            push_prim!(ops, OpType::Hexagon, v4(*radius, 0.0, 0.0, 0.0));
-        }
-        SdfNode::Octagon { radius } => {
-            push_prim!(ops, OpType::Octagon, v4(*radius, 0.0, 0.0, 0.0));
-        }
-        SdfNode::Hexagram { radius } => {
-            push_prim!(ops, OpType::Hexagram, v4(*radius, 0.0, 0.0, 0.0));
-        }
-        SdfNode::Star { radius, n, m } => {
-            push_prim!(ops, OpType::Star, v4(*radius, *n as f32, *m, 0.0));
-        }
-        SdfNode::Pie { angle, radius } => {
-            push_prim!(ops, OpType::Pie, v4(angle.sin(), angle.cos(), *radius, 0.0));
-        }
-        SdfNode::Arc { angle, ra, rb } => {
-            push_prim!(ops, OpType::Arc, v4(angle.sin(), angle.cos(), *ra, *rb));
-        }
-        SdfNode::CutDisk { radius, h } => {
-            push_prim!(ops, OpType::CutDisk, v4(*radius, *h, 0.0, 0.0));
-        }
-        SdfNode::Heart => {
-            push_prim!(ops, OpType::Heart, V4_ZERO);
-        }
-        SdfNode::Egg { ra, rb } => {
-            push_prim!(ops, OpType::Egg, v4(*ra, *rb, 0.0, 0.0));
-        }
-        SdfNode::Moon { d, ra, rb } => {
-            push_prim!(ops, OpType::Moon, v4(*d, *ra, *rb, 0.0));
-        }
-        SdfNode::Vesica { r, d } => {
-            push_prim!(ops, OpType::Vesica, v4(*r, *d, 0.0, 0.0));
-        }
-        SdfNode::UnevenCapsule { r1, r2, h } => {
-            push_prim!(ops, OpType::UnevenCapsule, v4(*r1, *r2, *h, 0.0));
-        }
-        SdfNode::OrientedBox { a, b, thickness } => {
-            push_prim!(ops, OpType::OrientedBox,
-                v4(a.x, a.y, b.x, b.y),
-                v4(*thickness, 0.0, 0.0, 0.0));
-        }
-        SdfNode::Horseshoe { angle, radius, w } => {
-            push_prim!(ops, OpType::Horseshoe,
-                v4(angle.sin(), angle.cos(), *radius, 0.0),
-                v4(w.x, w.y, 0.0, 0.0));
-        }
-        SdfNode::RoundedX { w, r } => {
-            push_prim!(ops, OpType::RoundedX, v4(*w, *r, 0.0, 0.0));
-        }
-        SdfNode::Cross { b, r } => {
-            push_prim!(ops, OpType::Cross, v4(b.x, b.y, *r, 0.0));
-        }
-        SdfNode::Parabola { k } => {
-            push_prim!(ops, OpType::Parabola, v4(*k, 0.0, 0.0, 0.0));
-        }
-        SdfNode::CoolS => {
-            push_prim!(ops, OpType::CoolS, V4_ZERO);
-        }
-        SdfNode::BlobbyCross { he } => {
-            push_prim!(ops, OpType::BlobbyCross, v4(*he, 0.0, 0.0, 0.0));
-        }
+        None => (0, 0.0, 0.0, 0.0, 0.0, 0.0),
+    };
 
-        // Binary operations: evaluate children first (postfix), then operation
-        SdfNode::Union(a, b) => {
-            compile_node(a, ops);
-            compile_node(b, ops);
-            push_prim!(ops, OpType::Union, V4_ZERO);
-        }
-        SdfNode::Subtract(a, b) => {
-            compile_node(a, ops);
-            compile_node(b, ops);
-            push_prim!(ops, OpType::Subtract, V4_ZERO);
-        }
-        SdfNode::Intersect(a, b) => {
-            compile_node(a, ops);
-            compile_node(b, ops);
-            push_prim!(ops, OpType::Intersect, V4_ZERO);
-        }
-        SdfNode::SmoothUnion { a, b, k } => {
-            compile_node(a, ops);
-            compile_node(b, ops);
-            push_prim!(ops, OpType::SmoothUnion, v4(*k, 0.0, 0.0, 0.0));
-        }
-        SdfNode::SmoothSubtract { a, b, k } => {
-            compile_node(a, ops);
-            compile_node(b, ops);
-            push_prim!(ops, OpType::SmoothSubtract, v4(*k, 0.0, 0.0, 0.0));
-        }
+    let (outline_thickness, outline_color) = match &style.outline {
+        Some(o) => (o.thickness, color_to_vec4(o.color)),
+        None => (0.0, GpuVec4::ZERO),
+    };
 
-        // Unary modifiers: evaluate child first, then modifier
-        SdfNode::Round { node, radius } => {
-            compile_node(node, ops);
-            push_prim!(ops, OpType::Round, v4(*radius, 0.0, 0.0, 0.0));
-        }
-        SdfNode::Onion { node, thickness } => {
-            compile_node(node, ops);
-            push_prim!(ops, OpType::Onion, v4(*thickness, 0.0, 0.0, 0.0));
-        }
-
-        SdfNode::Dash { node, dash, gap, thickness, angle, speed } => {
-            let perimeter = node.perimeter().unwrap_or(0.0);
-            compile_node(node, ops);
-            push_prim!(ops, OpType::Dash,
-                v4(*dash, *gap, *thickness, *angle),
-                v4(*speed, perimeter, 0.0, 0.0));
-        }
-        SdfNode::Arrow { node, segment, gap, thickness, angle, speed } => {
-            let perimeter = node.perimeter().unwrap_or(0.0);
-            compile_node(node, ops);
-            push_prim!(ops, OpType::Arrow,
-                v4(*segment, *gap, *thickness, *angle),
-                v4(*speed, perimeter, 0.0, 0.0));
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::shape::Sdf;
-
-    #[test]
-    fn test_compile_circle() {
-        let sdf = Sdf::circle([10.0, 20.0], 5.0);
-        let ops = compile(sdf.node());
-
-        assert_eq!(ops.len(), 1);
-        assert_eq!(ops[0].op_type, OpType::Circle as u32);
-        assert_eq!(ops[0].param0.0[0], 10.0);
-        assert_eq!(ops[0].param0.0[1], 20.0);
-        assert_eq!(ops[0].param0.0[2], 5.0);
-    }
-
-    #[test]
-    fn test_compile_union() {
-        let a = Sdf::circle([0.0, 0.0], 10.0);
-        let b = Sdf::circle([20.0, 0.0], 10.0);
-        let combined = a | b;
-        let ops = compile(combined.node());
-
-        // Postfix: [Circle A, Circle B, Union]
-        assert_eq!(ops.len(), 3);
-        assert_eq!(ops[0].op_type, OpType::Circle as u32);
-        assert_eq!(ops[1].op_type, OpType::Circle as u32);
-        assert_eq!(ops[2].op_type, OpType::Union as u32);
-    }
-
-    #[test]
-    fn test_compile_subtract() {
-        let a = Sdf::rect([0.0, 0.0], [50.0, 50.0]);
-        let b = Sdf::circle([0.0, 0.0], 25.0);
-        let result = a - b;
-        let ops = compile(result.node());
-
-        // Postfix: [Box, Circle, Subtract]
-        assert_eq!(ops.len(), 3);
-        assert_eq!(ops[0].op_type, OpType::Box as u32);
-        assert_eq!(ops[1].op_type, OpType::Circle as u32);
-        assert_eq!(ops[2].op_type, OpType::Subtract as u32);
-    }
-
-    #[test]
-    fn test_compile_nested() {
-        // (A - B) | C
-        let a = Sdf::rect([0.0, 0.0], [100.0, 100.0]);
-        let b = Sdf::circle([50.0, 50.0], 30.0);
-        let c = Sdf::circle([-50.0, -50.0], 20.0);
-        let result = (a - b) | c;
-        let ops = compile(result.node());
-
-        // Postfix: [Box, Circle B, Subtract, Circle C, Union]
-        assert_eq!(ops.len(), 5);
-        assert_eq!(ops[0].op_type, OpType::Box as u32);
-        assert_eq!(ops[1].op_type, OpType::Circle as u32);
-        assert_eq!(ops[2].op_type, OpType::Subtract as u32);
-        assert_eq!(ops[3].op_type, OpType::Circle as u32);
-        assert_eq!(ops[4].op_type, OpType::Union as u32);
+    GpuStyle {
+        color,
+        gradient_color,
+        gradient_angle,
+        flags,
+        expand: style.expand,
+        blur: style.blur,
+        pattern_type,
+        pattern_thickness,
+        pattern_param0: p0,
+        pattern_param1: p1,
+        pattern_param2: p2,
+        flow_speed,
+        outline_thickness,
+        _pad0: 0.0,
+        outline_color,
     }
 }
