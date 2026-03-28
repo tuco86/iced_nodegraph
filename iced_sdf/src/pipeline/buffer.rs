@@ -6,12 +6,14 @@ use encase::{ShaderSize, ShaderType, internal::WriteInto};
 use iced::wgpu::{self, BindingResource};
 
 const BUFFER_GROWTH_FACTOR: f32 = 1.5;
-const BUFFER_MIN_CAPACITY: usize = 16;
+const BUFFER_MIN_ITEMS: usize = 16;
 
 /// GPU buffer wrapper with incremental update support.
 ///
-/// Tracks a generation counter that increments when the underlying GPU buffer
-/// is recreated, enabling bind group caching.
+/// Manages a GPU storage buffer alongside a CPU-side Vec mirror. The GPU buffer
+/// grows like a Vec (factor 1.5x) and is never shrunk, so steady-state frames
+/// after the first few cause zero GPU allocations. `clear()` resets the logical
+/// length without touching the GPU buffer.
 pub(crate) struct Buffer<T> {
     buffer_wgpu: wgpu::Buffer,
     buffer_vec: Vec<T>,
@@ -21,16 +23,16 @@ pub(crate) struct Buffer<T> {
     generation: u64,
 }
 
-impl<T> Buffer<T> {
+impl<T: ShaderSize> Buffer<T> {
     pub fn new(
         device: &wgpu::Device,
         label: Option<&'static str>,
         usage: wgpu::BufferUsages,
     ) -> Self {
-        let capacity = BUFFER_MIN_CAPACITY;
-        let size = capacity as wgpu::BufferAddress * 256;
+        let item_size = T::SHADER_SIZE.get() as usize;
+        let size = (BUFFER_MIN_ITEMS * item_size) as wgpu::BufferAddress;
         let buffer_wgpu = create_wgpu_buffer(device, label, size, usage);
-        let buffer_vec = Vec::with_capacity(capacity);
+        let buffer_vec = Vec::with_capacity(BUFFER_MIN_ITEMS);
         Self { buffer_wgpu, buffer_vec, scratch: Vec::new(), label, usage, generation: 0 }
     }
 
@@ -56,7 +58,7 @@ impl<T> Buffer<T> {
 
         if self.buffer_wgpu.size() < required_size as u64 {
             let new_size = ((required_size as f32 * BUFFER_GROWTH_FACTOR) as u64)
-                .max(BUFFER_MIN_CAPACITY as u64 * 256);
+                .max((BUFFER_MIN_ITEMS * T::SHADER_SIZE.get() as usize) as u64);
             self.buffer_wgpu = create_wgpu_buffer(device, self.label, new_size, self.usage);
             self.generation += 1;
             self.rewrite_all(queue);
@@ -103,7 +105,7 @@ impl<T> Buffer<T> {
 
         if self.buffer_wgpu.size() < required_size as u64 {
             let new_size = ((required_size as f32 * BUFFER_GROWTH_FACTOR) as u64)
-                .max(BUFFER_MIN_CAPACITY as u64 * 256);
+                .max((BUFFER_MIN_ITEMS * T::SHADER_SIZE.get() as usize) as u64);
             self.buffer_wgpu = create_wgpu_buffer(device, self.label, new_size, self.usage);
             self.generation += 1;
             self.rewrite_all(queue);

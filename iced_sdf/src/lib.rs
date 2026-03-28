@@ -15,7 +15,7 @@
 //! ```ignore
 //! use iced_sdf::{Curve, Style, Pattern, SdfPrimitive};
 //!
-//! let edge = Curve::single_bezier([0, 0], [30, -20], [70, 20], [100, 0]);
+//! let edge = Curve::bezier([0.0, 0.0], [30.0, -20.0], [70.0, 20.0], [100.0, 0.0]);
 //! let style = Style::stroke(Color::WHITE, Pattern::solid(2.0));
 //!
 //! let mut prim = SdfPrimitive::new();

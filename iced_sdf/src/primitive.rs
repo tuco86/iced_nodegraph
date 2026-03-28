@@ -29,7 +29,7 @@ static LAST_STATS: Mutex<types::SdfStats> = Mutex::new(types::SdfStats {
 
 /// Read performance statistics from the last completed frame.
 pub fn sdf_stats() -> types::SdfStats {
-    LAST_STATS.lock().unwrap().clone()
+    LAST_STATS.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 // Must match WGSL constants

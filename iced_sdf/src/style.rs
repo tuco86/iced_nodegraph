@@ -132,14 +132,6 @@ impl Style {
         self
     }
 
-    /// Set outline: thin stroke at shape boundary.
-    pub fn outline(self, thickness: f32, color: Color) -> Self {
-        // Outline = stroke at dist 0 with thin range
-        // For now, just adjust the style. TODO: separate outline entry
-        let _ = (thickness, color);
-        self
-    }
-
     /// Uniform color over a distance range.
     fn uniform(color: Color, from: f32, to: f32) -> Self {
         Self {

@@ -48,9 +48,9 @@ pub(crate) struct GpuSegment {
     pub _pad0: u32,
     pub _pad1: u32,
     pub _pad2: u32,
-    /// Primary geometry. Line: (ax,ay,bx,by). Bezier: (p0x,p0y,p1x,p1y).
+    /// Primary geometry. Line: (ax,ay,bx,by). Bezier: (p0x,p0y,p1x,p1y). Arc: (cx,cy,r,start_angle).
     pub geom0: GpuVec4,
-    /// Secondary geometry. Bezier: (p2x,p2y,p3x,p3y). Arc: (cx,cy,r,start_angle).
+    /// Secondary geometry. Bezier: (p2x,p2y,p3x,p3y). Arc: (sweep_angle,0,0,0).
     pub geom1: GpuVec4,
     /// Arc-length range: (arc_start, arc_end, total_arc_length, 0).
     pub arc_range: GpuVec4,

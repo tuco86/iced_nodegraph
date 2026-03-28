@@ -150,15 +150,11 @@ struct EdgeEditor {
     flow_speed: f32,
     stroke_color: [f32; 4],
     stroke_color_end: [f32; 4],
-    outline_thickness: f32,
-    outline_color: [f32; 4],
     border_visible: bool,
     border_gap: f32,
     border_thickness: f32,
     border_color: [f32; 4],
     border_color_end: [f32; 4],
-    border_outline_thickness: f32,
-    border_outline_color: [f32; 4],
     shadow_visible: bool,
     shadow_expand: f32,
     shadow_color: [f32; 4],
@@ -174,14 +170,10 @@ impl Default for EdgeEditor {
             thickness: 6.0, dash: 14.0, gap: 8.0, angle: 0.0, flow_speed: 0.0,
             stroke_color: [0.2, 0.85, 1.0, 1.0],
             stroke_color_end: [0.6, 0.2, 1.0, 1.0],
-            outline_thickness: 1.2,
-            outline_color: [0.05, 0.05, 0.15, 1.0],
             border_visible: true,
             border_gap: 2.0, border_thickness: 3.0,
             border_color: [0.95, 0.75, 0.2, 1.0],
             border_color_end: [1.0, 0.3, 0.2, 1.0],
-            border_outline_thickness: 0.8,
-            border_outline_color: [0.05, 0.05, 0.15, 1.0],
             shadow_visible: true,
             shadow_expand: 10.0,
             shadow_color: [0.0, 0.0, 0.1, 0.35],
@@ -211,7 +203,6 @@ impl EdgeEditor {
             styles.push(
                 Style::arc_gradient(rgba(&self.stroke_color), rgba(&self.stroke_color_end))
                     .with_pattern(self.build_pattern())
-                    .outline(self.outline_thickness, rgba(&self.outline_color))
             );
         }
         // Border (middle)
@@ -220,7 +211,6 @@ impl EdgeEditor {
             styles.push(
                 Style::arc_gradient(rgba(&self.border_color), rgba(&self.border_color_end))
                     .with_pattern(Pattern::solid(border_total))
-                    .outline(self.border_outline_thickness, rgba(&self.border_outline_color))
             );
         }
         // Shadow (back)
@@ -243,8 +233,6 @@ struct NodeEditor {
     border_color: [f32; 4],
     border_dash: f32,
     border_gap: f32,
-    border_outline_width: f32,
-    border_outline_color: [f32; 4],
     #[allow(dead_code)]
     shadow_offset_x: f32,
     #[allow(dead_code)]
@@ -265,8 +253,6 @@ impl Default for NodeEditor {
             border_width: 1.0,
             border_color: [0.30, 0.30, 0.35, 1.0],
             border_dash: 10.0, border_gap: 6.0,
-            border_outline_width: 0.0,
-            border_outline_color: [0.05, 0.05, 0.15, 1.0],
             shadow_offset_x: 4.0, shadow_offset_y: 4.0,
             shadow_blur: 8.0,
             shadow_color: [0.0, 0.0, 0.0, 0.3],
@@ -285,7 +271,6 @@ impl NodeEditor {
             };
             styles.push(
                 Style::stroke(rgba(&self.border_color), pattern)
-                    .outline(self.border_outline_width, rgba(&self.border_outline_color))
             );
         }
         if self.fill_visible {
@@ -332,7 +317,7 @@ enum Msg {
     EPattern(PatternKind), EThick(f32), EDash(f32), EGap(f32), EAngle(f32), EFlow(f32),
     EColorR(f32), EColorG(f32), EColorB(f32),
     EColorEndR(f32), EColorEndG(f32), EColorEndB(f32),
-    EOutline(f32), EBorderVis(bool), EBorderGap(f32), EBorderThick(f32),
+    EBorderVis(bool), EBorderGap(f32), EBorderThick(f32),
     EShadowVis(bool), EShadowExpand(f32), EStrokeVis(bool),
     // Node editor
     NCorner(f32), NOpacity(f32), NBorderPat(NodeBorderKind), NBorderW(f32),
@@ -363,7 +348,6 @@ impl App {
             Msg::EColorEndR(v) => self.edge_ed.stroke_color_end[0] = v,
             Msg::EColorEndG(v) => self.edge_ed.stroke_color_end[1] = v,
             Msg::EColorEndB(v) => self.edge_ed.stroke_color_end[2] = v,
-            Msg::EOutline(v) => self.edge_ed.outline_thickness = v,
             Msg::EBorderVis(v) => self.edge_ed.border_visible = v,
             Msg::EBorderGap(v) => self.edge_ed.border_gap = v,
             Msg::EBorderThick(v) => self.edge_ed.border_thickness = v,
@@ -447,7 +431,6 @@ impl App {
             color_rgb(ed.stroke_color, Msg::EColorR, Msg::EColorG, Msg::EColorB),
             text("Color End").size(12),
             color_rgb(ed.stroke_color_end, Msg::EColorEndR, Msg::EColorEndG, Msg::EColorEndB),
-            labeled_slider("Outline", 0.0, 10.0, ed.outline_thickness, Msg::EOutline),
             iced::widget::Space::new().height(8),
             text("Border").size(14),
             checkbox(ed.border_visible).label("Visible").on_toggle(Msg::EBorderVis).size(13),
