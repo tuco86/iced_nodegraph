@@ -51,6 +51,8 @@ pub enum DrawableType {
 pub enum TilingType {
     Grid = 0,
     Dots = 1,
+    Triangles = 2,
+    Hex = 3,
 }
 
 /// Compiled result from a Curve, Shape, or Tiling builder.

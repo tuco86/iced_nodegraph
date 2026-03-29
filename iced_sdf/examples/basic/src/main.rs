@@ -66,6 +66,18 @@ fn build_static_entries() -> Vec<StaticEntry> {
             styles: vec![Style::distance_field()],
             extent: 60.0,
         },
+        StaticEntry {
+            name: "Triangles (DF)",
+            drawables: vec![Tiling::triangles(20.0, 0.5)],
+            styles: vec![Style::distance_field()],
+            extent: 100.0,
+        },
+        StaticEntry {
+            name: "Hex (DF)",
+            drawables: vec![Tiling::hex(20.0, 0.5)],
+            styles: vec![Style::distance_field()],
+            extent: 100.0,
+        },
     ]
 }
 

@@ -12,6 +12,10 @@ pub enum Tiling {
     Grid { spacing_x: f32, spacing_y: f32, thickness: f32 },
     /// Dot array.
     Dots { spacing_x: f32, spacing_y: f32, radius: f32 },
+    /// Equilateral triangle grid.
+    Triangles { spacing: f32, thickness: f32 },
+    /// Regular hexagonal grid.
+    Hex { spacing: f32, thickness: f32 },
 }
 
 impl Tiling {
@@ -23,5 +27,15 @@ impl Tiling {
     /// Dot array with given spacing and dot radius.
     pub fn dots(spacing_x: f32, spacing_y: f32, radius: f32) -> Drawable {
         Drawable::new_tiling(TilingType::Dots, [spacing_x, spacing_y, radius, 0.0])
+    }
+
+    /// Equilateral triangle grid. Spacing = triangle edge length.
+    pub fn triangles(spacing: f32, thickness: f32) -> Drawable {
+        Drawable::new_tiling(TilingType::Triangles, [spacing, 0.0, thickness, 0.0])
+    }
+
+    /// Regular hexagonal grid. Spacing = flat-to-flat distance.
+    pub fn hex(spacing: f32, thickness: f32) -> Drawable {
+        Drawable::new_tiling(TilingType::Hex, [spacing, 0.0, thickness, 0.0])
     }
 }

@@ -289,19 +289,19 @@ fn sd_point(p: vec2<f32>, pos: vec2<f32>, heading: f32) -> SdfResult {
 
 const TILING_GRID: u32 = 0u;
 const TILING_DOTS: u32 = 1u;
+const TILING_TRIANGLES: u32 = 2u;
+const TILING_HEX: u32 = 3u;
 
 fn sd_tiling(p: vec2<f32>, tiling_type: u32, params: vec4<f32>) -> SdfResult {
     let spacing = params.xy;
     switch tiling_type {
         case TILING_GRID: {
-            let thickness = params.z;
-            // Distance to nearest grid line (modulo spacing)
-            let mx = abs(((p.x % spacing.x) + spacing.x) % spacing.x - spacing.x * 0.5);
-            let my = abs(((p.y % spacing.y) + spacing.y) % spacing.y - spacing.y * 0.5);
-            let dx = mx - thickness * 0.5;
-            let dy = my - thickness * 0.5;
-            let dist = min(dx, dy);
-            return SdfResult(dist, 0.0, 0.0);
+            // Unsigned distance to nearest grid line
+            let fx = ((p.x % spacing.x) + spacing.x) % spacing.x;
+            let mx = min(fx, spacing.x - fx);
+            let fy = ((p.y % spacing.y) + spacing.y) % spacing.y;
+            let my = min(fy, spacing.y - fy);
+            return SdfResult(min(mx, my), 0.0, 0.0);
         }
         case TILING_DOTS: {
             let radius = params.z;
@@ -309,6 +309,50 @@ fn sd_tiling(p: vec2<f32>, tiling_type: u32, params: vec4<f32>) -> SdfResult {
             let cell = round(p / spacing) * spacing;
             let dist = length(p - cell) - radius;
             return SdfResult(dist, 0.0, 0.0);
+        }
+        case TILING_TRIANGLES: {
+            let s = params.x;
+            let h = s * 0.866025404;  // sqrt(3)/2 * edge length
+            // Three line-family projections (normals at 0, 60, -60 degrees)
+            let d1 = p.y;
+            let d2 = 0.866025404 * p.x + 0.5 * p.y;
+            let d3 = 0.866025404 * p.x - 0.5 * p.y;
+            // Unsigned distance to nearest line in each family
+            let f1 = ((d1 % h) + h) % h;
+            let m1 = min(f1, h - f1);
+            let f2 = ((d2 % h) + h) % h;
+            let m2 = min(f2, h - f2);
+            let f3 = ((d3 % h) + h) % h;
+            let m3 = min(f3, h - f3);
+            return SdfResult(min(min(m1, m2), m3), 0.0, 0.0);
+        }
+        case TILING_HEX: {
+            let size = params.x * 0.5;  // apothem = flat-to-flat / 2
+            let s3 = 1.732050808;
+            let edge = 2.0 * size / s3;
+            // Pixel to axial hex coordinates (flat-top)
+            let q = 2.0 / (3.0 * edge) * p.x;
+            let r = (-p.x + s3 * p.y) / (3.0 * edge);
+            let s_ax = -q - r;
+            // Cube round to nearest hex center
+            var qi = round(q);
+            var ri = round(r);
+            var si = round(s_ax);
+            let dq = abs(qi - q);
+            let dr = abs(ri - r);
+            let ds = abs(si - s_ax);
+            if dq > dr && dq > ds { qi = -ri - si; }
+            else if dr > ds { ri = -qi - si; }
+            // Axial to pixel (flat-top)
+            let cx = edge * 1.5 * qi;
+            let cy = edge * s3 * (0.5 * qi + ri);
+            let delta = p - vec2(cx, cy);
+            // Unsigned distance to nearest hex edge (IQ's sdHexagon)
+            let k = vec3(-0.866025404, 0.5, 0.577350269);
+            var d = abs(delta);
+            d -= 2.0 * min(dot(k.xy, d), 0.0) * k.xy;
+            d -= vec2(clamp(d.x, -k.z * size, k.z * size), size);
+            return SdfResult(abs(length(d) * sign(d.y)), 0.0, 0.0);
         }
         default: {
             return SdfResult(1e10, 0.0, 0.0);
