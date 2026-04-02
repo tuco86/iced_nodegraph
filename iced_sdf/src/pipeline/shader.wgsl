@@ -764,9 +764,9 @@ fn cs_build_index(@builtin(global_invocation_id) gid: vec3<u32>) {
                 // Pattern: per-segment culling with pattern evaluation
                 let sdf = cs_eval_segment(world_pos, seg_idx);
                 let eff = apply_pattern(sdf.dist, sdf, style, draw.time);
-                // Angled patterns shift by v*tan(angle), so margin grows with angle
-                let angle_margin = thd * (1.0 + abs(tan(style.pattern_param2)));
-                if eff <= angle_margin {
+                // Pattern SDF varies in 2D (arc-length + distance); margin = Euclidean extent
+                let u_var = thd * (1.0 + abs(tan(style.pattern_param2)));
+                if eff <= length(vec2(u_var, thd)) {
                     cs_push_slot(slot_base, &count, seg_idx, sty_idx);
                 }
             } else {

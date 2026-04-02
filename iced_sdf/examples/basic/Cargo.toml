@@ -14,4 +14,5 @@ path = "src/main.rs"
 iced_sdf.workspace = true
 iced = { workspace = true, features = ["advanced", "wgpu"] }
 iced_wgpu.workspace = true
+iced_aw = { workspace = true, features = ["color_picker"] }
 web-time.workspace = true
