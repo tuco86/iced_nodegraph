@@ -49,6 +49,7 @@ wgpu = "27.0"
 bitflags = "2.11"
 thiserror = "2.0"
 iced_aw = { version = "0.13.1", default-features = false }
+pollster = "0.4"
 rustc-hash = "2.1"
 web-time = "1.1"
 

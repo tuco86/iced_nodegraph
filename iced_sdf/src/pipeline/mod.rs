@@ -2,3 +2,6 @@
 
 pub(crate) mod buffer;
 pub(crate) mod types;
+
+#[cfg(test)]
+mod pixel_tests;

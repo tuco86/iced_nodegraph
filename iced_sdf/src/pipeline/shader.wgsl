@@ -26,7 +26,9 @@ const FLAG_CLOSED: u32 = 1u;
 // style.flags
 const STYLE_FLAG_HAS_PATTERN: u32 = 1u;
 const STYLE_FLAG_DISTANCE_FIELD: u32 = 2u;
-const STYLE_FLAG_CLOSED: u32 = 4u;
+
+// segment.flags (in _pad0 slot)
+const SEG_FLAG_SIGNED: u32 = 1u;
 
 const PATTERN_SOLID: u32 = 0u;
 const PATTERN_DASHED: u32 = 1u;
@@ -56,7 +58,7 @@ struct DrawData {
 
 struct GpuSegment {
     segment_type: u32,
-    _pad0: u32,
+    flags: u32,
     _pad1: u32,
     _pad2: u32,
     geom0: vec4<f32>,
@@ -104,9 +106,8 @@ struct ComputeUniforms {
 }
 
 struct SdfResult {
-    dist: f32,
-    u: f32,
-    v: f32,
+    dist: f32,  // signed distance (positive = right side of curve)
+    u: f32,     // parametric position along curve [0..1]
 }
 
 // --- Render bindings (group 0) ---
@@ -143,12 +144,11 @@ fn sd_line(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> SdfResult {
     }
     let proj = a + ba * t;
     let dist = length(p - proj);
+    // Sign from perpendicular: positive = right side of a→b
     let n = vec2<f32>(-ba.y, ba.x);
-    var v_val = 0.0;
-    if len_sq > 0.0 {
-        v_val = dot(pa, n) / sqrt(len_sq);
-    }
-    return SdfResult(dist, t, v_val);
+    var sign = 1.0;
+    if len_sq > 0.0 && dot(pa, n) > 0.0 { sign = -1.0; }
+    return SdfResult(dist * sign, t);
 }
 
 fn sd_bezier(p: vec2<f32>, p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>) -> SdfResult {
@@ -175,14 +175,14 @@ fn sd_bezier(p: vec2<f32>, p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2
     let tangent = bezier_deriv(p0, p1, p2, p3, best_t);
     let normal = vec2<f32>(-tangent.y, tangent.x);
     let diff = p - closest;
-    var v_val = 0.0;
+    var sign = 1.0;
     let n_len = length(normal);
-    if n_len > 1e-8 { v_val = dot(diff, normal) / n_len; }
+    if n_len > 1e-8 && dot(diff, normal) > 0.0 { sign = -1.0; }
     let arc_to_t = bezier_arc_length_to(p0, p1, p2, p3, best_t);
     let total_arc = bezier_total_arc_length(p0, p1, p2, p3);
     var u_frac = 0.0;
     if total_arc > 1e-6 { u_frac = arc_to_t / total_arc; }
-    return SdfResult(dist, u_frac, v_val);
+    return SdfResult(dist * sign, u_frac);
 }
 
 fn bezier_point(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>, t: f32) -> vec2<f32> {
@@ -236,15 +236,14 @@ fn sd_arc_segment(p: vec2<f32>, center: vec2<f32>, radius: f32, start: f32, swee
 
     var dist: f32;
     var u_frac: f32;
-    var v_val: f32;
+    var v_sign = 1.0;
 
     if on_arc {
         dist = abs(dist_to_center - radius);
         u_frac = rel / sweep;
-        // On the arc: radial v (perpendicular to curve)
-        v_val = select(-1.0, 1.0, sweep > 0.0) * (radius - dist_to_center);
+        let v_val = select(-1.0, 1.0, sweep > 0.0) * (radius - dist_to_center);
+        if v_val > 0.0 { v_sign = -1.0; }
     } else {
-        // At endpoints: tangent-based v (sign boundary extends straight)
         let end_angle = start + sweep;
         let p_start = center + vec2(cos(start), sin(start)) * radius;
         let p_end = center + vec2(cos(end_angle), sin(end_angle)) * radius;
@@ -254,24 +253,19 @@ fn sd_arc_segment(p: vec2<f32>, center: vec2<f32>, radius: f32, start: f32, swee
         if d_start < d_end {
             dist = d_start;
             u_frac = 0.0;
-            // Tangent at start in travel direction
             let tangent = vec2(-sin(start), cos(start)) * sign(sweep);
             let n = vec2(-tangent.y, tangent.x);
-            let nlen = length(n);
-            if nlen > 0.0 { v_val = dot(p - p_start, n) / nlen; }
-            else { v_val = 0.0; }
+            if dot(p - p_start, n) > 0.0 { v_sign = -1.0; }
         } else {
             dist = d_end;
             u_frac = 1.0;
             let tangent = vec2(-sin(end_angle), cos(end_angle)) * sign(sweep);
             let n = vec2(-tangent.y, tangent.x);
-            let nlen = length(n);
-            if nlen > 0.0 { v_val = dot(p - p_end, n) / nlen; }
-            else { v_val = 0.0; }
+            if dot(p - p_end, n) > 0.0 { v_sign = -1.0; }
         }
     }
 
-    return SdfResult(dist, u_frac, v_val);
+    return SdfResult(dist * v_sign, u_frac);
 }
 
 // Junction point between segments. Owns the corner, defines sign via heading.
@@ -281,8 +275,9 @@ fn sd_point(p: vec2<f32>, pos: vec2<f32>, heading: f32) -> SdfResult {
     // at the junction. Ensures correct v from bisector heading.
     let dist = max(0.0, length(p - pos) - 0.01);
     let right = vec2(cos(heading), sin(heading));
-    let v_val = dot(p - pos, right);
-    return SdfResult(dist, 0.0, v_val);
+    var sign = 1.0;
+    if dot(p - pos, right) > 0.0 { sign = -1.0; }
+    return SdfResult(dist * sign, 0.0);
 }
 
 // --- Tiling SDF functions ---
@@ -301,14 +296,14 @@ fn sd_tiling(p: vec2<f32>, tiling_type: u32, params: vec4<f32>) -> SdfResult {
             let mx = min(fx, spacing.x - fx);
             let fy = ((p.y % spacing.y) + spacing.y) % spacing.y;
             let my = min(fy, spacing.y - fy);
-            return SdfResult(min(mx, my), 0.0, 0.0);
+            return SdfResult(min(mx, my), 0.0);
         }
         case TILING_DOTS: {
             let radius = params.z;
             // Distance to nearest dot center (modulo spacing)
             let cell = round(p / spacing) * spacing;
             let dist = length(p - cell) - radius;
-            return SdfResult(dist, 0.0, 0.0);
+            return SdfResult(dist, 0.0);
         }
         case TILING_TRIANGLES: {
             let s = params.x;
@@ -324,7 +319,7 @@ fn sd_tiling(p: vec2<f32>, tiling_type: u32, params: vec4<f32>) -> SdfResult {
             let m2 = min(f2, h - f2);
             let f3 = ((d3 % h) + h) % h;
             let m3 = min(f3, h - f3);
-            return SdfResult(min(min(m1, m2), m3), 0.0, 0.0);
+            return SdfResult(min(min(m1, m2), m3), 0.0);
         }
         case TILING_HEX: {
             let size = params.x * 0.5;  // apothem = flat-to-flat / 2
@@ -352,10 +347,10 @@ fn sd_tiling(p: vec2<f32>, tiling_type: u32, params: vec4<f32>) -> SdfResult {
             var d = abs(delta);
             d -= 2.0 * min(dot(k.xy, d), 0.0) * k.xy;
             d -= vec2(clamp(d.x, -k.z * size, k.z * size), size);
-            return SdfResult(abs(length(d) * sign(d.y)), 0.0, 0.0);
+            return SdfResult(abs(length(d) * sign(d.y)), 0.0);
         }
         default: {
-            return SdfResult(1e10, 0.0, 0.0);
+            return SdfResult(1e10, 0.0);
         }
     }
 }
@@ -366,24 +361,18 @@ fn eval_segment(p: vec2<f32>, seg: GpuSegment) -> SdfResult {
         case SEG_ARC: { return sd_arc_segment(p, seg.geom0.xy, seg.geom0.z, seg.geom0.w, seg.geom1.x); }
         case SEG_CUBIC: { return sd_bezier(p, seg.geom0.xy, seg.geom0.zw, seg.geom1.xy, seg.geom1.zw); }
         case SEG_POINT: { return sd_point(p, seg.geom0.xy, seg.geom0.z); }
-        default: { return SdfResult(1e10, 0.0, 0.0); }
+        default: { return SdfResult(1e10, 0.0); }
     }
 }
 
-// Evaluate a single segment, map u through arc_range, apply sign.
-fn eval_single_segment(p: vec2<f32>, seg_idx: u32, style: GpuStyle) -> SdfResult {
+// Evaluate a single segment. Maps parametric u to world-space arc-length.
+// dist is already signed from the SDF function.
+fn eval_single_segment(p: vec2<f32>, seg_idx: u32) -> SdfResult {
     let seg = segments[seg_idx];
     var r = eval_segment(p, seg);
-    // Map parametric u (0..1) to world-space arc-length
-    // Patterns need world units; render_style normalizes for gradients
     let arc_start = seg.arc_range.x;
     let arc_end = seg.arc_range.y;
     r.u = arc_start + r.u * (arc_end - arc_start);
-    // Store total arc length in v_unused... no, we need v for sign.
-    // Instead, store total in arc_range.z and pass through via a trick:
-    // We'll normalize in render_style using dist_from/dist_to context.
-    // For now: u = world-space arc-length, v = perpendicular
-    r.dist = r.dist * select(1.0, -1.0, r.v > 0.0);
     return r;
 }
 
@@ -466,7 +455,7 @@ fn apply_pattern(dist: f32, sdf: SdfResult, style: GpuStyle, time: f32) -> f32 {
             let gap = style.pattern_param1;
             let angle = style.pattern_param2;
             let period = dash + gap;
-            let shifted_u = u + sdf.v * tan(angle);
+            let shifted_u = u + dist * tan(angle);
             let nearest = round(shifted_u / period) * period;
             let dist_along = shifted_u - nearest;
             let dd = abs(vec2(dist_along, dist)) - vec2(dash * 0.5, half_t);
@@ -477,7 +466,7 @@ fn apply_pattern(dist: f32, sdf: SdfResult, style: GpuStyle, time: f32) -> f32 {
             let gap = style.pattern_param1;
             let angle = style.pattern_param2;
             let period = segment + gap;
-            let shifted_u = u + abs(sdf.v) * tan(angle);
+            let shifted_u = u + abs(dist) * tan(angle);
             let nearest = round(shifted_u / period) * period;
             let dist_along = shifted_u - nearest;
             let dd = abs(vec2(dist_along, dist)) - vec2(segment * 0.5, half_t);
@@ -512,7 +501,7 @@ fn apply_pattern(dist: f32, sdf: SdfResult, style: GpuStyle, time: f32) -> f32 {
             let period = segment + gap + dot_radius * 2.0 + gap;
             let nearest = round(u / period) * period;
             let local_u = u - nearest;
-            let shifted_local = local_u + abs(sdf.v) * tan(angle);
+            let shifted_local = local_u + abs(dist) * tan(angle);
             let dot_center = segment * 0.5 + gap + dot_radius;
             let dd = abs(vec2(shifted_local, dist)) - vec2(segment * 0.5, half_t);
             let d_seg = length(max(dd, vec2(0.0))) + min(max(dd.x, dd.y), 0.0);
@@ -593,7 +582,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             }
 
             // Regular segments: find nearest among consecutive same-style slots
-            var best_sdf = eval_single_segment(world_p, raw_seg, style);
+            var best_sdf = eval_single_segment(world_p, raw_seg);
             var best_abs = abs(best_sdf.dist);
             var best_seg = raw_seg;
             i++;
@@ -601,7 +590,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             while i < count && tile_slots[slot_base + i * 2u + 1u] == first_sty {
                 let next_seg = tile_slots[slot_base + i * 2u];
                 if (next_seg & TILING_BIT) != 0u { break; }
-                let sdf = eval_single_segment(world_p, next_seg, style);
+                let sdf = eval_single_segment(world_p, next_seg);
                 let ad = abs(sdf.dist);
                 if ad < best_abs {
                     best_abs = ad;
@@ -629,7 +618,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             } else {
                 for (var s = 0u; s < entry.segment_count; s++) {
                     let seg_idx = entry.segment_start + s;
-                    let sdf = eval_single_segment(world_p, seg_idx, style);
+                    let sdf = eval_single_segment(world_p, seg_idx);
                     let frag = render_style(sdf, style, draw, segment_total_arc(seg_idx));
                     acc = acc + frag * (1.0 - acc.a);
                 }
@@ -668,11 +657,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 fn cs_eval_segment(p: vec2<f32>, seg_idx: u32) -> SdfResult {
     let seg = cs_segments[seg_idx];
     var r = eval_segment(p, seg);
-    // World-space arc-length (patterns need world units)
     let arc_start = seg.arc_range.x;
     let arc_end = seg.arc_range.y;
     r.u = arc_start + r.u * (arc_end - arc_start);
-    r.dist = r.dist * select(1.0, -1.0, r.v > 0.0);
     return r;
 }
 
@@ -720,36 +707,33 @@ fn cs_build_index(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         let has_pattern = (style.flags & STYLE_FLAG_HAS_PATTERN) != 0u;
 
-        // Pass 1: find nearest segment to determine inside/outside at tile center
-        var min_unsigned = 1e10;
-        var best_v = 0.0;
+        // Pass 1: find nearest segment (by absolute distance) at tile center
+        var min_abs_dist = 1e10;
+        var best_signed_dist = 0.0;
         for (var s: u32 = 0u; s < entry.segment_count; s++) {
             let seg = cs_segments[entry.segment_start + s];
             let r = eval_segment(world_pos, seg);
-            if r.dist < min_unsigned {
-                min_unsigned = r.dist;
-                best_v = r.v;
+            let ad = abs(r.dist);
+            if ad < min_abs_dist {
+                min_abs_dist = ad;
+                best_signed_dist = r.dist;
             }
         }
 
-        // Shape-level signed distance (correct: from nearest segment across ALL)
-        let signed_dist = min_unsigned * select(1.0, -1.0, best_v > 0.0);
-        // Proximity: segments that could be nearest at any pixel in tile
-        let proximity = min_unsigned + thd * 2.0;
+        let proximity = min_abs_dist + thd * 2.0;
 
         // Determine if this (entry, style) is visible at all in this tile
         var entry_visible = false;
         if (style.flags & STYLE_FLAG_DISTANCE_FIELD) != 0u {
             entry_visible = true;
         } else if has_pattern {
-            // For patterns: visible if any nearby segment has visible pattern
             entry_visible = true; // conservative, per-segment check below
-        } else if (style.flags & STYLE_FLAG_CLOSED) != 0u {
-            // Closed fill: visible if any pixel in tile could be inside
-            entry_visible = (signed_dist - thd) < style.dist_to + 0.5;
+        } else if (entry.flags & FLAG_CLOSED) != 0u {
+            // Closed fill: signed dist from nearest segment
+            entry_visible = (best_signed_dist - thd) < style.dist_to + 0.5;
         } else {
-            // Open curve fill: use unsigned distance (no "inside" concept)
-            entry_visible = (min_unsigned - thd) < style.dist_to + 0.5;
+            // Open curve: unsigned distance
+            entry_visible = (min_abs_dist - thd) < style.dist_to + 0.5;
         }
 
         if !entry_visible { continue; }
@@ -764,14 +748,12 @@ fn cs_build_index(@builtin(global_invocation_id) gid: vec3<u32>) {
                 // Pattern: per-segment culling with pattern evaluation
                 let sdf = cs_eval_segment(world_pos, seg_idx);
                 let eff = apply_pattern(sdf.dist, sdf, style, draw.time);
-                // Pattern SDF varies in 2D (arc-length + distance); margin = Euclidean extent
-                let u_var = thd * (1.0 + abs(tan(style.pattern_param2)));
-                if eff <= length(vec2(u_var, thd)) {
+                if eff <= thd {
                     cs_push_slot(slot_base, &count, seg_idx, sty_idx);
                 }
             } else {
                 // Fill/DF: push segments that could be nearest at any pixel
-                if r.dist <= proximity {
+                if abs(r.dist) <= proximity {
                     cs_push_slot(slot_base, &count, seg_idx, sty_idx);
                 }
             }

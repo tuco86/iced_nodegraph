@@ -43,9 +43,10 @@ encase::impl_vector!(4, GpuVec4, f32; using AsRef AsMut From);
 /// 64 bytes (4 x vec4).
 #[derive(Clone, Debug, ShaderType)]
 pub(crate) struct GpuSegment {
-    /// Segment type: 0=line, 1=arc, 2=cubic_bezier.
+    /// Segment type: 0=line, 1=arc, 2=cubic_bezier, 3=point.
     pub segment_type: u32,
-    pub _pad0: u32,
+    /// Segment flags. Bit 0: signed (part of closed contour).
+    pub flags: u32,
     pub _pad1: u32,
     pub _pad2: u32,
     /// Primary geometry. Line: (ax,ay,bx,by). Bezier: (p0x,p0y,p1x,p1y). Arc: (cx,cy,r,start_angle).
@@ -157,7 +158,7 @@ pub(crate) struct ComputeUniforms {
 impl Default for GpuSegment {
     fn default() -> Self {
         Self {
-            segment_type: 0, _pad0: 0, _pad1: 0, _pad2: 0,
+            segment_type: 0, flags: 0, _pad1: 0, _pad2: 0,
             geom0: GpuVec4::ZERO, geom1: GpuVec4::ZERO, arc_range: GpuVec4::ZERO,
         }
     }

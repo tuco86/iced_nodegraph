@@ -21,6 +21,8 @@ pub enum SegmentType {
 #[derive(Debug, Clone, Copy)]
 pub struct Segment {
     pub segment_type: SegmentType,
+    /// Part of a closed contour: SDF returns signed distance (negative = interior).
+    pub signed: bool,
     /// Geometry: interpretation depends on segment_type.
     /// Line: geom0 = (ax, ay, bx, by), geom1 unused
     /// CubicBezier: geom0 = (p0x, p0y, p1x, p1y), geom1 = (p2x, p2y, p3x, p3y)
@@ -100,6 +102,7 @@ impl Drawable {
             drawable_type: DrawableType::CurveSegment,
             segments: vec![Segment {
                 segment_type: SegmentType::Line,
+                signed: false,
                 geom0: [a.x, a.y, b.x, b.y],
                 geom1: [0.0; 4],
                 arc_start: 0.0,
@@ -119,6 +122,7 @@ impl Drawable {
             drawable_type: DrawableType::CurveSegment,
             segments: vec![Segment {
                 segment_type: SegmentType::Point,
+                signed: false,
                 geom0: [pos.x, pos.y, heading, 0.0],
                 geom1: [0.0; 4],
                 arc_start: 0.0,
@@ -139,6 +143,7 @@ impl Drawable {
             drawable_type: DrawableType::CurveSegment,
             segments: vec![Segment {
                 segment_type: SegmentType::Arc,
+                signed: false,
                 geom0: [center.x, center.y, radius, start_angle],
                 geom1: [sweep, 0.0, 0.0, 0.0],
                 arc_start: 0.0,
@@ -163,6 +168,7 @@ impl Drawable {
             drawable_type: DrawableType::CurveSegment,
             segments: vec![Segment {
                 segment_type: SegmentType::CubicBezier,
+                signed: false,
                 geom0: [p0.x, p0.y, p1.x, p1.y],
                 geom1: [p2.x, p2.y, p3.x, p3.y],
                 arc_start: 0.0,

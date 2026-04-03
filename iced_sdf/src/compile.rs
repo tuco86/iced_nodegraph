@@ -7,9 +7,9 @@ use crate::pipeline::types::{GpuDrawEntry, GpuSegment, GpuStyle, GpuVec4};
 use crate::style::Style;
 
 const FLAG_CLOSED: u32 = 1; // entry.flags
+const SEG_FLAG_SIGNED: u32 = 1; // segment.flags
 const STYLE_FLAG_HAS_PATTERN: u32 = 1;
 const STYLE_FLAG_DISTANCE_FIELD: u32 = 2;
-const STYLE_FLAG_CLOSED: u32 = 4;
 
 /// Compile a drawable and style into GPU data.
 pub(crate) fn compile_drawable(
@@ -24,7 +24,8 @@ pub(crate) fn compile_drawable(
     for seg in &drawable.segments {
         out_segments.push(GpuSegment {
             segment_type: seg.segment_type as u32,
-            _pad0: 0, _pad1: 0, _pad2: 0,
+            flags: if seg.signed { SEG_FLAG_SIGNED } else { 0 },
+            _pad1: 0, _pad2: 0,
             geom0: GpuVec4(seg.geom0),
             geom1: GpuVec4(seg.geom1),
             arc_range: GpuVec4([seg.arc_start, seg.arc_end, drawable.total_arc_length, 0.0]),
@@ -47,8 +48,7 @@ pub(crate) fn compile_drawable(
         tiling_params: GpuVec4(drawable.tiling_params),
     };
 
-    let mut gpu_style = compile_style(style);
-    if drawable.is_closed { gpu_style.flags |= STYLE_FLAG_CLOSED; }
+    let gpu_style = compile_style(style);
 
     (entry, gpu_style)
 }

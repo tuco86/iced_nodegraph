@@ -297,6 +297,7 @@ impl ShapeBuilder {
                     max_y = max_y.max(a.y).max(b.y);
                     gpu_segments.push(Segment {
                         segment_type: SegmentType::Line,
+                        signed: closed,
                         geom0: [a.x, a.y, b.x, b.y],
                         geom1: [0.0; 4],
                         arc_start, arc_end,
@@ -310,6 +311,7 @@ impl ShapeBuilder {
                     max_y = max_y.max(center.y + radius);
                     gpu_segments.push(Segment {
                         segment_type: SegmentType::Arc,
+                        signed: closed,
                         geom0: [center.x, center.y, *radius, *start_angle],
                         geom1: [*sweep, 0.0, 0.0, 0.0],
                         arc_start, arc_end,
@@ -324,6 +326,7 @@ impl ShapeBuilder {
                     }
                     gpu_segments.push(Segment {
                         segment_type: SegmentType::CubicBezier,
+                        signed: closed,
                         geom0: [p0.x, p0.y, p1.x, p1.y],
                         geom1: [p2.x, p2.y, p3.x, p3.y],
                         arc_start, arc_end,
@@ -336,6 +339,7 @@ impl ShapeBuilder {
                     max_y = max_y.max(pos.y);
                     gpu_segments.push(Segment {
                         segment_type: SegmentType::Point,
+                        signed: closed,
                         geom0: [pos.x, pos.y, *heading, 0.0],
                         geom1: [0.0; 4],
                         arc_start, arc_end: arc_start, // zero length
