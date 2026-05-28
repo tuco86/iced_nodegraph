@@ -217,6 +217,133 @@ fn draw_clips_child_viewport_to_graph_bounds() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Event-propagation regression: NodeGraph must not consume wheel-scroll events
+// when the cursor isn't actually over its bounds. `is_over` returns false
+// both for `Levitating` cursors (covered by a sibling above in a `stack`) and
+// for cursors geometrically outside the bounds.
+// ---------------------------------------------------------------------------
+
+fn wheel_event() -> iced::Event {
+    iced::Event::Mouse(mouse::Event::WheelScrolled {
+        delta: mouse::ScrollDelta::Lines { x: 0.0, y: 5.0 },
+    })
+}
+
+fn run_update_with_cursor(
+    graph_w: f32,
+    graph_h: f32,
+    cursor: mouse::Cursor,
+) -> Rc<Cell<bool>> {
+    let mut base_graph: NodeGraph<'static, usize, usize, usize, (), Theme, Stub> =
+        NodeGraph::default()
+            .width(Length::Fixed(graph_w))
+            .height(Length::Fixed(graph_h));
+    base_graph.push_node(0_usize, Point::new(0.0, 0.0), Element::<(), _, _>::from(EmptyLeaf));
+
+    let camera_changed = Rc::new(Cell::new(false));
+    let cc = camera_changed.clone();
+    let mut graph = base_graph.on_camera_change(move |_pos, _zoom| cc.set(true));
+
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Stub>);
+    let renderer = Stub;
+    let layout_node = graph.layout(
+        &mut tree,
+        &renderer,
+        &layout::Limits::new(Size::ZERO, Size::new(1024.0, 768.0)),
+    );
+    let layout = Layout::new(&layout_node);
+
+    let mut messages: Vec<()> = Vec::new();
+    let mut shell = iced_widget::core::Shell::new(&mut messages);
+    let mut clipboard = clipboard::Null;
+    let viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
+
+    graph.update(
+        &mut tree,
+        &wheel_event(),
+        layout,
+        cursor,
+        &renderer,
+        &mut clipboard,
+        &mut shell,
+        &viewport,
+    );
+
+    camera_changed
+}
+
+// Minimal no-op leaf (we only need a node to exist so push_node doesn't panic).
+struct EmptyLeaf;
+impl<Message> Widget<Message, Theme, Stub> for EmptyLeaf {
+    fn size(&self) -> Size<Length> {
+        Size::new(Length::Fixed(10.0), Length::Fixed(10.0))
+    }
+    fn layout(&mut self, _: &mut Tree, _: &Stub, limits: &layout::Limits) -> layout::Node {
+        layout::Node::new(limits.resolve(Length::Fixed(10.0), Length::Fixed(10.0), Size::ZERO))
+    }
+    fn draw(
+        &self,
+        _: &Tree,
+        _: &mut Stub,
+        _: &Theme,
+        _: &renderer::Style,
+        _: Layout<'_>,
+        _: mouse::Cursor,
+        _: &Rectangle,
+    ) {
+    }
+}
+impl<'a, Message: 'a> From<EmptyLeaf> for Element<'a, Message, Theme, Stub> {
+    fn from(w: EmptyLeaf) -> Self {
+        Element::new(w)
+    }
+}
+
+#[test]
+fn wheel_scroll_with_levitating_cursor_does_not_zoom() {
+    // Levitating cursor = a sibling above (e.g. an `opaque` overlay) has
+    // claimed mouse interaction at this position. NodeGraph must not zoom.
+    let changed = run_update_with_cursor(
+        200.0,
+        200.0,
+        mouse::Cursor::Levitating(Point::new(100.0, 100.0)),
+    );
+    assert!(
+        !changed.get(),
+        "wheel scroll under a levitating cursor must not change the camera",
+    );
+}
+
+#[test]
+fn wheel_scroll_outside_graph_bounds_does_not_zoom() {
+    // Cursor is geometrically outside the NodeGraph's layout bounds (200x200).
+    let changed = run_update_with_cursor(
+        200.0,
+        200.0,
+        mouse::Cursor::Available(Point::new(500.0, 500.0)),
+    );
+    assert!(
+        !changed.get(),
+        "wheel scroll outside the graph bounds must not change the camera",
+    );
+}
+
+#[test]
+fn wheel_scroll_inside_graph_bounds_zooms() {
+    // Happy-path control test: an Available cursor inside the bounds must
+    // still drive the camera.
+    let changed = run_update_with_cursor(
+        200.0,
+        200.0,
+        mouse::Cursor::Available(Point::new(100.0, 100.0)),
+    );
+    assert!(
+        changed.get(),
+        "wheel scroll over the graph must still change the camera",
+    );
+}
+
 #[test]
 fn update_clips_child_viewport_to_graph_bounds() {
     let (mut graph, _on_draw, on_update) =
