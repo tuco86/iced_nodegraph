@@ -42,7 +42,7 @@ mod persistence;
 
 use iced::{
     Color, Event, Length, Point, Subscription, Task, Theme, Vector, event, keyboard,
-    widget::{container, stack, text},
+    widget::{container, opaque, stack, text},
     window,
 };
 use iced_nodegraph::{EdgeConfig, NodeConfig, PinConfig, PinRef, ShadowConfig};
@@ -2050,7 +2050,10 @@ impl Application {
         // The command palette is conditionally shown as an overlay
         let overlay: iced::Element<'_, ApplicationMessage> = if self.command_palette_open {
             let (_, commands) = self.build_palette_commands();
-            command_palette(
+            // `opaque` blocks wheel events from reaching the NodeGraph behind
+            // the palette; `command_palette`'s own `mouse_area` only captures
+            // `on_press`, not scroll.
+            opaque(command_palette(
                 &self.command_input,
                 &commands,
                 self.palette_selected_index,
@@ -2058,7 +2061,7 @@ impl Application {
                 ApplicationMessage::CommandPaletteSelect,
                 ApplicationMessage::CommandPaletteNavigate,
                 || ApplicationMessage::CommandPaletteCancel,
-            )
+            ))
         } else {
             // Invisible placeholder to maintain widget tree structure
             container(text("")).width(0).height(0).into()
