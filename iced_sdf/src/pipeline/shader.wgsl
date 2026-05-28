@@ -151,27 +151,77 @@ fn sd_line(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> SdfResult {
     return SdfResult(dist * sign, t);
 }
 
+// Newton refinement of a single Bezier parameter. Returns the converged t.
+fn bezier_newton(
+    p: vec2<f32>, p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>, t_init: f32,
+) -> f32 {
+    var t = t_init;
+    for (var iter = 0u; iter < 4u; iter++) {
+        let bp = bezier_point(p0, p1, p2, p3, t);
+        let bd = bezier_deriv(p0, p1, p2, p3, t);
+        let bdd = bezier_deriv2(p0, p1, p2, p3, t);
+        let diff = bp - p;
+        let num = dot(diff, bd);
+        let den = dot(bd, bd) + dot(diff, bdd);
+        if abs(den) > 1e-8 { t = clamp(t - num / den, 0.0, 1.0); }
+    }
+    return t;
+}
+
 fn sd_bezier(p: vec2<f32>, p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>) -> SdfResult {
-    var best_t = 0.0;
-    var best_dist = 1e20;
-    const SAMPLES: u32 = 16u;
+    // Tight or self-overshooting beziers (e.g. an edge being dragged near its
+    // origin) have multiple local distance minima. A single 16-sample seed +
+    // Newton run frequently snaps to the wrong one, leaving "armpit" tiles
+    // with a far-away point as their "nearest" — the culling then drops the
+    // tile and the fragment renders garbage. Densely sample and refine the
+    // best AND second-best local minimum, then keep the global winner.
+    const SAMPLES: u32 = 32u;
+    var best1_t = 0.0; var best1_d = 1e20;
+    var best2_t = 0.0; var best2_d = 1e20;
+    var prev_d = 1e20;
+    var prev_t = 0.0;
+    var prev_decreasing = true;
     for (var i = 0u; i <= SAMPLES; i++) {
         let t = f32(i) / f32(SAMPLES);
         let bp = bezier_point(p0, p1, p2, p3, t);
         let d = length(p - bp);
-        if d < best_dist { best_dist = d; best_t = t; }
+        // Track every basin (local min). A basin ends when distance starts
+        // increasing again; record that prior sample as a candidate.
+        if i > 0u && prev_decreasing && d > prev_d {
+            if prev_d < best1_d {
+                best2_d = best1_d; best2_t = best1_t;
+                best1_d = prev_d;  best1_t = prev_t;
+            } else if prev_d < best2_d {
+                best2_d = prev_d; best2_t = prev_t;
+            }
+        }
+        prev_decreasing = d < prev_d;
+        prev_d = d; prev_t = t;
     }
-    for (var iter = 0u; iter < 4u; iter++) {
-        let bp = bezier_point(p0, p1, p2, p3, best_t);
-        let bd = bezier_deriv(p0, p1, p2, p3, best_t);
-        let bdd = bezier_deriv2(p0, p1, p2, p3, best_t);
-        let diff = bp - p;
-        let num = dot(diff, bd);
-        let den = dot(bd, bd) + dot(diff, bdd);
-        if abs(den) > 1e-8 { best_t = clamp(best_t - num / den, 0.0, 1.0); }
+    // Always also consider the final sample (descending into endpoint).
+    if prev_d < best1_d {
+        best2_d = best1_d; best2_t = best1_t;
+        best1_d = prev_d;  best1_t = prev_t;
+    } else if prev_d < best2_d {
+        best2_d = prev_d; best2_t = prev_t;
     }
-    let closest = bezier_point(p0, p1, p2, p3, best_t);
-    let dist = length(p - closest);
+
+    let t_a = bezier_newton(p, p0, p1, p2, p3, best1_t);
+    let bp_a = bezier_point(p0, p1, p2, p3, t_a);
+    let d_a = length(p - bp_a);
+
+    var best_t = t_a;
+    var closest = bp_a;
+    var dist = d_a;
+    if best2_d < 1e19 {
+        let t_b = bezier_newton(p, p0, p1, p2, p3, best2_t);
+        let bp_b = bezier_point(p0, p1, p2, p3, t_b);
+        let d_b = length(p - bp_b);
+        if d_b < dist {
+            best_t = t_b; closest = bp_b; dist = d_b;
+        }
+    }
+
     let tangent = bezier_deriv(p0, p1, p2, p3, best_t);
     let normal = vec2<f32>(-tangent.y, tangent.x);
     let diff = p - closest;
@@ -227,12 +277,20 @@ fn sd_arc_segment(p: vec2<f32>, center: vec2<f32>, radius: f32, start: f32, swee
     let dist_to_center = length(offset);
     let angle = atan2(offset.y, offset.x);
 
-    // Normalize angle relative to arc start, wrapping to [-PI, PI]
+    // Normalize angle relative to arc start. Wrap into the half-turn that
+    // matches the sweep direction so the on_arc test below works for arcs
+    // wider than PI (full circles in particular — without this the
+    // wrap-around half is wrongly classified as off-arc and gets a flipped
+    // sign in the else branch, leaking the closed-shape fill outside).
     var rel = angle - start;
-    rel = rel - round(rel / 6.2831853) * 6.2831853;
+    if sweep > 0.0 {
+        rel = rel - floor(rel / 6.2831853) * 6.2831853; // → [0, TAU)
+    } else {
+        rel = rel - ceil(rel / 6.2831853) * 6.2831853;  // → (-TAU, 0]
+    }
 
-    let on_arc = (sweep > 0.0 && rel >= 0.0 && rel <= sweep)
-              || (sweep < 0.0 && rel <= 0.0 && rel >= sweep);
+    let on_arc = (sweep > 0.0 && rel <= sweep)
+              || (sweep < 0.0 && rel >= sweep);
 
     var dist: f32;
     var u_frac: f32;
@@ -745,10 +803,21 @@ fn cs_build_index(@builtin(global_invocation_id) gid: vec3<u32>) {
             let r = eval_segment(world_pos, seg);
 
             if has_pattern {
-                // Pattern: per-segment culling with pattern evaluation
+                // Pattern: per-segment culling with pattern evaluation.
+                // Dashed/Arrowed shear `shifted_u = u + dist*tan(angle)`, so a
+                // pixel within the tile can shift `dist_along` by up to
+                // thd*|tan(angle)| beyond what tile-center evaluation sees.
+                // Widen the cull margin in that case to avoid dropping whole
+                // tiles for any plausible angle.
                 let sdf = cs_eval_segment(world_pos, seg_idx);
                 let eff = apply_pattern(sdf.dist, sdf, style, draw.time);
-                if eff <= thd {
+                var cull_margin = thd;
+                if style.pattern_type == PATTERN_DASHED
+                    || style.pattern_type == PATTERN_ARROWED
+                {
+                    cull_margin = thd * (1.0 + abs(tan(style.pattern_param2)));
+                }
+                if eff <= cull_margin {
                     cs_push_slot(slot_base, &count, seg_idx, sty_idx);
                 }
             } else {

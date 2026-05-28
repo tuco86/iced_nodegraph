@@ -747,6 +747,112 @@ fn dashed_stroke_no_tile_seams() {
     );
 }
 
+/// A bezier whose control points overshoot — the classic shape produced by
+/// dragging an edge near its origin or wiring two nodes a few pixels apart —
+/// folds back on itself and develops multiple local distance minima. With a
+/// single 16-sample seed + Newton, tiles near the inner "armpit" snap to the
+/// wrong local min, the SDF reports the wrong distance, and the cull discards
+/// them. Visually it shows up as quad-shaped holes rotated along the curve.
+/// This walks the visible centerline of the S and asserts every centerline
+/// pixel renders opaque — pre-fix, alternating tile-shaped chunks dropped.
+#[test]
+fn tight_overshoot_bezier_renders_without_holes() {
+    let renderer = TestRenderer::new();
+    let width = 256u32;
+    let height = 128u32;
+    let zoom = 1.0;
+
+    // Real 2D S-curve with overshooting control points (40px endpoints,
+    // 60px control extension into each lobe).
+    let p0 = [-20.0_f32, -15.0];
+    let p1 = [40.0, -15.0];
+    let p2 = [-40.0, 15.0];
+    let p3 = [20.0, 15.0];
+    let curve = Curve::bezier(p0, p1, p2, p3);
+    let style = Style::stroke(iced::Color::WHITE, Pattern::solid(4.0));
+
+    let pixels = renderer.render(&[(&curve, &style)], width, height, zoom);
+
+    // Helper: cubic bezier point.
+    let bp = |t: f32| -> [f32; 2] {
+        let u = 1.0 - t;
+        [
+            u*u*u*p0[0] + 3.0*u*u*t*p1[0] + 3.0*u*t*t*p2[0] + t*t*t*p3[0],
+            u*u*u*p0[1] + 3.0*u*u*t*p1[1] + 3.0*u*t*t*p2[1] + t*t*t*p3[1],
+        ]
+    };
+
+    let cx = (width / 2) as i32;
+    let cy = (height / 2) as i32;
+    let mut holes = Vec::new();
+    // Sample the centerline at 64 points; each must be opaque.
+    for i in 0..=64 {
+        let t = i as f32 / 64.0;
+        let p = bp(t);
+        let sx = (cx + p[0].round() as i32) as u32;
+        let sy = (cy + p[1].round() as i32) as u32;
+        if sx >= width || sy >= height { continue; }
+        let a = TestRenderer::pixel_at(&pixels, width, sx, sy)[3];
+        if a < 200 {
+            holes.push((t, p[0], p[1], a));
+        }
+    }
+    assert!(
+        holes.is_empty(),
+        "Tight overshoot bezier has SDF holes along its centerline ({} bad of 65): first = {:?}",
+        holes.len(),
+        &holes[..holes.len().min(5)],
+    );
+}
+
+/// Angled dashed strokes must not lose entire tiles to per-segment culling.
+/// `apply_pattern` shears `shifted_u = u + dist*tan(angle)`, so a pixel away
+/// from the tile center can fall inside a dash even when the tile center is
+/// well outside one. Without an angle-aware cull margin in the compute pass,
+/// the segment is dropped for those tiles and visible coverage collapses as
+/// the angle grows. Compare opaque coverage at 0° vs 40°: they should be
+/// within tens of percent, not >50% drop.
+#[test]
+fn dashed_stroke_at_angle_preserves_coverage() {
+    let renderer = TestRenderer::new();
+    let width = 384u32;
+    let height = 96u32;
+    let zoom = 1.0;
+
+    let line = Curve::line([-160.0, 0.0], [160.0, 0.0]);
+    let measure = |angle_deg: f32| -> u32 {
+        let style = Style::stroke(
+            iced::Color::WHITE,
+            Pattern::dashed_angle(6.0, 14.0, 8.0, angle_deg.to_radians()),
+        );
+        let pixels = renderer.render(&[(&line, &style)], width, height, zoom);
+        let cy = height / 2;
+        let mut opaque = 0u32;
+        // Sample the whole stroke band (≈ thickness 6 plus a few px of AA).
+        for y in (cy - 5)..=(cy + 5) {
+            for x in 40..(width - 40) {
+                if TestRenderer::pixel_at(&pixels, width, x, y)[3] > 150 {
+                    opaque += 1;
+                }
+            }
+        }
+        opaque
+    };
+
+    let baseline = measure(0.0);
+    assert!(baseline > 100, "baseline coverage too low: {baseline}");
+    for &ang in &[20.0_f32, 30.0, 40.0, 45.0] {
+        let c = measure(ang);
+        let ratio = c as f32 / baseline as f32;
+        assert!(
+            ratio > 0.6,
+            "Angle {ang}°: coverage {c} = {:.0}% of baseline {baseline} \
+             — culling is dropping dashed tiles at angle",
+            ratio * 100.0,
+        );
+    }
+}
+
 /// Multi-style bezier (like edge editor) must not show horizontal artifacts
 /// at tile row boundaries. Checks that pixels at y=tile_boundary are
 /// consistent with their vertical neighbors.
@@ -1410,6 +1516,55 @@ fn closed_solid_fill_large_no_interior_holes() {
         holes.len(),
         &holes[..holes.len().min(5)],
     );
+}
+
+/// A solid-filled `Curve::circle` must not leak its fill color outside the
+/// circle. Regression: a bug in `sd_arc_segment`'s angle normalization (clamp
+/// to [-PI, PI]) caused a full-sweep arc to classify points on the
+/// wrap-around half as off-arc and assign them a negative signed distance via
+/// the start-endpoint sign branch, painting Style::solid across most of the
+/// surrounding plane. Visible in iced_nodegraph as a pin-colored block
+/// covering the node body adjacent to each pin.
+#[test]
+fn closed_circle_solid_fill_does_not_leak_outside() {
+    let renderer = TestRenderer::new();
+    let width = 128u32;
+    let height = 128u32;
+    let zoom = 1.0;
+
+    let shape = Curve::circle([0.0, 0.0], 20.0);
+    let style = Style::solid(iced::Color::from_rgb(1.0, 0.0, 0.0));
+
+    let pixels = renderer.render(&[(&shape, &style)], width, height, zoom);
+
+    // Camera centers world (0,0) at screen (w/2, h/2). Sample a ring of
+    // points well outside the radius (>= 30 world units) — they must be
+    // transparent. Pre-fix, the bottom-left half-plane outside the circle
+    // was filled solid.
+    let cx_s = (width / 2) as i32;
+    let cy_s = (height / 2) as i32;
+    let mut leaks = Vec::new();
+    for (dx, dy) in &[
+        (-40, 0), (-40, -20), (-40, 20),
+        (40, 0), (40, -20), (40, 20),
+        (0, -40), (0, 40),
+        (-30, 30), (30, -30), (-30, -30), (30, 30),
+    ] {
+        let sx = (cx_s + dx) as u32;
+        let sy = (cy_s + dy) as u32;
+        let px = TestRenderer::pixel_at(&pixels, width, sx, sy);
+        if px[3] > 20 {
+            leaks.push((*dx, *dy, px));
+        }
+    }
+    assert!(
+        leaks.is_empty(),
+        "Curve::circle solid fill leaked outside the radius: {leaks:?}",
+    );
+
+    // Sanity: the interior is actually filled.
+    let center = TestRenderer::pixel_at(&pixels, width, cx_s as u32, cy_s as u32);
+    assert!(center[3] > 200, "Circle interior not filled: {center:?}");
 }
 
 /// A closed rounded_rect with Style::solid must fill its interior completely.
