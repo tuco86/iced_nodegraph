@@ -36,7 +36,7 @@ mod nodes;
 
 use iced::{
     Element, Length, Point, Subscription, Task, Theme, Vector,
-    widget::{button, column, container, pick_list, row, slider, stack, text},
+    widget::{button, column, container, opaque, pick_list, row, slider, stack, text},
     window,
 };
 use iced_nodegraph::{NodeBorder, NodeStyle, Pattern, PinRef, node_graph};
@@ -294,11 +294,14 @@ impl Application {
         let control_panel = self.build_control_panel();
         let graph = self.build_graph();
 
-        // Use stack to overlay control panel on right side of graph
-        // This avoids wrapping the graph in a container which breaks coordinates
+        // Use stack to overlay control panel on right side of graph.
+        // `opaque` claims mouse interaction for the menu's 280px strip so the
+        // NodeGraph below doesn't receive wheel/click events that fall on it.
+        // The outer Fill x Fill container is just for alignment and must stay
+        // transparent.
         stack![
             graph,
-            container(
+            container(opaque(
                 container(control_panel)
                     .width(Length::Fixed(280.0))
                     .height(Length::Fill)
@@ -310,7 +313,7 @@ impl Application {
                             ..Default::default()
                         }
                     })
-            )
+            ))
             .width(Length::Fill)
             .height(Length::Fill)
             .align_x(iced::alignment::Horizontal::Right),
