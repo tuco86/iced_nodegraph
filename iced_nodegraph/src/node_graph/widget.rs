@@ -990,10 +990,16 @@ where
             }
 
             // Layer 4b: Node Widgets
+            // Mirrors Container::clip(true): bound the child viewport to the
+            // graph so widgets inside nodes can't paint past the graph edge.
+            let clipped_viewport = layout
+                .bounds()
+                .intersection(viewport)
+                .unwrap_or(Rectangle::new(layout.bounds().position(), Size::ZERO));
             renderer.with_layer(layout.bounds(), |renderer| {
                 camera.draw_with::<_, Renderer>(
                     renderer,
-                    viewport,
+                    &clipped_viewport,
                     cursor,
                     |renderer, viewport, cursor| {
                         let bounds = node_layout.bounds();
@@ -1435,10 +1441,15 @@ where
             None
         }
         .unwrap_or(Vector::ZERO);
+        // Matches draw(): children see the viewport clipped to graph bounds.
+        let clipped_viewport = layout
+            .bounds()
+            .intersection(viewport)
+            .unwrap_or(Rectangle::new(layout.bounds().position(), Size::ZERO));
         state
             .camera
             .move_by(graph_move_offset.into_euclid())
-            .update_with(viewport, screen_cursor, |viewport, world_cursor| {
+            .update_with(&clipped_viewport, screen_cursor, |viewport, world_cursor| {
                 let state = tree.state.downcast_mut::<NodeGraphState>();
 
                 if state.dragging != Dragging::None
