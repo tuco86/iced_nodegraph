@@ -248,5 +248,8 @@ mod node_pin;
 pub mod prelude;
 pub mod style;
 
+#[cfg(test)]
+mod clipping_tests;
+
 // Re-export iced for downstream crates
 pub use iced;
