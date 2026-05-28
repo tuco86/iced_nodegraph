@@ -48,7 +48,7 @@ pub fn wasm_init() {
 use compiler::ShaderCompiler;
 use iced::{
     Color, Element, Event, Length, Point, Subscription, Task, Theme, Vector, event, keyboard,
-    widget::{column, container, stack, text},
+    widget::{column, container, opaque, stack, text},
     window,
 };
 use iced_nodegraph::{PinDirection, PinRef, PinSide, node_graph, node_pin};
@@ -410,12 +410,14 @@ impl Application {
 
         let graph_element: Element<Message> = graph.into();
 
-        // Show command palette overlay if open
+        // Show command palette overlay if open. `opaque` blocks wheel events
+        // from reaching the NodeGraph behind it; the palette's internal
+        // `mouse_area` only captures `on_press`, not scroll.
         if self.command_palette_open {
             let commands = self.build_palette_commands();
             stack![
                 graph_element,
-                command_palette(
+                opaque(command_palette(
                     &self.command_input,
                     &commands,
                     self.palette_selected_index,
@@ -423,7 +425,7 @@ impl Application {
                     Message::CommandPaletteSelect,
                     Message::CommandPaletteNavigate,
                     || Message::CommandPaletteCancel,
-                )
+                ))
             ]
             .into()
         } else {

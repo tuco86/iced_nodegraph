@@ -45,7 +45,7 @@ pub fn wasm_init() {
 use graph::generate_procedural_graph;
 use iced::{
     Color, Length, Point, Subscription, Theme, Vector,
-    widget::{checkbox, column, container, stack, text},
+    widget::{checkbox, column, container, opaque, stack, text},
     window,
 };
 use iced_nodegraph::{PinRef, SdfDebug, node_graph};
@@ -252,9 +252,11 @@ impl Application {
 
         let graph_view: iced::Element<'_, ApplicationMessage> = ng.into();
 
+        // `opaque` ensures the stats panel claims wheel/click events for its
+        // own area so the NodeGraph below doesn't react through it.
         stack![
             graph_view,
-            container(stats)
+            container(opaque(stats))
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .padding(10)
