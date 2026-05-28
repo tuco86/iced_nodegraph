@@ -79,6 +79,7 @@ cargo run -p demo_styling
 cargo run -p demo_interaction
 cargo run --release -p demo_500_nodes
 cargo run -p demo_shader_editor
+cargo run -p sdf_basic                 # iced_sdf example
 ```
 
 ## Building
@@ -87,7 +88,7 @@ cargo run -p demo_shader_editor
 cargo build -p iced_nodegraph          # Core library
 cargo build --workspace                # Everything
 cargo test -p iced_nodegraph           # 69 unit tests
-cargo test -p iced_sdf                 # 79 unit + doc tests
+cargo test -p iced_sdf                 # 34 unit tests
 cargo clippy --workspace -- -D warnings
 ```
 

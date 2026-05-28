@@ -72,13 +72,6 @@ $demos = @(
         Path = "demos/shader_editor"
         OutName = "demo_shader_editor"
         HasWasmFeature = $true
-    },
-    @{
-        Name = "sdf_gallery"
-        Path = "iced_sdf/examples/gallery"
-        OutName = "sdf_gallery"
-        HasWasmFeature = $true
-        OutDirPrefix = "../../../"
     }
 )
 
@@ -106,10 +99,6 @@ foreach ($demo in $demos) {
         # Copy static assets into pkg folder alongside WASM files
         Copy-Item "demos/static/demo.css" -Destination $outDir
         Copy-Item "demos/static/demo-loader.js" -Destination $outDir
-        # Copy shape loader only for sdf_gallery
-        if ($demo.Name -eq "sdf_gallery" -and (Test-Path "demos/static/sdf-shape-loader.js")) {
-            Copy-Item "demos/static/sdf-shape-loader.js" -Destination $outDir
-        }
 
         Write-Host "  Built $($demo.Name)" -ForegroundColor Green
     } catch {
