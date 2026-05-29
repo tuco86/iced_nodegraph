@@ -176,12 +176,22 @@ impl Style {
         self.pattern.is_none() && self.dist_from < -100.0
     }
 
-    /// Maximum visual extent beyond the shape boundary.
-    pub fn max_effect_radius(&self) -> f32 {
+    /// World-space extent this style draws beyond the shape boundary.
+    ///
+    /// Use this to size cull/clip padding so a layer is never clipped early.
+    /// For a `closed` (filled) shape only the outward band counts: the interior
+    /// (very negative `dist_from`) is fill, not overdraw. For an open stroke
+    /// both sides of the curve lie outside the shape, so the larger magnitude
+    /// of the two distance bounds applies. `distance_field` styles are unbounded.
+    pub fn extent(&self, closed: bool) -> f32 {
         if self.distance_field {
             return f32::INFINITY;
         }
-        self.dist_to.max(0.0)
+        if closed {
+            self.dist_to.max(0.0)
+        } else {
+            self.dist_to.max(-self.dist_from).max(0.0)
+        }
     }
 }
 
@@ -202,8 +212,17 @@ mod tests {
     }
 
     #[test]
-    fn shadow_effect_radius() {
+    fn shadow_extent() {
         let s = Style::shadow(Color::BLACK, 10.0);
-        assert_eq!(s.max_effect_radius(), 10.0);
+        // Closed shape: only the outward fade band counts.
+        assert_eq!(s.extent(true), 10.0);
+    }
+
+    #[test]
+    fn stroke_extent_uses_both_sides() {
+        // An open stroke extends to both sides of the curve; extent is the half
+        // thickness regardless of which sign bound is larger.
+        let s = Style::stroke(Color::WHITE, Pattern::solid(4.0));
+        assert_eq!(s.extent(false), 2.0);
     }
 }
