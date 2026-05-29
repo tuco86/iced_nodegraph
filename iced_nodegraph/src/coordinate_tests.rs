@@ -423,3 +423,99 @@ fn content_and_fill_coincide_at_origin_zoom2() {
         "content {content:?} and fill {fill:?} diverge (dx={dx}, dy={dy})",
     );
 }
+
+/// Drags a box-select from screen `p1` to `p2` over empty graph space (the only
+/// node is far away) and returns the SDF primitives recorded by a final draw.
+fn box_select_primitives(
+    widget_origin: Vector,
+    camera_zoom: f32,
+    p1: Point,
+    p2: Point,
+) -> Vec<Rectangle> {
+    let mut graph: NodeGraph<'static, usize, usize, usize, (), Theme, Rec> =
+        NodeGraph::default()
+            .width(Length::Fixed(400.0))
+            .height(Length::Fixed(400.0))
+            .initial_camera(Point::ORIGIN, camera_zoom)
+            .on_select(|_ids| {});
+    // Node far from the drag so the press starts a box select, not a node click.
+    graph.push_node(0_usize, Point::new(900.0, 900.0), Element::from(ContentProbe));
+
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Rec>);
+    let out = Rc::new(RefCell::new(Recorded::default()));
+    let mut renderer = Rec::new(out.clone());
+    let layout_node = graph.layout(
+        &mut tree,
+        &renderer,
+        &layout::Limits::new(Size::ZERO, Size::new(1024.0, 768.0)),
+    );
+    let layout = Layout::with_offset(widget_origin, &layout_node);
+    let viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
+    let mut msgs: Vec<()> = Vec::new();
+    let mut shell = iced_widget::core::Shell::new(&mut msgs);
+    let mut clipboard = clipboard::Null;
+
+    let send = |graph: &mut NodeGraph<'static, usize, usize, usize, (), Theme, Rec>,
+                tree: &mut Tree,
+                shell: &mut iced_widget::core::Shell<'_, ()>,
+                clipboard: &mut clipboard::Null,
+                renderer: &Rec,
+                event: iced::Event,
+                at: Point| {
+        graph.update(
+            tree,
+            &event,
+            layout,
+            mouse::Cursor::Available(at),
+            renderer,
+            clipboard,
+            shell,
+            &viewport,
+        );
+    };
+
+    // Move to p1, press (starts box select at p1), drag to p2.
+    send(&mut graph, &mut tree, &mut shell, &mut clipboard, &renderer,
+        iced::Event::Mouse(mouse::Event::CursorMoved { position: p1 }), p1);
+    send(&mut graph, &mut tree, &mut shell, &mut clipboard, &renderer,
+        iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)), p1);
+    send(&mut graph, &mut tree, &mut shell, &mut clipboard, &renderer,
+        iced::Event::Mouse(mouse::Event::CursorMoved { position: p2 }), p2);
+
+    graph.draw(
+        &tree,
+        &mut renderer,
+        &Theme::Dark,
+        &renderer::Style { text_color: Color::WHITE },
+        layout,
+        mouse::Cursor::Available(p2),
+        &viewport,
+    );
+
+    let result = out.borrow().primitives.clone();
+    result
+}
+
+#[test]
+fn box_select_renders_where_dragged_at_nonzero_origin() {
+    // The selection box must render at the screen rectangle the user dragged,
+    // regardless of widget origin or zoom. Box corners map back to the cursor
+    // screen positions, so the select clip should span p1..p2 (plus AA padding).
+    let origin = Vector::new(0.0, 100.0);
+    let p1 = Point::new(40.0, 160.0);
+    let p2 = Point::new(120.0, 240.0);
+    let prims = box_select_primitives(origin, 2.0, p1, p2);
+
+    let expect = Rectangle::new(p1, Size::new(p2.x - p1.x, p2.y - p1.y));
+    // The far node's layers sit elsewhere; find the primitive near the drag rect.
+    let found = prims.iter().any(|r| {
+        (r.x - expect.x).abs() < 8.0
+            && (r.y - expect.y).abs() < 8.0
+            && (r.width - expect.width).abs() < 12.0
+            && (r.height - expect.height).abs() < 12.0
+    });
+    assert!(
+        found,
+        "no selection-box primitive near dragged rect {expect:?}; got {prims:?}",
+    );
+}
