@@ -702,13 +702,18 @@ where
 
         renderer.with_layer(layout.bounds(), |renderer| {
             // Batched static edges (single draw call)
+            // Batches clipped to the full graph bounds use the bounds origin as
+            // the shader's `bounds_origin`, so the camera offset compensates with
+            // `camera_position - widget_origin` (the general formula reduced for a
+            // full-bounds clip). No-op when the graph is at the window origin.
+            let wo = layout.bounds().position();
             if !edge_batch.is_empty() {
                 renderer.draw_primitive(
                     layout.bounds(),
                     edge_batch
                         .camera(
-                            render_context.camera_position.x,
-                            render_context.camera_position.y,
+                            render_context.camera_position.x - wo.x,
+                            render_context.camera_position.y - wo.y,
                             render_context.camera_zoom,
                         )
                         .time(render_context.time)
@@ -786,8 +791,8 @@ where
                         layout.bounds(),
                         drag_batch
                             .camera(
-                                render_context.camera_position.x,
-                                render_context.camera_position.y,
+                                render_context.camera_position.x - wo.x,
+                                render_context.camera_position.y - wo.y,
                                 render_context.camera_zoom,
                             )
                             .time(render_context.time),
@@ -851,11 +856,13 @@ where
             }
 
             if !shadow_batch.is_empty() {
+                // Full-bounds clip: compensate the camera by the widget origin.
+                let wo = layout.bounds().position();
                 renderer.with_layer(layout.bounds(), |renderer| {
                     renderer.draw_primitive(
                         layout.bounds(),
                         shadow_batch
-                            .camera(cam_x, cam_y, cam_zoom)
+                            .camera(cam_x - wo.x, cam_y - wo.y, cam_zoom)
                             .time(render_context.time)
                             .debug_tiles(self.sdf_debug.shadows),
                     );
@@ -1147,9 +1154,11 @@ where
         // Layer N+1: Box Selection Overlay
         // ========================================
         if let Dragging::BoxSelect(start, _end) = &state.dragging {
+            // `start` was captured in layout-absolute space (the event closure's
+            // cursor), so the live corner must match that space.
             let cursor_world = cursor
                 .position()
-                .map(|p| camera.screen_to_world().transform_point(p.into_euclid()))
+                .map(cursor_layout)
                 .unwrap_or(*start);
 
             // Resolve box select colors: use callback if provided, otherwise use selection_style
@@ -1210,9 +1219,11 @@ where
         if let Dragging::EdgeCutting { trail, .. } = &state.dragging
             && let Some(start) = trail.first()
         {
+            // `start` was captured in layout-absolute space (the event closure's
+            // cursor), so the live corner must match that space.
             let cursor_world = cursor
                 .position()
-                .map(|p| camera.screen_to_world().transform_point(p.into_euclid()))
+                .map(cursor_layout)
                 .unwrap_or(*start);
 
             // Resolve cutting tool color: use callback if provided, otherwise use selection_style
