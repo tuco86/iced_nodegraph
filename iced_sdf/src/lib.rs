@@ -15,8 +15,11 @@
 //!
 //! # Rendering
 //!
-//! ```ignore
+//! ```no_run
 //! use iced_sdf::{Curve, Style, Pattern, SdfPrimitive};
+//! use iced::Color;
+//!
+//! let (cam_x, cam_y, zoom, elapsed) = (0.0, 0.0, 1.0, 0.0);
 //!
 //! let edge = Curve::bezier([0.0, 0.0], [30.0, -20.0], [70.0, 20.0], [100.0, 0.0]);
 //! let style = Style::stroke(Color::WHITE, Pattern::solid(2.0));
