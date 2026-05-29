@@ -1061,10 +1061,10 @@ impl Application {
                     inputs.border_width = value.as_float();
                 }
             }
-            ConfigNodeType::ApplyToNode { target_id, .. } => {
-                if *pin_label == pin::TARGET {
-                    *target_id = value.as_int();
-                }
+            ConfigNodeType::ApplyToNode { target_id, .. }
+                if *pin_label == pin::TARGET =>
+            {
+                *target_id = value.as_int();
             }
             _ => {}
         }
