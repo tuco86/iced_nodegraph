@@ -250,6 +250,104 @@ fn node_fill_primitive(rec: &Recorded) -> Rectangle {
         .expect("node fill primitive was not recorded")
 }
 
+/// Presses the left mouse button at `screen` over a single-node graph placed at
+/// `widget_origin` with the given camera, and returns the selection emitted by
+/// `on_select` (if any). Verifies hit-testing maps screen -> the correct node.
+fn click_select(
+    widget_origin: Vector,
+    node_world: Point,
+    camera_pos: Point,
+    camera_zoom: f32,
+    screen: Point,
+) -> Option<Vec<usize>> {
+    let selected: Rc<RefCell<Option<Vec<usize>>>> = Rc::new(RefCell::new(None));
+    let sel = selected.clone();
+
+    let mut graph: NodeGraph<'static, usize, usize, usize, (), Theme, Rec> =
+        NodeGraph::default()
+            .width(Length::Fixed(400.0))
+            .height(Length::Fixed(400.0))
+            .initial_camera(camera_pos, camera_zoom)
+            .on_select(move |ids| {
+                *sel.borrow_mut() = Some(ids);
+            });
+    graph.push_node(0_usize, node_world, Element::from(ContentProbe));
+
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Rec>);
+    let out = Rc::new(RefCell::new(Recorded::default()));
+    let renderer = Rec::new(out);
+    let layout_node = graph.layout(
+        &mut tree,
+        &renderer,
+        &layout::Limits::new(Size::ZERO, Size::new(1024.0, 768.0)),
+    );
+    let layout = Layout::with_offset(widget_origin, &layout_node);
+    let viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
+
+    let mut msgs: Vec<()> = Vec::new();
+    let mut shell = iced_widget::core::Shell::new(&mut msgs);
+    let mut clipboard = clipboard::Null;
+    let cursor = mouse::Cursor::Available(screen);
+
+    // First a CursorMoved so the widget applies initial_camera and tracks the
+    // cursor, then the press that performs the hit-test and selection.
+    for event in [
+        iced::Event::Mouse(mouse::Event::CursorMoved { position: screen }),
+        iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+    ] {
+        graph.update(
+            &mut tree,
+            &event,
+            layout,
+            cursor,
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+    }
+
+    let result = selected.borrow().clone();
+    result
+}
+
+#[test]
+fn click_hits_node_at_nonzero_origin_zoom1() {
+    // Node body spans world (30,40)..(70,60), center (50,50). Graph at (0,100).
+    // Screen center at zoom 1 = origin + center = (50, 150).
+    let origin = Vector::new(0.0, 100.0);
+    let selected = click_select(
+        origin,
+        Point::new(30.0, 40.0),
+        Point::ORIGIN,
+        1.0,
+        Point::new(50.0, 150.0),
+    );
+    assert_eq!(
+        selected,
+        Some(vec![0]),
+        "click at the node's screen center must select it (origin {origin:?}, zoom 1)",
+    );
+}
+
+#[test]
+fn click_hits_node_at_nonzero_origin_zoom2() {
+    // Same node; at zoom 2 the screen center = origin + center*2 = (100, 200).
+    let origin = Vector::new(0.0, 100.0);
+    let selected = click_select(
+        origin,
+        Point::new(30.0, 40.0),
+        Point::ORIGIN,
+        2.0,
+        Point::new(100.0, 200.0),
+    );
+    assert_eq!(
+        selected,
+        Some(vec![0]),
+        "click at the node's screen center must select it (origin {origin:?}, zoom 2)",
+    );
+}
+
 // Antialias padding the fill clip adds around the node bbox.
 const FILL_PAD: f32 = 6.0;
 

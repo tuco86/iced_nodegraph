@@ -288,8 +288,8 @@ impl Camera2D {
         Renderer: renderer::Renderer,
         F: FnOnce(&mut Renderer, &iced::Rectangle, mouse::Cursor),
     {
-        let transformed_cursor = self.cursor_screen_to_world(cursor);
-        let world_viewport = self.viewport_screen_to_world(viewport);
+        let transformed_cursor = self.cursor_screen_to_layout(cursor);
+        let world_viewport = self.viewport_screen_to_layout(viewport);
 
         // Child layouts arrive in absolute coordinates: a child at world point w
         // has layout position `viewport_origin + w`. We want it drawn at
@@ -313,37 +313,41 @@ impl Camera2D {
     where
         F: FnOnce(&iced::Rectangle, mouse::Cursor),
     {
-        let transformed_cursor = self.cursor_screen_to_world(cursor);
-        let world_viewport = self.viewport_screen_to_world(viewport);
+        let transformed_cursor = self.cursor_screen_to_layout(cursor);
+        let world_viewport = self.viewport_screen_to_layout(viewport);
         f(&world_viewport, transformed_cursor)
     }
 
-    fn cursor_screen_to_world(&self, cursor: mouse::Cursor) -> mouse::Cursor {
-        let screen_to_world = self.screen_to_world();
+    /// Converts a screen cursor into the widget's layout-absolute space, the
+    /// space child layouts and node positions live in (`viewport_origin +
+    /// world`). Equal to world space when the widget is at the window origin.
+    /// Hit-testing and child event/draw propagation compare against layout
+    /// positions, so they must use this space; drag deltas and emitted node
+    /// positions are relative or use stored world coordinates, so the origin
+    /// term cancels there.
+    fn cursor_screen_to_layout(&self, cursor: mouse::Cursor) -> mouse::Cursor {
+        let to_world = self.screen_to_world();
+        let map = |pos: iced::Point| -> iced::Point {
+            let w = to_world.transform_point(pos.into_euclid());
+            iced::Point::new(w.x + self.viewport_origin.x, w.y + self.viewport_origin.y)
+        };
         match cursor {
-            mouse::Cursor::Available(pos) => mouse::Cursor::Available(
-                screen_to_world
-                    .transform_point(pos.into_euclid())
-                    .into_iced(),
-            ),
-            mouse::Cursor::Levitating(pos) => mouse::Cursor::Levitating(
-                screen_to_world
-                    .transform_point(pos.into_euclid())
-                    .into_iced(),
-            ),
+            mouse::Cursor::Available(pos) => mouse::Cursor::Available(map(pos)),
+            mouse::Cursor::Levitating(pos) => mouse::Cursor::Levitating(map(pos)),
             mouse::Cursor::Unavailable => mouse::Cursor::Unavailable,
         }
     }
 
-    fn viewport_screen_to_world(&self, viewport: &Rectangle<f32>) -> Rectangle<f32> {
+    fn viewport_screen_to_layout(&self, viewport: &Rectangle<f32>) -> Rectangle<f32> {
         let viewport: ScreenRect = viewport.into_euclid();
-        // Convert screen viewport to world space using same formula as screen_to_world
-        // world = screen / zoom - position
+        // Screen -> layout-absolute: (screen - origin) / zoom - position + origin.
         let inv_zoom = 1.0 / self.zoom.get();
         let world_viewport: WorldRect = WorldRect::new(
             WorldPoint::new(
-                viewport.origin.x * inv_zoom - self.position.x,
-                viewport.origin.y * inv_zoom - self.position.y,
+                (viewport.origin.x - self.viewport_origin.x) * inv_zoom - self.position.x
+                    + self.viewport_origin.x,
+                (viewport.origin.y - self.viewport_origin.y) * inv_zoom - self.position.y
+                    + self.viewport_origin.y,
             ),
             WorldSize::new(
                 viewport.size.width * inv_zoom,
@@ -516,6 +520,55 @@ mod tests {
         // At (0,0) screen, we should see world (-100, -50) because camera moved
         assert!(approx_eq(world.x, -100.0), "world.x at origin");
         assert!(approx_eq(world.y, -50.0), "world.y at origin");
+    }
+
+    #[test]
+    fn test_world_to_screen_with_viewport_origin() {
+        // With a non-zero widget origin, world maps to
+        // origin + (world + position) * zoom.
+        let camera = Camera2D::with_zoom_and_position(2.0, WorldPoint::new(10.0, 20.0))
+            .with_viewport_origin(ScreenVector::new(40.0, 100.0));
+        let world = WorldPoint::new(30.0, 5.0);
+        let screen = camera.world_to_screen().transform_point(world);
+
+        // origin + (world + pos) * zoom = (40,100) + ((30,5)+(10,20))*2 = (40,100)+(80,50)
+        assert!(approx_eq(screen.x, 120.0), "x: expected 120.0, got {}", screen.x);
+        assert!(approx_eq(screen.y, 150.0), "y: expected 150.0, got {}", screen.y);
+    }
+
+    #[test]
+    fn test_round_trip_with_viewport_origin() {
+        // screen -> world -> screen is identity for any zoom/position/origin.
+        let camera = Camera2D::with_zoom_and_position(1.7, WorldPoint::new(-12.0, 33.0))
+            .with_viewport_origin(ScreenVector::new(40.0, 100.0));
+        let screen_orig = ScreenPoint::new(150.0, 250.0);
+
+        let world = camera.screen_to_world().transform_point(screen_orig);
+        let screen_back = camera.world_to_screen().transform_point(world);
+
+        assert!(approx_eq(screen_orig.x, screen_back.x), "x roundtrip with origin");
+        assert!(approx_eq(screen_orig.y, screen_back.y), "y roundtrip with origin");
+    }
+
+    #[test]
+    fn test_zoom_at_cursor_with_viewport_origin() {
+        // Zooming must keep the world point under the cursor visually fixed even
+        // when the widget sits at a non-zero origin.
+        let camera = Camera2D::with_zoom_and_position(1.0, WorldPoint::new(5.0, -7.0))
+            .with_viewport_origin(ScreenVector::new(40.0, 100.0));
+        let cursor_screen = ScreenPoint::new(400.0, 300.0);
+        let world_before = camera.screen_to_world().transform_point(cursor_screen);
+
+        let camera = camera.zoom_at(cursor_screen, 1.3);
+        let world_after = camera.screen_to_world().transform_point(cursor_screen);
+
+        assert!(
+            point_approx_eq(world_before, world_after),
+            "cursor world moved under zoom with origin: {world_before:?} -> {world_after:?}",
+        );
+        // The origin must be preserved across zoom_at.
+        assert!(approx_eq(camera.viewport_origin().x, 40.0), "origin x preserved");
+        assert!(approx_eq(camera.viewport_origin().y, 100.0), "origin y preserved");
     }
 
     #[test]

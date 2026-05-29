@@ -566,6 +566,14 @@ where
         // Collect edge data with resolved positions
         // ========================================
         // Helper to compute drag offset for a node
+        // Node/group drag origins are captured in layout-absolute space (the
+        // event closure's cursor), so the live preview must compute the cursor
+        // in the same space; the `viewport_origin` term cancels in the delta.
+        let vo = camera.viewport_origin();
+        let cursor_layout = |cursor_pos: iced::Point| -> WorldPoint {
+            let w = camera.screen_to_world().transform_point(cursor_pos.into_euclid());
+            WorldPoint::new(w.x + vo.x, w.y + vo.y)
+        };
         let compute_node_offset = |node_idx: usize| -> WorldVector {
             let mut offset = WorldVector::zero();
             let is_selected = state.selected_nodes.contains(&node_idx);
@@ -574,20 +582,14 @@ where
             if let (Dragging::Node(drag_idx, origin), Some(cursor_pos)) =
                 (&state.dragging, cursor.position())
                 && *drag_idx == node_idx {
-                    let cursor_world: WorldPoint = camera
-                        .screen_to_world()
-                        .transform_point(cursor_pos.into_euclid());
-                    offset = cursor_world - *origin;
+                    offset = cursor_layout(cursor_pos) - *origin;
                 }
 
             // Group move
             if let (Dragging::GroupMove(origin), Some(cursor_pos)) =
                 (&state.dragging, cursor.position())
                 && is_selected {
-                    let cursor_world: WorldPoint = camera
-                        .screen_to_world()
-                        .transform_point(cursor_pos.into_euclid());
-                    offset = cursor_world - *origin;
+                    offset = cursor_layout(cursor_pos) - *origin;
                 }
 
             offset
@@ -727,9 +729,10 @@ where
                     let from_offset = compute_node_offset(*from_node_idx);
                     let start_pos =
                         (from_pin_pos.into_euclid().to_vector() + from_offset).to_point();
-                    let end_pos: WorldPoint = camera
-                        .screen_to_world()
-                        .transform_point(cursor_pos.into_euclid());
+                    // Loose end follows the cursor in the same layout-absolute
+                    // space as the pin geometry so the dragged edge stays aligned
+                    // when the graph is off the window origin.
+                    let end_pos: WorldPoint = cursor_layout(cursor_pos);
 
                     let default_edge_config = EdgeConfig::default();
                     let drag_edge_config = self.edge_defaults.as_ref().unwrap_or(&default_edge_config);
@@ -1305,6 +1308,14 @@ where
             }
             state.camera_initialized = true;
         }
+
+        // Refresh the viewport origin so screen->layout mapping (cursor hit-tests,
+        // child event propagation) aligns when the graph is not at the window
+        // origin. Drag deltas and emitted positions are relative or use stored
+        // world coordinates, so this origin term cancels there.
+        state.camera = state
+            .camera
+            .with_viewport_origin(layout.bounds().position().into_euclid().to_vector());
 
         // Assign z-order entries to any newly-seen node indices so freshly
         // pushed nodes spawn on top of older ones.
