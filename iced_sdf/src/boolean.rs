@@ -324,6 +324,10 @@ type Loop = Vec<Edge>;
 /// Decompose a closed [`Drawable`] into one or more boundary loops. `Point`
 /// junctions are dropped (regenerated on output); beziers are unsupported.
 fn from_drawable(d: &Drawable) -> Vec<Loop> {
+    debug_assert!(
+        d.is_closed(),
+        "boolean ops require a closed contour; got an open drawable"
+    );
     let mut edges = Vec::new();
     for seg in &d.segments {
         match seg.segment_type {
@@ -343,7 +347,32 @@ fn from_drawable(d: &Drawable) -> Vec<Loop> {
             }
         }
     }
-    edges_to_loops(edges)
+    let mut loops = edges_to_loops(edges);
+    close_loops(&mut loops);
+    loops
+}
+
+/// Ensure every loop forms a closed cycle (last edge's endpoint == first edge's
+/// start point). The winding-based evaluator relies on closure; an open loop
+/// would leak ray crossings and corrupt the inside/outside test. In debug
+/// builds an unclosed loop is treated as a caller bug and trips an assertion;
+/// in release the loop is repaired by appending a closing edge so rendering
+/// stays robust. A lone full-circle arc already satisfies start == end.
+fn close_loops(loops: &mut [Loop]) {
+    for loop_ in loops.iter_mut() {
+        let (Some(first), Some(last)) = (loop_.first().copied(), loop_.last().copied()) else {
+            continue;
+        };
+        let start = first.start();
+        let end = last.end();
+        if !end.abs_diff_eq(start, EPS) {
+            debug_assert!(
+                false,
+                "boolean op received an unclosed loop: start {start:?} != end {end:?}"
+            );
+            loop_.push(Edge::Line { a: end, b: start });
+        }
+    }
 }
 
 /// Partition a flat, ordered edge list into closed loops by connectivity.
@@ -1176,5 +1205,15 @@ mod tests {
             |p| circ_inside(p, Vec2::ZERO, 20.0) && circ_inside(p, Vec2::new(15.0, 0.0), 20.0),
             (-30.0, -30.0, 45.0, 30.0),
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "closed contour")]
+    fn open_contour_input_trips_assert() {
+        // An open stroke is not a valid boolean operand; the closed-loop guard
+        // must catch it in debug builds rather than silently mis-rendering.
+        let open = Curve::shape([0.0, 0.0], FRAC_PI_2).line(40.0).line(40.0).end();
+        let square = Curve::rect([0.0, 0.0], [20.0, 20.0]);
+        let _ = super::difference(&square, &open);
     }
 }
