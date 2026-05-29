@@ -157,8 +157,8 @@
 //! Run tests with: `cargo test --lib camera`
 
 use super::euclid::{
-    IntoEuclid, IntoIced, Screen, ScreenPoint, ScreenRect, ScreenToWorld, World, WorldPoint,
-    WorldRect, WorldSize, WorldVector,
+    IntoEuclid, IntoIced, Screen, ScreenPoint, ScreenRect, ScreenToWorld, ScreenVector, World,
+    WorldPoint, WorldRect, WorldSize, WorldVector,
 };
 use euclid::{Scale, Transform2D};
 use iced::Rectangle;
@@ -168,6 +168,12 @@ use iced_widget::core::{mouse, renderer};
 pub struct Camera2D {
     zoom: Scale<f32, Screen, World>,
     position: WorldPoint,
+    /// Screen-space offset of the widget's top-left within the window. The
+    /// widget refreshes this every frame from its layout bounds so that
+    /// rendering and hit-testing work when the graph is not at the window
+    /// origin (e.g. below a toolbar). Persisted state ignores it; it is a
+    /// per-frame render detail.
+    viewport_origin: ScreenVector,
 }
 
 impl Default for Camera2D {
@@ -181,6 +187,7 @@ impl Camera2D {
         Self {
             zoom: Scale::new(1.0),
             position: WorldPoint::origin(),
+            viewport_origin: ScreenVector::zero(),
         }
     }
 
@@ -191,7 +198,19 @@ impl Camera2D {
         Self {
             zoom: Scale::new(zoom),
             position,
+            viewport_origin: ScreenVector::zero(),
         }
+    }
+
+    /// Returns a copy with the viewport origin set to the widget's screen
+    /// position. Call this each frame before rendering or hit-testing.
+    pub fn with_viewport_origin(mut self, origin: ScreenVector) -> Self {
+        self.viewport_origin = origin;
+        self
+    }
+
+    pub fn viewport_origin(&self) -> ScreenVector {
+        self.viewport_origin
     }
 
     pub fn zoom(&self) -> f32 {
@@ -203,11 +222,14 @@ impl Camera2D {
     }
 
     pub fn screen_to_world(&self) -> ScreenToWorld {
-        // Converts screen coordinates to world coordinates, factoring in zoom and position.
-        // draw_with() does: screen = (world + position) * zoom
-        // So inverse is: world = screen / zoom - position
+        // Converts screen coordinates to world coordinates, factoring in zoom,
+        // position, and the widget's viewport origin.
+        // Rendering does: screen = viewport_origin + (world + position) * zoom
+        // So inverse is:  world  = (screen - viewport_origin) / zoom - position
         let inv_zoom = 1.0 / self.zoom.get();
-        Transform2D::scale(inv_zoom, inv_zoom).then_translate(-self.position.to_vector())
+        Transform2D::translation(-self.viewport_origin.x, -self.viewport_origin.y)
+            .then_scale(inv_zoom, inv_zoom)
+            .then_translate(-self.position.to_vector())
     }
 
     pub fn world_to_screen(&self) -> Transform2D<f32, World, Screen> {
@@ -223,6 +245,7 @@ impl Camera2D {
         Self {
             zoom: self.zoom,
             position: self.position + offset,
+            viewport_origin: self.viewport_origin,
         }
     }
 
@@ -240,14 +263,18 @@ impl Camera2D {
         let old_zoom = self.zoom.get();
         let new_zoom = (old_zoom + offset).clamp(0.1, 10.0);
 
+        // Cursor must be relative to the widget origin; screen = origin + (world + pos) * zoom.
+        let local_x = cursor_screen.x - self.viewport_origin.x;
+        let local_y = cursor_screen.y - self.viewport_origin.y;
+
         // zoom_delta = 1/new_zoom - 1/old_zoom (not the other way around!)
         let zoom_delta = 1.0 / new_zoom - 1.0 / old_zoom;
-        let position_offset =
-            WorldVector::new(cursor_screen.x * zoom_delta, cursor_screen.y * zoom_delta);
+        let position_offset = WorldVector::new(local_x * zoom_delta, local_y * zoom_delta);
 
         Self {
             zoom: Scale::new(new_zoom),
             position: self.position + position_offset,
+            viewport_origin: self.viewport_origin,
         }
     }
 
@@ -261,15 +288,24 @@ impl Camera2D {
         Renderer: renderer::Renderer,
         F: FnOnce(&mut Renderer, &iced::Rectangle, mouse::Cursor),
     {
-        let offset = self.position;
-
         let transformed_cursor = self.cursor_screen_to_world(cursor);
         let world_viewport = self.viewport_screen_to_world(viewport);
 
-        renderer.with_transformation(iced::Transformation::scale(self.zoom.get()), |renderer| {
-            renderer.with_translation(offset.to_vector().into_iced(), |renderer| {
-                f(renderer, &world_viewport, transformed_cursor)
-            })
+        // Child layouts arrive in absolute coordinates: a child at world point w
+        // has layout position `viewport_origin + w`. We want it drawn at
+        // `screen = viewport_origin + (w + position) * zoom`. For a layout point
+        // p (= viewport_origin + w) that is:
+        //   screen = zoom * p + v,  where v = viewport_origin * (1 - zoom) + zoom * position
+        // Composed as translate(v) * scale(zoom) so the renderer applies
+        // `scale * p` first, then the translation.
+        let zoom = self.zoom.get();
+        let v_x = self.viewport_origin.x * (1.0 - zoom) + zoom * self.position.x;
+        let v_y = self.viewport_origin.y * (1.0 - zoom) + zoom * self.position.y;
+        let transform =
+            iced::Transformation::translate(v_x, v_y) * iced::Transformation::scale(zoom);
+
+        renderer.with_transformation(transform, |renderer| {
+            f(renderer, &world_viewport, transformed_cursor)
         })
     }
 

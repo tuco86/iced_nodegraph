@@ -99,10 +99,18 @@ fn world_bbox_to_screen_bounds(
     let max_x = x0.max(x1) + padding;
     let max_y = y0.max(y1) + padding;
 
-    let screen_min_x = (min_x + ctx.camera_position.x) * ctx.camera_zoom;
-    let screen_min_y = (min_y + ctx.camera_position.y) * ctx.camera_zoom;
-    let screen_max_x = (max_x + ctx.camera_position.x) * ctx.camera_zoom;
-    let screen_max_y = (max_y + ctx.camera_position.y) * ctx.camera_zoom;
+    // Node geometry is expressed in absolute layout coordinates (widget origin
+    // + world). The screen mapping is `origin + (world + camera) * zoom`, which
+    // for an absolute coordinate `a = origin + world` becomes
+    // `(a + camera) * zoom + origin * (1 - zoom)`. The `origin * (1 - zoom)`
+    // term keeps the bounds aligned with the widget when it is not at the
+    // window origin.
+    let ox = ctx.viewport_origin.x * (1.0 - ctx.camera_zoom);
+    let oy = ctx.viewport_origin.y * (1.0 - ctx.camera_zoom);
+    let screen_min_x = (min_x + ctx.camera_position.x) * ctx.camera_zoom + ox;
+    let screen_min_y = (min_y + ctx.camera_position.y) * ctx.camera_zoom + oy;
+    let screen_max_x = (max_x + ctx.camera_position.x) * ctx.camera_zoom + ox;
+    let screen_max_y = (max_y + ctx.camera_position.y) * ctx.camera_zoom + oy;
 
     [
         screen_min_x,
@@ -485,7 +493,12 @@ where
         viewport: &Rectangle,
     ) {
         let state = tree.state.downcast_ref::<NodeGraphState>();
-        let mut camera = state.camera;
+        // Refresh the camera's viewport origin from the widget's screen position
+        // so SDF layers, child content, and hit-testing stay aligned when the
+        // graph is not at the window origin (e.g. below a toolbar).
+        let mut camera = state
+            .camera
+            .with_viewport_origin(layout.bounds().position().into_euclid().to_vector());
         let z_indices = z_render_indices(state, self.nodes.len());
 
         // Update time for animations
@@ -504,6 +517,7 @@ where
         let mut render_context = RenderContext {
             camera_zoom: state.camera.zoom(),
             camera_position: state.camera.position(),
+            viewport_origin: camera.viewport_origin(),
             time,
         };
 
@@ -512,10 +526,8 @@ where
             && let Some(cursor_position) = cursor.position()
         {
             let cursor_position: ScreenPoint = cursor_position.into_euclid();
-            let cursor_position: WorldPoint = state
-                .camera
-                .screen_to_world()
-                .transform_point(cursor_position);
+            let cursor_position: WorldPoint =
+                camera.screen_to_world().transform_point(cursor_position);
             camera = camera.move_by(cursor_position - origin);
         }
 
@@ -946,8 +958,8 @@ where
             );
             if let Some(fill_clip) = clipped_shape_bounds(fb, layout.bounds()) {
                 let widget_origin = layout.bounds().position();
-                let cx = cam_x + (widget_origin.x - fill_clip.x) / cam_zoom;
-                let cy = cam_y + (widget_origin.y - fill_clip.y) / cam_zoom;
+                let cx = cam_x + (widget_origin.x * (1.0 - cam_zoom) - fill_clip.x) / cam_zoom;
+                let cy = cam_y + (widget_origin.y * (1.0 - cam_zoom) - fill_clip.y) / cam_zoom;
                 renderer.with_layer(layout.bounds(), |renderer| {
                     let mut fill_batch = SdfPrimitive::new();
                     fill_batch.push(
@@ -1113,8 +1125,8 @@ where
                     layout.bounds(),
                 ) {
                     let widget_origin = layout.bounds().position();
-                    let cx = cam_x + (widget_origin.x - fg_clip.x) / cam_zoom;
-                    let cy = cam_y + (widget_origin.y - fg_clip.y) / cam_zoom;
+                    let cx = cam_x + (widget_origin.x * (1.0 - cam_zoom) - fg_clip.x) / cam_zoom;
+                    let cy = cam_y + (widget_origin.y * (1.0 - cam_zoom) - fg_clip.y) / cam_zoom;
                     renderer.with_layer(layout.bounds(), |renderer| {
                         renderer.draw_primitive(
                             fg_clip,
@@ -1174,10 +1186,11 @@ where
                 select_batch.push(&select_shape, &Style::solid(fill_color), select_bounds);
 
                 let widget_origin = layout.bounds().position();
+                let z = render_context.camera_zoom;
                 let cx = render_context.camera_position.x
-                    + (widget_origin.x - select_clip.x) / render_context.camera_zoom;
+                    + (widget_origin.x * (1.0 - z) - select_clip.x) / z;
                 let cy = render_context.camera_position.y
-                    + (widget_origin.y - select_clip.y) / render_context.camera_zoom;
+                    + (widget_origin.y * (1.0 - z) - select_clip.y) / z;
                 let select_primitive = select_batch
                     .camera(cx, cy, render_context.camera_zoom)
                     .time(render_context.time);
@@ -1219,10 +1232,11 @@ where
                     cutting_bounds,
                 );
                 let widget_origin = layout.bounds().position();
+                let z = render_context.camera_zoom;
                 let cx = render_context.camera_position.x
-                    + (widget_origin.x - cutting_clip.x) / render_context.camera_zoom;
+                    + (widget_origin.x * (1.0 - z) - cutting_clip.x) / z;
                 let cy = render_context.camera_position.y
-                    + (widget_origin.y - cutting_clip.y) / render_context.camera_zoom;
+                    + (widget_origin.y * (1.0 - z) - cutting_clip.y) / z;
                 let cutting_primitive = cutting_batch
                     .camera(cx, cy, render_context.camera_zoom)
                     .time(render_context.time);

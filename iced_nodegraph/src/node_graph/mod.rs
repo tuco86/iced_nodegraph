@@ -62,6 +62,10 @@ pub(crate) mod widget;
 pub(crate) struct RenderContext {
     pub camera_zoom: f32,
     pub camera_position: euclid::WorldPoint,
+    /// Screen-space top-left of the widget within the window. SDF screen
+    /// mapping must offset by this so layers align with Iced content when the
+    /// graph is not at the window origin (e.g. below a toolbar).
+    pub viewport_origin: euclid::ScreenVector,
     pub time: f32,
 }
 
