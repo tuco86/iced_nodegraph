@@ -18,9 +18,13 @@ use iced_sdf::Pattern;
 use std::borrow::Cow;
 
 mod config;
+mod sdf;
 
 // Re-export config types
 pub use config::{EdgeConfig, GraphConfig, NodeConfig, PinConfig, SelectionConfig, ShadowConfig};
+
+// SDF layer decomposition (crate-internal, used by the widget renderer).
+pub(crate) use sdf::{EdgeGeometry, color_with_opacity};
 
 /// Shape of a pin indicator.
 ///

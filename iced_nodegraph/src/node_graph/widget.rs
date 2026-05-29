@@ -34,8 +34,8 @@ use crate::{
     node_graph::euclid::{IntoEuclid, ScreenPoint, WorldPoint},
     node_pin::NodePinState,
     style::{
-        EdgeConfig, EdgeStatus, EdgeStyle, GraphStyle, NodeConfig, NodeStatus, NodeStyle,
-        PinConfig, PinStatus, PinStyle,
+        EdgeConfig, EdgeGeometry, EdgeStatus, EdgeStyle, GraphStyle, NodeConfig, NodeStatus,
+        NodeStyle, PinConfig, PinStatus, PinStyle, color_with_opacity,
     },
 };
 use iced_sdf::{Curve, Drawable, Pattern, SdfPrimitive, Style};
@@ -63,14 +63,6 @@ fn adaptive_bezier_length(start: [f32; 2], end: [f32; 2]) -> f32 {
 
 /// Line width for the edge cutting overlay (in world-space pixels).
 const EDGE_CUT_LINE_WIDTH: f32 = 3.0;
-
-/// Apply opacity to a color by multiplying its alpha channel.
-fn color_with_opacity(c: Color, opacity: f32) -> Color {
-    Color {
-        a: c.a * opacity,
-        ..c
-    }
-}
 
 /// Convert a world-space bounding box to screen-space bounds for SdfPrimitive.
 ///
@@ -203,161 +195,31 @@ fn edge_shapes(
     (shape, shadow_shape)
 }
 
-/// Resolve an edge color, falling back to pin color when transparent.
-fn resolve_edge_color(color: iced::Color, pin_color: iced::Color) -> iced::Color {
-    if color.a > 0.01 { color } else { pin_color }
-}
-
-/// Build a soft shadow style with optional gradient.
-///
-/// Approximates the legacy `Layer::gradient_u(c0, c1).expand(e).blur(b)` by
-/// creating a 4-color Style with near=opaque, far=transparent over a band of
-/// width `expand + blur` outside the shape.
-fn shadow_style(c0: iced::Color, c1: iced::Color, expand: f32, blur: f32) -> Style {
-    let t0 = iced::Color { a: 0.0, ..c0 };
-    let t1 = iced::Color { a: 0.0, ..c1 };
-    Style {
-        near_start: c0,
-        near_end: c1,
-        far_start: t0,
-        far_end: t1,
-        dist_from: -expand,
-        dist_to: expand + blur.max(0.001),
-        pattern: None,
-        distance_field: false,
-    }
-}
-
-/// Push the stroke styles for a single edge onto `batch`.
-///
-/// Main stroke first (in front); optional outline last (behind, visible only
-/// as a halo where the main stroke is transparent).
+/// Push the SDF layers of `style` for an edge onto `batch`, choosing the stroke
+/// or shadow drawable per layer. Layer order and styling live in
+/// [`EdgeStyle::sdf_layers`].
 #[allow(clippy::too_many_arguments)]
-fn push_edge_stroke(
-    batch: &mut SdfPrimitive,
-    shape: &Drawable,
-    style: &crate::style::EdgeStyle,
-    start_pin_color: iced::Color,
-    end_pin_color: iced::Color,
-    start_direction: PinDirection,
-    end_direction: PinDirection,
-) {
-    let is_reversed = matches!(
-        (start_direction, end_direction),
-        (PinDirection::Input, PinDirection::Output)
-    );
-
-    let stroke_start = resolve_edge_color(style.start_color, start_pin_color);
-    let stroke_end = resolve_edge_color(style.end_color, end_pin_color);
-    let (c0, c1) = if is_reversed {
-        (stroke_end, stroke_start)
-    } else {
-        (stroke_start, stroke_end)
-    };
-
-    let base_speed = style.pattern.flow_speed;
-    let pattern = if is_reversed && base_speed.abs() > 0.001 {
-        let mut p = style.pattern;
-        p.flow_speed = -p.flow_speed;
-        p
-    } else {
-        style.pattern
-    };
-
-    batch.push(shape, &Style::arc_gradient_stroke(c0, c1, pattern));
-
-    if let Some((w, c)) = style.stroke_outline
-        && w > 0.0
-        && c.a > 0.0
-    {
-        let outline_pat = Pattern::solid(pattern.thickness + w * 2.0);
-        batch.push(shape, &Style::stroke(c, outline_pat));
-    }
-}
-
-/// Push shadow + border + stroke styles for a standalone edge onto `batch`.
-///
-/// The shadow uses a separately constructed drawable shifted by `shadow.offset`.
-#[allow(clippy::too_many_arguments)]
-fn push_edge_visuals(
+fn push_edge_layers(
     batch: &mut SdfPrimitive,
     shape: &Drawable,
     shadow_shape: &Drawable,
-    style: &crate::style::EdgeStyle,
-    start_pin_color: iced::Color,
-    end_pin_color: iced::Color,
+    style: &EdgeStyle,
+    start_pin_color: Color,
+    end_pin_color: Color,
     start_direction: PinDirection,
     end_direction: PinDirection,
 ) {
-    let is_reversed = matches!(
-        (start_direction, end_direction),
-        (PinDirection::Input, PinDirection::Output)
-    );
-
-    // Stroke (front)
-    push_edge_stroke(
-        batch,
-        shape,
-        style,
+    for layer in style.sdf_layers(
         start_pin_color,
         end_pin_color,
         start_direction,
         end_direction,
-    );
-
-    // Border (behind stroke)
-    if let Some(border) = &style.border
-        && border.width > 0.0
-    {
-        let border_center = style.pattern.thickness * 0.5 + border.gap + border.width * 0.5;
-        let border_outer = border_center + border.width * 0.5;
-
-        let border_start = resolve_edge_color(border.start_color, start_pin_color);
-        let border_end = resolve_edge_color(border.end_color, end_pin_color);
-        let (c0, c1) = if is_reversed {
-            (border_end, border_start)
-        } else {
-            (border_start, border_end)
+    ) {
+        let drawable = match layer.geometry {
+            EdgeGeometry::Stroke => shape,
+            EdgeGeometry::Shadow => shadow_shape,
         };
-
-        let border_pat = Pattern::solid(border.width);
-        let mut border_style = Style::arc_gradient_stroke(c0, c1, border_pat);
-        border_style.dist_from = -border_outer;
-        border_style.dist_to = -border_center + border.width * 0.5;
-        batch.push(shape, &border_style);
-
-        if let Some((w, oc)) = border.outline
-            && w > 0.0
-            && oc.a > 0.0
-        {
-            let outline_pat = Pattern::solid(border.width + w * 2.0);
-            let mut outline_style = Style::stroke(oc, outline_pat);
-            outline_style.dist_from = -border_outer - w;
-            outline_style.dist_to = -border_center + (border.width * 0.5) + w;
-            batch.push(shape, &outline_style);
-        }
-
-        // Border background fill (behind the border stroke)
-        if border.background.a > 0.0 || border.background_end.a > 0.0 {
-            let (bg0, bg1) = if is_reversed {
-                (border.background_end, border.background)
-            } else {
-                (border.background, border.background_end)
-            };
-            let mut bg_style = Style::arc_gradient(bg0, bg1);
-            bg_style.dist_to = border_outer;
-            batch.push(shape, &bg_style);
-        }
-    }
-
-    // Shadow (deepest)
-    if let Some(shadow) = &style.shadow
-        && (shadow.color.a > 0.0 || shadow.end_color.a > 0.0)
-    {
-        batch.push(
-            shadow_shape,
-            &shadow_style(shadow.color, shadow.end_color, shadow.expand, shadow.blur),
-        );
+        batch.push(drawable, &layer.style);
     }
 }
 
@@ -650,7 +512,7 @@ where
                 let (shape, shadow_shape) =
                     edge_shapes(&start_pos, &end_pos, from_side, to_side, &edge_style);
 
-                push_edge_visuals(
+                push_edge_layers(
                     &mut batch,
                     &shape,
                     &shadow_shape,
@@ -732,7 +594,7 @@ where
                         edge_shapes(&start_pos, &end_pos, from_side, end_side, &drag_edge_style);
 
                     let mut drag_batch = SdfPrimitive::new();
-                    push_edge_visuals(
+                    push_edge_layers(
                         &mut drag_batch,
                         &shape,
                         &shadow_shape,
@@ -942,10 +804,7 @@ where
                 );
                 renderer.with_layer(layout.bounds(), |renderer| {
                     let mut fill_batch = SdfPrimitive::new();
-                    fill_batch.push(
-                        &node_outline,
-                        &Style::solid(color_with_opacity(resolved.fill_color, opacity)),
-                    );
+                    fill_batch.push(&node_outline, &resolved.fill_sdf_style(opacity));
                     renderer.draw_primitive(
                         fill_clip,
                         fill_batch
@@ -1023,25 +882,8 @@ where
                             &render_context,
                         );
 
-                        fg_batch.push(
-                            &node_outline,
-                            &Style::stroke(
-                                color_with_opacity(node_border.color, opacity),
-                                node_border.pattern,
-                            ),
-                        );
-
-                        if let Some((ow, oc)) = node_border.outline
-                            && ow > 0.0
-                            && oc.a > 0.0
-                        {
-                            fg_batch.push(
-                                &node_outline,
-                                &Style::stroke(
-                                    color_with_opacity(oc, opacity),
-                                    Pattern::solid(bw + ow * 2.0),
-                                ),
-                            );
+                        for style in resolved.border_sdf_layers(opacity) {
+                            fg_batch.push(&node_outline, &style);
                         }
 
                         fg_min_x = fg_min_x.min(bb[0]);
@@ -1069,8 +911,6 @@ where
                     let indicator_r = radius * 0.4;
                     let pin_world: WorldPoint =
                         (pin_pos.into_euclid().to_vector() + offset).to_point();
-                    let pin_border_color =
-                        pin_style.border_color.unwrap_or(iced::Color::TRANSPARENT);
                     let pin_border_width = pin_style.border_width;
                     let pin_color = pin_state.color;
                     let pw = [pin_world.x, pin_world.y];
@@ -1080,13 +920,6 @@ where
                             Curve::rect(pw, [indicator_r * 0.7, indicator_r * 0.7])
                         }
                         _ => Curve::circle(pw, indicator_r),
-                    };
-
-                    let pin_fill_style = if pin_state.direction == PinDirection::Input {
-                        // Hollow ring (replaces legacy onion + solid layer).
-                        Style::stroke(pin_color, Pattern::solid(indicator_r * 0.8))
-                    } else {
-                        Style::solid(pin_color)
                     };
 
                     let pin_pad = indicator_r + pin_border_width + 2.0 / cam_zoom;
@@ -1099,13 +932,8 @@ where
                         &render_context,
                     );
 
-                    fg_batch.push(&pin_shape, &pin_fill_style);
-
-                    if pin_border_color.a > 0.0 && pin_border_width > 0.0 {
-                        fg_batch.push(
-                            &pin_shape,
-                            &Style::solid(pin_border_color).expand(pin_border_width),
-                        );
+                    for style in pin_style.sdf_layers(pin_color, pin_state.direction, indicator_r) {
+                        fg_batch.push(&pin_shape, &style);
                     }
 
                     fg_min_x = fg_min_x.min(pin_bounds[0]);
