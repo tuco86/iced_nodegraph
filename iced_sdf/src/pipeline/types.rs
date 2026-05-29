@@ -18,21 +18,49 @@ pub(crate) struct GpuVec4(pub [f32; 4]);
 
 impl GpuVec2 {
     pub const ZERO: Self = Self([0.0; 2]);
-    pub fn new(x: f32, y: f32) -> Self { Self([x, y]) }
+    pub fn new(x: f32, y: f32) -> Self {
+        Self([x, y])
+    }
 }
 
 impl GpuVec4 {
     pub const ZERO: Self = Self([0.0; 4]);
-    pub fn new(x: f32, y: f32, z: f32, w: f32) -> Self { Self([x, y, z, w]) }
+    pub fn new(x: f32, y: f32, z: f32, w: f32) -> Self {
+        Self([x, y, z, w])
+    }
 }
 
-impl AsRef<[f32; 2]> for GpuVec2 { fn as_ref(&self) -> &[f32; 2] { &self.0 } }
-impl AsMut<[f32; 2]> for GpuVec2 { fn as_mut(&mut self) -> &mut [f32; 2] { &mut self.0 } }
-impl From<[f32; 2]> for GpuVec2 { fn from(v: [f32; 2]) -> Self { Self(v) } }
+impl AsRef<[f32; 2]> for GpuVec2 {
+    fn as_ref(&self) -> &[f32; 2] {
+        &self.0
+    }
+}
+impl AsMut<[f32; 2]> for GpuVec2 {
+    fn as_mut(&mut self) -> &mut [f32; 2] {
+        &mut self.0
+    }
+}
+impl From<[f32; 2]> for GpuVec2 {
+    fn from(v: [f32; 2]) -> Self {
+        Self(v)
+    }
+}
 
-impl AsRef<[f32; 4]> for GpuVec4 { fn as_ref(&self) -> &[f32; 4] { &self.0 } }
-impl AsMut<[f32; 4]> for GpuVec4 { fn as_mut(&mut self) -> &mut [f32; 4] { &mut self.0 } }
-impl From<[f32; 4]> for GpuVec4 { fn from(v: [f32; 4]) -> Self { Self(v) } }
+impl AsRef<[f32; 4]> for GpuVec4 {
+    fn as_ref(&self) -> &[f32; 4] {
+        &self.0
+    }
+}
+impl AsMut<[f32; 4]> for GpuVec4 {
+    fn as_mut(&mut self) -> &mut [f32; 4] {
+        &mut self.0
+    }
+}
+impl From<[f32; 4]> for GpuVec4 {
+    fn from(v: [f32; 4]) -> Self {
+        Self(v)
+    }
+}
 
 encase::impl_vector!(2, GpuVec2, f32; using AsRef AsMut From);
 encase::impl_vector!(4, GpuVec4, f32; using AsRef AsMut From);
@@ -158,8 +186,13 @@ pub(crate) struct ComputeUniforms {
 impl Default for GpuSegment {
     fn default() -> Self {
         Self {
-            segment_type: 0, flags: 0, _pad1: 0, _pad2: 0,
-            geom0: GpuVec4::ZERO, geom1: GpuVec4::ZERO, arc_range: GpuVec4::ZERO,
+            segment_type: 0,
+            flags: 0,
+            _pad1: 0,
+            _pad2: 0,
+            geom0: GpuVec4::ZERO,
+            geom1: GpuVec4::ZERO,
+            arc_range: GpuVec4::ZERO,
         }
     }
 }
@@ -167,9 +200,16 @@ impl Default for GpuSegment {
 impl Default for GpuDrawEntry {
     fn default() -> Self {
         Self {
-            entry_type: 0, style_idx: 0, z_order: 0, flags: 0,
-            bounds: GpuVec4::ZERO, segment_start: 0, segment_count: 0,
-            tiling_type: 0, _pad: 0, tiling_params: GpuVec4::ZERO,
+            entry_type: 0,
+            style_idx: 0,
+            z_order: 0,
+            flags: 0,
+            bounds: GpuVec4::ZERO,
+            segment_start: 0,
+            segment_count: 0,
+            tiling_type: 0,
+            _pad: 0,
+            tiling_params: GpuVec4::ZERO,
         }
     }
 }
@@ -181,11 +221,18 @@ impl Default for GpuStyle {
             near_end: GpuVec4::new(1.0, 1.0, 1.0, 1.0),
             far_start: GpuVec4::new(1.0, 1.0, 1.0, 1.0),
             far_end: GpuVec4::new(1.0, 1.0, 1.0, 1.0),
-            dist_from: -1e6, dist_to: 0.0,
-            flags: 0, pattern_type: 0,
+            dist_from: -1e6,
+            dist_to: 0.0,
+            flags: 0,
+            pattern_type: 0,
             pattern_thickness: 1.0,
-            pattern_param0: 0.0, pattern_param1: 0.0, pattern_param2: 0.0,
-            flow_speed: 0.0, _pad0: 0.0, _pad1: 0.0, _pad2: 0.0,
+            pattern_param0: 0.0,
+            pattern_param1: 0.0,
+            pattern_param2: 0.0,
+            flow_speed: 0.0,
+            _pad0: 0.0,
+            _pad1: 0.0,
+            _pad2: 0.0,
         }
     }
 }
@@ -193,10 +240,20 @@ impl Default for GpuStyle {
 impl Default for DrawData {
     fn default() -> Self {
         Self {
-            bounds_origin: GpuVec2::ZERO, camera_position: GpuVec2::ZERO,
-            camera_zoom: 1.0, scale_factor: 1.0, time: 0.0, debug_flags: 0,
-            entry_count: 0, entry_start: 0, grid_cols: 0, grid_rows: 0,
-            tile_base: 0, _pad0: 0, _pad1: 0, _pad2: 0,
+            bounds_origin: GpuVec2::ZERO,
+            camera_position: GpuVec2::ZERO,
+            camera_zoom: 1.0,
+            scale_factor: 1.0,
+            time: 0.0,
+            debug_flags: 0,
+            entry_count: 0,
+            entry_start: 0,
+            grid_cols: 0,
+            grid_rows: 0,
+            tile_base: 0,
+            _pad0: 0,
+            _pad1: 0,
+            _pad2: 0,
         }
     }
 }

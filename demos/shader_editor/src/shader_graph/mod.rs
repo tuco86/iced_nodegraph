@@ -26,14 +26,12 @@ impl ShaderNode {
     }
 }
 
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ShaderGraph {
     pub nodes: Vec<ShaderNode>,
     pub connections: Vec<Connection>,
     next_id: usize,
 }
-
 
 #[allow(dead_code)]
 impl ShaderGraph {

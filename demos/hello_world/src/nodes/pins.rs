@@ -54,7 +54,6 @@ pub struct PinConfigData;
 /// Marker type for shadow configuration bundle pins
 pub struct ShadowConfigData;
 
-
 // =============================================================================
 // Pin Label Constants
 // =============================================================================

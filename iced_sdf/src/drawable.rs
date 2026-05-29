@@ -150,7 +150,12 @@ impl Drawable {
                 arc_end: arc_length,
             }],
             total_arc_length: arc_length,
-            bounds: [center.x - radius, center.y - radius, center.x + radius, center.y + radius],
+            bounds: [
+                center.x - radius,
+                center.y - radius,
+                center.x + radius,
+                center.y + radius,
+            ],
             is_closed: false,
             tiling_type: None,
             tiling_params: [0.0; 4],
@@ -184,7 +189,9 @@ impl Drawable {
 
     /// Assemble a closed shape from segments produced by a boolean operation.
     pub(crate) fn from_boolean_segments(
-        segments: Vec<Segment>, total_arc_length: f32, bounds: [f32; 4],
+        segments: Vec<Segment>,
+        total_arc_length: f32,
+        bounds: [f32; 4],
     ) -> Self {
         Self {
             drawable_type: DrawableType::Shape,
@@ -203,7 +210,12 @@ impl Drawable {
             drawable_type: DrawableType::Tiling,
             segments: Vec::new(),
             total_arc_length: 0.0,
-            bounds: [f32::NEG_INFINITY, f32::NEG_INFINITY, f32::INFINITY, f32::INFINITY],
+            bounds: [
+                f32::NEG_INFINITY,
+                f32::NEG_INFINITY,
+                f32::INFINITY,
+                f32::INFINITY,
+            ],
             is_closed: false,
             tiling_type: Some(tiling_type),
             tiling_params: params,
@@ -251,8 +263,10 @@ mod tests {
     #[test]
     fn test_single_bezier() {
         let d = Drawable::single_bezier(
-            Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0),
-            Vec2::new(20.0, 0.0), Vec2::new(30.0, 0.0),
+            Vec2::new(0.0, 0.0),
+            Vec2::new(10.0, 0.0),
+            Vec2::new(20.0, 0.0),
+            Vec2::new(30.0, 0.0),
         );
         assert_eq!(d.segment_count(), 1);
         // Straight-line bezier should have arc length ~30
@@ -262,8 +276,10 @@ mod tests {
     #[test]
     fn test_bezier_arc_length_curved() {
         let len = bezier_arc_length(
-            Vec2::new(0.0, 0.0), Vec2::new(0.0, 10.0),
-            Vec2::new(10.0, 10.0), Vec2::new(10.0, 0.0),
+            Vec2::new(0.0, 0.0),
+            Vec2::new(0.0, 10.0),
+            Vec2::new(10.0, 10.0),
+            Vec2::new(10.0, 0.0),
         );
         // Quarter-circle-ish curve, should be > straight distance (14.14) and < perimeter
         assert!(len > 14.0);

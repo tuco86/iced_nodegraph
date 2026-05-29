@@ -532,8 +532,16 @@ mod tests {
         let screen = camera.world_to_screen().transform_point(world);
 
         // origin + (world + pos) * zoom = (40,100) + ((30,5)+(10,20))*2 = (40,100)+(80,50)
-        assert!(approx_eq(screen.x, 120.0), "x: expected 120.0, got {}", screen.x);
-        assert!(approx_eq(screen.y, 150.0), "y: expected 150.0, got {}", screen.y);
+        assert!(
+            approx_eq(screen.x, 120.0),
+            "x: expected 120.0, got {}",
+            screen.x
+        );
+        assert!(
+            approx_eq(screen.y, 150.0),
+            "y: expected 150.0, got {}",
+            screen.y
+        );
     }
 
     #[test]
@@ -546,8 +554,14 @@ mod tests {
         let world = camera.screen_to_world().transform_point(screen_orig);
         let screen_back = camera.world_to_screen().transform_point(world);
 
-        assert!(approx_eq(screen_orig.x, screen_back.x), "x roundtrip with origin");
-        assert!(approx_eq(screen_orig.y, screen_back.y), "y roundtrip with origin");
+        assert!(
+            approx_eq(screen_orig.x, screen_back.x),
+            "x roundtrip with origin"
+        );
+        assert!(
+            approx_eq(screen_orig.y, screen_back.y),
+            "y roundtrip with origin"
+        );
     }
 
     #[test]
@@ -567,8 +581,14 @@ mod tests {
             "cursor world moved under zoom with origin: {world_before:?} -> {world_after:?}",
         );
         // The origin must be preserved across zoom_at.
-        assert!(approx_eq(camera.viewport_origin().x, 40.0), "origin x preserved");
-        assert!(approx_eq(camera.viewport_origin().y, 100.0), "origin y preserved");
+        assert!(
+            approx_eq(camera.viewport_origin().x, 40.0),
+            "origin x preserved"
+        );
+        assert!(
+            approx_eq(camera.viewport_origin().y, 100.0),
+            "origin y preserved"
+        );
     }
 
     #[test]

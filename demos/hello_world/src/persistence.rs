@@ -17,10 +17,9 @@ use std::path::PathBuf;
 
 use crate::ids::{EdgeId, NodeId};
 use crate::nodes::{
-    BoolToggleConfig, ConfigNodeType, EdgeConfigInputs, EdgeSections,
-    FloatSliderConfig, InputNodeType, IntSliderConfig, MathNodeState, MathOperation,
-    NodeConfigInputs, NodeSections, NodeType, PatternType, PinConfigInputs,
-    ShadowConfigInputs,
+    BoolToggleConfig, ConfigNodeType, EdgeConfigInputs, EdgeSections, FloatSliderConfig,
+    InputNodeType, IntSliderConfig, MathNodeState, MathOperation, NodeConfigInputs, NodeSections,
+    NodeType, PatternType, PinConfigInputs, ShadowConfigInputs,
 };
 use iced_nodegraph::{EdgeCurve, PinShape};
 

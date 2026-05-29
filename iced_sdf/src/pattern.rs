@@ -16,9 +16,17 @@ pub enum PatternType {
     /// Dotted pattern.
     Dotted { spacing: f32, radius: f32 },
     /// Alternating dash-dot pattern.
-    DashDotted { dash: f32, gap: f32, dot_radius: f32 },
+    DashDotted {
+        dash: f32,
+        gap: f32,
+        dot_radius: f32,
+    },
     /// Alternating arrow-dot pattern.
-    ArrowDotted { segment: f32, gap: f32, dot_radius: f32 },
+    ArrowDotted {
+        segment: f32,
+        gap: f32,
+        dot_radius: f32,
+    },
 }
 
 /// Pattern configuration for SDF stroke rendering.
@@ -45,43 +53,95 @@ impl Default for Pattern {
 impl Pattern {
     /// Solid stroke with given thickness.
     pub fn solid(thickness: f32) -> Self {
-        Self { thickness, pattern_type: PatternType::Solid, flow_speed: 0.0 }
+        Self {
+            thickness,
+            pattern_type: PatternType::Solid,
+            flow_speed: 0.0,
+        }
     }
 
     /// Dashed stroke with straight caps.
     pub fn dashed(thickness: f32, dash: f32, gap: f32) -> Self {
-        Self { thickness, pattern_type: PatternType::Dashed { dash, gap, angle: 0.0 }, flow_speed: 0.0 }
+        Self {
+            thickness,
+            pattern_type: PatternType::Dashed {
+                dash,
+                gap,
+                angle: 0.0,
+            },
+            flow_speed: 0.0,
+        }
     }
 
     /// Dashed stroke with angled caps.
     pub fn dashed_angle(thickness: f32, dash: f32, gap: f32, angle: f32) -> Self {
-        Self { thickness, pattern_type: PatternType::Dashed { dash, gap, angle }, flow_speed: 0.0 }
+        Self {
+            thickness,
+            pattern_type: PatternType::Dashed { dash, gap, angle },
+            flow_speed: 0.0,
+        }
     }
 
     /// Arrow-style angled dashes.
     pub fn arrowed(thickness: f32, segment: f32, gap: f32) -> Self {
         let angle = 33.3_f32.to_radians();
-        Self { thickness, pattern_type: PatternType::Arrowed { segment, gap, angle }, flow_speed: 0.0 }
+        Self {
+            thickness,
+            pattern_type: PatternType::Arrowed {
+                segment,
+                gap,
+                angle,
+            },
+            flow_speed: 0.0,
+        }
     }
 
     /// Arrow-style angled dashes with custom angle.
     pub fn arrowed_angle(thickness: f32, segment: f32, gap: f32, angle: f32) -> Self {
-        Self { thickness, pattern_type: PatternType::Arrowed { segment, gap, angle }, flow_speed: 0.0 }
+        Self {
+            thickness,
+            pattern_type: PatternType::Arrowed {
+                segment,
+                gap,
+                angle,
+            },
+            flow_speed: 0.0,
+        }
     }
 
     /// Dotted pattern.
     pub fn dotted(spacing: f32, radius: f32) -> Self {
-        Self { thickness: radius * 2.0, pattern_type: PatternType::Dotted { spacing, radius }, flow_speed: 0.0 }
+        Self {
+            thickness: radius * 2.0,
+            pattern_type: PatternType::Dotted { spacing, radius },
+            flow_speed: 0.0,
+        }
     }
 
     /// Alternating dash-dot pattern.
     pub fn dash_dotted(thickness: f32, dash: f32, gap: f32, dot_radius: f32) -> Self {
-        Self { thickness, pattern_type: PatternType::DashDotted { dash, gap, dot_radius }, flow_speed: 0.0 }
+        Self {
+            thickness,
+            pattern_type: PatternType::DashDotted {
+                dash,
+                gap,
+                dot_radius,
+            },
+            flow_speed: 0.0,
+        }
     }
 
     /// Alternating arrow-dot pattern.
     pub fn arrow_dotted(thickness: f32, segment: f32, gap: f32, dot_radius: f32) -> Self {
-        Self { thickness, pattern_type: PatternType::ArrowDotted { segment, gap, dot_radius }, flow_speed: 0.0 }
+        Self {
+            thickness,
+            pattern_type: PatternType::ArrowDotted {
+                segment,
+                gap,
+                dot_radius,
+            },
+            flow_speed: 0.0,
+        }
     }
 
     /// Set flow animation speed (world units per second).
@@ -99,11 +159,27 @@ impl Pattern {
     pub(crate) fn as_gpu(self) -> (u32, f32, f32, f32, f32, f32) {
         match self.pattern_type {
             PatternType::Solid => (0, self.thickness, 0.0, 0.0, 0.0, self.flow_speed),
-            PatternType::Dashed { dash, gap, angle } => (1, self.thickness, dash, gap, angle, self.flow_speed),
-            PatternType::Arrowed { segment, gap, angle } => (2, self.thickness, segment, gap, angle, self.flow_speed),
-            PatternType::Dotted { spacing, radius } => (3, self.thickness, spacing, radius, 0.0, self.flow_speed),
-            PatternType::DashDotted { dash, gap, dot_radius } => (4, self.thickness, dash, gap, dot_radius, self.flow_speed),
-            PatternType::ArrowDotted { segment, gap, dot_radius } => (5, self.thickness, segment, gap, dot_radius, self.flow_speed),
+            PatternType::Dashed { dash, gap, angle } => {
+                (1, self.thickness, dash, gap, angle, self.flow_speed)
+            }
+            PatternType::Arrowed {
+                segment,
+                gap,
+                angle,
+            } => (2, self.thickness, segment, gap, angle, self.flow_speed),
+            PatternType::Dotted { spacing, radius } => {
+                (3, self.thickness, spacing, radius, 0.0, self.flow_speed)
+            }
+            PatternType::DashDotted {
+                dash,
+                gap,
+                dot_radius,
+            } => (4, self.thickness, dash, gap, dot_radius, self.flow_speed),
+            PatternType::ArrowDotted {
+                segment,
+                gap,
+                dot_radius,
+            } => (5, self.thickness, segment, gap, dot_radius, self.flow_speed),
         }
     }
 }

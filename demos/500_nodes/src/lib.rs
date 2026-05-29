@@ -162,9 +162,15 @@ impl Application {
             }
             ApplicationMessage::Tick => {}
             ApplicationMessage::ToggleDebugEdges => self.sdf_debug.edges = !self.sdf_debug.edges,
-            ApplicationMessage::ToggleDebugShadows => self.sdf_debug.shadows = !self.sdf_debug.shadows,
-            ApplicationMessage::ToggleDebugFill => self.sdf_debug.node_fill = !self.sdf_debug.node_fill,
-            ApplicationMessage::ToggleDebugForeground => self.sdf_debug.node_foreground = !self.sdf_debug.node_foreground,
+            ApplicationMessage::ToggleDebugShadows => {
+                self.sdf_debug.shadows = !self.sdf_debug.shadows
+            }
+            ApplicationMessage::ToggleDebugFill => {
+                self.sdf_debug.node_fill = !self.sdf_debug.node_fill
+            }
+            ApplicationMessage::ToggleDebugForeground => {
+                self.sdf_debug.node_foreground = !self.sdf_debug.node_foreground
+            }
         }
     }
 

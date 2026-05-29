@@ -74,12 +74,7 @@ where
     ]
     .align_y(iced::Alignment::Center);
 
-    let content = column![
-        node_config_row,
-        edge_config_row,
-        pin_config_row,
-    ]
-    .spacing(4);
+    let content = column![node_config_row, edge_config_row, pin_config_row,].spacing(4);
 
     column![
         node_title_bar("Apply to Graph", style),

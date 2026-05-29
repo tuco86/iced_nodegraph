@@ -9,11 +9,11 @@ use std::sync::{Arc, Mutex};
 use web_time::Instant;
 
 use encase::ShaderSize;
+use iced::Rectangle;
 use iced::wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BufferDescriptor, BufferUsages,
     CommandEncoderDescriptor, Device, Queue, TextureFormat,
 };
-use iced::Rectangle;
 use iced_wgpu::graphics::Viewport;
 use iced_wgpu::primitive::{Pipeline, Primitive};
 
@@ -24,7 +24,9 @@ use crate::shared::SharedSdfResources;
 use crate::style::Style;
 
 static LAST_STATS: Mutex<types::SdfStats> = Mutex::new(types::SdfStats {
-    entry_count: 0, tile_count: 0, prepare_cpu_us: 0,
+    entry_count: 0,
+    tile_count: 0,
+    prepare_cpu_us: 0,
 });
 
 /// Read performance statistics from the last completed frame.
@@ -66,14 +68,20 @@ impl SdfPrimitive {
     }
 
     pub fn with_capacity(n: usize) -> Self {
-        Self { entries: Vec::with_capacity(n), ..Self::new() }
+        Self {
+            entries: Vec::with_capacity(n),
+            ..Self::new()
+        }
     }
 
     /// Append a drawable with its style. `_screen_bounds` is accepted for API
     /// compatibility but no longer stored: the pipeline derives a per-draw AABB
     /// on the GPU, so callers need not supply an accurate screen rectangle.
     pub fn push(
-        &mut self, drawable: &Drawable, style: &Style, _screen_bounds: [f32; 4],
+        &mut self,
+        drawable: &Drawable,
+        style: &Style,
+        _screen_bounds: [f32; 4],
     ) -> &mut Self {
         self.entries.push(DrawEntry {
             drawable: drawable.clone(),
@@ -88,13 +96,23 @@ impl SdfPrimitive {
         self
     }
 
-    pub fn time(mut self, time: f32) -> Self { self.time = time; self }
-    pub fn debug_flags(mut self, flags: u32) -> Self { self.debug_flags = flags; self }
+    pub fn time(mut self, time: f32) -> Self {
+        self.time = time;
+        self
+    }
+    pub fn debug_flags(mut self, flags: u32) -> Self {
+        self.debug_flags = flags;
+        self
+    }
     pub fn debug_tiles(self, enabled: bool) -> Self {
         self.debug_flags(if enabled { 1 } else { 0 })
     }
-    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
-    pub fn entry_count(&self) -> usize { self.entries.len() }
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+    pub fn entry_count(&self) -> usize {
+        self.entries.len()
+    }
 
     pub fn has_animations(&self) -> bool {
         self.entries.iter().any(|e| e.style.is_animated())
@@ -102,7 +120,9 @@ impl SdfPrimitive {
 }
 
 impl Default for SdfPrimitive {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // --- Pipeline ---
@@ -139,19 +159,24 @@ fn create_tile_buffers(device: &Device, cap: u32) -> (iced::wgpu::Buffer, iced::
     let usage = BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC;
     (
         device.create_buffer(&BufferDescriptor {
-            label: Some("sdf_tile_counts"), size: cap * 4,
-            usage, mapped_at_creation: false,
+            label: Some("sdf_tile_counts"),
+            size: cap * 4,
+            usage,
+            mapped_at_creation: false,
         }),
         device.create_buffer(&BufferDescriptor {
-            label: Some("sdf_tile_slots"), size: cap * SLOT_STRIDE as u64 * 4,
-            usage, mapped_at_creation: false,
+            label: Some("sdf_tile_slots"),
+            size: cap * SLOT_STRIDE as u64 * 4,
+            usage,
+            mapped_at_creation: false,
         }),
     )
 }
 
 #[allow(clippy::too_many_arguments)]
 fn create_render_group0(
-    device: &Device, shared: &SharedSdfResources,
+    device: &Device,
+    shared: &SharedSdfResources,
     draws: &buffer::Buffer<types::DrawData>,
     entries: &buffer::Buffer<types::GpuDrawEntry>,
     segments: &buffer::Buffer<types::GpuSegment>,
@@ -160,48 +185,92 @@ fn create_render_group0(
     tile_entries: &iced::wgpu::Buffer,
 ) -> BindGroup {
     device.create_bind_group(&BindGroupDescriptor {
-        label: Some("sdf_render_g0"), layout: &shared.render_group0_layout,
+        label: Some("sdf_render_g0"),
+        layout: &shared.render_group0_layout,
         entries: &[
-            BindGroupEntry { binding: 0, resource: draws.as_entire_binding() },
-            BindGroupEntry { binding: 1, resource: entries.as_entire_binding() },
-            BindGroupEntry { binding: 2, resource: segments.as_entire_binding() },
-            BindGroupEntry { binding: 3, resource: styles.as_entire_binding() },
-            BindGroupEntry { binding: 4, resource: tile_counts.as_entire_binding() },
-            BindGroupEntry { binding: 5, resource: tile_entries.as_entire_binding() },
+            BindGroupEntry {
+                binding: 0,
+                resource: draws.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: entries.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: segments.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 3,
+                resource: styles.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 4,
+                resource: tile_counts.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 5,
+                resource: tile_entries.as_entire_binding(),
+            },
         ],
     })
 }
 
 fn create_compute_group0(
-    device: &Device, shared: &SharedSdfResources,
+    device: &Device,
+    shared: &SharedSdfResources,
     draws: &buffer::Buffer<types::DrawData>,
     entries: &buffer::Buffer<types::GpuDrawEntry>,
     segments: &buffer::Buffer<types::GpuSegment>,
     styles: &buffer::Buffer<types::GpuStyle>,
 ) -> BindGroup {
     device.create_bind_group(&BindGroupDescriptor {
-        label: Some("sdf_compute_g0"), layout: &shared.compute_group0_layout,
+        label: Some("sdf_compute_g0"),
+        layout: &shared.compute_group0_layout,
         entries: &[
-            BindGroupEntry { binding: 0, resource: draws.as_entire_binding() },
-            BindGroupEntry { binding: 1, resource: entries.as_entire_binding() },
-            BindGroupEntry { binding: 2, resource: segments.as_entire_binding() },
-            BindGroupEntry { binding: 3, resource: styles.as_entire_binding() },
+            BindGroupEntry {
+                binding: 0,
+                resource: draws.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: entries.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: segments.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 3,
+                resource: styles.as_entire_binding(),
+            },
         ],
     })
 }
 
 fn create_compute_group1(
-    device: &Device, shared: &SharedSdfResources,
+    device: &Device,
+    shared: &SharedSdfResources,
     uniforms: &iced::wgpu::Buffer,
     tile_counts: &iced::wgpu::Buffer,
     tile_entries: &iced::wgpu::Buffer,
 ) -> BindGroup {
     device.create_bind_group(&BindGroupDescriptor {
-        label: Some("sdf_compute_g1"), layout: &shared.compute_group1_layout,
+        label: Some("sdf_compute_g1"),
+        layout: &shared.compute_group1_layout,
         entries: &[
-            BindGroupEntry { binding: 0, resource: uniforms.as_entire_binding() },
-            BindGroupEntry { binding: 1, resource: tile_counts.as_entire_binding() },
-            BindGroupEntry { binding: 2, resource: tile_entries.as_entire_binding() },
+            BindGroupEntry {
+                binding: 0,
+                resource: uniforms.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: tile_counts.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: tile_entries.as_entire_binding(),
+            },
         ],
     })
 }
@@ -226,30 +295,59 @@ impl Pipeline for SdfPipeline {
         });
 
         let render_group0 = create_render_group0(
-            device, &shared, &draw_data_buffer, &entries_buffer,
-            &segments_buffer, &styles_buffer, &tile_counts_buffer, &tile_entries_buffer,
+            device,
+            &shared,
+            &draw_data_buffer,
+            &entries_buffer,
+            &segments_buffer,
+            &styles_buffer,
+            &tile_counts_buffer,
+            &tile_entries_buffer,
         );
         let compute_group0 = create_compute_group0(
-            device, &shared, &draw_data_buffer, &entries_buffer, &segments_buffer, &styles_buffer,
+            device,
+            &shared,
+            &draw_data_buffer,
+            &entries_buffer,
+            &segments_buffer,
+            &styles_buffer,
         );
         let compute_group1 = create_compute_group1(
-            device, &shared, &compute_uniform_buffer, &tile_counts_buffer, &tile_entries_buffer,
+            device,
+            &shared,
+            &compute_uniform_buffer,
+            &tile_counts_buffer,
+            &tile_entries_buffer,
         );
 
         Self {
-            shared, draw_data_buffer, entries_buffer, segments_buffer, styles_buffer,
-            tile_counts_buffer, tile_entries_buffer, tile_capacity: 256, spatial_index_gen: 0,
-            compute_uniform_buffer, compute_uniform_scratch: Vec::new(),
-            render_group0, compute_group0, compute_group1,
+            shared,
+            draw_data_buffer,
+            entries_buffer,
+            segments_buffer,
+            styles_buffer,
+            tile_counts_buffer,
+            tile_entries_buffer,
+            tile_capacity: 256,
+            spatial_index_gen: 0,
+            compute_uniform_buffer,
+            compute_uniform_scratch: Vec::new(),
+            render_group0,
+            compute_group0,
+            compute_group1,
             bind_group_gens: (0, 0, 0, 0, 0),
-            total_tiles: 0, draw_index: AtomicU32::new(0),
-            segment_scratch: Vec::new(), frame_stats: types::SdfStats::default(),
+            total_tiles: 0,
+            draw_index: AtomicU32::new(0),
+            segment_scratch: Vec::new(),
+            frame_stats: types::SdfStats::default(),
         }
     }
 
     fn trim(&mut self) {
         self.frame_stats.tile_count = self.total_tiles;
-        if let Ok(mut s) = LAST_STATS.lock() { *s = self.frame_stats.clone(); }
+        if let Ok(mut s) = LAST_STATS.lock() {
+            *s = self.frame_stats.clone();
+        }
         self.frame_stats = types::SdfStats::default();
         self.draw_data_buffer.clear();
         self.entries_buffer.clear();
@@ -264,11 +362,17 @@ impl Primitive for SdfPrimitive {
     type Pipeline = SdfPipeline;
 
     fn prepare(
-        &self, pipeline: &mut Self::Pipeline, device: &Device, queue: &Queue,
-        bounds: &Rectangle, viewport: &Viewport,
+        &self,
+        pipeline: &mut Self::Pipeline,
+        device: &Device,
+        queue: &Queue,
+        bounds: &Rectangle,
+        viewport: &Viewport,
     ) {
         if self.entries.is_empty() {
-            let _ = pipeline.draw_data_buffer.push(device, queue, types::DrawData::default());
+            let _ = pipeline
+                .draw_data_buffer
+                .push(device, queue, types::DrawData::default());
             return;
         }
 
@@ -289,9 +393,10 @@ impl Primitive for SdfPrimitive {
             );
 
             if !pipeline.segment_scratch.is_empty() {
-                let _ = pipeline.segments_buffer.push_bulk(
-                    device, queue, &pipeline.segment_scratch,
-                );
+                let _ =
+                    pipeline
+                        .segments_buffer
+                        .push_bulk(device, queue, &pipeline.segment_scratch);
             }
 
             let style_idx = pipeline.styles_buffer.push(device, queue, gpu_style);
@@ -325,10 +430,17 @@ impl Primitive for SdfPrimitive {
                     label: Some("sdf_tile_grow_copy"),
                 });
                 encoder.copy_buffer_to_buffer(
-                    &pipeline.tile_counts_buffer, 0, &tc, 0, preserved_tiles * 4,
+                    &pipeline.tile_counts_buffer,
+                    0,
+                    &tc,
+                    0,
+                    preserved_tiles * 4,
                 );
                 encoder.copy_buffer_to_buffer(
-                    &pipeline.tile_entries_buffer, 0, &te, 0,
+                    &pipeline.tile_entries_buffer,
+                    0,
+                    &te,
+                    0,
                     preserved_tiles * SLOT_STRIDE as u64 * 4,
                 );
                 queue.submit(std::iter::once(encoder.finish()));
@@ -343,28 +455,40 @@ impl Primitive for SdfPrimitive {
         let draw_index = pipeline.draw_data_buffer.len() as u32; // will be this index after push
         let cu = types::ComputeUniforms {
             draw_index,
-            _pad0: 0, _pad1: 0, _pad2: 0,
+            _pad0: 0,
+            _pad1: 0,
+            _pad2: 0,
         };
         pipeline.compute_uniform_scratch.clear();
         let mut w = encase::UniformBuffer::new(&mut pipeline.compute_uniform_scratch);
         w.write(&cu).expect("Failed to write compute uniforms");
-        queue.write_buffer(&pipeline.compute_uniform_buffer, 0, &pipeline.compute_uniform_scratch);
+        queue.write_buffer(
+            &pipeline.compute_uniform_buffer,
+            0,
+            &pipeline.compute_uniform_scratch,
+        );
 
         // Push DrawData
-        let _ = pipeline.draw_data_buffer.push(device, queue, types::DrawData {
-            bounds_origin: grid_origin,
-            camera_position: camera_pos,
-            camera_zoom: self.camera_zoom,
-            scale_factor: scale,
-            time: self.time,
-            debug_flags: self.debug_flags,
-            entry_count,
-            entry_start,
-            grid_cols,
-            grid_rows,
-            tile_base,
-            _pad0: 0, _pad1: 0, _pad2: 0,
-        });
+        let _ = pipeline.draw_data_buffer.push(
+            device,
+            queue,
+            types::DrawData {
+                bounds_origin: grid_origin,
+                camera_position: camera_pos,
+                camera_zoom: self.camera_zoom,
+                scale_factor: scale,
+                time: self.time,
+                debug_flags: self.debug_flags,
+                entry_count,
+                entry_start,
+                grid_cols,
+                grid_rows,
+                tile_base,
+                _pad0: 0,
+                _pad1: 0,
+                _pad2: 0,
+            },
+        );
 
         // Recreate bind groups if any buffer generation changed
         let gens = (
@@ -376,20 +500,29 @@ impl Primitive for SdfPrimitive {
         );
         if gens != pipeline.bind_group_gens {
             pipeline.render_group0 = create_render_group0(
-                device, &pipeline.shared,
-                &pipeline.draw_data_buffer, &pipeline.entries_buffer,
-                &pipeline.segments_buffer, &pipeline.styles_buffer,
-                &pipeline.tile_counts_buffer, &pipeline.tile_entries_buffer,
+                device,
+                &pipeline.shared,
+                &pipeline.draw_data_buffer,
+                &pipeline.entries_buffer,
+                &pipeline.segments_buffer,
+                &pipeline.styles_buffer,
+                &pipeline.tile_counts_buffer,
+                &pipeline.tile_entries_buffer,
             );
             pipeline.compute_group0 = create_compute_group0(
-                device, &pipeline.shared,
-                &pipeline.draw_data_buffer, &pipeline.entries_buffer,
-                &pipeline.segments_buffer, &pipeline.styles_buffer,
+                device,
+                &pipeline.shared,
+                &pipeline.draw_data_buffer,
+                &pipeline.entries_buffer,
+                &pipeline.segments_buffer,
+                &pipeline.styles_buffer,
             );
             pipeline.compute_group1 = create_compute_group1(
-                device, &pipeline.shared,
+                device,
+                &pipeline.shared,
                 &pipeline.compute_uniform_buffer,
-                &pipeline.tile_counts_buffer, &pipeline.tile_entries_buffer,
+                &pipeline.tile_counts_buffer,
+                &pipeline.tile_entries_buffer,
             );
             pipeline.bind_group_gens = gens;
         }
@@ -400,7 +533,8 @@ impl Primitive for SdfPrimitive {
         });
         {
             let mut pass = encoder.begin_compute_pass(&iced::wgpu::ComputePassDescriptor {
-                label: Some("sdf_spatial_index"), timestamp_writes: None,
+                label: Some("sdf_spatial_index"),
+                timestamp_writes: None,
             });
             pass.set_pipeline(&pipeline.shared.compute_pipeline);
             pass.set_bind_group(0, &pipeline.compute_group0, &[]);
@@ -414,7 +548,9 @@ impl Primitive for SdfPrimitive {
     }
 
     fn draw(
-        &self, pipeline: &Self::Pipeline, render_pass: &mut iced::wgpu::RenderPass<'_>,
+        &self,
+        pipeline: &Self::Pipeline,
+        render_pass: &mut iced::wgpu::RenderPass<'_>,
     ) -> bool {
         let draw_idx = pipeline.draw_index.fetch_add(1, Ordering::Relaxed);
         render_pass.set_pipeline(&pipeline.shared.render_pipeline);

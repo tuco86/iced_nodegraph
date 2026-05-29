@@ -189,15 +189,9 @@ where
             pins::Float,
             colors::PIN_NUMBER
         ),
-        container(
-            text(
-                border_width
-                    .map_or("--".to_string(), |v| format!("{:.1}", v))
-            )
-            .size(9)
-        )
-        .width(Length::Fill)
-        .align_x(Horizontal::Right),
+        container(text(border_width.map_or("--".to_string(), |v| format!("{:.1}", v))).size(9))
+            .width(Length::Fill)
+            .align_x(Horizontal::Right),
     ]
     .align_y(iced::Alignment::Center);
 
@@ -270,9 +264,33 @@ where
     let fill_collapsed_pins: Option<iced::Element<'_, Message>> = if !sections.fill {
         Some(
             row![
-                pin!(Left, pins::config::BG_COLOR, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
-                pin!(Left, pins::config::RADIUS, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
-                pin!(Left, pins::config::OPACITY, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
+                pin!(
+                    Left,
+                    pins::config::BG_COLOR,
+                    text("").size(1),
+                    Input,
+                    pins::ColorData,
+                    colors::PIN_COLOR
+                )
+                .disable_interactions(),
+                pin!(
+                    Left,
+                    pins::config::RADIUS,
+                    text("").size(1),
+                    Input,
+                    pins::Float,
+                    colors::PIN_NUMBER
+                )
+                .disable_interactions(),
+                pin!(
+                    Left,
+                    pins::config::OPACITY,
+                    text("").size(1),
+                    Input,
+                    pins::Float,
+                    colors::PIN_NUMBER
+                )
+                .disable_interactions(),
             ]
             .spacing(2)
             .into(),
@@ -296,8 +314,24 @@ where
     let border_collapsed_pins: Option<iced::Element<'_, Message>> = if !sections.border {
         Some(
             row![
-                pin!(Left, pins::config::COLOR, text("").size(1), Input, pins::ColorData, colors::PIN_COLOR).disable_interactions(),
-                pin!(Left, pins::config::WIDTH, text("").size(1), Input, pins::Float, colors::PIN_NUMBER).disable_interactions(),
+                pin!(
+                    Left,
+                    pins::config::COLOR,
+                    text("").size(1),
+                    Input,
+                    pins::ColorData,
+                    colors::PIN_COLOR
+                )
+                .disable_interactions(),
+                pin!(
+                    Left,
+                    pins::config::WIDTH,
+                    text("").size(1),
+                    Input,
+                    pins::Float,
+                    colors::PIN_NUMBER
+                )
+                .disable_interactions(),
             ]
             .spacing(2)
             .into(),
@@ -319,9 +353,16 @@ where
     // Shadow section - pin inline when collapsed
     let shadow_collapsed_pins: Option<iced::Element<'_, Message>> = if !sections.shadow {
         Some(
-            pin!(Left, pins::config::SHADOW, text("").size(1), Input, pins::ShadowConfigData, colors::PIN_CONFIG)
-                .disable_interactions()
-                .into(),
+            pin!(
+                Left,
+                pins::config::SHADOW,
+                text("").size(1),
+                Input,
+                pins::ShadowConfigData,
+                colors::PIN_CONFIG
+            )
+            .disable_interactions()
+            .into(),
         )
     } else {
         None

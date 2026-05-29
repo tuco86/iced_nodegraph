@@ -45,9 +45,12 @@ impl Style {
     pub fn stroke(color: Color, pattern: Pattern) -> Self {
         let ht = pattern.thickness * 0.5;
         Self {
-            near_start: color, near_end: color,
-            far_start: color, far_end: color,
-            dist_from: -ht, dist_to: ht,
+            near_start: color,
+            near_end: color,
+            far_start: color,
+            far_end: color,
+            dist_from: -ht,
+            dist_to: ht,
             pattern: Some(pattern),
             distance_field: false,
         }
@@ -56,10 +59,14 @@ impl Style {
     /// Arc-length gradient (start → end) over a fill.
     pub fn arc_gradient(start: Color, end: Color) -> Self {
         Self {
-            near_start: start, near_end: end,
-            far_start: start, far_end: end,
-            dist_from: -1e6, dist_to: 0.0,
-            pattern: None, distance_field: false,
+            near_start: start,
+            near_end: end,
+            far_start: start,
+            far_end: end,
+            dist_from: -1e6,
+            dist_to: 0.0,
+            pattern: None,
+            distance_field: false,
         }
     }
 
@@ -67,9 +74,12 @@ impl Style {
     pub fn arc_gradient_stroke(start: Color, end: Color, pattern: Pattern) -> Self {
         let ht = pattern.thickness * 0.5;
         Self {
-            near_start: start, near_end: end,
-            far_start: start, far_end: end,
-            dist_from: -ht, dist_to: ht,
+            near_start: start,
+            near_end: end,
+            far_start: start,
+            far_end: end,
+            dist_from: -ht,
+            dist_to: ht,
             pattern: Some(pattern),
             distance_field: false,
         }
@@ -79,10 +89,14 @@ impl Style {
     pub fn shadow(color: Color, radius: f32) -> Self {
         let transparent = Color::from_rgba(color.r, color.g, color.b, 0.0);
         Self {
-            near_start: color, near_end: color,
-            far_start: transparent, far_end: transparent,
-            dist_from: 0.0, dist_to: radius,
-            pattern: None, distance_field: false,
+            near_start: color,
+            near_end: color,
+            far_start: transparent,
+            far_end: transparent,
+            dist_from: 0.0,
+            dist_to: radius,
+            pattern: None,
+            distance_field: false,
         }
     }
 
@@ -90,22 +104,28 @@ impl Style {
     pub fn blur(color: Color, radius: f32) -> Self {
         let transparent = Color::from_rgba(color.r, color.g, color.b, 0.0);
         Self {
-            near_start: color, near_end: color,
-            far_start: transparent, far_end: transparent,
-            dist_from: -radius, dist_to: radius,
-            pattern: None, distance_field: false,
+            near_start: color,
+            near_end: color,
+            far_start: transparent,
+            far_end: transparent,
+            dist_from: -radius,
+            dist_to: radius,
+            pattern: None,
+            distance_field: false,
         }
     }
 
     /// IQ distance field visualization.
     pub fn distance_field() -> Self {
         Self {
-            near_start: Color::from_rgb(0.9, 0.6, 0.3),  // outside: orange
+            near_start: Color::from_rgb(0.9, 0.6, 0.3), // outside: orange
             near_end: Color::from_rgb(0.9, 0.6, 0.3),
-            far_start: Color::from_rgb(0.65, 0.85, 1.0),  // inside: blue
+            far_start: Color::from_rgb(0.65, 0.85, 1.0), // inside: blue
             far_end: Color::from_rgb(0.65, 0.85, 1.0),
-            dist_from: 0.0, dist_to: 0.0,
-            pattern: None, distance_field: true,
+            dist_from: 0.0,
+            dist_to: 0.0,
+            pattern: None,
+            distance_field: true,
         }
     }
 
@@ -135,10 +155,14 @@ impl Style {
     /// Uniform color over a distance range.
     fn uniform(color: Color, from: f32, to: f32) -> Self {
         Self {
-            near_start: color, near_end: color,
-            far_start: color, far_end: color,
-            dist_from: from, dist_to: to,
-            pattern: None, distance_field: false,
+            near_start: color,
+            near_end: color,
+            far_start: color,
+            far_end: color,
+            dist_from: from,
+            dist_to: to,
+            pattern: None,
+            distance_field: false,
         }
     }
 
@@ -154,7 +178,9 @@ impl Style {
 
     /// Maximum visual extent beyond the shape boundary.
     pub fn max_effect_radius(&self) -> f32 {
-        if self.distance_field { return f32::INFINITY; }
+        if self.distance_field {
+            return f32::INFINITY;
+        }
         self.dist_to.max(0.0)
     }
 }

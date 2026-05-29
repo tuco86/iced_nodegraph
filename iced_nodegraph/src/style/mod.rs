@@ -469,9 +469,11 @@ impl NodeStyle {
     pub fn input() -> Self {
         Self {
             fill_color: Color::from_rgb(0.15, 0.20, 0.30),
-            border: Some(NodeBorder::new()
-                .color(Color::from_rgb(0.30, 0.45, 0.70))
-                .width(1.5)),
+            border: Some(
+                NodeBorder::new()
+                    .color(Color::from_rgb(0.30, 0.45, 0.70))
+                    .width(1.5),
+            ),
             corner_radius: 6.0,
             opacity: 0.85,
             shadow: Some(NodeShadow::medium()),
@@ -482,9 +484,11 @@ impl NodeStyle {
     pub fn process() -> Self {
         Self {
             fill_color: Color::from_rgb(0.18, 0.28, 0.18),
-            border: Some(NodeBorder::new()
-                .color(Color::from_rgb(0.35, 0.60, 0.35))
-                .width(1.5)),
+            border: Some(
+                NodeBorder::new()
+                    .color(Color::from_rgb(0.35, 0.60, 0.35))
+                    .width(1.5),
+            ),
             corner_radius: 4.0,
             opacity: 0.80,
             shadow: Some(NodeShadow::medium()),
@@ -495,9 +499,11 @@ impl NodeStyle {
     pub fn output() -> Self {
         Self {
             fill_color: Color::from_rgb(0.30, 0.22, 0.15),
-            border: Some(NodeBorder::new()
-                .color(Color::from_rgb(0.75, 0.55, 0.30))
-                .width(2.0)),
+            border: Some(
+                NodeBorder::new()
+                    .color(Color::from_rgb(0.75, 0.55, 0.30))
+                    .width(2.0),
+            ),
             corner_radius: 8.0,
             opacity: 0.85,
             shadow: Some(NodeShadow::strong()),
@@ -508,9 +514,11 @@ impl NodeStyle {
     pub fn comment() -> Self {
         Self {
             fill_color: Color::from_rgba(0.20, 0.20, 0.22, 0.5),
-            border: Some(NodeBorder::new()
-                .color(Color::from_rgba(0.40, 0.40, 0.44, 0.5))
-                .width(1.0)),
+            border: Some(
+                NodeBorder::new()
+                    .color(Color::from_rgba(0.40, 0.40, 0.44, 0.5))
+                    .width(1.0),
+            ),
             corner_radius: 3.0,
             opacity: 0.60,
             shadow: None,
@@ -531,9 +539,11 @@ impl NodeStyle {
                     bg.b + (primary.b - bg.b) * 0.15,
                     1.0,
                 ),
-                border: Some(NodeBorder::new()
-                    .color(Color::from_rgba(primary.r, primary.g, primary.b, 0.6))
-                    .width(1.5)),
+                border: Some(
+                    NodeBorder::new()
+                        .color(Color::from_rgba(primary.r, primary.g, primary.b, 0.6))
+                        .width(1.5),
+                ),
                 corner_radius: 6.0,
                 opacity: 0.85,
                 shadow: Some(NodeShadow::medium()),
@@ -546,9 +556,11 @@ impl NodeStyle {
                     1.0 - (1.0 - primary.b) * 0.08,
                     1.0,
                 ),
-                border: Some(NodeBorder::new()
-                    .color(Color::from_rgba(primary.r, primary.g, primary.b, 0.5))
-                    .width(1.5)),
+                border: Some(
+                    NodeBorder::new()
+                        .color(Color::from_rgba(primary.r, primary.g, primary.b, 0.5))
+                        .width(1.5),
+                ),
                 corner_radius: 6.0,
                 opacity: 0.90,
                 shadow: Some(NodeShadow::subtle()),
@@ -570,9 +582,11 @@ impl NodeStyle {
                     bg.b + (success.b - bg.b) * 0.12,
                     1.0,
                 ),
-                border: Some(NodeBorder::new()
-                    .color(Color::from_rgba(success.r, success.g, success.b, 0.5))
-                    .width(1.5)),
+                border: Some(
+                    NodeBorder::new()
+                        .color(Color::from_rgba(success.r, success.g, success.b, 0.5))
+                        .width(1.5),
+                ),
                 corner_radius: 4.0,
                 opacity: 0.80,
                 shadow: Some(NodeShadow::medium()),
@@ -585,9 +599,11 @@ impl NodeStyle {
                     1.0 - (1.0 - success.b) * 0.06,
                     1.0,
                 ),
-                border: Some(NodeBorder::new()
-                    .color(Color::from_rgba(success.r, success.g, success.b, 0.4))
-                    .width(1.5)),
+                border: Some(
+                    NodeBorder::new()
+                        .color(Color::from_rgba(success.r, success.g, success.b, 0.4))
+                        .width(1.5),
+                ),
                 corner_radius: 4.0,
                 opacity: 0.88,
                 shadow: Some(NodeShadow::subtle()),
@@ -609,9 +625,11 @@ impl NodeStyle {
                     bg.b + (secondary.b - bg.b) * 0.15,
                     1.0,
                 ),
-                border: Some(NodeBorder::new()
-                    .color(Color::from_rgba(secondary.r, secondary.g, secondary.b, 0.7))
-                    .width(2.0)),
+                border: Some(
+                    NodeBorder::new()
+                        .color(Color::from_rgba(secondary.r, secondary.g, secondary.b, 0.7))
+                        .width(2.0),
+                ),
                 corner_radius: 8.0,
                 opacity: 0.85,
                 shadow: Some(NodeShadow::strong()),
@@ -624,9 +642,11 @@ impl NodeStyle {
                     1.0 - (1.0 - secondary.b) * 0.10,
                     1.0,
                 ),
-                border: Some(NodeBorder::new()
-                    .color(Color::from_rgba(secondary.r, secondary.g, secondary.b, 0.6))
-                    .width(2.0)),
+                border: Some(
+                    NodeBorder::new()
+                        .color(Color::from_rgba(secondary.r, secondary.g, secondary.b, 0.6))
+                        .width(2.0),
+                ),
                 corner_radius: 8.0,
                 opacity: 0.90,
                 shadow: Some(NodeShadow::medium()),
@@ -641,9 +661,16 @@ impl NodeStyle {
 
         Self {
             fill_color: Color::from_rgba(weak.r, weak.g, weak.b, 0.5),
-            border: Some(NodeBorder::new()
-                .color(Color::from_rgba(weak.r * 1.2, weak.g * 1.2, weak.b * 1.2, 0.4))
-                .width(1.0)),
+            border: Some(
+                NodeBorder::new()
+                    .color(Color::from_rgba(
+                        weak.r * 1.2,
+                        weak.g * 1.2,
+                        weak.b * 1.2,
+                        0.4,
+                    ))
+                    .width(1.0),
+            ),
             corner_radius: 3.0,
             opacity: 0.60,
             shadow: None,

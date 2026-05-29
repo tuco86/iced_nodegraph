@@ -6,8 +6,8 @@
 #![cfg(test)]
 
 use encase::{ShaderSize, ShaderType, StorageBuffer, UniformBuffer, internal::WriteInto};
-use wgpu::*;
 use wgpu::util::DeviceExt;
+use wgpu::*;
 
 use crate::compile::compile_drawable;
 use crate::curve::Curve;
@@ -44,14 +44,12 @@ impl TestRenderer {
         }))
         .expect("No GPU adapter found");
 
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &DeviceDescriptor {
-                label: Some("sdf_test_device"),
-                required_features: Features::empty(),
-                required_limits: Limits::default(),
-                ..Default::default()
-            },
-        ))
+        let (device, queue) = pollster::block_on(adapter.request_device(&DeviceDescriptor {
+            label: Some("sdf_test_device"),
+            required_features: Features::empty(),
+            required_limits: Limits::default(),
+            ..Default::default()
+        }))
         .expect("Failed to create device");
 
         let shader = device.create_shader_module(ShaderModuleDescriptor {
@@ -196,8 +194,15 @@ impl TestRenderer {
         };
 
         self.execute_render(
-            &gpu_entries, &gpu_segments, &gpu_styles,
-            draw_data, total_tiles, width, height, grid_cols, grid_rows,
+            &gpu_entries,
+            &gpu_segments,
+            &gpu_styles,
+            draw_data,
+            total_tiles,
+            width,
+            height,
+            grid_cols,
+            grid_rows,
         )
     }
 
@@ -232,44 +237,92 @@ impl TestRenderer {
             mapped_at_creation: false,
         });
 
-        let compute_uniforms = ComputeUniforms { draw_index: 0, _pad0: 0, _pad1: 0, _pad2: 0 };
+        let compute_uniforms = ComputeUniforms {
+            draw_index: 0,
+            _pad0: 0,
+            _pad1: 0,
+            _pad2: 0,
+        };
         let cu_buf = self.create_uniform(&compute_uniforms);
 
         let render_bg = self.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &self.render_group0_layout,
             entries: &[
-                BindGroupEntry { binding: 0, resource: draws_buf.as_entire_binding() },
-                BindGroupEntry { binding: 1, resource: entries_buf.as_entire_binding() },
-                BindGroupEntry { binding: 2, resource: segments_buf.as_entire_binding() },
-                BindGroupEntry { binding: 3, resource: styles_buf.as_entire_binding() },
-                BindGroupEntry { binding: 4, resource: tile_counts_buf.as_entire_binding() },
-                BindGroupEntry { binding: 5, resource: tile_slots_buf.as_entire_binding() },
+                BindGroupEntry {
+                    binding: 0,
+                    resource: draws_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: entries_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: segments_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: styles_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: tile_counts_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: tile_slots_buf.as_entire_binding(),
+                },
             ],
         });
         let compute_bg0 = self.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &self.compute_group0_layout,
             entries: &[
-                BindGroupEntry { binding: 0, resource: draws_buf.as_entire_binding() },
-                BindGroupEntry { binding: 1, resource: entries_buf.as_entire_binding() },
-                BindGroupEntry { binding: 2, resource: segments_buf.as_entire_binding() },
-                BindGroupEntry { binding: 3, resource: styles_buf.as_entire_binding() },
+                BindGroupEntry {
+                    binding: 0,
+                    resource: draws_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: entries_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: segments_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: styles_buf.as_entire_binding(),
+                },
             ],
         });
         let compute_bg1 = self.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &self.compute_group1_layout,
             entries: &[
-                BindGroupEntry { binding: 0, resource: cu_buf.as_entire_binding() },
-                BindGroupEntry { binding: 1, resource: tile_counts_buf.as_entire_binding() },
-                BindGroupEntry { binding: 2, resource: tile_slots_buf.as_entire_binding() },
+                BindGroupEntry {
+                    binding: 0,
+                    resource: cu_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: tile_counts_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: tile_slots_buf.as_entire_binding(),
+                },
             ],
         });
 
         let texture = self.device.create_texture(&TextureDescriptor {
             label: None,
-            size: Extent3d { width, height, depth_or_array_layers: 1 },
+            size: Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: TextureDimension::D2,
@@ -288,7 +341,9 @@ impl TestRenderer {
             mapped_at_creation: false,
         });
 
-        let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor::default());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
         if grid_cols > 0 && grid_rows > 0 {
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
             pass.set_pipeline(&self.compute_pipeline);
@@ -302,7 +357,10 @@ impl TestRenderer {
                 color_attachments: &[Some(RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
-                    ops: Operations { load: LoadOp::Clear(Color::TRANSPARENT), store: StoreOp::Store },
+                    ops: Operations {
+                        load: LoadOp::Clear(Color::TRANSPARENT),
+                        store: StoreOp::Store,
+                    },
                     depth_slice: None,
                 })],
                 depth_stencil_attachment: None,
@@ -314,7 +372,12 @@ impl TestRenderer {
             pass.draw(0..3, 0..1);
         }
         encoder.copy_texture_to_buffer(
-            TexelCopyTextureInfo { texture: &texture, mip_level: 0, origin: Origin3d::ZERO, aspect: TextureAspect::All },
+            TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: Origin3d::ZERO,
+                aspect: TextureAspect::All,
+            },
             TexelCopyBufferInfo {
                 buffer: &readback,
                 layout: TexelCopyBufferLayout {
@@ -323,16 +386,22 @@ impl TestRenderer {
                     rows_per_image: Some(height),
                 },
             },
-            Extent3d { width, height, depth_or_array_layers: 1 },
+            Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
         );
         let sub_idx = self.queue.submit(Some(encoder.finish()));
 
         let slice = readback.slice(..);
         slice.map_async(wgpu::MapMode::Read, |_| {});
-        self.device.poll(wgpu::PollType::Wait {
-            submission_index: Some(sub_idx),
-            timeout: Some(std::time::Duration::from_secs(5)),
-        }).unwrap();
+        self.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(sub_idx),
+                timeout: Some(std::time::Duration::from_secs(5)),
+            })
+            .unwrap();
         let data = slice.get_mapped_range();
         let mut pixels = vec![[0u8; 4]; (width * height) as usize];
         for y in 0..height {
@@ -432,38 +501,81 @@ impl TestRenderer {
             label: None,
             layout: &self.render_group0_layout,
             entries: &[
-                BindGroupEntry { binding: 0, resource: draws_buf.as_entire_binding() },
-                BindGroupEntry { binding: 1, resource: entries_buf.as_entire_binding() },
-                BindGroupEntry { binding: 2, resource: segments_buf.as_entire_binding() },
-                BindGroupEntry { binding: 3, resource: styles_buf.as_entire_binding() },
-                BindGroupEntry { binding: 4, resource: tile_counts_buf.as_entire_binding() },
-                BindGroupEntry { binding: 5, resource: tile_slots_buf.as_entire_binding() },
+                BindGroupEntry {
+                    binding: 0,
+                    resource: draws_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: entries_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: segments_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: styles_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: tile_counts_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: tile_slots_buf.as_entire_binding(),
+                },
             ],
         });
         let compute_bg0 = self.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &self.compute_group0_layout,
             entries: &[
-                BindGroupEntry { binding: 0, resource: draws_buf.as_entire_binding() },
-                BindGroupEntry { binding: 1, resource: entries_buf.as_entire_binding() },
-                BindGroupEntry { binding: 2, resource: segments_buf.as_entire_binding() },
-                BindGroupEntry { binding: 3, resource: styles_buf.as_entire_binding() },
+                BindGroupEntry {
+                    binding: 0,
+                    resource: draws_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: entries_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: segments_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: styles_buf.as_entire_binding(),
+                },
             ],
         });
         let compute_bg1 = self.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &self.compute_group1_layout,
             entries: &[
-                BindGroupEntry { binding: 0, resource: cu_buf.as_entire_binding() },
-                BindGroupEntry { binding: 1, resource: tile_counts_buf.as_entire_binding() },
-                BindGroupEntry { binding: 2, resource: tile_slots_buf.as_entire_binding() },
+                BindGroupEntry {
+                    binding: 0,
+                    resource: cu_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: tile_counts_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: tile_slots_buf.as_entire_binding(),
+                },
             ],
         });
 
         // Render target
         let texture = self.device.create_texture(&TextureDescriptor {
             label: None,
-            size: Extent3d { width, height, depth_or_array_layers: 1 },
+            size: Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: TextureDimension::D2,
@@ -484,7 +596,9 @@ impl TestRenderer {
         });
 
         // Execute
-        let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor::default());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
 
         // Compute pass
         {
@@ -519,7 +633,12 @@ impl TestRenderer {
 
         // Copy texture to readback buffer
         encoder.copy_texture_to_buffer(
-            TexelCopyTextureInfo { texture: &texture, mip_level: 0, origin: Origin3d::ZERO, aspect: TextureAspect::All },
+            TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: Origin3d::ZERO,
+                aspect: TextureAspect::All,
+            },
             TexelCopyBufferInfo {
                 buffer: &readback,
                 layout: TexelCopyBufferLayout {
@@ -528,7 +647,11 @@ impl TestRenderer {
                     rows_per_image: Some(height),
                 },
             },
-            Extent3d { width, height, depth_or_array_layers: 1 },
+            Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
         );
 
         let sub_idx = self.queue.submit(std::iter::once(encoder.finish()));
@@ -536,10 +659,12 @@ impl TestRenderer {
         // Map and read
         let slice = readback.slice(..);
         slice.map_async(MapMode::Read, |_| {});
-        self.device.poll(wgpu::PollType::Wait {
-            submission_index: Some(sub_idx),
-            timeout: Some(std::time::Duration::from_secs(5)),
-        }).unwrap();
+        self.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(sub_idx),
+                timeout: Some(std::time::Duration::from_secs(5)),
+            })
+            .unwrap();
 
         let data = slice.get_mapped_range();
         let mut pixels = vec![[0u8; 4]; (width * height) as usize];
@@ -618,8 +743,15 @@ impl TestRenderer {
             _pad2: 0,
         };
         self.execute_render(
-            &gpu_entries, &gpu_segments, &gpu_styles,
-            draw_data, total_tiles, width, height, grid_cols, grid_rows,
+            &gpu_entries,
+            &gpu_segments,
+            &gpu_styles,
+            draw_data,
+            total_tiles,
+            width,
+            height,
+            grid_cols,
+            grid_rows,
         )
     }
 
@@ -627,29 +759,35 @@ impl TestRenderer {
         let mut scratch = Vec::new();
         let mut writer = StorageBuffer::new(&mut scratch);
         writer.write(items).expect("Failed to write storage buffer");
-        self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: None,
-            contents: &scratch,
-            usage: BufferUsages::STORAGE,
-        })
+        self.device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: &scratch,
+                usage: BufferUsages::STORAGE,
+            })
     }
 
     fn create_uniform<T: ShaderType + ShaderSize + WriteInto>(&self, item: &T) -> Buffer {
         let mut scratch = Vec::new();
         let mut writer = UniformBuffer::new(&mut scratch);
         writer.write(item).expect("Failed to write uniform buffer");
-        self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: None,
-            contents: &scratch,
-            usage: BufferUsages::UNIFORM,
-        })
+        self.device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: &scratch,
+                usage: BufferUsages::UNIFORM,
+            })
     }
 
     fn create_render_layout(device: &Device) -> BindGroupLayout {
         device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: None,
             entries: &[
-                bgl_storage(0, ShaderStages::VERTEX_FRAGMENT, DrawData::SHADER_SIZE.get()),
+                bgl_storage(
+                    0,
+                    ShaderStages::VERTEX_FRAGMENT,
+                    DrawData::SHADER_SIZE.get(),
+                ),
                 bgl_storage(1, ShaderStages::FRAGMENT, GpuDrawEntry::SHADER_SIZE.get()),
                 bgl_storage(2, ShaderStages::FRAGMENT, GpuSegment::SHADER_SIZE.get()),
                 bgl_storage(3, ShaderStages::FRAGMENT, GpuStyle::SHADER_SIZE.get()),
@@ -748,12 +886,16 @@ fn solid_stroke_no_tile_seams() {
 
     // All on-line pixels should have the same (nonzero) alpha
     let nonzero: Vec<_> = alphas.iter().filter(|(_, a)| *a > 0).collect();
-    assert!(!nonzero.is_empty(), "No visible pixels on the stroke center line");
+    assert!(
+        !nonzero.is_empty(),
+        "No visible pixels on the stroke center line"
+    );
 
     let expected_alpha = nonzero[0].1;
     for &&(x, alpha) in &nonzero {
         assert_eq!(
-            alpha, expected_alpha,
+            alpha,
+            expected_alpha,
             "Tile seam: alpha differs at x={x} (got {alpha}, expected {expected_alpha}). \
              Tile boundary at x={}",
             (x / TILE_SIZE as u32) * TILE_SIZE as u32,
@@ -829,8 +971,14 @@ fn tight_overshoot_bezier_renders_without_holes() {
     let bp = |t: f32| -> [f32; 2] {
         let u = 1.0 - t;
         [
-            u*u*u*p0[0] + 3.0*u*u*t*p1[0] + 3.0*u*t*t*p2[0] + t*t*t*p3[0],
-            u*u*u*p0[1] + 3.0*u*u*t*p1[1] + 3.0*u*t*t*p2[1] + t*t*t*p3[1],
+            u * u * u * p0[0]
+                + 3.0 * u * u * t * p1[0]
+                + 3.0 * u * t * t * p2[0]
+                + t * t * t * p3[0],
+            u * u * u * p0[1]
+                + 3.0 * u * u * t * p1[1]
+                + 3.0 * u * t * t * p2[1]
+                + t * t * t * p3[1],
         ]
     };
 
@@ -843,7 +991,9 @@ fn tight_overshoot_bezier_renders_without_holes() {
         let p = bp(t);
         let sx = (cx + p[0].round() as i32) as u32;
         let sy = (cy + p[1].round() as i32) as u32;
-        if sx >= width || sy >= height { continue; }
+        if sx >= width || sy >= height {
+            continue;
+        }
         let a = TestRenderer::pixel_at(&pixels, width, sx, sy)[3];
         if a < 200 {
             holes.push((t, p[0], p[1], a));
@@ -937,7 +1087,9 @@ fn bezier_multi_style_no_row_artifacts() {
 
     let pixels = renderer.render(
         &[(&bezier, &stroke), (&bezier, &border), (&bezier, &shadow)],
-        width, height, zoom,
+        width,
+        height,
+        zoom,
     );
 
     // Check every tile row boundary for horizontal artifacts.
@@ -1044,7 +1196,9 @@ fn edge_editor_defaults_no_row_artifacts() {
             let t = TestRenderer::pixel_at(&tiled, width, x, y);
             let u = TestRenderer::pixel_at(&untiled, width, x, y);
             // Only care about solidly visible pixels (shadow edge differences are expected)
-            if t[3] < 100 && u[3] < 100 { continue; }
+            if t[3] < 100 && u[3] < 100 {
+                continue;
+            }
             let max_diff = (0..4)
                 .map(|ch| (t[ch] as i32 - u[ch] as i32).abs())
                 .max()
@@ -1056,8 +1210,11 @@ fn edge_editor_defaults_no_row_artifacts() {
     }
 
     // Check if diffs cluster at tile column boundaries
-    let at_col_boundary = significant_diffs.iter()
-        .filter(|&&(x, _, _, _, _)| x % (TILE_SIZE as u32) <= 1 || x % (TILE_SIZE as u32) >= (TILE_SIZE as u32) - 1)
+    let at_col_boundary = significant_diffs
+        .iter()
+        .filter(|&&(x, _, _, _, _)| {
+            x % (TILE_SIZE as u32) <= 1 || x % (TILE_SIZE as u32) >= (TILE_SIZE as u32) - 1
+        })
         .count();
 
     assert!(
@@ -1105,9 +1262,7 @@ fn bezier_stroke_edge_is_smooth() {
         iced::Color::from_rgba(0.95, 0.75, 0.2, 1.0),
         Pattern::solid(border_total),
     );
-    let drawables: Vec<(&crate::drawable::Drawable, &Style)> = vec![
-        (&bezier, &flat_border),
-    ];
+    let drawables: Vec<(&crate::drawable::Drawable, &Style)> = vec![(&bezier, &flat_border)];
 
     // Test untiled first to confirm wobble is tiling-specific
     let pixels = renderer.render_opts(&drawables, width, height, zoom, false);
@@ -1147,7 +1302,9 @@ fn bezier_stroke_edge_is_smooth() {
         let (_, y_curr) = edge_positions[i];
         let (_, y_next) = edge_positions[i + 1];
         let accel = (y_next - 2.0 * y_curr + y_prev).abs();
-        if accel > max_accel { max_accel = accel; }
+        if accel > max_accel {
+            max_accel = accel;
+        }
         // Flag positions where acceleration is suspiciously high
         if accel > 0.15 {
             wobbles.push((x, y_curr, accel));
@@ -1155,8 +1312,11 @@ fn bezier_stroke_edge_is_smooth() {
     }
 
     // Check if wobbles correlate with tile boundaries
-    let at_tile_boundary: Vec<_> = wobbles.iter()
-        .filter(|&&(x, _, _)| x % (TILE_SIZE as u32) <= 1 || x % (TILE_SIZE as u32) >= (TILE_SIZE as u32) - 1)
+    let at_tile_boundary: Vec<_> = wobbles
+        .iter()
+        .filter(|&&(x, _, _)| {
+            x % (TILE_SIZE as u32) <= 1 || x % (TILE_SIZE as u32) >= (TILE_SIZE as u32) - 1
+        })
         .collect();
 
     assert!(
@@ -1173,8 +1333,10 @@ fn bezier_stroke_edge_is_smooth() {
 #[test]
 #[ignore]
 fn bezier_closest_point_smooth_cpu() {
-    let p0 = [-100.0f32, -30.0]; let p1 = [-30.0, -30.0];
-    let p2 = [30.0, 30.0]; let p3 = [100.0, 30.0];
+    let p0 = [-100.0f32, -30.0];
+    let p1 = [-30.0, -30.0];
+    let p2 = [30.0, 30.0];
+    let p3 = [100.0, 30.0];
     let zoom = 500.0f32 * 0.333 / 160.0;
 
     // Scan along the outer edge of a 16-wide border at zoom
@@ -1191,7 +1353,11 @@ fn bezier_closest_point_smooth_cpu() {
         for _ in 0..40 {
             let y_mid = (y_lo + y_hi) * 0.5;
             let dist = cpu_bezier_dist(world_x, y_mid, &p0, &p1, &p2, &p3);
-            if dist < half_t { y_lo = y_mid; } else { y_hi = y_mid; }
+            if dist < half_t {
+                y_lo = y_mid;
+            } else {
+                y_hi = y_mid;
+            }
         }
         edge_y_positions.push((px_x, (y_lo + y_hi) * 0.5));
     }
@@ -1210,11 +1376,20 @@ fn bezier_closest_point_smooth_cpu() {
     assert!(
         wobbles.is_empty(),
         "CPU bezier distance has {} wobbles. First 10: {:?}",
-        wobbles.len(), &wobbles[..wobbles.len().min(10)],
+        wobbles.len(),
+        &wobbles[..wobbles.len().min(10)],
     );
 }
 
-fn cpu_newton_refine(px: f32, py: f32, t0: f32, p0: &[f32; 2], p1: &[f32; 2], p2: &[f32; 2], p3: &[f32; 2]) -> (f32, f32) {
+fn cpu_newton_refine(
+    px: f32,
+    py: f32,
+    t0: f32,
+    p0: &[f32; 2],
+    p1: &[f32; 2],
+    p2: &[f32; 2],
+    p3: &[f32; 2],
+) -> (f32, f32) {
     let mut t = t0;
     for _ in 0..4 {
         let bp = cpu_bez_pt(p0, p1, p2, p3, t);
@@ -1233,7 +1408,14 @@ fn cpu_newton_refine(px: f32, py: f32, t0: f32, p0: &[f32; 2], p1: &[f32; 2], p2
     (t, d)
 }
 
-fn cpu_bezier_dist(px: f32, py: f32, p0: &[f32; 2], p1: &[f32; 2], p2: &[f32; 2], p3: &[f32; 2]) -> f32 {
+fn cpu_bezier_dist(
+    px: f32,
+    py: f32,
+    p0: &[f32; 2],
+    p1: &[f32; 2],
+    p2: &[f32; 2],
+    p3: &[f32; 2],
+) -> f32 {
     // Coarse search: track best AND second-best
     let mut best_t = 0.0f32;
     let mut best_dist = 1e20f32;
@@ -1244,10 +1426,13 @@ fn cpu_bezier_dist(px: f32, py: f32, p0: &[f32; 2], p1: &[f32; 2], p2: &[f32; 2]
         let bp = cpu_bez_pt(p0, p1, p2, p3, t);
         let d = ((px - bp[0]).powi(2) + (py - bp[1]).powi(2)).sqrt();
         if d < best_dist {
-            second_t = best_t; second_dist = best_dist;
-            best_dist = d; best_t = t;
+            second_t = best_t;
+            second_dist = best_dist;
+            best_dist = d;
+            best_t = t;
         } else if d < second_dist {
-            second_t = t; second_dist = d;
+            second_t = t;
+            second_dist = d;
         }
     }
     // Refine both candidates
@@ -1258,20 +1443,30 @@ fn cpu_bezier_dist(px: f32, py: f32, p0: &[f32; 2], p1: &[f32; 2], p2: &[f32; 2]
 
 fn cpu_bez_pt(p0: &[f32; 2], p1: &[f32; 2], p2: &[f32; 2], p3: &[f32; 2], t: f32) -> [f32; 2] {
     let u = 1.0 - t;
-    [u*u*u*p0[0] + 3.0*u*u*t*p1[0] + 3.0*u*t*t*p2[0] + t*t*t*p3[0],
-     u*u*u*p0[1] + 3.0*u*u*t*p1[1] + 3.0*u*t*t*p2[1] + t*t*t*p3[1]]
+    [
+        u * u * u * p0[0] + 3.0 * u * u * t * p1[0] + 3.0 * u * t * t * p2[0] + t * t * t * p3[0],
+        u * u * u * p0[1] + 3.0 * u * u * t * p1[1] + 3.0 * u * t * t * p2[1] + t * t * t * p3[1],
+    ]
 }
 
 fn cpu_bez_deriv(p0: &[f32; 2], p1: &[f32; 2], p2: &[f32; 2], p3: &[f32; 2], t: f32) -> [f32; 2] {
     let u = 1.0 - t;
-    [3.0*u*u*(p1[0]-p0[0]) + 6.0*u*t*(p2[0]-p1[0]) + 3.0*t*t*(p3[0]-p2[0]),
-     3.0*u*u*(p1[1]-p0[1]) + 6.0*u*t*(p2[1]-p1[1]) + 3.0*t*t*(p3[1]-p2[1])]
+    [
+        3.0 * u * u * (p1[0] - p0[0])
+            + 6.0 * u * t * (p2[0] - p1[0])
+            + 3.0 * t * t * (p3[0] - p2[0]),
+        3.0 * u * u * (p1[1] - p0[1])
+            + 6.0 * u * t * (p2[1] - p1[1])
+            + 3.0 * t * t * (p3[1] - p2[1]),
+    ]
 }
 
 fn cpu_bez_deriv2(p0: &[f32; 2], p1: &[f32; 2], p2: &[f32; 2], p3: &[f32; 2], t: f32) -> [f32; 2] {
     let u = 1.0 - t;
-    [6.0*u*(p2[0]-2.0*p1[0]+p0[0]) + 6.0*t*(p3[0]-2.0*p2[0]+p1[0]),
-     6.0*u*(p2[1]-2.0*p1[1]+p0[1]) + 6.0*t*(p3[1]-2.0*p2[1]+p1[1])]
+    [
+        6.0 * u * (p2[0] - 2.0 * p1[0] + p0[0]) + 6.0 * t * (p3[0] - 2.0 * p2[0] + p1[0]),
+        6.0 * u * (p2[1] - 2.0 * p1[1] + p0[1]) + 6.0 * t * (p3[1] - 2.0 * p2[1] + p1[1]),
+    ]
 }
 
 /// Check for missing rows at tile boundaries inside the stroke.
@@ -1310,8 +1505,10 @@ fn no_missing_rows_in_stroke() {
         near_end: iced::Color::from_rgba(0.0, 0.0, 0.1, 0.35),
         far_start: iced::Color::from_rgba(0.0, 0.0, 0.1, 0.0),
         far_end: iced::Color::from_rgba(0.0, 0.0, 0.1, 0.0),
-        dist_from: 0.0, dist_to: 10.0,
-        pattern: None, distance_field: false,
+        dist_from: 0.0,
+        dist_to: 10.0,
+        pattern: None,
+        distance_field: false,
     };
 
     let edges = [&fwd, &mir];
@@ -1411,7 +1608,8 @@ fn distance_field_shows_both_sides() {
 
     // They should have different colors (signed DF shows orange vs blue)
     assert_ne!(
-        above[0..3], below[0..3],
+        above[0..3],
+        below[0..3],
         "Distance field should show different colors on each side of the line. \
          Above: {above:?}, Below: {below:?}",
     );
@@ -1443,9 +1641,12 @@ fn bounds_origin_shift_preserves_shape_position() {
     // Baseline: grid covers full texture, bounds_origin = (0, 0).
     let baseline = renderer.render_with_origin(
         &[(&shape, &style)],
-        width, height, zoom,
+        width,
+        height,
+        zoom,
         [0.0, 0.0],
-        width, height,
+        width,
+        height,
         cam_centered,
     );
 
@@ -1461,7 +1662,9 @@ fn bounds_origin_shift_preserves_shape_position() {
     ];
     let shifted = renderer.render_with_origin(
         &[(&shape, &style)],
-        width, height, zoom,
+        width,
+        height,
+        zoom,
         [bounds_x, bounds_y],
         width - bounds_x as u32,
         height - bounds_y as u32,
@@ -1597,10 +1800,18 @@ fn closed_circle_solid_fill_does_not_leak_outside() {
     let cy_s = (height / 2) as i32;
     let mut leaks = Vec::new();
     for (dx, dy) in &[
-        (-40, 0), (-40, -20), (-40, 20),
-        (40, 0), (40, -20), (40, 20),
-        (0, -40), (0, 40),
-        (-30, 30), (30, -30), (-30, -30), (30, 30),
+        (-40, 0),
+        (-40, -20),
+        (-40, 20),
+        (40, 0),
+        (40, -20),
+        (40, 20),
+        (0, -40),
+        (0, 40),
+        (-30, 30),
+        (30, -30),
+        (-30, -30),
+        (30, 30),
     ] {
         let sx = (cx_s + dx) as u32;
         let sy = (cy_s + dy) as u32;
@@ -1670,7 +1881,10 @@ fn save_rgba_png(path: &str, width: u32, height: u32, pixels: &[[u8; 4]], bg: [u
     let mut enc = png::Encoder::new(std::io::BufWriter::new(file), width, height);
     enc.set_color(png::ColorType::Rgba);
     enc.set_depth(png::BitDepth::Eight);
-    enc.write_header().unwrap().write_image_data(&bytes).unwrap();
+    enc.write_header()
+        .unwrap()
+        .write_image_data(&bytes)
+        .unwrap();
 }
 
 /// Renders the edge editor's exact default layer stack (stroke + outline +
@@ -1694,13 +1908,26 @@ fn dump_edge_editor_center() {
     // Edge editor defaults: thickness 6, outline 1.2, border gap 2 + thick 3,
     // shadow expand 10. Gradients replaced by flat, distinguishable colors.
     let c = |r, g, b, a| iced::Color::from_rgba(r, g, b, a);
-    let stroke = Style::arc_gradient_stroke(c(0.0, 0.9, 1.0, 1.0), c(0.0, 0.9, 1.0, 1.0), Pattern::solid(6.0));
+    let stroke = Style::arc_gradient_stroke(
+        c(0.0, 0.9, 1.0, 1.0),
+        c(0.0, 0.9, 1.0, 1.0),
+        Pattern::solid(6.0),
+    );
     let outline = Style::stroke(c(1.0, 0.1, 0.1, 1.0), Pattern::solid(6.0 + 1.2 * 2.0));
-    let border = Style::arc_gradient_stroke(c(0.1, 1.0, 0.1, 1.0), c(0.1, 1.0, 0.1, 1.0), Pattern::solid(6.0 + 2.0 * 2.0 + 3.0 * 2.0));
+    let border = Style::arc_gradient_stroke(
+        c(0.1, 1.0, 0.1, 1.0),
+        c(0.1, 1.0, 0.1, 1.0),
+        Pattern::solid(6.0 + 2.0 * 2.0 + 3.0 * 2.0),
+    );
     let shadow = Style {
-        near_start: c(0.3, 0.3, 1.0, 0.9), near_end: c(0.3, 0.3, 1.0, 0.9),
-        far_start: c(0.3, 0.3, 1.0, 0.0), far_end: c(0.3, 0.3, 1.0, 0.0),
-        dist_from: 0.0, dist_to: 10.0, pattern: None, distance_field: false,
+        near_start: c(0.3, 0.3, 1.0, 0.9),
+        near_end: c(0.3, 0.3, 1.0, 0.9),
+        far_start: c(0.3, 0.3, 1.0, 0.0),
+        far_end: c(0.3, 0.3, 1.0, 0.0),
+        dist_from: 0.0,
+        dist_to: 10.0,
+        pattern: None,
+        distance_field: false,
     };
 
     // SdfEdgeCanvas order: each style applied to both edges, front-to-back.
@@ -1715,7 +1942,13 @@ fn dump_edge_editor_center() {
 
     let pixels = renderer.render_full(&scene, width, height, zoom, scale, true);
     std::fs::create_dir_all("../out").ok();
-    save_rgba_png("../out/edge_artifact.png", width, height, &pixels, [26, 26, 31]);
+    save_rgba_png(
+        "../out/edge_artifact.png",
+        width,
+        height,
+        &pixels,
+        [26, 26, 31],
+    );
 
     // 4x nearest-neighbor upscale so 1px seams are visible to the eye.
     let f = 4u32;
@@ -1725,14 +1958,23 @@ fn dump_edge_editor_center() {
             big[(y * width * f + x) as usize] = pixels[((y / f) * width + (x / f)) as usize];
         }
     }
-    save_rgba_png("../out/edge_artifact_4x.png", width * f, height * f, &big, [26, 26, 31]);
+    save_rgba_png(
+        "../out/edge_artifact_4x.png",
+        width * f,
+        height * f,
+        &big,
+        [26, 26, 31],
+    );
 
     // Programmatic seam scan: at every 16px tile boundary, compare the boundary
     // row/col to its immediate interior neighbor; flag large jumps that the
     // neighbor-of-neighbor does not show (i.e. a 1px anomaly, not a real edge).
     let px = |x: u32, y: u32| pixels[(y * width + x) as usize];
     let diff = |a: [u8; 4], b: [u8; 4]| {
-        (0..4).map(|c| (a[c] as i32 - b[c] as i32).abs()).max().unwrap()
+        (0..4)
+            .map(|c| (a[c] as i32 - b[c] as i32).abs())
+            .max()
+            .unwrap()
     };
     let mut seams = Vec::new();
     for by in (16..height).step_by(16) {
@@ -1838,7 +2080,10 @@ fn tiling_alignment_is_invisible() {
         iced::Color::from_rgba(0.6, 0.2, 1.0, 1.0),
         Pattern::solid(6.0),
     );
-    let outline = Style::stroke(iced::Color::from_rgba(0.05, 0.05, 0.15, 1.0), Pattern::solid(8.4));
+    let outline = Style::stroke(
+        iced::Color::from_rgba(0.05, 0.05, 0.15, 1.0),
+        Pattern::solid(8.4),
+    );
     let border = Style::arc_gradient_stroke(
         iced::Color::from_rgba(0.95, 0.75, 0.2, 1.0),
         iced::Color::from_rgba(1.0, 0.3, 0.2, 1.0),
@@ -1846,9 +2091,12 @@ fn tiling_alignment_is_invisible() {
     );
     // SdfEdgeCanvas applies each style to every edge -> same-style adjacency.
     let scene: Vec<(&crate::drawable::Drawable, &Style)> = vec![
-        (&e1, &border), (&e2, &border),
-        (&e1, &outline), (&e2, &outline),
-        (&e1, &stroke), (&e2, &stroke),
+        (&e1, &border),
+        (&e2, &border),
+        (&e1, &outline),
+        (&e2, &outline),
+        (&e1, &stroke),
+        (&e2, &stroke),
     ];
 
     let cam_a = [w as f32 * 0.5 / cs, h as f32 * 0.5 / cs];
@@ -1859,7 +2107,14 @@ fn tiling_alignment_is_invisible() {
     let shift = 8.0_f32;
     let cam_b = [cam_a[0] + shift / cs, cam_a[1] + shift / cs];
     let b = r.render_scene_phys(
-        &scene, w, h, zoom, scale, [-shift, -shift], [w + 16, h + 16], cam_b,
+        &scene,
+        w,
+        h,
+        zoom,
+        scale,
+        [-shift, -shift],
+        [w + 16, h + 16],
+        cam_b,
     );
 
     let mut n_diff = 0u32;

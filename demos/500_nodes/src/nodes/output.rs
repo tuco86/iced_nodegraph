@@ -28,8 +28,15 @@ pub fn base_color_node<'a, Message>(theme: &'a Theme) -> iced::Element<'a, Messa
 where
     Message: Clone + 'a,
 {
-    let pins =
-        column![pin!(Left, 0usize, text("rgba"), Input, colors::Vec4, PIN_VEC4),].spacing(SPACING_PIN);
+    let pins = column![pin!(
+        Left,
+        0usize,
+        text("rgba"),
+        Input,
+        colors::Vec4,
+        PIN_VEC4
+    ),]
+    .spacing(SPACING_PIN);
 
     column![
         title_bar("Base Color", theme),

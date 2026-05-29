@@ -109,7 +109,12 @@ impl<Message> Widget<Message, Theme, Stub> for ViewportRecorder {
     fn size(&self) -> Size<Length> {
         Size::new(Length::Fixed(40.0), Length::Fixed(20.0))
     }
-    fn layout(&mut self, _tree: &mut Tree, _renderer: &Stub, limits: &layout::Limits) -> layout::Node {
+    fn layout(
+        &mut self,
+        _tree: &mut Tree,
+        _renderer: &Stub,
+        limits: &layout::Limits,
+    ) -> layout::Node {
         layout::Node::new(limits.resolve(Length::Fixed(40.0), Length::Fixed(20.0), Size::ZERO))
     }
     fn draw(
@@ -164,10 +169,9 @@ fn build_graph_with_recorder(
         on_draw: on_draw.clone(),
         on_update: on_update.clone(),
     };
-    let mut graph: NodeGraph<'static, usize, usize, usize, (), Theme, Stub> =
-        NodeGraph::default()
-            .width(Length::Fixed(graph_w))
-            .height(Length::Fixed(graph_h));
+    let mut graph: NodeGraph<'static, usize, usize, usize, (), Theme, Stub> = NodeGraph::default()
+        .width(Length::Fixed(graph_w))
+        .height(Length::Fixed(graph_h));
     graph.push_node(0_usize, node_world_pos, Element::from(recorder));
     (graph, on_draw, on_update)
 }
@@ -230,16 +234,16 @@ fn wheel_event() -> iced::Event {
     })
 }
 
-fn run_update_with_cursor(
-    graph_w: f32,
-    graph_h: f32,
-    cursor: mouse::Cursor,
-) -> Rc<Cell<bool>> {
+fn run_update_with_cursor(graph_w: f32, graph_h: f32, cursor: mouse::Cursor) -> Rc<Cell<bool>> {
     let mut base_graph: NodeGraph<'static, usize, usize, usize, (), Theme, Stub> =
         NodeGraph::default()
             .width(Length::Fixed(graph_w))
             .height(Length::Fixed(graph_h));
-    base_graph.push_node(0_usize, Point::new(0.0, 0.0), Element::<(), _, _>::from(EmptyLeaf));
+    base_graph.push_node(
+        0_usize,
+        Point::new(0.0, 0.0),
+        Element::<(), _, _>::from(EmptyLeaf),
+    );
 
     let camera_changed = Rc::new(Cell::new(false));
     let cc = camera_changed.clone();
@@ -387,4 +391,3 @@ fn update_clips_child_viewport_to_graph_bounds() {
         "child update viewport {recorded:?} should be clipped to NodeGraph bounds (200x200)",
     );
 }
-

@@ -117,8 +117,8 @@ impl EdgeConfigInputs {
         let end_color = self.end_color.or(parent.end_color);
 
         // Stroke outline
-        let has_stroke_outline = self.stroke_outline_thickness.is_some()
-            || self.stroke_outline_color.is_some();
+        let has_stroke_outline =
+            self.stroke_outline_thickness.is_some() || self.stroke_outline_color.is_some();
         let stroke_outline = if has_stroke_outline {
             let parent_ol = parent.stroke_outline.unwrap_or((1.0, Color::WHITE));
             Some((
@@ -141,8 +141,8 @@ impl EdgeConfigInputs {
 
         let border = if has_border_overrides {
             let pb = parent.border.unwrap_or_default();
-            let has_ol = self.border_outline_thickness.is_some()
-                || self.border_outline_color.is_some();
+            let has_ol =
+                self.border_outline_thickness.is_some() || self.border_outline_color.is_some();
             let outline = if has_ol {
                 let parent_ol = pb.outline.unwrap_or((1.0, Color::WHITE));
                 Some((
@@ -258,9 +258,23 @@ where
 
     // Config in/out row
     let config_row = row![
-        pin!(Left, pins::config::CONFIG, text("in").size(10), Input, pins::EdgeConfigData, colors::PIN_CONFIG),
+        pin!(
+            Left,
+            pins::config::CONFIG,
+            text("in").size(10),
+            Input,
+            pins::EdgeConfigData,
+            colors::PIN_CONFIG
+        ),
         container(text("")).width(Length::Fill),
-        pin!(Right, pins::config::EDGE_OUT, text("out").size(10), Output, pins::EdgeConfigData, colors::PIN_CONFIG),
+        pin!(
+            Right,
+            pins::config::EDGE_OUT,
+            text("out").size(10),
+            Output,
+            pins::EdgeConfigData,
+            colors::PIN_CONFIG
+        ),
     ]
     .align_y(iced::Alignment::Center);
 
@@ -297,36 +311,92 @@ where
                 (pins::config::END, pins::ColorData, colors::PIN_COLOR),
                 (pins::config::THICK, pins::Float, colors::PIN_NUMBER),
                 (pins::config::CURVE, pins::EdgeCurveData, colors::PIN_ANY),
-                (pins::config::STROKE_OL_THICK, pins::Float, colors::PIN_NUMBER),
-                (pins::config::STROKE_OL_COLOR, pins::ColorData, colors::PIN_COLOR)
+                (
+                    pins::config::STROKE_OL_THICK,
+                    pins::Float,
+                    colors::PIN_NUMBER
+                ),
+                (
+                    pins::config::STROKE_OL_COLOR,
+                    pins::ColorData,
+                    colors::PIN_COLOR
+                )
             ]
             .into()
         }),
         vec![
             pin_row(
-                pin!(Left, pins::config::START, text("start").size(10), Input, pins::ColorData, colors::PIN_COLOR),
+                pin!(
+                    Left,
+                    pins::config::START,
+                    text("start").size(10),
+                    Input,
+                    pins::ColorData,
+                    colors::PIN_COLOR
+                ),
                 color_swatch(result.start_color),
-            ).into(),
+            )
+            .into(),
             pin_row(
-                pin!(Left, pins::config::END, text("end").size(10), Input, pins::ColorData, colors::PIN_COLOR),
+                pin!(
+                    Left,
+                    pins::config::END,
+                    text("end").size(10),
+                    Input,
+                    pins::ColorData,
+                    colors::PIN_COLOR
+                ),
                 color_swatch(result.end_color),
-            ).into(),
+            )
+            .into(),
             pin_row(
-                pin!(Left, pins::config::THICK, text("thick").size(10), Input, pins::Float, colors::PIN_NUMBER),
+                pin!(
+                    Left,
+                    pins::config::THICK,
+                    text("thick").size(10),
+                    Input,
+                    pins::Float,
+                    colors::PIN_NUMBER
+                ),
                 value_display(fmt_float(thickness, 1)),
-            ).into(),
+            )
+            .into(),
             pin_row(
-                pin!(Left, pins::config::CURVE, text("curve").size(10), Input, pins::EdgeCurveData, colors::PIN_ANY),
+                pin!(
+                    Left,
+                    pins::config::CURVE,
+                    text("curve").size(10),
+                    Input,
+                    pins::EdgeCurveData,
+                    colors::PIN_ANY
+                ),
                 value_display(curve_label),
-            ).into(),
+            )
+            .into(),
             pin_row(
-                pin!(Left, pins::config::STROKE_OL_THICK, text("s.ol.w").size(10), Input, pins::Float, colors::PIN_NUMBER),
+                pin!(
+                    Left,
+                    pins::config::STROKE_OL_THICK,
+                    text("s.ol.w").size(10),
+                    Input,
+                    pins::Float,
+                    colors::PIN_NUMBER
+                ),
                 value_display(fmt_float(inputs.stroke_outline_thickness, 1)),
-            ).into(),
+            )
+            .into(),
             pin_row(
-                pin!(Left, pins::config::STROKE_OL_COLOR, text("s.ol.c").size(10), Input, pins::ColorData, colors::PIN_COLOR),
+                pin!(
+                    Left,
+                    pins::config::STROKE_OL_COLOR,
+                    text("s.ol.c").size(10),
+                    Input,
+                    pins::ColorData,
+                    colors::PIN_COLOR
+                ),
                 color_swatch(inputs.stroke_outline_color),
-            ).into(),
+            )
+            .into(),
         ],
     );
 
@@ -338,7 +408,11 @@ where
         on_toggle(EdgeSection::Pattern),
         (!sections.pattern).then(|| {
             collapsed_pin_row![
-                (pins::config::PATTERN, pins::PatternTypeData, colors::PIN_ANY),
+                (
+                    pins::config::PATTERN,
+                    pins::PatternTypeData,
+                    colors::PIN_ANY
+                ),
                 (pins::config::DASH, pins::Float, colors::PIN_NUMBER),
                 (pins::config::GAP, pins::Float, colors::PIN_NUMBER),
                 (pins::config::ANGLE, pins::Float, colors::PIN_NUMBER),
@@ -348,25 +422,65 @@ where
         }),
         vec![
             pin_row(
-                pin!(Left, pins::config::PATTERN, text("pattern").size(10), Input, pins::PatternTypeData, colors::PIN_ANY),
+                pin!(
+                    Left,
+                    pins::config::PATTERN,
+                    text("pattern").size(10),
+                    Input,
+                    pins::PatternTypeData,
+                    colors::PIN_ANY
+                ),
                 value_display(pattern_label),
-            ).into(),
+            )
+            .into(),
             pin_row(
-                pin!(Left, pins::config::DASH, text("dash").size(10), Input, pins::Float, colors::PIN_NUMBER),
+                pin!(
+                    Left,
+                    pins::config::DASH,
+                    text("dash").size(10),
+                    Input,
+                    pins::Float,
+                    colors::PIN_NUMBER
+                ),
                 value_display(fmt_float(inputs.dash_length, 1)),
-            ).into(),
+            )
+            .into(),
             pin_row(
-                pin!(Left, pins::config::GAP, text("gap").size(10), Input, pins::Float, colors::PIN_NUMBER),
+                pin!(
+                    Left,
+                    pins::config::GAP,
+                    text("gap").size(10),
+                    Input,
+                    pins::Float,
+                    colors::PIN_NUMBER
+                ),
                 value_display(fmt_float(inputs.gap_length, 1)),
-            ).into(),
+            )
+            .into(),
             pin_row(
-                pin!(Left, pins::config::ANGLE, text("angle").size(10), Input, pins::Float, colors::PIN_NUMBER),
+                pin!(
+                    Left,
+                    pins::config::ANGLE,
+                    text("angle").size(10),
+                    Input,
+                    pins::Float,
+                    colors::PIN_NUMBER
+                ),
                 value_display(angle_display),
-            ).into(),
+            )
+            .into(),
             pin_row(
-                pin!(Left, pins::config::SPEED, text("speed").size(10), Input, pins::Float, colors::PIN_NUMBER),
+                pin!(
+                    Left,
+                    pins::config::SPEED,
+                    text("speed").size(10),
+                    Input,
+                    pins::Float,
+                    colors::PIN_NUMBER
+                ),
                 value_display(fmt_float(inputs.animation_speed, 0)),
-            ).into(),
+            )
+            .into(),
         ],
     );
 
@@ -380,48 +494,132 @@ where
             collapsed_pin_row![
                 (pins::config::BORDER_WIDTH, pins::Float, colors::PIN_NUMBER),
                 (pins::config::BORDER_GAP, pins::Float, colors::PIN_NUMBER),
-                (pins::config::BORDER_START_COLOR, pins::ColorData, colors::PIN_COLOR),
-                (pins::config::BORDER_END_COLOR, pins::ColorData, colors::PIN_COLOR),
+                (
+                    pins::config::BORDER_START_COLOR,
+                    pins::ColorData,
+                    colors::PIN_COLOR
+                ),
+                (
+                    pins::config::BORDER_END_COLOR,
+                    pins::ColorData,
+                    colors::PIN_COLOR
+                ),
                 (pins::config::BORDER_BG, pins::ColorData, colors::PIN_COLOR),
-                (pins::config::BORDER_BG_END, pins::ColorData, colors::PIN_COLOR),
-                (pins::config::BORDER_OL_THICK, pins::Float, colors::PIN_NUMBER),
-                (pins::config::BORDER_OL_COLOR, pins::ColorData, colors::PIN_COLOR)
+                (
+                    pins::config::BORDER_BG_END,
+                    pins::ColorData,
+                    colors::PIN_COLOR
+                ),
+                (
+                    pins::config::BORDER_OL_THICK,
+                    pins::Float,
+                    colors::PIN_NUMBER
+                ),
+                (
+                    pins::config::BORDER_OL_COLOR,
+                    pins::ColorData,
+                    colors::PIN_COLOR
+                )
             ]
             .into()
         }),
         vec![
             pin_row(
-                pin!(Left, pins::config::BORDER_WIDTH, text("b.thick").size(10), Input, pins::Float, colors::PIN_NUMBER),
+                pin!(
+                    Left,
+                    pins::config::BORDER_WIDTH,
+                    text("b.thick").size(10),
+                    Input,
+                    pins::Float,
+                    colors::PIN_NUMBER
+                ),
                 value_display(fmt_float(inputs.border_thickness, 1)),
-            ).into(),
+            )
+            .into(),
             pin_row(
-                pin!(Left, pins::config::BORDER_GAP, text("b.gap").size(10), Input, pins::Float, colors::PIN_NUMBER),
+                pin!(
+                    Left,
+                    pins::config::BORDER_GAP,
+                    text("b.gap").size(10),
+                    Input,
+                    pins::Float,
+                    colors::PIN_NUMBER
+                ),
                 value_display(fmt_float(inputs.border_gap, 1)),
-            ).into(),
+            )
+            .into(),
             pin_row(
-                pin!(Left, pins::config::BORDER_START_COLOR, text("b.start").size(10), Input, pins::ColorData, colors::PIN_COLOR),
+                pin!(
+                    Left,
+                    pins::config::BORDER_START_COLOR,
+                    text("b.start").size(10),
+                    Input,
+                    pins::ColorData,
+                    colors::PIN_COLOR
+                ),
                 color_swatch(inputs.border_color),
-            ).into(),
+            )
+            .into(),
             pin_row(
-                pin!(Left, pins::config::BORDER_END_COLOR, text("b.end").size(10), Input, pins::ColorData, colors::PIN_COLOR),
+                pin!(
+                    Left,
+                    pins::config::BORDER_END_COLOR,
+                    text("b.end").size(10),
+                    Input,
+                    pins::ColorData,
+                    colors::PIN_COLOR
+                ),
                 color_swatch(inputs.border_color_end),
-            ).into(),
+            )
+            .into(),
             pin_row(
-                pin!(Left, pins::config::BORDER_BG, text("b.bg").size(10), Input, pins::ColorData, colors::PIN_COLOR),
+                pin!(
+                    Left,
+                    pins::config::BORDER_BG,
+                    text("b.bg").size(10),
+                    Input,
+                    pins::ColorData,
+                    colors::PIN_COLOR
+                ),
                 color_swatch(inputs.border_background),
-            ).into(),
+            )
+            .into(),
             pin_row(
-                pin!(Left, pins::config::BORDER_BG_END, text("b.bge").size(10), Input, pins::ColorData, colors::PIN_COLOR),
+                pin!(
+                    Left,
+                    pins::config::BORDER_BG_END,
+                    text("b.bge").size(10),
+                    Input,
+                    pins::ColorData,
+                    colors::PIN_COLOR
+                ),
                 color_swatch(inputs.border_background_end),
-            ).into(),
+            )
+            .into(),
             pin_row(
-                pin!(Left, pins::config::BORDER_OL_THICK, text("bo.w").size(10), Input, pins::Float, colors::PIN_NUMBER),
+                pin!(
+                    Left,
+                    pins::config::BORDER_OL_THICK,
+                    text("bo.w").size(10),
+                    Input,
+                    pins::Float,
+                    colors::PIN_NUMBER
+                ),
                 value_display(fmt_float(inputs.border_outline_thickness, 1)),
-            ).into(),
+            )
+            .into(),
             pin_row(
-                pin!(Left, pins::config::BORDER_OL_COLOR, text("bo.c").size(10), Input, pins::ColorData, colors::PIN_COLOR),
+                pin!(
+                    Left,
+                    pins::config::BORDER_OL_COLOR,
+                    text("bo.c").size(10),
+                    Input,
+                    pins::ColorData,
+                    colors::PIN_COLOR
+                ),
                 color_swatch(inputs.border_outline_color),
-            ).into(),
+            )
+            .into(),
         ],
     );
 
@@ -435,38 +633,102 @@ where
             collapsed_pin_row![
                 (pins::config::SHADOW_BLUR, pins::Float, colors::PIN_NUMBER),
                 (pins::config::SHADOW_EXPAND, pins::Float, colors::PIN_NUMBER),
-                (pins::config::SHADOW_COLOR, pins::ColorData, colors::PIN_COLOR),
-                (pins::config::SHADOW_END_COLOR, pins::ColorData, colors::PIN_COLOR),
-                (pins::config::SHADOW_OFFSET_X, pins::Float, colors::PIN_NUMBER),
-                (pins::config::SHADOW_OFFSET_Y, pins::Float, colors::PIN_NUMBER)
+                (
+                    pins::config::SHADOW_COLOR,
+                    pins::ColorData,
+                    colors::PIN_COLOR
+                ),
+                (
+                    pins::config::SHADOW_END_COLOR,
+                    pins::ColorData,
+                    colors::PIN_COLOR
+                ),
+                (
+                    pins::config::SHADOW_OFFSET_X,
+                    pins::Float,
+                    colors::PIN_NUMBER
+                ),
+                (
+                    pins::config::SHADOW_OFFSET_Y,
+                    pins::Float,
+                    colors::PIN_NUMBER
+                )
             ]
             .into()
         }),
         vec![
             pin_row(
-                pin!(Left, pins::config::SHADOW_BLUR, text("s.blur").size(10), Input, pins::Float, colors::PIN_NUMBER),
+                pin!(
+                    Left,
+                    pins::config::SHADOW_BLUR,
+                    text("s.blur").size(10),
+                    Input,
+                    pins::Float,
+                    colors::PIN_NUMBER
+                ),
                 value_display(fmt_float(inputs.shadow_blur, 1)),
-            ).into(),
+            )
+            .into(),
             pin_row(
-                pin!(Left, pins::config::SHADOW_EXPAND, text("s.exp").size(10), Input, pins::Float, colors::PIN_NUMBER),
+                pin!(
+                    Left,
+                    pins::config::SHADOW_EXPAND,
+                    text("s.exp").size(10),
+                    Input,
+                    pins::Float,
+                    colors::PIN_NUMBER
+                ),
                 value_display(fmt_float(inputs.shadow_expand, 1)),
-            ).into(),
+            )
+            .into(),
             pin_row(
-                pin!(Left, pins::config::SHADOW_COLOR, text("s.color").size(10), Input, pins::ColorData, colors::PIN_COLOR),
+                pin!(
+                    Left,
+                    pins::config::SHADOW_COLOR,
+                    text("s.color").size(10),
+                    Input,
+                    pins::ColorData,
+                    colors::PIN_COLOR
+                ),
                 color_swatch(inputs.shadow_color),
-            ).into(),
+            )
+            .into(),
             pin_row(
-                pin!(Left, pins::config::SHADOW_END_COLOR, text("s.cend").size(10), Input, pins::ColorData, colors::PIN_COLOR),
+                pin!(
+                    Left,
+                    pins::config::SHADOW_END_COLOR,
+                    text("s.cend").size(10),
+                    Input,
+                    pins::ColorData,
+                    colors::PIN_COLOR
+                ),
                 color_swatch(inputs.shadow_color_end),
-            ).into(),
+            )
+            .into(),
             pin_row(
-                pin!(Left, pins::config::SHADOW_OFFSET_X, text("s.off.x").size(10), Input, pins::Float, colors::PIN_NUMBER),
+                pin!(
+                    Left,
+                    pins::config::SHADOW_OFFSET_X,
+                    text("s.off.x").size(10),
+                    Input,
+                    pins::Float,
+                    colors::PIN_NUMBER
+                ),
                 value_display(fmt_float(inputs.shadow_offset_x, 1)),
-            ).into(),
+            )
+            .into(),
             pin_row(
-                pin!(Left, pins::config::SHADOW_OFFSET_Y, text("s.off.y").size(10), Input, pins::Float, colors::PIN_NUMBER),
+                pin!(
+                    Left,
+                    pins::config::SHADOW_OFFSET_Y,
+                    text("s.off.y").size(10),
+                    Input,
+                    pins::Float,
+                    colors::PIN_NUMBER
+                ),
                 value_display(fmt_float(inputs.shadow_offset_y, 1)),
-            ).into(),
+            )
+            .into(),
         ],
     );
 

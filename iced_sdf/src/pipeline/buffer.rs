@@ -33,22 +33,37 @@ impl<T: ShaderSize> Buffer<T> {
         let size = (BUFFER_MIN_ITEMS * item_size) as wgpu::BufferAddress;
         let buffer_wgpu = create_wgpu_buffer(device, label, size, usage);
         let buffer_vec = Vec::with_capacity(BUFFER_MIN_ITEMS);
-        Self { buffer_wgpu, buffer_vec, scratch: Vec::new(), label, usage, generation: 0 }
+        Self {
+            buffer_wgpu,
+            buffer_vec,
+            scratch: Vec::new(),
+            label,
+            usage,
+            generation: 0,
+        }
     }
 
-    pub fn generation(&self) -> u64 { self.generation }
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
 
     pub fn as_entire_binding(&self) -> BindingResource<'_> {
         self.buffer_wgpu.as_entire_binding()
     }
 
-    pub fn len(&self) -> usize { self.buffer_vec.len() }
+    pub fn len(&self) -> usize {
+        self.buffer_vec.len()
+    }
 
-    pub fn is_empty(&self) -> bool { self.buffer_vec.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.buffer_vec.is_empty()
+    }
 
     #[must_use]
     pub fn push(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, item: T) -> usize
-    where T: ShaderType + ShaderSize + WriteInto {
+    where
+        T: ShaderType + ShaderSize + WriteInto,
+    {
         let slot = self.buffer_vec.len();
         self.buffer_vec.push(item);
 
@@ -66,15 +81,21 @@ impl<T: ShaderSize> Buffer<T> {
             self.scratch.clear();
             self.scratch.resize(item_size, 0);
             let mut writer = encase::StorageBuffer::new(&mut self.scratch[..]);
-            writer.write(&self.buffer_vec[slot]).expect("Failed to write to storage buffer");
+            writer
+                .write(&self.buffer_vec[slot])
+                .expect("Failed to write to storage buffer");
             queue.write_buffer(&self.buffer_wgpu, offset as u64, &self.scratch);
         }
         slot
     }
 
     fn rewrite_all(&mut self, queue: &wgpu::Queue)
-    where T: ShaderType + ShaderSize + WriteInto {
-        if self.buffer_vec.is_empty() { return; }
+    where
+        T: ShaderType + ShaderSize + WriteInto,
+    {
+        if self.buffer_vec.is_empty() {
+            return;
+        }
 
         let item_size = T::SHADER_SIZE.get() as usize;
         let total_size = self.buffer_vec.len() * item_size;
@@ -85,17 +106,21 @@ impl<T: ShaderSize> Buffer<T> {
             let offset = i * item_size;
             let slice = &mut self.scratch[offset..offset + item_size];
             let mut writer = encase::StorageBuffer::new(slice);
-            writer.write(item).expect("Failed to write to storage buffer");
+            writer
+                .write(item)
+                .expect("Failed to write to storage buffer");
         }
         queue.write_buffer(&self.buffer_wgpu, 0, &self.scratch);
     }
 
     #[must_use]
-    pub fn push_bulk(
-        &mut self, device: &wgpu::Device, queue: &wgpu::Queue, items: &[T],
-    ) -> usize
-    where T: ShaderType + ShaderSize + WriteInto + Clone {
-        if items.is_empty() { return self.buffer_vec.len(); }
+    pub fn push_bulk(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, items: &[T]) -> usize
+    where
+        T: ShaderType + ShaderSize + WriteInto + Clone,
+    {
+        if items.is_empty() {
+            return self.buffer_vec.len();
+        }
 
         let start_slot = self.buffer_vec.len();
         self.buffer_vec.extend_from_slice(items);
@@ -119,18 +144,30 @@ impl<T: ShaderSize> Buffer<T> {
                 let item_offset = i * item_size;
                 let slice = &mut self.scratch[item_offset..item_offset + item_size];
                 let mut writer = encase::StorageBuffer::new(slice);
-                writer.write(item).expect("Failed to write to storage buffer");
+                writer
+                    .write(item)
+                    .expect("Failed to write to storage buffer");
             }
             queue.write_buffer(&self.buffer_wgpu, offset as u64, &self.scratch);
         }
         start_slot
     }
 
-    pub fn clear(&mut self) { self.buffer_vec.clear(); }
+    pub fn clear(&mut self) {
+        self.buffer_vec.clear();
+    }
 }
 
 fn create_wgpu_buffer(
-    device: &wgpu::Device, label: Option<&str>, size: wgpu::BufferAddress, usage: wgpu::BufferUsages,
+    device: &wgpu::Device,
+    label: Option<&str>,
+    size: wgpu::BufferAddress,
+    usage: wgpu::BufferUsages,
 ) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor { label, size, usage, mapped_at_creation: false })
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label,
+        size,
+        usage,
+        mapped_at_creation: false,
+    })
 }

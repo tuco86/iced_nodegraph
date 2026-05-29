@@ -30,9 +30,16 @@ where
     Message: Clone + 'a,
 {
     let pins = row![
-        container(pin!(Left, 0usize, text("uv"), Input, colors::Vec2, PIN_VEC2))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Left),
+        container(pin!(
+            Left,
+            0usize,
+            text("uv"),
+            Input,
+            colors::Vec2,
+            PIN_VEC2
+        ))
+        .width(Length::FillPortion(1))
+        .align_x(Horizontal::Left),
         container(pin!(
             Right,
             1usize,
@@ -56,9 +63,16 @@ where
     Message: Clone + 'a,
 {
     let pins = row![
-        container(pin!(Left, 0usize, text("uv"), Input, colors::Vec2, PIN_VEC2))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Left),
+        container(pin!(
+            Left,
+            0usize,
+            text("uv"),
+            Input,
+            colors::Vec2,
+            PIN_VEC2
+        ))
+        .width(Length::FillPortion(1))
+        .align_x(Horizontal::Left),
         container(pin!(
             Right,
             1usize,
@@ -82,9 +96,16 @@ where
     Message: Clone + 'a,
 {
     let pins = row![
-        container(pin!(Left, 0usize, text("uv"), Input, colors::Vec2, PIN_VEC2))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Left),
+        container(pin!(
+            Left,
+            0usize,
+            text("uv"),
+            Input,
+            colors::Vec2,
+            PIN_VEC2
+        ))
+        .width(Length::FillPortion(1))
+        .align_x(Horizontal::Left),
         container(pin!(
             Right,
             1usize,

@@ -53,11 +53,10 @@ use iced_palette::{
 };
 use ids::{EdgeId, NodeId, PinLabel, generate_edge_id, generate_node_id};
 use nodes::{
-    BoolToggleConfig, ConfigNodeType, EdgeConfigInputs, EdgeSection,
-    EdgeSections, FloatSliderConfig, InputNodeType, IntSliderConfig, MathNodeState, MathOperation,
-    NodeConfigInputs, NodeSection, NodeSections, NodeType, NodeValue, PatternType,
-    PinConfigInputs, ShadowConfigInputs, apply_to_graph_node,
-    apply_to_node_node, bool_toggle_node,
+    BoolToggleConfig, ConfigNodeType, EdgeConfigInputs, EdgeSection, EdgeSections,
+    FloatSliderConfig, InputNodeType, IntSliderConfig, MathNodeState, MathOperation,
+    NodeConfigInputs, NodeSection, NodeSections, NodeType, NodeValue, PatternType, PinConfigInputs,
+    ShadowConfigInputs, apply_to_graph_node, apply_to_node_node, bool_toggle_node,
     color_picker_node, color_preset_node, edge_config_node, edge_curve_selector_node,
     float_slider_node, int_slider_node, math_node, node, node_config_node,
     pattern_type_selector_node, pin_config_node, pin_shape_selector_node, shadow_config_node,
@@ -587,10 +586,11 @@ impl Application {
         // Create out/ directory if it doesn't exist
         let out_dir = std::path::Path::new("out");
         if !out_dir.exists()
-            && let Err(e) = std::fs::create_dir(out_dir) {
-                eprintln!("Failed to create out/ directory: {}", e);
-                return;
-            }
+            && let Err(e) = std::fs::create_dir(out_dir)
+        {
+            eprintln!("Failed to create out/ directory: {}", e);
+            return;
+        }
 
         // Generate random filename
         let filename = Self::generate_random_name();
@@ -795,11 +795,11 @@ impl Application {
                                     state.input_a = Some(float_val);
                                     changed = true;
                                 }
-                            } else if edge.to_pin == pin_math::B
-                                && state.input_b != Some(float_val) {
-                                    state.input_b = Some(float_val);
-                                    changed = true;
-                                }
+                            } else if edge.to_pin == pin_math::B && state.input_b != Some(float_val)
+                            {
+                                state.input_b = Some(float_val);
+                                changed = true;
+                            }
                         }
                     }
                 }
@@ -812,18 +812,18 @@ impl Application {
 
                 if let Some(value) = source_value
                     && let Some((_, NodeType::Math(state))) = self.nodes.get_mut(&edge.from_node)
-                        && let Some(float_val) = value.as_float() {
-                            if edge.from_pin == pin_math::A {
-                                if state.input_a != Some(float_val) {
-                                    state.input_a = Some(float_val);
-                                    changed = true;
-                                }
-                            } else if edge.from_pin == pin_math::B
-                                && state.input_b != Some(float_val) {
-                                    state.input_b = Some(float_val);
-                                    changed = true;
-                                }
+                    && let Some(float_val) = value.as_float()
+                {
+                    if edge.from_pin == pin_math::A {
+                        if state.input_a != Some(float_val) {
+                            state.input_a = Some(float_val);
+                            changed = true;
                         }
+                    } else if edge.from_pin == pin_math::B && state.input_b != Some(float_val) {
+                        state.input_b = Some(float_val);
+                        changed = true;
+                    }
+                }
             }
 
             if !changed {
@@ -851,16 +851,18 @@ impl Application {
                 }
                 // Handle Math → Config connections
                 if let (NodeType::Math(state), NodeType::Config(_)) = (&from_type, &to_type)
-                    && let Some(result) = state.result() {
-                        let value = NodeValue::Float(result);
-                        self.apply_value_to_config_node(&edge.to_node, &edge.to_pin, &value);
-                    }
+                    && let Some(result) = state.result()
+                {
+                    let value = NodeValue::Float(result);
+                    self.apply_value_to_config_node(&edge.to_node, &edge.to_pin, &value);
+                }
                 // Handle Config → Math connections (reverse direction)
                 if let (NodeType::Config(_), NodeType::Math(state)) = (&from_type, &to_type)
-                    && let Some(result) = state.result() {
-                        let value = NodeValue::Float(result);
-                        self.apply_value_to_config_node(&edge.from_node, &edge.from_pin, &value);
-                    }
+                    && let Some(result) = state.result()
+                {
+                    let value = NodeValue::Float(result);
+                    self.apply_value_to_config_node(&edge.from_node, &edge.from_pin, &value);
+                }
             }
         }
 
@@ -876,21 +878,25 @@ impl Application {
                     NodeType::Config(ConfigNodeType::ShadowConfig(shadow_inputs)),
                     NodeType::Config(ConfigNodeType::NodeConfig(_)),
                 ) = (&from_type, &to_type)
-                    && edge.from_pin == pin_config::CONFIG && edge.to_pin == pin_config::SHADOW {
-                        let shadow_config = shadow_inputs.build();
-                        let value = NodeValue::ShadowConfig(shadow_config);
-                        self.apply_value_to_config_node(&edge.to_node, &edge.to_pin, &value);
-                    }
+                    && edge.from_pin == pin_config::CONFIG
+                    && edge.to_pin == pin_config::SHADOW
+                {
+                    let shadow_config = shadow_inputs.build();
+                    let value = NodeValue::ShadowConfig(shadow_config);
+                    self.apply_value_to_config_node(&edge.to_node, &edge.to_pin, &value);
+                }
                 // Reverse: NodeConfig ← ShadowConfig
                 if let (
                     NodeType::Config(ConfigNodeType::NodeConfig(_)),
                     NodeType::Config(ConfigNodeType::ShadowConfig(shadow_inputs)),
                 ) = (&from_type, &to_type)
-                    && edge.to_pin == pin_config::CONFIG && edge.from_pin == pin_config::SHADOW {
-                        let shadow_config = shadow_inputs.build();
-                        let value = NodeValue::ShadowConfig(shadow_config);
-                        self.apply_value_to_config_node(&edge.from_node, &edge.from_pin, &value);
-                    }
+                    && edge.to_pin == pin_config::CONFIG
+                    && edge.from_pin == pin_config::SHADOW
+                {
+                    let shadow_config = shadow_inputs.build();
+                    let value = NodeValue::ShadowConfig(shadow_config);
+                    self.apply_value_to_config_node(&edge.from_node, &edge.from_pin, &value);
+                }
             }
         }
 
@@ -967,9 +973,10 @@ impl Application {
                 } else if *pin_label == pin::OPACITY {
                     inputs.opacity = value.as_float();
                 } else if *pin_label == pin::SHADOW
-                    && let Some(shadow) = value.as_shadow_config() {
-                        inputs.shadow = Some(shadow.clone());
-                    }
+                    && let Some(shadow) = value.as_shadow_config()
+                {
+                    inputs.shadow = Some(shadow.clone());
+                }
             }
             ConfigNodeType::EdgeConfig(inputs) => {
                 // EdgeConfig pin labels
@@ -1061,9 +1068,7 @@ impl Application {
                     inputs.border_width = value.as_float();
                 }
             }
-            ConfigNodeType::ApplyToNode { target_id, .. }
-                if *pin_label == pin::TARGET =>
-            {
+            ConfigNodeType::ApplyToNode { target_id, .. } if *pin_label == pin::TARGET => {
                 *target_id = value.as_int();
             }
             _ => {}
@@ -1137,59 +1142,60 @@ impl Application {
                 has_edge_config,
                 has_pin_config,
             }) = node_type
-                && let Some(configs) = self.pending_configs.get(node_id) {
-                    for (_, config) in configs {
-                        match config {
-                            ConfigOutput::Node(node_config) => {
-                                if *has_node_config {
-                                    if let Some(r) = node_config.corner_radius {
-                                        computed.corner_radius = Some(r);
-                                    }
-                                    if let Some(o) = node_config.opacity {
-                                        computed.opacity = Some(o);
-                                    }
-                                    if let Some(ref b) = node_config.border {
-                                        computed.border_width = Some(b.pattern.thickness);
-                                    }
-                                    if let Some(c) = node_config.fill_color {
-                                        computed.fill_color = Some(c);
-                                    }
-                                    if node_config.shadow.is_some() {
-                                        computed.shadow = node_config.shadow.clone();
-                                    }
+                && let Some(configs) = self.pending_configs.get(node_id)
+            {
+                for (_, config) in configs {
+                    match config {
+                        ConfigOutput::Node(node_config) => {
+                            if *has_node_config {
+                                if let Some(r) = node_config.corner_radius {
+                                    computed.corner_radius = Some(r);
+                                }
+                                if let Some(o) = node_config.opacity {
+                                    computed.opacity = Some(o);
+                                }
+                                if let Some(ref b) = node_config.border {
+                                    computed.border_width = Some(b.pattern.thickness);
+                                }
+                                if let Some(c) = node_config.fill_color {
+                                    computed.fill_color = Some(c);
+                                }
+                                if node_config.shadow.is_some() {
+                                    computed.shadow = node_config.shadow.clone();
                                 }
                             }
-                            ConfigOutput::Edge(edge_config) => {
-                                if *has_edge_config {
-                                    // Merge with existing or set as new
-                                    computed.edge_config = Some(match &computed.edge_config {
-                                        Some(existing) => edge_config.merge(existing),
-                                        None => edge_config.clone(),
-                                    });
-                                }
+                        }
+                        ConfigOutput::Edge(edge_config) => {
+                            if *has_edge_config {
+                                // Merge with existing or set as new
+                                computed.edge_config = Some(match &computed.edge_config {
+                                    Some(existing) => edge_config.merge(existing),
+                                    None => edge_config.clone(),
+                                });
                             }
-                            ConfigOutput::Pin(pin_config) => {
-                                if *has_pin_config {
-                                    if let Some(c) = pin_config.color {
-                                        computed.pin_color = Some(c);
-                                    }
-                                    if let Some(r) = pin_config.radius {
-                                        computed.pin_radius = Some(r);
-                                    }
-                                    if let Some(s) = pin_config.shape {
-                                        computed.pin_shape = Some(s);
-                                    }
-                                    if let Some(c) = pin_config.border_color {
-                                        computed.pin_border_color = Some(c);
-                                    }
-                                    if let Some(w) = pin_config.border_width {
-                                        computed.pin_border_width = Some(w);
-                                    }
+                        }
+                        ConfigOutput::Pin(pin_config) => {
+                            if *has_pin_config {
+                                if let Some(c) = pin_config.color {
+                                    computed.pin_color = Some(c);
+                                }
+                                if let Some(r) = pin_config.radius {
+                                    computed.pin_radius = Some(r);
+                                }
+                                if let Some(s) = pin_config.shape {
+                                    computed.pin_shape = Some(s);
+                                }
+                                if let Some(c) = pin_config.border_color {
+                                    computed.pin_border_color = Some(c);
+                                }
+                                if let Some(w) = pin_config.border_width {
+                                    computed.pin_border_width = Some(w);
                                 }
                             }
                         }
                     }
                 }
+            }
         }
         // Clear pending configs after application
         self.pending_configs.clear();
@@ -1298,19 +1304,20 @@ impl Application {
                 self.palette_selected_index = new_index;
 
                 if let PaletteView::Submenu(ref submenu) = self.palette_view
-                    && submenu == "themes" {
-                        let (_, commands) = self.build_palette_commands();
-                        if let Some(original_idx) = get_filtered_command_index(
-                            &self.command_input,
-                            &commands,
-                            self.palette_selected_index,
-                        ) {
-                            let themes = Self::get_available_themes();
-                            if original_idx < themes.len() {
-                                self.palette_preview_theme = Some(themes[original_idx].clone());
-                            }
+                    && submenu == "themes"
+                {
+                    let (_, commands) = self.build_palette_commands();
+                    if let Some(original_idx) = get_filtered_command_index(
+                        &self.command_input,
+                        &commands,
+                        self.palette_selected_index,
+                    ) {
+                        let themes = Self::get_available_themes();
+                        if original_idx < themes.len() {
+                            self.palette_preview_theme = Some(themes[original_idx].clone());
                         }
                     }
+                }
                 Task::none()
             }
             ApplicationMessage::CommandPaletteNavigateUp => {
@@ -1664,7 +1671,8 @@ impl Application {
                         }
                     }
                 } else {
-                    let sections = self.edge_config_sections
+                    let sections = self
+                        .edge_config_sections
                         .entry(node_id)
                         .or_insert_with(EdgeSections::new_all_expanded);
                     match section {
@@ -1678,7 +1686,8 @@ impl Application {
                 Task::none()
             }
             ApplicationMessage::ToggleNodeSection { node_id, section } => {
-                let sections = self.node_config_sections
+                let sections = self
+                    .node_config_sections
                     .entry(node_id)
                     .or_insert_with(NodeSections::new_all_expanded);
                 match section {
@@ -1970,22 +1979,30 @@ impl Application {
                 NodeType::Config(config) => match config {
                     ConfigNodeType::NodeConfig(inputs) => {
                         let id = node_id_clone.clone();
-                        let sections = self.node_config_sections
+                        let sections = self
+                            .node_config_sections
                             .get(&id)
                             .cloned()
                             .unwrap_or_else(NodeSections::new_all_expanded);
                         node_config_node(theme, inputs, &sections, move |section| {
-                            ApplicationMessage::ToggleNodeSection { node_id: id.clone(), section }
+                            ApplicationMessage::ToggleNodeSection {
+                                node_id: id.clone(),
+                                section,
+                            }
                         })
                     }
                     ConfigNodeType::EdgeConfig(inputs) => {
                         let id = node_id_clone.clone();
-                        let sections = self.edge_config_sections
+                        let sections = self
+                            .edge_config_sections
                             .get(&id)
                             .cloned()
                             .unwrap_or_else(EdgeSections::new_all_expanded);
                         edge_config_node(theme, inputs, &sections, move |section| {
-                            ApplicationMessage::ToggleEdgeSection { node_id: id.clone(), section }
+                            ApplicationMessage::ToggleEdgeSection {
+                                node_id: id.clone(),
+                                section,
+                            }
                         })
                     }
                     ConfigNodeType::ShadowConfig(inputs) => shadow_config_node(theme, inputs),
@@ -2613,7 +2630,10 @@ mod tests {
         // Pattern
         let pattern = config.pattern.expect("pattern must be present");
         assert_eq!(pattern.thickness, 4.0);
-        assert!(matches!(pattern.pattern_type, SdfPatternType::Dashed { .. }));
+        assert!(matches!(
+            pattern.pattern_type,
+            SdfPatternType::Dashed { .. }
+        ));
         assert!((pattern.flow_speed - 50.0).abs() < 0.01);
 
         // Colors

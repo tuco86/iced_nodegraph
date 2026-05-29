@@ -247,7 +247,11 @@ impl Application {
                 if let Some((_, _, style)) = self.nodes.get(index) {
                     self.corner_radius = style.corner_radius;
                     self.opacity = style.opacity;
-                    self.border_width = style.border.as_ref().map(|b| b.pattern.thickness).unwrap_or(1.0);
+                    self.border_width = style
+                        .border
+                        .as_ref()
+                        .map(|b| b.pattern.thickness)
+                        .unwrap_or(1.0);
                 }
             }
             Message::ApplyPreset(preset) => {
@@ -262,7 +266,11 @@ impl Application {
                         *style = new_style.clone();
                         self.corner_radius = new_style.corner_radius;
                         self.opacity = new_style.opacity;
-                        self.border_width = new_style.border.as_ref().map(|b| b.pattern.thickness).unwrap_or(1.0);
+                        self.border_width = new_style
+                            .border
+                            .as_ref()
+                            .map(|b| b.pattern.thickness)
+                            .unwrap_or(1.0);
                     }
                 }
             }
@@ -278,16 +286,17 @@ impl Application {
 
     fn apply_style_to_selected(&mut self) {
         if let Some(index) = self.selected_node
-            && let Some((_, _, style)) = self.nodes.get_mut(index) {
-                style.corner_radius = self.corner_radius;
-                style.opacity = self.opacity;
-                // Update border width in the border field
-                if let Some(ref mut border) = style.border {
-                    border.pattern = Pattern::solid(self.border_width);
-                } else {
-                    style.border = Some(NodeBorder::new().pattern(Pattern::solid(self.border_width)));
-                }
+            && let Some((_, _, style)) = self.nodes.get_mut(index)
+        {
+            style.corner_radius = self.corner_radius;
+            style.opacity = self.opacity;
+            // Update border width in the border field
+            if let Some(ref mut border) = style.border {
+                border.pattern = Pattern::solid(self.border_width);
+            } else {
+                style.border = Some(NodeBorder::new().pattern(Pattern::solid(self.border_width)));
             }
+        }
     }
 
     fn view(&self) -> Element<'_, Message> {

@@ -26,10 +26,7 @@ pub struct ForceDirectedLayout {
 
 impl ForceDirectedLayout {
     /// Creates a new layout from initial positions and edges.
-    pub fn new(
-        positions: Vec<Point>,
-        edges: &[super::Edge],
-    ) -> Self {
+    pub fn new(positions: Vec<Point>, edges: &[super::Edge]) -> Self {
         let nodes = positions
             .into_iter()
             .map(|pos| PhysicsNode {

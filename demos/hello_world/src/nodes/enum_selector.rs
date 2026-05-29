@@ -118,8 +118,7 @@ where
 
     column![
         node_title_bar("Edge Curve", style),
-        container(column![pills, output_pin,].spacing(8))
-            .padding([10, 12])
+        container(column![pills, output_pin,].spacing(8)).padding([10, 12])
     ]
     .width(160.0)
     .into()
@@ -285,4 +284,3 @@ where
     .width(200.0)
     .into()
 }
-

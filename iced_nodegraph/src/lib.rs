@@ -197,26 +197,29 @@ pub use helpers::{
 };
 pub use ids::{EdgeId, IdMap, IdMaps, NodeId, PinId};
 pub use node_graph::{
-    NodeGraph, NodeGraphEvent, NodeGraphMessage, PinRef, SdfDebug,
-    camera::Camera2D, widget::node_graph,
+    NodeGraph, NodeGraphEvent, NodeGraphMessage, PinRef, SdfDebug, camera::Camera2D,
+    widget::node_graph,
 };
 pub use node_pin::{NodePin, PinDirection, PinReference, PinSide, node_pin};
 pub use style::{
+    // Edge style layer types
+    EdgeBorder,
     // Config types (partial overrides with merge())
     EdgeConfig,
     EdgeCurve,
+    EdgeShadow,
+    // Status enums for widget-side styling
+    EdgeStatus,
     EdgeStyle,
     // Style function types (Iced Toggler pattern)
     EdgeStyleFn,
-    // Edge style layer types
-    EdgeBorder,
-    EdgeShadow,
     GraphConfig,
     GraphStyle,
     // Node style types
     NodeBorder,
     NodeConfig,
     NodeShadow,
+    NodeStatus,
     NodeStyle,
     NodeStyleFn,
     PinConfig,
@@ -225,9 +228,6 @@ pub use style::{
     PinStyle,
     PinStyleFn,
     STANDARD_THEMES,
-    // Status enums for widget-side styling
-    EdgeStatus,
-    NodeStatus,
     SelectionConfig,
     SelectionStyle,
     ShadowConfig,

@@ -1,7 +1,7 @@
+use super::Edge;
 use super::layout::ForceDirectedLayout;
 use crate::nodes::NodeType;
 use iced::Point;
-use super::Edge;
 use iced_nodegraph::PinRef;
 
 /// Generates a realistic procedural shader graph with ~500 nodes.
@@ -233,10 +233,7 @@ pub fn generate_procedural_graph() -> (Vec<(Point, NodeType)>, Vec<Edge>) {
 
 /// Validates that all edges connect outputs to inputs correctly.
 #[allow(dead_code)]
-fn validate_edges(
-    nodes: &[(Point, NodeType)],
-    edges: &[Edge],
-) {
+fn validate_edges(nodes: &[(Point, NodeType)], edges: &[Edge]) {
     let mut error_count = 0;
     for (from, to) in edges {
         let from_type = &nodes[from.node_id].1;

@@ -88,10 +88,7 @@ impl ScreenshotHelper {
 
     /// Handle screenshot messages. Returns a Task that should be returned
     /// from the app's update function.
-    pub fn update<M>(
-        &mut self,
-        message: ScreenshotMessage,
-    ) -> Task<M>
+    pub fn update<M>(&mut self, message: ScreenshotMessage) -> Task<M>
     where
         M: From<ScreenshotMessage> + Send + 'static,
     {
@@ -105,11 +102,9 @@ impl ScreenshotHelper {
                     move |()| M::from(ScreenshotMessage::TakeScreenshot(window_id)),
                 )
             }
-            ScreenshotMessage::TakeScreenshot(window_id) => {
-                window::screenshot(window_id)
-                    .map(ScreenshotMessage::Captured)
-                    .map(M::from)
-            }
+            ScreenshotMessage::TakeScreenshot(window_id) => window::screenshot(window_id)
+                .map(ScreenshotMessage::Captured)
+                .map(M::from),
             ScreenshotMessage::Captured(screenshot) => {
                 if let Some(ref path) = self.output_path {
                     if let Err(e) = save_png(path, &screenshot) {
@@ -145,7 +140,9 @@ fn save_png(path: &std::path::Path, screenshot: &window::Screenshot) -> Result<(
     encoder.set_depth(png::BitDepth::Eight);
 
     let mut png_writer = encoder.write_header().map_err(|e| e.to_string())?;
-    png_writer.write_image_data(rgba).map_err(|e| e.to_string())?;
+    png_writer
+        .write_image_data(rgba)
+        .map_err(|e| e.to_string())?;
 
     Ok(())
 }

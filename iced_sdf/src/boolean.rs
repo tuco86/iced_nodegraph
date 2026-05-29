@@ -1212,7 +1212,10 @@ mod tests {
     fn open_contour_input_trips_assert() {
         // An open stroke is not a valid boolean operand; the closed-loop guard
         // must catch it in debug builds rather than silently mis-rendering.
-        let open = Curve::shape([0.0, 0.0], FRAC_PI_2).line(40.0).line(40.0).end();
+        let open = Curve::shape([0.0, 0.0], FRAC_PI_2)
+            .line(40.0)
+            .line(40.0)
+            .end();
         let square = Curve::rect([0.0, 0.0], [20.0, 20.0]);
         let _ = super::difference(&square, &open);
     }

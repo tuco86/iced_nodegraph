@@ -371,7 +371,13 @@ pub fn node_header<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    node_section(content, background, corner_radius, border_width, ContentPosition::Top)
+    node_section(
+        content,
+        background,
+        corner_radius,
+        border_width,
+        ContentPosition::Top,
+    )
 }
 
 /// Creates a footer container for nodes with bottom rounded corners.
@@ -409,7 +415,13 @@ pub fn node_footer<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    node_section(content, background, corner_radius, border_width, ContentPosition::Bottom)
+    node_section(
+        content,
+        background,
+        corner_radius,
+        border_width,
+        ContentPosition::Bottom,
+    )
 }
 
 /// Shared implementation for header/footer node sections.

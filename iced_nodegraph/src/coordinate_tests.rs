@@ -18,11 +18,11 @@ use std::rc::Rc;
 use iced::advanced::renderer::Renderer as _;
 use iced::advanced::widget::{Tree, Widget};
 use iced::advanced::{Layout, layout, mouse, renderer};
-use iced_widget::core::clipboard;
 use iced::{
     Background, Color, Element, Length, Pixels, Point, Rectangle, Size, Theme, Transformation,
     Vector,
 };
+use iced_widget::core::clipboard;
 use iced_widget::core::image;
 use iced_widget::core::text;
 
@@ -166,11 +166,10 @@ fn draw_at_origin(
     camera_pos: Point,
     camera_zoom: f32,
 ) -> Recorded {
-    let mut graph: NodeGraph<'static, usize, usize, usize, (), Theme, Rec> =
-        NodeGraph::default()
-            .width(Length::Fixed(400.0))
-            .height(Length::Fixed(400.0))
-            .initial_camera(camera_pos, camera_zoom);
+    let mut graph: NodeGraph<'static, usize, usize, usize, (), Theme, Rec> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .initial_camera(camera_pos, camera_zoom);
     graph.push_node(0_usize, node_world, Element::from(ContentProbe));
 
     let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Rec>);
@@ -263,14 +262,13 @@ fn click_select(
     let selected: Rc<RefCell<Option<Vec<usize>>>> = Rc::new(RefCell::new(None));
     let sel = selected.clone();
 
-    let mut graph: NodeGraph<'static, usize, usize, usize, (), Theme, Rec> =
-        NodeGraph::default()
-            .width(Length::Fixed(400.0))
-            .height(Length::Fixed(400.0))
-            .initial_camera(camera_pos, camera_zoom)
-            .on_select(move |ids| {
-                *sel.borrow_mut() = Some(ids);
-            });
+    let mut graph: NodeGraph<'static, usize, usize, usize, (), Theme, Rec> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .initial_camera(camera_pos, camera_zoom)
+        .on_select(move |ids| {
+            *sel.borrow_mut() = Some(ids);
+        });
     graph.push_node(0_usize, node_world, Element::from(ContentProbe));
 
     let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Rec>);
@@ -432,14 +430,17 @@ fn box_select_primitives(
     p1: Point,
     p2: Point,
 ) -> Vec<Rectangle> {
-    let mut graph: NodeGraph<'static, usize, usize, usize, (), Theme, Rec> =
-        NodeGraph::default()
-            .width(Length::Fixed(400.0))
-            .height(Length::Fixed(400.0))
-            .initial_camera(Point::ORIGIN, camera_zoom)
-            .on_select(|_ids| {});
+    let mut graph: NodeGraph<'static, usize, usize, usize, (), Theme, Rec> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .initial_camera(Point::ORIGIN, camera_zoom)
+        .on_select(|_ids| {});
     // Node far from the drag so the press starts a box select, not a node click.
-    graph.push_node(0_usize, Point::new(900.0, 900.0), Element::from(ContentProbe));
+    graph.push_node(
+        0_usize,
+        Point::new(900.0, 900.0),
+        Element::from(ContentProbe),
+    );
 
     let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Rec>);
     let out = Rc::new(RefCell::new(Recorded::default()));
@@ -475,18 +476,41 @@ fn box_select_primitives(
     };
 
     // Move to p1, press (starts box select at p1), drag to p2.
-    send(&mut graph, &mut tree, &mut shell, &mut clipboard, &renderer,
-        iced::Event::Mouse(mouse::Event::CursorMoved { position: p1 }), p1);
-    send(&mut graph, &mut tree, &mut shell, &mut clipboard, &renderer,
-        iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)), p1);
-    send(&mut graph, &mut tree, &mut shell, &mut clipboard, &renderer,
-        iced::Event::Mouse(mouse::Event::CursorMoved { position: p2 }), p2);
+    send(
+        &mut graph,
+        &mut tree,
+        &mut shell,
+        &mut clipboard,
+        &renderer,
+        iced::Event::Mouse(mouse::Event::CursorMoved { position: p1 }),
+        p1,
+    );
+    send(
+        &mut graph,
+        &mut tree,
+        &mut shell,
+        &mut clipboard,
+        &renderer,
+        iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+        p1,
+    );
+    send(
+        &mut graph,
+        &mut tree,
+        &mut shell,
+        &mut clipboard,
+        &renderer,
+        iced::Event::Mouse(mouse::Event::CursorMoved { position: p2 }),
+        p2,
+    );
 
     graph.draw(
         &tree,
         &mut renderer,
         &Theme::Dark,
-        &renderer::Style { text_color: Color::WHITE },
+        &renderer::Style {
+            text_color: Color::WHITE,
+        },
         layout,
         mouse::Cursor::Available(p2),
         &viewport,

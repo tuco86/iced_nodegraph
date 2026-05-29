@@ -476,7 +476,8 @@ where
     /// ```
     pub fn edge_style(
         mut self,
-        f: impl Fn(&Theme, crate::style::EdgeStatus, crate::style::EdgeStyle) -> crate::style::EdgeStyle + 'a,
+        f: impl Fn(&Theme, crate::style::EdgeStatus, crate::style::EdgeStyle) -> crate::style::EdgeStyle
+        + 'a,
     ) -> Self {
         self.edge_style_fn = Some(Box::new(f));
         self
@@ -501,7 +502,8 @@ where
     /// ```
     pub fn node_style(
         mut self,
-        f: impl Fn(&Theme, crate::style::NodeStatus, crate::style::NodeStyle) -> crate::style::NodeStyle + 'a,
+        f: impl Fn(&Theme, crate::style::NodeStatus, crate::style::NodeStyle) -> crate::style::NodeStyle
+        + 'a,
     ) -> Self {
         self.node_style_fn = Some(Box::new(f));
         self
@@ -524,7 +526,8 @@ where
     /// ```
     pub fn pin_style(
         mut self,
-        f: impl Fn(&Theme, crate::style::PinStatus, crate::style::PinStyle) -> crate::style::PinStyle + 'a,
+        f: impl Fn(&Theme, crate::style::PinStatus, crate::style::PinStyle) -> crate::style::PinStyle
+        + 'a,
     ) -> Self {
         self.pin_style_fn = Some(Box::new(f));
         self
@@ -751,10 +754,11 @@ where
     /// Returns `true` if the node was found and updated, `false` otherwise.
     pub fn update_node_position(&mut self, node_id: &N, position: Point) -> bool {
         if let Some(idx) = self.id_maps.node_index(node_id)
-            && let Some((pos, _, _)) = self.nodes.get_mut(idx) {
-                *pos = position;
-                return true;
-            }
+            && let Some((pos, _, _)) = self.nodes.get_mut(idx)
+        {
+            *pos = position;
+            return true;
+        }
         false
     }
 

@@ -92,6 +92,10 @@ fn determine_content_style(style: &NodeStyle, theme: &iced::Theme) -> NodeConten
         NodeContentStyle::comment(theme)
     };
     // Apply the actual node geometry for correct title bar corners
-    let border_width = style.border.as_ref().map(|b| b.pattern.thickness).unwrap_or(1.0);
+    let border_width = style
+        .border
+        .as_ref()
+        .map(|b| b.pattern.thickness)
+        .unwrap_or(1.0);
     base.with_geometry(style.corner_radius, border_width)
 }

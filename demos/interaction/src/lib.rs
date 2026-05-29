@@ -35,13 +35,11 @@
 
 use demo_common::{ScreenshotHelper, ScreenshotMessage};
 use iced::{
-    alignment::Horizontal,
     Color, Element, Length, Point, Subscription, Theme, Vector,
-    widget::{button, column, container, row, scrollable, text, Space},
+    alignment::Horizontal,
+    widget::{Space, button, column, container, row, scrollable, text},
 };
-use iced_nodegraph::{
-    NodeContentStyle, PinRef, node_graph, pin, simple_node,
-};
+use iced_nodegraph::{NodeContentStyle, PinRef, node_graph, pin, simple_node};
 use std::collections::{HashMap, HashSet};
 
 #[cfg(feature = "wasm")]
@@ -287,9 +285,10 @@ impl App {
 
         // Check single-connection constraint on target
         if to_info.single_connection {
-            let already_connected = self.edges.iter().any(|(_, t)| {
-                t.node_id == to.node_id && t.pin_id == to.pin_id
-            });
+            let already_connected = self
+                .edges
+                .iter()
+                .any(|(_, t)| t.node_id == to.node_id && t.pin_id == to.pin_id);
             if already_connected {
                 return Err(format!(
                     "Pin '{}' only accepts a single connection",
@@ -300,9 +299,10 @@ impl App {
 
         // Check single-connection constraint on source
         if from_info.single_connection {
-            let already_connected = self.edges.iter().any(|(f, _)| {
-                f.node_id == from.node_id && f.pin_id == from.pin_id
-            });
+            let already_connected = self
+                .edges
+                .iter()
+                .any(|(f, _)| f.node_id == from.node_id && f.pin_id == from.pin_id);
             if already_connected {
                 return Err(format!(
                     "Pin '{}' only accepts a single connection",
@@ -313,10 +313,14 @@ impl App {
 
         // Check duplicate
         let duplicate = self.edges.iter().any(|(f, t)| {
-            (f.node_id == from.node_id && f.pin_id == from.pin_id
-                && t.node_id == to.node_id && t.pin_id == to.pin_id)
-                || (f.node_id == to.node_id && f.pin_id == to.pin_id
-                    && t.node_id == from.node_id && t.pin_id == from.pin_id)
+            (f.node_id == from.node_id
+                && f.pin_id == from.pin_id
+                && t.node_id == to.node_id
+                && t.pin_id == to.pin_id)
+                || (f.node_id == to.node_id
+                    && f.pin_id == to.pin_id
+                    && t.node_id == from.node_id
+                    && t.pin_id == from.pin_id)
         });
         if duplicate {
             return Err("Connection already exists".into());
@@ -324,31 +328,35 @@ impl App {
 
         Ok(format!(
             "Connected: {} -> {} ({} -> {})",
-            from_info.label, to_info.label,
-            from_info.pin_type.name(), to_info.pin_type.name()
+            from_info.label,
+            to_info.label,
+            from_info.pin_type.name(),
+            to_info.pin_type.name()
         ))
     }
 
     fn update(&mut self, message: Message) -> iced::Task<Message> {
         match message {
             Message::Screenshot(msg) => return self.screenshot.update(msg),
-            Message::EdgeConnected { from, to } => {
-                match self.validate_connection(&from, &to) {
-                    Ok(msg) => {
-                        self.edges.push((from, to));
-                        self.feedback.push(msg);
-                    }
-                    Err(msg) => {
-                        self.feedback.push(format!("Rejected: {}", msg));
-                    }
+            Message::EdgeConnected { from, to } => match self.validate_connection(&from, &to) {
+                Ok(msg) => {
+                    self.edges.push((from, to));
+                    self.feedback.push(msg);
                 }
-            }
+                Err(msg) => {
+                    self.feedback.push(format!("Rejected: {}", msg));
+                }
+            },
             Message::EdgeDisconnected { from, to } => {
                 self.edges.retain(|(f, t)| {
-                    !((f.node_id == from.node_id && f.pin_id == from.pin_id
-                        && t.node_id == to.node_id && t.pin_id == to.pin_id)
-                        || (f.node_id == to.node_id && f.pin_id == to.pin_id
-                            && t.node_id == from.node_id && t.pin_id == from.pin_id))
+                    !((f.node_id == from.node_id
+                        && f.pin_id == from.pin_id
+                        && t.node_id == to.node_id
+                        && t.pin_id == to.pin_id)
+                        || (f.node_id == to.node_id
+                            && f.pin_id == to.pin_id
+                            && t.node_id == from.node_id
+                            && t.pin_id == from.pin_id))
                 });
                 if let (Some(from_info), Some(to_info)) = (
                     self.pin_registry.get(&(from.node_id, from.pin_id)),
@@ -436,27 +444,43 @@ impl App {
             .selection(&self.selected_nodes);
 
         // Node 0: Number Generator
-        let pos = self.node_positions.get(&0).copied().unwrap_or(Point::ORIGIN);
-        ng.push_node(
-            0usize,
-            pos,
-            self.number_generator_node(&theme),
-        );
+        let pos = self
+            .node_positions
+            .get(&0)
+            .copied()
+            .unwrap_or(Point::ORIGIN);
+        ng.push_node(0usize, pos, self.number_generator_node(&theme));
 
         // Node 1: Math Operations
-        let pos = self.node_positions.get(&1).copied().unwrap_or(Point::ORIGIN);
+        let pos = self
+            .node_positions
+            .get(&1)
+            .copied()
+            .unwrap_or(Point::ORIGIN);
         ng.push_node(1usize, pos, self.math_operations_node(&theme));
 
         // Node 2: Type Converter
-        let pos = self.node_positions.get(&2).copied().unwrap_or(Point::ORIGIN);
+        let pos = self
+            .node_positions
+            .get(&2)
+            .copied()
+            .unwrap_or(Point::ORIGIN);
         ng.push_node(2usize, pos, self.type_converter_node(&theme));
 
         // Node 3: Display
-        let pos = self.node_positions.get(&3).copied().unwrap_or(Point::ORIGIN);
+        let pos = self
+            .node_positions
+            .get(&3)
+            .copied()
+            .unwrap_or(Point::ORIGIN);
         ng.push_node(3usize, pos, self.display_node(&theme));
 
         // Node 4: Bidirectional Hub
-        let pos = self.node_positions.get(&4).copied().unwrap_or(Point::ORIGIN);
+        let pos = self
+            .node_positions
+            .get(&4)
+            .copied()
+            .unwrap_or(Point::ORIGIN);
         ng.push_node(4usize, pos, self.bidirectional_hub_node(&theme));
 
         // Add edges
@@ -469,8 +493,12 @@ impl App {
             row![
                 button("Clear All").on_press(Message::ClearAll),
                 button("Reset").on_press(Message::Reset),
-                button(if self.show_rules { "Hide Rules" } else { "Show Rules" })
-                    .on_press(Message::ToggleRules),
+                button(if self.show_rules {
+                    "Hide Rules"
+                } else {
+                    "Show Rules"
+                })
+                .on_press(Message::ToggleRules),
                 Space::new().width(Length::Fill),
                 text(format!("{} connections", self.edges.len())).size(13),
             ]
@@ -528,8 +556,22 @@ impl App {
             "Number Generator",
             style,
             column![
-                right_pin(pin!(Right, 0usize, text("Int Out").size(12), Output, Integer, PinType::Integer.color())),
-                right_pin(pin!(Right, 1usize, text("Float Out").size(12), Output, Float, PinType::Float.color())),
+                right_pin(pin!(
+                    Right,
+                    0usize,
+                    text("Int Out").size(12),
+                    Output,
+                    Integer,
+                    PinType::Integer.color()
+                )),
+                right_pin(pin!(
+                    Right,
+                    1usize,
+                    text("Float Out").size(12),
+                    Output,
+                    Float,
+                    PinType::Float.color()
+                )),
             ]
             .spacing(4),
         ))
@@ -543,9 +585,30 @@ impl App {
             "Math Operations",
             style,
             column![
-                pin!(Left, 0usize, text("A (Float)").size(12), Input, Float, PinType::Float.color()),
-                pin!(Left, 1usize, text("B (Float)").size(12), Input, Float, PinType::Float.color()),
-                right_pin(pin!(Right, 2usize, text("Result").size(12), Output, Float, PinType::Float.color())),
+                pin!(
+                    Left,
+                    0usize,
+                    text("A (Float)").size(12),
+                    Input,
+                    Float,
+                    PinType::Float.color()
+                ),
+                pin!(
+                    Left,
+                    1usize,
+                    text("B (Float)").size(12),
+                    Input,
+                    Float,
+                    PinType::Float.color()
+                ),
+                right_pin(pin!(
+                    Right,
+                    2usize,
+                    text("Result").size(12),
+                    Output,
+                    Float,
+                    PinType::Float.color()
+                )),
             ]
             .spacing(4),
         ))
@@ -559,10 +622,38 @@ impl App {
             "Type Converter",
             style,
             column![
-                pin!(Left, 0usize, text("In (Any)").size(12), Input, AnyType, PinType::Any.color()),
-                right_pin(pin!(Right, 1usize, text("Int").size(12), Output, Integer, PinType::Integer.color())),
-                right_pin(pin!(Right, 2usize, text("Float").size(12), Output, Float, PinType::Float.color())),
-                right_pin(pin!(Right, 3usize, text("String").size(12), Output, StringType, PinType::String.color())),
+                pin!(
+                    Left,
+                    0usize,
+                    text("In (Any)").size(12),
+                    Input,
+                    AnyType,
+                    PinType::Any.color()
+                ),
+                right_pin(pin!(
+                    Right,
+                    1usize,
+                    text("Int").size(12),
+                    Output,
+                    Integer,
+                    PinType::Integer.color()
+                )),
+                right_pin(pin!(
+                    Right,
+                    2usize,
+                    text("Float").size(12),
+                    Output,
+                    Float,
+                    PinType::Float.color()
+                )),
+                right_pin(pin!(
+                    Right,
+                    3usize,
+                    text("String").size(12),
+                    Output,
+                    StringType,
+                    PinType::String.color()
+                )),
             ]
             .spacing(4),
         ))
@@ -576,8 +667,22 @@ impl App {
             "Display",
             style,
             column![
-                pin!(Left, 0usize, text("Value (Any)").size(12), Input, AnyType, PinType::Any.color()),
-                pin!(Left, 1usize, text("Label (String)").size(12), Input, StringType, PinType::String.color()),
+                pin!(
+                    Left,
+                    0usize,
+                    text("Value (Any)").size(12),
+                    Input,
+                    AnyType,
+                    PinType::Any.color()
+                ),
+                pin!(
+                    Left,
+                    1usize,
+                    text("Label (String)").size(12),
+                    Input,
+                    StringType,
+                    PinType::String.color()
+                ),
             ]
             .spacing(4),
         ))
@@ -591,10 +696,38 @@ impl App {
             "Bidirectional Hub",
             style,
             column![
-                pin!(Top, 0usize, text("Float").size(12), Both, Float, PinType::Float.color()),
-                right_pin(pin!(Right, 1usize, text("Int").size(12), Both, Integer, PinType::Integer.color())),
-                pin!(Bottom, 2usize, text("Any").size(12), Both, AnyType, PinType::Any.color()),
-                pin!(Left, 3usize, text("Str").size(12), Both, StringType, PinType::String.color()),
+                pin!(
+                    Top,
+                    0usize,
+                    text("Float").size(12),
+                    Both,
+                    Float,
+                    PinType::Float.color()
+                ),
+                right_pin(pin!(
+                    Right,
+                    1usize,
+                    text("Int").size(12),
+                    Both,
+                    Integer,
+                    PinType::Integer.color()
+                )),
+                pin!(
+                    Bottom,
+                    2usize,
+                    text("Any").size(12),
+                    Both,
+                    AnyType,
+                    PinType::Any.color()
+                ),
+                pin!(
+                    Left,
+                    3usize,
+                    text("Str").size(12),
+                    Both,
+                    StringType,
+                    PinType::String.color()
+                ),
             ]
             .spacing(4),
         ))

@@ -25,7 +25,8 @@ pub(crate) fn compile_drawable(
         out_segments.push(GpuSegment {
             segment_type: seg.segment_type as u32,
             flags: if seg.signed { SEG_FLAG_SIGNED } else { 0 },
-            _pad1: 0, _pad2: 0,
+            _pad1: 0,
+            _pad2: 0,
             geom0: GpuVec4(seg.geom0),
             geom1: GpuVec4(seg.geom1),
             arc_range: GpuVec4([seg.arc_start, seg.arc_end, drawable.total_arc_length, 0.0]),
@@ -33,7 +34,9 @@ pub(crate) fn compile_drawable(
     }
 
     let mut flags = 0u32;
-    if drawable.is_closed { flags |= FLAG_CLOSED; }
+    if drawable.is_closed {
+        flags |= FLAG_CLOSED;
+    }
 
     let entry = GpuDrawEntry {
         entry_type: drawable.drawable_type as u32,
@@ -53,14 +56,21 @@ pub(crate) fn compile_drawable(
     (entry, gpu_style)
 }
 
-fn c2v(c: Color) -> GpuVec4 { GpuVec4::new(c.r, c.g, c.b, c.a) }
+fn c2v(c: Color) -> GpuVec4 {
+    GpuVec4::new(c.r, c.g, c.b, c.a)
+}
 
 fn compile_style(style: &Style) -> GpuStyle {
     let mut flags = 0u32;
-    if style.distance_field { flags |= STYLE_FLAG_DISTANCE_FIELD; }
+    if style.distance_field {
+        flags |= STYLE_FLAG_DISTANCE_FIELD;
+    }
 
     let (pattern_type, pattern_thickness, p0, p1, p2, flow_speed) = match &style.pattern {
-        Some(p) => { flags |= STYLE_FLAG_HAS_PATTERN; p.as_gpu() }
+        Some(p) => {
+            flags |= STYLE_FLAG_HAS_PATTERN;
+            p.as_gpu()
+        }
         None => (0, 0.0, 0.0, 0.0, 0.0, 0.0),
     };
 
@@ -78,6 +88,8 @@ fn compile_style(style: &Style) -> GpuStyle {
         pattern_param1: p1,
         pattern_param2: p2,
         flow_speed,
-        _pad0: 0.0, _pad1: 0.0, _pad2: 0.0,
+        _pad0: 0.0,
+        _pad1: 0.0,
+        _pad2: 0.0,
     }
 }

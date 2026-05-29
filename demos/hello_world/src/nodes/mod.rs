@@ -17,16 +17,14 @@ pub use bool_toggle::{BoolToggleConfig, bool_toggle_node};
 pub use calendar::calendar_node;
 pub use color_picker::{color_picker_node, color_preset_node};
 pub use config::{
-    EdgeConfigInputs, EdgeSection, EdgeSections, NodeConfigInputs,
-    NodeSection, NodeSections, PatternType, PinConfigInputs,
-    ShadowConfigInputs, apply_to_graph_node, apply_to_node_node,
+    EdgeConfigInputs, EdgeSection, EdgeSections, NodeConfigInputs, NodeSection, NodeSections,
+    PatternType, PinConfigInputs, ShadowConfigInputs, apply_to_graph_node, apply_to_node_node,
     edge_config_node, node_config_node, pin_config_node, shadow_config_node,
 };
 pub use email_parser::email_parser_node;
 pub use email_trigger::email_trigger_node;
 pub use enum_selector::{
-    edge_curve_selector_node, pattern_type_selector_node,
-    pin_shape_selector_node,
+    edge_curve_selector_node, pattern_type_selector_node, pin_shape_selector_node,
 };
 pub use filter::filter_node;
 pub use float_slider::{FloatSliderConfig, float_slider_node};
@@ -185,7 +183,6 @@ impl NodeValue {
             _ => None,
         }
     }
-
 }
 
 /// Configuration node types that affect graph styling
@@ -448,7 +445,9 @@ pub fn section_header_with_pins<'a, Message: Clone + 'a>(
 
     // Separator line style
     let separator_style = |_: &_| container::Style {
-        background: Some(iced::Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.1))),
+        background: Some(iced::Background::Color(Color::from_rgba(
+            1.0, 1.0, 1.0, 0.1,
+        ))),
         ..Default::default()
     };
 
@@ -512,9 +511,9 @@ pub fn section_header_with_pins<'a, Message: Clone + 'a>(
         .padding([4, 0])
         .style(|_theme: &Theme, status| {
             let background = match status {
-                button::Status::Hovered | button::Status::Pressed => {
-                    Some(iced::Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.03)))
-                }
+                button::Status::Hovered | button::Status::Pressed => Some(iced::Background::Color(
+                    Color::from_rgba(1.0, 1.0, 1.0, 0.03),
+                )),
                 _ => None,
             };
             button::Style {
@@ -532,7 +531,9 @@ pub fn section_header_with_pins<'a, Message: Clone + 'a>(
 // ============================================================================
 
 /// Renders an `Option<Color>` as a small colored swatch or "--" placeholder.
-pub fn color_swatch<'a, Message: 'a>(color: Option<Color>) -> Element<'a, Message, Theme, iced::Renderer> {
+pub fn color_swatch<'a, Message: 'a>(
+    color: Option<Color>,
+) -> Element<'a, Message, Theme, iced::Renderer> {
     if let Some(c) = color {
         container(text(""))
             .width(20)
@@ -603,9 +604,7 @@ pub fn push_section<'a, Message: Clone + 'a>(
     collapsed_pins: Option<Element<'a, Message, Theme, iced::Renderer>>,
     rows: Vec<Element<'a, Message, Theme, iced::Renderer>>,
 ) {
-    items.push(
-        section_header_with_pins(title, expanded, on_toggle, collapsed_pins).into(),
-    );
+    items.push(section_header_with_pins(title, expanded, on_toggle, collapsed_pins).into());
     if expanded {
         items.extend(rows);
     }

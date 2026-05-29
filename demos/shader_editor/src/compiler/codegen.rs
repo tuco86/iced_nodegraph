@@ -222,7 +222,8 @@ impl CodeGenerator {
             // Use socket default value if available
             node.inputs
                 .get(socket_index)
-                .and_then(|s| s.default_value.as_ref()).cloned()
+                .and_then(|s| s.default_value.as_ref())
+                .cloned()
                 .unwrap_or_else(|| default.to_string())
         }
     }

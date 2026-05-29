@@ -9,9 +9,17 @@ use crate::drawable::{Drawable, TilingType};
 #[derive(Debug, Clone, Copy)]
 pub enum Tiling {
     /// Rectangular grid.
-    Grid { spacing_x: f32, spacing_y: f32, thickness: f32 },
+    Grid {
+        spacing_x: f32,
+        spacing_y: f32,
+        thickness: f32,
+    },
     /// Dot array.
-    Dots { spacing_x: f32, spacing_y: f32, radius: f32 },
+    Dots {
+        spacing_x: f32,
+        spacing_y: f32,
+        radius: f32,
+    },
     /// Equilateral triangle grid.
     Triangles { spacing: f32, thickness: f32 },
     /// Regular hexagonal grid.

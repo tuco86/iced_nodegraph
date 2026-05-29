@@ -31,9 +31,16 @@ where
 {
     let pins = column![
         row![
-            container(pin!(Left, 0usize, text("vec"), Input, colors::Vec3, PIN_VEC3))
-                .width(Length::FillPortion(1))
-                .align_x(Horizontal::Left),
+            container(pin!(
+                Left,
+                0usize,
+                text("vec"),
+                Input,
+                colors::Vec3,
+                PIN_VEC3
+            ))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Left),
             container(pin!(Right, 1usize, text("x"), Output, colors::Float, PIN_X))
                 .width(Length::FillPortion(1))
                 .align_x(Horizontal::Right),
@@ -93,9 +100,16 @@ where
     Message: Clone + 'a,
 {
     let pins = row![
-        container(pin!(Left, 0usize, text("in"), Input, colors::Vec3, PIN_VEC3))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Left),
+        container(pin!(
+            Left,
+            0usize,
+            text("in"),
+            Input,
+            colors::Vec3,
+            PIN_VEC3
+        ))
+        .width(Length::FillPortion(1))
+        .align_x(Horizontal::Left),
         container(pin!(
             Right,
             1usize,

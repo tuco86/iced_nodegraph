@@ -82,9 +82,8 @@ impl SharedSdfResources {
             ..Default::default()
         });
 
-        let render_pipeline = create_render_pipeline(
-            device, format, &render_pipeline_layout, &shader_module,
-        );
+        let render_pipeline =
+            create_render_pipeline(device, format, &render_pipeline_layout, &shader_module);
 
         let compute_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
             label: Some("SDF Compute Pipeline"),
@@ -115,52 +114,61 @@ fn create_render_group0_layout(device: &Device) -> BindGroupLayout {
         label: Some("SDF Render Group 0"),
         entries: &[
             BindGroupLayoutEntry {
-                binding: 0, visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
+                binding: 0,
+                visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
-                    min_binding_size: Some(NonZeroU64::new(
-                        <types::DrawData as ShaderSize>::SHADER_SIZE.get(),
-                    ).unwrap()),
+                    min_binding_size: Some(
+                        NonZeroU64::new(<types::DrawData as ShaderSize>::SHADER_SIZE.get())
+                            .unwrap(),
+                    ),
                 },
                 count: None,
             },
             BindGroupLayoutEntry {
-                binding: 1, visibility: ShaderStages::FRAGMENT,
+                binding: 1,
+                visibility: ShaderStages::FRAGMENT,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
-                    min_binding_size: Some(NonZeroU64::new(
-                        <types::GpuDrawEntry as ShaderSize>::SHADER_SIZE.get(),
-                    ).unwrap()),
+                    min_binding_size: Some(
+                        NonZeroU64::new(<types::GpuDrawEntry as ShaderSize>::SHADER_SIZE.get())
+                            .unwrap(),
+                    ),
                 },
                 count: None,
             },
             BindGroupLayoutEntry {
-                binding: 2, visibility: ShaderStages::FRAGMENT,
+                binding: 2,
+                visibility: ShaderStages::FRAGMENT,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
-                    min_binding_size: Some(NonZeroU64::new(
-                        <types::GpuSegment as ShaderSize>::SHADER_SIZE.get(),
-                    ).unwrap()),
+                    min_binding_size: Some(
+                        NonZeroU64::new(<types::GpuSegment as ShaderSize>::SHADER_SIZE.get())
+                            .unwrap(),
+                    ),
                 },
                 count: None,
             },
             BindGroupLayoutEntry {
-                binding: 3, visibility: ShaderStages::FRAGMENT,
+                binding: 3,
+                visibility: ShaderStages::FRAGMENT,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
-                    min_binding_size: Some(NonZeroU64::new(
-                        <types::GpuStyle as ShaderSize>::SHADER_SIZE.get(),
-                    ).unwrap()),
+                    min_binding_size: Some(
+                        NonZeroU64::new(<types::GpuStyle as ShaderSize>::SHADER_SIZE.get())
+                            .unwrap(),
+                    ),
                 },
                 count: None,
             },
             // binding 4: tile_counts (read)
             BindGroupLayoutEntry {
-                binding: 4, visibility: ShaderStages::FRAGMENT,
+                binding: 4,
+                visibility: ShaderStages::FRAGMENT,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
@@ -170,7 +178,8 @@ fn create_render_group0_layout(device: &Device) -> BindGroupLayout {
             },
             // binding 5: tile_entries (read)
             BindGroupLayoutEntry {
-                binding: 5, visibility: ShaderStages::FRAGMENT,
+                binding: 5,
+                visibility: ShaderStages::FRAGMENT,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
@@ -190,46 +199,54 @@ fn create_compute_group0_layout(device: &Device) -> BindGroupLayout {
         label: Some("SDF Compute Group 0"),
         entries: &[
             BindGroupLayoutEntry {
-                binding: 0, visibility: ShaderStages::COMPUTE,
+                binding: 0,
+                visibility: ShaderStages::COMPUTE,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
-                    min_binding_size: Some(NonZeroU64::new(
-                        <types::DrawData as ShaderSize>::SHADER_SIZE.get(),
-                    ).unwrap()),
+                    min_binding_size: Some(
+                        NonZeroU64::new(<types::DrawData as ShaderSize>::SHADER_SIZE.get())
+                            .unwrap(),
+                    ),
                 },
                 count: None,
             },
             BindGroupLayoutEntry {
-                binding: 1, visibility: ShaderStages::COMPUTE,
+                binding: 1,
+                visibility: ShaderStages::COMPUTE,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
-                    min_binding_size: Some(NonZeroU64::new(
-                        <types::GpuDrawEntry as ShaderSize>::SHADER_SIZE.get(),
-                    ).unwrap()),
+                    min_binding_size: Some(
+                        NonZeroU64::new(<types::GpuDrawEntry as ShaderSize>::SHADER_SIZE.get())
+                            .unwrap(),
+                    ),
                 },
                 count: None,
             },
             BindGroupLayoutEntry {
-                binding: 2, visibility: ShaderStages::COMPUTE,
+                binding: 2,
+                visibility: ShaderStages::COMPUTE,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
-                    min_binding_size: Some(NonZeroU64::new(
-                        <types::GpuSegment as ShaderSize>::SHADER_SIZE.get(),
-                    ).unwrap()),
+                    min_binding_size: Some(
+                        NonZeroU64::new(<types::GpuSegment as ShaderSize>::SHADER_SIZE.get())
+                            .unwrap(),
+                    ),
                 },
                 count: None,
             },
             BindGroupLayoutEntry {
-                binding: 3, visibility: ShaderStages::COMPUTE,
+                binding: 3,
+                visibility: ShaderStages::COMPUTE,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
-                    min_binding_size: Some(NonZeroU64::new(
-                        <types::GpuStyle as ShaderSize>::SHADER_SIZE.get(),
-                    ).unwrap()),
+                    min_binding_size: Some(
+                        NonZeroU64::new(<types::GpuStyle as ShaderSize>::SHADER_SIZE.get())
+                            .unwrap(),
+                    ),
                 },
                 count: None,
             },
@@ -244,7 +261,8 @@ fn create_compute_group1_layout(device: &Device) -> BindGroupLayout {
         label: Some("SDF Compute Group 1"),
         entries: &[
             BindGroupLayoutEntry {
-                binding: 0, visibility: ShaderStages::COMPUTE,
+                binding: 0,
+                visibility: ShaderStages::COMPUTE,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -253,7 +271,8 @@ fn create_compute_group1_layout(device: &Device) -> BindGroupLayout {
                 count: None,
             },
             BindGroupLayoutEntry {
-                binding: 1, visibility: ShaderStages::COMPUTE,
+                binding: 1,
+                visibility: ShaderStages::COMPUTE,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
@@ -262,7 +281,8 @@ fn create_compute_group1_layout(device: &Device) -> BindGroupLayout {
                 count: None,
             },
             BindGroupLayoutEntry {
-                binding: 2, visibility: ShaderStages::COMPUTE,
+                binding: 2,
+                visibility: ShaderStages::COMPUTE,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
@@ -275,26 +295,39 @@ fn create_compute_group1_layout(device: &Device) -> BindGroupLayout {
 }
 
 fn create_render_pipeline(
-    device: &Device, format: TextureFormat, layout: &PipelineLayout, module: &ShaderModule,
+    device: &Device,
+    format: TextureFormat,
+    layout: &PipelineLayout,
+    module: &ShaderModule,
 ) -> RenderPipeline {
     device.create_render_pipeline(&RenderPipelineDescriptor {
         label: Some("SDF Render Pipeline"),
         layout: Some(layout),
         vertex: VertexState {
-            module, entry_point: Some("vs_main"), buffers: &[],
+            module,
+            entry_point: Some("vs_main"),
+            buffers: &[],
             compilation_options: PipelineCompilationOptions::default(),
         },
         primitive: PrimitiveState {
-            topology: PrimitiveTopology::TriangleList, front_face: FrontFace::Ccw,
-            cull_mode: None, polygon_mode: PolygonMode::Fill,
+            topology: PrimitiveTopology::TriangleList,
+            front_face: FrontFace::Ccw,
+            cull_mode: None,
+            polygon_mode: PolygonMode::Fill,
             ..Default::default()
         },
         depth_stencil: None,
-        multisample: MultisampleState { count: 1, mask: !0, alpha_to_coverage_enabled: false },
+        multisample: MultisampleState {
+            count: 1,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        },
         fragment: Some(FragmentState {
-            module, entry_point: Some("fs_main"),
+            module,
+            entry_point: Some("fs_main"),
             targets: &[Some(ColorTargetState {
-                format, blend: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                format,
+                blend: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                 write_mask: ColorWrites::ALL,
             })],
             compilation_options: PipelineCompilationOptions::default(),

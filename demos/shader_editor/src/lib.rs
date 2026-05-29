@@ -241,12 +241,7 @@ impl Application {
                         if from_socket < from_node_data.outputs.len()
                             && to_socket < to_node_data.inputs.len()
                         {
-                            Some((
-                                from_node_data.id,
-                                from_socket,
-                                to_node_data.id,
-                                to_socket,
-                            ))
+                            Some((from_node_data.id, from_socket, to_node_data.id, to_socket))
                         } else {
                             None
                         }
@@ -445,10 +440,9 @@ impl Application {
             event::listen_with(|event, _status, _id| {
                 if let Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event {
                     // Ctrl+Space or Ctrl+Space to toggle palette
-                    if modifiers.command()
-                        && key == keyboard::Key::Named(Named::Space) {
-                            return Some(Message::ToggleCommandPalette);
-                        }
+                    if modifiers.command() && key == keyboard::Key::Named(Named::Space) {
+                        return Some(Message::ToggleCommandPalette);
+                    }
 
                     // When palette is open, handle navigation
                     match key {
