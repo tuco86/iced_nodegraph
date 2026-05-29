@@ -1413,10 +1413,9 @@ where
     ) {
         let b = layout.bounds();
         let z = b.width.min(b.height) * 0.333 / self.extent;
-        let sb = [b.x, b.y, b.width, b.height];
         let mut prim = SdfPrimitive::new();
         for (i, style) in self.styles.iter().enumerate() {
-            prim.push(&self.drawables[i.min(self.drawables.len() - 1)], style, sb);
+            prim.push(&self.drawables[i.min(self.drawables.len() - 1)], style);
         }
         renderer.draw_primitive(
             b,
@@ -1476,10 +1475,9 @@ where
     ) {
         let b = layout.bounds();
         let z = b.width.min(b.height) * 0.333 / self.extent;
-        let sb = [b.x, b.y, b.width, b.height];
         let mut prim = SdfPrimitive::new();
         for (i, style) in self.styles.iter().enumerate() {
-            prim.push(&self.drawables[i.min(self.drawables.len() - 1)], style, sb);
+            prim.push(&self.drawables[i.min(self.drawables.len() - 1)], style);
         }
         renderer.draw_primitive(
             b,
@@ -1540,11 +1538,10 @@ where
     ) {
         let b = layout.bounds();
         let z = b.width.min(b.height) * 0.333 / self.extent;
-        let sb = [b.x, b.y, b.width, b.height];
         let mut prim = SdfPrimitive::new();
         for style in &self.styles {
             for edge in &self.edges[..self.edge_count] {
-                prim.push(edge, style, sb);
+                prim.push(edge, style);
             }
         }
         renderer.draw_primitive(

@@ -25,7 +25,7 @@
 //! let style = Style::stroke(Color::WHITE, Pattern::solid(2.0));
 //!
 //! let mut prim = SdfPrimitive::new();
-//! prim.push(&edge, &style, [0.0, 0.0, 200.0, 100.0]);
+//! prim.push(&edge, &style);
 //! let prim = prim.camera(cam_x, cam_y, zoom).time(elapsed);
 //! ```
 

@@ -74,15 +74,10 @@ impl SdfPrimitive {
         }
     }
 
-    /// Append a drawable with its style. `_screen_bounds` is accepted for API
-    /// compatibility but no longer stored: the pipeline derives a per-draw AABB
-    /// on the GPU, so callers need not supply an accurate screen rectangle.
-    pub fn push(
-        &mut self,
-        drawable: &Drawable,
-        style: &Style,
-        _screen_bounds: [f32; 4],
-    ) -> &mut Self {
+    /// Append a drawable with its style. The pipeline derives a per-draw AABB
+    /// on the GPU from the drawable's world-space bounds, so callers do not
+    /// supply a screen rectangle.
+    pub fn push(&mut self, drawable: &Drawable, style: &Style) -> &mut Self {
         self.entries.push(DrawEntry {
             drawable: drawable.clone(),
             style: style.clone(),
@@ -577,7 +572,7 @@ mod tests {
         let mut p = SdfPrimitive::new();
         let d = crate::curve::Curve::line([0.0, 0.0], [10.0, 0.0]);
         let s = Style::stroke(iced::Color::WHITE, crate::pattern::Pattern::solid(2.0));
-        p.push(&d, &s, [0.0, 0.0, 100.0, 100.0]);
+        p.push(&d, &s);
         assert_eq!(p.entry_count(), 1);
     }
 }
