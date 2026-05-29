@@ -92,6 +92,23 @@ fn clipped_shape_bounds(b: [f32; 4], clip: Rectangle) -> Option<Rectangle> {
     ))
 }
 
+/// Camera offset for an SDF layer drawn into the sub-rectangle `clip`.
+///
+/// The shader uses `clip` as its `bounds_origin`, so the world->screen mapping
+/// must shift the camera to compensate for both the clip origin and the
+/// widget's own screen offset. Reduces to `camera_position - widget_origin`
+/// when `clip` covers the full widget bounds.
+fn layer_camera(
+    camera_position: WorldPoint,
+    zoom: f32,
+    widget_origin: Point,
+    clip: Rectangle,
+) -> (f32, f32) {
+    let cx = camera_position.x + (widget_origin.x * (1.0 - zoom) - clip.x) / zoom;
+    let cy = camera_position.y + (widget_origin.y * (1.0 - zoom) - clip.y) / zoom;
+    (cx, cy)
+}
+
 fn world_bbox_to_screen_bounds(
     x0: f32,
     y0: f32,
@@ -163,74 +180,27 @@ fn edge_drawable(
     }
 }
 
-/// Compute screen-space bounding box for a bezier edge.
-fn edge_screen_bounds(
+/// Build the stroke drawable for an edge plus its shadow drawable.
+///
+/// The shadow shares the stroke geometry, shifted by `style.shadow.offset` when
+/// non-zero (otherwise it is a clone of the stroke shape).
+fn edge_shapes(
     start: &WorldPoint,
     end: &WorldPoint,
     start_side: u32,
     end_side: u32,
-    curve: &crate::style::EdgeCurve,
     style: &crate::style::EdgeStyle,
-    ctx: &RenderContext,
-) -> [f32; 4] {
-    let dir_from = pin_side_direction(start_side);
-    let dir_to = pin_side_direction(end_side);
-
-    // Compute bounding box of all control points
-    let (min_x, min_y, max_x, max_y) = match curve {
-        crate::style::EdgeCurve::Line => (
-            start.x.min(end.x),
-            start.y.min(end.y),
-            start.x.max(end.x),
-            start.y.max(end.y),
-        ),
-        _ => {
-            let l = adaptive_bezier_length([start.x, start.y], [end.x, end.y]);
-            let cp0x = start.x + dir_from[0] * l;
-            let cp0y = start.y + dir_from[1] * l;
-            let cp1x = end.x + dir_to[0] * l;
-            let cp1y = end.y + dir_to[1] * l;
-            (
-                start.x.min(end.x).min(cp0x).min(cp1x),
-                start.y.min(end.y).min(cp0y).min(cp1y),
-                start.x.max(end.x).max(cp0x).max(cp1x),
-                start.y.max(end.y).max(cp0y).max(cp1y),
-            )
+) -> (Drawable, Drawable) {
+    let shape = edge_drawable(start, end, start_side, end_side, &style.curve);
+    let shadow_shape = match &style.shadow {
+        Some(s) if s.offset != (0.0, 0.0) => {
+            let s_start = WorldPoint::new(start.x + s.offset.0, start.y + s.offset.1);
+            let s_end = WorldPoint::new(end.x + s.offset.0, end.y + s.offset.1);
+            edge_drawable(&s_start, &s_end, start_side, end_side, &style.curve)
         }
+        _ => shape.clone(),
     };
-
-    // Compute total padding from style layers
-    let stroke_width = style.pattern.thickness;
-    let stroke_outline_extend = style.stroke_outline.map(|(w, _)| w).unwrap_or(0.0);
-    let border_extend = style
-        .border
-        .as_ref()
-        .map(|b| b.gap + b.width)
-        .unwrap_or(0.0);
-    let shadow_extend = style
-        .shadow
-        .as_ref()
-        .map(|s| s.blur + s.expand)
-        .unwrap_or(0.0);
-    let shadow_offset = style
-        .shadow
-        .as_ref()
-        .map(|s| s.offset)
-        .unwrap_or((0.0, 0.0));
-    let padding = stroke_width
-        + stroke_outline_extend
-        + border_extend
-        + shadow_extend
-        + 4.0 / ctx.camera_zoom;
-
-    world_bbox_to_screen_bounds(
-        min_x - padding + shadow_offset.0.min(0.0),
-        min_y - padding + shadow_offset.1.min(0.0),
-        max_x + padding + shadow_offset.0.max(0.0),
-        max_y + padding + shadow_offset.1.max(0.0),
-        0.0,
-        ctx,
-    )
+    (shape, shadow_shape)
 }
 
 /// Resolve an edge color, falling back to pin color when transparent.
@@ -266,7 +236,6 @@ fn shadow_style(c0: iced::Color, c1: iced::Color, expand: f32, blur: f32) -> Sty
 fn push_edge_stroke(
     batch: &mut SdfPrimitive,
     shape: &Drawable,
-    bounds: [f32; 4],
     style: &crate::style::EdgeStyle,
     start_pin_color: iced::Color,
     end_pin_color: iced::Color,
@@ -295,14 +264,14 @@ fn push_edge_stroke(
         style.pattern
     };
 
-    batch.push(shape, &Style::arc_gradient_stroke(c0, c1, pattern), bounds);
+    batch.push(shape, &Style::arc_gradient_stroke(c0, c1, pattern));
 
     if let Some((w, c)) = style.stroke_outline
         && w > 0.0
         && c.a > 0.0
     {
         let outline_pat = Pattern::solid(pattern.thickness + w * 2.0);
-        batch.push(shape, &Style::stroke(c, outline_pat), bounds);
+        batch.push(shape, &Style::stroke(c, outline_pat));
     }
 }
 
@@ -314,7 +283,6 @@ fn push_edge_visuals(
     batch: &mut SdfPrimitive,
     shape: &Drawable,
     shadow_shape: &Drawable,
-    bounds: [f32; 4],
     style: &crate::style::EdgeStyle,
     start_pin_color: iced::Color,
     end_pin_color: iced::Color,
@@ -330,7 +298,6 @@ fn push_edge_visuals(
     push_edge_stroke(
         batch,
         shape,
-        bounds,
         style,
         start_pin_color,
         end_pin_color,
@@ -357,7 +324,7 @@ fn push_edge_visuals(
         let mut border_style = Style::arc_gradient_stroke(c0, c1, border_pat);
         border_style.dist_from = -border_outer;
         border_style.dist_to = -border_center + border.width * 0.5;
-        batch.push(shape, &border_style, bounds);
+        batch.push(shape, &border_style);
 
         if let Some((w, oc)) = border.outline
             && w > 0.0
@@ -367,7 +334,7 @@ fn push_edge_visuals(
             let mut outline_style = Style::stroke(oc, outline_pat);
             outline_style.dist_from = -border_outer - w;
             outline_style.dist_to = -border_center + (border.width * 0.5) + w;
-            batch.push(shape, &outline_style, bounds);
+            batch.push(shape, &outline_style);
         }
 
         // Border background fill (behind the border stroke)
@@ -379,7 +346,7 @@ fn push_edge_visuals(
             };
             let mut bg_style = Style::arc_gradient(bg0, bg1);
             bg_style.dist_to = border_outer;
-            batch.push(shape, &bg_style, bounds);
+            batch.push(shape, &bg_style);
         }
     }
 
@@ -390,7 +357,6 @@ fn push_edge_visuals(
         batch.push(
             shadow_shape,
             &shadow_style(shadow.color, shadow.end_color, shadow.expand, shadow.blur),
-            bounds,
         );
     }
 }
@@ -681,33 +647,13 @@ where
 
                 let from_side: u32 = from_pin_state.side.into();
                 let to_side: u32 = to_pin_state.side.into();
-                let shape =
-                    edge_drawable(&start_pos, &end_pos, from_side, to_side, &edge_style.curve);
-                let bounds = edge_screen_bounds(
-                    &start_pos,
-                    &end_pos,
-                    from_side,
-                    to_side,
-                    &edge_style.curve,
-                    &edge_style,
-                    &render_context,
-                );
-
-                let shadow_shape = match &edge_style.shadow {
-                    Some(s) if s.offset != (0.0, 0.0) => {
-                        let so = (s.offset.0, s.offset.1);
-                        let s_start = WorldPoint::new(start_pos.x + so.0, start_pos.y + so.1);
-                        let s_end = WorldPoint::new(end_pos.x + so.0, end_pos.y + so.1);
-                        edge_drawable(&s_start, &s_end, from_side, to_side, &edge_style.curve)
-                    }
-                    _ => shape.clone(),
-                };
+                let (shape, shadow_shape) =
+                    edge_shapes(&start_pos, &end_pos, from_side, to_side, &edge_style);
 
                 push_edge_visuals(
                     &mut batch,
                     &shape,
                     &shadow_shape,
-                    bounds,
                     &edge_style,
                     from_pin_state.color,
                     to_pin_state.color,
@@ -730,14 +676,16 @@ where
             // full-bounds clip). No-op when the graph is at the window origin.
             let wo = layout.bounds().position();
             if !edge_batch.is_empty() {
+                let (cx, cy) = layer_camera(
+                    render_context.camera_position,
+                    render_context.camera_zoom,
+                    wo,
+                    layout.bounds(),
+                );
                 renderer.draw_primitive(
                     layout.bounds(),
                     edge_batch
-                        .camera(
-                            render_context.camera_position.x - wo.x,
-                            render_context.camera_position.y - wo.y,
-                            render_context.camera_zoom,
-                        )
+                        .camera(cx, cy, render_context.camera_zoom)
                         .time(render_context.time)
                         .debug_tiles(self.sdf_debug.edges),
                 );
@@ -780,44 +728,14 @@ where
                     };
 
                     let from_side: u32 = from_pin_state.side.into();
-                    let shape = edge_drawable(
-                        &start_pos,
-                        &end_pos,
-                        from_side,
-                        end_side,
-                        &drag_edge_style.curve,
-                    );
-                    let bounds = edge_screen_bounds(
-                        &start_pos,
-                        &end_pos,
-                        from_side,
-                        end_side,
-                        &drag_edge_style.curve,
-                        &drag_edge_style,
-                        &render_context,
-                    );
-                    let shadow_shape = match &drag_edge_style.shadow {
-                        Some(s) if s.offset != (0.0, 0.0) => {
-                            let so = (s.offset.0, s.offset.1);
-                            let s_start = WorldPoint::new(start_pos.x + so.0, start_pos.y + so.1);
-                            let s_end = WorldPoint::new(end_pos.x + so.0, end_pos.y + so.1);
-                            edge_drawable(
-                                &s_start,
-                                &s_end,
-                                from_side,
-                                end_side,
-                                &drag_edge_style.curve,
-                            )
-                        }
-                        _ => shape.clone(),
-                    };
+                    let (shape, shadow_shape) =
+                        edge_shapes(&start_pos, &end_pos, from_side, end_side, &drag_edge_style);
 
                     let mut drag_batch = SdfPrimitive::new();
                     push_edge_visuals(
                         &mut drag_batch,
                         &shape,
                         &shadow_shape,
-                        bounds,
                         &drag_edge_style,
                         from_pin_state.color,
                         from_pin_state.color,
@@ -825,14 +743,16 @@ where
                         end_direction,
                     );
 
+                    let (cx, cy) = layer_camera(
+                        render_context.camera_position,
+                        render_context.camera_zoom,
+                        wo,
+                        layout.bounds(),
+                    );
                     renderer.draw_primitive(
                         layout.bounds(),
                         drag_batch
-                            .camera(
-                                render_context.camera_position.x - wo.x,
-                                render_context.camera_position.y - wo.y,
-                                render_context.camera_zoom,
-                            )
+                            .camera(cx, cy, render_context.camera_zoom)
                             .time(render_context.time),
                     );
                 }
@@ -844,8 +764,6 @@ where
         // ========================================
         {
             let mut shadow_batch = SdfPrimitive::new();
-            let cam_x = render_context.camera_position.x;
-            let cam_y = render_context.camera_position.y;
             let cam_zoom = render_context.camera_zoom;
 
             for &node_index in &z_indices {
@@ -889,30 +807,26 @@ where
                     node_center[0] + shadow.offset.0,
                     node_center[1] + shadow.offset.1,
                 ];
-                let pad = shadow.blur * 1.5;
-                let sb = world_bbox_to_screen_bounds(
-                    sc[0] - node_half_size[0],
-                    sc[1] - node_half_size[1],
-                    sc[0] + node_half_size[0],
-                    sc[1] + node_half_size[1],
-                    pad,
-                    &render_context,
-                );
                 let shadow_shape = Curve::rounded_rect(sc, node_half_size, corner_radius);
                 let shadow_color = color_with_opacity(shadow.color, opacity);
                 let shadow_style_ =
                     Style::shadow(shadow_color, shadow.blur).expand(shadow.blur * 0.5);
-                shadow_batch.push(&shadow_shape, &shadow_style_, sb);
+                shadow_batch.push(&shadow_shape, &shadow_style_);
             }
 
             if !shadow_batch.is_empty() {
-                // Full-bounds clip: compensate the camera by the widget origin.
                 let wo = layout.bounds().position();
+                let (cx, cy) = layer_camera(
+                    render_context.camera_position,
+                    cam_zoom,
+                    wo,
+                    layout.bounds(),
+                );
                 renderer.with_layer(layout.bounds(), |renderer| {
                     renderer.draw_primitive(
                         layout.bounds(),
                         shadow_batch
-                            .camera(cam_x - wo.x, cam_y - wo.y, cam_zoom)
+                            .camera(cx, cy, cam_zoom)
                             .time(render_context.time)
                             .debug_tiles(self.sdf_debug.shadows),
                     );
@@ -959,8 +873,6 @@ where
             let node_size = node_layout.bounds().size();
             let corner_radius = resolved.corner_radius;
             let opacity = resolved.opacity;
-            let cam_x = render_context.camera_position.x;
-            let cam_y = render_context.camera_position.y;
             let cam_zoom = render_context.camera_zoom;
 
             // Gather pins once. Each pin punctures the body with a circular
@@ -1022,15 +934,17 @@ where
                 &render_context,
             );
             if let Some(fill_clip) = clipped_shape_bounds(fb, layout.bounds()) {
-                let widget_origin = layout.bounds().position();
-                let cx = cam_x + (widget_origin.x * (1.0 - cam_zoom) - fill_clip.x) / cam_zoom;
-                let cy = cam_y + (widget_origin.y * (1.0 - cam_zoom) - fill_clip.y) / cam_zoom;
+                let (cx, cy) = layer_camera(
+                    render_context.camera_position,
+                    cam_zoom,
+                    layout.bounds().position(),
+                    fill_clip,
+                );
                 renderer.with_layer(layout.bounds(), |renderer| {
                     let mut fill_batch = SdfPrimitive::new();
                     fill_batch.push(
                         &node_outline,
                         &Style::solid(color_with_opacity(resolved.fill_color, opacity)),
-                        fb,
                     );
                     renderer.draw_primitive(
                         fill_clip,
@@ -1115,7 +1029,6 @@ where
                                 color_with_opacity(node_border.color, opacity),
                                 node_border.pattern,
                             ),
-                            bb,
                         );
 
                         if let Some((ow, oc)) = node_border.outline
@@ -1128,7 +1041,6 @@ where
                                     color_with_opacity(oc, opacity),
                                     Pattern::solid(bw + ow * 2.0),
                                 ),
-                                bb,
                             );
                         }
 
@@ -1187,13 +1099,12 @@ where
                         &render_context,
                     );
 
-                    fg_batch.push(&pin_shape, &pin_fill_style, pin_bounds);
+                    fg_batch.push(&pin_shape, &pin_fill_style);
 
                     if pin_border_color.a > 0.0 && pin_border_width > 0.0 {
                         fg_batch.push(
                             &pin_shape,
                             &Style::solid(pin_border_color).expand(pin_border_width),
-                            pin_bounds,
                         );
                     }
 
@@ -1207,9 +1118,12 @@ where
                     [fg_min_x, fg_min_y, fg_max_x - fg_min_x, fg_max_y - fg_min_y],
                     layout.bounds(),
                 ) {
-                    let widget_origin = layout.bounds().position();
-                    let cx = cam_x + (widget_origin.x * (1.0 - cam_zoom) - fg_clip.x) / cam_zoom;
-                    let cy = cam_y + (widget_origin.y * (1.0 - cam_zoom) - fg_clip.y) / cam_zoom;
+                    let (cx, cy) = layer_camera(
+                        render_context.camera_position,
+                        cam_zoom,
+                        layout.bounds().position(),
+                        fg_clip,
+                    );
                     renderer.with_layer(layout.bounds(), |renderer| {
                         renderer.draw_primitive(
                             fg_clip,
@@ -1267,16 +1181,15 @@ where
                 select_batch.push(
                     &select_shape,
                     &Style::stroke(border_color, Pattern::solid(border_width)),
-                    select_bounds,
                 );
-                select_batch.push(&select_shape, &Style::solid(fill_color), select_bounds);
+                select_batch.push(&select_shape, &Style::solid(fill_color));
 
-                let widget_origin = layout.bounds().position();
-                let z = render_context.camera_zoom;
-                let cx = render_context.camera_position.x
-                    + (widget_origin.x * (1.0 - z) - select_clip.x) / z;
-                let cy = render_context.camera_position.y
-                    + (widget_origin.y * (1.0 - z) - select_clip.y) / z;
+                let (cx, cy) = layer_camera(
+                    render_context.camera_position,
+                    render_context.camera_zoom,
+                    layout.bounds().position(),
+                    select_clip,
+                );
                 let select_primitive = select_batch
                     .camera(cx, cy, render_context.camera_zoom)
                     .time(render_context.time);
@@ -1318,14 +1231,13 @@ where
                 cutting_batch.push(
                     &Curve::line([start.x, start.y], [cursor_world.x, cursor_world.y]),
                     &Style::stroke(cutting_color, Pattern::solid(EDGE_CUT_LINE_WIDTH)),
-                    cutting_bounds,
                 );
-                let widget_origin = layout.bounds().position();
-                let z = render_context.camera_zoom;
-                let cx = render_context.camera_position.x
-                    + (widget_origin.x * (1.0 - z) - cutting_clip.x) / z;
-                let cy = render_context.camera_position.y
-                    + (widget_origin.y * (1.0 - z) - cutting_clip.y) / z;
+                let (cx, cy) = layer_camera(
+                    render_context.camera_position,
+                    render_context.camera_zoom,
+                    layout.bounds().position(),
+                    cutting_clip,
+                );
                 let cutting_primitive = cutting_batch
                     .camera(cx, cy, render_context.camera_zoom)
                     .time(render_context.time);
