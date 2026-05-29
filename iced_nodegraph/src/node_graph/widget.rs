@@ -868,29 +868,33 @@ where
                 let mut fg_max_x = f32::MIN;
                 let mut fg_max_y = f32::MIN;
 
-                // Border (main stroke in front; outline pushed behind as halo)
-                if let Some(node_border) = &resolved.border {
-                    let bw = node_border.pattern.thickness;
-                    if bw > 0.0 {
-                        let border_pad = bw + 2.0 / cam_zoom;
-                        let bb = world_bbox_to_screen_bounds(
-                            node_position.x,
-                            node_position.y,
-                            node_position.x + node_size.width,
-                            node_position.y + node_size.height,
-                            border_pad,
-                            &render_context,
-                        );
+                // Border (main stroke in front; outline pushed behind as halo).
+                // Cull padding follows the actual layer extents rather than a
+                // hand-tuned guess; the node body is a closed shape.
+                let border_layers = resolved.border_sdf_layers(opacity);
+                if !border_layers.is_empty() {
+                    let border_pad = border_layers
+                        .iter()
+                        .map(|s| s.extent(node_outline.is_closed()))
+                        .fold(0.0_f32, f32::max)
+                        + 2.0 / cam_zoom;
+                    let bb = world_bbox_to_screen_bounds(
+                        node_position.x,
+                        node_position.y,
+                        node_position.x + node_size.width,
+                        node_position.y + node_size.height,
+                        border_pad,
+                        &render_context,
+                    );
 
-                        for style in resolved.border_sdf_layers(opacity) {
-                            fg_batch.push(&node_outline, &style);
-                        }
-
-                        fg_min_x = fg_min_x.min(bb[0]);
-                        fg_min_y = fg_min_y.min(bb[1]);
-                        fg_max_x = fg_max_x.max(bb[0] + bb[2]);
-                        fg_max_y = fg_max_y.max(bb[1] + bb[3]);
+                    for style in &border_layers {
+                        fg_batch.push(&node_outline, style);
                     }
+
+                    fg_min_x = fg_min_x.min(bb[0]);
+                    fg_min_y = fg_min_y.min(bb[1]);
+                    fg_max_x = fg_max_x.max(bb[0] + bb[2]);
+                    fg_max_y = fg_max_y.max(bb[1] + bb[3]);
                 }
 
                 // Pins
@@ -911,7 +915,6 @@ where
                     let indicator_r = radius * 0.4;
                     let pin_world: WorldPoint =
                         (pin_pos.into_euclid().to_vector() + offset).to_point();
-                    let pin_border_width = pin_style.border_width;
                     let pin_color = pin_state.color;
                     let pw = [pin_world.x, pin_world.y];
 
@@ -922,7 +925,16 @@ where
                         _ => Curve::circle(pw, indicator_r),
                     };
 
-                    let pin_pad = indicator_r + pin_border_width + 2.0 / cam_zoom;
+                    let pin_layers =
+                        pin_style.sdf_layers(pin_color, pin_state.direction, indicator_r);
+                    // Bounds: shape radius plus the largest layer extent beyond
+                    // the shape boundary (input ring, border ring).
+                    let pin_pad = indicator_r
+                        + pin_layers
+                            .iter()
+                            .map(|s| s.extent(pin_shape.is_closed()))
+                            .fold(0.0_f32, f32::max)
+                        + 2.0 / cam_zoom;
                     let pin_bounds = world_bbox_to_screen_bounds(
                         pin_world.x - pin_pad,
                         pin_world.y - pin_pad,
@@ -932,8 +944,8 @@ where
                         &render_context,
                     );
 
-                    for style in pin_style.sdf_layers(pin_color, pin_state.direction, indicator_r) {
-                        fg_batch.push(&pin_shape, &style);
+                    for style in &pin_layers {
+                        fg_batch.push(&pin_shape, style);
                     }
 
                     fg_min_x = fg_min_x.min(pin_bounds[0]);
