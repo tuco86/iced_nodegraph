@@ -36,13 +36,13 @@
 use demo_common::{ScreenshotHelper, ScreenshotMessage};
 use iced::{
     alignment::Horizontal,
-    Color, Element, Length, Point, Subscription, Theme,
+    Color, Element, Length, Point, Subscription, Theme, Vector,
     widget::{button, column, container, row, scrollable, text, Space},
 };
 use iced_nodegraph::{
     NodeContentStyle, PinRef, node_graph, pin, simple_node,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[cfg(feature = "wasm")]
 use wasm_bindgen::prelude::*;
@@ -142,6 +142,11 @@ enum Message {
         node_id: usize,
         position: Point,
     },
+    SelectionChanged(Vec<usize>),
+    GroupMoved {
+        node_ids: Vec<usize>,
+        delta: Vector,
+    },
     ClearAll,
     Reset,
     ToggleRules,
@@ -158,8 +163,10 @@ struct App {
     edges: Vec<(PinRef<usize, usize>, PinRef<usize, usize>)>,
     node_positions: HashMap<usize, Point>,
     pin_registry: HashMap<(usize, usize), PinInfo>,
+    selected_nodes: HashSet<usize>,
     feedback: Vec<String>,
     show_rules: bool,
+    theme: Theme,
     screenshot: ScreenshotHelper,
 }
 
@@ -169,8 +176,10 @@ impl App {
             edges: Vec::new(),
             node_positions: Self::default_positions(),
             pin_registry: HashMap::new(),
+            selected_nodes: HashSet::new(),
             feedback: vec!["Drag between pins to connect nodes.".into()],
             show_rules: false,
+            theme: Theme::Dark,
             screenshot: ScreenshotHelper::from_args(),
         };
         app.register_pins();
@@ -249,6 +258,11 @@ impl App {
             .pin_registry
             .get(&(to.node_id, to.pin_id))
             .ok_or("Unknown target pin")?;
+
+        // Reject a pin wired to itself (degenerate self-loop: start == end).
+        if from.node_id == to.node_id && from.pin_id == to.pin_id {
+            return Err("Cannot connect a pin to itself".into());
+        }
 
         // Check direction compatibility (Input<->Input is the only invalid combo)
         let dir_ok = !matches!(
@@ -349,6 +363,17 @@ impl App {
             Message::NodeMoved { node_id, position } => {
                 self.node_positions.insert(node_id, position);
             }
+            Message::SelectionChanged(node_ids) => {
+                self.selected_nodes = node_ids.into_iter().collect();
+            }
+            Message::GroupMoved { node_ids, delta } => {
+                for id in node_ids {
+                    if let Some(pos) = self.node_positions.get_mut(&id) {
+                        pos.x += delta.x;
+                        pos.y += delta.y;
+                    }
+                }
+            }
             Message::ClearAll => {
                 self.edges.clear();
                 self.feedback.push("All connections cleared.".into());
@@ -356,6 +381,7 @@ impl App {
             Message::Reset => {
                 self.edges.clear();
                 self.node_positions = Self::default_positions();
+                self.selected_nodes.clear();
                 self.feedback = vec!["Reset to initial state.".into()];
             }
             Message::ToggleRules => {
@@ -374,22 +400,40 @@ impl App {
         self.screenshot.subscription().map(Message::Screenshot)
     }
 
+    fn theme(&self) -> Theme {
+        self.theme.clone()
+    }
+
     fn view(&self) -> Element<'_, Message> {
-        let theme = Theme::Dark;
+        let theme = self.theme();
 
         let registry = self.pin_registry.clone();
         let mut ng = node_graph()
             .can_connect(move |from, to| {
+                // Live snap feedback: reject self-loops, direction conflicts and
+                // type mismatches before the edge is committed on release.
+                if from.node_id == to.node_id && from.pin_id == to.pin_id {
+                    return false;
+                }
                 let from_info = registry.get(&(from.node_id, from.pin_id));
                 let to_info = registry.get(&(to.node_id, to.pin_id));
                 match (from_info, to_info) {
-                    (Some(f), Some(t)) => f.pin_type.is_compatible(t.pin_type),
+                    (Some(f), Some(t)) => {
+                        let dir_ok = !matches!(
+                            (f.direction, t.direction),
+                            (PinDir::Input, PinDir::Input) | (PinDir::Output, PinDir::Output)
+                        );
+                        dir_ok && f.pin_type.is_compatible(t.pin_type)
+                    }
                     _ => false,
                 }
             })
             .on_connect(|from, to| Message::EdgeConnected { from, to })
             .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })
-            .on_move(|node_id, position| Message::NodeMoved { node_id, position });
+            .on_move(|node_id, position| Message::NodeMoved { node_id, position })
+            .on_select(Message::SelectionChanged)
+            .on_group_move(|node_ids, delta| Message::GroupMoved { node_ids, delta })
+            .selection(&self.selected_nodes);
 
         // Node 0: Number Generator
         let pos = self.node_positions.get(&0).copied().unwrap_or(Point::ORIGIN);
@@ -587,6 +631,7 @@ pub fn main() -> iced::Result {
 
     iced::application(App::new, App::update, App::view)
         .subscription(App::subscription)
+        .theme(App::theme)
         .title("Interaction Demo - Connection Validation")
         .window(window_settings)
         .run()
