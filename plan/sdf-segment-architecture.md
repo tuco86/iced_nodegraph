@@ -1,5 +1,11 @@
 # Segment-Based SDF Architecture
 
+> Status: IMPLEMENTED. This design has shipped in the `iced_sdf` crate. The
+> contour type, turtle/coordinate builder, GPU segment pipeline, cubic beziers,
+> and boolean contour operations all exist in `iced_sdf/src/{curve,drawable,
+> compile,boolean}.rs` and `iced_sdf/src/pipeline/`. Retained as a historical
+> design record; the authoritative reference is `iced_sdf/ARCHITECTURE.md`.
+
 ## Problem
 
 CSG operations (`min`, `max`) on SDFs produce inexact distance fields. The distance is correct at the surface (`dist = 0`) but increasingly wrong further away. This affects blur, gradients, expand, and any effect that depends on accurate distance values.

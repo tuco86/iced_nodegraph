@@ -97,9 +97,12 @@ Use the `code-reviewer` agent for reviewing significant code changes before comm
 This workspace contains a node graph editor built on Iced 0.14:
 
 - **`iced_nodegraph`** - Custom node graph widget built on Iced GUI framework *(main project)*
-- **`ngwa-rs`** - SpacetimeDB module for backend data persistence (optional)
+- **`iced_sdf`** - Segment-based SDF renderer providing exact distance fields for nodes, edges, pins, and pin cutouts
+- **`demos/*`** - hello_world, styling, interaction, 500_nodes, shader_editor, plus a shared `common` crate
 
-**Dependencies**: Uses `iced = "0.14"` from crates.io and `iced_sdf` for SDF-based rendering.
+`ngwa-rs` (a SpacetimeDB backend module) is an optional, separate sibling workspace at `../ngwa-rs`. It is NOT a member of this workspace's `Cargo.toml` and is not required to build or run the widget or demos.
+
+**Dependencies**: Uses `iced = "0.14"` from crates.io and the in-tree `iced_sdf` crate for SDF-based rendering.
 
 **Current Status**: Core functionality is complete - node/pin interaction, edge connections, and coordinate transformations are fully functional with type-safe API.
 
@@ -288,27 +291,27 @@ pub enum NodeGraphEvent {
 ```
 
 ### NodeGraph Methods
+The widget is generic over node id `N` and pin id `P` (both default to `usize`).
+A connection endpoint is a `PinRef<N, P> { node_id, pin_id }`; `PinReference` is
+the `PinRef<usize, usize>` specialization. Each node is pushed with an explicit
+id as the first argument.
 ```rust
-// Adding content
-ng.push_node(position, element);
-ng.push_node_styled(position, element, NodeStyle);
-ng.push_edge(PinReference::new(0, 0), PinReference::new(1, 0));
+// Adding content (node_id comes first)
+ng.push_node(node_id, position, element);
+ng.push_node_styled(node_id, position, element, NodeConfig);
+ng.push_edge(PinRef::new(0, 0), PinRef::new(1, 0));
 ng.push_edge_styled(from, to, EdgeStyle);
 
-// Event handlers
-ng.on_connect(|from_node, from_pin, to_node, to_pin| Message)
-ng.on_disconnect(|from_node, from_pin, to_node, to_pin| Message)
+// Event handlers (callbacks receive PinRef endpoints, not split node/pin ids)
+ng.on_connect(|from, to| Message)        // from, to: PinRef<N, P>
+ng.on_disconnect(|from, to| Message)
 ng.on_move(|node_id, position| Message)
-ng.on_select(|selected_ids| Message)
+ng.on_select(|selected_ids| Message)     // selected_ids: Vec<N>
 ng.on_clone(|node_ids| Message)
 ng.on_delete(|node_ids| Message)
 ng.on_group_move(|node_ids, delta| Message)
-
-// State queries
-ng.node_count() -> usize
-ng.edge_count() -> usize
-ng.node_position(node_id) -> Option<Point>
-ng.edges() -> Iterator<Item = (PinReference, PinReference, Option<&EdgeStyle>)>
+ng.can_connect(|from, to| bool)          // live snap validation during drag
+ng.selection(&selected_set)              // highlight + z-order selected nodes
 ```
 
 When adding features, maintain the coordinate system abstractions and use `iced_sdf` Layer/Pattern API for custom rendering.

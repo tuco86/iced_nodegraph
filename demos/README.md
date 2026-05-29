@@ -1,116 +1,80 @@
 # iced_nodegraph Demos
 
-This directory contains demonstration projects showcasing different aspects of the `iced_nodegraph` library.
+This directory contains demonstration projects showcasing different aspects of
+the `iced_nodegraph` library. All demos are implemented and runnable.
 
 ## Demo Projects
 
 ### [hello_world](./hello_world/)
 
-**Basic Node Graph Usage**
+The most feature-complete demo. A pre-built workflow graph with a command
+palette (Cmd/Ctrl+Space), 22 theme presets, live style-config nodes,
+selection, clone, delete, group move, edge cutting, and native persistence.
 
-The simplest possible node graph application. Shows fundamental concepts:
-
-- Creating and displaying a NodeGraph widget
-- Adding nodes to the canvas
-- Basic camera controls (pan, zoom)
-- Connecting pins between nodes
-- Handling connection events
-
-**Run:** `cargo run -p hello_world_demo`
+**Run:** `cargo run -p demo_hello_world`
 
 ### [styling](./styling/)
 
-**Visual Customization and Theming**
+Visual customization and theming. Node presets, theme switching, and live
+style controls (corner radius, opacity, border width) applied to the selection.
 
-Demonstrates theming and visual customization capabilities:
-
-- Custom node styles (colors, borders, shadows)
-- Pin appearance customization per type
-- Theme switching (light/dark modes)
-- Edge styling variations
-- Visual feedback states (hover, selected, dragging)
-
-**Run:** `cargo run -p styling_demo`
+**Run:** `cargo run -p demo_styling`
 
 ### [interaction](./interaction/)
 
-**Input/Output Pin Rules and Connection Validation**
+Typed pin connection validation: input-only, output-only, and bidirectional
+pins; type compatibility; single-connection and duplicate rules; self-loop
+rejection; and live snap feedback via `can_connect`.
 
-Shows how to implement directional data flow and enforce connection constraints:
+**Run:** `cargo run -p demo_interaction`
 
-- Input-only pins (left side) - can only receive edges
-- Output-only pins (right side) - can only send edges  
-- Bidirectional pins (top/bottom)
-- Pin type validation (prevent incompatible connections)
-- Multiple edges per pin vs. single connection enforcement
-- Visual feedback for valid/invalid connection attempts
+### [500_nodes](./500_nodes/)
 
-**Run:** `cargo run -p interaction_demo`
+Performance benchmark with a procedurally generated graph of 500+ nodes.
+Selection and group move are supported, with per-layer SDF debug toggles and a
+runtime stats overlay.
+
+**Run:** `cargo run -p demo_500_nodes`
+
+### [shader_editor](./shader_editor/)
+
+Visual WGSL shader graph with a category-grouped command palette, typed
+sockets, and a compiler that validates the graph and generates WGSL.
+
+**Run:** `cargo run -p demo_shader_editor`
 
 ## Building Demos
 
-### Build All Demos
-
 ```bash
+# Build the whole workspace
 cargo build --workspace
-```
 
-### Run Specific Demo
+# Run a specific demo from the workspace root
+cargo run -p demo_hello_world
 
-```bash
-# From workspace root
-cargo run -p hello_world_demo
-cargo run -p styling_demo
-cargo run -p interaction_demo
-```
-
-### Run from Demo Directory
-
-```bash
+# Or run from the demo directory
 cd demos/hello_world
 cargo run
 ```
 
-## Demo Structure
+The shared `demos/common` crate provides a `ScreenshotHelper` for the
+`--screenshot <path.png>` CLI flag used in documentation captures.
 
-Each demo project follows this structure:
+## Demo Structure
 
 ```
 demos/<demo_name>/
-├── Cargo.toml           # Demo-specific dependencies
-├── README.md            # Detailed documentation and requirements
-└── src/
-    ├── main.rs          # Application entry point
-    └── ...              # Demo-specific modules
+|-- Cargo.toml           # Demo-specific dependencies
+|-- README.md            # Demo documentation
+`-- src/
+    |-- main.rs          # Native entry point
+    |-- lib.rs           # Application logic (shared with the WASM target)
+    `-- ...              # Demo-specific modules
 ```
-
-## Development Guidelines
-
-- Each demo should be self-contained and runnable independently
-- READMEs serve as specification documents for AI-assisted initialization
-- Keep demos focused on specific feature sets
-- Use consistent code style across all demos
-- Include comprehensive comments explaining key concepts
-
-## Contributing New Demos
-
-When adding a new demo:
-
-1. Create directory under `demos/`
-2. Write comprehensive README.md with:
-   - Features demonstrated
-   - Implementation requirements
-   - Expected output
-   - Copilot initialization instructions
-3. Add workspace member to root `Cargo.toml`
-4. Ensure demo builds and runs correctly
-5. Update this README with demo description
 
 ## Requirements
 
-All demos require:
-
-- Rust 1.75+ (edition 2024)
-- Iced master branch (targeting 0.14 release)
-- WGPU-capable graphics driver
-- See individual demo READMEs for specific dependencies
+- Rust (edition 2024)
+- `iced = "0.14"` from crates.io
+- A WGPU-capable graphics driver (WebGPU for the WASM builds; Chrome or another
+  Chromium-based browser is recommended)

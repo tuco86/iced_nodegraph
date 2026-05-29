@@ -4,20 +4,17 @@
 //!
 //! ## Running Demos
 //!
-//! All demos can be run from the workspace root:
+//! All demos can be run from the workspace root with their package name:
 //!
 //! ```bash
-//! # Hello World demo
-//! cargo run -p iced_nodegraph_demo_hello_world
-//!
-//! # Styling demo (when implemented)
-//! cargo run -p iced_nodegraph_demo_styling
-//!
-//! # Interaction demo (when implemented)
-//! cargo run -p iced_nodegraph_demo_interaction
+//! cargo run -p demo_hello_world
+//! cargo run -p demo_styling
+//! cargo run -p demo_interaction
+//! cargo run -p demo_500_nodes
+//! cargo run -p demo_shader_editor
 //! ```
 //!
-//! Or navigate to the specific demo directory:
+//! Or from the specific demo directory:
 //!
 //! ```bash
 //! cd demos/hello_world
@@ -26,112 +23,78 @@
 //!
 //! ## Demo Projects
 //!
+//! All demos below are implemented and runnable.
+//!
 //! ### hello_world
 //!
-//! **Status**: ✅ Implemented
+//! The most feature-complete demo. A pre-built workflow graph with a command
+//! palette (Cmd/Ctrl+Space), 22 theme presets, live style-config nodes,
+//! selection/clone/delete/group-move, edge cutting, and native persistence.
 //!
-//! Basic node graph demonstration with command palette.
-//!
-//! **Features:**
-//! - Pre-configured email processing workflow
-//! - Command palette (Cmd/Ctrl+Space) for actions
-//! - Theme switcher with live preview
-//! - Node creation from palette
-//! - Pan (middle-mouse) and zoom (scroll)
-//!
-//! **Source**: [`demos/hello_world/src/main.rs`](../demos/hello_world/src/main.rs)  
-//! **Documentation**: [`demos/hello_world/README.md`](../demos/hello_world/README.md)
+//! Source: [`demos/hello_world/src/lib.rs`](../demos/hello_world/src/lib.rs).
+//! Documentation: [`demos/hello_world/README.md`](../demos/hello_world/README.md).
 //!
 //! ### styling
 //!
-//! **Status**: 📋 Planned (README complete, ready for implementation)
+//! Visual customization showcase: node presets, theme switching, and live
+//! style controls (corner radius, opacity, border width) applied to selection.
 //!
-//! Visual customization and theming showcase.
-//!
-//! **Planned Features:**
-//! - Custom node styles (colors, borders, shadows)
-//! - Pin appearance customization
-//! - Theme switching (light/dark modes)
-//! - Edge styling variations
-//! - Visual feedback states
-//!
-//! **Specification**: [`demos/styling/README.md`](../demos/styling/README.md)
+//! Documentation: [`demos/styling/README.md`](../demos/styling/README.md).
 //!
 //! ### interaction
 //!
-//! **Status**: 📋 Planned (README complete, ready for implementation)
+//! Typed pin connection validation: input/output/bidirectional directions,
+//! type compatibility, single-connection and duplicate rules, self-loop
+//! rejection, and live snap feedback via `can_connect`.
 //!
-//! Pin rules and connection validation demonstration.
+//! Documentation: [`demos/interaction/README.md`](../demos/interaction/README.md).
 //!
-//! **Planned Features:**
-//! - Input-only pins (left side)
-//! - Output-only pins (right side)
-//! - Bidirectional pins (top/bottom)
-//! - Type validation (prevent incompatible connections)
-//! - Single vs. multiple connection enforcement
-//! - Visual feedback for valid/invalid attempts
+//! ### 500_nodes
 //!
-//! **Specification**: [`demos/interaction/README.md`](../demos/interaction/README.md)
+//! Performance benchmark with a procedurally generated graph of 500+ nodes,
+//! selection and group-move support, and per-layer SDF debug toggles.
+//!
+//! Source: [`demos/500_nodes/src/lib.rs`](../demos/500_nodes/src/lib.rs).
+//!
+//! ### shader_editor
+//!
+//! Visual WGSL shader graph with a category-grouped command palette, typed
+//! sockets, and a compiler that validates and generates WGSL from the graph.
+//!
+//! Documentation: [`demos/shader_editor/README.md`](../demos/shader_editor/README.md).
+//!
+//! ## Shared Crate
+//!
+//! `demos/common` provides a `ScreenshotHelper` used by demos to support the
+//! `--screenshot <path.png>` CLI flag for documentation captures.
 //!
 //! ## Building All Demos
 //!
 //! ```bash
-//! # Build entire workspace
 //! cargo build --workspace
-//!
-//! # Build only demos
-//! cargo build -p iced_nodegraph_demo_hello_world
-//! cargo build -p iced_nodegraph_demo_styling
-//! cargo build -p iced_nodegraph_demo_interaction
 //! ```
-//!
-//! ## Documentation
-//!
-//! Each demo includes:
-//!
-//! - **README.md**: Detailed specification with features, requirements, and implementation notes
-//! - **Source code documentation**: Inline rustdoc comments explaining key concepts
-//! - **Cargo.toml**: Demo-specific dependencies
-//!
-//! ## For Contributors
-//!
-//! ### Implementing a New Demo
-//!
-//! 1. **Read the README**: Each demo has a comprehensive README serving as specification
-//! 2. **Check dependencies**: Review `Cargo.toml` for required crates
-//! 3. **Follow patterns**: Use existing demos as reference for structure
-//! 4. **Document thoroughly**: Add rustdoc comments explaining concepts
-//! 5. **Test comprehensively**: Ensure all features work as specified
-//!
-//! ### Demo Requirements
-//!
-//! All demos must:
-//! - Be self-contained and independently runnable
-//! - Include comprehensive documentation
-//! - Follow workspace coding standards
-//! - Use consistent naming (iced_nodegraph_demo_*)
-//! - Work on all supported platforms (Windows, macOS, Linux)
 //!
 //! ## Architecture
 //!
-//! Demos are separate binary crates in the workspace:
+//! Each demo is a separate binary crate that depends on the core library:
 //!
 //! ```text
 //! workspace/
-//! ├── Cargo.toml              # Workspace manifest
-//! ├── iced_nodegraph/         # Core library
-//! └── demos/
-//!     ├── hello_world/
-//!     │   ├── Cargo.toml
-//!     │   ├── README.md
-//!     │   └── src/main.rs
-//!     ├── styling/
-//!     └── interaction/
+//! |-- Cargo.toml              # Workspace manifest
+//! |-- iced_nodegraph/         # Core widget library
+//! |-- iced_sdf/               # Segment-based SDF renderer
+//! `-- demos/
+//!     |-- common/             # Shared screenshot helper
+//!     |-- hello_world/
+//!     |-- styling/
+//!     |-- interaction/
+//!     |-- 500_nodes/
+//!     `-- shader_editor/
 //! ```
 //!
 //! See [`docs/architecture.md`](../docs/architecture.md) for complete workspace documentation.
 
 #![allow(unused)]
 
-// This file provides documentation only
-// Each demo is a separate binary crate
+// This file provides documentation only.
+// Each demo is a separate binary crate.

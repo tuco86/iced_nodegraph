@@ -1,38 +1,77 @@
-# Visual Shader Editor Demo
+# Demo: shader_editor
 
-A comprehensive visual shader editor for iced_nodegraph that demonstrates:
+A visual WGSL shader editor built on `iced_nodegraph`. Nodes are placed and
+wired on the canvas; the graph is validated and compiled to WGSL on every
+change. The demo showcases a larger, more structured node graph with typed
+sockets and a node-to-code compiler.
 
-- **110+ Shader Nodes** - Complete Inigo Quilez 2D SDF library + math, vector, color operations
-- **Live WGSL Compilation** - Node graph compiles to GPU shader code in real-time
-- **Error Visualization** - Animated error pattern when compilation fails
-- **Self-Rendering Pipeline** - The shader you build controls how the node graph renders itself
+The editor opens with a small default graph (UV and Time inputs feeding a
+Circle SDF and a Smoothstep, combined into a color and routed to an Edge
+Output) that compiles successfully on launch.
 
 ## Features
 
-### Complete SDF Library
+- Command palette (Cmd/Ctrl+Space) to add shader nodes, grouped by category:
+  Input, Math, Vector, Color, SDF, SDF Ops, Logic, and Output.
+- Typed sockets with TypeId-based connection matching. Socket types are Float,
+  Vec2, Vec3, Vec4, Bool, and Int, each drawn in a distinct color. The pin
+  system rejects type-mismatched connections.
+- A node graph compiler that, on every edit:
+  - Validates the graph (cycle detection via Kahn's algorithm, socket type
+    checking, and a required output node).
+  - Orders nodes by topological sort.
+  - Generates a WGSL fragment shader, prepending the bundled SDF library.
+- Theme switching (Dark, Light, Catppuccin Mocha, Dracula, Nord).
+- Selection, group move, pan, zoom, edge connect, and edge disconnect.
 
-All 34 2D signed distance functions from Inigo Quilez's library:
-- Primitives: Circle, Box, Triangle, Pentagon, Hexagon, Star, Heart, etc.
-- Operations: Union, Subtraction, Intersection, Smooth variants
+## Controls
 
-### Node Categories
+- Cmd/Ctrl+Space - Open or close the command palette.
+- Arrow Up / Arrow Down - Navigate palette entries.
+- Enter - Confirm the selected palette entry.
+- Escape - Cancel the palette.
+- Drag a node - Move it; group selections move together.
+- Drag from a pin - Connect to a compatible (same-type) pin.
+- Click an edge - Disconnect it.
+- Scroll - Zoom in or out at the cursor.
+- Middle-drag - Pan the canvas.
 
-- **Input Nodes** (10): UV, Time, Mouse Position, Camera, Resolution
-- **Math Operations** (23): Add, Sub, Mul, Div, Trigonometry, etc.
-- **Vector Operations** (15): Split, Combine, Dot, Cross, Normalize, etc.
-- **Color Operations** (8): RGB/HSV conversion, Mix, Desaturate, etc.
-- **SDF Primitives** (34): All Inigo Quilez 2D shapes
-- **SDF Operations** (12): Boolean operations, smoothing, modifiers
-- **Logic** (8): Comparisons, And, Or
-- **Outputs** (5): Background, Node, Pin, Edge, Final
+## Code Structure
 
-### Live Compilation
+- `src/shader_graph/` - Node types, sockets, connections, and the graph model.
+- `src/compiler/` - Validation, topological sort, and WGSL code generation.
+- `src/sdf_library.wgsl` - SDF helper functions included in compiled output.
+- `src/error_shader.wgsl` - Fallback error visualization shader.
+- `src/default_shader.rs` - The starter graph loaded on launch.
 
-1. Build shader graph visually by connecting nodes
-2. Compiler validates graph (type checking, cycle detection)
-3. Generates WGSL code via topological sort
-4. Injects into GPU rendering pipeline
-5. On error: shows animated red/pink error pattern
+## Extending
+
+To add a working node:
+
+1. Add a variant to `ShaderNodeType` in `shader_graph/nodes.rs` and list it in
+   `all()` so it appears in the palette.
+2. Define its sockets in `inputs()` and `outputs()`.
+3. Add code generation in `compiler/codegen.rs`.
+
+## Limitations
+
+This is a demonstration of the node-to-WGSL pipeline, not a complete shader
+authoring tool. Current behavior:
+
+- The compiled WGSL is produced and validated, but it is not yet injected into
+  a live rendering pipeline. There is no in-app preview surface; the result is
+  the generated shader string and its compile status.
+- Code generation covers a subset of the listed node types: the math and vector
+  operators, the Circle and Box SDF primitives, and the Union, Subtraction,
+  Intersection, and smooth-boolean SDF operations. Many enumerated nodes
+  (most SDF primitives, color operations, and logic nodes) appear in the
+  palette but currently emit a placeholder function, and several have no
+  defined sockets yet.
+- Only the edge fragment shader entry point is generated. The other output
+  node types are recognized for validation but do not yet drive separate
+  shader passes.
+- The bundled `error_shader.wgsl` is provided as a fallback but is not wired
+  into rendering.
 
 ## Running
 
@@ -40,76 +79,10 @@ All 34 2D signed distance functions from Inigo Quilez's library:
 cargo run -p demo_shader_editor
 ```
 
-For WASM:
-```bash
-cd demos/shader_editor
-./build_wasm.sh  # or build_wasm.ps1 on Windows
-```
-
-## Architecture
-
-```
-User builds node graph
-        ↓
-Compiler validates & sorts nodes (topological order)
-        ↓
-Code generator creates WGSL functions
-        ↓
-Shader injected into Pipeline via new_with_shader()
-        ↓
-GPU renders with custom shader
-```
-
-## Code Structure
-
-- `src/shader_graph/` - Node and socket data structures
-- `src/compiler/` - Validation, topological sort, code generation
-- `src/sdf_library.wgsl` - Complete Inigo Quilez SDF library
-- `src/error_shader.wgsl` - Fallback error visualization
-- `src/default_shader.rs` - Working starter graph
-
-## Default Shader
-
-The demo starts with a simple animated shader:
-1. UV Input → Circle SDF
-2. Time Input → Sin → Modulate radius
-3. Smoothstep → Color → Edge Output
-4. Result: Pulsing circular edges
-
-## Extending
-
-To add custom nodes:
-1. Add variant to `ShaderNodeType` enum in `shader_graph/nodes.rs`
-2. Define inputs/outputs in `inputs()` and `outputs()` methods
-3. Add code generation in `compiler/codegen.rs`
-4. Node automatically appears in node palette
-
-## Technical Highlights
-
-- **Type-safe sockets**: WGSL type system enforced at compile time
-- **Cycle detection**: Kahn's algorithm prevents infinite loops
-- **Topological sort**: Ensures correct function call order
-- **Error recovery**: Graceful fallback on compilation failure
-- **Hot reload**: Graph changes recompile shader instantly
-
-## Limitations
-
-- Currently only generates edge fragment shader
-- Background/Node/Pin shaders use default implementation
-- No runtime shader hot-swapping (requires pipeline recreation)
-- Some advanced SDF nodes still need implementation
-
-## Future Work
-
-- Complete all 110 node implementations
-- Add node palette/search UI
-- Implement all shader passes (background, nodes, pins)
-- Runtime shader hot-swapping
-- Save/load shader graphs
-- Export standalone WGSL shaders
+For the browser build, compile with the `wasm` feature. WebGPU is required;
+Chromium-based browsers are recommended.
 
 ## References
 
 - [Inigo Quilez 2D SDFs](https://iquilezles.org/articles/distfunctions2d/)
 - [WGSL Specification](https://www.w3.org/TR/WGSL/)
-- [iced_nodegraph Documentation](../../README.md)

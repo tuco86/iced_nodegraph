@@ -2,261 +2,189 @@
 
 ## Overview
 
-This document describes the organization and structure of the `iced_nodegraph` workspace. The project is organized as a Cargo workspace containing the core library and multiple demonstration projects.
+This document describes the organization of the `iced_nodegraph` workspace. The
+project is a Cargo workspace containing two library crates (the node graph
+widget and the SDF renderer it draws with) and a set of demonstration binaries.
 
 ## Workspace Structure
 
 ```
 iced_nodegraph/                    # Workspace root
-├── Cargo.toml                     # Workspace manifest
-├── README.md                      # Project documentation
-├── LICENSE                        # License information
-│
-├── iced_nodegraph/                # Core library package
-│   ├── Cargo.toml                 # Library dependencies
-│   ├── src/
-│   │   ├── lib.rs                 # Public API exports
-│   │   ├── node_graph/           # Main widget implementation
-│   │   │   ├── mod.rs
-│   │   │   ├── widget.rs          # Widget trait implementation
-│   │   │   ├── camera.rs          # 2D camera transformations
-│   │   │   ├── state.rs           # Interaction state management
-│   │   │   ├── euclid.rs          # Coordinate system conversions
-│   │   │   └── effects/           # WGPU rendering pipeline
-│   │   │       ├── pipeline/      # Shader compilation and GPU setup
-│   │   │       └── primitive/     # Render primitives
-│   │   └── node_pin/              # Pin widget implementation
-│   │       └── mod.rs
-│   └── target/                    # Build artifacts
-│
-├── demos/                         # Demonstration projects
-│   ├── README.md                  # Demo overview and guidelines
-│   │
-│   ├── hello_world/               # Basic usage demo
-│   │   ├── Cargo.toml
-│   │   ├── README.md              # Detailed demo specification
-│   │   └── src/
-│   │       └── main.rs
-│   │
-│   ├── styling/                   # Theming and customization demo
-│   │   ├── Cargo.toml
-│   │   ├── README.md
-│   │   └── src/
-│   │       ├── main.rs
-│   │       ├── theme.rs           # Theme definitions
-│   │       ├── node_styles.rs     # Custom node styles
-│   │       └── pin_styles.rs      # Pin customization
-│   │
-│   └── interaction/               # Pin rules and validation demo
-│       ├── Cargo.toml
-│       ├── README.md
-│       └── src/
-│           ├── main.rs
-│           ├── pin_types.rs       # Type definitions
-│           ├── validation.rs      # Connection validation
-│           └── feedback.rs        # User feedback system
-│
-└── docs/                          # Additional documentation
-    └── architecture.md            # This file
+|-- Cargo.toml                     # Workspace manifest
+|-- README.md                      # Project documentation
+|-- CHANGELOG.md
+|-- LICENSE
+|-- CLAUDE.md                      # Contributor / agent instructions
+|-- docs/architecture.md           # This file
+|-- plan/                          # Historical design records
+|
+|-- iced_nodegraph/                # Core widget library
+|   |-- Cargo.toml
+|   |-- NODE_STYLE_GUIDE.md
+|   `-- src/
+|       |-- lib.rs                 # Public API exports
+|       |-- prelude.rs             # Convenience re-exports
+|       |-- ids.rs                 # Generic node/pin/edge id traits
+|       |-- content.rs             # Node content layout helpers
+|       |-- helpers.rs             # Clone/delete/selection utilities
+|       |-- clipping_tests.rs
+|       |-- node_graph/
+|       |   |-- mod.rs             # NodeGraph, NodeGraphEvent, builder API
+|       |   |-- widget.rs          # iced Widget trait: layout, events, draw
+|       |   |-- camera.rs          # 2D zoom/pan transforms
+|       |   |-- euclid.rs          # Type-safe World/Screen coordinates
+|       |   |-- state.rs           # Interaction and drag state
+|       |   `-- interaction_tests.rs
+|       |-- node_pin/mod.rs        # NodePin widget, PinReference, PinSide
+|       `-- style/
+|           |-- mod.rs             # NodeStyle, EdgeStyle, PinStyle, GraphStyle
+|           `-- config.rs          # Partial-override config types (merge)
+|
+|-- iced_sdf/                      # Segment-based SDF renderer
+|   |-- ARCHITECTURE.md            # Authoritative renderer design doc
+|   `-- src/
+|       |-- curve.rs               # Curve / ShapeBuilder contour API
+|       |-- drawable.rs            # Compiled Drawable + Segment data
+|       |-- compile.rs             # CPU -> GPU buffer compilation
+|       |-- boolean.rs             # Union/difference/intersection on contours
+|       |-- pattern.rs             # Stroke patterns (solid, dashed, arrowed...)
+|       |-- style.rs               # Fill/gradient/outline/blur style
+|       |-- tiling.rs              # Repeating grid/dots/triangle/hex patterns
+|       |-- primitive.rs           # iced Primitive integration
+|       |-- shared.rs              # Lazy shared GPU resources
+|       `-- pipeline/              # WGSL shader, GPU types, buffers, tests
+|
+`-- demos/                         # Demonstration binaries
+    |-- README.md
+    |-- lib.rs                     # Rustdoc overview of all demos
+    |-- common/                    # Shared ScreenshotHelper
+    |-- hello_world/
+    |-- styling/
+    |-- interaction/
+    |-- 500_nodes/
+    `-- shader_editor/
 ```
 
 ## Package Organization
 
 ### Core Library: `iced_nodegraph`
 
-The core library is located in `iced_nodegraph/` and provides:
+Provides:
 
-- **NodeGraph Widget** - Main container for nodes and edges
-- **NodePin Widget** - Connection points with directional constraints
-- **Camera System** - Zoom and pan transformations
-- **WGPU Rendering Pipeline** - Custom shaders for high-performance rendering
-- **Coordinate Systems** - Type-safe screen/world space conversions
+- **NodeGraph widget** - container managing nodes, edges, camera, and interaction
+- **NodePin widget** - connection points with directional and type metadata
+- **Camera system** - zoom and pan with type-safe screen/world transforms
+- **Style system** - `Style` types plus `Config` partial-override types that merge
 
-**Key Design Principles:**
+Key design principles:
 
-- Type safety through `euclid` crate coordinate abstractions
-- GPU-accelerated rendering with custom WGPU shaders
-- Iced 0.14 compatibility using master branch features
-- Extensive test coverage (15 camera tests, interaction tests)
+- Type safety through `euclid` coordinate abstractions (`WorldPoint`, `ScreenPoint`)
+- Rendering delegated to `iced_sdf` for exact distance fields at any zoom
+- Generic over node id `N` and pin id `P` (both default to `usize`)
+
+### SDF Renderer: `iced_sdf`
+
+A standalone crate that renders contours, strokes, and tilings from exact
+signed distance fields. Node bodies with pin cutouts are produced by boolean
+contour operations (`difference_many`). See `iced_sdf/ARCHITECTURE.md` for the
+full CPU-compile / GPU-compute / fragment pipeline.
 
 ### Demo Projects: `demos/*`
 
-Each demo is a standalone binary crate that depends on the core library. Demos are organized by feature focus:
-
-1. **hello_world** - Minimal working example, entry point for new users
-2. **styling** - Visual customization and theming capabilities
-3. **interaction** - Pin rules, type validation, connection constraints
-
-**Demo Design Philosophy:**
-
-- Self-contained and independently runnable
-- READMEs serve as AI initialization specifications
-- Focused on specific feature sets
-- Educational code with comprehensive comments
-- Consistent structure across all demos
+Each demo is a standalone binary crate (with a `lib.rs` shared by the native
+`main.rs` and the WASM entry point) that depends on the core library. See
+`demos/README.md` for the catalog.
 
 ## Dependency Graph
 
 ```
-┌─────────────────────────────────────────┐
-│  Workspace Root (Cargo.toml)            │
-└──────────────┬──────────────────────────┘
-               │
-               ├─────────────────────────────────────────┐
-               │                                          │
-               │                                          │
-    ┌──────────▼──────────┐                  ┌───────────▼──────────┐
-    │  iced_nodegraph     │                  │  Demo Projects       │
-    │  (Library)          │◄─────────────────┤  - hello_world       │
-    │                     │                  │  - styling           │
-    │  Dependencies:      │                  │  - interaction       │
-    │  - iced (master)    │                  │                      │
-    │  - iced_wgpu        │                  │  Each depends on:    │
-    │  - euclid           │                  │  - iced_nodegraph    │
-    │  - wgpu             │                  │  - iced (master)     │
-    └─────────────────────┘                  └──────────────────────┘
++-------------------------------+
+|  Workspace Root (Cargo.toml)  |
++---------------+---------------+
+                |
+        +-------+--------+----------------------+
+        |                |                      |
++-------v------+  +------v-------+      +--------v---------+
+| iced_sdf     |  | iced_nodegraph|     | demos/*          |
+| (renderer)   |<-| (widget)      |<----| each depends on  |
+|              |  |               |     | iced_nodegraph   |
+| deps: iced,  |  | deps: iced,   |     | (+ demo_common)  |
+| wgpu, glam,  |  | iced_sdf,     |     |                  |
+| encase,      |  | euclid        |     |                  |
+| bytemuck     |  |               |     |                  |
++--------------+  +---------------+     +------------------+
 ```
 
 ## Build System
 
 ### Workspace Configuration
 
-The root `Cargo.toml` defines the workspace:
+The root `Cargo.toml` declares the members and shared dependency versions:
 
 ```toml
 [workspace]
 members = [
     "iced_nodegraph",
+    "iced_sdf",
+    "iced_sdf/examples/basic",
+    "demos/common",
     "demos/hello_world",
     "demos/styling",
     "demos/interaction",
+    "demos/500_nodes",
+    "demos/shader_editor",
 ]
 resolver = "2"
 
 [workspace.dependencies]
-iced = { git = "https://github.com/iced-rs/iced.git", branch = "master" }
+iced = "0.14"
 iced_nodegraph = { path = "iced_nodegraph" }
 ```
 
-### Building
+The project uses the released `iced = "0.14"` from crates.io.
+
+### Common Commands
 
 ```bash
-# Build entire workspace
+# Build the whole workspace
 cargo build --workspace
 
-# Build specific package
-cargo build -p iced_nodegraph
-cargo build -p hello_world_demo
+# Library checks (native and WASM)
+cargo check -p iced_nodegraph
+cargo check -p iced_nodegraph --target wasm32-unknown-unknown
 
-# Run specific demo
-cargo run -p styling_demo
-
-# Test core library
+# Tests and lints
 cargo test -p iced_nodegraph
+cargo test -p iced_sdf
+cargo clippy -p iced_nodegraph -- -D warnings
+
+# Run a demo
+cargo run -p demo_hello_world
 ```
-
-## Development Workflow
-
-### Adding New Demos
-
-1. Create demo directory: `demos/new_demo/`
-2. Write comprehensive `README.md` with:
-   - Feature list
-   - Implementation requirements
-   - Expected behavior
-   - Copilot initialization instructions
-3. Add to workspace members in root `Cargo.toml`
-4. Initialize with Copilot using README as specification
-5. Test and verify demo works standalone
-
-### Core Library Development
-
-1. Make changes in `iced_nodegraph/src/`
-2. Run tests: `cargo test -p iced_nodegraph`
-3. Verify demos still work: `cargo build --workspace`
-4. Update documentation if API changes
-5. Consider adding demo for new features
 
 ## Documentation Strategy
 
-### README Files
-
-- **Root README**: Project overview, quick start, features
-- **demos/README.md**: Demo catalog and build instructions
-- **Demo READMEs**: Detailed specifications for AI initialization
-- **docs/architecture.md**: This file, workspace organization
-
-### Code Documentation
-
-- Inline comments for complex logic
-- Module-level docs explaining purpose
-- Public API documentation with examples
-- Test coverage for critical components
-
-### AI-Assisted Development
-
-Demo READMEs are structured as specifications that enable:
-
-- Copilot to initialize complete demo projects
-- Clear requirements and expected outputs
-- Consistent structure across demos
-- Self-documenting demonstration code
+- **Root README**: project overview and quick start
+- **demos/README.md**: demo catalog and run commands
+- **Demo READMEs**: describe what each implemented demo does
+- **docs/architecture.md**: this file, workspace organization
+- **iced_sdf/ARCHITECTURE.md**: authoritative SDF renderer design
+- **iced_nodegraph/NODE_STYLE_GUIDE.md**: visual node-design guidelines
 
 ## External Dependencies
 
-### Iced Framework
-
-The project depends on Iced master branch (pre-0.14):
-
-```toml
-iced = { git = "https://github.com/iced-rs/iced.git", branch = "master" }
-```
-
-**Rationale:** Requires unreleased features for advanced widget implementation.
-
-### Related Workspace
-
-This workspace is part of a larger development environment:
-
-```
-c:/workspace/
-├── iced/              # Local Iced fork
-├── iced_aw/           # Additional widgets library
-├── iced_nodegraph/    # This project
-└── ngwa-rs/           # SpacetimeDB backend module
-```
-
-**Multi-Workspace Configuration:** See `examples/ngwa-rs.code-workspace` for VS Code workspace setup.
+`ngwa-rs` (a SpacetimeDB backend module) is an optional, separate sibling
+workspace located at `../ngwa-rs`. It is not a member of this workspace and is
+not required to build or run the widget or any demo.
 
 ## Platform Support
 
-- **Native**: Windows, macOS, Linux with WGPU support
-- **WASM**: WebAssembly with WebGPU backend
-- **Rendering**: WGPU with custom shaders
-
-## Future Considerations
-
-### Potential New Demos
-
-- **animation** - Node movement, edge flow, transitions
-- **serialization** - Save/load graph state
-- **undo_redo** - Command pattern implementation
-- **minimap** - Overview navigation widget
-- **search** - Node search and filtering
-
-### API Evolution
-
-As the library matures toward 0.14 compatibility:
-
-- Stabilize public API surface
-- Improve error handling
-- Enhance documentation
-- Expand test coverage
-- Performance optimizations
+- **Native**: Windows, macOS, Linux with a WGPU-capable driver
+- **WASM**: WebAssembly with the WebGPU backend (Chrome / Chromium recommended;
+  Firefox has known WebGPU buffer-mapping issues)
 
 ## References
 
 - [Iced Documentation](https://docs.rs/iced/)
 - [WGPU Guide](https://wgpu.rs/)
 - [Euclid Crate](https://docs.rs/euclid/)
-- Project `.github/copilot-instructions.md` for AI coding guidelines

@@ -6,9 +6,12 @@
 //!
 //! # Builders
 //!
-//! - [`Curve`] - Disconnected segments (edges, lines, beziers)
-//! - [`Shape`] - Connected contours (nodes with pin cutouts) [Phase 3]
-//! - [`Tiling`] - Infinite repeating backgrounds (grid, dots) [Phase 6]
+//! - [`Curve`] - Disconnected segments and factory shapes (edges, lines, beziers, rects, circles)
+//! - [`ShapeBuilder`] - Connected open or closed contours (nodes, pin cutouts)
+//! - [`Tiling`] - Infinite repeating backgrounds (grid, dots, triangles, hex)
+//!
+//! Closed contours combine via [`boolean`] operations (union, difference,
+//! intersection) for compound shapes such as node bodies with pin cutouts.
 //!
 //! # Rendering
 //!
