@@ -42,8 +42,6 @@ const SLOT_STRIDE: u32 = MAX_SLOTS_PER_TILE * 2;
 struct DrawEntry {
     drawable: Drawable,
     style: Style,
-    #[allow(dead_code)]
-    screen_bounds: [f32; 4],
 }
 
 /// SDF rendering primitive holding drawables with styles.
@@ -71,13 +69,15 @@ impl SdfPrimitive {
         Self { entries: Vec::with_capacity(n), ..Self::new() }
     }
 
+    /// Append a drawable with its style. `_screen_bounds` is accepted for API
+    /// compatibility but no longer stored: the pipeline derives a per-draw AABB
+    /// on the GPU, so callers need not supply an accurate screen rectangle.
     pub fn push(
-        &mut self, drawable: &Drawable, style: &Style, screen_bounds: [f32; 4],
+        &mut self, drawable: &Drawable, style: &Style, _screen_bounds: [f32; 4],
     ) -> &mut Self {
         self.entries.push(DrawEntry {
             drawable: drawable.clone(),
             style: style.clone(),
-            screen_bounds,
         });
         self
     }
