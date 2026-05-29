@@ -263,6 +263,10 @@ where
 /// This is a convenience function for building common node structures.
 /// Uses default node geometry (corner_radius=5.0, border_width=1.0).
 ///
+/// The returned element is `Length::Fill` in width so the title bar and body
+/// stay aligned with the rendered node fill. Constrain it with a fixed-width
+/// parent, e.g. `container(simple_node(..)).width(160.0)`.
+///
 /// # Example
 /// ```ignore
 /// let node = simple_node(
@@ -299,9 +303,13 @@ where
         border_width,
     );
 
+    // The body fills the node width to match the header (node_header is
+    // Length::Fill); otherwise it would shrink to its content and sit
+    // misaligned inside a wider node, offsetting the rendered node fill.
     column![
         title_bar,
         container(content)
+            .width(Length::Fill)
             .padding(Padding {
                 top: 6.0,
                 bottom: 6.0,
@@ -314,6 +322,7 @@ where
                 ..Default::default()
             })
     ]
+    .width(Length::Fill)
     .into()
 }
 
