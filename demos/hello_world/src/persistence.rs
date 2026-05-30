@@ -19,7 +19,7 @@ use crate::ids::{EdgeId, NodeId};
 use crate::nodes::{
     BoolToggleConfig, ConfigNodeType, EdgeConfigInputs, EdgeSections, FloatSliderConfig,
     InputNodeType, IntSliderConfig, MathNodeState, MathOperation, NodeConfigInputs, NodeSections,
-    NodeType, PatternType, PinConfigInputs, ShadowConfigInputs,
+    NodeType, PatternType, PinConfigInputs,
 };
 use iced_nodegraph::{EdgeCurve, PinShape};
 
@@ -60,7 +60,6 @@ impl SavedEdgeSections {
 pub struct SavedNodeSections {
     pub fill: bool,
     pub border: bool,
-    pub shadow: bool,
 }
 
 impl From<&NodeSections> for SavedNodeSections {
@@ -68,7 +67,6 @@ impl From<&NodeSections> for SavedNodeSections {
         Self {
             fill: s.fill,
             border: s.border,
-            shadow: s.shadow,
         }
     }
 }
@@ -78,7 +76,6 @@ impl SavedNodeSections {
         NodeSections {
             fill: self.fill,
             border: self.border,
-            shadow: self.shadow,
         }
     }
 }
@@ -164,7 +161,6 @@ pub enum SavedNodeType {
     },
     NodeConfig,
     EdgeConfig,
-    ShadowConfig,
     PinConfig,
     ApplyToGraph,
     ApplyToNode,
@@ -479,7 +475,6 @@ impl SavedNodeType {
             NodeType::Config(config) => match config {
                 ConfigNodeType::NodeConfig(_) => SavedNodeType::NodeConfig,
                 ConfigNodeType::EdgeConfig(_) => SavedNodeType::EdgeConfig,
-                ConfigNodeType::ShadowConfig(_) => SavedNodeType::ShadowConfig,
                 ConfigNodeType::PinConfig(_) => SavedNodeType::PinConfig,
                 ConfigNodeType::ApplyToGraph { .. } => SavedNodeType::ApplyToGraph,
                 ConfigNodeType::ApplyToNode { .. } => SavedNodeType::ApplyToNode,
@@ -561,9 +556,6 @@ impl SavedNodeType {
             }
             SavedNodeType::EdgeConfig => {
                 NodeType::Config(ConfigNodeType::EdgeConfig(EdgeConfigInputs::default()))
-            }
-            SavedNodeType::ShadowConfig => {
-                NodeType::Config(ConfigNodeType::ShadowConfig(ShadowConfigInputs::default()))
             }
             SavedNodeType::PinConfig => {
                 NodeType::Config(ConfigNodeType::PinConfig(PinConfigInputs::default()))

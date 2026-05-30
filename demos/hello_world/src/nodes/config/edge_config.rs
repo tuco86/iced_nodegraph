@@ -6,9 +6,7 @@ use iced::{
     Color, Length,
     widget::{column, container, row, text},
 };
-use iced_nodegraph::{
-    EdgeBorder, EdgeConfig, EdgeCurve, EdgeShadow, NodeContentStyle, Pattern, pin,
-};
+use iced_nodegraph::{ColorQuad, EdgeCurve, EdgeStyle, NodeContentStyle, Partial, Pattern, pin};
 
 use crate::nodes::{
     collapsed_pin_row, color_swatch, colors, fmt_float, node_title_bar, pin_row, pins,
@@ -63,8 +61,8 @@ pub enum PatternType {
 /// Collected inputs for EdgeConfigNode
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct EdgeConfigInputs {
-    /// Parent config to inherit from
-    pub config_in: Option<EdgeConfig>,
+    /// Parent overlay to inherit from
+    pub config_in: Option<EdgeStyle<Partial>>,
 
     // --- Stroke ---
     pub start_color: Option<Color>,
@@ -105,111 +103,84 @@ pub struct EdgeConfigInputs {
 }
 
 impl EdgeConfigInputs {
-    /// Builds the final EdgeConfig by merging with parent
-    pub fn build(&self) -> EdgeConfig {
-        let parent = self.config_in.clone().unwrap_or_default();
+    /// Builds the overlay by setting this node's fields, then merging over the parent.
+    /// Colors map to arc-length gradients (start -> end); TRANSPARENT = inherit pin.
+    pub fn build(&self) -> EdgeStyle<Partial> {
+        let mut p = EdgeStyle::new();
 
-        // Build pattern from inputs
-        let pattern = self.build_pattern(&parent);
-
-        // Colors
-        let start_color = self.start_color.or(parent.start_color);
-        let end_color = self.end_color.or(parent.end_color);
-
+        if self.start_color.is_some() || self.end_color.is_some() {
+            p = p.stroke_color(ColorQuad::arc(
+                self.start_color.unwrap_or(Color::TRANSPARENT),
+                self.end_color.unwrap_or(Color::TRANSPARENT),
+            ));
+        }
+        if let Some(pat) = self.build_pattern() {
+            p = p.pattern(pat);
+        }
+        if let Some(c) = self.curve {
+            p = p.curve(c);
+        }
         // Stroke outline
-        let has_stroke_outline =
-            self.stroke_outline_thickness.is_some() || self.stroke_outline_color.is_some();
-        let stroke_outline = if has_stroke_outline {
-            let parent_ol = parent.stroke_outline.unwrap_or((1.0, Color::WHITE));
-            Some((
-                self.stroke_outline_thickness.unwrap_or(parent_ol.0),
-                self.stroke_outline_color.unwrap_or(parent_ol.1),
-            ))
-        } else {
-            parent.stroke_outline
-        };
+        if let Some(w) = self.stroke_outline_thickness {
+            p = p.stroke_outline_width(w);
+        }
+        if let Some(c) = self.stroke_outline_color {
+            p = p.stroke_outline_color(c);
+        }
+        // Border ring
+        if let Some(w) = self.border_thickness {
+            p = p.border_width(w);
+        }
+        if let Some(g) = self.border_gap {
+            p = p.border_gap(g);
+        }
+        if self.border_color.is_some() || self.border_color_end.is_some() {
+            p = p.border_color(ColorQuad::arc(
+                self.border_color.unwrap_or(Color::TRANSPARENT),
+                self.border_color_end.unwrap_or(Color::TRANSPARENT),
+            ));
+        }
+        if self.border_background.is_some() || self.border_background_end.is_some() {
+            p = p.border_background(ColorQuad::arc(
+                self.border_background.unwrap_or(Color::TRANSPARENT),
+                self.border_background_end.unwrap_or(Color::TRANSPARENT),
+            ));
+        }
+        if let Some(w) = self.border_outline_thickness {
+            p = p.border_outline_width(w);
+        }
+        if let Some(c) = self.border_outline_color {
+            p = p.border_outline_color(c);
+        }
+        // Shadow
+        if self.shadow_color.is_some() || self.shadow_color_end.is_some() {
+            p = p.shadow_color(ColorQuad::arc(
+                self.shadow_color.unwrap_or(Color::TRANSPARENT),
+                self.shadow_color_end.unwrap_or(Color::TRANSPARENT),
+            ));
+        }
+        if let Some(v) = self.shadow_expand {
+            p = p.shadow_expand(v);
+        }
+        if let Some(v) = self.shadow_blur {
+            p = p.shadow_blur(v);
+        }
+        if self.shadow_offset_x.is_some() || self.shadow_offset_y.is_some() {
+            p = p.shadow_offset((
+                self.shadow_offset_x.unwrap_or(0.0),
+                self.shadow_offset_y.unwrap_or(0.0),
+            ));
+        }
 
-        // Build border config
-        let has_border_overrides = self.border_thickness.is_some()
-            || self.border_gap.is_some()
-            || self.border_color.is_some()
-            || self.border_color_end.is_some()
-            || self.border_background.is_some()
-            || self.border_background_end.is_some()
-            || self.border_outline_thickness.is_some()
-            || self.border_outline_color.is_some();
-
-        let border = if has_border_overrides {
-            let pb = parent.border.unwrap_or_default();
-            let has_ol =
-                self.border_outline_thickness.is_some() || self.border_outline_color.is_some();
-            let outline = if has_ol {
-                let parent_ol = pb.outline.unwrap_or((1.0, Color::WHITE));
-                Some((
-                    self.border_outline_thickness.unwrap_or(parent_ol.0),
-                    self.border_outline_color.unwrap_or(parent_ol.1),
-                ))
-            } else {
-                pb.outline
-            };
-            Some(EdgeBorder {
-                start_color: self.border_color.unwrap_or(pb.start_color),
-                end_color: self.border_color_end.unwrap_or(pb.end_color),
-                width: self.border_thickness.unwrap_or(pb.width),
-                gap: self.border_gap.unwrap_or(pb.gap),
-                outline,
-                background: self.border_background.unwrap_or(pb.background),
-                background_end: self.border_background_end.unwrap_or(pb.background_end),
-            })
-        } else {
-            parent.border
-        };
-
-        // Build shadow config
-        let has_shadow_overrides = self.shadow_blur.is_some()
-            || self.shadow_expand.is_some()
-            || self.shadow_color.is_some()
-            || self.shadow_color_end.is_some()
-            || self.shadow_offset_x.is_some()
-            || self.shadow_offset_y.is_some();
-
-        let shadow = if has_shadow_overrides {
-            let ps = parent.shadow.unwrap_or_default();
-            Some(EdgeShadow {
-                color: self.shadow_color.unwrap_or(ps.color),
-                end_color: self.shadow_color_end.unwrap_or(ps.end_color),
-                expand: self.shadow_expand.unwrap_or(ps.expand),
-                blur: self.shadow_blur.unwrap_or(ps.blur),
-                offset: (
-                    self.shadow_offset_x.unwrap_or(ps.offset.0),
-                    self.shadow_offset_y.unwrap_or(ps.offset.1),
-                ),
-            })
-        } else {
-            parent.shadow
-        };
-
-        EdgeConfig {
-            start_color,
-            end_color,
-            pattern,
-            stroke_outline,
-            border,
-            shadow,
-            curve: self.curve.or(parent.curve),
+        match &self.config_in {
+            Some(parent) => p.merge(parent),
+            None => p,
         }
     }
 
     /// Builds the Pattern from individual inputs, aligned with iced_sdf gallery.
-    fn build_pattern(&self, parent: &EdgeConfig) -> Option<Pattern> {
-        let pattern_type = self.pattern_type.unwrap_or(PatternType::Solid);
-        let thickness = self.thickness.unwrap_or(2.0);
-        let dash = self.dash_length.unwrap_or(12.0);
-        let gap = self.gap_length.unwrap_or(6.0);
-        let angle = self.pattern_angle.unwrap_or(0.0);
-        let dot_radius = self.dot_radius.unwrap_or(2.0);
-        let speed = self.animation_speed.unwrap_or(0.0);
-
+    /// Returns None when no pattern field is set (inherit).
+    fn build_pattern(&self) -> Option<Pattern> {
         let has_overrides = self.pattern_type.is_some()
             || self.thickness.is_some()
             || self.dash_length.is_some()
@@ -219,8 +190,16 @@ impl EdgeConfigInputs {
             || self.animation_speed.is_some();
 
         if !has_overrides {
-            return parent.pattern;
+            return None;
         }
+
+        let pattern_type = self.pattern_type.unwrap_or(PatternType::Solid);
+        let thickness = self.thickness.unwrap_or(2.0);
+        let dash = self.dash_length.unwrap_or(12.0);
+        let gap = self.gap_length.unwrap_or(6.0);
+        let angle = self.pattern_angle.unwrap_or(0.0);
+        let dot_radius = self.dot_radius.unwrap_or(2.0);
+        let speed = self.animation_speed.unwrap_or(0.0);
 
         let mut p = match pattern_type {
             PatternType::Solid => Pattern::solid(thickness),
@@ -334,7 +313,7 @@ where
                     pins::ColorData,
                     colors::PIN_COLOR
                 ),
-                color_swatch(result.start_color),
+                color_swatch(result.stroke_color.map(|q| q.near_start)),
             )
             .into(),
             pin_row(
@@ -346,7 +325,7 @@ where
                     pins::ColorData,
                     colors::PIN_COLOR
                 ),
-                color_swatch(result.end_color),
+                color_swatch(result.stroke_color.map(|q| q.near_end)),
             )
             .into(),
             pin_row(

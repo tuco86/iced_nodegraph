@@ -15,15 +15,10 @@ pub fn filter_node<'a, Message>(theme: &'a iced::Theme) -> iced::Element<'a, Mes
 where
     Message: Clone + 'a,
 {
-    // Use actual NodeStyle defaults for precise corner calculation
-    let node_defaults = NodeStyle::default();
-    let border_width = node_defaults
-        .border
-        .as_ref()
-        .map(|b| b.pattern.thickness)
-        .unwrap_or(1.0);
-    let style =
-        NodeContentStyle::process(theme).with_geometry(node_defaults.corner_radius, border_width);
+    // Use the theme-resolved NodeStyle for precise corner calculation
+    let base = NodeStyle::from_theme(theme);
+    let border_width = base.border_pattern.thickness;
+    let style = NodeContentStyle::process(theme).with_geometry(base.corner_radius, border_width);
 
     let pin_list = row![
         container(pin!(
