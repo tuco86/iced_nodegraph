@@ -488,8 +488,23 @@ enum BoolOp {
 const PROBE: f32 = 1e-2;
 
 fn boolean(a: &Drawable, b: &Drawable, op: BoolOp) -> Drawable {
-    let a_loops = from_drawable(a);
-    let b_loops = from_drawable(b);
+    let mut a_loops = from_drawable(a);
+    let mut b_loops = from_drawable(b);
+
+    // Recenter into a local frame before any geometry math. Segments carry
+    // absolute world coordinates, so a shape dragged far from the origin runs
+    // every intersection/stitch computation at large magnitudes where float32
+    // precision (ULP grows with magnitude) erodes the fixed tolerances. Working
+    // around a shared local origin makes precision depend only on a shape's own
+    // size, not its world position. The result is shifted back at the end.
+    let ab = a.bounds();
+    let bb = b.bounds();
+    let origin = Vec2::new(
+        (ab[0].min(bb[0]) + ab[2].max(bb[2])) * 0.5,
+        (ab[1].min(bb[1]) + ab[3].max(bb[3])) * 0.5,
+    );
+    offset_loops(&mut a_loops, -origin);
+    offset_loops(&mut b_loops, -origin);
 
     // Whether the result region contains `p`.
     let inside_result = |p: Vec2| -> bool {
@@ -547,8 +562,28 @@ fn boolean(a: &Drawable, b: &Drawable, op: BoolOp) -> Drawable {
     }
 
     dedup_edges(&mut selected);
-    let loops = stitch(selected);
+    let mut loops = stitch(selected);
+    // Back to world coordinates.
+    offset_loops(&mut loops, origin);
     build_drawable(&loops)
+}
+
+/// Translate every edge of every loop by `o` (positions only; radii/angles are
+/// translation-invariant).
+fn offset_loops(loops: &mut [Loop], o: Vec2) {
+    for loop_ in loops.iter_mut() {
+        for e in loop_.iter_mut() {
+            match e {
+                Edge::Line { a, b } => {
+                    *a += o;
+                    *b += o;
+                }
+                Edge::Arc { center, .. } => {
+                    *center += o;
+                }
+            }
+        }
+    }
 }
 
 /// Drop edges that coincide geometrically (e.g. two identical pin cutouts both
@@ -568,33 +603,51 @@ fn dedup_edges(edges: &mut Vec<Edge>) {
     *edges = kept;
 }
 
-/// Connect oriented sub-edges end-to-start into closed loops.
+/// Connect oriented sub-edges into closed loops by nearest-neighbour matching.
+///
+/// At each step the chain continues to the remaining edge whose start is
+/// *nearest* the current tail, rather than the first within a fixed absolute
+/// tolerance. In a valid boolean result the true continuation is essentially
+/// coincident (a few float ULP) while every other edge start is at least a
+/// feature-size away, so the nearest match is unambiguous — and, crucially,
+/// independent of the absolute coordinate magnitude. A fixed tolerance (the old
+/// `4*EPS`) erodes against float32 precision once a node is dragged into large
+/// world coordinates: a single junction then exceeds it, the whole multi-edge
+/// loop fails to close and is dropped, leaving an empty contour (observed on the
+/// dense Edge Config node ~900 units from the origin).
 fn stitch(mut remaining: Vec<Edge>) -> Vec<Loop> {
-    const JOIN: f32 = 4.0 * EPS;
     let mut loops = Vec::new();
     while let Some(first) = remaining.pop() {
+        let start0 = first.start();
         let mut loop_: Loop = vec![first];
         loop {
             let tail = loop_.last().unwrap().end();
-            if loop_.len() > 1 && tail.abs_diff_eq(loop_[0].start(), JOIN) {
-                break; // closed
-            }
-            let next = remaining
+            // Distance to close the loop back to its start.
+            let close_d = tail.distance(start0);
+            // Nearest remaining edge start to the tail.
+            let nearest = remaining
                 .iter()
-                .position(|e| e.start().abs_diff_eq(tail, JOIN));
-            match next {
-                Some(i) => loop_.push(remaining.remove(i)),
-                None => break, // open chain (degenerate); keep what we have
+                .enumerate()
+                .map(|(i, e)| (i, e.start().distance(tail)))
+                .min_by(|a, b| a.1.total_cmp(&b.1));
+            match nearest {
+                // Continue while some edge start is at least as near as closing
+                // back to the loop start; otherwise close here. A lone
+                // full-circle arc has tail == start (close_d == 0), so it closes
+                // immediately instead of grabbing an unrelated edge.
+                Some((i, d)) if d <= close_d => {
+                    loop_.push(remaining.remove(i));
+                }
+                _ => break,
             }
         }
-        // Keep only properly closed loops. A lone full-circle arc closes on
-        // itself (start == end) and is valid despite having a single edge.
-        let closed = loop_
-            .last()
-            .unwrap()
-            .end()
-            .abs_diff_eq(loop_[0].start(), JOIN * 2.0);
-        if closed {
+        // Accept loops that return to their start. The true closure gap is
+        // float noise (a few ULP); an open chain is off by a whole feature.
+        // Since the boolean now runs in a recentered local frame, a small fixed
+        // tolerance suffices regardless of world position. A lone full-circle
+        // arc already has start == end.
+        let end = loop_.last().unwrap().end();
+        if end.distance(start0) <= 8.0 * EPS {
             loops.push(loop_);
         }
     }
@@ -866,6 +919,139 @@ mod tests {
             sweep: TAU,
         };
         assert!(intersect(&c0, &c1).is_empty());
+    }
+
+    // --- Dense-node pin-cutout regressions ---------------------------------
+    // A node body with many pin cutouts (circles centered on an edge) must
+    // produce a closed, non-empty contour. The Edge Config node in the
+    // hello_world demo (≈20+ stacked left-edge pins) degenerated to a
+    // non-closed/empty outline, which the renderer then dropped entirely.
+
+    /// Sanity: one cutout notch on an edge stays closed.
+    #[test]
+    fn rect_minus_one_edge_circle_closed() {
+        let body = Curve::rect([80.0, 200.0], [80.0, 200.0]);
+        let out = difference_many(&body, &[Curve::circle([0.0, 100.0], 6.0)]);
+        assert!(out.segment_count() > 0, "empty");
+        assert!(out.is_closed(), "not closed");
+    }
+
+    /// Many well-separated cutouts on one edge (the dense-node case).
+    #[test]
+    fn rect_minus_many_edge_circles_closed() {
+        let body = Curve::rect([80.0, 200.0], [80.0, 200.0]); // x in [0,160], y in [0,400]
+        let cuts: Vec<Drawable> = (0..20)
+            .map(|i| Curve::circle([0.0, 20.0 + i as f32 * 18.0], 3.4))
+            .collect();
+        let out = difference_many(&body, &cuts);
+        assert!(out.segment_count() > 0, "empty result");
+        assert!(out.is_closed(), "result not closed");
+    }
+
+    /// Same on a rounded body (matches the actual node shape with corner arcs).
+    #[test]
+    fn rounded_rect_minus_many_edge_circles_closed() {
+        let body = Curve::rounded_rect([80.0, 200.0], [80.0, 200.0], 8.0);
+        let cuts: Vec<Drawable> = (0..20)
+            .map(|i| Curve::circle([0.0, 20.0 + i as f32 * 18.0], 3.4))
+            .collect();
+        let out = difference_many(&body, &cuts);
+        assert!(out.segment_count() > 0, "empty result");
+        assert!(out.is_closed(), "result not closed");
+    }
+
+    /// A cutout straddling a (rounded) corner — arc-vs-arc near-tangency.
+    #[test]
+    fn rounded_rect_minus_corner_circle_closed() {
+        let body = Curve::rounded_rect([80.0, 200.0], [80.0, 200.0], 8.0);
+        // Near the top-left rounded corner.
+        let out = difference_many(&body, &[Curve::circle([0.0, 0.0], 5.0)]);
+        assert!(out.segment_count() > 0, "empty");
+        assert!(out.is_closed(), "not closed");
+    }
+
+    /// Same dense cutouts but far from the origin: nodes are dragged into large
+    /// world coordinates, where absolute EPS/JOIN tolerances erode against
+    /// float32 precision and the contour can fail to stitch closed.
+    #[test]
+    fn rect_minus_many_edge_circles_far_from_origin_closed() {
+        let (ox, oy) = (12345.0_f32, 6789.0_f32);
+        let body = Curve::rect([ox + 80.0, oy + 200.0], [80.0, 200.0]);
+        let cuts: Vec<Drawable> = (0..20)
+            .map(|i| Curve::circle([ox, oy + 20.0 + i as f32 * 18.0], 3.4))
+            .collect();
+        let out = difference_many(&body, &cuts);
+        assert!(out.segment_count() > 0, "empty result far from origin");
+        assert!(out.is_closed(), "result not closed far from origin");
+    }
+
+    /// Exact geometry captured from the hello_world Edge Config node, which
+    /// produced a degenerate (non-closed/empty) outline. ~26 left-edge cutouts
+    /// plus one on the right border; well separated, yet it failed to stitch.
+    #[test]
+    fn edge_config_node_real_geometry_closed() {
+        let body = Curve::rounded_rect([641.626, 643.551], [75.000, 302.600], 8.000);
+        let cuts = [
+            Curve::circle([566.626, 384.251], 2.400),
+            Curve::circle([716.626, 384.251], 2.400),
+            Curve::circle([566.626, 428.851], 2.400),
+            Curve::circle([566.626, 445.851], 2.400),
+            Curve::circle([566.626, 462.851], 2.400),
+            Curve::circle([566.626, 479.851], 2.400),
+            Curve::circle([566.626, 496.851], 2.400),
+            Curve::circle([566.626, 513.851], 2.400),
+            Curve::circle([566.626, 554.551], 2.400),
+            Curve::circle([566.626, 571.551], 2.400),
+            Curve::circle([566.626, 588.551], 2.400),
+            Curve::circle([566.626, 605.551], 2.400),
+            Curve::circle([566.626, 622.551], 2.400),
+            Curve::circle([566.626, 663.251], 2.400),
+            Curve::circle([566.626, 680.251], 2.400),
+            Curve::circle([566.626, 697.251], 2.400),
+            Curve::circle([566.626, 714.251], 2.400),
+            Curve::circle([566.626, 731.251], 2.400),
+            Curve::circle([566.626, 748.251], 2.400),
+            Curve::circle([566.626, 765.251], 2.400),
+            Curve::circle([566.626, 782.251], 2.400),
+            Curve::circle([566.626, 822.951], 2.400),
+            Curve::circle([566.626, 839.951], 2.400),
+            Curve::circle([566.626, 856.951], 2.400),
+            Curve::circle([566.626, 873.951], 2.400),
+            Curve::circle([566.626, 890.951], 2.400),
+            Curve::circle([566.626, 907.951], 2.400),
+        ];
+        let out = difference_many(&body, &cuts);
+        assert!(out.segment_count() > 0, "empty result");
+        assert!(out.is_closed(), "result not closed");
+    }
+
+    /// Extreme world coordinates (~1e6): only correct because the boolean
+    /// recenters to a local frame before doing geometry. Absolute math here
+    /// would have float32 ULP ~0.06, swamping any fixed tolerance.
+    #[test]
+    fn rect_minus_many_edge_circles_extreme_coords_closed() {
+        let (ox, oy) = (1_000_000.0_f32, 2_000_000.0_f32);
+        let body = Curve::rect([ox + 80.0, oy + 200.0], [80.0, 200.0]);
+        let cuts: Vec<Drawable> = (0..20)
+            .map(|i| Curve::circle([ox, oy + 20.0 + i as f32 * 18.0], 3.4))
+            .collect();
+        let out = difference_many(&body, &cuts);
+        assert!(out.segment_count() > 0, "empty at extreme coords");
+        assert!(out.is_closed(), "not closed at extreme coords");
+    }
+
+    /// Two near-tangent cutouts (spacing ≈ 2r) on an edge.
+    #[test]
+    fn rect_minus_near_tangent_circles_closed() {
+        let body = Curve::rect([80.0, 200.0], [80.0, 200.0]);
+        let r = 4.0;
+        let cuts = [
+            Curve::circle([0.0, 100.0], r),
+            Curve::circle([0.0, 100.0 + 2.0 * r - 0.02], r), // almost touching
+        ];
+        let out = difference_many(&body, &cuts);
+        assert!(out.segment_count() > 0, "empty");
+        assert!(out.is_closed(), "not closed");
     }
 
     #[test]
