@@ -48,9 +48,15 @@ use iced::{Color, Length, Point, Size, Vector};
 
 use crate::ids::{EdgeId, IdMaps, NodeId, PinId};
 use crate::node_pin::PinReference;
-use crate::style::{
-    EdgeConfig, EdgeStyleFn, GraphStyle, NodeConfig, NodeStyleFn, PinConfig, PinStyleFn,
-};
+use crate::style::{EdgeStyle, GraphStyle, NodeStyle, Resolved};
+
+/// Per-node style callback: maps theme + resolved base style to a resolved
+/// style. Used by `push_node_styled`.
+pub(crate) type NodeStyleFn<'a, Theme> =
+    Box<dyn Fn(&Theme, NodeStyle<Resolved>) -> NodeStyle<Resolved> + 'a>;
+/// Per-edge style callback. Used by `push_edge_styled`.
+pub(crate) type EdgeStyleFn<'a, Theme> =
+    Box<dyn Fn(&Theme, EdgeStyle<Resolved>) -> EdgeStyle<Resolved> + 'a>;
 
 pub mod camera;
 pub(crate) mod euclid;
@@ -256,13 +262,17 @@ pub struct NodeGraph<
     pub(super) nodes: Vec<(
         Point,
         iced::Element<'a, Message, Theme, Renderer>,
-        NodeConfig,
+        Option<NodeStyleFn<'a, Theme>>,
     )>,
     /// Edges with user-defined pin references and config overrides.
     /// Pin IDs are resolved to local indices at render time.
     /// Config fields set to Some() override theme defaults.
     /// None fields use `EdgeStyle::from_theme()` values at render time.
-    pub(super) edges: Vec<(PinRef<N, P>, PinRef<N, P>, EdgeConfig)>,
+    pub(super) edges: Vec<(
+        PinRef<N, P>,
+        PinRef<N, P>,
+        Option<EdgeStyleFn<'a, Theme>>,
+    )>,
     /// Bidirectional maps for ID translation.
     pub(super) id_maps: IdMaps<N, P, E>,
     graph_style: Option<GraphStyle>,
@@ -288,22 +298,6 @@ pub struct NodeGraph<
     /// Callback for camera state changes (position, zoom).
     /// Used for tracking viewport state in application for features like spawn-at-center.
     on_camera_change: Option<Box<dyn Fn(Point, f32) -> Message + 'a>>,
-    /// Global pin style overrides applied to all pins.
-    /// Individual pin colors from widgets take precedence over this.
-    pub(super) pin_defaults: Option<PinConfig>,
-    /// Global edge style defaults.
-    /// Applied to all edges (including dragging edge) unless overridden per-edge.
-    pub(super) edge_defaults: Option<EdgeConfig>,
-    /// Style callback for edges (Iced Toggler pattern).
-    /// When set, called with EdgeStatus to get the resolved style.
-    /// Takes precedence over edge_defaults.
-    pub(super) edge_style_fn: Option<EdgeStyleFn<'a, Theme>>,
-    /// Style callback for nodes (Iced Toggler pattern).
-    /// When set, called with NodeStatus to get the resolved style.
-    pub(super) node_style_fn: Option<NodeStyleFn<'a, Theme>>,
-    /// Style callback for pins (Iced Toggler pattern).
-    /// When set, called with PinStatus to get the resolved style.
-    pub(super) pin_style_fn: Option<PinStyleFn<'a, Theme>>,
     /// Style callback for box selection overlay.
     /// Returns (fill_color, border_color).
     pub(super) box_select_style_fn: Option<Box<dyn Fn(&Theme) -> (iced::Color, iced::Color) + 'a>>,
@@ -351,11 +345,6 @@ where
             remote_users: None,
             on_event: None,
             on_camera_change: None,
-            pin_defaults: None,
-            edge_defaults: None,
-            edge_style_fn: None,
-            node_style_fn: None,
-            pin_style_fn: None,
             box_select_style_fn: None,
             cutting_tool_style_fn: None,
             initial_camera: None,
@@ -392,25 +381,30 @@ where
         element: impl Into<iced::Element<'a, Message, Theme, Renderer>>,
     ) {
         self.id_maps.register_node(node_id);
-        self.nodes
-            .push((position, element.into(), NodeConfig::default()));
+        self.nodes.push((position, element.into(), None));
     }
 
-    /// Adds a node with specific style overrides.
+    /// Adds a node with a per-node style callback.
     ///
-    /// Only the properties set in `config` will override theme defaults.
-    /// Unset (None) properties will use `NodeStyle::from_theme()` values.
+    /// The callback receives the theme and the resolved theme-default style, and
+    /// returns the style to draw. Build overrides with `NodeStyle::new()` (a
+    /// `Partial` overlay) and `.resolve(&base)`:
     ///
-    /// Use `NodeConfig::merge()` to combine multiple configs for inheritance.
+    /// ```ignore
+    /// ng.push_node_styled(0, pos, el, |_theme, base| {
+    ///     NodeStyle::new().fill_color(Color::WHITE).resolve(&base)
+    /// });
+    /// ```
     pub fn push_node_styled(
         &mut self,
         node_id: N,
         position: Point,
         element: impl Into<iced::Element<'a, Message, Theme, Renderer>>,
-        config: NodeConfig,
+        style: impl Fn(&Theme, NodeStyle<Resolved>) -> NodeStyle<Resolved> + 'a,
     ) {
         self.id_maps.register_node(node_id);
-        self.nodes.push((position, element.into(), config));
+        self.nodes
+            .push((position, element.into(), Some(Box::new(style))));
     }
 
     /// Adds an edge with default styling.
@@ -418,16 +412,20 @@ where
     /// The edge will use theme defaults from `EdgeStyle::from_theme()`.
     /// Pin IDs are resolved to local indices at render time.
     pub fn push_edge(&mut self, from: PinRef<N, P>, to: PinRef<N, P>) {
-        self.edges.push((from, to, EdgeConfig::default()));
+        self.edges.push((from, to, None));
     }
 
-    /// Adds an edge with specific style overrides.
+    /// Adds an edge with a per-edge style callback.
     ///
-    /// Only the properties set in `config` will override theme defaults.
-    /// Unset (None) properties will use `EdgeStyle::from_theme()` values.
-    /// Pin IDs are resolved to local indices at render time.
-    pub fn push_edge_styled(&mut self, from: PinRef<N, P>, to: PinRef<N, P>, config: EdgeConfig) {
-        self.edges.push((from, to, config));
+    /// The callback receives the theme and the resolved theme-default style and
+    /// returns the style to draw (see [`Self::push_node_styled`]).
+    pub fn push_edge_styled(
+        &mut self,
+        from: PinRef<N, P>,
+        to: PinRef<N, P>,
+        style: impl Fn(&Theme, EdgeStyle<Resolved>) -> EdgeStyle<Resolved> + 'a,
+    ) {
+        self.edges.push((from, to, Some(Box::new(style))));
     }
 
     /// Translates internal node index to user's node ID.
@@ -437,99 +435,6 @@ where
 
     pub fn graph_style(mut self, style: GraphStyle) -> Self {
         self.graph_style = Some(style);
-        self
-    }
-
-    /// Sets global pin style defaults.
-    /// These override theme defaults but individual pin colors from widgets still take precedence.
-    pub fn pin_defaults(mut self, config: PinConfig) -> Self {
-        self.pin_defaults = Some(config);
-        self
-    }
-
-    /// Sets global edge style defaults for all edges including dragging edge.
-    ///
-    /// These defaults are applied to:
-    /// - All edges that don't have per-edge style overrides
-    /// - The dragging edge preview while creating new connections
-    ///
-    /// Per-edge styles set via `push_edge_styled()` take precedence.
-    pub fn edge_defaults(mut self, config: EdgeConfig) -> Self {
-        self.edge_defaults = Some(config);
-        self
-    }
-
-    /// Sets a style callback for edges (Iced Toggler pattern).
-    ///
-    /// The callback receives the theme, edge status, and the resolved base style.
-    /// The base style comes from per-edge styling (via `push_edge_styled()`) or `edge_defaults`.
-    ///
-    /// # Example
-    /// ```ignore
-    /// node_graph()
-    ///     .edge_style(|_theme, status, base| {
-    ///         match status {
-    ///             EdgeStatus::PendingCut => base.stroke(StrokeStyle::new().color(Color::RED)),
-    ///             EdgeStatus::Idle => base,
-    ///         }
-    ///     })
-    /// ```
-    pub fn edge_style(
-        mut self,
-        f: impl Fn(&Theme, crate::style::EdgeStatus, crate::style::EdgeStyle) -> crate::style::EdgeStyle
-        + 'a,
-    ) -> Self {
-        self.edge_style_fn = Some(Box::new(f));
-        self
-    }
-
-    /// Sets a style callback for nodes (Iced Toggler pattern).
-    ///
-    /// The callback receives the theme, node status, and the resolved base style.
-    /// The base style comes from per-node styling (via `push_node_styled()`) or theme defaults.
-    ///
-    /// # Example
-    /// ```ignore
-    /// node_graph()
-    ///     .node_style(|_theme, status, base| {
-    ///         match status {
-    ///             NodeStatus::Selected => base
-    ///                 .border_color(Color::from_rgb(0.3, 0.6, 1.0))
-    ///                 .border_width(2.5),
-    ///             NodeStatus::Idle => base,
-    ///         }
-    ///     })
-    /// ```
-    pub fn node_style(
-        mut self,
-        f: impl Fn(&Theme, crate::style::NodeStatus, crate::style::NodeStyle) -> crate::style::NodeStyle
-        + 'a,
-    ) -> Self {
-        self.node_style_fn = Some(Box::new(f));
-        self
-    }
-
-    /// Sets a style callback for pins (Iced Toggler pattern).
-    ///
-    /// The callback receives the theme, pin status, and the resolved base style.
-    /// The base style comes from `pin_defaults` or theme defaults.
-    ///
-    /// # Example
-    /// ```ignore
-    /// node_graph()
-    ///     .pin_style(|_theme, status, base| {
-    ///         match status {
-    ///             PinStatus::ValidTarget => base.radius(8.0),
-    ///             PinStatus::Idle => base,
-    ///         }
-    ///     })
-    /// ```
-    pub fn pin_style(
-        mut self,
-        f: impl Fn(&Theme, crate::style::PinStatus, crate::style::PinStyle) -> crate::style::PinStyle
-        + 'a,
-    ) -> Self {
-        self.pin_style_fn = Some(Box::new(f));
         self
     }
 
@@ -731,11 +636,9 @@ where
         self.edges.len()
     }
 
-    /// Returns an iterator over all edges with their configs.
-    pub fn edges(&self) -> impl Iterator<Item = (&PinRef<N, P>, &PinRef<N, P>, &EdgeConfig)> {
-        self.edges
-            .iter()
-            .map(|(from, to, config)| (from, to, config))
+    /// Returns an iterator over all edges as (from, to) pin references.
+    pub fn edges(&self) -> impl Iterator<Item = (&PinRef<N, P>, &PinRef<N, P>)> {
+        self.edges.iter().map(|(from, to, _)| (from, to))
     }
 
     /// Returns the position of a node by its user ID.
@@ -800,28 +703,14 @@ where
 
     pub(super) fn elements_iter(
         &self,
-    ) -> impl Iterator<
-        Item = (
-            Point,
-            &iced::Element<'a, Message, Theme, Renderer>,
-            &NodeConfig,
-        ),
-    > {
-        self.nodes.iter().map(|(p, e, c)| (*p, e, c))
+    ) -> impl Iterator<Item = (Point, &iced::Element<'a, Message, Theme, Renderer>)> {
+        self.nodes.iter().map(|(p, e, _)| (*p, e))
     }
 
     pub(super) fn elements_iter_mut(
         &mut self,
-    ) -> impl Iterator<
-        Item = (
-            Point,
-            &mut iced::Element<'a, Message, Theme, Renderer>,
-            &NodeConfig,
-        ),
-    > {
-        self.nodes
-            .iter_mut()
-            .map(|(p, e, c)| (*p, e, c as &NodeConfig))
+    ) -> impl Iterator<Item = (Point, &mut iced::Element<'a, Message, Theme, Renderer>)> {
+        self.nodes.iter_mut().map(|(p, e, _)| (*p, e))
     }
 
     pub(super) fn on_connect_handler(

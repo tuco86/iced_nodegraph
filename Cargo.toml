@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "iced_nodegraph",
+    "iced_nodegraph_macros",
     "iced_sdf",
     "iced_sdf/examples/basic",
     "demos/hello_world",
@@ -22,6 +23,7 @@ repository = "https://github.com/tuco86/iced_nodegraph"
 [workspace.dependencies]
 # Core libraries
 iced_nodegraph = { path = "iced_nodegraph" }
+iced_nodegraph_macros = { path = "iced_nodegraph_macros" }
 iced_sdf = { path = "iced_sdf" }
 demo_common = { path = "demos/common" }
 

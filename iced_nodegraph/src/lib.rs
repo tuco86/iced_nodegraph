@@ -202,35 +202,24 @@ pub use node_graph::{
 };
 pub use node_pin::{NodePin, PinDirection, PinReference, PinSide, node_pin};
 pub use style::{
-    // Edge style layer types
-    EdgeBorder,
-    // Config types (partial overrides with merge())
-    EdgeConfig,
+    // Unified color type for style fields
+    ColorQuad,
     EdgeCurve,
-    EdgeShadow,
     // Status enums for widget-side styling
     EdgeStatus,
     EdgeStyle,
-    // Style function types (Iced Toggler pattern)
-    EdgeStyleFn,
-    GraphConfig,
     GraphStyle,
-    // Node style types
-    NodeBorder,
-    NodeConfig,
-    NodeShadow,
     NodeStatus,
+    // Node/edge/pin style types (typestate: Partial overlay / Resolved value)
     NodeStyle,
-    NodeStyleFn,
-    PinConfig,
+    Partial,
     PinShape,
     PinStatus,
     PinStyle,
-    PinStyleFn,
+    Resolved,
     STANDARD_THEMES,
-    SelectionConfig,
     SelectionStyle,
-    ShadowConfig,
+    StyleMode,
     is_dark_theme,
     relative_luminance,
     theme_name,

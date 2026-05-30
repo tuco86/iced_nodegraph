@@ -2,10 +2,15 @@
 //!
 //! Each visual element (edge, node, pin) is composited from several SDF draws
 //! stacked front-to-back. This module is the single place that translates the
-//! high-level style types ([`EdgeStyle`], [`NodeStyle`], [`PinStyle`]) into the
-//! flat list of [`iced_sdf::Style`] layers the renderer pushes. The widget owns
-//! geometry (where pins are, how an edge curves); this module owns appearance
-//! (which layers exist and their distance bands).
+//! resolved style types ([`EdgeStyle`], [`NodeStyle`], [`PinStyle`] in their
+//! `Resolved` form) into the flat list of [`iced_sdf::Style`] layers the
+//! renderer pushes. The widget owns geometry (where pins are, how an edge
+//! curves); this module owns appearance (which layers exist and their distance
+//! bands).
+//!
+//! A color field is a [`ColorQuad`]: its four corners map directly onto the four
+//! corners of an `iced_sdf::Style` (arc-length axis start->end crossed with the
+//! distance axis near->far).
 //!
 //! Layer order matters: the first layer in a returned list is drawn closest to
 //! the viewer (lowest SDF z-order), the last is deepest.
@@ -15,6 +20,8 @@ use iced_sdf::{Pattern, Style};
 
 use crate::node_pin::PinDirection;
 
+use super::color::ColorQuad;
+use super::mode::Resolved;
 use super::{EdgeStyle, NodeStyle, PinStyle};
 
 /// Apply opacity to a color by multiplying its alpha channel.
@@ -30,20 +37,39 @@ fn resolve_edge_color(color: Color, pin_color: Color) -> Color {
     if color.a > 0.01 { color } else { pin_color }
 }
 
-/// Build a soft shadow style with optional gradient: opaque at the boundary,
-/// fading to transparent over a band of width `expand + blur` outside the shape.
-fn shadow_style(c0: Color, c1: Color, expand: f32, blur: f32) -> Style {
-    let t0 = Color { a: 0.0, ..c0 };
-    let t1 = Color { a: 0.0, ..c1 };
+/// Build a `Style` from a color quad over a distance band, premultiplying alpha.
+fn quad_style(
+    q: &ColorQuad,
+    dist_from: f32,
+    dist_to: f32,
+    pattern: Option<Pattern>,
+    opacity: f32,
+) -> Style {
     Style {
-        near_start: c0,
-        near_end: c1,
-        far_start: t0,
-        far_end: t1,
-        dist_from: -expand,
-        dist_to: expand + blur.max(0.001),
-        pattern: None,
+        near_start: color_with_opacity(q.near_start, opacity),
+        near_end: color_with_opacity(q.near_end, opacity),
+        far_start: color_with_opacity(q.far_start, opacity),
+        far_end: color_with_opacity(q.far_end, opacity),
+        dist_from,
+        dist_to,
+        pattern,
         distance_field: false,
+    }
+}
+
+/// Stroke style from a quad: distance band is the pattern half-thickness.
+fn quad_stroke(q: &ColorQuad, pattern: Pattern, opacity: f32) -> Style {
+    let ht = pattern.thickness * 0.5;
+    quad_style(q, -ht, ht, Some(pattern), opacity)
+}
+
+/// Replace transparent quad corners with the connected pin color, per arc side.
+fn quad_resolve_pins(q: &ColorQuad, start_pin: Color, end_pin: Color) -> ColorQuad {
+    ColorQuad {
+        near_start: resolve_edge_color(q.near_start, start_pin),
+        far_start: resolve_edge_color(q.far_start, start_pin),
+        near_end: resolve_edge_color(q.near_end, end_pin),
+        far_end: resolve_edge_color(q.far_end, end_pin),
     }
 }
 
@@ -66,120 +92,130 @@ pub(crate) struct EdgeLayer {
     pub style: Style,
 }
 
-impl EdgeStyle {
-    /// Decompose this edge style into SDF layers, front-to-back: stroke,
-    /// optional stroke outline, optional border (ring, outline, background),
-    /// then the shadow deepest.
-    ///
-    /// `start_*`/`end_*` describe the two endpoints; transparent edge colors
-    /// inherit the pin color, and an Input->Output edge is drawn reversed so the
-    /// gradient and flow animation always run source-to-target.
-    pub(crate) fn sdf_layers(
-        &self,
-        start_pin_color: Color,
-        end_pin_color: Color,
-        start_direction: PinDirection,
-        end_direction: PinDirection,
-    ) -> Vec<EdgeLayer> {
-        let is_reversed = matches!(
-            (start_direction, end_direction),
-            (PinDirection::Input, PinDirection::Output)
-        );
+impl NodeStyle<Resolved> {
+    /// Solid fill layer for the node body, premultiplied by `opacity`.
+    pub(crate) fn fill_sdf_style(&self, opacity: f32) -> Style {
+        quad_style(&self.fill_color, -1e6, 0.0, None, opacity)
+    }
 
+    /// Border layers, front-to-back: main stroke then optional outline halo.
+    /// Empty when the border pattern thickness is zero.
+    pub(crate) fn border_sdf_layers(&self, opacity: f32) -> Vec<Style> {
+        let mut layers = Vec::new();
+        let bw = self.border_pattern.thickness;
+        if bw > 0.0 {
+            layers.push(quad_stroke(&self.border_color, self.border_pattern, opacity));
+            if self.border_outline_width > 0.0 {
+                layers.push(quad_stroke(
+                    &self.border_outline_color,
+                    Pattern::solid(bw + self.border_outline_width * 2.0),
+                    opacity,
+                ));
+            }
+        }
+        layers
+    }
+
+    /// Whether the shadow is visible (inner alpha and distance both nonzero).
+    pub(crate) fn has_shadow(&self) -> bool {
+        self.shadow_distance > 0.0
+            && (self.shadow_color.near_start.a > 0.0 || self.shadow_color.near_end.a > 0.0)
+    }
+
+    /// Shadow style: distance gradient from inner (near) to outer (far) over
+    /// `shadow_distance`. The widget shifts the shape by `shadow_offset`.
+    pub(crate) fn shadow_sdf_style(&self, opacity: f32) -> Style {
+        quad_style(
+            &self.shadow_color,
+            0.0,
+            self.shadow_distance.max(0.001),
+            None,
+            opacity,
+        )
+    }
+}
+
+impl EdgeStyle<Resolved> {
+    /// Decompose into SDF layers front-to-back: stroke, optional stroke outline,
+    /// optional border (ring, outline, background), then shadow deepest.
+    ///
+    /// Colors are in arc-length order (`start_color` at arc 0, `end_color` at arc
+    /// 1); transparent quad corners inherit the given pin colors. No reversal: the
+    /// caller lays the edge out in the intended direction, so gradient, arrow
+    /// pattern and flow all follow the arc-length as-is.
+    pub(crate) fn sdf_layers(&self, start_color: Color, end_color: Color) -> Vec<EdgeLayer> {
         let mut layers = Vec::with_capacity(6);
 
         // Stroke (front).
-        let stroke_start = resolve_edge_color(self.start_color, start_pin_color);
-        let stroke_end = resolve_edge_color(self.end_color, end_pin_color);
-        let (c0, c1) = if is_reversed {
-            (stroke_end, stroke_start)
-        } else {
-            (stroke_start, stroke_end)
-        };
-        let pattern = if is_reversed && self.pattern.flow_speed.abs() > 0.001 {
-            let mut p = self.pattern;
-            p.flow_speed = -p.flow_speed;
-            p
-        } else {
-            self.pattern
-        };
+        let stroke_q = quad_resolve_pins(&self.color, start_color, end_color);
         layers.push(EdgeLayer {
             geometry: EdgeGeometry::Stroke,
-            style: Style::arc_gradient_stroke(c0, c1, pattern),
+            style: quad_stroke(&stroke_q, self.pattern, 1.0),
         });
 
-        // Stroke outline (behind the stroke, visible as a halo).
-        if let Some((w, c)) = self.stroke_outline
-            && w > 0.0
-            && c.a > 0.0
+        // Stroke outline (halo behind the stroke).
+        if self.stroke_outline_width > 0.0
+            && (self.stroke_outline_color.near_start.a > 0.0
+                || self.stroke_outline_color.near_end.a > 0.0)
         {
-            let outline_pat = Pattern::solid(pattern.thickness + w * 2.0);
+            let outline_pat =
+                Pattern::solid(self.pattern.thickness + self.stroke_outline_width * 2.0);
             layers.push(EdgeLayer {
                 geometry: EdgeGeometry::Stroke,
-                style: Style::stroke(c, outline_pat),
+                style: quad_stroke(&self.stroke_outline_color, outline_pat, 1.0),
             });
         }
 
         // Border ring (behind stroke).
-        if let Some(border) = &self.border
-            && border.width > 0.0
-        {
-            let border_center = self.pattern.thickness * 0.5 + border.gap + border.width * 0.5;
-            let border_outer = border_center + border.width * 0.5;
+        if self.border_width > 0.0 {
+            let border_center =
+                self.pattern.thickness * 0.5 + self.border_gap + self.border_width * 0.5;
+            let border_outer = border_center + self.border_width * 0.5;
 
-            let border_start = resolve_edge_color(border.start_color, start_pin_color);
-            let border_end = resolve_edge_color(border.end_color, end_pin_color);
-            let (c0, c1) = if is_reversed {
-                (border_end, border_start)
-            } else {
-                (border_start, border_end)
-            };
-
-            let mut border_style = Style::arc_gradient_stroke(c0, c1, Pattern::solid(border.width));
+            let bq = quad_resolve_pins(&self.border_color, start_color, end_color);
+            let mut border_style = quad_stroke(&bq, Pattern::solid(self.border_width), 1.0);
             border_style.dist_from = -border_outer;
-            border_style.dist_to = -border_center + border.width * 0.5;
+            border_style.dist_to = -border_center + self.border_width * 0.5;
             layers.push(EdgeLayer {
                 geometry: EdgeGeometry::Stroke,
                 style: border_style,
             });
 
-            if let Some((w, oc)) = border.outline
-                && w > 0.0
-                && oc.a > 0.0
-            {
-                let outline_pat = Pattern::solid(border.width + w * 2.0);
-                let mut outline_style = Style::stroke(oc, outline_pat);
-                outline_style.dist_from = -border_outer - w;
-                outline_style.dist_to = -border_center + (border.width * 0.5) + w;
+            if self.border_outline_width > 0.0 {
+                let outline_pat =
+                    Pattern::solid(self.border_width + self.border_outline_width * 2.0);
+                let mut outline_style = quad_stroke(&self.border_outline_color, outline_pat, 1.0);
+                outline_style.dist_from = -border_outer - self.border_outline_width;
+                outline_style.dist_to =
+                    -border_center + self.border_width * 0.5 + self.border_outline_width;
                 layers.push(EdgeLayer {
                     geometry: EdgeGeometry::Stroke,
                     style: outline_style,
                 });
             }
 
-            // Border background fill (behind the border stroke).
-            if border.background.a > 0.0 || border.background_end.a > 0.0 {
-                let (bg0, bg1) = if is_reversed {
-                    (border.background_end, border.background)
-                } else {
-                    (border.background, border.background_end)
-                };
-                let mut bg_style = Style::arc_gradient(bg0, bg1);
-                bg_style.dist_to = border_outer;
+            // Border background fill (behind the border ring).
+            if self.border_background.near_start.a > 0.0 || self.border_background.near_end.a > 0.0 {
                 layers.push(EdgeLayer {
                     geometry: EdgeGeometry::Stroke,
-                    style: bg_style,
+                    style: quad_style(&self.border_background, -1e6, border_outer, None, 1.0),
                 });
             }
         }
 
         // Shadow (deepest).
-        if let Some(shadow) = &self.shadow
-            && (shadow.color.a > 0.0 || shadow.end_color.a > 0.0)
+        if self.shadow_blur > 0.0
+            && (self.shadow_color.near_start.a > 0.0 || self.shadow_color.near_end.a > 0.0)
         {
             layers.push(EdgeLayer {
                 geometry: EdgeGeometry::Shadow,
-                style: shadow_style(shadow.color, shadow.end_color, shadow.expand, shadow.blur),
+                style: quad_style(
+                    &self.shadow_color,
+                    -self.shadow_expand,
+                    self.shadow_expand + self.shadow_blur.max(0.001),
+                    None,
+                    1.0,
+                ),
             });
         }
 
@@ -187,59 +223,25 @@ impl EdgeStyle {
     }
 }
 
-impl NodeStyle {
-    /// Solid fill layer for the node body, premultiplied by `opacity`.
-    pub(crate) fn fill_sdf_style(&self, opacity: f32) -> Style {
-        Style::solid(color_with_opacity(self.fill_color, opacity))
-    }
-
-    /// Border layers, front-to-back: main stroke then optional outline halo.
-    /// Empty when there is no border or its width is zero.
-    pub(crate) fn border_sdf_layers(&self, opacity: f32) -> Vec<Style> {
-        let mut layers = Vec::new();
-        if let Some(border) = &self.border {
-            let bw = border.pattern.thickness;
-            if bw > 0.0 {
-                layers.push(Style::stroke(
-                    color_with_opacity(border.color, opacity),
-                    border.pattern,
-                ));
-                if let Some((ow, oc)) = border.outline
-                    && ow > 0.0
-                    && oc.a > 0.0
-                {
-                    layers.push(Style::stroke(
-                        color_with_opacity(oc, opacity),
-                        Pattern::solid(bw + ow * 2.0),
-                    ));
-                }
-            }
-        }
-        layers
-    }
-}
-
-impl PinStyle {
-    /// SDF layers for a pin indicator, front-to-back: fill then optional border
-    /// ring. `pin_color` is the per-pin color, `indicator_r` the drawn radius.
-    pub(crate) fn sdf_layers(
-        &self,
-        pin_color: Color,
-        direction: PinDirection,
-        indicator_r: f32,
-    ) -> Vec<Style> {
+impl PinStyle<Resolved> {
+    /// SDF layers for a pin indicator, front-to-back: fill then optional border.
+    /// `indicator_r` is the drawn radius (the widget may scale it for pulses).
+    pub(crate) fn sdf_layers(&self, direction: PinDirection, indicator_r: f32) -> Vec<Style> {
         let mut layers = Vec::with_capacity(2);
         let fill = if direction == PinDirection::Input {
             // Hollow ring for inputs.
-            Style::stroke(pin_color, Pattern::solid(indicator_r * 0.8))
+            quad_stroke(&self.color, Pattern::solid(indicator_r * 0.8), 1.0)
         } else {
-            Style::solid(pin_color)
+            quad_style(&self.color, -1e6, 0.0, None, 1.0)
         };
         layers.push(fill);
 
-        let border_color = self.border_color.unwrap_or(Color::TRANSPARENT);
-        if border_color.a > 0.0 && self.border_width > 0.0 {
-            layers.push(Style::solid(border_color).expand(self.border_width));
+        if self.border_width > 0.0
+            && (self.border_color.near_start.a > 0.0 || self.border_color.near_end.a > 0.0)
+        {
+            layers.push(
+                quad_style(&self.border_color, -1e6, 0.0, None, 1.0).expand(self.border_width),
+            );
         }
         layers
     }

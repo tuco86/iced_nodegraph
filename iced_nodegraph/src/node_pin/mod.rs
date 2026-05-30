@@ -33,6 +33,7 @@
 //! - Visual feedback via pulsing animation on valid targets
 
 use crate::ids::PinId;
+use crate::style::{Partial, PinStyle};
 use iced::{Color, Element, Event, Length, Point, Rectangle, Size};
 use iced_widget::core::{
     Clipboard, Layout, Shell, Widget, layout, mouse, renderer,
@@ -136,6 +137,9 @@ where
     pub pin_id: P,
     pub data_type: TypeId,
     pub color: Color,
+    /// Per-pin style overlay (shape, radius, border). Resolved against the theme
+    /// at draw time; the indicator fill color comes from `color`.
+    pub style: PinStyle<Partial>,
     pub content: Element<'a, Message, Theme, Renderer>,
     interactions_disabled: bool,
 }
@@ -156,6 +160,7 @@ where
             pin_id,
             data_type: TypeId::of::<()>(), // Default: untyped
             color: Color::from_rgb(0.5, 0.5, 0.5),
+            style: PinStyle::new(),
             content: content.into(),
             interactions_disabled: false,
         }
@@ -181,6 +186,14 @@ where
 
     pub fn color(mut self, color: Color) -> Self {
         self.color = color;
+        self
+    }
+
+    /// Sets the per-pin style overlay (shape, radius, border). Only fields set
+    /// in the overlay override the theme defaults; the indicator fill color is
+    /// taken from [`Self::color`].
+    pub fn styled(mut self, style: impl Into<PinStyle<Partial>>) -> Self {
+        self.style = style.into();
         self
     }
 
@@ -234,6 +247,8 @@ pub(super) struct NodePinState {
     /// TypeId of the data this pin carries - used for connection matching
     pub data_type: TypeId,
     pub color: Color,
+    /// Per-pin style overlay (shape, radius, border).
+    pub style: PinStyle<Partial>,
     pub position: Point,
     /// When true, pin cannot be dragged from or dropped onto
     pub interactions_disabled: bool,
@@ -260,6 +275,7 @@ where
             direction: self.direction,
             data_type: self.data_type,
             color: self.color,
+            style: self.style.clone(),
             position: Point::new(0.0, 0.0),
             interactions_disabled: self.interactions_disabled,
         })
@@ -310,6 +326,7 @@ where
             state.direction = self.direction;
             state.data_type = self.data_type;
             state.color = self.color;
+            state.style = self.style.clone();
             state.position = layout.bounds().center();
             state.interactions_disabled = self.interactions_disabled;
         }
