@@ -47,8 +47,8 @@ use iced::{
 };
 use iced_nodegraph::{EdgeCurve, PinShape};
 use iced_nodegraph::{
-    EdgeStatus, EdgeStyle, NodeStyle, Partial, PinInfo, PinRef, PinStatus, PinStyle, Resolved,
-    default_edge_style, default_node_style, default_pin_style, edge as ng_edge, node as ng_node,
+    EdgeStatus, EdgeStyle, NodeStyle, Partial, PinRef, PinStyle, default_edge_style,
+    default_node_style, default_pin_style, edge as ng_edge, node as ng_node,
 };
 use iced_palette::{
     Command, Shortcut, command, command_palette, find_matching_shortcut, focus_input,
@@ -270,17 +270,6 @@ fn pin_color_for(ty: std::any::TypeId) -> Color {
     } else {
         colors::PIN_ANY
     }
-}
-
-/// Per-node pin style: theme defaults + status, indicator colored by data type.
-fn graph_pin_style(
-    theme: &Theme,
-    pin: PinInfo<'_, PinLabel>,
-    status: PinStatus,
-) -> PinStyle<Resolved> {
-    default_pin_style(theme, status)
-        .color(pin_color_for(pin.data_type()))
-        .resolve(&PinStyle::from_theme(theme))
 }
 
 /// Computed style overlays accumulated from connected config nodes. Each is a
@@ -1906,6 +1895,10 @@ impl Application {
             } else {
                 node_defaults.clone()
             };
+            // Pins: the per-pin data-type color wins, then the global Pin Config
+            // overlay (radius/shape/border from an ApplyToGraph chain), then the
+            // status default fills the rest.
+            let pin_overlay = self.computed_style.pin.clone();
             ng.push_node(
                 ng_node(node_id.clone(), *position, element)
                     .style(move |theme, status| {
@@ -1913,7 +1906,13 @@ impl Application {
                             .merge(&overlay)
                             .resolve(&NodeStyle::from_theme(theme))
                     })
-                    .pin_style(graph_pin_style),
+                    .pin_style(move |theme, pin, status| {
+                        PinStyle::new()
+                            .color(pin_color_for(pin.data_type()))
+                            .merge(&pin_overlay)
+                            .merge(&default_pin_style(theme, status))
+                            .resolve(&PinStyle::from_theme(theme))
+                    }),
             );
         }
 
