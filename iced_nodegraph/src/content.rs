@@ -435,10 +435,14 @@ fn node_section<'a, Message>(
 where
     Message: Clone + 'a,
 {
+    // The section's background is clipped to the node's inner rect (inset by
+    // border_width), so its corners must round to the inner radius to line up
+    // with the node fill's inner border edge. Matches node_content_container.
+    let inner_radius = (corner_radius - border_width).max(0.0);
     let radius = match position {
-        ContentPosition::Top => border::top(corner_radius),
-        ContentPosition::Bottom => border::bottom(corner_radius),
-        ContentPosition::Full => border::radius(corner_radius),
+        ContentPosition::Top => border::top(inner_radius),
+        ContentPosition::Bottom => border::bottom(inner_radius),
+        ContentPosition::Full => border::radius(inner_radius),
         ContentPosition::Middle => border::radius(0.0),
     };
 
