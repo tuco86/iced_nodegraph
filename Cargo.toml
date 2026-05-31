@@ -32,8 +32,7 @@ iced = "0.14"
 iced_wgpu = "0.14"
 iced_widget = "0.14"
 
-# iced_palette (git for CI, patched locally for development)
-iced_palette = { git = "https://github.com/tuco86/iced_palette.git", branch = "main" }
+iced_palette = "0.1"
 
 # Coordinate transformations and math
 euclid = { version = "0.22.11", features = ["bytemuck"] }

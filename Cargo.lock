@@ -1509,6 +1509,8 @@ dependencies = [
 [[package]]
 name = "iced_palette"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c59a6a281f850c4551f2c3db0fa595a217943966dcc2d8a2e368e44a70ac173"
 dependencies = [
  "iced",
  "iced_widget",
@@ -3978,7 +3980,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
