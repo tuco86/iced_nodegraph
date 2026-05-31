@@ -2,6 +2,10 @@
 #![allow(clippy::type_complexity)]
 #![allow(clippy::borrowed_box)]
 #![allow(clippy::should_implement_trait)]
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/tuco86/iced_nodegraph/main/assets/logo/logo.svg",
+    html_favicon_url = "https://raw.githubusercontent.com/tuco86/iced_nodegraph/main/assets/logo/logo.svg"
+)]
 
 //! # iced_nodegraph
 //!

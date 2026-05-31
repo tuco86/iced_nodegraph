@@ -1,4 +1,8 @@
-# iced_nodegraph
+<p align="center">
+  <img src="assets/logo/logo.svg" alt="iced_nodegraph logo" width="120" height="120">
+</p>
+
+<h1 align="center">iced_nodegraph</h1>
 
 A high-performance node graph editor widget for the [Iced](https://github.com/iced-rs/iced) GUI framework, featuring SDF-based GPU rendering via a custom WGPU pipeline and type-safe coordinate transformations.
 

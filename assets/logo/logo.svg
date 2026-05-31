@@ -1,0 +1,30 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Concept: Constellation - abstract graph, circular nodes, bezier web -->
+  <defs>
+    <linearGradient id="con-edge" x1="0" y1="0" x2="256" y2="256" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#89dceb"/>
+      <stop offset="0.5" stop-color="#cba6f7"/>
+      <stop offset="1" stop-color="#fab387"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="56" fill="#181825"/>
+
+  <g stroke="url(#con-edge)" stroke-width="5" stroke-linecap="round" fill="none">
+    <path d="M88 80 C 140 88, 150 110, 176 96"/>
+    <path d="M88 80 C 80 130, 90 150, 96 176"/>
+    <path d="M176 96 C 188 140, 170 150, 160 176"/>
+    <path d="M96 176 C 120 168, 140 184, 160 176"/>
+    <path d="M88 80 C 130 120, 130 140, 160 176" opacity="0.4"/>
+  </g>
+
+  <!-- nodes as circles with rings -->
+  <circle cx="88" cy="80" r="16" fill="#313244" stroke="#89dceb" stroke-width="4"/>
+  <circle cx="176" cy="96" r="13" fill="#313244" stroke="#cba6f7" stroke-width="4"/>
+  <circle cx="96" cy="176" r="13" fill="#313244" stroke="#fab387" stroke-width="4"/>
+  <circle cx="160" cy="176" r="18" fill="#45475a" stroke="#89dceb" stroke-width="4"/>
+
+  <circle cx="88" cy="80" r="4" fill="#89dceb"/>
+  <circle cx="176" cy="96" r="4" fill="#cba6f7"/>
+  <circle cx="96" cy="176" r="4" fill="#fab387"/>
+  <circle cx="160" cy="176" r="4" fill="#89dceb"/>
+</svg>
