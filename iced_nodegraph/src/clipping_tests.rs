@@ -9,7 +9,7 @@
 //! but we do not need a real renderer: the bug is observable in a single
 //! argument value, not in pixel output.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use iced::advanced::widget::{Tree, Widget};
@@ -29,9 +29,23 @@ use crate::{NodeGraph, node};
 // ---------------------------------------------------------------------------
 struct Stub;
 
+thread_local! {
+    // Records active clip layers so a child can inspect the innermost clip it
+    // is drawn under (push_clip in iced replaces, not intersects, parent clips).
+    static LAYER_STACK: RefCell<Vec<Rectangle>> = const { RefCell::new(Vec::new()) };
+    // Snapshot of the innermost clip at the moment the recorder child is drawn.
+    static CHILD_CLIP: Cell<Option<Rectangle>> = const { Cell::new(None) };
+}
+
 impl renderer::Renderer for Stub {
-    fn start_layer(&mut self, _bounds: Rectangle) {}
-    fn end_layer(&mut self) {}
+    fn start_layer(&mut self, bounds: Rectangle) {
+        LAYER_STACK.with(|s| s.borrow_mut().push(bounds));
+    }
+    fn end_layer(&mut self) {
+        LAYER_STACK.with(|s| {
+            s.borrow_mut().pop();
+        });
+    }
     fn start_transformation(&mut self, _t: Transformation) {}
     fn end_transformation(&mut self) {}
     fn reset(&mut self, _new_bounds: Rectangle) {}
@@ -128,6 +142,7 @@ impl<Message> Widget<Message, Theme, Stub> for ViewportRecorder {
         viewport: &Rectangle,
     ) {
         self.on_draw.0.set(Some(*viewport));
+        CHILD_CLIP.with(|c| c.set(LAYER_STACK.with(|s| s.borrow().last().copied())));
     }
     fn update(
         &mut self,
@@ -218,6 +233,52 @@ fn draw_clips_child_viewport_to_graph_bounds() {
     assert!(
         recorded.width <= 200.0 && recorded.height <= 200.0,
         "child draw viewport {recorded:?} should be clipped to NodeGraph bounds (200x200)",
+    );
+}
+
+#[test]
+fn draw_clips_node_content_layer_to_graph_bounds() {
+    // A node straddling the graph's right edge: its rect extends past x=200,
+    // but the layer the node content (title bar, widgets) is drawn under must
+    // be bounded by the graph, not by the node rect. iced's push_clip replaces
+    // the parent clip, so the node-content clip has to be intersected with the
+    // graph viewport explicitly. The recorder is 40 wide; placed at world
+    // x=180 it spans [180, 220], 20px past the 200px graph edge.
+    CHILD_CLIP.with(|c| c.set(None));
+    let (mut graph, _on_draw, _on_update) =
+        build_graph_with_recorder(200.0, 200.0, Point::new(180.0, 50.0));
+
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Stub>);
+    let mut renderer = Stub;
+    let layout_node = graph.layout(
+        &mut tree,
+        &renderer,
+        &layout::Limits::new(Size::ZERO, Size::new(1024.0, 768.0)),
+    );
+    let layout = Layout::new(&layout_node);
+
+    let outer_viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
+    graph.draw(
+        &tree,
+        &mut renderer,
+        &Theme::Light,
+        &renderer::Style {
+            text_color: Color::BLACK,
+        },
+        layout,
+        mouse::Cursor::Unavailable,
+        &outer_viewport,
+    );
+
+    let clip = CHILD_CLIP
+        .with(|c| c.get())
+        .expect("node content was never drawn under a clip layer");
+
+    // Default camera (zoom 1, no pan, graph at origin): layout space == screen
+    // space, so the clip must stay within the 0..200 graph bounds.
+    assert!(
+        clip.x + clip.width <= 200.5,
+        "node content clip {clip:?} must not extend past graph right edge (200)",
     );
 }
 

@@ -875,12 +875,20 @@ where
                     |renderer, viewport, cursor| {
                         let bounds = node_layout.bounds();
                         let screen_offset: Vector = offset.into_iced();
-                        let clip_bounds = Rectangle {
+                        let node_clip = Rectangle {
                             x: bounds.x + screen_offset.x + border_width,
                             y: bounds.y + screen_offset.y + border_width,
                             width: (bounds.width - 2.0 * border_width).max(0.0),
                             height: (bounds.height - 2.0 * border_width).max(0.0),
                         };
+
+                        // push_clip replaces (does not intersect) the parent
+                        // clip, so intersect with the graph viewport here;
+                        // otherwise a node straddling the graph edge paints its
+                        // content (e.g. the title bar) past that edge.
+                        let clip_bounds = node_clip
+                            .intersection(viewport)
+                            .unwrap_or(Rectangle::new(node_clip.position(), Size::ZERO));
 
                         renderer.with_layer(clip_bounds, |renderer| {
                             renderer.with_translation(screen_offset, |renderer| {
