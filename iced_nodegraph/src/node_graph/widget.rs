@@ -243,15 +243,25 @@ fn resolve_node_style(
 }
 
 /// Resolves an edge's style: the per-edge callback, or the built-in default.
-fn resolve_edge_style(
-    style_fn: Option<&EdgeStyleFn<'_, Theme>>,
+fn resolve_edge_style<P: PinId + 'static>(
+    style_fn: Option<&EdgeStyleFn<'_, P, Theme>>,
     theme: &Theme,
     status: EdgeStatus,
+    start: Option<PinInfo<'_, P>>,
+    end: Option<PinInfo<'_, P>>,
 ) -> EdgeStyle<Resolved> {
-    match style_fn {
-        Some(f) => f(theme, status),
-        None => crate::style::resolved_edge_style(theme, status),
+    match (style_fn, start, end) {
+        (Some(f), Some(s), Some(e)) => f(theme, status, s, e),
+        _ => crate::style::resolved_edge_style(theme, status),
     }
+}
+
+/// Builds the read-only [`PinInfo`] for a pin state, if its id is of type `P`.
+fn pin_info<'s, P: PinId + 'static>(state: &'s NodePinState) -> Option<PinInfo<'s, P>> {
+    state
+        .pin_id
+        .downcast_ref::<P>()
+        .map(|id| PinInfo::new(state.direction, state.data_type, id))
 }
 
 /// Resolves a GraphStyle or uses theme defaults.
@@ -511,6 +521,8 @@ where
                 let to_pos = (to_pin_pos.into_euclid().to_vector() + to_offset).to_point();
                 let from_side: u32 = from_pin_state.side.into();
                 let to_side: u32 = to_pin_state.side.into();
+                let from_info = pin_info::<P>(from_pin_state);
+                let to_info = pin_info::<P>(to_pin_state);
 
                 // Pin colors come from each pin's owner-node pin_style closure
                 // (pins carry no style); TRANSPARENT stroke ends inherit them.
@@ -523,18 +535,31 @@ where
                 // data-flow direction regardless of which side was dragged from.
                 let swap = !matches!(from_pin_state.direction, PinDirection::Output)
                     && matches!(to_pin_state.direction, PinDirection::Output);
-                let (start_pos, end_pos, start_side, end_side, start_color, end_color) = if swap {
-                    (to_pos, from_pos, to_side, from_side, to_color, from_color)
-                } else {
-                    (from_pos, to_pos, from_side, to_side, from_color, to_color)
-                };
+                let (start_pos, end_pos, start_side, end_side, start_color, end_color, start_info, end_info) =
+                    if swap {
+                        (
+                            to_pos, from_pos, to_side, from_side, to_color, from_color, to_info,
+                            from_info,
+                        )
+                    } else {
+                        (
+                            from_pos, to_pos, from_side, to_side, from_color, to_color, from_info,
+                            to_info,
+                        )
+                    };
 
                 let edge_status = if pending_cuts.is_some_and(|cuts| cuts.contains(&edge_idx)) {
                     EdgeStatus::PendingCut
                 } else {
                     EdgeStatus::Idle
                 };
-                let edge_style = resolve_edge_style(edge_style_fn.as_ref(), theme, edge_status);
+                let edge_style = resolve_edge_style(
+                    edge_style_fn.as_ref(),
+                    theme,
+                    edge_status,
+                    start_info,
+                    end_info,
+                );
 
                 let (shape, shadow_shape) =
                     edge_shapes(&start_pos, &end_pos, start_side, end_side, &edge_style);
@@ -596,10 +621,11 @@ where
                     // when the graph is off the window origin.
                     let end_pos: WorldPoint = cursor_layout(cursor_pos);
 
-                    let drag_edge_style = match self.dragging_edge_style_fn.as_ref() {
-                        Some(f) => f(theme),
-                        None => crate::style::resolved_edge_style(theme, EdgeStatus::Idle),
-                    };
+                    let drag_edge_style =
+                        match (self.dragging_edge_style_fn.as_ref(), pin_info::<P>(from_pin_state)) {
+                            (Some(f), Some(info)) => f(theme, info),
+                            _ => crate::style::resolved_edge_style(theme, EdgeStatus::Idle),
+                        };
 
                     let from_side: u32 = from_pin_state.side.into();
                     let cursor_side: u32 = match from_pin_state.side {

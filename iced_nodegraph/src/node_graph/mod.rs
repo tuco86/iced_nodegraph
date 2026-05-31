@@ -54,17 +54,20 @@ use crate::style::{
 /// Per-node style callback: theme + status -> resolved style. Used by [`Node`].
 pub(crate) type NodeStyleFn<'a, Theme> =
     Box<dyn Fn(&Theme, NodeStatus) -> NodeStyle<Resolved> + 'a>;
-/// Per-edge style callback: theme + status -> resolved style. Used by [`Edge`].
-pub(crate) type EdgeStyleFn<'a, Theme> =
-    Box<dyn Fn(&Theme, EdgeStatus) -> EdgeStyle<Resolved> + 'a>;
+/// Per-edge style callback: theme + status + both endpoint pin infos (in draw
+/// order: start = output side, end = input side) -> resolved style. Used by
+/// [`Edge`].
+pub(crate) type EdgeStyleFn<'a, P, Theme> =
+    Box<dyn Fn(&Theme, EdgeStatus, PinInfo<'_, P>, PinInfo<'_, P>) -> EdgeStyle<Resolved> + 'a>;
 /// Per-node pin style callback: theme + pin info + status -> resolved pin style.
 /// The node styles all of its pins (pins carry no style of their own). Used by
 /// [`Node::pin_style`].
 pub(crate) type PinStyleFn<'a, P, Theme> =
     Box<dyn Fn(&Theme, PinInfo<'_, P>, PinStatus) -> PinStyle<Resolved> + 'a>;
-/// Drag-edge style callback: theme -> resolved style. A freshly dragged edge has
-/// no status. Used by [`NodeGraph::dragging_edge_style`].
-pub(crate) type DragEdgeStyleFn<'a, Theme> = Box<dyn Fn(&Theme) -> EdgeStyle<Resolved> + 'a>;
+/// Drag-edge style callback: theme + the source pin's info -> resolved style. A
+/// freshly dragged edge has no status. Used by [`NodeGraph::dragging_edge_style`].
+pub(crate) type DragEdgeStyleFn<'a, P, Theme> =
+    Box<dyn Fn(&Theme, PinInfo<'_, P>) -> EdgeStyle<Resolved> + 'a>;
 
 /// A node to push onto the graph: id, position, content element, an optional
 /// per-node style closure, and an optional closure styling all of its pins.
@@ -135,7 +138,7 @@ impl<'a, N, P, Message, Theme, Renderer> Node<'a, N, P, Message, Theme, Renderer
 pub struct Edge<'a, N, P, Theme> {
     from: PinRef<N, P>,
     to: PinRef<N, P>,
-    style_fn: Option<EdgeStyleFn<'a, Theme>>,
+    style_fn: Option<EdgeStyleFn<'a, P, Theme>>,
 }
 
 /// Creates an [`Edge`] with default (theme) styling.
@@ -148,8 +151,13 @@ pub fn edge<'a, N, P, Theme>(from: PinRef<N, P>, to: PinRef<N, P>) -> Edge<'a, N
 }
 
 impl<'a, N, P, Theme> Edge<'a, N, P, Theme> {
-    /// Sets the per-edge style closure: theme + [`EdgeStatus`] -> resolved style.
-    pub fn style(mut self, f: impl Fn(&Theme, EdgeStatus) -> EdgeStyle<Resolved> + 'a) -> Self {
+    /// Sets the per-edge style closure: theme, [`EdgeStatus`], and both endpoint
+    /// [`PinInfo`]s in draw order (start = output side, end = input side) ->
+    /// resolved style.
+    pub fn style(
+        mut self,
+        f: impl Fn(&Theme, EdgeStatus, PinInfo<'_, P>, PinInfo<'_, P>) -> EdgeStyle<Resolved> + 'a,
+    ) -> Self {
         self.style_fn = Some(Box::new(f));
         self
     }
@@ -369,7 +377,7 @@ pub struct NodeGraph<
     pub(super) edges: Vec<(
         PinRef<N, P>,
         PinRef<N, P>,
-        Option<EdgeStyleFn<'a, Theme>>,
+        Option<EdgeStyleFn<'a, P, Theme>>,
     )>,
     /// Bidirectional maps for ID translation.
     pub(super) id_maps: IdMaps<N, P, E>,
@@ -404,7 +412,7 @@ pub struct NodeGraph<
     pub(super) cutting_tool_style_fn: Option<Box<dyn Fn(&Theme) -> iced::Color + 'a>>,
     /// Style for the edge being dragged (theme -> resolved style). The graph
     /// injects the source pin's color for inheriting (TRANSPARENT) stroke ends.
-    pub(super) dragging_edge_style_fn: Option<DragEdgeStyleFn<'a, Theme>>,
+    pub(super) dragging_edge_style_fn: Option<DragEdgeStyleFn<'a, P, Theme>>,
     /// Initial camera position and zoom to restore on first render.
     /// Applied once when the widget state is created, then controlled by user interaction.
     pub(super) initial_camera: Option<(Point, f32)>,
@@ -537,7 +545,7 @@ where
     /// the theme; the source pin's color is injected for inheriting stroke ends.
     pub fn dragging_edge_style(
         mut self,
-        f: impl Fn(&Theme) -> EdgeStyle<Resolved> + 'a,
+        f: impl Fn(&Theme, PinInfo<'_, P>) -> EdgeStyle<Resolved> + 'a,
     ) -> Self {
         self.dragging_edge_style_fn = Some(Box::new(f));
         self
