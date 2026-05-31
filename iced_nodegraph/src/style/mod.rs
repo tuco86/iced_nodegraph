@@ -13,6 +13,7 @@
 use iced::{Color, Theme};
 
 mod color;
+mod defaults;
 mod edge;
 mod mode;
 mod node;
@@ -20,6 +21,10 @@ mod pin;
 mod sdf;
 
 pub use color::ColorQuad;
+pub use defaults::{
+    default_edge_style, default_node_style, default_pin_style, resolved_edge_style,
+    resolved_node_style, resolved_pin_style,
+};
 pub use edge::EdgeStyle;
 pub use mode::{Partial, Resolved, StyleMode};
 pub use node::NodeStyle;
