@@ -39,7 +39,10 @@ use iced::{
     alignment::Horizontal,
     widget::{Space, button, column, container, row, scrollable, text},
 };
-use iced_nodegraph::{NodeContentStyle, PinRef, node_graph, pin, simple_node};
+use iced_nodegraph::{
+    NodeContentStyle, PinInfo as NgPinInfo, PinRef, PinStatus, PinStyle, Resolved,
+    default_pin_style, edge, node, node_graph, pin, simple_node,
+};
 use std::collections::{HashMap, HashSet};
 
 #[cfg(feature = "wasm")]
@@ -114,6 +117,25 @@ enum PinDir {
     Input,
     Output,
     Bidirectional,
+}
+
+/// Colors a node's pins by their data-type marker (pins carry no style; the
+/// owning node styles them).
+fn pin_style(theme: &Theme, pin: NgPinInfo<'_, usize>, status: PinStatus) -> PinStyle<Resolved> {
+    use std::any::TypeId;
+    let ty = pin.data_type();
+    let color = if ty == TypeId::of::<Integer>() {
+        PinType::Integer.color()
+    } else if ty == TypeId::of::<Float>() {
+        PinType::Float.color()
+    } else if ty == TypeId::of::<StringType>() {
+        PinType::String.color()
+    } else {
+        PinType::Any.color()
+    };
+    default_pin_style(theme, status)
+        .color(color)
+        .resolve(&PinStyle::from_theme(theme))
 }
 
 #[derive(Debug, Clone)]
@@ -449,7 +471,7 @@ impl App {
             .get(&0)
             .copied()
             .unwrap_or(Point::ORIGIN);
-        ng.push_node(0usize, pos, self.number_generator_node(&theme));
+        ng.push_node(node(0usize, pos, self.number_generator_node(&theme)).pin_style(pin_style));
 
         // Node 1: Math Operations
         let pos = self
@@ -457,7 +479,7 @@ impl App {
             .get(&1)
             .copied()
             .unwrap_or(Point::ORIGIN);
-        ng.push_node(1usize, pos, self.math_operations_node(&theme));
+        ng.push_node(node(1usize, pos, self.math_operations_node(&theme)).pin_style(pin_style));
 
         // Node 2: Type Converter
         let pos = self
@@ -465,7 +487,7 @@ impl App {
             .get(&2)
             .copied()
             .unwrap_or(Point::ORIGIN);
-        ng.push_node(2usize, pos, self.type_converter_node(&theme));
+        ng.push_node(node(2usize, pos, self.type_converter_node(&theme)).pin_style(pin_style));
 
         // Node 3: Display
         let pos = self
@@ -473,7 +495,7 @@ impl App {
             .get(&3)
             .copied()
             .unwrap_or(Point::ORIGIN);
-        ng.push_node(3usize, pos, self.display_node(&theme));
+        ng.push_node(node(3usize, pos, self.display_node(&theme)).pin_style(pin_style));
 
         // Node 4: Bidirectional Hub
         let pos = self
@@ -481,11 +503,11 @@ impl App {
             .get(&4)
             .copied()
             .unwrap_or(Point::ORIGIN);
-        ng.push_node(4usize, pos, self.bidirectional_hub_node(&theme));
+        ng.push_node(node(4usize, pos, self.bidirectional_hub_node(&theme)).pin_style(pin_style));
 
         // Add edges
         for (from, to) in &self.edges {
-            ng.push_edge(*from, *to);
+            ng.push_edge(edge(*from, *to));
         }
 
         // Toolbar
@@ -561,16 +583,14 @@ impl App {
                     0usize,
                     text("Int Out").size(12),
                     Output,
-                    Integer,
-                    PinType::Integer.color()
+                    Integer
                 )),
                 right_pin(pin!(
                     Right,
                     1usize,
                     text("Float Out").size(12),
                     Output,
-                    Float,
-                    PinType::Float.color()
+                    Float
                 )),
             ]
             .spacing(4),
@@ -585,30 +605,9 @@ impl App {
             "Math Operations",
             style,
             column![
-                pin!(
-                    Left,
-                    0usize,
-                    text("A (Float)").size(12),
-                    Input,
-                    Float,
-                    PinType::Float.color()
-                ),
-                pin!(
-                    Left,
-                    1usize,
-                    text("B (Float)").size(12),
-                    Input,
-                    Float,
-                    PinType::Float.color()
-                ),
-                right_pin(pin!(
-                    Right,
-                    2usize,
-                    text("Result").size(12),
-                    Output,
-                    Float,
-                    PinType::Float.color()
-                )),
+                pin!(Left, 0usize, text("A (Float)").size(12), Input, Float),
+                pin!(Left, 1usize, text("B (Float)").size(12), Input, Float),
+                right_pin(pin!(Right, 2usize, text("Result").size(12), Output, Float)),
             ]
             .spacing(4),
         ))
@@ -622,37 +621,15 @@ impl App {
             "Type Converter",
             style,
             column![
-                pin!(
-                    Left,
-                    0usize,
-                    text("In (Any)").size(12),
-                    Input,
-                    AnyType,
-                    PinType::Any.color()
-                ),
-                right_pin(pin!(
-                    Right,
-                    1usize,
-                    text("Int").size(12),
-                    Output,
-                    Integer,
-                    PinType::Integer.color()
-                )),
-                right_pin(pin!(
-                    Right,
-                    2usize,
-                    text("Float").size(12),
-                    Output,
-                    Float,
-                    PinType::Float.color()
-                )),
+                pin!(Left, 0usize, text("In (Any)").size(12), Input, AnyType),
+                right_pin(pin!(Right, 1usize, text("Int").size(12), Output, Integer)),
+                right_pin(pin!(Right, 2usize, text("Float").size(12), Output, Float)),
                 right_pin(pin!(
                     Right,
                     3usize,
                     text("String").size(12),
                     Output,
-                    StringType,
-                    PinType::String.color()
+                    StringType
                 )),
             ]
             .spacing(4),
@@ -667,21 +644,13 @@ impl App {
             "Display",
             style,
             column![
-                pin!(
-                    Left,
-                    0usize,
-                    text("Value (Any)").size(12),
-                    Input,
-                    AnyType,
-                    PinType::Any.color()
-                ),
+                pin!(Left, 0usize, text("Value (Any)").size(12), Input, AnyType),
                 pin!(
                     Left,
                     1usize,
                     text("Label (String)").size(12),
                     Input,
-                    StringType,
-                    PinType::String.color()
+                    StringType
                 ),
             ]
             .spacing(4),
@@ -696,38 +665,10 @@ impl App {
             "Bidirectional Hub",
             style,
             column![
-                pin!(
-                    Top,
-                    0usize,
-                    text("Float").size(12),
-                    Both,
-                    Float,
-                    PinType::Float.color()
-                ),
-                right_pin(pin!(
-                    Right,
-                    1usize,
-                    text("Int").size(12),
-                    Both,
-                    Integer,
-                    PinType::Integer.color()
-                )),
-                pin!(
-                    Bottom,
-                    2usize,
-                    text("Any").size(12),
-                    Both,
-                    AnyType,
-                    PinType::Any.color()
-                ),
-                pin!(
-                    Left,
-                    3usize,
-                    text("Str").size(12),
-                    Both,
-                    StringType,
-                    PinType::String.color()
-                ),
+                pin!(Top, 0usize, text("Float").size(12), Both, Float),
+                right_pin(pin!(Right, 1usize, text("Int").size(12), Both, Integer)),
+                pin!(Bottom, 2usize, text("Any").size(12), Both, AnyType),
+                pin!(Left, 3usize, text("Str").size(12), Both, StringType),
             ]
             .spacing(4),
         ))

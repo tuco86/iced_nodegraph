@@ -48,8 +48,36 @@ use iced::{
     widget::{checkbox, column, container, opaque, stack, text},
     window,
 };
-use iced_nodegraph::{PinRef, SdfDebug, node_graph};
+use iced_nodegraph::{
+    PinInfo, PinRef, PinStatus, PinStyle, Resolved, SdfDebug, default_pin_style, edge, node,
+    node_graph,
+};
 use nodes::NodeType;
+
+/// Colors a node's pins by their data-type marker.
+fn pin_style(
+    theme: &iced::Theme,
+    pin: PinInfo<'_, usize>,
+    status: PinStatus,
+) -> PinStyle<Resolved> {
+    use nodes::colors;
+    use std::any::TypeId;
+    let ty = pin.data_type();
+    let color = if ty == TypeId::of::<colors::Float>() {
+        colors::PIN_FLOAT
+    } else if ty == TypeId::of::<colors::Vec2>() {
+        colors::PIN_VEC2
+    } else if ty == TypeId::of::<colors::Vec3>() {
+        colors::PIN_VEC3
+    } else if ty == TypeId::of::<colors::Vec4>() {
+        colors::PIN_VEC4
+    } else {
+        colors::PIN_GENERIC_IN
+    };
+    default_pin_style(theme, status)
+        .color(color)
+        .resolve(&PinStyle::from_theme(theme))
+}
 use std::collections::HashSet;
 
 pub fn main() -> iced::Result {
@@ -193,12 +221,15 @@ impl Application {
 
         // Add all nodes
         for (index, (position, node_type)) in self.nodes.iter().enumerate() {
-            ng.push_node(index, *position, node_type.create_node(&self.current_theme));
+            ng.push_node(
+                node(index, *position, node_type.create_node(&self.current_theme))
+                    .pin_style(pin_style),
+            );
         }
 
         // Add all edges
         for (from, to) in &self.edges {
-            ng.push_edge(*from, *to);
+            ng.push_edge(edge(*from, *to));
         }
 
         // Add stats overlay with SDF pipeline metrics

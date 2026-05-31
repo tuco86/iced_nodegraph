@@ -1,6 +1,9 @@
 //! Semantic pin colors for the 500_nodes shader graph demo.
 //!
 //! Colors are organized by GLSL data type for consistent visual language.
+//! Not every palette entry is wired up (pins are colored by data type via
+//! `pin_style`); keep the full palette for reference.
+#![allow(dead_code)]
 
 use iced::Color;
 
