@@ -122,8 +122,7 @@ where
         .spacing(8)
         .align_y(iced::Alignment::Center),
         Output,
-        pins::Bool,
-        colors::PIN_BOOL
+        pins::Bool
     ))
     .width(Length::Fill)
     .align_x(Horizontal::Right);

@@ -45,8 +45,11 @@ use iced::{
     widget::{container, opaque, stack, text},
     window,
 };
-use iced_nodegraph::{EdgeConfig, NodeConfig, PinConfig, PinRef, ShadowConfig};
 use iced_nodegraph::{EdgeCurve, PinShape};
+use iced_nodegraph::{
+    EdgeStatus, EdgeStyle, NodeStyle, Partial, PinRef, PinStyle, default_edge_style,
+    default_node_style, default_pin_style, edge as ng_edge, node as ng_node,
+};
 use iced_palette::{
     Command, Shortcut, command, command_palette, find_matching_shortcut, focus_input,
     get_filtered_command_index, get_filtered_count, is_toggle_shortcut, navigate_down, navigate_up,
@@ -56,10 +59,10 @@ use nodes::{
     BoolToggleConfig, ConfigNodeType, EdgeConfigInputs, EdgeSection, EdgeSections,
     FloatSliderConfig, InputNodeType, IntSliderConfig, MathNodeState, MathOperation,
     NodeConfigInputs, NodeSection, NodeSections, NodeType, NodeValue, PatternType, PinConfigInputs,
-    ShadowConfigInputs, apply_to_graph_node, apply_to_node_node, bool_toggle_node,
-    color_picker_node, color_preset_node, edge_config_node, edge_curve_selector_node,
-    float_slider_node, int_slider_node, math_node, node, node_config_node,
-    pattern_type_selector_node, pin_config_node, pin_shape_selector_node, shadow_config_node,
+    apply_to_graph_node, apply_to_node_node, bool_toggle_node, color_picker_node,
+    color_preset_node, edge_config_node, edge_curve_selector_node, float_slider_node,
+    int_slider_node, math_node, node, node_config_node, pattern_type_selector_node,
+    pin_config_node, pin_shape_selector_node,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use persistence::EdgeData;
@@ -237,77 +240,45 @@ enum PaletteView {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 enum ConfigOutput {
-    Node(NodeConfig),
-    Edge(EdgeConfig),
-    Pin(iced_nodegraph::PinConfig),
+    Node(NodeStyle<Partial>),
+    Edge(EdgeStyle<Partial>),
+    Pin(PinStyle<Partial>),
 }
 
-/// Computed style values from connected config nodes
+/// Maps a pin's data-type marker to its semantic color. Pins carry no style;
+/// the owning node colors them via `pin_style`, keyed on this.
+fn pin_color_for(ty: std::any::TypeId) -> Color {
+    use nodes::{colors, pins};
+    use std::any::TypeId;
+    if ty == TypeId::of::<pins::ColorData>() {
+        colors::PIN_COLOR
+    } else if ty == TypeId::of::<pins::Float>() || ty == TypeId::of::<pins::Int>() {
+        colors::PIN_NUMBER
+    } else if ty == TypeId::of::<pins::Bool>() {
+        colors::PIN_BOOL
+    } else if ty == TypeId::of::<pins::StringData>() {
+        colors::PIN_STRING
+    } else if ty == TypeId::of::<pins::Email>() {
+        colors::PIN_EMAIL
+    } else if ty == TypeId::of::<pins::DateTime>() {
+        colors::PIN_DATETIME
+    } else if ty == TypeId::of::<pins::NodeConfigData>()
+        || ty == TypeId::of::<pins::EdgeConfigData>()
+        || ty == TypeId::of::<pins::PinConfigData>()
+    {
+        colors::PIN_CONFIG
+    } else {
+        colors::PIN_ANY
+    }
+}
+
+/// Computed style overlays accumulated from connected config nodes. Each is a
+/// partial overlay resolved against the theme base at draw time.
 #[derive(Debug, Clone, Default)]
 struct ComputedStyle {
-    corner_radius: Option<f32>,
-    opacity: Option<f32>,
-    border_width: Option<f32>,
-    fill_color: Option<Color>,
-    shadow: Option<ShadowConfig>,
-    /// Full EdgeConfig from connected Edge Config node (passed through as-is)
-    edge_config: Option<EdgeConfig>,
-    // Pin config values
-    pin_color: Option<Color>,
-    pin_radius: Option<f32>,
-    pin_shape: Option<iced_nodegraph::PinShape>,
-    pin_border_color: Option<Color>,
-    pin_border_width: Option<f32>,
-}
-
-impl ComputedStyle {
-    /// Builds a NodeConfig from computed values (partial overrides).
-    /// Only properties that are explicitly set will override theme defaults.
-    fn to_node_config(&self) -> NodeConfig {
-        let mut config = NodeConfig::new();
-        if let Some(r) = self.corner_radius {
-            config = config.corner_radius(r);
-        }
-        if let Some(o) = self.opacity {
-            config = config.opacity(o);
-        }
-        if let Some(w) = self.border_width {
-            config = config.border_width(w);
-        }
-        if let Some(c) = self.fill_color {
-            config = config.fill_color(c);
-        }
-        if let Some(ref s) = self.shadow {
-            config = config.shadow(s.clone());
-        }
-        config
-    }
-
-    /// Returns the EdgeConfig (passed through from Edge Config node as-is).
-    fn to_edge_config(&self) -> EdgeConfig {
-        self.edge_config.clone().unwrap_or_default()
-    }
-
-    /// Builds a PinConfig from computed values
-    fn to_pin_config(&self) -> PinConfig {
-        let mut config = PinConfig::new();
-        if let Some(c) = self.pin_color {
-            config = config.color(c);
-        }
-        if let Some(r) = self.pin_radius {
-            config = config.radius(r);
-        }
-        if let Some(s) = self.pin_shape {
-            config = config.shape(s);
-        }
-        if let Some(bc) = self.pin_border_color {
-            config = config.border_color(bc);
-        }
-        if let Some(bw) = self.pin_border_width {
-            config = config.border_width(bw);
-        }
-        config
-    }
+    node: NodeStyle<Partial>,
+    edge: EdgeStyle<Partial>,
+    pin: PinStyle<Partial>,
 }
 
 struct Application {
@@ -730,7 +701,7 @@ impl Application {
 
     /// Propagates values from input nodes to connected config nodes
     fn propagate_values(&mut self) {
-        use nodes::pins::{config as pin_config, math as pin_math};
+        use nodes::pins::math as pin_math;
 
         let mut new_computed = ComputedStyle::default();
         self.pending_configs.clear();
@@ -741,7 +712,6 @@ impl Application {
                 NodeType::Config(config) => match config {
                     ConfigNodeType::NodeConfig(inputs) => *inputs = NodeConfigInputs::default(),
                     ConfigNodeType::EdgeConfig(inputs) => *inputs = EdgeConfigInputs::default(),
-                    ConfigNodeType::ShadowConfig(inputs) => *inputs = ShadowConfigInputs::default(),
                     ConfigNodeType::PinConfig(inputs) => *inputs = PinConfigInputs::default(),
                     ConfigNodeType::ApplyToGraph {
                         has_node_config,
@@ -866,40 +836,6 @@ impl Application {
             }
         }
 
-        // Phase 2.5: Handle ShadowConfig → NodeConfig connections
-        // ShadowConfig's output connects to NodeConfig's shadow input
-        for edge in &edges_snapshot {
-            let from_node_type = self.nodes.get(&edge.from_node).map(|(_, t)| t.clone());
-            let to_node_type = self.nodes.get(&edge.to_node).map(|(_, t)| t.clone());
-
-            if let (Some(from_type), Some(to_type)) = (from_node_type, to_node_type) {
-                // ShadowConfig (output CONFIG) → NodeConfig (shadow input SHADOW)
-                if let (
-                    NodeType::Config(ConfigNodeType::ShadowConfig(shadow_inputs)),
-                    NodeType::Config(ConfigNodeType::NodeConfig(_)),
-                ) = (&from_type, &to_type)
-                    && edge.from_pin == pin_config::CONFIG
-                    && edge.to_pin == pin_config::SHADOW
-                {
-                    let shadow_config = shadow_inputs.build();
-                    let value = NodeValue::ShadowConfig(shadow_config);
-                    self.apply_value_to_config_node(&edge.to_node, &edge.to_pin, &value);
-                }
-                // Reverse: NodeConfig ← ShadowConfig
-                if let (
-                    NodeType::Config(ConfigNodeType::NodeConfig(_)),
-                    NodeType::Config(ConfigNodeType::ShadowConfig(shadow_inputs)),
-                ) = (&from_type, &to_type)
-                    && edge.to_pin == pin_config::CONFIG
-                    && edge.from_pin == pin_config::SHADOW
-                {
-                    let shadow_config = shadow_inputs.build();
-                    let value = NodeValue::ShadowConfig(shadow_config);
-                    self.apply_value_to_config_node(&edge.from_node, &edge.from_pin, &value);
-                }
-            }
-        }
-
         // Phase 3: After all inputs applied, process Config → ApplyToGraph connections
         // Now config nodes have their updated inputs, so we can build configs
         for edge in &edges_snapshot {
@@ -972,10 +908,6 @@ impl Application {
                     inputs.corner_radius = value.as_float();
                 } else if *pin_label == pin::OPACITY {
                     inputs.opacity = value.as_float();
-                } else if *pin_label == pin::SHADOW
-                    && let Some(shadow) = value.as_shadow_config()
-                {
-                    inputs.shadow = Some(shadow.clone());
                 }
             }
             ConfigNodeType::EdgeConfig(inputs) => {
@@ -1034,24 +966,6 @@ impl Application {
                     inputs.shadow_offset_x = value.as_float();
                 } else if *pin_label == pin::SHADOW_OFFSET_Y {
                     inputs.shadow_offset_y = value.as_float();
-                }
-            }
-            ConfigNodeType::ShadowConfig(inputs) => {
-                // ShadowConfig pin labels
-                if *pin_label == pin::SHADOW_OFFSET {
-                    // For shadow config, offset sets both x and y
-                    inputs.offset_x = value.as_float();
-                    inputs.offset_y = value.as_float();
-                } else if *pin_label == pin::SHADOW_OFFSET_X {
-                    inputs.offset_x = value.as_float();
-                } else if *pin_label == pin::SHADOW_OFFSET_Y {
-                    inputs.offset_y = value.as_float();
-                } else if *pin_label == pin::SHADOW_BLUR {
-                    inputs.blur_radius = value.as_float();
-                } else if *pin_label == pin::SHADOW_COLOR {
-                    inputs.color = value.as_color();
-                } else if *pin_label == pin::ON {
-                    inputs.enabled = value.as_bool();
                 }
             }
             ConfigNodeType::PinConfig(inputs) => {
@@ -1145,52 +1059,21 @@ impl Application {
                 && let Some(configs) = self.pending_configs.get(node_id)
             {
                 for (_, config) in configs {
+                    // Each config node's overlay wins over what is already accumulated.
                     match config {
-                        ConfigOutput::Node(node_config) => {
+                        ConfigOutput::Node(node) => {
                             if *has_node_config {
-                                if let Some(r) = node_config.corner_radius {
-                                    computed.corner_radius = Some(r);
-                                }
-                                if let Some(o) = node_config.opacity {
-                                    computed.opacity = Some(o);
-                                }
-                                if let Some(ref b) = node_config.border {
-                                    computed.border_width = Some(b.pattern.thickness);
-                                }
-                                if let Some(c) = node_config.fill_color {
-                                    computed.fill_color = Some(c);
-                                }
-                                if node_config.shadow.is_some() {
-                                    computed.shadow = node_config.shadow.clone();
-                                }
+                                computed.node = node.merge(&computed.node);
                             }
                         }
-                        ConfigOutput::Edge(edge_config) => {
+                        ConfigOutput::Edge(edge) => {
                             if *has_edge_config {
-                                // Merge with existing or set as new
-                                computed.edge_config = Some(match &computed.edge_config {
-                                    Some(existing) => edge_config.merge(existing),
-                                    None => edge_config.clone(),
-                                });
+                                computed.edge = edge.merge(&computed.edge);
                             }
                         }
-                        ConfigOutput::Pin(pin_config) => {
+                        ConfigOutput::Pin(pin) => {
                             if *has_pin_config {
-                                if let Some(c) = pin_config.color {
-                                    computed.pin_color = Some(c);
-                                }
-                                if let Some(r) = pin_config.radius {
-                                    computed.pin_radius = Some(r);
-                                }
-                                if let Some(s) = pin_config.shape {
-                                    computed.pin_shape = Some(s);
-                                }
-                                if let Some(c) = pin_config.border_color {
-                                    computed.pin_border_color = Some(c);
-                                }
-                                if let Some(w) = pin_config.border_width {
-                                    computed.pin_border_width = Some(w);
-                                }
+                                computed.pin = pin.merge(&computed.pin);
                             }
                         }
                     }
@@ -1693,7 +1576,6 @@ impl Application {
                 match section {
                     NodeSection::Fill => sections.fill = !sections.fill,
                     NodeSection::Border => sections.border = !sections.border,
-                    NodeSection::Shadow => sections.shadow = !sections.shadow,
                 }
                 Task::none()
             }
@@ -1792,11 +1674,11 @@ impl Application {
             .as_ref()
             .unwrap_or(&self.current_theme);
 
-        // Graph-wide node defaults - combine with per-node configs using merge()
-        let node_defaults = NodeConfig::new().corner_radius(8.0).opacity(0.88);
-
-        // Pin defaults from connected config nodes
-        let pin_defaults = self.computed_style.to_pin_config();
+        // Graph-wide node defaults - combined with per-node overlays via merge()
+        let node_defaults = NodeStyle::new().corner_radius(8.0).opacity(0.88);
+        // The dragging edge preview uses the graph-wide computed edge overlay
+        // (e.g. from an EdgeConfig -> ApplyToGraph chain).
+        let drag_overlay = self.computed_style.edge.clone();
 
         let mut ng: NodeGraph<
             '_,
@@ -1829,38 +1711,20 @@ impl Application {
             .on_group_move(|node_ids, delta| ApplicationMessage::GroupMoved { node_ids, delta })
             .on_camera_change(|position, zoom| ApplicationMessage::CameraChanged { position, zoom })
             .initial_camera(self.camera_position, self.camera_zoom)
-            .pin_defaults(pin_defaults)
-            // Style callbacks - user controls appearance based on status
-            // The base style comes from per-element config or theme defaults
-            .node_style(|_theme, status, base| {
-                use iced_nodegraph::NodeStatus;
-                match status {
-                    NodeStatus::Selected => base
-                        .border_color(iced::Color::from_rgb(0.3, 0.6, 1.0))
-                        .border_width(2.5),
-                    NodeStatus::Idle => base,
-                }
-            })
-            .pin_style(|_theme, _status, base| {
-                // Pin animation (pulsing) is handled internally via scaled_radius()
-                base
-            })
-            .edge_style(|_theme, status, base| {
-                use iced_nodegraph::EdgeStatus;
-                match status {
-                    EdgeStatus::PendingCut => {
-                        base.solid_color(iced::Color::from_rgb(1.0, 0.3, 0.3))
-                    }
-                    EdgeStatus::Idle => base,
-                }
-            })
+            // Selection highlight and pending-cut feedback are handled internally
+            // by the widget; per-node/edge styling flows through push_*_styled.
             .box_select_style(|_theme| {
                 (
                     iced::Color::from_rgba(0.3, 0.6, 1.0, 0.15), // fill
                     iced::Color::from_rgb(0.3, 0.6, 1.0),        // border
                 )
             })
-            .cutting_tool_style(|_theme| iced::Color::from_rgb(1.0, 0.3, 0.3));
+            .cutting_tool_style(|_theme| iced::Color::from_rgb(1.0, 0.3, 0.3))
+            .dragging_edge_style(move |theme, _source| {
+                default_edge_style(theme, EdgeStatus::Idle)
+                    .merge(&drag_overlay)
+                    .resolve(&EdgeStyle::from_theme(theme))
+            });
 
         // Add all nodes from state (in order)
         for node_id in &self.node_order {
@@ -2005,7 +1869,6 @@ impl Application {
                             }
                         })
                     }
-                    ConfigNodeType::ShadowConfig(inputs) => shadow_config_node(theme, inputs),
                     ConfigNodeType::PinConfig(inputs) => pin_config_node(theme, inputs),
                     ConfigNodeType::ApplyToGraph {
                         has_node_config,
@@ -2025,28 +1888,48 @@ impl Application {
                 NodeType::Math(state) => math_node(theme, state),
             };
 
-            // Apply computed style to workflow nodes only (not to input/config nodes)
-            // Merge per-node config with defaults (per-node takes priority)
-            if matches!(node_type, NodeType::Workflow(_)) {
-                let config = self.computed_style.to_node_config().merge(&node_defaults);
-                ng.push_node_styled(node_id.clone(), *position, element, config);
+            // Apply the computed overlay to workflow nodes only (not input/config
+            // nodes); the per-node closure resolves it over the theme base.
+            let overlay = if matches!(node_type, NodeType::Workflow(_)) {
+                self.computed_style.node.merge(&node_defaults)
             } else {
-                ng.push_node_styled(node_id.clone(), *position, element, node_defaults.clone());
-            }
+                node_defaults.clone()
+            };
+            // Pins: the per-pin data-type color wins, then the global Pin Config
+            // overlay (radius/shape/border from an ApplyToGraph chain), then the
+            // status default fills the rest.
+            let pin_overlay = self.computed_style.pin.clone();
+            ng.push_node(
+                ng_node(node_id.clone(), *position, element)
+                    .style(move |theme, status| {
+                        default_node_style(theme, status)
+                            .merge(&overlay)
+                            .resolve(&NodeStyle::from_theme(theme))
+                    })
+                    .pin_style(move |theme, pin, status| {
+                        PinStyle::new()
+                            .color(pin_color_for(pin.data_type()))
+                            .merge(&pin_overlay)
+                            .merge(&default_pin_style(theme, status))
+                            .resolve(&PinStyle::from_theme(theme))
+                    }),
+            );
         }
 
-        // Add stored edges with computed config
-        let edge_config = self.computed_style.to_edge_config();
+        // Add stored edges with the computed overlay resolved per edge.
+        let edge_overlay = self.computed_style.edge.clone();
         for edge_id in &self.edge_order {
-            if let Some(edge) = self.edges.get(edge_id) {
-                let from = PinRef::new(edge.from_node.clone(), edge.from_pin);
-                let to = PinRef::new(edge.to_node.clone(), edge.to_pin);
-                ng.push_edge_styled(from, to, edge_config.clone());
+            if let Some(edge_data) = self.edges.get(edge_id) {
+                let from = PinRef::new(edge_data.from_node.clone(), edge_data.from_pin);
+                let to = PinRef::new(edge_data.to_node.clone(), edge_data.to_pin);
+                let overlay = edge_overlay.clone();
+                ng.push_edge(ng_edge(from, to).style(move |theme, status, _start, _end| {
+                    default_edge_style(theme, status)
+                        .merge(&overlay)
+                        .resolve(&EdgeStyle::from_theme(theme))
+                }));
             }
         }
-
-        // Set edge defaults for dragging edge preview
-        ng = ng.edge_defaults(edge_config);
 
         // Enable tile debug if any EdgeConfig node has it toggled on
         let tile_debug = self.nodes.values().any(|(_, nt)| {
@@ -2263,13 +2146,6 @@ impl Application {
                                 EdgeConfigInputs::default(),
                             )),
                         }),
-                    command("shadow_config", "Shadow Config")
-                        .description("Shadow configuration with offset, blur, color")
-                        .action(ApplicationMessage::SpawnNode {
-                            node_type: NodeType::Config(ConfigNodeType::ShadowConfig(
-                                ShadowConfigInputs::default(),
-                            )),
-                        }),
                     command("pin_config", "Pin Config")
                         .description("Pin configuration with shape, color, radius")
                         .action(ApplicationMessage::SpawnNode {
@@ -2483,57 +2359,55 @@ mod tests {
     // === ComputedStyle Tests ===
 
     #[test]
-    fn test_computed_style_to_pin_config_empty() {
+    fn test_computed_style_pin_overlay_empty() {
         let style = ComputedStyle::default();
-        let config = style.to_pin_config();
-        // Empty style should produce empty config
-        assert!(config.color.is_none());
-        assert!(config.radius.is_none());
-        assert!(config.shape.is_none());
+        // Empty overlay leaves every field to inherit.
+        assert!(style.pin.color.is_none());
+        assert!(style.pin.radius.is_none());
+        assert!(style.pin.shape.is_none());
     }
 
     #[test]
-    fn test_computed_style_to_pin_config_with_values() {
-        let mut style = ComputedStyle::default();
-        style.pin_color = Some(Color::from_rgb(1.0, 0.0, 0.0));
-        style.pin_radius = Some(10.0);
-        style.pin_shape = Some(PinShape::Diamond);
-
-        let config = style.to_pin_config();
-        assert_eq!(config.color, Some(Color::from_rgb(1.0, 0.0, 0.0)));
-        assert_eq!(config.radius, Some(10.0));
-        assert_eq!(config.shape, Some(PinShape::Diamond));
+    fn test_computed_style_pin_overlay_with_values() {
+        let style = ComputedStyle {
+            pin: PinStyle::new()
+                .color(Color::from_rgb(1.0, 0.0, 0.0))
+                .radius(10.0)
+                .shape(PinShape::Diamond),
+            ..Default::default()
+        };
+        assert!(style.pin.color.is_some());
+        assert_eq!(style.pin.radius, Some(10.0));
+        assert_eq!(style.pin.shape, Some(PinShape::Diamond));
     }
 
     #[test]
-    fn test_computed_style_to_node_config() {
-        let mut style = ComputedStyle::default();
-        style.corner_radius = Some(12.0);
-        style.opacity = Some(0.8);
-        style.fill_color = Some(Color::from_rgb(0.2, 0.3, 0.4));
-
-        let config = style.to_node_config();
-        assert_eq!(config.corner_radius, Some(12.0));
-        assert_eq!(config.opacity, Some(0.8));
-        assert_eq!(config.fill_color, Some(Color::from_rgb(0.2, 0.3, 0.4)));
+    fn test_computed_style_node_overlay() {
+        let style = ComputedStyle {
+            node: NodeStyle::new()
+                .corner_radius(12.0)
+                .opacity(0.8)
+                .fill_color(Color::from_rgb(0.2, 0.3, 0.4)),
+            ..Default::default()
+        };
+        assert_eq!(style.node.corner_radius, Some(12.0));
+        assert_eq!(style.node.opacity, Some(0.8));
+        assert!(style.node.fill_color.is_some());
     }
 
     #[test]
-    fn test_computed_style_edge_config_passthrough() {
-        // EdgeConfig should be stored and returned as-is
-        let mut style = ComputedStyle::default();
-        assert!(style.to_edge_config().pattern.is_none());
+    fn test_computed_style_edge_overlay() {
+        let style = ComputedStyle::default();
+        assert!(style.edge.pattern.is_none());
 
-        let ec = EdgeConfig::new()
-            .thickness(5.0)
-            .solid_color(Color::from_rgb(1.0, 0.0, 0.0))
-            .curve(EdgeCurve::Line);
-        style.edge_config = Some(ec);
-
-        let result = style.to_edge_config();
-        assert_eq!(result.pattern.unwrap().thickness, 5.0);
-        assert_eq!(result.start_color, Some(Color::from_rgb(1.0, 0.0, 0.0)));
-        assert_eq!(result.curve, Some(EdgeCurve::Line));
+        let style = ComputedStyle {
+            edge: EdgeStyle::new()
+                .pattern(iced_nodegraph::Pattern::solid(5.0))
+                .curve(EdgeCurve::Line),
+            ..Default::default()
+        };
+        assert_eq!(style.edge.pattern.unwrap().thickness, 5.0);
+        assert_eq!(style.edge.curve, Some(EdgeCurve::Line));
     }
 
     #[test]
@@ -2636,18 +2510,17 @@ mod tests {
         ));
         assert!((pattern.flow_speed - 50.0).abs() < 0.01);
 
-        // Colors
-        assert_eq!(config.start_color, Some(Color::from_rgb(1.0, 0.0, 0.0)));
-        assert_eq!(config.end_color, Some(Color::from_rgb(0.0, 0.0, 1.0)));
+        // Colors: arc gradient start -> end
+        let stroke = config.stroke_color.expect("stroke color present");
+        assert_eq!(stroke.near_start, Color::from_rgb(1.0, 0.0, 0.0));
+        assert_eq!(stroke.near_end, Color::from_rgb(0.0, 0.0, 1.0));
 
         // Border
-        let border = config.border.expect("border must be present");
-        assert_eq!(border.width, 2.0);
-        assert_eq!(border.gap, 1.0);
+        assert_eq!(config.border_width, Some(2.0));
+        assert_eq!(config.border_gap, Some(1.0));
 
         // Shadow
-        let shadow = config.shadow.expect("shadow must be present");
-        assert_eq!(shadow.blur, 6.0);
-        assert_eq!(shadow.expand, 3.0);
+        assert_eq!(config.shadow_blur, Some(6.0));
+        assert_eq!(config.shadow_expand, Some(3.0));
     }
 }

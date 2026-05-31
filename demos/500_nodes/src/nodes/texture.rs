@@ -5,7 +5,7 @@ use iced::{
 };
 use iced_nodegraph::pin;
 
-use super::colors::{self, PIN_FLOAT, PIN_VEC2, PIN_VEC4, SPACING_PIN};
+use super::colors::{self, SPACING_PIN};
 
 fn title_bar<'a, Message>(
     title: &'a str,
@@ -30,26 +30,12 @@ where
     Message: Clone + 'a,
 {
     let pins = row![
-        container(pin!(
-            Left,
-            0usize,
-            text("uv"),
-            Input,
-            colors::Vec2,
-            PIN_VEC2
-        ))
-        .width(Length::FillPortion(1))
-        .align_x(Horizontal::Left),
-        container(pin!(
-            Right,
-            1usize,
-            text("rgba"),
-            Output,
-            colors::Vec4,
-            PIN_VEC4
-        ))
-        .width(Length::FillPortion(1))
-        .align_x(Horizontal::Right),
+        container(pin!(Left, 0usize, text("uv"), Input, colors::Vec2))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Left),
+        container(pin!(Right, 1usize, text("rgba"), Output, colors::Vec4))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Right),
     ]
     .width(Length::Fill);
 
@@ -64,22 +50,15 @@ where
 {
     let pins = column![
         row![
-            container(pin!(Left, 0usize, text("A"), Input, colors::Vec4, PIN_VEC4))
+            container(pin!(Left, 0usize, text("A"), Input, colors::Vec4))
                 .width(Length::FillPortion(1))
                 .align_x(Horizontal::Left),
-            container(pin!(
-                Right,
-                1usize,
-                text("out"),
-                Output,
-                colors::Vec4,
-                PIN_VEC4
-            ))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Right),
+            container(pin!(Right, 1usize, text("out"), Output, colors::Vec4))
+                .width(Length::FillPortion(1))
+                .align_x(Horizontal::Right),
         ]
         .width(Length::Fill),
-        container(pin!(Left, 2usize, text("B"), Input, colors::Vec4, PIN_VEC4))
+        container(pin!(Left, 2usize, text("B"), Input, colors::Vec4))
             .width(Length::Fill)
             .align_x(Horizontal::Left),
     ]
@@ -95,26 +74,12 @@ where
     Message: Clone + 'a,
 {
     let pins = row![
-        container(pin!(
-            Left,
-            0usize,
-            text("t"),
-            Input,
-            colors::Float,
-            PIN_FLOAT
-        ))
-        .width(Length::FillPortion(1))
-        .align_x(Horizontal::Left),
-        container(pin!(
-            Right,
-            1usize,
-            text("rgba"),
-            Output,
-            colors::Vec4,
-            PIN_VEC4
-        ))
-        .width(Length::FillPortion(1))
-        .align_x(Horizontal::Right),
+        container(pin!(Left, 0usize, text("t"), Input, colors::Float))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Left),
+        container(pin!(Right, 1usize, text("rgba"), Output, colors::Vec4))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Right),
     ]
     .width(Length::Fill);
 

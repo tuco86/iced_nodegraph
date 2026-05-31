@@ -47,11 +47,14 @@ pub fn wasm_init() {
 
 use compiler::ShaderCompiler;
 use iced::{
-    Color, Element, Event, Length, Point, Subscription, Task, Theme, Vector, event, keyboard,
+    Element, Event, Length, Point, Subscription, Task, Theme, Vector, event, keyboard,
     widget::{column, container, opaque, stack, text},
     window,
 };
-use iced_nodegraph::{PinDirection, PinRef, PinSide, node_graph, node_pin};
+use iced_nodegraph::{
+    PinDirection, PinInfo, PinRef, PinSide, PinStatus, PinStyle, Resolved, default_pin_style,
+    edge as ng_edge, node as ng_node, node_graph, node_pin,
+};
 use iced_palette::{
     Command, command, command_palette, focus_input, get_filtered_command_index, get_filtered_count,
     navigate_down, navigate_up,
@@ -395,12 +398,12 @@ impl Application {
         // Add all shader graph nodes
         for (node_idx, node) in self.shader_graph.nodes.iter().enumerate() {
             let node_content = create_node_widget(&node.node_type, &self.current_theme);
-            graph.push_node(node_idx, node.position, node_content);
+            graph.push_node(ng_node(node_idx, node.position, node_content).pin_style(pin_style));
         }
 
         // Add all edges
         for (from, to) in &self.visual_edges {
-            graph.push_edge(*from, *to);
+            graph.push_edge(ng_edge(*from, *to));
         }
 
         let graph_element: Element<Message> = graph.into();
@@ -564,7 +567,6 @@ fn create_node_widget<'a>(
                     container(text("out").size(11)).padding([0, 8])
                 )
                 .direction(PinDirection::Output)
-                .color(colors::TEXT_MUTED)
             ]
             .spacing(2),
         )
@@ -575,7 +577,6 @@ fn create_node_widget<'a>(
         let num_inputs = inputs.len();
 
         for (i, input) in inputs.into_iter().enumerate() {
-            let socket_color = get_socket_color(&input.socket_type);
             let label = input.name.clone();
             pin_elements.push(create_typed_pin(
                 PinSide::Left,
@@ -583,12 +584,10 @@ fn create_node_widget<'a>(
                 label,
                 PinDirection::Input,
                 &input.socket_type,
-                socket_color,
             ));
         }
 
         for (i, output) in outputs.into_iter().enumerate() {
-            let socket_color = get_socket_color(&output.socket_type);
             let label = output.name.clone();
             pin_elements.push(create_typed_pin(
                 PinSide::Right,
@@ -596,7 +595,6 @@ fn create_node_widget<'a>(
                 label,
                 PinDirection::Output,
                 &output.socket_type,
-                socket_color,
             ));
         }
 
@@ -606,16 +604,26 @@ fn create_node_widget<'a>(
     column![title_bar, pin_section].width(160.0).into()
 }
 
-fn get_socket_color(socket_type: &shader_graph::sockets::SocketType) -> Color {
-    use shader_graph::sockets::SocketType;
-    match socket_type {
-        SocketType::Float => colors::SOCKET_FLOAT, // Light green
-        SocketType::Vec2 => colors::SOCKET_VEC2,   // Light cyan
-        SocketType::Vec3 => colors::SOCKET_VEC3,   // Light yellow
-        SocketType::Vec4 => colors::SOCKET_VEC4,   // Light pink
-        SocketType::Bool => colors::SOCKET_BOOL,   // Light red
-        SocketType::Int => colors::SOCKET_INT,     // Light purple
-    }
+/// Colors a node's pins by their socket data-type marker.
+fn pin_style(theme: &Theme, pin: PinInfo<'_, usize>, status: PinStatus) -> PinStyle<Resolved> {
+    use std::any::TypeId;
+    let ty = pin.data_type();
+    let color = if ty == TypeId::of::<colors::Float>() {
+        colors::SOCKET_FLOAT
+    } else if ty == TypeId::of::<colors::Vec2>() {
+        colors::SOCKET_VEC2
+    } else if ty == TypeId::of::<colors::Vec3>() {
+        colors::SOCKET_VEC3
+    } else if ty == TypeId::of::<colors::Vec4>() {
+        colors::SOCKET_VEC4
+    } else if ty == TypeId::of::<colors::Bool>() {
+        colors::SOCKET_BOOL
+    } else {
+        colors::SOCKET_INT
+    };
+    default_pin_style(theme, status)
+        .color(color)
+        .resolve(&PinStyle::from_theme(theme))
 }
 
 /// Creates a typed pin element based on the socket type.
@@ -626,7 +634,6 @@ fn create_typed_pin<'a, Message: Clone + 'a>(
     label: String,
     direction: PinDirection,
     socket_type: &shader_graph::sockets::SocketType,
-    color: Color,
 ) -> Element<'a, Message> {
     use shader_graph::sockets::SocketType;
 
@@ -636,32 +643,26 @@ fn create_typed_pin<'a, Message: Clone + 'a>(
         SocketType::Float => node_pin(side, pin_id, content)
             .direction(direction)
             .data_type::<colors::Float>()
-            .color(color)
             .into(),
         SocketType::Vec2 => node_pin(side, pin_id, content)
             .direction(direction)
             .data_type::<colors::Vec2>()
-            .color(color)
             .into(),
         SocketType::Vec3 => node_pin(side, pin_id, content)
             .direction(direction)
             .data_type::<colors::Vec3>()
-            .color(color)
             .into(),
         SocketType::Vec4 => node_pin(side, pin_id, content)
             .direction(direction)
             .data_type::<colors::Vec4>()
-            .color(color)
             .into(),
         SocketType::Bool => node_pin(side, pin_id, content)
             .direction(direction)
             .data_type::<colors::Bool>()
-            .color(color)
             .into(),
         SocketType::Int => node_pin(side, pin_id, content)
             .direction(direction)
             .data_type::<colors::Int>()
-            .color(color)
             .into(),
     }
 }

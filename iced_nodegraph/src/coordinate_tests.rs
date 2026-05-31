@@ -26,7 +26,7 @@ use iced_widget::core::clipboard;
 use iced_widget::core::image;
 use iced_widget::core::text;
 
-use crate::NodeGraph;
+use crate::{NodeGraph, node};
 
 // ---------------------------------------------------------------------------
 // Recording renderer: tracks the transformation stack (composed like
@@ -170,7 +170,7 @@ fn draw_at_origin(
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
         .initial_camera(camera_pos, camera_zoom);
-    graph.push_node(0_usize, node_world, Element::from(ContentProbe));
+    graph.push_node(node(0_usize, node_world, Element::from(ContentProbe)));
 
     let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Rec>);
     let out = Rc::new(RefCell::new(Recorded::default()));
@@ -269,7 +269,7 @@ fn click_select(
         .on_select(move |ids| {
             *sel.borrow_mut() = Some(ids);
         });
-    graph.push_node(0_usize, node_world, Element::from(ContentProbe));
+    graph.push_node(node(0_usize, node_world, Element::from(ContentProbe)));
 
     let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Rec>);
     let out = Rc::new(RefCell::new(Recorded::default()));
@@ -436,11 +436,11 @@ fn box_select_primitives(
         .initial_camera(Point::ORIGIN, camera_zoom)
         .on_select(|_ids| {});
     // Node far from the drag so the press starts a box select, not a node click.
-    graph.push_node(
+    graph.push_node(node(
         0_usize,
         Point::new(900.0, 900.0),
         Element::from(ContentProbe),
-    );
+    ));
 
     let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Rec>);
     let out = Rc::new(RefCell::new(Recorded::default()));

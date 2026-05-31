@@ -39,9 +39,27 @@ use iced::{
     widget::{button, column, container, opaque, pick_list, row, slider, stack, text},
     window,
 };
-use iced_nodegraph::{NodeBorder, NodeStyle, Pattern, PinRef, node_graph};
+use iced_nodegraph::{
+    NodeStyle, Pattern, PinDirection, PinInfo, PinRef, PinStatus, PinStyle, Resolved,
+    default_node_style, default_pin_style, edge, node, node_graph,
+};
 use nodes::styled_node;
 use std::collections::HashSet;
+
+/// Pin style for the styling demo: blue inputs, orange outputs.
+fn styling_pin_style(
+    theme: &Theme,
+    pin: PinInfo<'_, usize>,
+    status: PinStatus,
+) -> PinStyle<Resolved> {
+    let color = match pin.direction() {
+        PinDirection::Output => iced::Color::from_rgb(0.9, 0.7, 0.5),
+        _ => iced::Color::from_rgb(0.5, 0.7, 0.9),
+    };
+    default_pin_style(theme, status)
+        .color(color)
+        .resolve(&PinStyle::from_theme(theme))
+}
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -139,7 +157,7 @@ impl NodePreset {
 
 struct Application {
     edges: Vec<(PinRef<usize, usize>, PinRef<usize, usize>)>,
-    nodes: Vec<(Point, String, NodeStyle)>,
+    nodes: Vec<(Point, String, NodeStyle<Resolved>)>,
     current_theme: Theme,
     selected_node: Option<usize>,
     graph_selection: HashSet<usize>,
@@ -247,11 +265,7 @@ impl Application {
                 if let Some((_, _, style)) = self.nodes.get(index) {
                     self.corner_radius = style.corner_radius;
                     self.opacity = style.opacity;
-                    self.border_width = style
-                        .border
-                        .as_ref()
-                        .map(|b| b.pattern.thickness)
-                        .unwrap_or(1.0);
+                    self.border_width = style.border_pattern.thickness;
                 }
             }
             Message::ApplyPreset(preset) => {
@@ -266,11 +280,7 @@ impl Application {
                         *style = new_style.clone();
                         self.corner_radius = new_style.corner_radius;
                         self.opacity = new_style.opacity;
-                        self.border_width = new_style
-                            .border
-                            .as_ref()
-                            .map(|b| b.pattern.thickness)
-                            .unwrap_or(1.0);
+                        self.border_width = new_style.border_pattern.thickness;
                     }
                 }
             }
@@ -290,12 +300,7 @@ impl Application {
         {
             style.corner_radius = self.corner_radius;
             style.opacity = self.opacity;
-            // Update border width in the border field
-            if let Some(ref mut border) = style.border {
-                border.pattern = Pattern::solid(self.border_width);
-            } else {
-                style.border = Some(NodeBorder::new().pattern(Pattern::solid(self.border_width)));
-            }
+            style.border_pattern = Pattern::solid(self.border_width);
         }
     }
 
@@ -482,17 +487,20 @@ impl Application {
             .selection(&self.graph_selection);
 
         for (index, (position, name, style)) in self.nodes.iter().enumerate() {
-            // Convert NodeStyle to NodeConfig for API
-            ng.push_node_styled(
-                index,
-                *position,
-                styled_node(name, style, theme),
-                style.clone().into(),
+            // The demo stores a fully resolved style per node; the callback just
+            // returns it (ignoring the theme base).
+            let node_style = style.clone();
+            ng.push_node(
+                node(index, *position, styled_node(name, style, theme))
+                    .style(move |theme, status| {
+                        default_node_style(theme, status).resolve(&node_style)
+                    })
+                    .pin_style(styling_pin_style),
             );
         }
 
         for (from, to) in &self.edges {
-            ng.push_edge(*from, *to);
+            ng.push_edge(edge(*from, *to));
         }
 
         ng.into()

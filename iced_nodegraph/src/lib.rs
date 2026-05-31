@@ -23,7 +23,7 @@
 //! ## Quick Start
 //!
 //! ```rust,no_run
-//! use iced_nodegraph::{NodeGraph, PinRef, node_graph};
+//! use iced_nodegraph::{NodeGraph, PinRef, edge, node, node_graph};
 //! use iced::{Element, Theme, Point};
 //! use iced::widget::text;
 //! use iced_wgpu::Renderer;
@@ -40,12 +40,12 @@
 //!         .on_move(|node_id, position| Message::NodeMoved { node_id, position });
 //!
 //!     // Add nodes with IDs
-//!     ng.push_node(0, Point::new(100.0, 100.0), text("Node A"));
-//!     ng.push_node(1, Point::new(300.0, 100.0), text("Node B"));
+//!     ng.push_node(node(0, Point::new(100.0, 100.0), text("Node A")));
+//!     ng.push_node(node(1, Point::new(300.0, 100.0), text("Node B")));
 //!
 //!     // Add edges using type-safe PinRef
 //!     for (from, to) in edges {
-//!         ng.push_edge(*from, *to);
+//!         ng.push_edge(edge(*from, *to));
 //!     }
 //!
 //!     ng.into()
@@ -197,42 +197,38 @@ pub use helpers::{
 };
 pub use ids::{EdgeId, IdMap, IdMaps, NodeId, PinId};
 pub use node_graph::{
-    NodeGraph, NodeGraphEvent, NodeGraphMessage, PinRef, SdfDebug, camera::Camera2D,
-    widget::node_graph,
+    Edge, Node, NodeGraph, NodeGraphEvent, NodeGraphMessage, PinRef, SdfDebug, camera::Camera2D,
+    edge, node, widget::node_graph,
 };
-pub use node_pin::{NodePin, PinDirection, PinReference, PinSide, node_pin};
+pub use node_pin::{NodePin, PinDirection, PinInfo, PinReference, PinSide, node_pin};
 pub use style::{
-    // Edge style layer types
-    EdgeBorder,
-    // Config types (partial overrides with merge())
-    EdgeConfig,
+    // Unified color type for style fields
+    ColorQuad,
     EdgeCurve,
-    EdgeShadow,
     // Status enums for widget-side styling
     EdgeStatus,
     EdgeStyle,
-    // Style function types (Iced Toggler pattern)
-    EdgeStyleFn,
-    GraphConfig,
     GraphStyle,
-    // Node style types
-    NodeBorder,
-    NodeConfig,
-    NodeShadow,
     NodeStatus,
+    // Node/edge/pin style types (typestate: Partial overlay / Resolved value)
     NodeStyle,
-    NodeStyleFn,
-    PinConfig,
+    Partial,
     PinShape,
     PinStatus,
     PinStyle,
-    PinStyleFn,
+    Resolved,
     STANDARD_THEMES,
-    SelectionConfig,
     SelectionStyle,
-    ShadowConfig,
+    StyleMode,
+    // Built-in status-driven default styles (Partial) + resolved wrappers
+    default_edge_style,
+    default_node_style,
+    default_pin_style,
     is_dark_theme,
     relative_luminance,
+    resolved_edge_style,
+    resolved_node_style,
+    resolved_pin_style,
     theme_name,
 };
 

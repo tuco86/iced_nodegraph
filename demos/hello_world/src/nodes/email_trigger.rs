@@ -1,7 +1,7 @@
 use iced::widget::{column, container, text};
 use iced_nodegraph::{NodeContentStyle, pin};
 
-use super::{colors, node_title_bar, pins};
+use super::{node_title_bar, pins};
 
 /// Email Trigger Node - Only outputs
 pub fn email_trigger_node<'a, Message>(theme: &'a iced::Theme) -> iced::Element<'a, Message>
@@ -15,8 +15,7 @@ where
         "on email",
         text("on email"),
         Output,
-        pins::Email,
-        colors::PIN_EMAIL
+        pins::Email
     ),]
     .spacing(4);
 

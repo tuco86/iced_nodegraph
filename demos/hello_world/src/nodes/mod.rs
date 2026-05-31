@@ -18,8 +18,8 @@ pub use calendar::calendar_node;
 pub use color_picker::{color_picker_node, color_preset_node};
 pub use config::{
     EdgeConfigInputs, EdgeSection, EdgeSections, NodeConfigInputs, NodeSection, NodeSections,
-    PatternType, PinConfigInputs, ShadowConfigInputs, apply_to_graph_node, apply_to_node_node,
-    edge_config_node, node_config_node, pin_config_node, shadow_config_node,
+    PatternType, PinConfigInputs, apply_to_graph_node, apply_to_node_node, edge_config_node,
+    node_config_node, pin_config_node,
 };
 pub use email_parser::email_parser_node;
 pub use email_trigger::email_trigger_node;
@@ -37,8 +37,7 @@ use iced::{
     widget::{Container, Row, container, row, text},
 };
 use iced_nodegraph::{
-    EdgeConfig, EdgeCurve, NodeConfig, NodeContentStyle, PinConfig, PinShape, ShadowConfig,
-    node_header,
+    EdgeCurve, EdgeStyle, NodeContentStyle, NodeStyle, Partial, PinShape, PinStyle, node_header,
 };
 
 /// Semantic pin colors for consistent visual language across nodes.
@@ -98,11 +97,11 @@ pub enum NodeValue {
     EdgeCurve(EdgeCurve),
     PinShape(PinShape),
     PatternType(PatternType),
-    // Config types for config-node chains
-    NodeConfig(NodeConfig),
-    EdgeConfig(EdgeConfig),
-    PinConfig(PinConfig),
-    ShadowConfig(ShadowConfig),
+    // Style overlays for config-node chains (the old *Config types, now the
+    // typestate Partial overlays).
+    NodeConfig(NodeStyle<Partial>),
+    EdgeConfig(EdgeStyle<Partial>),
+    PinConfig(PinStyle<Partial>),
 }
 
 #[allow(dead_code)]
@@ -156,30 +155,23 @@ impl NodeValue {
         }
     }
 
-    pub fn as_node_config(&self) -> Option<&NodeConfig> {
+    pub fn as_node_config(&self) -> Option<&NodeStyle<Partial>> {
         match self {
             NodeValue::NodeConfig(c) => Some(c),
             _ => None,
         }
     }
 
-    pub fn as_edge_config(&self) -> Option<&EdgeConfig> {
+    pub fn as_edge_config(&self) -> Option<&EdgeStyle<Partial>> {
         match self {
             NodeValue::EdgeConfig(c) => Some(c),
             _ => None,
         }
     }
 
-    pub fn as_pin_config(&self) -> Option<&PinConfig> {
+    pub fn as_pin_config(&self) -> Option<&PinStyle<Partial>> {
         match self {
             NodeValue::PinConfig(c) => Some(c),
-            _ => None,
-        }
-    }
-
-    pub fn as_shadow_config(&self) -> Option<&ShadowConfig> {
-        match self {
-            NodeValue::ShadowConfig(c) => Some(c),
             _ => None,
         }
     }
@@ -190,7 +182,6 @@ impl NodeValue {
 pub enum ConfigNodeType {
     NodeConfig(NodeConfigInputs),
     EdgeConfig(EdgeConfigInputs),
-    ShadowConfig(ShadowConfigInputs),
     PinConfig(PinConfigInputs),
     // Apply nodes
     ApplyToGraph {
@@ -369,7 +360,6 @@ impl NodeType {
             Self::Config(config) => match config {
                 ConfigNodeType::NodeConfig(_) => "Node Config",
                 ConfigNodeType::EdgeConfig(_) => "Edge Config",
-                ConfigNodeType::ShadowConfig(_) => "Shadow Config",
                 ConfigNodeType::PinConfig(_) => "Pin Config",
                 ConfigNodeType::ApplyToGraph { .. } => "Apply to Graph",
                 ConfigNodeType::ApplyToNode { .. } => "Apply to Node",
@@ -587,9 +577,9 @@ pub fn pin_row<'a, Message: Clone + 'a>(
 
 /// Creates a row of disabled collapsed pins (used when a section is collapsed).
 macro_rules! collapsed_pin_row {
-    ( $( ($id:expr, $dt:ty, $color:expr) ),+ $(,)? ) => {
+    ( $( ($id:expr, $dt:ty) ),+ $(,)? ) => {
         iced::widget::row![
-            $( iced_nodegraph::pin!(Left, $id, iced::widget::text("").size(1), Input, $dt, $color).disable_interactions() ),+
+            $( iced_nodegraph::pin!(Left, $id, iced::widget::text("").size(1), Input, $dt).disable_interactions() ),+
         ].spacing(2)
     };
 }

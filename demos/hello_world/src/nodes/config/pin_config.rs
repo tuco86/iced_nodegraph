@@ -7,15 +7,15 @@ use iced::{
     alignment::Horizontal,
     widget::{column, container, row, text},
 };
-use iced_nodegraph::{NodeContentStyle, PinConfig, PinShape, pin};
+use iced_nodegraph::{NodeContentStyle, Partial, PinShape, PinStyle, pin};
 
 use crate::nodes::{colors, node_title_bar, pins};
 
 /// Collected inputs for PinConfigNode
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PinConfigInputs {
-    /// Parent config to inherit from
-    pub config_in: Option<PinConfig>,
+    /// Parent overlay to inherit from
+    pub config_in: Option<PinStyle<Partial>>,
     /// Individual field overrides
     pub color: Option<Color>,
     pub radius: Option<f32>,
@@ -25,16 +25,27 @@ pub struct PinConfigInputs {
 }
 
 impl PinConfigInputs {
-    /// Builds the final PinConfig by merging with parent
-    pub fn build(&self) -> PinConfig {
-        let parent = self.config_in.clone().unwrap_or_default();
-
-        PinConfig {
-            color: self.color.or(parent.color),
-            radius: self.radius.or(parent.radius),
-            shape: self.shape.or(parent.shape),
-            border_color: self.border_color.or(parent.border_color),
-            border_width: self.border_width.or(parent.border_width),
+    /// Builds the overlay by setting this node's fields, then merging over the parent.
+    pub fn build(&self) -> PinStyle<Partial> {
+        let mut p = PinStyle::new();
+        if let Some(c) = self.color {
+            p = p.color(c);
+        }
+        if let Some(r) = self.radius {
+            p = p.radius(r);
+        }
+        if let Some(s) = self.shape {
+            p = p.shape(s);
+        }
+        if let Some(c) = self.border_color {
+            p = p.border_color(c);
+        }
+        if let Some(w) = self.border_width {
+            p = p.border_width(w);
+        }
+        match &self.config_in {
+            Some(parent) => p.merge(parent),
+            None => p,
         }
     }
 }
@@ -57,8 +68,7 @@ where
             pins::config::CONFIG,
             text("in").size(10),
             Input,
-            pins::PinConfigData,
-            colors::PIN_CONFIG
+            pins::PinConfigData
         ),
         container(text("")).width(Length::Fill),
         pin!(
@@ -66,8 +76,7 @@ where
             pins::config::PIN_OUT,
             text("out").size(10),
             Output,
-            pins::PinConfigData,
-            colors::PIN_CONFIG
+            pins::PinConfigData
         ),
     ]
     .align_y(iced::Alignment::Center);
@@ -84,31 +93,31 @@ where
         });
 
     // Color row
-    let color_display: iced::Element<'a, Message> = if let Some(c) = result.color {
-        container(text(""))
-            .width(20)
-            .height(12)
-            .style(move |_: &_| container::Style {
-                background: Some(iced::Background::Color(c)),
-                border: iced::Border {
-                    color: colors::PIN_ANY,
-                    width: 1.0,
-                    radius: 2.0.into(),
-                },
-                ..Default::default()
-            })
-            .into()
-    } else {
-        text("--").size(9).into()
-    };
+    let color_display: iced::Element<'a, Message> =
+        if let Some(c) = result.color.map(|q| q.near_start) {
+            container(text(""))
+                .width(20)
+                .height(12)
+                .style(move |_: &_| container::Style {
+                    background: Some(iced::Background::Color(c)),
+                    border: iced::Border {
+                        color: colors::PIN_ANY,
+                        width: 1.0,
+                        radius: 2.0.into(),
+                    },
+                    ..Default::default()
+                })
+                .into()
+        } else {
+            text("--").size(9).into()
+        };
     let color_row = row![
         pin!(
             Left,
             pins::config::COLOR,
             text("color").size(10),
             Input,
-            pins::ColorData,
-            colors::PIN_COLOR
+            pins::ColorData
         ),
         container(color_display)
             .width(Length::Fill)
@@ -123,8 +132,7 @@ where
             pins::config::SIZE,
             text("radius").size(10),
             Input,
-            pins::Float,
-            colors::PIN_NUMBER
+            pins::Float
         ),
         container(
             text(
@@ -153,8 +161,7 @@ where
             pins::config::SHAPE,
             text("shape").size(10),
             Input,
-            pins::PinShapeData,
-            colors::PIN_ANY
+            pins::PinShapeData
         ),
         container(text(shape_label).size(9))
             .width(Length::Fill)
@@ -163,31 +170,31 @@ where
     .align_y(iced::Alignment::Center);
 
     // Border color row
-    let border_color_display: iced::Element<'a, Message> = if let Some(c) = result.border_color {
-        container(text(""))
-            .width(20)
-            .height(12)
-            .style(move |_: &_| container::Style {
-                background: Some(iced::Background::Color(c)),
-                border: iced::Border {
-                    color: colors::PIN_ANY,
-                    width: 1.0,
-                    radius: 2.0.into(),
-                },
-                ..Default::default()
-            })
-            .into()
-    } else {
-        text("--").size(9).into()
-    };
+    let border_color_display: iced::Element<'a, Message> =
+        if let Some(c) = result.border_color.map(|q| q.near_start) {
+            container(text(""))
+                .width(20)
+                .height(12)
+                .style(move |_: &_| container::Style {
+                    background: Some(iced::Background::Color(c)),
+                    border: iced::Border {
+                        color: colors::PIN_ANY,
+                        width: 1.0,
+                        radius: 2.0.into(),
+                    },
+                    ..Default::default()
+                })
+                .into()
+        } else {
+            text("--").size(9).into()
+        };
     let border_color_row = row![
         pin!(
             Left,
             pins::config::GLOW,
             text("border").size(10),
             Input,
-            pins::ColorData,
-            colors::PIN_COLOR
+            pins::ColorData
         ),
         container(border_color_display)
             .width(Length::Fill)
@@ -202,8 +209,7 @@ where
             pins::config::PULSE,
             text("width").size(10),
             Input,
-            pins::Float,
-            colors::PIN_NUMBER
+            pins::Float
         ),
         container(
             text(
