@@ -21,7 +21,7 @@ use iced_widget::core::clipboard;
 use iced_widget::core::image;
 use iced_widget::core::text;
 
-use crate::NodeGraph;
+use crate::{NodeGraph, node};
 
 // ---------------------------------------------------------------------------
 // Stub renderer: no-op implementations of every trait NodeGraph requires.
@@ -172,7 +172,7 @@ fn build_graph_with_recorder(
     let mut graph: NodeGraph<'static, usize, usize, usize, (), Theme, Stub> = NodeGraph::default()
         .width(Length::Fixed(graph_w))
         .height(Length::Fixed(graph_h));
-    graph.push_node(0_usize, node_world_pos, Element::from(recorder));
+    graph.push_node(node(0_usize, node_world_pos, Element::from(recorder)));
     (graph, on_draw, on_update)
 }
 
@@ -239,11 +239,11 @@ fn run_update_with_cursor(graph_w: f32, graph_h: f32, cursor: mouse::Cursor) -> 
         NodeGraph::default()
             .width(Length::Fixed(graph_w))
             .height(Length::Fixed(graph_h));
-    base_graph.push_node(
+    base_graph.push_node(node(
         0_usize,
         Point::new(0.0, 0.0),
         Element::<(), _, _>::from(EmptyLeaf),
-    );
+    ));
 
     let camera_changed = Rc::new(Cell::new(false));
     let cc = camera_changed.clone();

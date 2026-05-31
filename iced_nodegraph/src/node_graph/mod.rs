@@ -12,8 +12,8 @@
 //!     .on_connect(|from, to| Message::Connected { from, to })
 //!     .on_move(|node_id, pos| Message::NodeMoved { node_id, pos });
 //!
-//! ng.push_node(0, Point::new(100.0, 100.0), my_node_content);
-//! ng.push_edge(PinRef::new(0, 0), PinRef::new(1, 0));
+//! ng.push_node(node(0, Point::new(100.0, 100.0), my_node_content));
+//! ng.push_edge(edge(PinRef::new(0, 0), PinRef::new(1, 0)));
 //! ```
 //!
 //! ## Architecture
@@ -48,15 +48,82 @@ use iced::{Color, Length, Point, Size, Vector};
 
 use crate::ids::{EdgeId, IdMaps, NodeId, PinId};
 use crate::node_pin::PinReference;
-use crate::style::{EdgeStyle, GraphStyle, NodeStyle, Resolved};
+use crate::style::{EdgeStatus, EdgeStyle, GraphStyle, NodeStatus, NodeStyle, Resolved};
 
-/// Per-node style callback: maps theme + resolved base style to a resolved
-/// style. Used by `push_node_styled`.
+/// Per-node style callback: theme + status -> resolved style. Used by [`Node`].
 pub(crate) type NodeStyleFn<'a, Theme> =
-    Box<dyn Fn(&Theme, NodeStyle<Resolved>) -> NodeStyle<Resolved> + 'a>;
-/// Per-edge style callback. Used by `push_edge_styled`.
+    Box<dyn Fn(&Theme, NodeStatus) -> NodeStyle<Resolved> + 'a>;
+/// Per-edge style callback: theme + status -> resolved style. Used by [`Edge`].
 pub(crate) type EdgeStyleFn<'a, Theme> =
-    Box<dyn Fn(&Theme, EdgeStyle<Resolved>) -> EdgeStyle<Resolved> + 'a>;
+    Box<dyn Fn(&Theme, EdgeStatus) -> EdgeStyle<Resolved> + 'a>;
+
+/// A node to push onto the graph: id, position, content element, and an optional
+/// per-node status-driven style closure. Build with [`node`] + [`Node::style`],
+/// then add via [`NodeGraph::push_node`]. Looks like its own widget even though
+/// the body is drawn by the graph.
+pub struct Node<'a, N, Message, Theme, Renderer> {
+    id: N,
+    position: Point,
+    element: iced::Element<'a, Message, Theme, Renderer>,
+    style_fn: Option<NodeStyleFn<'a, Theme>>,
+}
+
+/// Creates a [`Node`] with default (theme) styling.
+pub fn node<'a, N, Message, Theme, Renderer>(
+    id: N,
+    position: Point,
+    element: impl Into<iced::Element<'a, Message, Theme, Renderer>>,
+) -> Node<'a, N, Message, Theme, Renderer> {
+    Node {
+        id,
+        position,
+        element: element.into(),
+        style_fn: None,
+    }
+}
+
+impl<'a, N, Message, Theme, Renderer> Node<'a, N, Message, Theme, Renderer> {
+    /// Sets the per-node style closure: receives the theme and the node's
+    /// [`NodeStatus`], returns the resolved style. Layer over the built-in
+    /// default:
+    /// ```ignore
+    /// node(0, pos, el).style(|theme, status| {
+    ///     default_node_style(theme, status)
+    ///         .fill_color(Color::WHITE)
+    ///         .resolve(&NodeStyle::from_theme(theme))
+    /// })
+    /// ```
+    pub fn style(mut self, f: impl Fn(&Theme, NodeStatus) -> NodeStyle<Resolved> + 'a) -> Self {
+        self.style_fn = Some(Box::new(f));
+        self
+    }
+}
+
+/// An edge to push onto the graph: endpoint pin references and an optional
+/// per-edge status-driven style closure. Build with [`edge`] + [`Edge::style`],
+/// then add via [`NodeGraph::push_edge`].
+pub struct Edge<'a, N, P, Theme> {
+    from: PinRef<N, P>,
+    to: PinRef<N, P>,
+    style_fn: Option<EdgeStyleFn<'a, Theme>>,
+}
+
+/// Creates an [`Edge`] with default (theme) styling.
+pub fn edge<'a, N, P, Theme>(from: PinRef<N, P>, to: PinRef<N, P>) -> Edge<'a, N, P, Theme> {
+    Edge {
+        from,
+        to,
+        style_fn: None,
+    }
+}
+
+impl<'a, N, P, Theme> Edge<'a, N, P, Theme> {
+    /// Sets the per-edge style closure: theme + [`EdgeStatus`] -> resolved style.
+    pub fn style(mut self, f: impl Fn(&Theme, EdgeStatus) -> EdgeStyle<Resolved> + 'a) -> Self {
+        self.style_fn = Some(Box::new(f));
+        self
+    }
+}
 
 pub mod camera;
 pub(crate) mod euclid;
@@ -374,58 +441,19 @@ where
     /// Adds a node with the given ID and default styling.
     ///
     /// The node will use theme defaults from `NodeStyle::from_theme()`.
-    pub fn push_node(
-        &mut self,
-        node_id: N,
-        position: Point,
-        element: impl Into<iced::Element<'a, Message, Theme, Renderer>>,
-    ) {
-        self.id_maps.register_node(node_id);
-        self.nodes.push((position, element.into(), None));
-    }
-
-    /// Adds a node with a per-node style callback.
-    ///
-    /// The callback receives the theme and the resolved theme-default style, and
-    /// returns the style to draw. Build overrides with `NodeStyle::new()` (a
-    /// `Partial` overlay) and `.resolve(&base)`:
-    ///
-    /// ```ignore
-    /// ng.push_node_styled(0, pos, el, |_theme, base| {
-    ///     NodeStyle::new().fill_color(Color::WHITE).resolve(&base)
-    /// });
-    /// ```
-    pub fn push_node_styled(
-        &mut self,
-        node_id: N,
-        position: Point,
-        element: impl Into<iced::Element<'a, Message, Theme, Renderer>>,
-        style: impl Fn(&Theme, NodeStyle<Resolved>) -> NodeStyle<Resolved> + 'a,
-    ) {
-        self.id_maps.register_node(node_id);
+    pub fn push_node(&mut self, node: Node<'a, N, Message, Theme, Renderer>) {
+        self.id_maps.register_node(node.id);
         self.nodes
-            .push((position, element.into(), Some(Box::new(style))));
+            .push((node.position, node.element, node.style_fn));
     }
 
-    /// Adds an edge with default styling.
+    /// Adds an edge to the graph.
     ///
-    /// The edge will use theme defaults from `EdgeStyle::from_theme()`.
-    /// Pin IDs are resolved to local indices at render time.
-    pub fn push_edge(&mut self, from: PinRef<N, P>, to: PinRef<N, P>) {
-        self.edges.push((from, to, None));
-    }
-
-    /// Adds an edge with a per-edge style callback.
-    ///
-    /// The callback receives the theme and the resolved theme-default style and
-    /// returns the style to draw (see [`Self::push_node_styled`]).
-    pub fn push_edge_styled(
-        &mut self,
-        from: PinRef<N, P>,
-        to: PinRef<N, P>,
-        style: impl Fn(&Theme, EdgeStyle<Resolved>) -> EdgeStyle<Resolved> + 'a,
-    ) {
-        self.edges.push((from, to, Some(Box::new(style))));
+    /// Pin IDs are resolved to local indices at render time; the widget
+    /// normalizes orientation so the output pin is the edge start (output ->
+    /// input).
+    pub fn push_edge(&mut self, edge: Edge<'a, N, P, Theme>) {
+        self.edges.push((edge.from, edge.to, edge.style_fn));
     }
 
     /// Translates internal node index to user's node ID.

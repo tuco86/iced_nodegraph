@@ -29,11 +29,14 @@ use super::{
     state::{Dragging, NodeGraphState, z_render_indices},
 };
 use crate::{
-    PinRef, PinSide,
+    PinDirection, PinRef, PinSide,
     ids::{EdgeId, NodeId, PinId},
     node_graph::euclid::{IntoEuclid, ScreenPoint, WorldPoint},
     node_pin::NodePinState,
-    style::{ColorQuad, EdgeGeometry, EdgeStyle, GraphStyle, NodeStyle, PinStyle, Resolved},
+    style::{
+        ColorQuad, EdgeGeometry, EdgeStatus, EdgeStyle, GraphStyle, NodeStatus, NodeStyle, PinStyle,
+        Resolved,
+    },
 };
 use super::{EdgeStyleFn, NodeStyleFn};
 use iced_sdf::{Curve, Drawable, Pattern, SdfPrimitive, Style};
@@ -231,23 +234,23 @@ fn compute_pin_hash<P: PinId>(pin_id: &P) -> u64 {
 fn resolve_node_style(
     style_fn: Option<&NodeStyleFn<'_, Theme>>,
     theme: &Theme,
+    status: NodeStatus,
 ) -> NodeStyle<Resolved> {
-    let base = NodeStyle::from_theme(theme);
     match style_fn {
-        Some(f) => f(theme, base),
-        None => base,
+        Some(f) => f(theme, status),
+        None => crate::style::resolved_node_style(theme, status),
     }
 }
 
-/// Resolves an edge's style: theme base, then the optional per-edge callback.
+/// Resolves an edge's style: the per-edge callback, or the built-in default.
 fn resolve_edge_style(
     style_fn: Option<&EdgeStyleFn<'_, Theme>>,
     theme: &Theme,
+    status: EdgeStatus,
 ) -> EdgeStyle<Resolved> {
-    let base = EdgeStyle::from_theme(theme);
     match style_fn {
-        Some(f) => f(theme, base),
-        None => base,
+        Some(f) => f(theme, status),
+        None => crate::style::resolved_edge_style(theme, status),
     }
 }
 
@@ -256,13 +259,6 @@ fn resolve_graph_style(style: Option<&GraphStyle>, theme: &Theme) -> GraphStyle 
     style
         .cloned()
         .unwrap_or_else(|| GraphStyle::from_theme(theme))
-}
-
-/// Applies the selection highlight to a resolved node style in place: overrides
-/// the border with the selection color/width.
-fn apply_node_selection(style: &mut NodeStyle<Resolved>, selection: &crate::style::SelectionStyle) {
-    style.border_color = ColorQuad::solid(selection.selected_border_color);
-    style.border_pattern = Pattern::solid(selection.selected_border_width);
 }
 
 /// Resolves a pin's drawn style: theme base merged with the per-pin overlay,
@@ -383,8 +379,6 @@ where
         // Resolve styles
         let resolved_graph = resolve_graph_style(self.graph_style.as_ref(), theme);
 
-        let selection_style = &resolved_graph.selection_style;
-
         // Check if we're edge dragging
         let is_edge_dragging = matches!(
             state.dragging,
@@ -495,31 +489,53 @@ where
                     continue;
                 };
 
-                let start_pos = (from_pin_pos.into_euclid().to_vector() + from_offset).to_point();
-                let end_pos = (to_pin_pos.into_euclid().to_vector() + to_offset).to_point();
-
-                let mut edge_style = resolve_edge_style(edge_style_fn.as_ref(), theme);
-                if pending_cuts.is_some_and(|cuts| cuts.contains(&edge_idx)) {
-                    // Pending-cut feedback: tint the stroke red.
-                    edge_style.stroke_color = ColorQuad::solid(Color::from_rgb(1.0, 0.2, 0.2));
-                }
-
-                // The edge is drawn exactly as stored (from -> to); gradient,
-                // arrow pattern and flow follow that arc-length. The edge is laid
-                // out in the right direction at connection time, so nothing is
-                // flipped here.
+                let from_pos = (from_pin_pos.into_euclid().to_vector() + from_offset).to_point();
+                let to_pos = (to_pin_pos.into_euclid().to_vector() + to_offset).to_point();
                 let from_side: u32 = from_pin_state.side.into();
                 let to_side: u32 = to_pin_state.side.into();
+
+                // Normalize orientation so the OUTPUT pin is the edge start
+                // (output -> input). Gradient, arrow and flow then follow the
+                // data-flow direction regardless of which side was dragged from.
+                let swap = !matches!(from_pin_state.direction, PinDirection::Output)
+                    && matches!(to_pin_state.direction, PinDirection::Output);
+                let (start_pos, end_pos, start_side, end_side, start_color, end_color) = if swap {
+                    (
+                        to_pos,
+                        from_pos,
+                        to_side,
+                        from_side,
+                        to_pin_state.color,
+                        from_pin_state.color,
+                    )
+                } else {
+                    (
+                        from_pos,
+                        to_pos,
+                        from_side,
+                        to_side,
+                        from_pin_state.color,
+                        to_pin_state.color,
+                    )
+                };
+
+                let edge_status = if pending_cuts.is_some_and(|cuts| cuts.contains(&edge_idx)) {
+                    EdgeStatus::PendingCut
+                } else {
+                    EdgeStatus::Idle
+                };
+                let edge_style = resolve_edge_style(edge_style_fn.as_ref(), theme, edge_status);
+
                 let (shape, shadow_shape) =
-                    edge_shapes(&start_pos, &end_pos, from_side, to_side, &edge_style);
+                    edge_shapes(&start_pos, &end_pos, start_side, end_side, &edge_style);
 
                 push_edge_layers(
                     &mut batch,
                     &shape,
                     &shadow_shape,
                     &edge_style,
-                    from_pin_state.color,
-                    to_pin_state.color,
+                    start_color,
+                    end_color,
                 );
             }
 
@@ -570,7 +586,7 @@ where
                     // when the graph is off the window origin.
                     let end_pos: WorldPoint = cursor_layout(cursor_pos);
 
-                    let drag_edge_style = resolve_edge_style(None, theme);
+                    let drag_edge_style = resolve_edge_style(None, theme, EdgeStatus::Idle);
 
                     let from_side: u32 = from_pin_state.side.into();
                     let cursor_side: u32 = match from_pin_state.side {
@@ -621,11 +637,12 @@ where
                 let Some(node_layout) = layout.children().nth(node_index) else {
                     continue;
                 };
-                let is_selected = state.selected_nodes.contains(&node_index);
-                let mut resolved = resolve_node_style(node_style.as_ref(), theme);
-                if is_selected {
-                    apply_node_selection(&mut resolved, selection_style);
-                }
+                let status = if state.selected_nodes.contains(&node_index) {
+                    NodeStatus::Selected
+                } else {
+                    NodeStatus::Idle
+                };
+                let resolved = resolve_node_style(node_style.as_ref(), theme, status);
 
                 if !resolved.has_shadow() {
                     continue;
@@ -682,13 +699,14 @@ where
             let Some(node_layout) = layout.children().nth(node_index) else {
                 continue;
             };
-            let is_selected = state.selected_nodes.contains(&node_index);
+            let status = if state.selected_nodes.contains(&node_index) {
+                NodeStatus::Selected
+            } else {
+                NodeStatus::Idle
+            };
             let offset = compute_node_offset(node_index);
 
-            let mut resolved = resolve_node_style(node_style.as_ref(), theme);
-            if is_selected {
-                apply_node_selection(&mut resolved, selection_style);
-            }
+            let resolved = resolve_node_style(node_style.as_ref(), theme, status);
 
             let border_width = resolved.border_pattern.thickness;
 
