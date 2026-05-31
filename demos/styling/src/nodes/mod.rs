@@ -1,5 +1,5 @@
 use iced::{
-    Color, Length, Padding,
+    Length, Padding,
     alignment::Horizontal,
     widget::{Container, column, container, row, text},
 };
@@ -49,26 +49,12 @@ where
         node_title_bar(name.to_string(), content_style),
         container(
             row![
-                container(pin!(
-                    Left,
-                    0usize,
-                    text(""),
-                    Input,
-                    Data,
-                    Color::from_rgb(0.5, 0.7, 0.9)
-                ))
-                .width(Length::FillPortion(1))
-                .align_x(Horizontal::Left),
-                container(pin!(
-                    Right,
-                    1usize,
-                    text(""),
-                    Output,
-                    Data,
-                    Color::from_rgb(0.9, 0.7, 0.5)
-                ))
-                .width(Length::FillPortion(1))
-                .align_x(Horizontal::Right),
+                container(pin!(Left, 0usize, text(""), Input, Data))
+                    .width(Length::FillPortion(1))
+                    .align_x(Horizontal::Left),
+                container(pin!(Right, 1usize, text(""), Output, Data))
+                    .width(Length::FillPortion(1))
+                    .align_x(Horizontal::Right),
             ]
             .width(Length::Fill)
         )

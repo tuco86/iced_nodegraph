@@ -46,7 +46,10 @@ use iced::{
     window,
 };
 use iced_nodegraph::{EdgeCurve, PinShape};
-use iced_nodegraph::{EdgeStyle, NodeStyle, Partial, PinRef, PinStyle};
+use iced_nodegraph::{
+    EdgeStatus, EdgeStyle, NodeStyle, Partial, PinInfo, PinRef, PinStatus, PinStyle, Resolved,
+    default_edge_style, default_node_style, default_pin_style, edge as ng_edge, node as ng_node,
+};
 use iced_palette::{
     Command, Shortcut, command, command_palette, find_matching_shortcut, focus_input,
     get_filtered_command_index, get_filtered_count, is_toggle_shortcut, navigate_down, navigate_up,
@@ -240,6 +243,44 @@ enum ConfigOutput {
     Node(NodeStyle<Partial>),
     Edge(EdgeStyle<Partial>),
     Pin(PinStyle<Partial>),
+}
+
+/// Maps a pin's data-type marker to its semantic color. Pins carry no style;
+/// the owning node colors them via `pin_style`, keyed on this.
+fn pin_color_for(ty: std::any::TypeId) -> Color {
+    use nodes::{colors, pins};
+    use std::any::TypeId;
+    if ty == TypeId::of::<pins::ColorData>() {
+        colors::PIN_COLOR
+    } else if ty == TypeId::of::<pins::Float>() || ty == TypeId::of::<pins::Int>() {
+        colors::PIN_NUMBER
+    } else if ty == TypeId::of::<pins::Bool>() {
+        colors::PIN_BOOL
+    } else if ty == TypeId::of::<pins::StringData>() {
+        colors::PIN_STRING
+    } else if ty == TypeId::of::<pins::Email>() {
+        colors::PIN_EMAIL
+    } else if ty == TypeId::of::<pins::DateTime>() {
+        colors::PIN_DATETIME
+    } else if ty == TypeId::of::<pins::NodeConfigData>()
+        || ty == TypeId::of::<pins::EdgeConfigData>()
+        || ty == TypeId::of::<pins::PinConfigData>()
+    {
+        colors::PIN_CONFIG
+    } else {
+        colors::PIN_ANY
+    }
+}
+
+/// Per-node pin style: theme defaults + status, indicator colored by data type.
+fn graph_pin_style(
+    theme: &Theme,
+    pin: PinInfo<'_, PinLabel>,
+    status: PinStatus,
+) -> PinStyle<Resolved> {
+    default_pin_style(theme, status)
+        .color(pin_color_for(pin.data_type()))
+        .resolve(&PinStyle::from_theme(theme))
 }
 
 /// Computed style overlays accumulated from connected config nodes. Each is a
@@ -1646,6 +1687,9 @@ impl Application {
 
         // Graph-wide node defaults - combined with per-node overlays via merge()
         let node_defaults = NodeStyle::new().corner_radius(8.0).opacity(0.88);
+        // The dragging edge preview uses the graph-wide computed edge overlay
+        // (e.g. from an EdgeConfig -> ApplyToGraph chain).
+        let drag_overlay = self.computed_style.edge.clone();
 
         let mut ng: NodeGraph<
             '_,
@@ -1686,7 +1730,12 @@ impl Application {
                     iced::Color::from_rgb(0.3, 0.6, 1.0),        // border
                 )
             })
-            .cutting_tool_style(|_theme| iced::Color::from_rgb(1.0, 0.3, 0.3));
+            .cutting_tool_style(|_theme| iced::Color::from_rgb(1.0, 0.3, 0.3))
+            .dragging_edge_style(move |theme, _source| {
+                default_edge_style(theme, EdgeStatus::Idle)
+                    .merge(&drag_overlay)
+                    .resolve(&EdgeStyle::from_theme(theme))
+            });
 
         // Add all nodes from state (in order)
         for node_id in &self.node_order {
@@ -1857,19 +1906,29 @@ impl Application {
             } else {
                 node_defaults.clone()
             };
-            ng.push_node_styled(node_id.clone(), *position, element, move |_theme, base| {
-                overlay.clone().resolve(&base)
-            });
+            ng.push_node(
+                ng_node(node_id.clone(), *position, element)
+                    .style(move |theme, status| {
+                        default_node_style(theme, status)
+                            .merge(&overlay)
+                            .resolve(&NodeStyle::from_theme(theme))
+                    })
+                    .pin_style(graph_pin_style),
+            );
         }
 
         // Add stored edges with the computed overlay resolved per edge.
         let edge_overlay = self.computed_style.edge.clone();
         for edge_id in &self.edge_order {
-            if let Some(edge) = self.edges.get(edge_id) {
-                let from = PinRef::new(edge.from_node.clone(), edge.from_pin);
-                let to = PinRef::new(edge.to_node.clone(), edge.to_pin);
+            if let Some(edge_data) = self.edges.get(edge_id) {
+                let from = PinRef::new(edge_data.from_node.clone(), edge_data.from_pin);
+                let to = PinRef::new(edge_data.to_node.clone(), edge_data.to_pin);
                 let overlay = edge_overlay.clone();
-                ng.push_edge_styled(from, to, move |_theme, base| overlay.clone().resolve(&base));
+                ng.push_edge(ng_edge(from, to).style(move |theme, status, _start, _end| {
+                    default_edge_style(theme, status)
+                        .merge(&overlay)
+                        .resolve(&EdgeStyle::from_theme(theme))
+                }));
             }
         }
 

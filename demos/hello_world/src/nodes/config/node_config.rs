@@ -93,8 +93,7 @@ where
             pins::config::CONFIG,
             text("in").size(10),
             Input,
-            pins::NodeConfigData,
-            colors::PIN_CONFIG
+            pins::NodeConfigData
         ),
         container(text("")).width(Length::Fill),
         pin!(
@@ -102,8 +101,7 @@ where
             pins::config::NODE_OUT,
             text("out").size(10),
             Output,
-            pins::NodeConfigData,
-            colors::PIN_CONFIG
+            pins::NodeConfigData
         ),
     ]
     .align_y(iced::Alignment::Center);
@@ -133,8 +131,7 @@ where
             pins::config::BG_COLOR,
             text("fill").size(10),
             Input,
-            pins::ColorData,
-            colors::PIN_COLOR
+            pins::ColorData
         ),
         container(fill_display)
             .width(Length::Fill)
@@ -167,8 +164,7 @@ where
             pins::config::COLOR,
             text("border").size(10),
             Input,
-            pins::ColorData,
-            colors::PIN_COLOR
+            pins::ColorData
         ),
         container(border_display)
             .width(Length::Fill)
@@ -184,8 +180,7 @@ where
             pins::config::WIDTH,
             text("width").size(10),
             Input,
-            pins::Float,
-            colors::PIN_NUMBER
+            pins::Float
         ),
         container(text(border_width.map_or("--".to_string(), |v| format!("{:.1}", v))).size(9))
             .width(Length::Fill)
@@ -200,8 +195,7 @@ where
             pins::config::RADIUS,
             text("radius").size(10),
             Input,
-            pins::Float,
-            colors::PIN_NUMBER
+            pins::Float
         ),
         container(
             text(
@@ -223,8 +217,7 @@ where
             pins::config::OPACITY,
             text("opacity").size(10),
             Input,
-            pins::Float,
-            colors::PIN_NUMBER
+            pins::Float
         ),
         container(
             text(
@@ -251,8 +244,7 @@ where
                     pins::config::BG_COLOR,
                     text("").size(1),
                     Input,
-                    pins::ColorData,
-                    colors::PIN_COLOR
+                    pins::ColorData
                 )
                 .disable_interactions(),
                 pin!(
@@ -260,8 +252,7 @@ where
                     pins::config::RADIUS,
                     text("").size(1),
                     Input,
-                    pins::Float,
-                    colors::PIN_NUMBER
+                    pins::Float
                 )
                 .disable_interactions(),
                 pin!(
@@ -269,8 +260,7 @@ where
                     pins::config::OPACITY,
                     text("").size(1),
                     Input,
-                    pins::Float,
-                    colors::PIN_NUMBER
+                    pins::Float
                 )
                 .disable_interactions(),
             ]
@@ -301,8 +291,7 @@ where
                     pins::config::COLOR,
                     text("").size(1),
                     Input,
-                    pins::ColorData,
-                    colors::PIN_COLOR
+                    pins::ColorData
                 )
                 .disable_interactions(),
                 pin!(
@@ -310,8 +299,7 @@ where
                     pins::config::WIDTH,
                     text("").size(1),
                     Input,
-                    pins::Float,
-                    colors::PIN_NUMBER
+                    pins::Float
                 )
                 .disable_interactions(),
             ]

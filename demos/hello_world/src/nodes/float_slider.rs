@@ -207,14 +207,7 @@ where
     // Build the main content - slider and pin-wrapped value on same row
     let main_content = row![
         slider_widget,
-        pin!(
-            Right,
-            "value",
-            value_display,
-            Output,
-            pins::Float,
-            colors::PIN_NUMBER
-        )
+        pin!(Right, "value", value_display, Output, pins::Float)
     ]
     .spacing(8)
     .align_y(iced::Alignment::Center);

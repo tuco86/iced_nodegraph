@@ -39,9 +39,27 @@ use iced::{
     widget::{button, column, container, opaque, pick_list, row, slider, stack, text},
     window,
 };
-use iced_nodegraph::{NodeStyle, Pattern, PinRef, Resolved, node_graph};
+use iced_nodegraph::{
+    NodeStyle, Pattern, PinDirection, PinInfo, PinRef, PinStatus, PinStyle, Resolved,
+    default_node_style, default_pin_style, edge, node, node_graph,
+};
 use nodes::styled_node;
 use std::collections::HashSet;
+
+/// Pin style for the styling demo: blue inputs, orange outputs.
+fn styling_pin_style(
+    theme: &Theme,
+    pin: PinInfo<'_, usize>,
+    status: PinStatus,
+) -> PinStyle<Resolved> {
+    let color = match pin.direction() {
+        PinDirection::Output => iced::Color::from_rgb(0.9, 0.7, 0.5),
+        _ => iced::Color::from_rgb(0.5, 0.7, 0.9),
+    };
+    default_pin_style(theme, status)
+        .color(color)
+        .resolve(&PinStyle::from_theme(theme))
+}
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -472,16 +490,17 @@ impl Application {
             // The demo stores a fully resolved style per node; the callback just
             // returns it (ignoring the theme base).
             let node_style = style.clone();
-            ng.push_node_styled(
-                index,
-                *position,
-                styled_node(name, style, theme),
-                move |_theme, _base| node_style.clone(),
+            ng.push_node(
+                node(index, *position, styled_node(name, style, theme))
+                    .style(move |theme, status| {
+                        default_node_style(theme, status).resolve(&node_style)
+                    })
+                    .pin_style(styling_pin_style),
             );
         }
 
         for (from, to) in &self.edges {
-            ng.push_edge(*from, *to);
+            ng.push_edge(edge(*from, *to));
         }
 
         ng.into()
