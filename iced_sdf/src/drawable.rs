@@ -91,6 +91,49 @@ impl Drawable {
         self.segments.len()
     }
 
+    /// Returns a copy shifted by `(dx, dy)` in world space.
+    ///
+    /// Translates every segment's positional geometry and the cached bounds;
+    /// radii, angles and arc lengths are translation-invariant. Cheaper than
+    /// rebuilding a shape at a new origin, e.g. to reuse a node silhouette for
+    /// its offset shadow. Curve and shape drawables only; a tiling pattern's
+    /// origin is not adjusted.
+    pub fn translated(&self, dx: f32, dy: f32) -> Self {
+        let mut out = self.clone();
+        for seg in &mut out.segments {
+            match seg.segment_type {
+                // geom0 = (ax, ay, bx, by)
+                SegmentType::Line => {
+                    seg.geom0[0] += dx;
+                    seg.geom0[1] += dy;
+                    seg.geom0[2] += dx;
+                    seg.geom0[3] += dy;
+                }
+                // geom0 = (p0, p1), geom1 = (p2, p3)
+                SegmentType::CubicBezier => {
+                    seg.geom0[0] += dx;
+                    seg.geom0[1] += dy;
+                    seg.geom0[2] += dx;
+                    seg.geom0[3] += dy;
+                    seg.geom1[0] += dx;
+                    seg.geom1[1] += dy;
+                    seg.geom1[2] += dx;
+                    seg.geom1[3] += dy;
+                }
+                // geom0 = (cx, cy, ...) / (px, py, ...): only the position moves.
+                SegmentType::Arc | SegmentType::Point => {
+                    seg.geom0[0] += dx;
+                    seg.geom0[1] += dy;
+                }
+            }
+        }
+        out.bounds[0] += dx;
+        out.bounds[1] += dy;
+        out.bounds[2] += dx;
+        out.bounds[3] += dy;
+        out
+    }
+
     /// Create a line segment drawable (convenience for Curve::single_line).
     pub(crate) fn single_line(a: Vec2, b: Vec2) -> Self {
         let length = a.distance(b);
@@ -284,5 +327,19 @@ mod tests {
         // Quarter-circle-ish curve, should be > straight distance (14.14) and < perimeter
         assert!(len > 14.0);
         assert!(len < 30.0);
+    }
+
+    #[test]
+    fn translated_shifts_geometry_and_bounds() {
+        let d = Drawable::single_line(Vec2::new(1.0, 2.0), Vec2::new(4.0, 6.0));
+        let t = d.translated(10.0, -3.0);
+
+        // Endpoints (geom0 = ax, ay, bx, by) move by the offset.
+        assert_eq!(t.segments[0].geom0, [11.0, -1.0, 14.0, 3.0]);
+        // Bounds shift with the geometry.
+        assert_eq!(t.bounds(), [11.0, -1.0, 14.0, 3.0]);
+        // Translation-invariant data is preserved; the original is untouched.
+        assert!((t.total_arc_length() - d.total_arc_length()).abs() < 1e-6);
+        assert_eq!(d.segments[0].geom0, [1.0, 2.0, 4.0, 6.0]);
     }
 }
