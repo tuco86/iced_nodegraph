@@ -59,17 +59,35 @@ where
         .color(result_color);
 
     let row_a = row![
-        pin!(Left, "input_a", text("A"), Input, pins::Float),
+        pin!(
+            Left,
+            "input_a",
+            text("A"),
+            Input,
+            ::std::any::TypeId::of::<pins::Float>()
+        ),
         text(a_display).size(10).color(colors::TEXT_MUTED),
         Space::new().width(Length::Fill),
-        pin!(Right, "result", result_text, Output, pins::Float),
+        pin!(
+            Right,
+            "result",
+            result_text,
+            Output,
+            ::std::any::TypeId::of::<pins::Float>()
+        ),
     ]
     .spacing(6)
     .align_y(iced::Alignment::Center);
 
     // Row 2: Input B only
     let row_b = row![
-        pin!(Left, "input_b", text("B"), Input, pins::Float),
+        pin!(
+            Left,
+            "input_b",
+            text("B"),
+            Input,
+            ::std::any::TypeId::of::<pins::Float>()
+        ),
         text(b_display).size(10).color(colors::TEXT_MUTED),
     ]
     .spacing(6)

@@ -30,12 +30,24 @@ where
     Message: Clone + 'a,
 {
     let pins = row![
-        container(pin!(Left, 0usize, text("uv"), Input, colors::Vec2))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Left),
-        container(pin!(Right, 1usize, text("out"), Output, colors::Float))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Right),
+        container(pin!(
+            Left,
+            0usize,
+            text("uv"),
+            Input,
+            ::std::any::TypeId::of::<colors::Vec2>()
+        ))
+        .width(Length::FillPortion(1))
+        .align_x(Horizontal::Left),
+        container(pin!(
+            Right,
+            1usize,
+            text("out"),
+            Output,
+            ::std::any::TypeId::of::<colors::Float>()
+        ))
+        .width(Length::FillPortion(1))
+        .align_x(Horizontal::Right),
     ]
     .width(Length::Fill);
 
@@ -49,12 +61,24 @@ where
     Message: Clone + 'a,
 {
     let pins = row![
-        container(pin!(Left, 0usize, text("uv"), Input, colors::Vec2))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Left),
-        container(pin!(Right, 1usize, text("out"), Output, colors::Float))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Right),
+        container(pin!(
+            Left,
+            0usize,
+            text("uv"),
+            Input,
+            ::std::any::TypeId::of::<colors::Vec2>()
+        ))
+        .width(Length::FillPortion(1))
+        .align_x(Horizontal::Left),
+        container(pin!(
+            Right,
+            1usize,
+            text("out"),
+            Output,
+            ::std::any::TypeId::of::<colors::Float>()
+        ))
+        .width(Length::FillPortion(1))
+        .align_x(Horizontal::Right),
     ]
     .width(Length::Fill);
 
@@ -68,12 +92,24 @@ where
     Message: Clone + 'a,
 {
     let pins = row![
-        container(pin!(Left, 0usize, text("uv"), Input, colors::Vec2))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Left),
-        container(pin!(Right, 1usize, text("out"), Output, colors::Float))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Right),
+        container(pin!(
+            Left,
+            0usize,
+            text("uv"),
+            Input,
+            ::std::any::TypeId::of::<colors::Vec2>()
+        ))
+        .width(Length::FillPortion(1))
+        .align_x(Horizontal::Left),
+        container(pin!(
+            Right,
+            1usize,
+            text("out"),
+            Output,
+            ::std::any::TypeId::of::<colors::Float>()
+        ))
+        .width(Length::FillPortion(1))
+        .align_x(Horizontal::Right),
     ]
     .width(Length::Fill);
 

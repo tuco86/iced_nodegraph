@@ -17,15 +17,21 @@ where
     let pin_list = column![
         // Row 1: email input + subject output
         row![
-            container(pin!(Left, "email", text("email"), Input, pins::Email))
-                .width(Length::FillPortion(1))
-                .align_x(Horizontal::Left),
+            container(pin!(
+                Left,
+                "email",
+                text("email"),
+                Input,
+                ::std::any::TypeId::of::<pins::Email>()
+            ))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Left),
             container(pin!(
                 Right,
                 "subject",
                 text("subject"),
                 Output,
-                pins::StringData
+                ::std::any::TypeId::of::<pins::StringData>()
             ))
             .width(Length::FillPortion(1))
             .align_x(Horizontal::Right),
@@ -37,14 +43,20 @@ where
             "datetime",
             text("datetime"),
             Output,
-            pins::DateTime
+            ::std::any::TypeId::of::<pins::DateTime>()
         ))
         .width(Length::Fill)
         .align_x(Horizontal::Right),
         // Row 3: body output
-        container(pin!(Right, "body", text("body"), Output, pins::StringData))
-            .width(Length::Fill)
-            .align_x(Horizontal::Right),
+        container(pin!(
+            Right,
+            "body",
+            text("body"),
+            Output,
+            ::std::any::TypeId::of::<pins::StringData>()
+        ))
+        .width(Length::Fill)
+        .align_x(Horizontal::Right),
     ]
     .spacing(4);
 

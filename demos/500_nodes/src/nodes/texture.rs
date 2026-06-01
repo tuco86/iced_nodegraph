@@ -30,12 +30,24 @@ where
     Message: Clone + 'a,
 {
     let pins = row![
-        container(pin!(Left, 0usize, text("uv"), Input, colors::Vec2))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Left),
-        container(pin!(Right, 1usize, text("rgba"), Output, colors::Vec4))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Right),
+        container(pin!(
+            Left,
+            0usize,
+            text("uv"),
+            Input,
+            ::std::any::TypeId::of::<colors::Vec2>()
+        ))
+        .width(Length::FillPortion(1))
+        .align_x(Horizontal::Left),
+        container(pin!(
+            Right,
+            1usize,
+            text("rgba"),
+            Output,
+            ::std::any::TypeId::of::<colors::Vec4>()
+        ))
+        .width(Length::FillPortion(1))
+        .align_x(Horizontal::Right),
     ]
     .width(Length::Fill);
 
@@ -50,17 +62,35 @@ where
 {
     let pins = column![
         row![
-            container(pin!(Left, 0usize, text("A"), Input, colors::Vec4))
-                .width(Length::FillPortion(1))
-                .align_x(Horizontal::Left),
-            container(pin!(Right, 1usize, text("out"), Output, colors::Vec4))
-                .width(Length::FillPortion(1))
-                .align_x(Horizontal::Right),
+            container(pin!(
+                Left,
+                0usize,
+                text("A"),
+                Input,
+                ::std::any::TypeId::of::<colors::Vec4>()
+            ))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Left),
+            container(pin!(
+                Right,
+                1usize,
+                text("out"),
+                Output,
+                ::std::any::TypeId::of::<colors::Vec4>()
+            ))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Right),
         ]
         .width(Length::Fill),
-        container(pin!(Left, 2usize, text("B"), Input, colors::Vec4))
-            .width(Length::Fill)
-            .align_x(Horizontal::Left),
+        container(pin!(
+            Left,
+            2usize,
+            text("B"),
+            Input,
+            ::std::any::TypeId::of::<colors::Vec4>()
+        ))
+        .width(Length::Fill)
+        .align_x(Horizontal::Left),
     ]
     .spacing(SPACING_PIN);
 
@@ -74,12 +104,24 @@ where
     Message: Clone + 'a,
 {
     let pins = row![
-        container(pin!(Left, 0usize, text("t"), Input, colors::Float))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Left),
-        container(pin!(Right, 1usize, text("rgba"), Output, colors::Vec4))
-            .width(Length::FillPortion(1))
-            .align_x(Horizontal::Right),
+        container(pin!(
+            Left,
+            0usize,
+            text("t"),
+            Input,
+            ::std::any::TypeId::of::<colors::Float>()
+        ))
+        .width(Length::FillPortion(1))
+        .align_x(Horizontal::Left),
+        container(pin!(
+            Right,
+            1usize,
+            text("rgba"),
+            Output,
+            ::std::any::TypeId::of::<colors::Vec4>()
+        ))
+        .width(Length::FillPortion(1))
+        .align_x(Horizontal::Right),
     ]
     .width(Length::Fill);
 

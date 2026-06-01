@@ -48,12 +48,24 @@ where
         node_title_bar(name.to_string(), content_style),
         container(
             row![
-                container(pin!(Left, 0usize, text(""), Input, Data))
-                    .width(Length::FillPortion(1))
-                    .align_x(Horizontal::Left),
-                container(pin!(Right, 1usize, text(""), Output, Data))
-                    .width(Length::FillPortion(1))
-                    .align_x(Horizontal::Right),
+                container(pin!(
+                    Left,
+                    0usize,
+                    text(""),
+                    Input,
+                    ::std::any::TypeId::of::<Data>()
+                ))
+                .width(Length::FillPortion(1))
+                .align_x(Horizontal::Left),
+                container(pin!(
+                    Right,
+                    1usize,
+                    text(""),
+                    Output,
+                    ::std::any::TypeId::of::<Data>()
+                ))
+                .width(Length::FillPortion(1))
+                .align_x(Horizontal::Right),
             ]
             .width(Length::Fill)
         )

@@ -28,7 +28,14 @@ pub fn time_input_node<'a, Message>(theme: &'a Theme) -> iced::Element<'a, Messa
 where
     Message: Clone + 'a,
 {
-    let pins = column![pin!(Right, 0usize, text("t"), Output, colors::Float),].spacing(SPACING_PIN);
+    let pins = column![pin!(
+        Right,
+        0usize,
+        text("t"),
+        Output,
+        ::std::any::TypeId::of::<colors::Float>()
+    ),]
+    .spacing(SPACING_PIN);
 
     column![title_bar("Time", theme), container(pins).padding([4, 0])]
         .width(100.0)
@@ -39,7 +46,14 @@ pub fn uv_input_node<'a, Message>(theme: &'a Theme) -> iced::Element<'a, Message
 where
     Message: Clone + 'a,
 {
-    let pins = column![pin!(Right, 0usize, text("uv"), Output, colors::Vec2),].spacing(SPACING_PIN);
+    let pins = column![pin!(
+        Right,
+        0usize,
+        text("uv"),
+        Output,
+        ::std::any::TypeId::of::<colors::Vec2>()
+    ),]
+    .spacing(SPACING_PIN);
 
     column![title_bar("UV", theme), container(pins).padding([4, 0])]
         .width(100.0)
@@ -50,7 +64,14 @@ pub fn normal_input_node<'a, Message>(theme: &'a Theme) -> iced::Element<'a, Mes
 where
     Message: Clone + 'a,
 {
-    let pins = column![pin!(Right, 0usize, text("N"), Output, colors::Vec3),].spacing(SPACING_PIN);
+    let pins = column![pin!(
+        Right,
+        0usize,
+        text("N"),
+        Output,
+        ::std::any::TypeId::of::<colors::Vec3>()
+    ),]
+    .spacing(SPACING_PIN);
 
     column![title_bar("Normal", theme), container(pins).padding([4, 0])]
         .width(100.0)
@@ -61,7 +82,14 @@ pub fn position_input_node<'a, Message>(theme: &'a Theme) -> iced::Element<'a, M
 where
     Message: Clone + 'a,
 {
-    let pins = column![pin!(Right, 0usize, text("P"), Output, colors::Vec3),].spacing(SPACING_PIN);
+    let pins = column![pin!(
+        Right,
+        0usize,
+        text("P"),
+        Output,
+        ::std::any::TypeId::of::<colors::Vec3>()
+    ),]
+    .spacing(SPACING_PIN);
 
     column![
         title_bar("Position", theme),

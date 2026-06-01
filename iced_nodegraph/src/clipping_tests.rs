@@ -174,7 +174,7 @@ fn build_graph_with_recorder(
     graph_h: f32,
     node_world_pos: Point,
 ) -> (
-    NodeGraph<'static, usize, usize, usize, (), Theme, Stub>,
+    NodeGraph<'static, usize, usize, (), usize, (), Theme, Stub>,
     Capture, // on_draw
     Capture, // on_update
 ) {
@@ -184,9 +184,10 @@ fn build_graph_with_recorder(
         on_draw: on_draw.clone(),
         on_update: on_update.clone(),
     };
-    let mut graph: NodeGraph<'static, usize, usize, usize, (), Theme, Stub> = NodeGraph::default()
-        .width(Length::Fixed(graph_w))
-        .height(Length::Fixed(graph_h));
+    let mut graph: NodeGraph<'static, usize, usize, (), usize, (), Theme, Stub> =
+        NodeGraph::default()
+            .width(Length::Fixed(graph_w))
+            .height(Length::Fixed(graph_h));
     graph.push_node(node(0_usize, node_world_pos, Element::from(recorder)));
     (graph, on_draw, on_update)
 }
@@ -296,7 +297,7 @@ fn wheel_event() -> iced::Event {
 }
 
 fn run_update_with_cursor(graph_w: f32, graph_h: f32, cursor: mouse::Cursor) -> Rc<Cell<bool>> {
-    let mut base_graph: NodeGraph<'static, usize, usize, usize, (), Theme, Stub> =
+    let mut base_graph: NodeGraph<'static, usize, usize, (), usize, (), Theme, Stub> =
         NodeGraph::default()
             .width(Length::Fixed(graph_w))
             .height(Length::Fixed(graph_h));

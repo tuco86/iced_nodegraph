@@ -41,7 +41,7 @@ use iced::{
 };
 use iced_nodegraph::{
     NodeStyle, Pattern, PinDirection, PinInfo, PinRef, PinStatus, PinStyle, Resolved,
-    default_node_style, default_pin_style, edge, node, node_graph,
+    default_node_style, default_pin_style, edge, node,
 };
 use nodes::styled_node;
 use std::collections::HashSet;
@@ -49,7 +49,8 @@ use std::collections::HashSet;
 /// Pin style for the styling demo: blue inputs, orange outputs.
 fn styling_pin_style(
     theme: &Theme,
-    pin: PinInfo<'_, usize>,
+    pin: &PinInfo<'_, usize, ::std::any::TypeId>,
+    _other: Option<&PinInfo<'_, usize, ::std::any::TypeId>>,
     status: PinStatus,
 ) -> PinStyle<Resolved> {
     let color = match pin.direction() {
@@ -475,16 +476,17 @@ impl Application {
     fn build_graph(&self) -> Element<'_, Message> {
         let theme = &self.current_theme;
 
-        let mut ng = node_graph()
-            .on_connect(|from, to| Message::EdgeConnected { from, to })
-            .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })
-            .on_move(|node_index, new_position| Message::NodeMoved {
-                node_index,
-                new_position,
-            })
-            .on_select(Message::SelectionChanged)
-            .on_group_move(|indices, delta| Message::GroupMoved { indices, delta })
-            .selection(&self.graph_selection);
+        let mut ng: ::iced_nodegraph::NodeGraph<usize, usize, ::std::any::TypeId, usize, _, _, _> =
+            ::iced_nodegraph::NodeGraph::default()
+                .on_connect(|from, to| Message::EdgeConnected { from, to })
+                .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })
+                .on_move(|node_index, new_position| Message::NodeMoved {
+                    node_index,
+                    new_position,
+                })
+                .on_select(Message::SelectionChanged)
+                .on_group_move(|indices, delta| Message::GroupMoved { indices, delta })
+                .selection(&self.graph_selection);
 
         for (index, (position, name, style)) in self.nodes.iter().enumerate() {
             // The demo stores a fully resolved style per node; the callback just

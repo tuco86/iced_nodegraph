@@ -31,17 +31,35 @@ where
 {
     let pins = column![
         row![
-            container(pin!(Left, 0usize, text("A"), Input, colors::Float))
-                .width(Length::FillPortion(1))
-                .align_x(Horizontal::Left),
-            container(pin!(Right, 1usize, text(""), Output, colors::Float))
-                .width(Length::FillPortion(1))
-                .align_x(Horizontal::Right),
+            container(pin!(
+                Left,
+                0usize,
+                text("A"),
+                Input,
+                ::std::any::TypeId::of::<colors::Float>()
+            ))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Left),
+            container(pin!(
+                Right,
+                1usize,
+                text(""),
+                Output,
+                ::std::any::TypeId::of::<colors::Float>()
+            ))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Right),
         ]
         .width(Length::Fill),
-        container(pin!(Left, 2usize, text("B"), Input, colors::Float))
-            .width(Length::Fill)
-            .align_x(Horizontal::Left),
+        container(pin!(
+            Left,
+            2usize,
+            text("B"),
+            Input,
+            ::std::any::TypeId::of::<colors::Float>()
+        ))
+        .width(Length::Fill)
+        .align_x(Horizontal::Left),
     ]
     .spacing(SPACING_PIN);
 
@@ -56,17 +74,35 @@ where
 {
     let pins = column![
         row![
-            container(pin!(Left, 0usize, text("A"), Input, colors::Float))
-                .width(Length::FillPortion(1))
-                .align_x(Horizontal::Left),
-            container(pin!(Right, 1usize, text(""), Output, colors::Float))
-                .width(Length::FillPortion(1))
-                .align_x(Horizontal::Right),
+            container(pin!(
+                Left,
+                0usize,
+                text("A"),
+                Input,
+                ::std::any::TypeId::of::<colors::Float>()
+            ))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Left),
+            container(pin!(
+                Right,
+                1usize,
+                text(""),
+                Output,
+                ::std::any::TypeId::of::<colors::Float>()
+            ))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Right),
         ]
         .width(Length::Fill),
-        container(pin!(Left, 2usize, text("B"), Input, colors::Float))
-            .width(Length::Fill)
-            .align_x(Horizontal::Left),
+        container(pin!(
+            Left,
+            2usize,
+            text("B"),
+            Input,
+            ::std::any::TypeId::of::<colors::Float>()
+        ))
+        .width(Length::Fill)
+        .align_x(Horizontal::Left),
     ]
     .spacing(SPACING_PIN);
 
@@ -84,17 +120,35 @@ where
 {
     let pins = column![
         row![
-            container(pin!(Left, 0usize, text("A"), Input, colors::Float))
-                .width(Length::FillPortion(1))
-                .align_x(Horizontal::Left),
-            container(pin!(Right, 1usize, text(""), Output, colors::Float))
-                .width(Length::FillPortion(1))
-                .align_x(Horizontal::Right),
+            container(pin!(
+                Left,
+                0usize,
+                text("A"),
+                Input,
+                ::std::any::TypeId::of::<colors::Float>()
+            ))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Left),
+            container(pin!(
+                Right,
+                1usize,
+                text(""),
+                Output,
+                ::std::any::TypeId::of::<colors::Float>()
+            ))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Right),
         ]
         .width(Length::Fill),
-        container(pin!(Left, 2usize, text("B"), Input, colors::Float))
-            .width(Length::Fill)
-            .align_x(Horizontal::Left),
+        container(pin!(
+            Left,
+            2usize,
+            text("B"),
+            Input,
+            ::std::any::TypeId::of::<colors::Float>()
+        ))
+        .width(Length::Fill)
+        .align_x(Horizontal::Left),
     ]
     .spacing(SPACING_PIN);
 
@@ -109,17 +163,35 @@ where
 {
     let pins = column![
         row![
-            container(pin!(Left, 0usize, text("A"), Input, colors::Float))
-                .width(Length::FillPortion(1))
-                .align_x(Horizontal::Left),
-            container(pin!(Right, 1usize, text(""), Output, colors::Float))
-                .width(Length::FillPortion(1))
-                .align_x(Horizontal::Right),
+            container(pin!(
+                Left,
+                0usize,
+                text("A"),
+                Input,
+                ::std::any::TypeId::of::<colors::Float>()
+            ))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Left),
+            container(pin!(
+                Right,
+                1usize,
+                text(""),
+                Output,
+                ::std::any::TypeId::of::<colors::Float>()
+            ))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Right),
         ]
         .width(Length::Fill),
-        container(pin!(Left, 2usize, text("B"), Input, colors::Float))
-            .width(Length::Fill)
-            .align_x(Horizontal::Left),
+        container(pin!(
+            Left,
+            2usize,
+            text("B"),
+            Input,
+            ::std::any::TypeId::of::<colors::Float>()
+        ))
+        .width(Length::Fill)
+        .align_x(Horizontal::Left),
     ]
     .spacing(SPACING_PIN);
 
@@ -137,17 +209,35 @@ where
 {
     let pins = column![
         row![
-            container(pin!(Left, 0usize, text("val"), Input, colors::Float))
-                .width(Length::FillPortion(1))
-                .align_x(Horizontal::Left),
-            container(pin!(Right, 1usize, text(""), Output, colors::Float))
-                .width(Length::FillPortion(1))
-                .align_x(Horizontal::Right),
+            container(pin!(
+                Left,
+                0usize,
+                text("val"),
+                Input,
+                ::std::any::TypeId::of::<colors::Float>()
+            ))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Left),
+            container(pin!(
+                Right,
+                1usize,
+                text(""),
+                Output,
+                ::std::any::TypeId::of::<colors::Float>()
+            ))
+            .width(Length::FillPortion(1))
+            .align_x(Horizontal::Right),
         ]
         .width(Length::Fill),
-        container(pin!(Left, 2usize, text("exp"), Input, colors::Float))
-            .width(Length::Fill)
-            .align_x(Horizontal::Left),
+        container(pin!(
+            Left,
+            2usize,
+            text("exp"),
+            Input,
+            ::std::any::TypeId::of::<colors::Float>()
+        ))
+        .width(Length::Fill)
+        .align_x(Horizontal::Left),
     ]
     .spacing(SPACING_PIN);
 

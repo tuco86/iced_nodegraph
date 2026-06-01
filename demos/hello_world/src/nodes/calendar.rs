@@ -11,14 +11,26 @@ where
     let style = NodeContentStyle::output(theme);
 
     let pin_list = column![
-        pin!(Left, "datetime", text("datetime"), Input, pins::DateTime),
-        pin!(Left, "title", text("title"), Input, pins::StringData),
+        pin!(
+            Left,
+            "datetime",
+            text("datetime"),
+            Input,
+            ::std::any::TypeId::of::<pins::DateTime>()
+        ),
+        pin!(
+            Left,
+            "title",
+            text("title"),
+            Input,
+            ::std::any::TypeId::of::<pins::StringData>()
+        ),
         pin!(
             Left,
             "description",
             text("description"),
             Input,
-            pins::StringData
+            ::std::any::TypeId::of::<pins::StringData>()
         ),
     ]
     .spacing(4);

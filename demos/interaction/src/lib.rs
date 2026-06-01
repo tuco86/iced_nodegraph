@@ -41,7 +41,7 @@ use iced::{
 };
 use iced_nodegraph::{
     NodeContentStyle, PinInfo as NgPinInfo, PinRef, PinStatus, PinStyle, Resolved,
-    default_pin_style, edge, node, node_graph, pin, simple_node,
+    default_pin_style, edge, node, pin, simple_node,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -121,9 +121,14 @@ enum PinDir {
 
 /// Colors a node's pins by their data-type marker (pins carry no style; the
 /// owning node styles them).
-fn pin_style(theme: &Theme, pin: NgPinInfo<'_, usize>, status: PinStatus) -> PinStyle<Resolved> {
+fn pin_style(
+    theme: &Theme,
+    pin: &NgPinInfo<'_, usize, ::std::any::TypeId>,
+    _other: Option<&NgPinInfo<'_, usize, ::std::any::TypeId>>,
+    status: PinStatus,
+) -> PinStyle<Resolved> {
     use std::any::TypeId;
-    let ty = pin.data_type();
+    let ty = *pin.info();
     let color = if ty == TypeId::of::<Integer>() {
         PinType::Integer.color()
     } else if ty == TypeId::of::<Float>() {
@@ -438,32 +443,33 @@ impl App {
         let theme = self.theme();
 
         let registry = self.pin_registry.clone();
-        let mut ng = node_graph()
-            .can_connect(move |from, to| {
-                // Live snap feedback: reject self-loops, direction conflicts and
-                // type mismatches before the edge is committed on release.
-                if from.node_id == to.node_id && from.pin_id == to.pin_id {
-                    return false;
-                }
-                let from_info = registry.get(&(from.node_id, from.pin_id));
-                let to_info = registry.get(&(to.node_id, to.pin_id));
-                match (from_info, to_info) {
-                    (Some(f), Some(t)) => {
-                        let dir_ok = !matches!(
-                            (f.direction, t.direction),
-                            (PinDir::Input, PinDir::Input) | (PinDir::Output, PinDir::Output)
-                        );
-                        dir_ok && f.pin_type.is_compatible(t.pin_type)
+        let mut ng: ::iced_nodegraph::NodeGraph<usize, usize, ::std::any::TypeId, usize, _, _, _> =
+            ::iced_nodegraph::NodeGraph::default()
+                .can_connect(move |from, to| {
+                    // Live snap feedback: reject self-loops, direction conflicts and
+                    // type mismatches before the edge is committed on release.
+                    if from.node_id() == to.node_id() && from.pin_id() == to.pin_id() {
+                        return false;
                     }
-                    _ => false,
-                }
-            })
-            .on_connect(|from, to| Message::EdgeConnected { from, to })
-            .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })
-            .on_move(|node_id, position| Message::NodeMoved { node_id, position })
-            .on_select(Message::SelectionChanged)
-            .on_group_move(|node_ids, delta| Message::GroupMoved { node_ids, delta })
-            .selection(&self.selected_nodes);
+                    let from_info = registry.get(&(*from.node_id(), *from.pin_id()));
+                    let to_info = registry.get(&(*to.node_id(), *to.pin_id()));
+                    match (from_info, to_info) {
+                        (Some(f), Some(t)) => {
+                            let dir_ok = !matches!(
+                                (f.direction, t.direction),
+                                (PinDir::Input, PinDir::Input) | (PinDir::Output, PinDir::Output)
+                            );
+                            dir_ok && f.pin_type.is_compatible(t.pin_type)
+                        }
+                        _ => false,
+                    }
+                })
+                .on_connect(|from, to| Message::EdgeConnected { from, to })
+                .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })
+                .on_move(|node_id, position| Message::NodeMoved { node_id, position })
+                .on_select(Message::SelectionChanged)
+                .on_group_move(|node_ids, delta| Message::GroupMoved { node_ids, delta })
+                .selection(&self.selected_nodes);
 
         // Node 0: Number Generator
         let pos = self
@@ -583,14 +589,14 @@ impl App {
                     0usize,
                     text("Int Out").size(12),
                     Output,
-                    Integer
+                    ::std::any::TypeId::of::<Integer>()
                 )),
                 right_pin(pin!(
                     Right,
                     1usize,
                     text("Float Out").size(12),
                     Output,
-                    Float
+                    ::std::any::TypeId::of::<Float>()
                 )),
             ]
             .spacing(4),
@@ -605,9 +611,27 @@ impl App {
             "Math Operations",
             style,
             column![
-                pin!(Left, 0usize, text("A (Float)").size(12), Input, Float),
-                pin!(Left, 1usize, text("B (Float)").size(12), Input, Float),
-                right_pin(pin!(Right, 2usize, text("Result").size(12), Output, Float)),
+                pin!(
+                    Left,
+                    0usize,
+                    text("A (Float)").size(12),
+                    Input,
+                    ::std::any::TypeId::of::<Float>()
+                ),
+                pin!(
+                    Left,
+                    1usize,
+                    text("B (Float)").size(12),
+                    Input,
+                    ::std::any::TypeId::of::<Float>()
+                ),
+                right_pin(pin!(
+                    Right,
+                    2usize,
+                    text("Result").size(12),
+                    Output,
+                    ::std::any::TypeId::of::<Float>()
+                )),
             ]
             .spacing(4),
         ))
@@ -621,15 +645,33 @@ impl App {
             "Type Converter",
             style,
             column![
-                pin!(Left, 0usize, text("In (Any)").size(12), Input, AnyType),
-                right_pin(pin!(Right, 1usize, text("Int").size(12), Output, Integer)),
-                right_pin(pin!(Right, 2usize, text("Float").size(12), Output, Float)),
+                pin!(
+                    Left,
+                    0usize,
+                    text("In (Any)").size(12),
+                    Input,
+                    ::std::any::TypeId::of::<AnyType>()
+                ),
+                right_pin(pin!(
+                    Right,
+                    1usize,
+                    text("Int").size(12),
+                    Output,
+                    ::std::any::TypeId::of::<Integer>()
+                )),
+                right_pin(pin!(
+                    Right,
+                    2usize,
+                    text("Float").size(12),
+                    Output,
+                    ::std::any::TypeId::of::<Float>()
+                )),
                 right_pin(pin!(
                     Right,
                     3usize,
                     text("String").size(12),
                     Output,
-                    StringType
+                    ::std::any::TypeId::of::<StringType>()
                 )),
             ]
             .spacing(4),
@@ -644,13 +686,19 @@ impl App {
             "Display",
             style,
             column![
-                pin!(Left, 0usize, text("Value (Any)").size(12), Input, AnyType),
+                pin!(
+                    Left,
+                    0usize,
+                    text("Value (Any)").size(12),
+                    Input,
+                    ::std::any::TypeId::of::<AnyType>()
+                ),
                 pin!(
                     Left,
                     1usize,
                     text("Label (String)").size(12),
                     Input,
-                    StringType
+                    ::std::any::TypeId::of::<StringType>()
                 ),
             ]
             .spacing(4),
@@ -665,10 +713,34 @@ impl App {
             "Bidirectional Hub",
             style,
             column![
-                pin!(Top, 0usize, text("Float").size(12), Both, Float),
-                right_pin(pin!(Right, 1usize, text("Int").size(12), Both, Integer)),
-                pin!(Bottom, 2usize, text("Any").size(12), Both, AnyType),
-                pin!(Left, 3usize, text("Str").size(12), Both, StringType),
+                pin!(
+                    Top,
+                    0usize,
+                    text("Float").size(12),
+                    Both,
+                    ::std::any::TypeId::of::<Float>()
+                ),
+                right_pin(pin!(
+                    Right,
+                    1usize,
+                    text("Int").size(12),
+                    Both,
+                    ::std::any::TypeId::of::<Integer>()
+                )),
+                pin!(
+                    Bottom,
+                    2usize,
+                    text("Any").size(12),
+                    Both,
+                    ::std::any::TypeId::of::<AnyType>()
+                ),
+                pin!(
+                    Left,
+                    3usize,
+                    text("Str").size(12),
+                    Both,
+                    ::std::any::TypeId::of::<StringType>()
+                ),
             ]
             .spacing(4),
         ))

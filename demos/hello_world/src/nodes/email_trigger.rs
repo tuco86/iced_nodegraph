@@ -15,7 +15,7 @@ where
         "on email",
         text("on email"),
         Output,
-        pins::Email
+        ::std::any::TypeId::of::<pins::Email>()
     ),]
     .spacing(4);
 

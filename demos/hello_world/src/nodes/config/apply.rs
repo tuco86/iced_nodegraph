@@ -31,7 +31,7 @@ where
             pins::config::NODE_CONFIG,
             text("nodes").size(10),
             Input,
-            pins::NodeConfigData
+            ::std::any::TypeId::of::<pins::NodeConfigData>()
         ),
         container(text(node_status).size(9))
             .width(Length::Fill)
@@ -47,7 +47,7 @@ where
             pins::config::EDGE_CONFIG,
             text("edges").size(10),
             Input,
-            pins::EdgeConfigData
+            ::std::any::TypeId::of::<pins::EdgeConfigData>()
         ),
         container(text(edge_status).size(9))
             .width(Length::Fill)
@@ -63,7 +63,7 @@ where
             pins::config::PIN_CONFIG,
             text("pins").size(10),
             Input,
-            pins::PinConfigData
+            ::std::any::TypeId::of::<pins::PinConfigData>()
         ),
         container(text(pin_status).size(9))
             .width(Length::Fill)
@@ -100,7 +100,7 @@ where
             pins::config::NODE_CONFIG,
             text("config").size(10),
             Input,
-            pins::NodeConfigData
+            ::std::any::TypeId::of::<pins::NodeConfigData>()
         ),
         container(text(config_status).size(9))
             .width(Length::Fill)
@@ -116,7 +116,7 @@ where
             pins::config::TARGET,
             text("target").size(10),
             Input,
-            pins::Int
+            ::std::any::TypeId::of::<pins::Int>()
         ),
         container(text(id_display).size(9))
             .width(Length::Fill)

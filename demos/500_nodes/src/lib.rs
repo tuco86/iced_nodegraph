@@ -50,19 +50,19 @@ use iced::{
 };
 use iced_nodegraph::{
     PinInfo, PinRef, PinStatus, PinStyle, Resolved, SdfDebug, default_pin_style, edge, node,
-    node_graph,
 };
 use nodes::NodeType;
 
 /// Colors a node's pins by their data-type marker.
 fn pin_style(
     theme: &iced::Theme,
-    pin: PinInfo<'_, usize>,
+    pin: &PinInfo<'_, usize, ::std::any::TypeId>,
+    _other: Option<&PinInfo<'_, usize, ::std::any::TypeId>>,
     status: PinStatus,
 ) -> PinStyle<Resolved> {
     use nodes::colors;
     use std::any::TypeId;
-    let ty = pin.data_type();
+    let ty = *pin.info();
     let color = if ty == TypeId::of::<colors::Float>() {
         colors::PIN_FLOAT
     } else if ty == TypeId::of::<colors::Vec2>() {
@@ -207,17 +207,18 @@ impl Application {
     }
 
     fn view(&self) -> iced::Element<'_, ApplicationMessage> {
-        let mut ng = node_graph()
-            .on_connect(|from, to| ApplicationMessage::EdgeConnected { from, to })
-            .on_disconnect(|from, to| ApplicationMessage::EdgeDisconnected { from, to })
-            .on_move(|node_index, new_position| ApplicationMessage::NodeMoved {
-                node_index,
-                new_position,
-            })
-            .on_select(ApplicationMessage::SelectionChanged)
-            .on_group_move(|indices, delta| ApplicationMessage::GroupMoved { indices, delta })
-            .selection(&self.selected_nodes)
-            .sdf_debug(self.sdf_debug);
+        let mut ng: ::iced_nodegraph::NodeGraph<usize, usize, ::std::any::TypeId, usize, _, _, _> =
+            ::iced_nodegraph::NodeGraph::default()
+                .on_connect(|from, to| ApplicationMessage::EdgeConnected { from, to })
+                .on_disconnect(|from, to| ApplicationMessage::EdgeDisconnected { from, to })
+                .on_move(|node_index, new_position| ApplicationMessage::NodeMoved {
+                    node_index,
+                    new_position,
+                })
+                .on_select(ApplicationMessage::SelectionChanged)
+                .on_group_move(|indices, delta| ApplicationMessage::GroupMoved { indices, delta })
+                .selection(&self.selected_nodes)
+                .sdf_debug(self.sdf_debug);
 
         // Add all nodes
         for (index, (position, node_type)) in self.nodes.iter().enumerate() {

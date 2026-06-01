@@ -33,7 +33,7 @@ use crate::{
     PinDirection, PinRef, PinSide,
     ids::{EdgeId, NodeId, PinId},
     node_graph::euclid::{IntoEuclid, ScreenPoint, WorldPoint},
-    node_pin::{NodePinState, PinInfo},
+    node_pin::{NodePinState, PinEnd, PinInfo},
     style::{
         EdgeGeometry, EdgeStatus, EdgeStyle, GraphStyle, NodeStatus, NodeStyle, PinStatus,
         PinStyle, Resolved,
@@ -243,12 +243,12 @@ fn resolve_node_style(
 }
 
 /// Resolves an edge's style: the per-edge callback, or the built-in default.
-fn resolve_edge_style<P: PinId + 'static>(
-    style_fn: Option<&EdgeStyleFn<'_, P, Theme>>,
+fn resolve_edge_style<P: PinId + 'static, UI>(
+    style_fn: Option<&EdgeStyleFn<'_, P, UI, Theme>>,
     theme: &Theme,
     status: EdgeStatus,
-    start: Option<PinInfo<'_, P>>,
-    end: Option<PinInfo<'_, P>>,
+    start: Option<PinInfo<'_, P, UI>>,
+    end: Option<PinInfo<'_, P, UI>>,
 ) -> EdgeStyle<Resolved> {
     match (style_fn, start, end) {
         (Some(f), Some(s), Some(e)) => f(theme, status, s, e),
@@ -257,11 +257,11 @@ fn resolve_edge_style<P: PinId + 'static>(
 }
 
 /// Builds the read-only [`PinInfo`] for a pin state, if its id is of type `P`.
-fn pin_info<'s, P: PinId + 'static>(state: &'s NodePinState) -> Option<PinInfo<'s, P>> {
+fn pin_info<'s, P: PinId + 'static, UI>(state: &'s NodePinState<UI>) -> Option<PinInfo<'s, P, UI>> {
     state
         .pin_id
         .downcast_ref::<P>()
-        .map(|id| PinInfo::new(state.direction, state.data_type, id))
+        .map(|id| PinInfo::new(state.direction, id, &state.user_info))
 }
 
 /// Resolves a GraphStyle or uses theme defaults.
@@ -273,30 +273,28 @@ fn resolve_graph_style(style: Option<&GraphStyle>, theme: &Theme) -> GraphStyle 
 
 /// Resolves a pin's drawn style: theme base merged with the per-pin overlay,
 /// then the indicator fill color forced to the pin's `color`.
-fn resolve_pin_style<P: PinId + 'static>(
-    pin_style_fn: Option<&PinStyleFn<'_, P, Theme>>,
-    state: &NodePinState,
+fn resolve_pin_style<P: PinId + 'static, UI>(
+    pin_style_fn: Option<&PinStyleFn<'_, P, UI, Theme>>,
+    state: &NodePinState<UI>,
+    other: Option<&NodePinState<UI>>,
     theme: &Theme,
     status: PinStatus,
 ) -> PinStyle<Resolved> {
-    if let (Some(f), Some(pin_id)) = (pin_style_fn, state.pin_id.downcast_ref::<P>()) {
-        f(
-            theme,
-            PinInfo::new(state.direction, state.data_type, pin_id),
-            status,
-        )
+    if let (Some(f), Some(this)) = (pin_style_fn, pin_info::<P, UI>(state)) {
+        let other_info = other.and_then(pin_info::<P, UI>);
+        f(theme, &this, other_info.as_ref(), status)
     } else {
         crate::style::resolved_pin_style(theme, status)
     }
 }
 
 /// The pin's resolved indicator color, for inheriting edge stroke ends.
-fn pin_color<P: PinId + 'static>(
-    pin_style_fn: Option<&PinStyleFn<'_, P, Theme>>,
-    state: &NodePinState,
+fn pin_color<P: PinId + 'static, UI>(
+    pin_style_fn: Option<&PinStyleFn<'_, P, UI, Theme>>,
+    state: &NodePinState<UI>,
     theme: &Theme,
 ) -> Color {
-    resolve_pin_style(pin_style_fn, state, theme, PinStatus::Idle)
+    resolve_pin_style::<P, UI>(pin_style_fn, state, None, theme, PinStatus::Idle)
         .color
         .near_start
 }
@@ -317,13 +315,13 @@ fn pin_indicator_radius(base_radius: f32, valid_target: bool, time: f32) -> f32 
 /// shadow offset) so the shadow's holes line up exactly with the body's. The
 /// cutout radius tracks the drawn pin indicator, including the valid-target
 /// pulse. `is_valid_target(pin_idx)` decides which pins pulse.
-fn pin_cutout_circles<P: PinId + 'static>(
-    pins: &[(usize, &NodePinState, (Point, Point))],
-    pin_style_fn: Option<&PinStyleFn<'_, P, Theme>>,
+fn pin_cutout_circles<P: PinId + 'static, UI>(
+    pins: &[(usize, &NodePinState<UI>, (Point, Point))],
+    pin_style_fn: Option<&PinStyleFn<'_, P, UI, Theme>>,
+    other: Option<&NodePinState<UI>>,
     theme: &Theme,
     time: f32,
-    tx: f32,
-    ty: f32,
+    offset: WorldVector,
     mut is_valid_target: impl FnMut(usize) -> bool,
 ) -> Vec<Drawable> {
     let mut cuts = Vec::new();
@@ -334,7 +332,8 @@ fn pin_cutout_circles<P: PinId + 'static>(
         } else {
             PinStatus::Idle
         };
-        let pin_style = resolve_pin_style(pin_style_fn, pin_state, theme, pin_status);
+        let pin_style =
+            resolve_pin_style::<P, UI>(pin_style_fn, pin_state, other, theme, pin_status);
         let indicator_r = pin_indicator_radius(pin_style.radius, valid, time) * 0.4;
         let cutout_r = indicator_r + pin_style.border_width;
         if cutout_r <= 0.01 {
@@ -347,17 +346,21 @@ fn pin_cutout_circles<P: PinId + 'static>(
             std::slice::from_ref(pos_a)
         };
         for pos in positions {
-            cuts.push(Curve::circle([pos.x + tx, pos.y + ty], cutout_r));
+            cuts.push(Curve::circle(
+                [pos.x + offset.x, pos.y + offset.y],
+                cutout_r,
+            ));
         }
     }
     cuts
 }
 
-impl<N, P, E, Message, Renderer> iced_widget::core::Widget<Message, iced::Theme, Renderer>
-    for NodeGraph<'_, N, P, E, Message, iced::Theme, Renderer>
+impl<N, P, UI, E, Message, Renderer> iced_widget::core::Widget<Message, iced::Theme, Renderer>
+    for NodeGraph<'_, N, P, UI, E, Message, iced::Theme, Renderer>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
+    UI: Clone + 'static,
     E: EdgeId + 'static,
     Renderer: iced_widget::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
@@ -459,6 +462,23 @@ where
             Dragging::Edge(_, _, _) | Dragging::EdgeOver(_, _, _, _)
         );
 
+        // The pin an edge drag started from, surfaced as `other` to pin_style so
+        // candidate pins can react to what is being dragged toward them.
+        let drag_source: Option<NodePinState<UI>> = match state.dragging {
+            Dragging::Edge(from_node, from_pin, _)
+            | Dragging::EdgeOver(from_node, from_pin, _, _) => tree
+                .children
+                .get(from_node)
+                .zip(layout.children().nth(from_node))
+                .and_then(|(nt, nl)| {
+                    find_pins::<UI>(nt, nl)
+                        .into_iter()
+                        .nth(from_pin)
+                        .map(|(_, s, _)| s.clone())
+                }),
+            _ => None,
+        };
+
         // ========================================
         // Layer 1: Background (solid color)
         // ========================================
@@ -546,7 +566,7 @@ where
                 let to_offset = compute_node_offset(to_node_idx);
 
                 let from_pin_hash = compute_pin_hash(&from.pin_id);
-                let from_pins = find_pins(from_node_tree, from_node_layout);
+                let from_pins = find_pins::<UI>(from_node_tree, from_node_layout);
                 let Some((_, from_pin_state, (from_pin_pos, _))) = from_pins
                     .iter()
                     .find(|(_, state, _)| state.pin_id_hash == from_pin_hash)
@@ -555,7 +575,7 @@ where
                 };
 
                 let to_pin_hash = compute_pin_hash(&to.pin_id);
-                let to_pins = find_pins(to_node_tree, to_node_layout);
+                let to_pins = find_pins::<UI>(to_node_tree, to_node_layout);
                 let Some((_, to_pin_state, (to_pin_pos, _))) = to_pins
                     .iter()
                     .find(|(_, state, _)| state.pin_id_hash == to_pin_hash)
@@ -567,8 +587,8 @@ where
                 let to_pos = (to_pin_pos.into_euclid().to_vector() + to_offset).to_point();
                 let from_side: u32 = from_pin_state.side.into();
                 let to_side: u32 = to_pin_state.side.into();
-                let from_info = pin_info::<P>(from_pin_state);
-                let to_info = pin_info::<P>(to_pin_state);
+                let from_info = pin_info::<P, UI>(from_pin_state);
+                let to_info = pin_info::<P, UI>(to_pin_state);
 
                 // Pin colors come from each pin's owner-node pin_style closure
                 // (pins carry no style); TRANSPARENT stroke ends inherit them.
@@ -665,7 +685,7 @@ where
                     layout.children().nth(*from_node_idx),
                 )
             {
-                let from_pins = find_pins(from_tree, from_layout);
+                let from_pins = find_pins::<UI>(from_tree, from_layout);
                 if let Some((_, from_pin_state, (from_pin_pos, _))) = from_pins.get(*from_pin_idx) {
                     let from_offset = compute_node_offset(*from_node_idx);
                     let start_pos =
@@ -677,7 +697,7 @@ where
 
                     let drag_edge_style = match (
                         self.dragging_edge_style_fn.as_ref(),
-                        pin_info::<P>(from_pin_state),
+                        pin_info::<P, UI>(from_pin_state),
                     ) {
                         (Some(f), Some(info)) => f(theme, info),
                         _ => crate::style::resolved_edge_style(theme, EdgeStatus::Idle),
@@ -762,14 +782,14 @@ where
                 let position: WorldPoint =
                     (node_layout.bounds().position().into_euclid().to_vector() + offset).to_point();
                 let size = node_layout.bounds().size();
-                let pins = find_pins(node_tree, node_layout);
+                let pins = find_pins::<UI>(node_tree, node_layout);
                 let cut_circles = pin_cutout_circles(
                     &pins,
                     node_pin_style.as_ref(),
+                    drag_source.as_ref(),
                     theme,
                     time,
-                    offset.x,
-                    offset.y,
+                    offset,
                     |pin_idx| {
                         is_edge_dragging
                             && state.valid_drop_targets.contains(&(node_index, pin_idx))
@@ -865,7 +885,7 @@ where
 
             // Pins drive the foreground (border halo plus indicators); the body
             // cutouts they imply are already baked into `node_outline`.
-            let pins = find_pins(node_tree, node_layout);
+            let pins = find_pins::<UI>(node_tree, node_layout);
 
             // Layer 4a: Node Fill
             let fill_pad = 2.0 / cam_zoom;
@@ -997,8 +1017,13 @@ where
                     } else {
                         PinStatus::Idle
                     };
-                    let pin_style =
-                        resolve_pin_style(node_pin_style.as_ref(), pin_state, theme, pin_status);
+                    let pin_style = resolve_pin_style(
+                        node_pin_style.as_ref(),
+                        pin_state,
+                        drag_source.as_ref(),
+                        theme,
+                        pin_status,
+                    );
                     let radius = pin_indicator_radius(pin_style.radius, is_valid_target, time);
                     let indicator_r = radius * 0.4;
                     let pin_world: WorldPoint =
@@ -1464,8 +1489,10 @@ where
                                                 .and_then(|node_layout| {
                                                     tree.children.get(from_node_idx).and_then(
                                                         |node_tree| {
-                                                            let pins =
-                                                                find_pins(node_tree, node_layout);
+                                                            let pins = find_pins::<UI>(
+                                                                node_tree,
+                                                                node_layout,
+                                                            );
                                                             pins.iter()
                                                                 .find(|(_, state, _)| {
                                                                     state.pin_id_hash
@@ -1484,8 +1511,10 @@ where
                                                 .and_then(|node_layout| {
                                                     tree.children.get(to_node_idx).and_then(
                                                         |node_tree| {
-                                                            let pins =
-                                                                find_pins(node_tree, node_layout);
+                                                            let pins = find_pins::<UI>(
+                                                                node_tree,
+                                                                node_layout,
+                                                            );
                                                             pins.iter()
                                                                 .find(|(_, state, _)| {
                                                                     state.pin_id_hash == to_pin_hash
@@ -1639,7 +1668,7 @@ where
                                         layout.children().zip(&tree.children).enumerate()
                                     {
                                         for (pin_index, pin_state, (a, b)) in
-                                            find_pins(node_tree, node_layout)
+                                            find_pins::<UI>(node_tree, node_layout)
                                         {
                                             // Extract from_pin_id when we find the source pin
                                             if node_index == from_node && pin_index == from_pin {
@@ -1742,7 +1771,7 @@ where
                                         layout.children().zip(&tree.children).enumerate()
                                     {
                                         for (pin_index, pin_state, (a, b)) in
-                                            find_pins(node_tree, node_layout)
+                                            find_pins::<UI>(node_tree, node_layout)
                                         {
                                             // Extract from_pin_id
                                             if node_index == from_node && pin_index == from_pin {
@@ -2018,7 +2047,7 @@ where
                                         .nth(from_node_idx)
                                         .and_then(|node_layout| {
                                             tree.children.get(from_node_idx).and_then(|node_tree| {
-                                                let pins = find_pins(node_tree, node_layout);
+                                                let pins = find_pins::<UI>(node_tree, node_layout);
                                                 pins.iter()
                                                     .find(|(_, state, _)| {
                                                         state.pin_id_hash == from_pin_hash
@@ -2030,7 +2059,7 @@ where
                                     let to_pin_pos = layout.children().nth(to_node_idx).and_then(
                                         |node_layout| {
                                             tree.children.get(to_node_idx).and_then(|node_tree| {
-                                                let pins = find_pins(node_tree, node_layout);
+                                                let pins = find_pins::<UI>(node_tree, node_layout);
                                                 pins.iter()
                                                     .find(|(_, state, _)| {
                                                         state.pin_id_hash == to_pin_hash
@@ -2083,7 +2112,7 @@ where
                                     let Some(node_tree) = tree.children.get(node_index) else {
                                         continue;
                                     };
-                                    let pins = find_pins(node_tree, node_layout);
+                                    let pins = find_pins::<UI>(node_tree, node_layout);
                                     // Get node_id for this node_index
                                     let current_node_id =
                                         match self.id_maps.nodes.id(node_index).cloned() {
@@ -2149,7 +2178,8 @@ where
                                                             Some(l) => l,
                                                             None => continue,
                                                         };
-                                                        let to_pins = find_pins(to_tree, to_layout);
+                                                        let to_pins =
+                                                            find_pins::<UI>(to_tree, to_layout);
                                                         match to_pins.iter().position(
                                                             |(_, s, _)| {
                                                                 s.pin_id_hash == to_pin_hash
@@ -2221,7 +2251,7 @@ where
                                                             None => continue,
                                                         };
                                                         let from_pins =
-                                                            find_pins(from_tree, from_layout);
+                                                            find_pins::<UI>(from_tree, from_layout);
                                                         match from_pins.iter().position(
                                                             |(_, s, _)| {
                                                                 s.pin_id_hash == from_pin_hash
@@ -2418,25 +2448,28 @@ where
     }
 }
 
-impl<'a, N, P, E, Message, Renderer> From<NodeGraph<'a, N, P, E, Message, iced::Theme, Renderer>>
+impl<'a, N, P, UI, E, Message, Renderer>
+    From<NodeGraph<'a, N, P, UI, E, Message, iced::Theme, Renderer>>
     for Element<'a, Message, iced::Theme, Renderer>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
+    UI: Clone + 'static,
     E: EdgeId + 'static,
     Renderer: iced_widget::core::renderer::Renderer + 'a + iced_wgpu::primitive::Renderer,
     Message: 'static,
 {
-    fn from(graph: NodeGraph<'a, N, P, E, Message, iced::Theme, Renderer>) -> Self {
+    fn from(graph: NodeGraph<'a, N, P, UI, E, Message, iced::Theme, Renderer>) -> Self {
         Element::new(graph)
     }
 }
 
-/// Creates a new NodeGraph with default usize-based IDs.
+/// Creates a new NodeGraph with default usize-based IDs and no pin user info.
 ///
-/// For custom ID types, use `NodeGraph::<N, P, E, Message, Theme, Renderer>::default()`.
+/// For custom types, use
+/// `NodeGraph::<N, P, UI, E, Message, Theme, Renderer>::default()`.
 pub fn node_graph<'a, Message, Theme, Renderer>()
--> NodeGraph<'a, usize, usize, usize, Message, Theme, Renderer>
+-> NodeGraph<'a, usize, usize, (), usize, Message, Theme, Renderer>
 where
     Renderer: iced_widget::core::renderer::Renderer,
 {
@@ -2444,27 +2477,27 @@ where
 }
 
 /// Helper function to find all NodePin elements in the tree of a Node.
-/// Returns: Vec of (pin_index, &NodePinState, (Point, Point) positions)
-/// NodePinState is non-generic and contains pin_id_hash for matching.
-fn find_pins<'a>(
+/// Returns: Vec of (pin_index, &NodePinState, (Point, Point) positions).
+/// Generic over `UI`; within one graph all pins share the same `UI`, so the tag
+/// match resolves a single concrete `NodePinState<UI>`.
+fn find_pins<'a, UI: 'static>(
     tree: &'a Tree,
     layout: Layout<'a>,
-) -> Vec<(usize, &'a NodePinState, (Point, Point))> {
+) -> Vec<(usize, &'a NodePinState<UI>, (Point, Point))> {
     let mut flat = Vec::new();
     let mut pin_index = 0;
-    inner_find_pins(&mut flat, &mut pin_index, layout, tree);
+    inner_find_pins::<UI>(&mut flat, &mut pin_index, layout, tree);
     flat
 }
 
-fn inner_find_pins<'a>(
-    flat: &mut Vec<(usize, &'a NodePinState, (Point, Point))>,
+fn inner_find_pins<'a, UI: 'static>(
+    flat: &mut Vec<(usize, &'a NodePinState<UI>, (Point, Point))>,
     pin_index: &mut usize,
     node_layout: Layout<'a>,
     pin_tree: &'a Tree,
 ) {
-    // NodePinState is non-generic, so tree::Tag is always the same
-    if pin_tree.tag == tree::Tag::of::<NodePinState>() {
-        let pin_state = pin_tree.state.downcast_ref::<NodePinState>();
+    if pin_tree.tag == tree::Tag::of::<NodePinState<UI>>() {
+        let pin_state = pin_tree.state.downcast_ref::<NodePinState<UI>>();
         let node_bounds = node_layout.bounds();
         let pin_positions = pin_positions(pin_state, node_bounds);
         flat.push((*pin_index, pin_state, pin_positions));
@@ -2472,13 +2505,13 @@ fn inner_find_pins<'a>(
     }
 
     for child_tree in &pin_tree.children {
-        inner_find_pins(flat, pin_index, node_layout, child_tree);
+        inner_find_pins::<UI>(flat, pin_index, node_layout, child_tree);
     }
 }
 
 /// Validates if two pins can be connected based on direction.
-/// Only checks direction compatibility - type/custom logic is handled by can_connect callback.
-fn validate_pin_direction(from_pin: &NodePinState, to_pin: &NodePinState) -> bool {
+/// Only checks direction compatibility - custom logic is handled by can_connect.
+fn validate_pin_direction<UI>(from_pin: &NodePinState<UI>, to_pin: &NodePinState<UI>) -> bool {
     use crate::node_pin::PinDirection;
 
     // Check direction compatibility:
@@ -2503,10 +2536,11 @@ fn validate_pin_direction(from_pin: &NodePinState, to_pin: &NodePinState) -> boo
 ///
 /// A pin is a valid target if:
 /// 1. It's not the source pin (can't connect to self)
-/// 2. Direction is compatible (Output->Input, etc.)
-/// 3. TypeId matches (same data type)
-fn compute_valid_targets<N, P, E, Message, Renderer>(
-    graph: &NodeGraph<'_, N, P, E, Message, iced::Theme, Renderer>,
+/// 2. It is not interaction-disabled
+/// 3. The `can_connect` closure accepts the pair (authoritative when set);
+///    otherwise the built-in direction check passes (Output<->Input, Both).
+fn compute_valid_targets<N, P, UI, E, Message, Renderer>(
+    graph: &NodeGraph<'_, N, P, UI, E, Message, iced::Theme, Renderer>,
     tree: &Tree,
     layout: Layout<'_>,
     from_node: usize,
@@ -2515,15 +2549,16 @@ fn compute_valid_targets<N, P, E, Message, Renderer>(
 where
     N: NodeId + 'static,
     P: PinId + 'static,
+    UI: Clone + 'static,
     E: EdgeId + 'static,
     Renderer: iced_widget::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
     let mut valid_targets = std::collections::HashSet::new();
 
-    // Get the source pin state for direction and type validation
+    // Get the source pin state for validation.
     let from_pin_state = tree.children.get(from_node).and_then(|node_tree| {
         layout.children().nth(from_node).and_then(|node_layout| {
-            find_pins(node_tree, node_layout)
+            find_pins::<UI>(node_tree, node_layout)
                 .into_iter()
                 .nth(from_pin)
                 .map(|(_, state, _)| state.clone())
@@ -2534,17 +2569,13 @@ where
         return valid_targets;
     };
 
-    // Resolve source pin to user IDs for can_connect callback
-    let from_pin_ref = graph.can_connect.as_ref().and_then(|_| {
-        let node_id = graph.id_maps.node_id(from_node)?.clone();
-        let pin_id = from_state.pin_id.downcast_ref::<P>()?.clone();
-        Some(PinRef::new(node_id, pin_id))
-    });
+    // Source node id, only needed when can_connect is set.
+    let from_node_id = graph.id_maps.node_id(from_node).cloned();
 
     // Iterate all pins in all nodes
     for (node_index, (node_layout, node_tree)) in layout.children().zip(&tree.children).enumerate()
     {
-        for (pin_index, pin_state, _) in find_pins(node_tree, node_layout) {
+        for (pin_index, pin_state, _) in find_pins::<UI>(node_tree, node_layout) {
             // Skip source pin
             if node_index == from_node && pin_index == from_pin {
                 continue;
@@ -2555,27 +2586,22 @@ where
                 continue;
             }
 
-            // Check direction compatibility (Input<->Output, etc.)
-            if !validate_pin_direction(&from_state, pin_state) {
-                continue;
-            }
-
-            // Type compatibility: use can_connect callback if set, else TypeId matching
-            if let (Some(can_connect), Some(from_ref)) = (&graph.can_connect, &from_pin_ref) {
-                let to_ref = graph.id_maps.node_id(node_index).and_then(|n| {
-                    pin_state
-                        .pin_id
-                        .downcast_ref::<P>()
-                        .map(|p| PinRef::new(n.clone(), p.clone()))
-                });
-                if let Some(to_ref) = to_ref {
-                    if !can_connect(from_ref.clone(), to_ref) {
-                        continue;
-                    }
-                } else {
+            if let Some(can_connect) = &graph.can_connect {
+                // Authoritative: the user closure decides, no implicit filter.
+                let (Some(fid), Some(fpid), Some(tid), Some(tpid)) = (
+                    from_node_id.as_ref(),
+                    from_state.pin_id.downcast_ref::<P>(),
+                    graph.id_maps.node_id(node_index),
+                    pin_state.pin_id.downcast_ref::<P>(),
+                ) else {
+                    continue;
+                };
+                let from_end = PinEnd::new(fid, fpid, from_state.direction, &from_state.user_info);
+                let to_end = PinEnd::new(tid, tpid, pin_state.direction, &pin_state.user_info);
+                if !can_connect(from_end, to_end) {
                     continue;
                 }
-            } else if from_state.data_type != pin_state.data_type {
+            } else if !validate_pin_direction(&from_state, pin_state) {
                 continue;
             }
 
@@ -2586,7 +2612,7 @@ where
     valid_targets
 }
 
-fn pin_positions(state: &NodePinState, node_bounds: Rectangle) -> (Point, Point) {
+fn pin_positions<UI>(state: &NodePinState<UI>, node_bounds: Rectangle) -> (Point, Point) {
     if state.side == PinSide::Row {
         (
             pin_position(state.position, PinSide::Left, node_bounds),

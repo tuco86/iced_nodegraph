@@ -1684,6 +1684,7 @@ impl Application {
             '_,
             NodeId,
             PinLabel,
+            ::std::any::TypeId,
             EdgeId,
             ApplicationMessage,
             Theme,
@@ -1906,9 +1907,9 @@ impl Application {
                             .merge(&overlay)
                             .resolve(&NodeStyle::from_theme(theme))
                     })
-                    .pin_style(move |theme, pin, status| {
+                    .pin_style(move |theme, pin, _other, status| {
                         PinStyle::new()
-                            .color(pin_color_for(pin.data_type()))
+                            .color(pin_color_for(*pin.info()))
                             .merge(&pin_overlay)
                             .merge(&default_pin_style(theme, status))
                             .resolve(&PinStyle::from_theme(theme))

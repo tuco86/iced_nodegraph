@@ -207,7 +207,7 @@ pub use node_graph::{
     Edge, Node, NodeGraph, NodeGraphEvent, NodeGraphMessage, PinRef, SdfDebug, camera::Camera2D,
     edge, node, widget::node_graph,
 };
-pub use node_pin::{NodePin, PinDirection, PinInfo, PinReference, PinSide, node_pin};
+pub use node_pin::{NodePin, PinDirection, PinEnd, PinInfo, PinReference, PinSide, node_pin};
 pub use style::{
     // Unified color type for style fields
     ColorQuad,

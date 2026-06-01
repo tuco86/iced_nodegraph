@@ -68,7 +68,7 @@ where
             pins::config::CONFIG,
             text("in").size(10),
             Input,
-            pins::PinConfigData
+            ::std::any::TypeId::of::<pins::PinConfigData>()
         ),
         container(text("")).width(Length::Fill),
         pin!(
@@ -76,7 +76,7 @@ where
             pins::config::PIN_OUT,
             text("out").size(10),
             Output,
-            pins::PinConfigData
+            ::std::any::TypeId::of::<pins::PinConfigData>()
         ),
     ]
     .align_y(iced::Alignment::Center);
@@ -117,7 +117,7 @@ where
             pins::config::COLOR,
             text("color").size(10),
             Input,
-            pins::ColorData
+            ::std::any::TypeId::of::<pins::ColorData>()
         ),
         container(color_display)
             .width(Length::Fill)
@@ -132,7 +132,7 @@ where
             pins::config::SIZE,
             text("radius").size(10),
             Input,
-            pins::Float
+            ::std::any::TypeId::of::<pins::Float>()
         ),
         container(
             text(
@@ -161,7 +161,7 @@ where
             pins::config::SHAPE,
             text("shape").size(10),
             Input,
-            pins::PinShapeData
+            ::std::any::TypeId::of::<pins::PinShapeData>()
         ),
         container(text(shape_label).size(9))
             .width(Length::Fill)
@@ -194,7 +194,7 @@ where
             pins::config::GLOW,
             text("border").size(10),
             Input,
-            pins::ColorData
+            ::std::any::TypeId::of::<pins::ColorData>()
         ),
         container(border_color_display)
             .width(Length::Fill)
@@ -209,7 +209,7 @@ where
             pins::config::PULSE,
             text("width").size(10),
             Input,
-            pins::Float
+            ::std::any::TypeId::of::<pins::Float>()
         ),
         container(
             text(

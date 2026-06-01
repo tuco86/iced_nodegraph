@@ -578,7 +578,7 @@ pub fn pin_row<'a, Message: Clone + 'a>(
 macro_rules! collapsed_pin_row {
     ( $( ($id:expr, $dt:ty) ),+ $(,)? ) => {
         iced::widget::row![
-            $( iced_nodegraph::pin!(Left, $id, iced::widget::text("").size(1), Input, $dt).disable_interactions() ),+
+            $( iced_nodegraph::pin!(Left, $id, iced::widget::text("").size(1), Input, ::std::any::TypeId::of::<$dt>()).disable_interactions() ),+
         ].spacing(2)
     };
 }

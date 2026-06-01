@@ -110,7 +110,7 @@ where
         "value",
         text("value").size(10),
         Output,
-        pins::EdgeCurveData
+        ::std::any::TypeId::of::<pins::EdgeCurveData>()
     ))
     .width(Length::Fill)
     .align_x(Horizontal::Right);
@@ -182,7 +182,7 @@ where
         "value",
         text("value").size(10),
         Output,
-        pins::PinShapeData
+        ::std::any::TypeId::of::<pins::PinShapeData>()
     ))
     .width(Length::Fill)
     .align_x(Horizontal::Right);
@@ -268,7 +268,7 @@ where
         "value",
         text("value").size(10),
         Output,
-        pins::PatternTypeData
+        ::std::any::TypeId::of::<pins::PatternTypeData>()
     ))
     .width(Length::Fill)
     .align_x(Horizontal::Right);

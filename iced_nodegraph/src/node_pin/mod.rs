@@ -14,22 +14,21 @@
 //! // Simple pin with just a label
 //! pin!(Left, 0, text("Input"), Input)
 //!
-//! // Pin with data type and color
-//! pin!(Right, 1, text("Output"), Output, MyDataType, Color::from_rgb(0.2, 0.8, 0.2))
+//! // Pin with a user-defined payload
+//! pin!(Right, 1, text("Output"), Output, MyKind::Audio)
 //! ```
 //!
 //! ## Pin Properties
 //!
 //! - [`PinSide`] - Which edge of the node the pin attaches to (Left, Right, Top, Bottom)
 //! - [`PinDirection`] - Whether the pin is an input or output
-//! - Data type - Optional type identifier for connection validation
-//! - Color - Visual color of the pin indicator
+//! - User info - Optional user-defined payload via [`NodePin::info`]
 //!
 //! ## Connection Behavior
 //!
 //! When users drag from a pin, the widget tracks valid drop targets based on:
 //! - Pin direction (inputs connect to outputs)
-//! - Data type compatibility (if types are specified)
+//! - The graph's [`NodeGraph::can_connect`](crate::NodeGraph::can_connect) closure
 //! - Visual feedback via pulsing animation on valid targets
 
 use crate::ids::PinId;
@@ -38,7 +37,6 @@ use iced_widget::core::{
     Clipboard, Layout, Shell, Widget, layout, mouse, renderer,
     widget::{Tree, tree},
 };
-use std::any::TypeId;
 use std::hash::{Hash, Hasher};
 
 /// Default pin size when no content widget is provided.
@@ -124,20 +122,23 @@ pub enum PinDirection {
 }
 
 /// Read-only view of a pin's semantic info, passed to a node's `pin_style`
-/// closure so it can style each pin by direction, data type, or id. The pin
+/// closure so it can style each pin by direction, user info, or id. The pin
 /// itself carries no style; the owning node decides how its pins look.
-pub struct PinInfo<'a, P> {
+///
+/// `UI` is the user-defined per-pin payload set via [`NodePin::info`]; it
+/// defaults to `()` for pins that carry none.
+pub struct PinInfo<'a, P, UI = ()> {
     direction: PinDirection,
-    data_type: TypeId,
     pin_id: &'a P,
+    info: &'a UI,
 }
 
-impl<'a, P> PinInfo<'a, P> {
-    pub(crate) fn new(direction: PinDirection, data_type: TypeId, pin_id: &'a P) -> Self {
+impl<'a, P, UI> PinInfo<'a, P, UI> {
+    pub(crate) fn new(direction: PinDirection, pin_id: &'a P, info: &'a UI) -> Self {
         Self {
             direction,
-            data_type,
             pin_id,
+            info,
         }
     }
 
@@ -146,21 +147,71 @@ impl<'a, P> PinInfo<'a, P> {
         self.direction
     }
 
-    /// The pin's data-type id (for type-based styling / connection matching).
-    pub fn data_type(&self) -> TypeId {
-        self.data_type
+    /// The pin's user id.
+    pub fn pin_id(&self) -> &P {
+        self.pin_id
+    }
+
+    /// The pin's user-defined payload set via [`NodePin::info`].
+    pub fn info(&self) -> &UI {
+        self.info
+    }
+}
+
+/// Read-only view of one endpoint of a candidate connection, passed to
+/// [`NodeGraph::can_connect`](crate::NodeGraph::can_connect). Bundles the pin's
+/// node id, pin id, direction and user payload.
+///
+/// `UI` is the user-defined per-pin payload; it defaults to `()`.
+pub struct PinEnd<'a, N, P, UI = ()> {
+    node_id: &'a N,
+    pin_id: &'a P,
+    direction: PinDirection,
+    info: &'a UI,
+}
+
+impl<'a, N, P, UI> PinEnd<'a, N, P, UI> {
+    pub(crate) fn new(
+        node_id: &'a N,
+        pin_id: &'a P,
+        direction: PinDirection,
+        info: &'a UI,
+    ) -> Self {
+        Self {
+            node_id,
+            pin_id,
+            direction,
+            info,
+        }
+    }
+
+    /// The id of the node this pin belongs to.
+    pub fn node_id(&self) -> &N {
+        self.node_id
     }
 
     /// The pin's user id.
     pub fn pin_id(&self) -> &P {
         self.pin_id
     }
+
+    /// The pin's direction (input / output / both).
+    pub fn direction(&self) -> PinDirection {
+        self.direction
+    }
+
+    /// The pin's user-defined payload set via [`NodePin::info`].
+    pub fn info(&self) -> &UI {
+        self.info
+    }
 }
 
 /// A transparent wrapper used as a marker within `NodeGraph`.
 ///
-/// Generic over `P` which is the pin identifier type (e.g., `String`, enum, UUID).
-pub struct NodePin<'a, P, Message, Theme, Renderer>
+/// Generic over `P` (the pin identifier type, e.g. `String`, enum, UUID) and
+/// `UI` (the user-defined per-pin payload surfaced to `pin_style`/`can_connect`,
+/// defaults to `()`).
+pub struct NodePin<'a, P, UI, Message, Theme, Renderer>
 where
     P: PinId,
     Renderer: renderer::Renderer,
@@ -168,12 +219,12 @@ where
     pub side: PinSide,
     pub direction: PinDirection,
     pub pin_id: P,
-    pub data_type: TypeId,
+    pub user_info: UI,
     pub content: Element<'a, Message, Theme, Renderer>,
     interactions_disabled: bool,
 }
 
-impl<'a, P, Message, Theme, Renderer> NodePin<'a, P, Message, Theme, Renderer>
+impl<'a, P, Message, Theme, Renderer> NodePin<'a, P, (), Message, Theme, Renderer>
 where
     P: PinId,
     Renderer: renderer::Renderer,
@@ -187,28 +238,41 @@ where
             side,
             direction: PinDirection::Both,
             pin_id,
-            data_type: TypeId::of::<()>(), // Default: untyped
+            user_info: (),
             content: content.into(),
             interactions_disabled: false,
         }
     }
+}
 
+impl<'a, P, UI, Message, Theme, Renderer> NodePin<'a, P, UI, Message, Theme, Renderer>
+where
+    P: PinId,
+    Renderer: renderer::Renderer,
+{
     pub fn direction(mut self, direction: PinDirection) -> Self {
         self.direction = direction;
         self
     }
 
-    /// Sets the data type of this pin for connection matching.
+    /// Attaches a user-defined payload to this pin, surfaced to the node's
+    /// `pin_style` closure and the graph's `can_connect` closure as `UI`.
     ///
-    /// Only pins with the same `TypeId` can connect to each other.
+    /// Changing the payload type also changes the pin's `UI` type parameter.
     ///
     /// # Example
     /// ```rust,ignore
-    /// pin!(Left, "value", text("x"), Input).data_type::<f32>()
+    /// pin!(Left, "value", text("x"), Input).info(MyKind::Scalar)
     /// ```
-    pub fn data_type<T: 'static>(mut self) -> Self {
-        self.data_type = TypeId::of::<T>();
-        self
+    pub fn info<UI2>(self, info: UI2) -> NodePin<'a, P, UI2, Message, Theme, Renderer> {
+        NodePin {
+            side: self.side,
+            direction: self.direction,
+            pin_id: self.pin_id,
+            user_info: info,
+            content: self.content,
+            interactions_disabled: self.interactions_disabled,
+        }
     }
 
     /// Disables all interactions (drag, drop) for this pin.
@@ -247,35 +311,36 @@ impl std::fmt::Debug for AnyPinId {
 
 /// Internal state for a NodePin widget.
 ///
-/// This is NOT generic over P - it stores a hash of the pin_id.
-/// This ensures consistent tree::Tag matching regardless of the user's pin ID type.
-/// The hash is computed when the state is created/updated.
+/// Generic only over `UI` (the user payload), NOT over `P`: the pin ID is kept
+/// type-erased as a hash plus an [`AnyPinId`]. Within one graph all pins share
+/// the same `UI`, so `find_pins` still matches a single `tree::Tag`.
 #[derive(Debug, Clone)]
-pub(super) struct NodePinState {
+pub(super) struct NodePinState<UI> {
     /// Hash of the user's pin ID for matching
     pub pin_id_hash: u64,
     /// Type-erased pin ID for reverse lookup
     pub pin_id: AnyPinId,
     pub side: PinSide,
     pub direction: PinDirection,
-    /// TypeId of the data this pin carries - used for connection matching
-    pub data_type: TypeId,
     pub position: Point,
     /// When true, pin cannot be dragged from or dropped onto
     pub interactions_disabled: bool,
+    /// User-defined per-pin payload, surfaced to pin_style / can_connect.
+    pub user_info: UI,
 }
 
-impl<'a, P, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
-    for NodePin<'a, P, Message, Theme, Renderer>
+impl<'a, P, UI, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
+    for NodePin<'a, P, UI, Message, Theme, Renderer>
 where
     P: PinId + 'static,
+    UI: Clone + 'static,
     Renderer: renderer::Renderer + 'a,
     Theme: 'a,
     Message: 'a,
 {
     fn tag(&self) -> tree::Tag {
-        // Always the same tag regardless of P - enables consistent pin finding
-        tree::Tag::of::<NodePinState>()
+        // Same tag for all pins sharing UI - enables consistent pin finding
+        tree::Tag::of::<NodePinState<UI>>()
     }
 
     fn state(&self) -> tree::State {
@@ -284,9 +349,9 @@ where
             pin_id: AnyPinId::new(self.pin_id.clone()),
             side: self.side,
             direction: self.direction,
-            data_type: self.data_type,
             position: Point::new(0.0, 0.0),
             interactions_disabled: self.interactions_disabled,
+            user_info: self.user_info.clone(),
         })
     }
 
@@ -328,14 +393,14 @@ where
         viewport: &Rectangle,
     ) {
         {
-            let state = tree.state.downcast_mut::<NodePinState>();
+            let state = tree.state.downcast_mut::<NodePinState<UI>>();
             state.pin_id_hash = hash_pin_id(&self.pin_id);
             state.pin_id = AnyPinId::new(self.pin_id.clone());
             state.side = self.side;
             state.direction = self.direction;
-            state.data_type = self.data_type;
             state.position = layout.bounds().center();
             state.interactions_disabled = self.interactions_disabled;
+            state.user_info = self.user_info.clone();
         }
         if let Some((child_layout, child_tree)) = layout.children().zip(&mut tree.children).next() {
             self.content.as_widget_mut().update(
@@ -410,15 +475,16 @@ where
     }
 }
 
-impl<'a, P, Message, Theme, Renderer> From<NodePin<'a, P, Message, Theme, Renderer>>
+impl<'a, P, UI, Message, Theme, Renderer> From<NodePin<'a, P, UI, Message, Theme, Renderer>>
     for Element<'a, Message, Theme, Renderer>
 where
     P: PinId + 'static,
+    UI: Clone + 'static,
     Renderer: renderer::Renderer + 'a,
     Message: 'a,
     Theme: 'a,
 {
-    fn from(widget: NodePin<'a, P, Message, Theme, Renderer>) -> Self {
+    fn from(widget: NodePin<'a, P, UI, Message, Theme, Renderer>) -> Self {
         Element::new(widget)
     }
 }
@@ -427,7 +493,7 @@ pub fn node_pin<'a, P, Message, Theme, Renderer>(
     side: PinSide,
     pin_id: P,
     content: impl Into<Element<'a, Message, Theme, Renderer>>,
-) -> NodePin<'a, P, Message, Theme, Renderer>
+) -> NodePin<'a, P, (), Message, Theme, Renderer>
 where
     P: PinId,
     Renderer: iced_widget::core::renderer::Renderer,
@@ -444,31 +510,28 @@ where
 ///
 /// Pins carry no style of their own; the owning node colors and shapes them via
 /// [`Node::pin_style`](crate::Node::pin_style), keyed on the pin's direction,
-/// data type or id.
+/// user info or id.
 ///
 /// ```rust,ignore
 /// use iced_nodegraph::pin;
 /// use iced::widget::text;
 ///
-/// // Full syntax: side, pin_id, content, direction, data_type
-/// pin!(Right, "output", text("output"), Output, Email)
+/// // Full syntax: side, pin_id, content, direction, user info
+/// pin!(Right, "output", text("output"), Output, MyKind::Email)
 ///
-/// // With type only
-/// pin!(Left, "input", text("input"), Input, f32)
-///
-/// // With direction only (untyped, connects to anything)
+/// // With direction only (connects to anything)
 /// pin!(Right, "data", text("data"), Output)
 ///
-/// // Minimal (side, pin_id, content only, defaults: Both direction, untyped)
+/// // Minimal (side, pin_id, content only, defaults: Both direction, no info)
 /// pin!(Right, "data", text("data"))
 /// ```
 #[macro_export]
 macro_rules! pin {
-    // With type: side, pin_id, content, direction, type
-    ($side:ident, $pin_id:expr, $content:expr, $dir:ident, $data_type:ty) => {
+    // With user info: side, pin_id, content, direction, info
+    ($side:ident, $pin_id:expr, $content:expr, $dir:ident, $info:expr) => {
         $crate::node_pin($crate::PinSide::$side, $pin_id, $content)
             .direction($crate::PinDirection::$dir)
-            .data_type::<$data_type>()
+            .info($info)
     };
 
     // Direction only: side, pin_id, content, direction

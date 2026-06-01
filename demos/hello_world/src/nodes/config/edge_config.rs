@@ -242,7 +242,7 @@ where
             pins::config::CONFIG,
             text("in").size(10),
             Input,
-            pins::EdgeConfigData
+            ::std::any::TypeId::of::<pins::EdgeConfigData>()
         ),
         container(text("")).width(Length::Fill),
         pin!(
@@ -250,7 +250,7 @@ where
             pins::config::EDGE_OUT,
             text("out").size(10),
             Output,
-            pins::EdgeConfigData
+            ::std::any::TypeId::of::<pins::EdgeConfigData>()
         ),
     ]
     .align_y(iced::Alignment::Center);
@@ -300,7 +300,7 @@ where
                     pins::config::START,
                     text("start").size(10),
                     Input,
-                    pins::ColorData
+                    ::std::any::TypeId::of::<pins::ColorData>()
                 ),
                 color_swatch(result.stroke_color.map(|q| q.near_start)),
             )
@@ -311,7 +311,7 @@ where
                     pins::config::END,
                     text("end").size(10),
                     Input,
-                    pins::ColorData
+                    ::std::any::TypeId::of::<pins::ColorData>()
                 ),
                 color_swatch(result.stroke_color.map(|q| q.near_end)),
             )
@@ -322,7 +322,7 @@ where
                     pins::config::THICK,
                     text("thick").size(10),
                     Input,
-                    pins::Float
+                    ::std::any::TypeId::of::<pins::Float>()
                 ),
                 value_display(fmt_float(thickness, 1)),
             )
@@ -333,7 +333,7 @@ where
                     pins::config::CURVE,
                     text("curve").size(10),
                     Input,
-                    pins::EdgeCurveData
+                    ::std::any::TypeId::of::<pins::EdgeCurveData>()
                 ),
                 value_display(curve_label),
             )
@@ -344,7 +344,7 @@ where
                     pins::config::STROKE_OL_THICK,
                     text("s.ol.w").size(10),
                     Input,
-                    pins::Float
+                    ::std::any::TypeId::of::<pins::Float>()
                 ),
                 value_display(fmt_float(inputs.stroke_outline_thickness, 1)),
             )
@@ -355,7 +355,7 @@ where
                     pins::config::STROKE_OL_COLOR,
                     text("s.ol.c").size(10),
                     Input,
-                    pins::ColorData
+                    ::std::any::TypeId::of::<pins::ColorData>()
                 ),
                 color_swatch(inputs.stroke_outline_color),
             )
@@ -386,7 +386,7 @@ where
                     pins::config::PATTERN,
                     text("pattern").size(10),
                     Input,
-                    pins::PatternTypeData
+                    ::std::any::TypeId::of::<pins::PatternTypeData>()
                 ),
                 value_display(pattern_label),
             )
@@ -397,7 +397,7 @@ where
                     pins::config::DASH,
                     text("dash").size(10),
                     Input,
-                    pins::Float
+                    ::std::any::TypeId::of::<pins::Float>()
                 ),
                 value_display(fmt_float(inputs.dash_length, 1)),
             )
@@ -408,7 +408,7 @@ where
                     pins::config::GAP,
                     text("gap").size(10),
                     Input,
-                    pins::Float
+                    ::std::any::TypeId::of::<pins::Float>()
                 ),
                 value_display(fmt_float(inputs.gap_length, 1)),
             )
@@ -419,7 +419,7 @@ where
                     pins::config::ANGLE,
                     text("angle").size(10),
                     Input,
-                    pins::Float
+                    ::std::any::TypeId::of::<pins::Float>()
                 ),
                 value_display(angle_display),
             )
@@ -430,7 +430,7 @@ where
                     pins::config::SPEED,
                     text("speed").size(10),
                     Input,
-                    pins::Float
+                    ::std::any::TypeId::of::<pins::Float>()
                 ),
                 value_display(fmt_float(inputs.animation_speed, 0)),
             )
@@ -464,7 +464,7 @@ where
                     pins::config::BORDER_WIDTH,
                     text("b.thick").size(10),
                     Input,
-                    pins::Float
+                    ::std::any::TypeId::of::<pins::Float>()
                 ),
                 value_display(fmt_float(inputs.border_thickness, 1)),
             )
@@ -475,7 +475,7 @@ where
                     pins::config::BORDER_GAP,
                     text("b.gap").size(10),
                     Input,
-                    pins::Float
+                    ::std::any::TypeId::of::<pins::Float>()
                 ),
                 value_display(fmt_float(inputs.border_gap, 1)),
             )
@@ -486,7 +486,7 @@ where
                     pins::config::BORDER_START_COLOR,
                     text("b.start").size(10),
                     Input,
-                    pins::ColorData
+                    ::std::any::TypeId::of::<pins::ColorData>()
                 ),
                 color_swatch(inputs.border_color),
             )
@@ -497,7 +497,7 @@ where
                     pins::config::BORDER_END_COLOR,
                     text("b.end").size(10),
                     Input,
-                    pins::ColorData
+                    ::std::any::TypeId::of::<pins::ColorData>()
                 ),
                 color_swatch(inputs.border_color_end),
             )
@@ -508,7 +508,7 @@ where
                     pins::config::BORDER_BG,
                     text("b.bg").size(10),
                     Input,
-                    pins::ColorData
+                    ::std::any::TypeId::of::<pins::ColorData>()
                 ),
                 color_swatch(inputs.border_background),
             )
@@ -519,7 +519,7 @@ where
                     pins::config::BORDER_BG_END,
                     text("b.bge").size(10),
                     Input,
-                    pins::ColorData
+                    ::std::any::TypeId::of::<pins::ColorData>()
                 ),
                 color_swatch(inputs.border_background_end),
             )
@@ -530,7 +530,7 @@ where
                     pins::config::BORDER_OL_THICK,
                     text("bo.w").size(10),
                     Input,
-                    pins::Float
+                    ::std::any::TypeId::of::<pins::Float>()
                 ),
                 value_display(fmt_float(inputs.border_outline_thickness, 1)),
             )
@@ -541,7 +541,7 @@ where
                     pins::config::BORDER_OL_COLOR,
                     text("bo.c").size(10),
                     Input,
-                    pins::ColorData
+                    ::std::any::TypeId::of::<pins::ColorData>()
                 ),
                 color_swatch(inputs.border_outline_color),
             )
@@ -573,7 +573,7 @@ where
                     pins::config::SHADOW_BLUR,
                     text("s.blur").size(10),
                     Input,
-                    pins::Float
+                    ::std::any::TypeId::of::<pins::Float>()
                 ),
                 value_display(fmt_float(inputs.shadow_blur, 1)),
             )
@@ -584,7 +584,7 @@ where
                     pins::config::SHADOW_EXPAND,
                     text("s.exp").size(10),
                     Input,
-                    pins::Float
+                    ::std::any::TypeId::of::<pins::Float>()
                 ),
                 value_display(fmt_float(inputs.shadow_expand, 1)),
             )
@@ -595,7 +595,7 @@ where
                     pins::config::SHADOW_COLOR,
                     text("s.color").size(10),
                     Input,
-                    pins::ColorData
+                    ::std::any::TypeId::of::<pins::ColorData>()
                 ),
                 color_swatch(inputs.shadow_color),
             )
@@ -606,7 +606,7 @@ where
                     pins::config::SHADOW_END_COLOR,
                     text("s.cend").size(10),
                     Input,
-                    pins::ColorData
+                    ::std::any::TypeId::of::<pins::ColorData>()
                 ),
                 color_swatch(inputs.shadow_color_end),
             )
@@ -617,7 +617,7 @@ where
                     pins::config::SHADOW_OFFSET_X,
                     text("s.off.x").size(10),
                     Input,
-                    pins::Float
+                    ::std::any::TypeId::of::<pins::Float>()
                 ),
                 value_display(fmt_float(inputs.shadow_offset_x, 1)),
             )
@@ -628,7 +628,7 @@ where
                     pins::config::SHADOW_OFFSET_Y,
                     text("s.off.y").size(10),
                     Input,
-                    pins::Float
+                    ::std::any::TypeId::of::<pins::Float>()
                 ),
                 value_display(fmt_float(inputs.shadow_offset_y, 1)),
             )

@@ -129,7 +129,7 @@ where
         "color",
         text("color").size(10),
         Output,
-        pins::ColorData
+        ::std::any::TypeId::of::<pins::ColorData>()
     ))
     .width(Length::Fill)
     .align_x(Horizontal::Right);
@@ -230,7 +230,7 @@ where
         "color",
         text("color").size(10),
         Output,
-        pins::ColorData
+        ::std::any::TypeId::of::<pins::ColorData>()
     ))
     .width(Length::Fill)
     .align_x(Horizontal::Right);

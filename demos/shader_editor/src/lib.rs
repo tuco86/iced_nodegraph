@@ -53,7 +53,7 @@ use iced::{
 };
 use iced_nodegraph::{
     PinDirection, PinInfo, PinRef, PinSide, PinStatus, PinStyle, Resolved, default_pin_style,
-    edge as ng_edge, node as ng_node, node_graph, node_pin,
+    edge as ng_edge, node as ng_node, node_pin,
 };
 use iced_palette::{
     Command, command, command_palette, focus_input, get_filtered_command_index, get_filtered_count,
@@ -383,7 +383,15 @@ impl Application {
 
     fn view(&self) -> Element<'_, Message> {
         // Build node graph
-        let mut graph = node_graph()
+        let mut graph: ::iced_nodegraph::NodeGraph<
+            usize,
+            usize,
+            ::std::any::TypeId,
+            usize,
+            _,
+            _,
+            _,
+        > = ::iced_nodegraph::NodeGraph::default()
             .on_connect(|from, to| Message::EdgeConnected { from, to })
             .on_move(|node_index: usize, new_position| Message::NodeMoved {
                 node_index,
@@ -605,9 +613,14 @@ fn create_node_widget<'a>(
 }
 
 /// Colors a node's pins by their socket data-type marker.
-fn pin_style(theme: &Theme, pin: PinInfo<'_, usize>, status: PinStatus) -> PinStyle<Resolved> {
+fn pin_style(
+    theme: &Theme,
+    pin: &PinInfo<'_, usize, ::std::any::TypeId>,
+    _other: Option<&PinInfo<'_, usize, ::std::any::TypeId>>,
+    status: PinStatus,
+) -> PinStyle<Resolved> {
     use std::any::TypeId;
-    let ty = pin.data_type();
+    let ty = *pin.info();
     let color = if ty == TypeId::of::<colors::Float>() {
         colors::SOCKET_FLOAT
     } else if ty == TypeId::of::<colors::Vec2>() {
@@ -642,27 +655,27 @@ fn create_typed_pin<'a, Message: Clone + 'a>(
     match socket_type {
         SocketType::Float => node_pin(side, pin_id, content)
             .direction(direction)
-            .data_type::<colors::Float>()
+            .info(::std::any::TypeId::of::<colors::Float>())
             .into(),
         SocketType::Vec2 => node_pin(side, pin_id, content)
             .direction(direction)
-            .data_type::<colors::Vec2>()
+            .info(::std::any::TypeId::of::<colors::Vec2>())
             .into(),
         SocketType::Vec3 => node_pin(side, pin_id, content)
             .direction(direction)
-            .data_type::<colors::Vec3>()
+            .info(::std::any::TypeId::of::<colors::Vec3>())
             .into(),
         SocketType::Vec4 => node_pin(side, pin_id, content)
             .direction(direction)
-            .data_type::<colors::Vec4>()
+            .info(::std::any::TypeId::of::<colors::Vec4>())
             .into(),
         SocketType::Bool => node_pin(side, pin_id, content)
             .direction(direction)
-            .data_type::<colors::Bool>()
+            .info(::std::any::TypeId::of::<colors::Bool>())
             .into(),
         SocketType::Int => node_pin(side, pin_id, content)
             .direction(direction)
-            .data_type::<colors::Int>()
+            .info(::std::any::TypeId::of::<colors::Int>())
             .into(),
     }
 }

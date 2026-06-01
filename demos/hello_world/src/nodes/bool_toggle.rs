@@ -122,7 +122,7 @@ where
         .spacing(8)
         .align_y(iced::Alignment::Center),
         Output,
-        pins::Bool
+        ::std::any::TypeId::of::<pins::Bool>()
     ))
     .width(Length::Fill)
     .align_x(Horizontal::Right);
