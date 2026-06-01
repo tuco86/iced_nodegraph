@@ -195,7 +195,10 @@
 //! }
 //! ```
 
-pub use content::{NodeContentStyle, node_footer, node_header, simple_node};
+pub use content::{
+    ContentPosition, EdgeRadii, NodeContentStyle, node_content_container, node_footer, node_header,
+    simple_node,
+};
 pub use helpers::{
     CloneResult, DeleteResult, NodeHandle, PinHandle, SelectionHelper, clone_nodes, delete_nodes,
 };

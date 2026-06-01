@@ -45,9 +45,10 @@ pub struct NodeContentStyle {
     pub border_width: f32,
 }
 
-/// Default corner radius for nodes (used when no resolved style is provided)
-const DEFAULT_CORNER_RADIUS: f32 = 8.0;
-/// Default border width for nodes (used when no resolved style is provided)
+/// Default node corner radius. Kept in sync with `NodeStyle::from_theme` so a
+/// `simple_node` built on the theme base lines up with the rendered fill.
+const DEFAULT_CORNER_RADIUS: f32 = 5.0;
+/// Default node border width. Kept in sync with `NodeStyle::from_theme`.
 const DEFAULT_BORDER_WIDTH: f32 = 1.0;
 
 impl NodeContentStyle {
@@ -201,53 +202,86 @@ where
         .into()
 }
 
-/// Creates a container for node content with proper rounded corners.
+/// Corner radii for the two corners along one node edge.
 ///
-/// Automatically calculates the inner radius and padding based on the node's
-/// geometry to ensure content fits precisely within the clipped area.
+/// Accepts a single value (both corners equal) or a `(left, right)` tuple via
+/// `impl Into<EdgeRadii>`, so a header/footer can match the node's rounded
+/// corners with one number or round each corner differently.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EdgeRadii {
+    /// The left (or top-left/bottom-left) corner radius.
+    pub left: f32,
+    /// The right (or top-right/bottom-right) corner radius.
+    pub right: f32,
+}
+
+impl From<f32> for EdgeRadii {
+    fn from(value: f32) -> Self {
+        Self {
+            left: value,
+            right: value,
+        }
+    }
+}
+
+impl From<(f32, f32)> for EdgeRadii {
+    fn from((left, right): (f32, f32)) -> Self {
+        Self { left, right }
+    }
+}
+
+/// Build the per-corner [`border::Radius`] for a section, rounding only the
+/// corners that touch the node edge: a header rounds the top pair, a footer the
+/// bottom, `Full` all four, `Middle` none. Stacked header + footer reconstruct
+/// the node's full rounded silhouette.
+pub(crate) fn section_border_radius(radii: EdgeRadii, position: ContentPosition) -> border::Radius {
+    let (l, r) = (radii.left, radii.right);
+    match position {
+        ContentPosition::Top => border::Radius {
+            top_left: l,
+            top_right: r,
+            bottom_right: 0.0,
+            bottom_left: 0.0,
+        },
+        ContentPosition::Bottom => border::Radius {
+            top_left: 0.0,
+            top_right: 0.0,
+            bottom_right: r,
+            bottom_left: l,
+        },
+        ContentPosition::Full => border::Radius {
+            top_left: l,
+            top_right: r,
+            bottom_right: r,
+            bottom_left: l,
+        },
+        ContentPosition::Middle => border::Radius::from(0.0),
+    }
+}
+
+/// Wraps `content` in a `Length::Fill` rounded-corner container, rounding the
+/// corners at `position` to `radii`.
 ///
-/// # Arguments
-/// * `content` - The content to wrap
-/// * `corner_radius` - The node's corner radius (typically 5.0)
-/// * `border_width` - The node's border width (typically 1.0)
-/// * `position` - Which corners should be rounded
+/// A thin wrapper over a rounded box: the returned [`Container`] can be styled
+/// and laid out further by the caller. Pass a single radius or a `(left, right)`
+/// tuple. To match a node exactly, pass the node's `corner_radius`.
 ///
 /// # Example
 /// ```ignore
-/// let body = node_content_container(
-///     my_widgets,
-///     5.0,
-///     1.0,
-///     ContentPosition::Bottom,
-/// );
+/// let body = node_content_container(my_widgets, 5.0, ContentPosition::Bottom);
+/// let body = node_content_container(my_widgets, (4.0, 8.0), ContentPosition::Top);
 /// ```
 pub fn node_content_container<'a, Message>(
     content: impl Into<Element<'a, Message, Theme, iced::Renderer>>,
-    corner_radius: f32,
-    border_width: f32,
+    radii: impl Into<EdgeRadii>,
     position: ContentPosition,
 ) -> Container<'a, Message, Theme, iced::Renderer>
 where
     Message: Clone + 'a,
 {
-    // Inner radius fits inside the node border
-    let inner_radius = (corner_radius - border_width).max(0.0);
-
-    // Radius based on position
-    let radius = match position {
-        ContentPosition::Top => border::top(inner_radius),
-        ContentPosition::Bottom => border::bottom(inner_radius),
-        ContentPosition::Full => border::radius(inner_radius),
-        ContentPosition::Middle => border::radius(0.0),
-    };
+    let radius = section_border_radius(radii.into(), position);
 
     container(content)
-        .padding(Padding {
-            top: 0.0,
-            bottom: 0.0,
-            left: border_width,
-            right: border_width,
-        })
         .width(Length::Fill)
         .style(move |_theme: &Theme| container::Style {
             border: Border {
@@ -287,7 +321,6 @@ where
     Message: Clone + 'a,
 {
     let corner_radius = style.corner_radius;
-    let border_width = style.border_width;
 
     // Title bar using node_header
     let title_text = text(title.into()).size(13).color(style.title_text);
@@ -300,7 +333,6 @@ where
         }),
         style.title_background,
         corner_radius,
-        border_width,
     );
 
     // The body fills the node width to match the header (node_header is
@@ -313,8 +345,8 @@ where
             .padding(Padding {
                 top: 6.0,
                 bottom: 6.0,
-                left: 8.0 + border_width,
-                right: 8.0 + border_width,
+                left: 8.0,
+                right: 8.0,
             })
             .style(move |_theme: &Theme| container::Style {
                 background: Some(style.body_background.into()),
@@ -336,131 +368,139 @@ pub fn is_theme_dark(theme: &Theme) -> bool {
     theme.extended_palette().is_dark
 }
 
-/// Creates a header container for nodes with top rounded corners.
+/// Wraps `content` in a `Length::Fill` header: a rounded box with its top two
+/// corners rounded to `radii` and filled with `background`.
 ///
-/// Uses the same corner radius as the parent node for consistent appearance.
-/// Padding is applied on left/right to account for the node's border.
-///
-/// # Arguments
-/// * `content` - The content to wrap in the header
-/// * `background` - Background color for the header
-/// * `corner_radius` - The node's corner radius
-/// * `border_width` - The node's border width
+/// `radii` accepts a single value (both corners equal) or a `(left, right)`
+/// tuple. To match a node's silhouette exactly, pass the node's `corner_radius`.
+/// The returned [`Container`] can be laid out further by the caller.
 ///
 /// # Example
 /// ```ignore
-/// use iced_nodegraph::{node_header, NodeStyle};
-/// use iced::widget::text;
-/// use iced::Color;
+/// use iced_nodegraph::node_header;
+/// use iced::{widget::text, Color};
 ///
-/// // Get geometry from node style
-/// let node_style = NodeStyle::default();
-/// let header = node_header(
-///     text("Header Content"),
-///     Color::from_rgb(0.2, 0.3, 0.4),
-///     node_style.corner_radius,
-///     node_style.border_width,
-/// );
+/// let header = node_header(text("Title"), Color::from_rgb(0.2, 0.3, 0.4), 5.0);
+/// let header = node_header(text("Title"), Color::BLACK, (4.0, 8.0));
 /// ```
 pub fn node_header<'a, Message>(
     content: impl Into<Element<'a, Message, Theme, iced::Renderer>>,
     background: Color,
-    corner_radius: f32,
-    border_width: f32,
+    radii: impl Into<EdgeRadii>,
 ) -> Container<'a, Message, Theme, iced::Renderer>
 where
     Message: Clone + 'a,
 {
-    node_section(
-        content,
-        background,
-        corner_radius,
-        border_width,
-        ContentPosition::Top,
-    )
+    node_section(content, background, radii.into(), ContentPosition::Top)
 }
 
-/// Creates a footer container for nodes with bottom rounded corners.
+/// Wraps `content` in a `Length::Fill` footer: a rounded box with its bottom two
+/// corners rounded to `radii` and filled with `background`.
 ///
-/// Uses the same corner radius as the parent node for consistent appearance.
-/// Padding is applied on left/right to account for the node's border.
-///
-/// # Arguments
-/// * `content` - The content to wrap in the footer
-/// * `background` - Background color for the footer
-/// * `corner_radius` - The node's corner radius
-/// * `border_width` - The node's border width
+/// `radii` accepts a single value or a `(left, right)` tuple; pass the node's
+/// `corner_radius` to match its silhouette. The returned [`Container`] can be
+/// laid out further by the caller.
 ///
 /// # Example
 /// ```ignore
-/// use iced_nodegraph::{node_footer, NodeStyle};
-/// use iced::widget::text;
-/// use iced::Color;
+/// use iced_nodegraph::node_footer;
+/// use iced::{widget::text, Color};
 ///
-/// // Get geometry from node style
-/// let node_style = NodeStyle::default();
-/// let footer = node_footer(
-///     text("Footer Content"),
-///     Color::from_rgb(0.15, 0.15, 0.15),
-///     node_style.corner_radius,
-///     node_style.border_width,
-/// );
+/// let footer = node_footer(text("Footer"), Color::from_rgb(0.15, 0.15, 0.15), 5.0);
 /// ```
 pub fn node_footer<'a, Message>(
     content: impl Into<Element<'a, Message, Theme, iced::Renderer>>,
     background: Color,
-    corner_radius: f32,
-    border_width: f32,
+    radii: impl Into<EdgeRadii>,
 ) -> Container<'a, Message, Theme, iced::Renderer>
 where
     Message: Clone + 'a,
 {
-    node_section(
-        content,
-        background,
-        corner_radius,
-        border_width,
-        ContentPosition::Bottom,
-    )
+    node_section(content, background, radii.into(), ContentPosition::Bottom)
 }
 
-/// Shared implementation for header/footer node sections.
+/// Shared rounded-box section for header/footer: fills `background` and rounds
+/// the corners at `position` to `radii`, at `Length::Fill` width.
 fn node_section<'a, Message>(
     content: impl Into<Element<'a, Message, Theme, iced::Renderer>>,
     background: Color,
-    corner_radius: f32,
-    border_width: f32,
+    radii: EdgeRadii,
     position: ContentPosition,
 ) -> Container<'a, Message, Theme, iced::Renderer>
 where
     Message: Clone + 'a,
 {
-    // The section's background is clipped to the node's inner rect (inset by
-    // border_width), so its corners must round to the inner radius to line up
-    // with the node fill's inner border edge. Matches node_content_container.
-    let inner_radius = (corner_radius - border_width).max(0.0);
-    let radius = match position {
-        ContentPosition::Top => border::top(inner_radius),
-        ContentPosition::Bottom => border::bottom(inner_radius),
-        ContentPosition::Full => border::radius(inner_radius),
-        ContentPosition::Middle => border::radius(0.0),
-    };
+    let radius = section_border_radius(radii, position);
 
     container(content)
-        .padding(Padding {
-            top: 0.0,
-            bottom: 0.0,
-            left: border_width,
-            right: border_width,
-        })
         .width(Length::Fill)
         .style(move |_theme: &Theme| container::Style {
             background: Some(background.into()),
             border: Border {
                 radius,
-                width: border_width,
-                color: Color::TRANSPARENT,
+                ..Default::default()
             },
             ..Default::default()
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::style::{NodeStyle, Resolved};
+
+    /// A single radius rounds both corners of the edge equally.
+    #[test]
+    fn single_radius_rounds_both_corners() {
+        let r = section_border_radius(6.0.into(), ContentPosition::Top);
+        assert_eq!((r.top_left, r.top_right), (6.0, 6.0));
+        assert_eq!((r.bottom_left, r.bottom_right), (0.0, 0.0));
+    }
+
+    /// A `(left, right)` tuple rounds the two corners independently.
+    #[test]
+    fn tuple_radius_rounds_corners_independently() {
+        let top = section_border_radius((4.0, 8.0).into(), ContentPosition::Top);
+        assert_eq!((top.top_left, top.top_right), (4.0, 8.0));
+
+        let bottom = section_border_radius((4.0, 8.0).into(), ContentPosition::Bottom);
+        assert_eq!((bottom.bottom_left, bottom.bottom_right), (4.0, 8.0));
+    }
+
+    /// Header rounds only the top corners, footer only the bottom; stacked they
+    /// reconstruct the node's full rounded silhouette with no double or missing
+    /// rounding at the seam.
+    #[test]
+    fn header_and_footer_round_complementary_corners() {
+        let cr: EdgeRadii = 6.0.into();
+        let header = section_border_radius(cr, ContentPosition::Top);
+        let footer = section_border_radius(cr, ContentPosition::Bottom);
+        let full = section_border_radius(cr, ContentPosition::Full);
+
+        assert_eq!((header.top_left, header.top_right), (6.0, 6.0));
+        assert_eq!((header.bottom_left, header.bottom_right), (0.0, 0.0));
+        assert_eq!((footer.bottom_left, footer.bottom_right), (6.0, 6.0));
+        assert_eq!((footer.top_left, footer.top_right), (0.0, 0.0));
+
+        // Header top + footer bottom equal the all-around full rounding.
+        assert_eq!(header.top_left, full.top_left);
+        assert_eq!(footer.bottom_right, full.bottom_right);
+    }
+
+    /// The default `simple_node`/header geometry matches the node the widget
+    /// actually renders: the fill uses `NodeStyle::corner_radius` directly, and
+    /// `NodeContentStyle` defaults to the same value, so they line up flush.
+    #[test]
+    fn default_content_matches_rendered_node() {
+        let theme = iced::Theme::Dark;
+        let fill = NodeStyle::<Resolved>::from_theme(&theme).corner_radius;
+        let content = NodeContentStyle::input(&theme).corner_radius;
+        assert_eq!(
+            content, fill,
+            "NodeContentStyle default radius must equal the rendered fill radius"
+        );
+
+        let header = section_border_radius(content.into(), ContentPosition::Top);
+        assert_eq!(header.top_left, fill);
+    }
 }
