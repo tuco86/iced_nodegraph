@@ -100,19 +100,33 @@ impl NodeStyle<Resolved> {
 
     /// Border layers, front-to-back: main stroke then optional outline halo.
     /// Empty when the border pattern thickness is zero.
+    ///
+    /// The border sits on the OUTSIDE of the node silhouette so it never eats
+    /// into the body or content: a solid border is a plain outward band
+    /// `[0, bw]` (the renderer honours distance bands for unpatterned styles),
+    /// drawn flush against the body edge. A patterned border keeps its
+    /// dash/dot layout centered on the contour, since the pattern's cross
+    /// section is fixed to the silhouette.
     pub(crate) fn border_sdf_layers(&self, opacity: f32) -> Vec<Style> {
         let mut layers = Vec::new();
         let bw = self.border_pattern.thickness;
         if bw > 0.0 {
-            layers.push(quad_stroke(
-                &self.border_color,
-                self.border_pattern,
-                opacity,
-            ));
-            if self.border_outline_width > 0.0 {
+            if self.border_pattern.is_solid() {
+                layers.push(quad_style(&self.border_color, 0.0, bw, None, opacity));
+            } else {
                 layers.push(quad_stroke(
+                    &self.border_color,
+                    self.border_pattern,
+                    opacity,
+                ));
+            }
+            if self.border_outline_width > 0.0 {
+                let ow = self.border_outline_width;
+                layers.push(quad_style(
                     &self.border_outline_color,
-                    Pattern::solid(bw + self.border_outline_width * 2.0),
+                    0.0,
+                    bw + ow * 2.0,
+                    None,
                     opacity,
                 ));
             }

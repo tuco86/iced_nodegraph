@@ -860,7 +860,6 @@ where
             // per-node pre-pass; reuse it here for fill and border.
             let node_outline = geom.outline.clone();
 
-            let border_width = resolved.border_pattern.thickness;
             let opacity = resolved.opacity;
             let cam_zoom = render_context.camera_zoom;
 
@@ -913,11 +912,15 @@ where
                     |renderer, viewport, cursor| {
                         let bounds = node_layout.bounds();
                         let screen_offset: Vector = offset.into_iced();
+                        // Clip content to the full node bounds (the body edge).
+                        // The border sits outside the silhouette, so it never
+                        // narrows the content area: selection thickening the
+                        // border no longer shrinks the node interior.
                         let node_clip = Rectangle {
-                            x: bounds.x + screen_offset.x + border_width,
-                            y: bounds.y + screen_offset.y + border_width,
-                            width: (bounds.width - 2.0 * border_width).max(0.0),
-                            height: (bounds.height - 2.0 * border_width).max(0.0),
+                            x: bounds.x + screen_offset.x,
+                            y: bounds.y + screen_offset.y,
+                            width: bounds.width,
+                            height: bounds.height,
                         };
 
                         // push_clip replaces (does not intersect) the parent
