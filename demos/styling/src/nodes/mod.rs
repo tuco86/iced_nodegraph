@@ -27,7 +27,6 @@ where
         }),
         style.title_background,
         style.corner_radius,
-        style.border_width,
     )
 }
 

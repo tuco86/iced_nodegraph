@@ -186,7 +186,6 @@ where
                 .align_x(Horizontal::Center),
             footer_bg,
             corner_radius,
-            border_width,
         )
     ]
     .width(200.0)

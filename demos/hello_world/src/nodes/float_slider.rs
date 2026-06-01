@@ -411,7 +411,6 @@ where
                 .align_x(iced::alignment::Horizontal::Center),
             footer_bg,
             corner_radius,
-            border_width,
         )
     ]
     .width(180.0)
