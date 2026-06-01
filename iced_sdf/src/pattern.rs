@@ -51,6 +51,11 @@ impl Default for Pattern {
 }
 
 impl Pattern {
+    /// Whether this is a plain solid stroke (no dashes, dots or arrows).
+    pub fn is_solid(&self) -> bool {
+        matches!(self.pattern_type, PatternType::Solid)
+    }
+
     /// Solid stroke with given thickness.
     pub fn solid(thickness: f32) -> Self {
         Self {
