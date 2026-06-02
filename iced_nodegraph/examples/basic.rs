@@ -1,17 +1,23 @@
-//! Minimal iced_nodegraph application.
+//! A small live logic playground built on iced_nodegraph.
 //!
-//! Two nodes wired together by a single edge. Drag a node by its title bar to
-//! move it, drag from one pin to another to connect them, and click a connected
-//! pin to unplug it.
+//! Every pin carries a `Port` payload (the graph's `UI` type parameter), which
+//! drives two things: the node colors its pins by that payload, and
+//! `can_connect` only joins an output to an input of the SAME port type. So a
+//! `Number` wire (orange) refuses to enter the `AND` gate's `Bool` inputs
+//! (green) - you must run it through the `>0` comparator first.
+//!
+//! The graph is evaluated live every frame: drag the slider or toggle the
+//! switch and the lamp reacts. Unplug a pin (click it) and rewire to build a
+//! different condition.
 //!
 //! Run with:
 //!
 //!     cargo run -p iced_nodegraph --example basic
 
-use iced::widget::{container, text};
-use iced::{Element, Point, Theme, Vector};
+use iced::widget::{checkbox, column, container, slider, text};
+use iced::{Color, Element, Point, Theme, Vector};
 use iced_nodegraph::prelude::*;
-use iced_nodegraph::{edge, node, node_pin};
+use iced_nodegraph::{Node, PinInfo, PinStatus, default_pin_style, edge, node, pin};
 
 fn main() -> iced::Result {
     iced::application(App::default, App::update, App::view)
@@ -20,22 +26,81 @@ fn main() -> iced::Result {
         .run()
 }
 
+/// The per-pin payload carried through the graph as its `UI` type. It drives
+/// pin color and connection compatibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Port {
+    Number,
+    Bool,
+}
+
+impl Port {
+    fn color(self) -> Color {
+        match self {
+            Port::Number => Color::from_rgb(0.90, 0.55, 0.20), // orange
+            Port::Bool => Color::from_rgb(0.30, 0.75, 0.45),   // green
+        }
+    }
+}
+
+/// A value flowing along a wire during evaluation.
+#[derive(Clone, Copy)]
+enum Value {
+    Num(f32),
+    Bool(bool),
+}
+
+impl Value {
+    fn as_num(self) -> f32 {
+        match self {
+            Value::Num(n) => n,
+            Value::Bool(b) => b as i32 as f32,
+        }
+    }
+    fn as_bool(self) -> bool {
+        matches!(self, Value::Bool(true))
+    }
+}
+
 /// A connection endpoint with the default `usize` node and pin ids.
 type Pin = PinRef<usize, usize>;
 
+// Node ids.
+const VALUE: usize = 0; // slider  -> Number out (pin 0)
+const SWITCH: usize = 1; // toggle  -> Bool out   (pin 0)
+const GT0: usize = 2; // Number in (0) -> Bool out (1)
+const AND: usize = 3; // Bool in (0), Bool in (1) -> Bool out (2)
+const LAMP: usize = 4; // Bool in (0)
+
 struct App {
-    /// Node positions in world space, indexed by node id. The graph reports
-    /// drags through `on_move`; storing the result keeps nodes where they land.
+    /// Node positions in world space, indexed by node id.
     positions: Vec<Point>,
     /// Active connections between pins.
     edges: Vec<(Pin, Pin)>,
+    /// Live input state of the two source nodes.
+    value: f32,
+    switch: bool,
 }
 
 impl Default for App {
     fn default() -> Self {
         Self {
-            positions: vec![Point::new(120.0, 160.0), Point::new(440.0, 220.0)],
-            edges: Vec::new(),
+            positions: vec![
+                Point::new(60.0, 80.0),
+                Point::new(60.0, 250.0),
+                Point::new(300.0, 90.0),
+                Point::new(520.0, 170.0),
+                Point::new(740.0, 195.0),
+            ],
+            // Pre-wired into "value > 0 AND switch -> lamp" so it works on launch.
+            edges: vec![
+                (PinRef::new(VALUE, 0), PinRef::new(GT0, 0)),
+                (PinRef::new(GT0, 1), PinRef::new(AND, 0)),
+                (PinRef::new(SWITCH, 0), PinRef::new(AND, 1)),
+                (PinRef::new(AND, 2), PinRef::new(LAMP, 0)),
+            ],
+            value: 0.5,
+            switch: true,
         }
     }
 }
@@ -43,16 +108,64 @@ impl Default for App {
 #[derive(Debug, Clone)]
 enum Message {
     Moved { id: usize, position: Point },
-    // Box-select (drag on the background) or Ctrl+click multiple nodes, then
-    // drag one of them: the graph reports the whole group shifted by `delta`.
     GroupMoved { ids: Vec<usize>, delta: Vector },
     Connected { from: Pin, to: Pin },
     Disconnected { from: Pin, to: Pin },
+    Value(f32),
+    Switch(bool),
+}
+
+/// Colors a pin by its `Port` payload (read via `pin.info()`). The node owns the
+/// pin styling; the pin itself carries no style.
+fn pin_style(
+    theme: &Theme,
+    pin: &PinInfo<'_, usize, Port>,
+    _other: Option<&PinInfo<'_, usize, Port>>,
+    status: PinStatus,
+) -> PinStyle<Resolved> {
+    default_pin_style(theme, status)
+        .color(pin.info().color())
+        .resolve(&PinStyle::from_theme(theme))
+}
+
+/// Wraps node content in a fixed-width body and attaches the shared pin styling.
+fn gate<'a>(
+    id: usize,
+    pos: Point,
+    body: impl Into<Element<'a, Message>>,
+) -> Node<'a, usize, usize, Port, Message, Theme, iced::Renderer> {
+    node(id, pos, container(body).width(150.0)).pin_style(pin_style)
 }
 
 impl App {
     fn theme(&self) -> Theme {
         Theme::SolarizedLight
+    }
+
+    /// The value produced at a node's (single) output, following edges. The
+    /// depth budget guards against cycles a user might wire by hand.
+    fn output(&self, node: usize, depth: u8) -> Option<Value> {
+        if depth == 0 {
+            return None;
+        }
+        Some(match node {
+            VALUE => Value::Num(self.value),
+            SWITCH => Value::Bool(self.switch),
+            GT0 => Value::Bool(self.input(GT0, 0, depth)?.as_num() > 0.0),
+            AND => Value::Bool(
+                self.input(AND, 0, depth)?.as_bool() && self.input(AND, 1, depth)?.as_bool(),
+            ),
+            _ => return None,
+        })
+    }
+
+    /// The value arriving at an input pin: whatever its incoming edge carries.
+    fn input(&self, node: usize, pin: usize, depth: u8) -> Option<Value> {
+        let (from, _) = self
+            .edges
+            .iter()
+            .find(|(_, to)| to.node_id == node && to.pin_id == pin)?;
+        self.output(from.node_id, depth - 1)
     }
 
     fn update(&mut self, message: Message) {
@@ -65,46 +178,106 @@ impl App {
             }
             Message::Connected { from, to } => self.edges.push((from, to)),
             Message::Disconnected { from, to } => self.edges.retain(|&e| e != (from, to)),
+            Message::Value(v) => self.value = v,
+            Message::Switch(b) => self.switch = b,
         }
     }
 
     fn view(&self) -> Element<'_, Message> {
         let theme = self.theme();
+        let p = &self.positions;
 
-        let mut ng = node_graph()
-            .on_move(|id, position| Message::Moved { id, position })
-            .on_group_move(|ids, delta| Message::GroupMoved { ids, delta })
-            .on_connect(|from, to| Message::Connected { from, to })
-            .on_disconnect(|from, to| Message::Disconnected { from, to });
+        // The graph is parameterized over `Port` as its pin payload (`UI`), so it
+        // cannot use the `node_graph()` helper (which fixes `UI = ()`).
+        let mut ng: NodeGraph<usize, usize, Port, usize, Message, Theme, iced::Renderer> =
+            NodeGraph::default()
+                .on_move(|id, position| Message::Moved { id, position })
+                .on_group_move(|ids, delta| Message::GroupMoved { ids, delta })
+                .on_connect(|from, to| Message::Connected { from, to })
+                .on_disconnect(|from, to| Message::Disconnected { from, to })
+                // Authoritative: opposite directions and matching port type.
+                .can_connect(|from, to| {
+                    from.direction() != to.direction() && from.info() == to.info()
+                });
 
-        // A source node carrying one output pin on its right edge. Pin ids are
-        // `usize` here, so they must match the graph's default id type.
-        // `simple_node` fills its width, so it needs a fixed-width parent.
-        ng.push_node(node(
-            0,
-            self.positions[0],
-            container(simple_node(
-                "Source",
+        ng.push_node(gate(
+            VALUE,
+            p[VALUE],
+            simple_node(
+                "Value",
                 NodeContentStyle::input(&theme),
-                node_pin(PinSide::Right, 0usize, text("out")),
-            ))
-            .width(160.0),
+                column![
+                    slider(-1.0..=1.0, self.value, Message::Value).step(0.01),
+                    text(format!("{:.2}", self.value)).size(11),
+                    pin!(Right, 0usize, text("n"), Output, Port::Number),
+                ]
+                .spacing(4),
+            ),
         ));
 
-        // A sink node with one input pin on its left edge.
-        ng.push_node(node(
-            1,
-            self.positions[1],
-            container(simple_node(
-                "Sink",
+        ng.push_node(gate(
+            SWITCH,
+            p[SWITCH],
+            simple_node(
+                "Switch",
+                NodeContentStyle::input(&theme),
+                column![
+                    checkbox(self.switch).on_toggle(Message::Switch),
+                    pin!(Right, 0usize, text("b"), Output, Port::Bool),
+                ]
+                .spacing(4),
+            ),
+        ));
+
+        ng.push_node(gate(
+            GT0,
+            p[GT0],
+            simple_node(
+                ">0",
+                NodeContentStyle::process(&theme),
+                column![
+                    pin!(Left, 0usize, text("x"), Input, Port::Number),
+                    pin!(Right, 1usize, text("out"), Output, Port::Bool),
+                ]
+                .spacing(4),
+            ),
+        ));
+
+        ng.push_node(gate(
+            AND,
+            p[AND],
+            simple_node(
+                "AND",
+                NodeContentStyle::process(&theme),
+                column![
+                    pin!(Left, 0usize, text("a"), Input, Port::Bool),
+                    pin!(Left, 1usize, text("b"), Input, Port::Bool),
+                    pin!(Right, 2usize, text("out"), Output, Port::Bool),
+                ]
+                .spacing(4),
+            ),
+        ));
+
+        let lit = self.input(LAMP, 0, 8).map(Value::as_bool).unwrap_or(false);
+        let lamp = if lit {
+            Color::from_rgb(0.95, 0.85, 0.20)
+        } else {
+            Color::from_rgb(0.40, 0.40, 0.40)
+        };
+        ng.push_node(gate(
+            LAMP,
+            p[LAMP],
+            simple_node(
+                "Lamp",
                 NodeContentStyle::output(&theme),
-                node_pin(PinSide::Left, 0usize, text("in")),
-            ))
-            .width(160.0),
+                column![
+                    pin!(Left, 0usize, text("in"), Input, Port::Bool),
+                    text("\u{25CF}").size(22).color(lamp),
+                ]
+                .spacing(4),
+            ),
         ));
 
-        // Re-create every stored connection each frame; the widget draws them
-        // as bezier curves between the referenced pins.
         for &(from, to) in &self.edges {
             ng.push_edge(edge(from, to));
         }
