@@ -1661,7 +1661,9 @@ where
 
                                     // Extract from_pin_id while iterating (need access to tree.children)
                                     let mut from_pin_id: Option<P> = None;
-                                    let mut target_info: Option<(usize, usize, P)> = None;
+                                    let mut from_dir: Option<PinDirection> = None;
+                                    let mut target_info: Option<(usize, usize, P, PinDirection)> =
+                                        None;
 
                                     // Check all pins for proximity and validity (use SNAP_THRESHOLD to enter)
                                     for (node_index, (node_layout, node_tree)) in
@@ -1674,6 +1676,7 @@ where
                                             if node_index == from_node && pin_index == from_pin {
                                                 from_pin_id =
                                                     pin_state.pin_id.downcast_ref::<P>().cloned();
+                                                from_dir = Some(pin_state.direction);
                                             }
 
                                             // Pin positions are already in world space (from layout)
@@ -1690,14 +1693,19 @@ where
                                                         .downcast_ref::<P>()
                                                         .cloned()
                                                 {
-                                                    target_info =
-                                                        Some((node_index, pin_index, pid));
+                                                    target_info = Some((
+                                                        node_index,
+                                                        pin_index,
+                                                        pid,
+                                                        pin_state.direction,
+                                                    ));
                                                 }
                                             }
                                         }
                                     }
 
-                                    if let Some((to_node, to_pin, to_pin_id)) = target_info {
+                                    if let Some((to_node, to_pin, to_pin_id, to_dir)) = target_info
+                                    {
                                         // Fire EdgeConnected event immediately on snap (plug behavior)
                                         let from_node_id = self.index_to_node_id(from_node);
                                         let to_node_id = self.index_to_node_id(to_node);
@@ -1705,8 +1713,15 @@ where
                                         if let (Some(from_nid), Some(to_nid), Some(from_pid)) =
                                             (from_node_id, to_node_id, from_pin_id)
                                         {
-                                            let from_ref = PinRef::new(from_nid.clone(), from_pid);
-                                            let to_ref = PinRef::new(to_nid.clone(), to_pin_id);
+                                            // Normalize to output -> input so the reported
+                                            // endpoints match the rendered data-flow direction,
+                                            // independent of which pin the drag started on.
+                                            let (from_ref, to_ref) = orient_connection(
+                                                from_dir.unwrap_or(PinDirection::Both),
+                                                to_dir,
+                                                PinRef::new(from_nid.clone(), from_pid),
+                                                PinRef::new(to_nid.clone(), to_pin_id),
+                                            );
 
                                             if let Some(handler) = self.on_connect_handler() {
                                                 shell.publish(handler(
@@ -1766,6 +1781,8 @@ where
                                     let mut still_over_pin = false;
                                     let mut from_pin_id: Option<P> = None;
                                     let mut to_pin_id: Option<P> = None;
+                                    let mut from_dir: Option<PinDirection> = None;
+                                    let mut to_dir: Option<PinDirection> = None;
 
                                     for (node_index, (node_layout, node_tree)) in
                                         layout.children().zip(&tree.children).enumerate()
@@ -1777,11 +1794,13 @@ where
                                             if node_index == from_node && pin_index == from_pin {
                                                 from_pin_id =
                                                     pin_state.pin_id.downcast_ref::<P>().cloned();
+                                                from_dir = Some(pin_state.direction);
                                             }
                                             // Extract to_pin_id and check distance
                                             if node_index == to_node && pin_index == to_pin {
                                                 to_pin_id =
                                                     pin_state.pin_id.downcast_ref::<P>().cloned();
+                                                to_dir = Some(pin_state.direction);
                                                 let distance = a
                                                     .distance(cursor_position)
                                                     .min(b.distance(cursor_position));
@@ -1802,8 +1821,15 @@ where
                                             Some(to_pid),
                                         ) = (from_node_id, to_node_id, from_pin_id, to_pin_id)
                                         {
-                                            let from_ref = PinRef::new(from_nid.clone(), from_pid);
-                                            let to_ref = PinRef::new(to_nid.clone(), to_pid);
+                                            // Match the output -> input order used when the
+                                            // edge connected, so the user's edge list lookup
+                                            // removes the same pair it inserted.
+                                            let (from_ref, to_ref) = orient_connection(
+                                                from_dir.unwrap_or(PinDirection::Both),
+                                                to_dir.unwrap_or(PinDirection::Both),
+                                                PinRef::new(from_nid.clone(), from_pid),
+                                                PinRef::new(to_nid.clone(), to_pid),
+                                            );
 
                                             if let Some(handler) = self.on_disconnect_handler() {
                                                 shell.publish(handler(
@@ -2509,6 +2535,21 @@ fn inner_find_pins<'a, UI: 'static>(
     }
 }
 
+/// Orients a connected pair so the OUTPUT pin is `from` (output -> input),
+/// independent of which side the drag started on. Mirrors the edge-rendering
+/// normalization (`swap` in `draw`), so the endpoints reported to
+/// `on_connect`/`on_disconnect` match the visual data-flow direction. Order is
+/// only swapped when `from` is a non-output and `to` is an output.
+fn orient_connection<N, P>(
+    from_dir: PinDirection,
+    to_dir: PinDirection,
+    from: PinRef<N, P>,
+    to: PinRef<N, P>,
+) -> (PinRef<N, P>, PinRef<N, P>) {
+    let swap = !matches!(from_dir, PinDirection::Output) && matches!(to_dir, PinDirection::Output);
+    if swap { (to, from) } else { (from, to) }
+}
+
 /// Validates if two pins can be connected based on direction.
 /// Only checks direction compatibility - custom logic is handled by can_connect.
 fn validate_pin_direction<UI>(from_pin: &NodePinState<UI>, to_pin: &NodePinState<UI>) -> bool {
@@ -2808,5 +2849,44 @@ fn pin_side_to_direction(side: crate::node_pin::PinSide) -> (f32, f32) {
         PinSide::Top => (0.0, -1.0),
         PinSide::Bottom => (0.0, 1.0),
         PinSide::Row => (1.0, 0.0), // Default to right
+    }
+}
+
+#[cfg(test)]
+mod orient_tests {
+    use super::orient_connection;
+    use crate::PinRef;
+    use crate::node_pin::PinDirection;
+
+    // A drag from an output pin to an input pin keeps (output, input) order.
+    #[test]
+    fn output_to_input_keeps_order() {
+        let out = PinRef::new(0usize, 0usize);
+        let inp = PinRef::new(1usize, 0usize);
+        let (from, to) = orient_connection(PinDirection::Output, PinDirection::Input, out, inp);
+        assert_eq!(from, PinRef::new(0, 0));
+        assert_eq!(to, PinRef::new(1, 0));
+    }
+
+    // A drag from an input pin to an output pin is flipped to (output, input),
+    // so on_connect reports the same pair regardless of drag direction.
+    #[test]
+    fn input_to_output_is_flipped() {
+        let inp = PinRef::new(1usize, 0usize);
+        let out = PinRef::new(0usize, 0usize);
+        let (from, to) = orient_connection(PinDirection::Input, PinDirection::Output, inp, out);
+        assert_eq!(from, PinRef::new(0, 0));
+        assert_eq!(to, PinRef::new(1, 0));
+    }
+
+    // Ambiguous pairs (Both) are left in drag order; only a non-output -> output
+    // pair is swapped.
+    #[test]
+    fn both_keeps_drag_order() {
+        let a = PinRef::new(0usize, 0usize);
+        let b = PinRef::new(1usize, 0usize);
+        let (from, to) = orient_connection(PinDirection::Both, PinDirection::Both, a, b);
+        assert_eq!(from, PinRef::new(0, 0));
+        assert_eq!(to, PinRef::new(1, 0));
     }
 }
