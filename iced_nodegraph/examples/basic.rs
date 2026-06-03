@@ -125,7 +125,7 @@ fn pin_style(
 ) -> PinStyle<Resolved> {
     default_pin_style(theme, status)
         .color(pin.info().color())
-        .resolve(&PinStyle::from_theme(theme))
+        .resolve()
 }
 
 /// Wraps node content in a fixed-width body and attaches the shared pin styling.

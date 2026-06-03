@@ -636,7 +636,7 @@ fn pin_style(
     };
     default_pin_style(theme, status)
         .color(color)
-        .resolve(&PinStyle::from_theme(theme))
+        .resolve()
 }
 
 /// Creates a typed pin element based on the socket type.

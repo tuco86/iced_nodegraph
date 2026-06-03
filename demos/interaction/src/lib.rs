@@ -138,9 +138,7 @@ fn pin_style(
     } else {
         PinType::Any.color()
     };
-    default_pin_style(theme, status)
-        .color(color)
-        .resolve(&PinStyle::from_theme(theme))
+    default_pin_style(theme, status).color(color).resolve()
 }
 
 #[derive(Debug, Clone)]

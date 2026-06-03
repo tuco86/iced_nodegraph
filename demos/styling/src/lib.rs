@@ -40,8 +40,8 @@ use iced::{
     window,
 };
 use iced_nodegraph::{
-    NodeStyle, Pattern, PinDirection, PinInfo, PinRef, PinStatus, PinStyle, Resolved,
-    default_node_style, default_pin_style, edge, node,
+    NodeStatus, NodeStyle, Pattern, PinDirection, PinInfo, PinRef, PinStatus, PinStyle, Resolved,
+    SelectionStyle, default_pin_style, edge, node,
 };
 use nodes::styled_node;
 use std::collections::HashSet;
@@ -57,9 +57,7 @@ fn styling_pin_style(
         PinDirection::Output => iced::Color::from_rgb(0.9, 0.7, 0.5),
         _ => iced::Color::from_rgb(0.5, 0.7, 0.9),
     };
-    default_pin_style(theme, status)
-        .color(color)
-        .resolve(&PinStyle::from_theme(theme))
+    default_pin_style(theme, status).color(color).resolve()
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -489,13 +487,19 @@ impl Application {
                 .selection(&self.graph_selection);
 
         for (index, (position, name, style)) in self.nodes.iter().enumerate() {
-            // The demo stores a fully resolved style per node; the callback just
-            // returns it (ignoring the theme base).
+            // The demo stores a fully resolved style per node; the callback
+            // returns it and layers the selection feedback on top when selected.
             let node_style = style.clone();
             ng.push_node(
                 node(index, *position, styled_node(name, style, theme))
                     .style(move |theme, status| {
-                        default_node_style(theme, status).resolve(&node_style)
+                        let mut resolved = node_style.clone();
+                        if status == NodeStatus::Selected {
+                            let sel = SelectionStyle::from_theme(theme);
+                            resolved.border_color = sel.selected_border_color.into();
+                            resolved.border_pattern = Pattern::solid(sel.selected_border_width);
+                        }
+                        resolved
                     })
                     .pin_style(styling_pin_style),
             );

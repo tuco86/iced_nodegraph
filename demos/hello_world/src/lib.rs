@@ -1722,9 +1722,9 @@ impl Application {
             })
             .cutting_tool_style(|_theme| iced::Color::from_rgb(1.0, 0.3, 0.3))
             .dragging_edge_style(move |theme, _source| {
-                default_edge_style(theme, EdgeStatus::Idle)
-                    .merge(&drag_overlay)
-                    .resolve(&EdgeStyle::from_theme(theme))
+                drag_overlay
+                    .merge(&default_edge_style(theme, EdgeStatus::Idle))
+                    .resolve()
             });
 
         // Add all nodes from state (in order)
@@ -1903,16 +1903,14 @@ impl Application {
             ng.push_node(
                 ng_node(node_id.clone(), *position, element)
                     .style(move |theme, status| {
-                        default_node_style(theme, status)
-                            .merge(&overlay)
-                            .resolve(&NodeStyle::from_theme(theme))
+                        overlay.merge(&default_node_style(theme, status)).resolve()
                     })
                     .pin_style(move |theme, pin, _other, status| {
                         PinStyle::new()
                             .color(pin_color_for(*pin.info()))
                             .merge(&pin_overlay)
                             .merge(&default_pin_style(theme, status))
-                            .resolve(&PinStyle::from_theme(theme))
+                            .resolve()
                     }),
             );
         }
@@ -1925,9 +1923,7 @@ impl Application {
                 let to = PinRef::new(edge_data.to_node.clone(), edge_data.to_pin);
                 let overlay = edge_overlay.clone();
                 ng.push_edge(ng_edge(from, to).style(move |theme, status, _start, _end| {
-                    default_edge_style(theme, status)
-                        .merge(&overlay)
-                        .resolve(&EdgeStyle::from_theme(theme))
+                    overlay.merge(&default_edge_style(theme, status)).resolve()
                 }));
             }
         }

@@ -4,14 +4,15 @@
 //! the typestate form: `NodeStyle<Partial>` (user overlay, `Option` per field,
 //! `None` = inherit) and `NodeStyle<Resolved>` (renderer form, concrete per
 //! field). The macro also generates `Clone`/`Debug`/`PartialEq`, `Default` for
-//! the overlay, builder setters, and `merge`/`resolve`/`merge_theme`. Only
-//! `from_theme` (palette logic) stays hand-written below.
+//! the overlay, builder setters, and `merge`/`resolve`. The theme-derived base
+//! lives in [`default_node_style`](crate::default_node_style); only the named
+//! presets stay hand-written below.
 //!
 //! On/off is encoded by sentinels (border thickness 0, shadow blur/alpha 0), so
 //! every field is a plain value and inheritance is per-field, never
 //! `Option<Option<T>>`.
 //!
-use iced::{Color, Theme};
+use iced::Color;
 use iced_nodegraph_macros::style;
 use iced_sdf::Pattern;
 
@@ -56,85 +57,6 @@ pub struct NodeStyle {
 }
 
 impl NodeStyle<Resolved> {
-    /// Theme-derived base style. Ports the legacy `NodeStyle::from_theme`
-    /// palette logic onto the flat fields.
-    pub fn from_theme(theme: &Theme) -> Self {
-        let palette = theme.extended_palette();
-        let bg = palette.background.base.color;
-        let bg_weak = palette.background.weak.color;
-        // Pull the theme's primary accent into the node so it reads as part of
-        // the theme rather than neutral gray. The body keeps a faint tint; the
-        // border carries most of the accent signal. Tune via FILL_TINT/
-        // BORDER_TINT below.
-        let accent = palette.primary.base.color;
-
-        // Linear color blend, t in [0, 1] from a toward b.
-        let mix = |a: Color, b: Color, t: f32| {
-            Color::from_rgb(
-                a.r + (b.r - a.r) * t,
-                a.g + (b.g - a.g) * t,
-                a.b + (b.b - a.b) * t,
-            )
-        };
-
-        /// Accent share mixed into the node body fill.
-        const FILL_TINT: f32 = 0.08;
-        /// Accent share mixed into the node border.
-        const BORDER_TINT: f32 = 0.55;
-
-        if palette.is_dark {
-            let neutral_fill = Color::from_rgb(
-                bg.r + (bg_weak.r - bg.r) * 0.3,
-                bg.g + (bg_weak.g - bg.g) * 0.3,
-                bg.b + (bg_weak.b - bg.b) * 0.3,
-            );
-            let node_fill = mix(neutral_fill, accent, FILL_TINT);
-            let node_border = mix(bg_weak, accent, BORDER_TINT);
-            Self {
-                fill_color: ColorQuad::solid(node_fill),
-                corner_radius: 5.0,
-                opacity: 0.75,
-                border_color: ColorQuad::solid(Color::from_rgba(
-                    node_border.r,
-                    node_border.g,
-                    node_border.b,
-                    0.85,
-                )),
-                border_pattern: Pattern::solid(1.0),
-                border_outline_width: 0.0,
-                border_outline_color: ColorQuad::solid(Color::TRANSPARENT),
-                shadow_color: Color::from_rgba(0.0, 0.0, 0.0, 0.3),
-                shadow_distance: 4.0,
-                shadow_offset: (2.0, 2.0),
-            }
-        } else {
-            let neutral_fill = Color::from_rgb(
-                bg.r - (bg.r - bg_weak.r) * 0.15,
-                bg.g - (bg.g - bg_weak.g) * 0.15,
-                bg.b - (bg.b - bg_weak.b) * 0.15,
-            );
-            let node_fill = mix(neutral_fill, accent, FILL_TINT);
-            let node_border = mix(bg_weak, accent, BORDER_TINT);
-            Self {
-                fill_color: ColorQuad::solid(node_fill),
-                corner_radius: 5.0,
-                opacity: 0.85,
-                border_color: ColorQuad::solid(Color::from_rgba(
-                    node_border.r,
-                    node_border.g,
-                    node_border.b,
-                    0.9,
-                )),
-                border_pattern: Pattern::solid(1.0),
-                border_outline_width: 0.0,
-                border_outline_color: ColorQuad::solid(Color::TRANSPARENT),
-                shadow_color: Color::from_rgba(0.0, 0.0, 0.0, 0.22),
-                shadow_distance: 6.0,
-                shadow_offset: (2.0, 2.0),
-            }
-        }
-    }
-
     /// Input node preset (blue tint).
     pub fn input() -> Self {
         Self::preset(
@@ -221,18 +143,20 @@ impl NodeStyle<Resolved> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iced::Theme;
 
     #[test]
-    fn partial_resolves_over_theme_base() {
-        let base = NodeStyle::<Resolved>::from_theme(&Theme::Dark);
+    fn overlay_merged_over_default_resolves() {
+        use crate::style::{NodeStatus, default_node_style};
         // Color coerces to a solid ColorQuad via the `impl Into` setter.
         let overlay = NodeStyle::new().fill_color(Color::WHITE).opacity(1.0);
-        let resolved = overlay.resolve(&base);
+        let base = default_node_style(&Theme::Dark, NodeStatus::Idle);
+        let resolved = overlay.merge(&base).resolve();
 
-        assert_eq!(resolved.fill_color, ColorQuad::solid(Color::WHITE)); // overridden
-        assert_eq!(resolved.opacity, 1.0); // overridden
-        assert_eq!(resolved.corner_radius, base.corner_radius); // inherited
-        assert_eq!(resolved.border_pattern, base.border_pattern); // inherited
+        assert_eq!(resolved.fill_color, ColorQuad::solid(Color::WHITE)); // overlay wins
+        assert_eq!(resolved.opacity, 1.0); // overlay wins
+        assert_eq!(resolved.corner_radius, 5.0); // inherited from theme default
+        assert_eq!(resolved.border_pattern, Pattern::solid(1.0)); // inherited
     }
 
     #[test]

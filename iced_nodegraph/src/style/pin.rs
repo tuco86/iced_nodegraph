@@ -6,7 +6,7 @@
 //! `Color` coerces to a solid quad. Border on/off is the `border_width` sentinel
 //! (0 = no border).
 //!
-use iced::{Color, Theme};
+use iced::Color;
 use iced_nodegraph_macros::style;
 
 use super::PinShape;
@@ -32,41 +32,6 @@ pub struct PinStyle {
 }
 
 impl PinStyle<Resolved> {
-    /// Theme-derived base style.
-    pub fn from_theme(theme: &Theme) -> Self {
-        let palette = theme.extended_palette();
-        let secondary = palette.secondary.base.color;
-        let text = palette.background.base.text;
-
-        if palette.is_dark {
-            Self {
-                color: ColorQuad::solid(Color::from_rgba(
-                    secondary.r,
-                    secondary.g,
-                    secondary.b,
-                    0.7,
-                )),
-                radius: 6.0,
-                shape: PinShape::Circle,
-                border_color: ColorQuad::solid(Color::TRANSPARENT),
-                border_width: 0.0,
-            }
-        } else {
-            Self {
-                color: ColorQuad::solid(Color::from_rgba(
-                    secondary.r * 0.7,
-                    secondary.g * 0.7,
-                    secondary.b * 0.7,
-                    0.8,
-                )),
-                radius: 6.0,
-                shape: PinShape::Circle,
-                border_color: ColorQuad::solid(Color::from_rgba(text.r, text.g, text.b, 0.3)),
-                border_width: 1.0,
-            }
-        }
-    }
-
     /// Data pin preset (circle, blue).
     pub fn data() -> Self {
         Self {
@@ -115,16 +80,18 @@ impl PinStyle<Resolved> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iced::Theme;
 
     #[test]
-    fn partial_resolves_over_theme_base() {
-        let base = PinStyle::<Resolved>::from_theme(&Theme::Dark);
+    fn overlay_merged_over_default_resolves() {
+        use crate::style::{PinStatus, default_pin_style};
         let overlay = PinStyle::new().radius(10.0).shape(PinShape::Square);
-        let resolved = overlay.resolve(&base);
+        let base = default_pin_style(&Theme::Dark, PinStatus::Idle);
+        let resolved = overlay.merge(&base).resolve();
 
-        assert_eq!(resolved.radius, 10.0); // overridden
-        assert_eq!(resolved.shape, PinShape::Square); // overridden
-        assert_eq!(resolved.color, base.color); // inherited
+        assert_eq!(resolved.radius, 10.0); // overlay wins
+        assert_eq!(resolved.shape, PinShape::Square); // overlay wins
+        assert_eq!(resolved.color, base.color.unwrap()); // inherited from default
     }
 
     #[test]

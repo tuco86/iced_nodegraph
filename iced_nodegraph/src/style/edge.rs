@@ -12,7 +12,7 @@
 //! border `width` 0, stroke/border outline `width` 0, shadow `blur` 0 or color
 //! alpha 0.
 //!
-use iced::{Color, Theme};
+use iced::Color;
 use iced_nodegraph_macros::style;
 use iced_sdf::Pattern;
 
@@ -85,12 +85,6 @@ impl EdgeStyle<Resolved> {
         }
     }
 
-    /// Theme-derived base style: 2px solid stroke inheriting pin colors.
-    pub fn from_theme(_theme: &Theme) -> Self {
-        // TRANSPARENT stroke ends mean "inherit from the connected pins".
-        Self::stroke(ColorQuad::solid(Color::TRANSPARENT), Pattern::solid(2.0))
-    }
-
     /// Data flow preset (blue, bezier).
     pub fn data_flow() -> Self {
         Self::stroke(
@@ -159,21 +153,23 @@ impl EdgeStyle<Resolved> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iced::Theme;
 
     #[test]
-    fn partial_resolves_over_theme_base() {
-        let base = EdgeStyle::<Resolved>::from_theme(&Theme::Dark);
+    fn overlay_merged_over_default_resolves() {
+        use crate::style::{EdgeStatus, default_edge_style};
         let overlay = EdgeStyle::new().border_width(2.0).curve(EdgeCurve::Line);
-        let resolved = overlay.resolve(&base);
+        let base = default_edge_style(&Theme::Dark, EdgeStatus::Idle);
+        let resolved = overlay.merge(&base).resolve();
 
-        assert_eq!(resolved.border_width, 2.0); // overridden
-        assert_eq!(resolved.curve, EdgeCurve::Line); // overridden
-        assert_eq!(resolved.pattern, base.pattern); // inherited
+        assert_eq!(resolved.border_width, 2.0); // overlay wins
+        assert_eq!(resolved.curve, EdgeCurve::Line); // overlay wins
+        assert_eq!(resolved.pattern, Pattern::solid(2.0)); // inherited from default
     }
 
     #[test]
     fn sdf_layers_preserves_stroke_pattern() {
-        let mut s = EdgeStyle::<Resolved>::from_theme(&Theme::Dark);
+        let mut s = EdgeStyle::data_flow();
         s.pattern = Pattern::dashed(2.0, 12.0, 6.0);
         let layers = s.sdf_layers(Color::WHITE, Color::BLACK);
         let stroke = &layers[0]; // stroke is the front layer

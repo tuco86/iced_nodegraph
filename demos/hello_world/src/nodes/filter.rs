@@ -3,7 +3,7 @@ use iced::{
     alignment::Horizontal,
     widget::{column, container, row, text},
 };
-use iced_nodegraph::{NodeContentStyle, NodeStyle, pin};
+use iced_nodegraph::{NodeContentStyle, NodeStatus, pin, resolved_node_style};
 
 use super::{node_title_bar, pins};
 
@@ -16,7 +16,7 @@ where
     Message: Clone + 'a,
 {
     // Use the theme-resolved NodeStyle for precise corner calculation
-    let base = NodeStyle::from_theme(theme);
+    let base = resolved_node_style(theme, NodeStatus::Idle);
     let border_width = base.border_pattern.thickness;
     let style = NodeContentStyle::process(theme).with_geometry(base.corner_radius, border_width);
 

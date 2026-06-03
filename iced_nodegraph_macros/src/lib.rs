@@ -4,12 +4,14 @@
 //! style system: one struct generic over `StyleMode`, with each field wrapped by
 //! `S::Wrap<T>` (`Option<T>` for `Partial`, `T` for `Resolved`). It also emits
 //! the mechanical glue: `Clone`/`Debug`/`PartialEq`, `Default` for the partial
-//! overlay, builder setters, and `merge`/`resolve`/`merge_theme`.
+//! overlay, builder setters, and `merge`/`resolve`.
 //!
 //! Requirements at the use site:
 //! - `StyleMode`, `Partial`, `Resolved` must be in scope.
-//! - The struct must provide `from_theme(&iced::Theme) -> Self` on its resolved
-//!   form (`Name<Resolved>`); `merge_theme` calls it.
+//! - `resolve` finalizes a complete overlay (every field set) into the resolved
+//!   form, panicking on any unset field. Make the overlay complete first, e.g.
+//!   by merging it over a complete default produced by a theme-translating
+//!   closure (`default_*_style`).
 
 use proc_macro::TokenStream;
 use quote::quote;
@@ -128,17 +130,17 @@ pub fn style(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
             }
 
-            /// Resolves against an explicit base, filling unset fields from it.
-            pub fn resolve(&self, base: &#name<Resolved>) -> #name<Resolved> {
+            /// Finalizes the overlay into its resolved form, requiring every
+            /// field to be set. Panics on any unset (`None`) field; the overlay
+            /// must be made complete first (e.g. via `merge` over a complete
+            /// default) before resolving.
+            pub fn resolve(self) -> #name<Resolved> {
                 #name {
-                    #( #idents: ::core::clone::Clone::clone(&self.#idents)
-                        .unwrap_or_else(|| ::core::clone::Clone::clone(&base.#idents)), )*
+                    #( #idents: self.#idents.expect(::core::concat!(
+                        ::core::stringify!(#name), ".", ::core::stringify!(#idents),
+                        " must be set before resolve()"
+                    )), )*
                 }
-            }
-
-            /// Resolves against the theme defaults (`Name::<Resolved>::from_theme`).
-            pub fn merge_theme(&self, theme: &::iced::Theme) -> #name<Resolved> {
-                self.resolve(&<#name<Resolved>>::from_theme(theme))
             }
         }
     };

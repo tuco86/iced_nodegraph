@@ -74,9 +74,7 @@ fn pin_style(
     } else {
         colors::PIN_GENERIC_IN
     };
-    default_pin_style(theme, status)
-        .color(color)
-        .resolve(&PinStyle::from_theme(theme))
+    default_pin_style(theme, status).color(color).resolve()
 }
 use std::collections::HashSet;
 

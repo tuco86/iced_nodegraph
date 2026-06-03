@@ -45,10 +45,10 @@ pub struct NodeContentStyle {
     pub border_width: f32,
 }
 
-/// Default node corner radius. Kept in sync with `NodeStyle::from_theme` so a
+/// Default node corner radius. Kept in sync with `default_node_style` so a
 /// `simple_node` built on the theme base lines up with the rendered fill.
 const DEFAULT_CORNER_RADIUS: f32 = 5.0;
-/// Default node border width. Kept in sync with `NodeStyle::from_theme`.
+/// Default node border width. Kept in sync with `default_node_style`.
 const DEFAULT_BORDER_WIDTH: f32 = 1.0;
 
 impl NodeContentStyle {
@@ -447,7 +447,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::style::{NodeStyle, Resolved};
+    use crate::style::{NodeStatus, resolved_node_style};
 
     /// A single radius rounds both corners of the edge equally.
     #[test]
@@ -493,7 +493,7 @@ mod tests {
     #[test]
     fn default_content_matches_rendered_node() {
         let theme = iced::Theme::Dark;
-        let fill = NodeStyle::<Resolved>::from_theme(&theme).corner_radius;
+        let fill = resolved_node_style(&theme, NodeStatus::Idle).corner_radius;
         let content = NodeContentStyle::input(&theme).corner_radius;
         assert_eq!(
             content, fill,

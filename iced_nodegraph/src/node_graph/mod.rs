@@ -112,9 +112,10 @@ impl<'a, N, P, UI, Message, Theme, Renderer> Node<'a, N, P, UI, Message, Theme, 
     /// default:
     /// ```ignore
     /// node(0, pos, el).style(|theme, status| {
-    ///     default_node_style(theme, status)
+    ///     NodeStyle::new()
     ///         .fill_color(Color::WHITE)
-    ///         .resolve(&NodeStyle::from_theme(theme))
+    ///         .merge(&default_node_style(theme, status))
+    ///         .resolve()
     /// })
     /// ```
     pub fn style(mut self, f: impl Fn(&Theme, NodeStatus) -> NodeStyle<Resolved> + 'a) -> Self {
@@ -130,7 +131,7 @@ impl<'a, N, P, UI, Message, Theme, Renderer> Node<'a, N, P, UI, Message, Theme, 
     /// node(0, pos, el).pin_style(|theme, pin, other, status| {
     ///     default_pin_style(theme, status)
     ///         .color(color_for(pin.info()))
-    ///         .resolve(&PinStyle::from_theme(theme))
+    ///         .resolve()
     /// })
     /// ```
     pub fn pin_style(
@@ -384,7 +385,7 @@ pub struct NodeGraph<
     pub(super) size: Size<Length>,
     /// Nodes with position, element, and config overrides.
     /// Config fields set to Some() override theme defaults.
-    /// None fields use `NodeStyle::from_theme()` values at render time.
+    /// None fields use `default_node_style()` values at render time.
     pub(super) nodes: Vec<(
         Point,
         iced::Element<'a, Message, Theme, Renderer>,
@@ -394,7 +395,7 @@ pub struct NodeGraph<
     /// Edges with user-defined pin references and config overrides.
     /// Pin IDs are resolved to local indices at render time.
     /// Config fields set to Some() override theme defaults.
-    /// None fields use `EdgeStyle::from_theme()` values at render time.
+    /// None fields use `default_edge_style()` values at render time.
     pub(super) edges: Vec<(
         PinRef<N, P>,
         PinRef<N, P>,
@@ -506,7 +507,7 @@ where
 
     /// Adds a node with the given ID and default styling.
     ///
-    /// The node will use theme defaults from `NodeStyle::from_theme()`.
+    /// The node will use theme defaults from `default_node_style()`.
     pub fn push_node(&mut self, node: Node<'a, N, P, UI, Message, Theme, Renderer>) {
         self.id_maps.register_node(node.id);
         self.nodes.push((
