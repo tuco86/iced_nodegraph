@@ -1626,8 +1626,17 @@ where
                                     let new_position =
                                         self.nodes[node_index].0 + offset.into_iced();
 
+                                    // A press+release without motion is a click, not
+                                    // a move: don't emit a spurious NodeMoved (which
+                                    // would dirty host state / undo history on a plain
+                                    // selection click). Only report an actual drag.
+                                    let moved = offset.x.abs() > f32::EPSILON
+                                        || offset.y.abs() > f32::EPSILON;
+
                                     // Translate internal index to user ID
-                                    if let Some(node_id) = self.index_to_node_id(node_index) {
+                                    if let Some(node_id) = self.index_to_node_id(node_index)
+                                        && moved
+                                    {
                                         // Call on_move handler if set
                                         if let Some(handler) = self.on_move_handler() {
                                             shell.publish(handler(node_id.clone(), new_position));
@@ -2169,19 +2178,13 @@ where
                                                 if from_ref.node_id == current_node_id
                                                     && from_pin_hash == pin_state.pin_id_hash
                                                 {
-                                                    // Disconnect the edge - already have user IDs
-                                                    if let Some(handler) =
-                                                        self.on_disconnect_handler()
-                                                    {
-                                                        shell.publish(handler(
-                                                            from_ref.clone(),
-                                                            to_ref.clone(),
-                                                        ));
-                                                    }
-                                                    // Note: EdgeDisconnected message not fired here
-
-                                                    // Start dragging FROM the TO pin (the end that stays connected)
-                                                    // We're now dragging back towards the TO pin
+                                                    // Magnetic plug: grabbing a connected pin
+                                                    // does NOT disconnect yet. Enter the snapped
+                                                    // EdgeOver state anchored at the OTHER (TO)
+                                                    // end; the hysteresis in the EdgeOver handler
+                                                    // fires on_disconnect only once the cursor
+                                                    // leaves the grabbed pin by more than
+                                                    // UNSNAP_THRESHOLD.
                                                     // Resolve to_ref to indices for internal Dragging state
                                                     let to_node_idx = match self
                                                         .id_maps
@@ -2226,10 +2229,13 @@ where
                                                     let state =
                                                         tree.state.downcast_mut::<NodeGraphState>();
                                                     state.valid_drop_targets = valid_targets;
-                                                    state.dragging = Dragging::Edge(
+                                                    // Anchor at the TO pin, hold the grabbed
+                                                    // FROM pin snapped (still connected).
+                                                    state.dragging = Dragging::EdgeOver(
                                                         to_node_idx,
                                                         to_pin_idx,
-                                                        cursor_position.into_euclid(),
+                                                        node_index,
+                                                        pin_index,
                                                     );
                                                     shell.capture_event();
                                                     return;
@@ -2239,19 +2245,13 @@ where
                                                 else if to_ref.node_id == current_node_id
                                                     && to_pin_hash == pin_state.pin_id_hash
                                                 {
-                                                    // Disconnect the edge - already have user IDs
-                                                    if let Some(handler) =
-                                                        self.on_disconnect_handler()
-                                                    {
-                                                        shell.publish(handler(
-                                                            from_ref.clone(),
-                                                            to_ref.clone(),
-                                                        ));
-                                                    }
-                                                    // Note: EdgeDisconnected message not fired here
-
-                                                    // Start dragging FROM the FROM pin (the end that stays connected)
-                                                    // We're now dragging away from the FROM pin
+                                                    // Magnetic plug: grabbing a connected pin
+                                                    // does NOT disconnect yet. Enter the snapped
+                                                    // EdgeOver state anchored at the OTHER (FROM)
+                                                    // end; the hysteresis in the EdgeOver handler
+                                                    // fires on_disconnect only once the cursor
+                                                    // leaves the grabbed pin by more than
+                                                    // UNSNAP_THRESHOLD.
                                                     // Resolve from_ref to indices for internal Dragging state
                                                     let from_node_idx = match self
                                                         .id_maps
@@ -2298,10 +2298,13 @@ where
                                                     let state =
                                                         tree.state.downcast_mut::<NodeGraphState>();
                                                     state.valid_drop_targets = valid_targets;
-                                                    state.dragging = Dragging::Edge(
+                                                    // Anchor at the FROM pin, hold the grabbed
+                                                    // TO pin snapped (still connected).
+                                                    state.dragging = Dragging::EdgeOver(
                                                         from_node_idx,
                                                         from_pin_idx,
-                                                        cursor_position.into_euclid(),
+                                                        node_index,
+                                                        pin_index,
                                                     );
                                                     shell.capture_event();
                                                     return;
