@@ -216,8 +216,7 @@ fn draw_at_origin(
         &viewport,
     );
 
-    let result = out.borrow().clone();
-    result
+    out.borrow().clone()
 }
 
 /// Where a node at `world` must land on screen for a graph at `origin` with the
@@ -307,8 +306,7 @@ fn click_select(
         );
     }
 
-    let result = selected.borrow().clone();
-    result
+    selected.borrow().clone()
 }
 
 #[test]
@@ -519,8 +517,7 @@ fn box_select_primitives(
         &viewport,
     );
 
-    let result = out.borrow().primitives.clone();
-    result
+    out.borrow().primitives.clone()
 }
 
 #[test]
