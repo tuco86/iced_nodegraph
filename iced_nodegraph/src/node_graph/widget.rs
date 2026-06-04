@@ -951,6 +951,21 @@ where
                             .intersection(viewport)
                             .unwrap_or(Rectangle::new(node_clip.position(), Size::ZERO));
 
+                        // The child is laid out at its stored position and shifted
+                        // into place by `screen_offset` during a drag. Child widgets
+                        // cull their content against the viewport using that stored
+                        // (pre-translation) position, so a node dragged in from off
+                        // screen would have its content (e.g. text glyphs) culled as
+                        // if still off screen (visible only after the next drop
+                        // re-laid it out). Compensate by handing the child the
+                        // viewport in its own pre-translation space.
+                        let child_viewport = Rectangle {
+                            x: viewport.x - screen_offset.x,
+                            y: viewport.y - screen_offset.y,
+                            width: viewport.width,
+                            height: viewport.height,
+                        };
+
                         renderer.with_layer(clip_bounds, |renderer| {
                             renderer.with_translation(screen_offset, |renderer| {
                                 element.as_widget().draw(
@@ -960,7 +975,7 @@ where
                                     style,
                                     node_layout,
                                     cursor,
-                                    viewport,
+                                    &child_viewport,
                                 );
                             });
                         });
