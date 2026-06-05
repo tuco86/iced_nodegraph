@@ -104,6 +104,20 @@ fn key_pressed(key: keyboard::Key, modifiers: keyboard::Modifiers) -> iced::Even
     })
 }
 
+/// Mirrors iced's `Modifiers::command()`: Cmd on macOS, Ctrl elsewhere. The
+/// graph's shortcuts gate on `command()`, so tests must send the platform's
+/// command modifier or they pass on one OS and fail on the other.
+fn cmd() -> keyboard::Modifiers {
+    #[cfg(target_os = "macos")]
+    {
+        keyboard::Modifiers::LOGO
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        keyboard::Modifiers::CTRL
+    }
+}
+
 fn messages(ui: Simulator<'_, Msg, Theme, Renderer>) -> Vec<Msg> {
     ui.into_messages().collect()
 }
@@ -183,7 +197,7 @@ fn ctrl_a_selects_all() {
     ui.point_at(Point::new(500.0, 400.0));
     ui.simulate([key_pressed(
         keyboard::Key::Character("a".into()),
-        keyboard::Modifiers::CTRL,
+        cmd(),
     )]);
     assert_eq!(last_selection(&messages(ui)), Some(vec![0, 1, 2]));
 }
@@ -249,7 +263,7 @@ fn group_move_emits_group_move_with_delta() {
     ui.point_at(Point::new(500.0, 400.0));
     ui.simulate([key_pressed(
         keyboard::Key::Character("a".into()),
-        keyboard::Modifiers::CTRL,
+        cmd(),
     )]);
     let from = center(Point::new(100.0, 100.0));
     drag(&mut ui, from, from + Vector::new(30.0, -10.0));
@@ -298,7 +312,7 @@ fn ctrl_d_requests_clone_of_selection() {
     click(&mut ui, center(Point::new(100.0, 100.0)));
     ui.simulate([key_pressed(
         keyboard::Key::Character("d".into()),
-        keyboard::Modifiers::CTRL,
+        cmd(),
     )]);
 
     let msgs = messages(ui);
@@ -314,7 +328,7 @@ fn ctrl_d_without_selection_does_nothing() {
     ui.point_at(Point::new(500.0, 400.0));
     ui.simulate([key_pressed(
         keyboard::Key::Character("d".into()),
-        keyboard::Modifiers::CTRL,
+        cmd(),
     )]);
 
     let msgs = messages(ui);
@@ -445,7 +459,7 @@ fn ctrl_click_on_edge_disconnects() {
     // ModifiersChanged + a CursorMoved so pins compute their anchors, then a
     // ctrl-held press on the edge.
     ui.simulate([
-        iced::Event::Keyboard(keyboard::Event::ModifiersChanged(keyboard::Modifiers::CTRL)),
+        iced::Event::Keyboard(keyboard::Event::ModifiersChanged(cmd())),
         moved(mid),
     ]);
     ui.simulate([press(), release()]);
@@ -808,7 +822,7 @@ fn backspace_in_focused_text_input_does_not_delete_node() {
     click(&mut ui, Point::new(150.0, 115.0));
     ui.simulate([key_pressed(
         keyboard::Key::Character("a".into()),
-        keyboard::Modifiers::CTRL,
+        cmd(),
     )]);
     ui.simulate([key_pressed(
         keyboard::Key::Named(keyboard::key::Named::Backspace),
