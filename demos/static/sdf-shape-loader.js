@@ -1,7 +1,7 @@
 /**
  * SDF Shape Doc Loader
  *
- * Embeds SDF gallery WASM instances into iced_sdf::Sdf struct documentation.
+ * Embeds SDF gallery WASM instances into iced_nodegraph_sdf::Sdf struct documentation.
  * Lazy load-in-view: visible slots get their own isolated WASM instance,
  * slots leaving the viewport get torn down and their target div recreated.
  *

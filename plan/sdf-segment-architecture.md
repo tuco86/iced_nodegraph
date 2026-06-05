@@ -1,10 +1,10 @@
 # Segment-Based SDF Architecture
 
-> Status: IMPLEMENTED. This design has shipped in the `iced_sdf` crate. The
+> Status: IMPLEMENTED. This design has shipped in the `iced_nodegraph_sdf` crate. The
 > contour type, turtle/coordinate builder, GPU segment pipeline, cubic beziers,
-> and boolean contour operations all exist in `iced_sdf/src/{curve,drawable,
-> compile,boolean}.rs` and `iced_sdf/src/pipeline/`. Retained as a historical
-> design record; the authoritative reference is `iced_sdf/ARCHITECTURE.md`.
+> and boolean contour operations all exist in `iced_nodegraph_sdf/src/{curve,drawable,
+> compile,boolean}.rs` and `iced_nodegraph_sdf/src/pipeline/`. Retained as a historical
+> design record; the authoritative reference is `iced_nodegraph_sdf/ARCHITECTURE.md`.
 
 ## Problem
 

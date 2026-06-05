@@ -40,7 +40,7 @@ iced_nodegraph/                    # Workspace root
 |           |-- mod.rs             # NodeStyle, EdgeStyle, PinStyle, GraphStyle
 |           `-- config.rs          # Partial-override config types (merge)
 |
-|-- iced_sdf/                      # Segment-based SDF renderer
+|-- iced_nodegraph_sdf/                      # Segment-based SDF renderer
 |   |-- ARCHITECTURE.md            # Authoritative renderer design doc
 |   `-- src/
 |       |-- curve.rs               # Curve / ShapeBuilder contour API
@@ -79,14 +79,14 @@ Provides:
 Key design principles:
 
 - Type safety through `euclid` coordinate abstractions (`WorldPoint`, `ScreenPoint`)
-- Rendering delegated to `iced_sdf` for exact distance fields at any zoom
+- Rendering delegated to `iced_nodegraph_sdf` for exact distance fields at any zoom
 - Generic over node id `N` and pin id `P` (both default to `usize`)
 
-### SDF Renderer: `iced_sdf`
+### SDF Renderer: `iced_nodegraph_sdf`
 
 A standalone crate that renders contours, strokes, and tilings from exact
 signed distance fields. Node bodies with pin cutouts are produced by boolean
-contour operations (`difference_many`). See `iced_sdf/ARCHITECTURE.md` for the
+contour operations (`difference_many`). See `iced_nodegraph_sdf/ARCHITECTURE.md` for the
 full CPU-compile / GPU-compute / fragment pipeline.
 
 ### Demo Projects: `demos/*`
@@ -105,11 +105,11 @@ Each demo is a standalone binary crate (with a `lib.rs` shared by the native
         +-------+--------+----------------------+
         |                |                      |
 +-------v------+  +------v-------+      +--------v---------+
-| iced_sdf     |  | iced_nodegraph|     | demos/*          |
+| iced_nodegraph_sdf     |  | iced_nodegraph|     | demos/*          |
 | (renderer)   |<-| (widget)      |<----| each depends on  |
 |              |  |               |     | iced_nodegraph   |
 | deps: iced,  |  | deps: iced,   |     | (+ demo_common)  |
-| wgpu, glam,  |  | iced_sdf,     |     |                  |
+| wgpu, glam,  |  | iced_nodegraph_sdf,     |     |                  |
 | encase,      |  | euclid        |     |                  |
 | bytemuck     |  |               |     |                  |
 +--------------+  +---------------+     +------------------+
@@ -125,8 +125,8 @@ The root `Cargo.toml` declares the members and shared dependency versions:
 [workspace]
 members = [
     "iced_nodegraph",
-    "iced_sdf",
-    "iced_sdf/examples/basic",
+    "iced_nodegraph_sdf",
+    "iced_nodegraph_sdf/examples/basic",
     "demos/common",
     "demos/hello_world",
     "demos/styling",
@@ -155,7 +155,7 @@ cargo check -p iced_nodegraph --target wasm32-unknown-unknown
 
 # Tests and lints
 cargo test -p iced_nodegraph
-cargo test -p iced_sdf
+cargo test -p iced_nodegraph_sdf
 cargo clippy -p iced_nodegraph -- -D warnings
 
 # Run a demo
@@ -168,7 +168,7 @@ cargo run -p demo_hello_world
 - **demos/README.md**: demo catalog and run commands
 - **Demo READMEs**: describe what each implemented demo does
 - **docs/architecture.md**: this file, workspace organization
-- **iced_sdf/ARCHITECTURE.md**: authoritative SDF renderer design
+- **iced_nodegraph_sdf/ARCHITECTURE.md**: authoritative SDF renderer design
 - **iced_nodegraph/NODE_STYLE_GUIDE.md**: visual node-design guidelines
 
 ## External Dependencies

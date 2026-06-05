@@ -45,7 +45,7 @@ pub enum EdgeSection {
     Debug,
 }
 
-/// Pattern type for simple selection (maps to iced_sdf::Pattern)
+/// Pattern type for simple selection (maps to iced_nodegraph_sdf::Pattern)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PatternType {
     #[default]
@@ -178,7 +178,7 @@ impl EdgeConfigInputs {
         }
     }
 
-    /// Builds the Pattern from individual inputs, aligned with iced_sdf gallery.
+    /// Builds the Pattern from individual inputs, aligned with iced_nodegraph_sdf gallery.
     /// Returns None when no pattern field is set (inherit).
     fn build_pattern(&self) -> Option<Pattern> {
         let has_overrides = self.pattern_type.is_some()

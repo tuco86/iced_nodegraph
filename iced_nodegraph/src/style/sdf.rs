@@ -1,22 +1,22 @@
-//! Decomposition of node-graph style types into `iced_sdf` draw layers.
+//! Decomposition of node-graph style types into `iced_nodegraph_sdf` draw layers.
 //!
 //! Each visual element (edge, node, pin) is composited from several SDF draws
 //! stacked front-to-back. This module is the single place that translates the
 //! resolved style types ([`EdgeStyle`], [`NodeStyle`], [`PinStyle`] in their
-//! `Resolved` form) into the flat list of [`iced_sdf::Style`] layers the
+//! `Resolved` form) into the flat list of [`iced_nodegraph_sdf::Style`] layers the
 //! renderer pushes. The widget owns geometry (where pins are, how an edge
 //! curves); this module owns appearance (which layers exist and their distance
 //! bands).
 //!
 //! A color field is a [`ColorQuad`]: its four corners map directly onto the four
-//! corners of an `iced_sdf::Style` (arc-length axis start->end crossed with the
+//! corners of an `iced_nodegraph_sdf::Style` (arc-length axis start->end crossed with the
 //! distance axis near->far).
 //!
 //! Layer order matters: the first layer in a returned list is drawn closest to
 //! the viewer (lowest SDF z-order), the last is deepest.
 
 use iced::Color;
-use iced_sdf::{Pattern, Style};
+use iced_nodegraph_sdf::{Pattern, Style};
 
 use crate::node_pin::PinDirection;
 

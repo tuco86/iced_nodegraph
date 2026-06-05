@@ -3,7 +3,7 @@
 //! This module implements the Iced `Widget` trait for [`NodeGraph`], handling:
 //! - Layout computation for nodes and their content
 //! - Event processing (mouse, keyboard)
-//! - SDF-based rendering via iced_sdf primitives
+//! - SDF-based rendering via iced_nodegraph_sdf primitives
 //!
 //! ## Rendering Layers
 //!
@@ -39,7 +39,7 @@ use crate::{
         PinStyle, Resolved,
     },
 };
-use iced_sdf::{Curve, Drawable, Pattern, SdfPrimitive, Style};
+use iced_nodegraph_sdf::{Curve, Drawable, Pattern, SdfPrimitive, Style};
 
 use iced::Color;
 
@@ -803,7 +803,7 @@ where
                     [size.width * 0.5, size.height * 0.5],
                     resolved.corner_radius,
                 );
-                let outline = iced_sdf::boolean::difference_many(&body, &cut_circles);
+                let outline = iced_nodegraph_sdf::boolean::difference_many(&body, &cut_circles);
                 Some(NodeGeom {
                     outline,
                     resolved,

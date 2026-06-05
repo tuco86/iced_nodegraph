@@ -1891,7 +1891,7 @@ fn save_rgba_png(path: &str, width: u32, height: u32, pixels: &[[u8; 4]], bg: [u
 /// border + shadow) on the two crossing S-curves, but with each layer a single
 /// distinguishable flat color, and dumps a 160x80 PNG centered on the crossing.
 /// Not an assertion - a visual probe for the reported tile-boundary artifact.
-/// Run on demand: `cargo test -p iced_sdf dump_edge_editor_center -- --ignored --nocapture`.
+/// Run on demand: `cargo test -p iced_nodegraph_sdf dump_edge_editor_center -- --ignored --nocapture`.
 #[test]
 #[ignore]
 fn dump_edge_editor_center() {

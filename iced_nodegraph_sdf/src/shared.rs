@@ -60,7 +60,7 @@ impl SharedSdfResources {
 
     fn new(device: &Device, format: TextureFormat) -> Self {
         let shader_module = device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("iced_sdf_shader"),
+            label: Some("iced_nodegraph_sdf_shader"),
             source: ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
                 "pipeline/shader.wgsl"
             ))),

@@ -14,14 +14,14 @@
 //!
 use iced::Color;
 use iced_nodegraph_macros::style;
-use iced_sdf::Pattern;
+use iced_nodegraph_sdf::Pattern;
 
 use super::color::ColorQuad;
 use super::mode::{Partial, Resolved, StyleMode};
 
 /// Visual style for a node.
 ///
-/// Color fields are [`ColorQuad`]s (the four iced_sdf corners); a plain `Color`
+/// Color fields are [`ColorQuad`]s (the four iced_nodegraph_sdf corners); a plain `Color`
 /// coerces to a solid quad, so simple cases stay one-liners.
 #[style]
 pub struct NodeStyle {

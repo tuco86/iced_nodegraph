@@ -13,7 +13,7 @@ A high-performance node graph editor widget for the [Iced](https://github.com/ic
 This is a **Cargo workspace** containing:
 
 - **`iced_nodegraph/`** - Core node graph widget library
-- **`iced_sdf/`** - SDF rendering engine (signed distance fields on GPU)
+- **`iced_nodegraph_sdf/`** - SDF rendering engine (signed distance fields on GPU)
 - **`demos/`** - Demonstration applications
   - [`hello_world`](demos/hello_world/) - Basic usage and command palette
   - [`styling`](demos/styling/) - Theming and visual customization
@@ -90,7 +90,7 @@ cargo run -p demo_styling
 cargo run -p demo_interaction
 cargo run --release -p demo_500_nodes
 cargo run -p demo_shader_editor
-cargo run -p sdf_basic                 # iced_sdf example
+cargo run -p sdf_basic                 # iced_nodegraph_sdf example
 ```
 
 ## Building
@@ -99,7 +99,7 @@ cargo run -p sdf_basic                 # iced_sdf example
 cargo build -p iced_nodegraph          # Core library
 cargo build --workspace                # Everything
 cargo test -p iced_nodegraph           # 69 unit tests
-cargo test -p iced_sdf                 # 34 unit tests
+cargo test -p iced_nodegraph_sdf                 # 34 unit tests
 cargo clippy --workspace -- -D warnings
 ```
 
@@ -128,7 +128,7 @@ iced_nodegraph/                    # Workspace root
 │       ├── helpers.rs             # Clone, delete, selection utilities
 │       ├── ids.rs                 # Generic ID system
 │       └── prelude.rs             # Convenience re-exports
-├── iced_sdf/                      # SDF rendering engine
+├── iced_nodegraph_sdf/                      # SDF rendering engine
 │   └── src/
 │       ├── shape.rs               # SDF primitives and CSG operations
 │       ├── eval.rs                # CPU-side SDF evaluation (hit testing)

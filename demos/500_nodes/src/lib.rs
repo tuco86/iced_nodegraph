@@ -232,7 +232,7 @@ impl Application {
         }
 
         // Add stats overlay with SDF pipeline metrics
-        let sdf = iced_sdf::sdf_stats();
+        let sdf = iced_nodegraph_sdf::sdf_stats();
         let stats = container(
             column![
                 text(format!("Nodes: {}", self.nodes.len())).size(14),

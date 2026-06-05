@@ -693,7 +693,7 @@ dependencies = [
  "console_error_panic_hook",
  "iced",
  "iced_nodegraph",
- "iced_sdf",
+ "iced_nodegraph_sdf",
  "wasm-bindgen",
  "web-sys",
 ]
@@ -1537,7 +1537,7 @@ dependencies = [
  "euclid",
  "iced",
  "iced_nodegraph_macros",
- "iced_sdf",
+ "iced_nodegraph_sdf",
  "iced_test",
  "iced_wgpu",
  "iced_widget",
@@ -1553,6 +1553,21 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "iced_nodegraph_sdf"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "encase",
+ "glam",
+ "iced",
+ "iced_wgpu",
+ "png 0.17.16",
+ "pollster",
+ "web-time",
+ "wgpu",
 ]
 
 [[package]]
@@ -1599,21 +1614,6 @@ dependencies = [
  "iced_futures",
  "raw-window-handle",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "iced_sdf"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "encase",
- "glam",
- "iced",
- "iced_wgpu",
- "png 0.17.16",
- "pollster",
- "web-time",
- "wgpu",
 ]
 
 [[package]]
@@ -3036,7 +3036,7 @@ version = "0.1.0"
 dependencies = [
  "iced",
  "iced_aw",
- "iced_sdf",
+ "iced_nodegraph_sdf",
  "iced_wgpu",
  "web-time",
 ]

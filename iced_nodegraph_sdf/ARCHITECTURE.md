@@ -1,4 +1,4 @@
-# iced_sdf Architecture
+# iced_nodegraph_sdf Architecture
 
 ## Purpose
 

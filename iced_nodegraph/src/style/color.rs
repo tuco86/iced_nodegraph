@@ -1,6 +1,6 @@
-//! `ColorQuad`: the four corner colors of an iced_sdf `Style`.
+//! `ColorQuad`: the four corner colors of an iced_nodegraph_sdf `Style`.
 //!
-//! An iced_sdf style is always a 2D color field: the arc-length axis
+//! An iced_nodegraph_sdf style is always a 2D color field: the arc-length axis
 //! (start -> end) crossed with the distance axis (near -> far). `ColorQuad`
 //! packages those four corners uniformly so node/edge/pin styles can expose the
 //! full gradient capability through a single field type, with constructors for

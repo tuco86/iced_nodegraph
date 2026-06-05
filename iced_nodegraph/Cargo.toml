@@ -13,7 +13,7 @@ categories = ["gui", "graphics", "visualization"]
 [dependencies]
 euclid.workspace = true
 iced_nodegraph_macros.workspace = true
-iced_sdf.workspace = true
+iced_nodegraph_sdf.workspace = true
 iced_wgpu.workspace = true
 iced_widget.workspace = true
 # webgl feature adds WebGL2 fallback for browsers without WebGPU (ignored on native)

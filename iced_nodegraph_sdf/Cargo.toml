@@ -1,5 +1,5 @@
 [package]
-name = "iced_sdf"
+name = "iced_nodegraph_sdf"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

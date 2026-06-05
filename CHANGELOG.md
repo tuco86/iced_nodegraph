@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `iced_sdf`: segment-based SDF renderer with exact distance fields (lines, arcs, cubic beziers)
-- `iced_sdf`: boolean contour operations (union, difference, intersection, merge) for clean pin cutouts
+- `iced_nodegraph_sdf`: segment-based SDF renderer with exact distance fields (lines, arcs, cubic beziers)
+- `iced_nodegraph_sdf`: boolean contour operations (union, difference, intersection, merge) for clean pin cutouts
 - Closed-loop validation guard on boolean operands (debug assertion plus release auto-close)
 - Pin cutouts: node bodies are punctured by per-pin circular cutouts via a single boolean difference
 - Z-ordering: nodes are ordered by last-moved, with selected nodes drawn on top
@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Migrated rendering from the legacy CSG SDF path to the segment-based `iced_sdf` crate
+- Migrated rendering from the legacy CSG SDF path to the segment-based `iced_nodegraph_sdf` crate
 - Fullscreen-quad pipeline with per-draw AABB filtering and tight clip bounds
 
 ### Fixed

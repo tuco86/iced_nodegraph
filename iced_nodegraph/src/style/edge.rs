@@ -14,7 +14,7 @@
 //!
 use iced::Color;
 use iced_nodegraph_macros::style;
-use iced_sdf::Pattern;
+use iced_nodegraph_sdf::Pattern;
 
 use super::EdgeCurve;
 use super::color::ColorQuad;
@@ -177,7 +177,7 @@ mod tests {
         assert!(
             matches!(
                 pat.pattern_type,
-                iced_sdf::pattern::PatternType::Dashed { .. }
+                iced_nodegraph_sdf::pattern::PatternType::Dashed { .. }
             ),
             "stroke pattern is not Dashed: {:?}",
             pat.pattern_type

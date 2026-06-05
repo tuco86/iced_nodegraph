@@ -3,11 +3,11 @@ use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use iced::widget::{button, checkbox, column, container, pick_list, row, scrollable, slider, text};
 use iced::{Color, Element, Fill, Length, Rectangle, Size, Subscription, Theme};
-use iced_sdf::{Curve, Drawable, Pattern, SdfPrimitive, Style, Tiling};
+use iced_nodegraph_sdf::{Curve, Drawable, Pattern, SdfPrimitive, Style, Tiling};
 
 fn main() -> iced::Result {
     iced::application(App::default, App::update, App::view)
-        .title("SDF Basic - iced_sdf")
+        .title("SDF Basic - iced_nodegraph_sdf")
         .font(iced_aw::ICED_AW_FONT_BYTES)
         .theme(App::theme)
         .subscription(App::subscription)
@@ -410,11 +410,11 @@ fn build_node_shape(cr: f32) -> Drawable {
 }
 
 fn edge_with_pins(
-    mut s: iced_sdf::ShapeBuilder,
+    mut s: iced_nodegraph_sdf::ShapeBuilder,
     length: f32,
     pins: &[f32],
     pr: f32,
-) -> iced_sdf::ShapeBuilder {
+) -> iced_nodegraph_sdf::ShapeBuilder {
     let half = length / 2.0;
     let mut sorted: Vec<f32> = pins.iter().map(|&y| y + half).collect();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());

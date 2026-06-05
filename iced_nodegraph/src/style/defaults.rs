@@ -22,7 +22,7 @@
 //! [`default_pin_style`] has no static `ValidTarget` feedback.
 
 use iced::{Color, Theme};
-use iced_sdf::Pattern;
+use iced_nodegraph_sdf::Pattern;
 
 use super::{
     EdgeCurve, EdgeStatus, EdgeStyle, NodeStatus, NodeStyle, Partial, PinShape, PinStatus,

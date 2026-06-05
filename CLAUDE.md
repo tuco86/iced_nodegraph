@@ -97,12 +97,12 @@ Use the `code-reviewer` agent for reviewing significant code changes before comm
 This workspace contains a node graph editor built on Iced 0.14:
 
 - **`iced_nodegraph`** - Custom node graph widget built on Iced GUI framework *(main project)*
-- **`iced_sdf`** - Segment-based SDF renderer providing exact distance fields for nodes, edges, pins, and pin cutouts
+- **`iced_nodegraph_sdf`** - Segment-based SDF renderer providing exact distance fields for nodes, edges, pins, and pin cutouts
 - **`demos/*`** - hello_world, styling, interaction, 500_nodes, shader_editor, plus a shared `common` crate
 
 `ngwa-rs` (a SpacetimeDB backend module) is an optional, separate sibling workspace at `../ngwa-rs`. It is NOT a member of this workspace's `Cargo.toml` and is not required to build or run the widget or demos.
 
-**Dependencies**: Uses `iced = "0.14"` from crates.io and the in-tree `iced_sdf` crate for SDF-based rendering.
+**Dependencies**: Uses `iced = "0.14"` from crates.io and the in-tree `iced_nodegraph_sdf` crate for SDF-based rendering.
 
 **Current Status**: Core functionality is complete - node/pin interaction, edge connections, and coordinate transformations are fully functional with type-safe API.
 
@@ -141,7 +141,7 @@ The project uses **euclid** crate for type-safe coordinate transformations:
 - **State Management** (`src/node_graph/state.rs`) - Handles dragging states and camera state
 
 ### SDF-Based Rendering
-Uses **iced_sdf** for high-performance node graph rendering:
+Uses **iced_nodegraph_sdf** for high-performance node graph rendering:
 - Nodes, edges, pins, and overlays rendered via SDF `Layer` + `Pattern` API
 - `Pattern` controls stroke appearance (solid, dashed, dotted, arrowed, etc.)
 - `Layer` composites fill, gradient, outline, blur, and expand effects
@@ -210,7 +210,7 @@ let world_cursor: WorldPoint = camera.screen_to_world().transform_point(cursor_p
 - `EDGE_CLICK_THRESHOLD = 8.0` pixels (in world space)
 
 ### Style System Pattern
-Styles use `iced_sdf::Pattern` and `Layer` directly:
+Styles use `iced_nodegraph_sdf::Pattern` and `Layer` directly:
 - `EdgeStyle` has `pattern: Pattern` for stroke appearance, optional `EdgeBorder` and `EdgeShadow`
 - `NodeStyle` has optional `NodeBorder` (with `pattern: Pattern`) and `NodeShadow`
 - Config types (`NodeConfig`, `EdgeConfig`) use `Option<T>` for partial overrides with `merge()`
@@ -220,7 +220,7 @@ Styles use `iced_sdf::Pattern` and `Layer` directly:
 
 ### Iced Framework
 - Uses **iced 0.14** from crates.io (upstream)
-- Uses advanced renderer features via `iced_sdf`
+- Uses advanced renderer features via `iced_nodegraph_sdf`
 - Requires `features = ["advanced", "wgpu", "tokio"]`
 
 ### Cross-Project Dependencies
@@ -314,4 +314,4 @@ ng.can_connect(|from, to| bool)          // live snap validation during drag
 ng.selection(&selected_set)              // highlight + z-order selected nodes
 ```
 
-When adding features, maintain the coordinate system abstractions and use `iced_sdf` Layer/Pattern API for custom rendering.
+When adding features, maintain the coordinate system abstractions and use `iced_nodegraph_sdf` Layer/Pattern API for custom rendering.

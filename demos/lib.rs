@@ -82,7 +82,7 @@
 //! workspace/
 //! |-- Cargo.toml              # Workspace manifest
 //! |-- iced_nodegraph/         # Core widget library
-//! |-- iced_sdf/               # Segment-based SDF renderer
+//! |-- iced_nodegraph_sdf/               # Segment-based SDF renderer
 //! `-- demos/
 //!     |-- common/             # Shared screenshot helper
 //!     |-- hello_world/

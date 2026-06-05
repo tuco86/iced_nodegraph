@@ -11,7 +11,7 @@ name = "sdf_basic"
 path = "src/main.rs"
 
 [dependencies]
-iced_sdf.workspace = true
+iced_nodegraph_sdf.workspace = true
 iced = { workspace = true, features = ["advanced", "wgpu"] }
 iced_wgpu.workspace = true
 iced_aw = { workspace = true, features = ["color_picker"] }

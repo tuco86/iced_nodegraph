@@ -16,7 +16,7 @@
 //! # Rendering
 //!
 //! ```no_run
-//! use iced_sdf::{Curve, Style, Pattern, SdfPrimitive};
+//! use iced_nodegraph_sdf::{Curve, Style, Pattern, SdfPrimitive};
 //! use iced::Color;
 //!
 //! let (cam_x, cam_y, zoom, elapsed) = (0.0, 0.0, 1.0, 0.0);
