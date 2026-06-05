@@ -1536,7 +1536,6 @@ dependencies = [
  "bitflags 2.11.1",
  "euclid",
  "iced",
- "iced_nodegraph_macros",
  "iced_nodegraph_sdf",
  "iced_test",
  "iced_wgpu",
@@ -1544,15 +1543,6 @@ dependencies = [
  "rustc-hash 2.1.2",
  "thiserror 2.0.18",
  "web-time",
-]
-
-[[package]]
-name = "iced_nodegraph_macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]
