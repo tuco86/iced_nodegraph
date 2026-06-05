@@ -6,12 +6,13 @@ use iced::{
     Color, Length,
     widget::{column, container, row, text},
 };
-use iced_nodegraph::{ColorQuad, EdgeCurve, EdgeStyle, NodeContentStyle, Partial, Pattern, pin};
+use iced_nodegraph::{ColorQuad, EdgeCurve, NodeContentStyle, Pattern, pin};
 
 use crate::nodes::{
     collapsed_pin_row, color_swatch, fmt_float, node_title_bar, pin_row, pins, push_section,
     value_display,
 };
+use crate::style_overlay::EdgeOverlay;
 
 /// Section expansion state for EdgeConfig nodes
 #[derive(Debug, Clone, Default)]
@@ -62,7 +63,7 @@ pub enum PatternType {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct EdgeConfigInputs {
     /// Parent overlay to inherit from
-    pub config_in: Option<EdgeStyle<Partial>>,
+    pub config_in: Option<EdgeOverlay>,
 
     // --- Stroke ---
     pub start_color: Option<Color>,
@@ -105,8 +106,8 @@ pub struct EdgeConfigInputs {
 impl EdgeConfigInputs {
     /// Builds the overlay by setting this node's fields, then merging over the parent.
     /// Colors map to arc-length gradients (start -> end); TRANSPARENT = inherit pin.
-    pub fn build(&self) -> EdgeStyle<Partial> {
-        let mut p = EdgeStyle::new();
+    pub fn build(&self) -> EdgeOverlay {
+        let mut p = EdgeOverlay::new();
 
         if self.start_color.is_some() || self.end_color.is_some() {
             p = p.stroke_color(ColorQuad::arc(

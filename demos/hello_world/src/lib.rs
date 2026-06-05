@@ -39,6 +39,7 @@ mod ids;
 mod nodes;
 #[cfg(not(target_arch = "wasm32"))]
 mod persistence;
+mod style_overlay;
 
 use iced::{
     Color, Event, Length, Point, Subscription, Task, Theme, Vector, event, keyboard,
@@ -47,8 +48,8 @@ use iced::{
 };
 use iced_nodegraph::{EdgeCurve, PinShape};
 use iced_nodegraph::{
-    EdgeStatus, EdgeStyle, NodeStyle, Partial, PinRef, PinStyle, default_edge_style,
-    default_node_style, default_pin_style, edge as ng_edge, node as ng_node,
+    EdgeStatus, PinRef, default_edge_style, default_node_style, default_pin_style, edge as ng_edge,
+    node as ng_node,
 };
 use iced_palette::{
     Command, Shortcut, command, command_palette, find_matching_shortcut, focus_input,
@@ -67,6 +68,7 @@ use nodes::{
 #[cfg(not(target_arch = "wasm32"))]
 use persistence::EdgeData;
 use std::collections::{HashMap, HashSet};
+use style_overlay::{EdgeOverlay, NodeOverlay, PinOverlay};
 
 /// Edge data for in-memory representation (WASM version).
 #[cfg(target_arch = "wasm32")]
@@ -240,9 +242,9 @@ enum PaletteView {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 enum ConfigOutput {
-    Node(NodeStyle<Partial>),
-    Edge(EdgeStyle<Partial>),
-    Pin(PinStyle<Partial>),
+    Node(NodeOverlay),
+    Edge(EdgeOverlay),
+    Pin(PinOverlay),
 }
 
 /// Maps a pin's data-type marker to its semantic color. Pins carry no style;
@@ -276,9 +278,9 @@ fn pin_color_for(ty: std::any::TypeId) -> Color {
 /// partial overlay resolved against the theme base at draw time.
 #[derive(Debug, Clone, Default)]
 struct ComputedStyle {
-    node: NodeStyle<Partial>,
-    edge: EdgeStyle<Partial>,
-    pin: PinStyle<Partial>,
+    node: NodeOverlay,
+    edge: EdgeOverlay,
+    pin: PinOverlay,
 }
 
 struct Application {
@@ -1675,7 +1677,7 @@ impl Application {
             .unwrap_or(&self.current_theme);
 
         // Graph-wide node defaults - combined with per-node overlays via merge()
-        let node_defaults = NodeStyle::new().corner_radius(8.0).opacity(0.88);
+        let node_defaults = NodeOverlay::new().corner_radius(8.0).opacity(0.88);
         // The dragging edge preview uses the graph-wide computed edge overlay
         // (e.g. from an EdgeConfig -> ApplyToGraph chain).
         let drag_overlay = self.computed_style.edge.clone();
@@ -1722,9 +1724,7 @@ impl Application {
             })
             .cutting_tool_style(|_theme| iced::Color::from_rgb(1.0, 0.3, 0.3))
             .dragging_edge_style(move |theme, _source| {
-                drag_overlay
-                    .merge(&default_edge_style(theme, EdgeStatus::Idle))
-                    .resolve()
+                drag_overlay.resolve_over(default_edge_style(theme, EdgeStatus::Idle))
             });
 
         // Add all nodes from state (in order)
@@ -1903,14 +1903,13 @@ impl Application {
             ng.push_node(
                 ng_node(node_id.clone(), *position, element)
                     .style(move |theme, status| {
-                        overlay.merge(&default_node_style(theme, status)).resolve()
+                        overlay.resolve_over(default_node_style(theme, status))
                     })
                     .pin_style(move |theme, pin, _other, status| {
-                        PinStyle::new()
+                        PinOverlay::new()
                             .color(pin_color_for(*pin.info()))
                             .merge(&pin_overlay)
-                            .merge(&default_pin_style(theme, status))
-                            .resolve()
+                            .resolve_over(default_pin_style(theme, status))
                     }),
             );
         }
@@ -1923,7 +1922,7 @@ impl Application {
                 let to = PinRef::new(edge_data.to_node.clone(), edge_data.to_pin);
                 let overlay = edge_overlay.clone();
                 ng.push_edge(ng_edge(from, to).style(move |theme, status, _start, _end| {
-                    overlay.merge(&default_edge_style(theme, status)).resolve()
+                    overlay.resolve_over(default_edge_style(theme, status))
                 }));
             }
         }
@@ -2367,7 +2366,7 @@ mod tests {
     #[test]
     fn test_computed_style_pin_overlay_with_values() {
         let style = ComputedStyle {
-            pin: PinStyle::new()
+            pin: PinOverlay::new()
                 .color(Color::from_rgb(1.0, 0.0, 0.0))
                 .radius(10.0)
                 .shape(PinShape::Diamond),
@@ -2381,7 +2380,7 @@ mod tests {
     #[test]
     fn test_computed_style_node_overlay() {
         let style = ComputedStyle {
-            node: NodeStyle::new()
+            node: NodeOverlay::new()
                 .corner_radius(12.0)
                 .opacity(0.8)
                 .fill_color(Color::from_rgb(0.2, 0.3, 0.4)),
@@ -2398,7 +2397,7 @@ mod tests {
         assert!(style.edge.pattern.is_none());
 
         let style = ComputedStyle {
-            edge: EdgeStyle::new()
+            edge: EdgeOverlay::new()
                 .pattern(iced_nodegraph::Pattern::solid(5.0))
                 .curve(EdgeCurve::Line),
             ..Default::default()

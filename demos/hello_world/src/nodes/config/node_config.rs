@@ -7,9 +7,10 @@ use iced::{
     alignment::Horizontal,
     widget::{column, container, row, text},
 };
-use iced_nodegraph::{NodeContentStyle, NodeStyle, Partial, Pattern, pin};
+use iced_nodegraph::{NodeContentStyle, Pattern, pin};
 
 use crate::nodes::{colors, node_title_bar, pins, section_header_with_pins};
+use crate::style_overlay::NodeOverlay;
 
 /// Section expansion state for NodeConfig nodes
 #[derive(Debug, Clone, Default)]
@@ -38,7 +39,7 @@ pub enum NodeSection {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct NodeConfigInputs {
     /// Parent overlay to inherit from
-    pub config_in: Option<NodeStyle<Partial>>,
+    pub config_in: Option<NodeOverlay>,
     /// Individual field overrides
     pub fill_color: Option<Color>,
     pub border_color: Option<Color>,
@@ -49,8 +50,8 @@ pub struct NodeConfigInputs {
 
 impl NodeConfigInputs {
     /// Builds the final overlay by merging this node's fields over the parent.
-    pub fn build(&self) -> NodeStyle<Partial> {
-        let mut p = NodeStyle::new();
+    pub fn build(&self) -> NodeOverlay {
+        let mut p = NodeOverlay::new();
         if let Some(c) = self.fill_color {
             p = p.fill_color(c);
         }

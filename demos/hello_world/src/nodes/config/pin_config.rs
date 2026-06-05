@@ -7,15 +7,16 @@ use iced::{
     alignment::Horizontal,
     widget::{column, container, row, text},
 };
-use iced_nodegraph::{NodeContentStyle, Partial, PinShape, PinStyle, pin};
+use iced_nodegraph::{NodeContentStyle, PinShape, pin};
 
 use crate::nodes::{colors, node_title_bar, pins};
+use crate::style_overlay::PinOverlay;
 
 /// Collected inputs for PinConfigNode
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PinConfigInputs {
     /// Parent overlay to inherit from
-    pub config_in: Option<PinStyle<Partial>>,
+    pub config_in: Option<PinOverlay>,
     /// Individual field overrides
     pub color: Option<Color>,
     pub radius: Option<f32>,
@@ -26,8 +27,8 @@ pub struct PinConfigInputs {
 
 impl PinConfigInputs {
     /// Builds the overlay by setting this node's fields, then merging over the parent.
-    pub fn build(&self) -> PinStyle<Partial> {
-        let mut p = PinStyle::new();
+    pub fn build(&self) -> PinOverlay {
+        let mut p = PinOverlay::new();
         if let Some(c) = self.color {
             p = p.color(c);
         }

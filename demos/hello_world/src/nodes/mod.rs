@@ -36,9 +36,9 @@ use iced::{
     alignment::Horizontal,
     widget::{Container, Row, container, row, text},
 };
-use iced_nodegraph::{
-    EdgeCurve, EdgeStyle, NodeContentStyle, NodeStyle, Partial, PinShape, PinStyle, node_header,
-};
+use iced_nodegraph::{EdgeCurve, NodeContentStyle, PinShape, node_header};
+
+use crate::style_overlay::{EdgeOverlay, NodeOverlay, PinOverlay};
 
 /// Semantic pin colors for consistent visual language across nodes.
 /// Based on "Industrial Precision" design system.
@@ -97,11 +97,11 @@ pub enum NodeValue {
     EdgeCurve(EdgeCurve),
     PinShape(PinShape),
     PatternType(PatternType),
-    // Style overlays for config-node chains (the old *Config types, now the
-    // typestate Partial overlays).
-    NodeConfig(NodeStyle<Partial>),
-    EdgeConfig(EdgeStyle<Partial>),
-    PinConfig(PinStyle<Partial>),
+    // Style overlays for config-node chains (partial overlays layered over the
+    // theme base at draw time).
+    NodeConfig(NodeOverlay),
+    EdgeConfig(EdgeOverlay),
+    PinConfig(PinOverlay),
 }
 
 #[allow(dead_code)]
@@ -155,21 +155,21 @@ impl NodeValue {
         }
     }
 
-    pub fn as_node_config(&self) -> Option<&NodeStyle<Partial>> {
+    pub fn as_node_config(&self) -> Option<&NodeOverlay> {
         match self {
             NodeValue::NodeConfig(c) => Some(c),
             _ => None,
         }
     }
 
-    pub fn as_edge_config(&self) -> Option<&EdgeStyle<Partial>> {
+    pub fn as_edge_config(&self) -> Option<&EdgeOverlay> {
         match self {
             NodeValue::EdgeConfig(c) => Some(c),
             _ => None,
         }
     }
 
-    pub fn as_pin_config(&self) -> Option<&PinStyle<Partial>> {
+    pub fn as_pin_config(&self) -> Option<&PinOverlay> {
         match self {
             NodeValue::PinConfig(c) => Some(c),
             _ => None,
