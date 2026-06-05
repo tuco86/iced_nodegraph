@@ -3,7 +3,7 @@ use iced::{
     alignment::Horizontal,
     widget::{Container, column, container, row, text},
 };
-use iced_nodegraph::{NodeContentStyle, NodeStyle, Resolved, node_header, pin};
+use iced_nodegraph::{NodeContentStyle, NodeStyle, node_header, pin};
 
 /// Marker type for generic data pins
 pub struct Data;
@@ -36,7 +36,7 @@ where
 /// the title bar color is derived from the style's fill color.
 pub fn styled_node<'a, Message>(
     name: &str,
-    style: &NodeStyle<Resolved>,
+    style: &NodeStyle,
     theme: &'a iced::Theme,
 ) -> iced::Element<'a, Message>
 where
@@ -77,7 +77,7 @@ where
 
 /// Determines the content style based on the node's fill color.
 /// Uses the node's actual corner_radius and border_width for proper geometry.
-fn determine_content_style(style: &NodeStyle<Resolved>, theme: &iced::Theme) -> NodeContentStyle {
+fn determine_content_style(style: &NodeStyle, theme: &iced::Theme) -> NodeContentStyle {
     // Pick the content preset from the body's representative (near-start) fill.
     let fill = style.fill_color.near_start;
     let base = if fill.b > fill.r && fill.b > fill.g {

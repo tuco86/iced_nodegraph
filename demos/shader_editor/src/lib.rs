@@ -52,7 +52,7 @@ use iced::{
     window,
 };
 use iced_nodegraph::{
-    PinDirection, PinInfo, PinRef, PinSide, PinStatus, PinStyle, Resolved, default_pin_style,
+    PinDirection, PinInfo, PinRef, PinSide, PinStatus, PinStyle, default_pin_style,
     edge as ng_edge, node as ng_node, node_pin,
 };
 use iced_palette::{
@@ -618,7 +618,7 @@ fn pin_style(
     pin: &PinInfo<'_, usize, ::std::any::TypeId>,
     _other: Option<&PinInfo<'_, usize, ::std::any::TypeId>>,
     status: PinStatus,
-) -> PinStyle<Resolved> {
+) -> PinStyle {
     use std::any::TypeId;
     let ty = *pin.info();
     let color = if ty == TypeId::of::<colors::Float>() {
@@ -634,7 +634,10 @@ fn pin_style(
     } else {
         colors::SOCKET_INT
     };
-    default_pin_style(theme, status).color(color).resolve()
+    PinStyle {
+        color: color.into(),
+        ..default_pin_style(theme, status)
+    }
 }
 
 /// Creates a typed pin element based on the socket type.

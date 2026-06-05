@@ -49,7 +49,7 @@ use iced::{
     window,
 };
 use iced_nodegraph::{
-    PinInfo, PinRef, PinStatus, PinStyle, Resolved, SdfDebug, default_pin_style, edge, node,
+    PinInfo, PinRef, PinStatus, PinStyle, SdfDebug, default_pin_style, edge, node,
 };
 use nodes::NodeType;
 
@@ -59,7 +59,7 @@ fn pin_style(
     pin: &PinInfo<'_, usize, ::std::any::TypeId>,
     _other: Option<&PinInfo<'_, usize, ::std::any::TypeId>>,
     status: PinStatus,
-) -> PinStyle<Resolved> {
+) -> PinStyle {
     use nodes::colors;
     use std::any::TypeId;
     let ty = *pin.info();
@@ -74,7 +74,10 @@ fn pin_style(
     } else {
         colors::PIN_GENERIC_IN
     };
-    default_pin_style(theme, status).color(color).resolve()
+    PinStyle {
+        color: color.into(),
+        ..default_pin_style(theme, status)
+    }
 }
 use std::collections::HashSet;
 

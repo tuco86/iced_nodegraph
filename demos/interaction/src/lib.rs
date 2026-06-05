@@ -40,8 +40,8 @@ use iced::{
     widget::{Space, button, column, container, row, scrollable, text},
 };
 use iced_nodegraph::{
-    NodeContentStyle, PinInfo as NgPinInfo, PinRef, PinStatus, PinStyle, Resolved,
-    default_pin_style, edge, node, pin, simple_node,
+    NodeContentStyle, PinInfo as NgPinInfo, PinRef, PinStatus, PinStyle, default_pin_style, edge,
+    node, pin, simple_node,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -126,7 +126,7 @@ fn pin_style(
     pin: &NgPinInfo<'_, usize, ::std::any::TypeId>,
     _other: Option<&NgPinInfo<'_, usize, ::std::any::TypeId>>,
     status: PinStatus,
-) -> PinStyle<Resolved> {
+) -> PinStyle {
     use std::any::TypeId;
     let ty = *pin.info();
     let color = if ty == TypeId::of::<Integer>() {
@@ -138,7 +138,10 @@ fn pin_style(
     } else {
         PinType::Any.color()
     };
-    default_pin_style(theme, status).color(color).resolve()
+    PinStyle {
+        color: color.into(),
+        ..default_pin_style(theme, status)
+    }
 }
 
 #[derive(Debug, Clone)]

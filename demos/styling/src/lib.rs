@@ -40,7 +40,7 @@ use iced::{
     window,
 };
 use iced_nodegraph::{
-    NodeStatus, NodeStyle, Pattern, PinDirection, PinInfo, PinRef, PinStatus, PinStyle, Resolved,
+    NodeStatus, NodeStyle, Pattern, PinDirection, PinInfo, PinRef, PinStatus, PinStyle,
     SelectionStyle, default_pin_style, edge, node,
 };
 use nodes::styled_node;
@@ -52,12 +52,15 @@ fn styling_pin_style(
     pin: &PinInfo<'_, usize, ::std::any::TypeId>,
     _other: Option<&PinInfo<'_, usize, ::std::any::TypeId>>,
     status: PinStatus,
-) -> PinStyle<Resolved> {
+) -> PinStyle {
     let color = match pin.direction() {
         PinDirection::Output => iced::Color::from_rgb(0.9, 0.7, 0.5),
         _ => iced::Color::from_rgb(0.5, 0.7, 0.9),
     };
-    default_pin_style(theme, status).color(color).resolve()
+    PinStyle {
+        color: color.into(),
+        ..default_pin_style(theme, status)
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -156,7 +159,7 @@ impl NodePreset {
 
 struct Application {
     edges: Vec<(PinRef<usize, usize>, PinRef<usize, usize>)>,
-    nodes: Vec<(Point, String, NodeStyle<Resolved>)>,
+    nodes: Vec<(Point, String, NodeStyle)>,
     current_theme: Theme,
     selected_node: Option<usize>,
     graph_selection: HashSet<usize>,
