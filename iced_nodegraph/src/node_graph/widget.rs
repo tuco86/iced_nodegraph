@@ -24,14 +24,14 @@ use std::hash::Hasher;
 use web_time::Instant;
 
 use super::{
-    DragInfo, NodeGraph, NodeGraphMessage, RenderContext,
+    DragInfo, NodeGraph, RenderContext,
     euclid::{IntoIced, WorldVector},
     state::{Dragging, NodeGraphState, z_render_indices},
 };
 use super::{EdgeStyleFn, NodeStyleFn, PinStyleFn};
 use crate::{
     PinDirection, PinRef, PinSide,
-    ids::{EdgeId, NodeId, PinId},
+    ids::{NodeId, PinId},
     node_graph::euclid::{IntoEuclid, ScreenPoint, WorldPoint},
     node_pin::{NodePinState, PinEnd, PinInfo},
     style::{
@@ -339,13 +339,12 @@ fn pin_cutout_circles<P: PinId + 'static, UI>(
     cuts
 }
 
-impl<N, P, UI, E, Message, Renderer> iced_widget::core::Widget<Message, iced::Theme, Renderer>
-    for NodeGraph<'_, N, P, UI, E, Message, iced::Theme, Renderer>
+impl<N, P, UI, Message, Renderer> iced_widget::core::Widget<Message, iced::Theme, Renderer>
+    for NodeGraph<'_, N, P, UI, Message, iced::Theme, Renderer>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
     UI: Clone + 'static,
-    E: EdgeId + 'static,
     Renderer: iced_widget::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
     fn tag(&self) -> tree::Tag {
@@ -527,10 +526,10 @@ where
             let mut batch = SdfPrimitive::with_capacity(self.edges.len() * 4);
 
             for (edge_idx, (from, to, edge_style_fn)) in self.edges.iter().enumerate() {
-                let Some(from_node_idx) = self.id_maps.nodes.index(&from.node_id) else {
+                let Some(from_node_idx) = self.node_ids.index(&from.node_id) else {
                     continue;
                 };
-                let Some(to_node_idx) = self.id_maps.nodes.index(&to.node_id) else {
+                let Some(to_node_idx) = self.node_ids.index(&to.node_id) else {
                     continue;
                 };
                 let Some(from_node_tree) = tree.children.get(from_node_idx) else {
@@ -1284,10 +1283,7 @@ where
                     let indices: Vec<usize> = state.selected_nodes.iter().copied().collect();
                     let node_ids = self.translate_node_ids(&indices);
                     if let Some(handler) = self.on_clone_handler() {
-                        shell.publish(handler(node_ids.clone()));
-                    }
-                    if let Some(handler) = self.get_on_event() {
-                        shell.publish(handler(NodeGraphMessage::CloneRequested { node_ids }));
+                        shell.publish(handler(node_ids));
                     }
                     shell.capture_event();
                 }
@@ -1298,10 +1294,7 @@ where
                     let indices: Vec<usize> = state.selected_nodes.iter().copied().collect();
                     let selected = self.translate_node_ids(&indices);
                     if let Some(handler) = self.on_select_handler() {
-                        shell.publish(handler(selected.clone()));
-                    }
-                    if let Some(handler) = self.get_on_event() {
-                        shell.publish(handler(NodeGraphMessage::SelectionChanged { selected }));
+                        shell.publish(handler(selected));
                     }
                     shell.capture_event();
                     shell.request_redraw();
@@ -1313,11 +1306,6 @@ where
                     state.selected_nodes.clear();
                     if let Some(handler) = self.on_select_handler() {
                         shell.publish(handler(vec![]));
-                    }
-                    if let Some(handler) = self.get_on_event() {
-                        shell.publish(handler(NodeGraphMessage::SelectionChanged {
-                            selected: vec![],
-                        }));
                     }
                     shell.capture_event();
                     shell.request_redraw();
@@ -1432,12 +1420,12 @@ where
                                         {
                                             // Resolve user IDs to indices
                                             let from_node_idx =
-                                                match self.id_maps.nodes.index(&from_ref.node_id) {
+                                                match self.node_ids.index(&from_ref.node_id) {
                                                     Some(idx) => idx,
                                                     None => continue,
                                                 };
                                             let to_node_idx =
-                                                match self.id_maps.nodes.index(&to_ref.node_id) {
+                                                match self.node_ids.index(&to_ref.node_id) {
                                                     Some(idx) => idx,
                                                     None => continue,
                                                 };
@@ -1600,13 +1588,7 @@ where
                                     {
                                         // Call on_move handler if set
                                         if let Some(handler) = self.on_move_handler() {
-                                            shell.publish(handler(node_id.clone(), new_position));
-                                        }
-                                        if let Some(handler) = self.get_on_event() {
-                                            shell.publish(handler(NodeGraphMessage::NodeMoved {
-                                                node_id,
-                                                position: new_position,
-                                            }));
+                                            shell.publish(handler(node_id, new_position));
                                         }
                                     }
                                 }
@@ -1694,33 +1676,7 @@ where
                                             );
 
                                             if let Some(handler) = self.on_connect_handler() {
-                                                shell.publish(handler(
-                                                    from_ref.clone(),
-                                                    to_ref.clone(),
-                                                ));
-                                            }
-                                            if let Some(handler) = self.get_on_event() {
-                                                // For on_event, we need edge_id - use edge count
-                                                use std::any::Any;
-                                                let edge_id: Option<E> =
-                                                    if std::any::TypeId::of::<E>()
-                                                        == std::any::TypeId::of::<usize>()
-                                                    {
-                                                        let boxed: Box<dyn Any> =
-                                                            Box::new(self.edges.len());
-                                                        boxed.downcast::<E>().ok().map(|b| *b)
-                                                    } else {
-                                                        None
-                                                    };
-                                                if let Some(eid) = edge_id {
-                                                    shell.publish(handler(
-                                                        NodeGraphMessage::EdgeConnected {
-                                                            edge_id: eid,
-                                                            from: from_ref,
-                                                            to: to_ref,
-                                                        },
-                                                    ));
-                                                }
+                                                shell.publish(handler(from_ref, to_ref));
                                             }
                                         }
 
@@ -1802,32 +1758,7 @@ where
                                             );
 
                                             if let Some(handler) = self.on_disconnect_handler() {
-                                                shell.publish(handler(
-                                                    from_ref.clone(),
-                                                    to_ref.clone(),
-                                                ));
-                                            }
-                                            if let Some(handler) = self.get_on_event() {
-                                                // For on_event, we need edge_id
-                                                use std::any::Any;
-                                                let edge_id: Option<E> =
-                                                    if std::any::TypeId::of::<E>()
-                                                        == std::any::TypeId::of::<usize>()
-                                                    {
-                                                        let boxed: Box<dyn Any> = Box::new(0usize);
-                                                        boxed.downcast::<E>().ok().map(|b| *b)
-                                                    } else {
-                                                        None
-                                                    };
-                                                if let Some(eid) = edge_id {
-                                                    shell.publish(handler(
-                                                        NodeGraphMessage::EdgeDisconnected {
-                                                            edge_id: eid,
-                                                            from: from_ref,
-                                                            to: to_ref,
-                                                        },
-                                                    ));
-                                                }
+                                                shell.publish(handler(from_ref, to_ref));
                                             }
                                         }
 
@@ -1885,12 +1816,7 @@ where
                                         state.selected_nodes.iter().copied().collect();
                                     let selected = self.translate_node_ids(&indices);
                                     if let Some(handler) = self.on_select_handler() {
-                                        shell.publish(handler(selected.clone()));
-                                    }
-                                    if let Some(handler) = self.get_on_event() {
-                                        shell.publish(handler(
-                                            NodeGraphMessage::SelectionChanged { selected },
-                                        ));
+                                        shell.publish(handler(selected));
                                     }
                                 }
                                 state.dragging = Dragging::None;
@@ -1919,13 +1845,7 @@ where
                                     let node_ids = self.translate_node_ids(&indices);
                                     let delta = offset.into_iced();
                                     if let Some(handler) = self.on_group_move_handler() {
-                                        shell.publish(handler(node_ids.clone(), delta));
-                                    }
-                                    if let Some(handler) = self.get_on_event() {
-                                        shell.publish(handler(NodeGraphMessage::GroupMoved {
-                                            node_ids,
-                                            delta,
-                                        }));
+                                        shell.publish(handler(node_ids, delta));
                                     }
                                 }
                                 // Promote moved nodes to the top of the z-order.
@@ -1998,10 +1918,7 @@ where
                         let indices: Vec<usize> = state.selected_nodes.iter().copied().collect();
                         let node_ids = self.translate_node_ids(&indices);
                         if let Some(handler) = self.on_delete_handler() {
-                            shell.publish(handler(node_ids.clone()));
-                        }
-                        if let Some(handler) = self.get_on_event() {
-                            shell.publish(handler(NodeGraphMessage::DeleteRequested { node_ids }));
+                            shell.publish(handler(node_ids));
                         }
                         state.selected_nodes.clear();
                         shell.capture_event();
@@ -2025,16 +1942,15 @@ where
                                 // Check if click is near any edge
                                 for (from_ref, to_ref, _style) in &self.edges {
                                     // Resolve user IDs to indices
-                                    let from_node_idx =
-                                        match self.id_maps.nodes.index(&from_ref.node_id) {
-                                            Some(idx) => idx,
-                                            None => continue,
-                                        };
-                                    let to_node_idx =
-                                        match self.id_maps.nodes.index(&to_ref.node_id) {
-                                            Some(idx) => idx,
-                                            None => continue,
-                                        };
+                                    let from_node_idx = match self.node_ids.index(&from_ref.node_id)
+                                    {
+                                        Some(idx) => idx,
+                                        None => continue,
+                                    };
+                                    let to_node_idx = match self.node_ids.index(&to_ref.node_id) {
+                                        Some(idx) => idx,
+                                        None => continue,
+                                    };
 
                                     // Get pin positions for both ends of the edge
                                     let from_pin_hash = compute_pin_hash(&from_ref.pin_id);
@@ -2111,7 +2027,7 @@ where
                                     let pins = find_pins::<UI>(node_tree, node_layout);
                                     // Get node_id for this node_index
                                     let current_node_id =
-                                        match self.id_maps.nodes.id(node_index).cloned() {
+                                        match self.node_ids.id(node_index).cloned() {
                                             Some(id) => id,
                                             None => continue,
                                         };
@@ -2148,8 +2064,7 @@ where
                                                     // UNSNAP_THRESHOLD.
                                                     // Resolve to_ref to indices for internal Dragging state
                                                     let to_node_idx = match self
-                                                        .id_maps
-                                                        .nodes
+                                                        .node_ids
                                                         .index(&to_ref.node_id)
                                                     {
                                                         Some(idx) => idx,
@@ -2215,8 +2130,7 @@ where
                                                     // UNSNAP_THRESHOLD.
                                                     // Resolve from_ref to indices for internal Dragging state
                                                     let from_node_idx = match self
-                                                        .id_maps
-                                                        .nodes
+                                                        .node_ids
                                                         .index(&from_ref.node_id)
                                                     {
                                                         Some(idx) => idx,
@@ -2360,12 +2274,7 @@ where
                                         if selection_changed {
                                             let selected = self.translate_node_ids(&new_selection);
                                             if let Some(handler) = self.on_select_handler() {
-                                                shell.publish(handler(selected.clone()));
-                                            }
-                                            if let Some(handler) = self.get_on_event() {
-                                                shell.publish(handler(
-                                                    NodeGraphMessage::SelectionChanged { selected },
-                                                ));
+                                                shell.publish(handler(selected));
                                             }
                                         }
 
@@ -2438,18 +2347,16 @@ where
     }
 }
 
-impl<'a, N, P, UI, E, Message, Renderer>
-    From<NodeGraph<'a, N, P, UI, E, Message, iced::Theme, Renderer>>
+impl<'a, N, P, UI, Message, Renderer> From<NodeGraph<'a, N, P, UI, Message, iced::Theme, Renderer>>
     for Element<'a, Message, iced::Theme, Renderer>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
     UI: Clone + 'static,
-    E: EdgeId + 'static,
     Renderer: iced_widget::core::renderer::Renderer + 'a + iced_wgpu::primitive::Renderer,
     Message: 'static,
 {
-    fn from(graph: NodeGraph<'a, N, P, UI, E, Message, iced::Theme, Renderer>) -> Self {
+    fn from(graph: NodeGraph<'a, N, P, UI, Message, iced::Theme, Renderer>) -> Self {
         Element::new(graph)
     }
 }
@@ -2457,9 +2364,9 @@ where
 /// Creates a new NodeGraph with default usize-based IDs and no pin user info.
 ///
 /// For custom types, use
-/// `NodeGraph::<N, P, UI, E, Message, Theme, Renderer>::default()`.
+/// `NodeGraph::<N, P, UI, Message, Theme, Renderer>::default()`.
 pub fn node_graph<'a, Message, Theme, Renderer>()
--> NodeGraph<'a, usize, usize, (), usize, Message, Theme, Renderer>
+-> NodeGraph<'a, usize, usize, (), Message, Theme, Renderer>
 where
     Renderer: iced_widget::core::renderer::Renderer,
 {
@@ -2544,8 +2451,8 @@ fn validate_pin_direction<UI>(from_pin: &NodePinState<UI>, to_pin: &NodePinState
 /// 2. It is not interaction-disabled
 /// 3. The `can_connect` closure accepts the pair (authoritative when set);
 ///    otherwise the built-in direction check passes (Output<->Input, Both).
-fn compute_valid_targets<N, P, UI, E, Message, Renderer>(
-    graph: &NodeGraph<'_, N, P, UI, E, Message, iced::Theme, Renderer>,
+fn compute_valid_targets<N, P, UI, Message, Renderer>(
+    graph: &NodeGraph<'_, N, P, UI, Message, iced::Theme, Renderer>,
     tree: &Tree,
     layout: Layout<'_>,
     from_node: usize,
@@ -2555,7 +2462,6 @@ where
     N: NodeId + 'static,
     P: PinId + 'static,
     UI: Clone + 'static,
-    E: EdgeId + 'static,
     Renderer: iced_widget::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
     let mut valid_targets = std::collections::HashSet::new();
@@ -2575,7 +2481,7 @@ where
     };
 
     // Source node id, only needed when can_connect is set.
-    let from_node_id = graph.id_maps.node_id(from_node).cloned();
+    let from_node_id = graph.node_ids.id(from_node).cloned();
 
     // Iterate all pins in all nodes
     for (node_index, (node_layout, node_tree)) in layout.children().zip(&tree.children).enumerate()
@@ -2596,7 +2502,7 @@ where
                 let (Some(fid), Some(fpid), Some(tid), Some(tpid)) = (
                     from_node_id.as_ref(),
                     from_state.pin_id.downcast_ref::<P>(),
-                    graph.id_maps.node_id(node_index),
+                    graph.node_ids.id(node_index),
                     pin_state.pin_id.downcast_ref::<P>(),
                 ) else {
                     continue;

@@ -477,7 +477,7 @@ impl Application {
     fn build_graph(&self) -> Element<'_, Message> {
         let theme = &self.current_theme;
 
-        let mut ng: ::iced_nodegraph::NodeGraph<usize, usize, ::std::any::TypeId, usize, _, _, _> =
+        let mut ng: ::iced_nodegraph::NodeGraph<usize, usize, ::std::any::TypeId, _, _, _> =
             ::iced_nodegraph::NodeGraph::default()
                 .on_connect(|from, to| Message::EdgeConnected { from, to })
                 .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })

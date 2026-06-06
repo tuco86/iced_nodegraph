@@ -51,42 +51,10 @@ fn hash_pin_id<P: Hash>(pin_id: &P) -> u64 {
 
 /// A reference to a specific pin on a specific node.
 ///
-/// This provides type-safe identification of pins for edge connections,
-/// replacing error-prone `(usize, usize)` tuples.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PinReference {
-    /// The index of the node containing this pin
-    pub node_id: usize,
-    /// The index of the pin within the node
-    pub pin_id: usize,
-}
-
-impl PinReference {
-    /// Creates a new pin reference.
-    pub fn new(node_id: usize, pin_id: usize) -> Self {
-        Self { node_id, pin_id }
-    }
-}
-
-/// Convert from generic PinRef<usize, usize> to PinReference for backwards compatibility.
-impl From<crate::node_graph::PinRef<usize, usize>> for PinReference {
-    fn from(pin_ref: crate::node_graph::PinRef<usize, usize>) -> Self {
-        Self {
-            node_id: pin_ref.node_id,
-            pin_id: pin_ref.pin_id,
-        }
-    }
-}
-
-/// Convert from PinReference to generic PinRef<usize, usize>.
-impl From<PinReference> for crate::node_graph::PinRef<usize, usize> {
-    fn from(pin_ref: PinReference) -> Self {
-        Self {
-            node_id: pin_ref.node_id,
-            pin_id: pin_ref.pin_id,
-        }
-    }
-}
+/// The `usize`-indexed specialization of [`PinRef`](crate::PinRef), used by the
+/// default API. Construct with `PinReference::new(node_id, pin_id)`; the fields
+/// are `node_id` and `pin_id`.
+pub type PinReference = crate::node_graph::PinRef<usize, usize>;
 
 /// Which side of a node this pin attaches to.
 /// Determines the tangent direction for edge bezier curves.

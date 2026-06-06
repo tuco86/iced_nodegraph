@@ -166,11 +166,10 @@ fn draw_at_origin(
     camera_pos: Point,
     camera_zoom: f32,
 ) -> Recorded {
-    let mut graph: NodeGraph<'static, usize, usize, (), usize, (), Theme, Rec> =
-        NodeGraph::default()
-            .width(Length::Fixed(400.0))
-            .height(Length::Fixed(400.0))
-            .initial_camera(camera_pos, camera_zoom);
+    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Rec> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .initial_camera(camera_pos, camera_zoom);
     graph.push_node(node(0_usize, node_world, Element::from(ContentProbe)));
 
     let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Rec>);
@@ -262,14 +261,13 @@ fn click_select(
     let selected: Rc<RefCell<Option<Vec<usize>>>> = Rc::new(RefCell::new(None));
     let sel = selected.clone();
 
-    let mut graph: NodeGraph<'static, usize, usize, (), usize, (), Theme, Rec> =
-        NodeGraph::default()
-            .width(Length::Fixed(400.0))
-            .height(Length::Fixed(400.0))
-            .initial_camera(camera_pos, camera_zoom)
-            .on_select(move |ids| {
-                *sel.borrow_mut() = Some(ids);
-            });
+    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Rec> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .initial_camera(camera_pos, camera_zoom)
+        .on_select(move |ids| {
+            *sel.borrow_mut() = Some(ids);
+        });
     graph.push_node(node(0_usize, node_world, Element::from(ContentProbe)));
 
     let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Rec>);
@@ -430,12 +428,11 @@ fn box_select_primitives(
     p1: Point,
     p2: Point,
 ) -> Vec<Rectangle> {
-    let mut graph: NodeGraph<'static, usize, usize, (), usize, (), Theme, Rec> =
-        NodeGraph::default()
-            .width(Length::Fixed(400.0))
-            .height(Length::Fixed(400.0))
-            .initial_camera(Point::ORIGIN, camera_zoom)
-            .on_select(|_ids| {});
+    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Rec> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .initial_camera(Point::ORIGIN, camera_zoom)
+        .on_select(|_ids| {});
     // Node far from the drag so the press starts a box select, not a node click.
     graph.push_node(node(
         0_usize,
@@ -457,7 +454,7 @@ fn box_select_primitives(
     let mut shell = iced_widget::core::Shell::new(&mut msgs);
     let mut clipboard = clipboard::Null;
 
-    let send = |graph: &mut NodeGraph<'static, usize, usize, (), usize, (), Theme, Rec>,
+    let send = |graph: &mut NodeGraph<'static, usize, usize, (), (), Theme, Rec>,
                 tree: &mut Tree,
                 shell: &mut iced_widget::core::Shell<'_, ()>,
                 clipboard: &mut clipboard::Null,

@@ -1687,7 +1687,6 @@ impl Application {
             NodeId,
             PinLabel,
             ::std::any::TypeId,
-            EdgeId,
             ApplicationMessage,
             Theme,
             iced::Renderer,

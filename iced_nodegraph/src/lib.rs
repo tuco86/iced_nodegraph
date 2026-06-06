@@ -68,13 +68,6 @@
 //! assert_eq!(pin.pin_id, 1);
 //! ```
 //!
-//! ### [`NodeGraphEvent`]
-//! Unified event enum for all graph interactions:
-//! - `EdgeConnected` / `EdgeDisconnected` - Connection changes
-//! - `NodeMoved` / `GroupMoved` - Position changes
-//! - `SelectionChanged` - Selection updates
-//! - `CloneRequested` / `DeleteRequested` - Edit operations
-//!
 //! ### [`Camera2D`]
 //! Programmatic access to zoom and pan state.
 //!
@@ -200,8 +193,7 @@ pub use content::{
 };
 pub use ids::{NodeId, PinId};
 pub use node_graph::{
-    Edge, Node, NodeGraph, NodeGraphEvent, NodeGraphMessage, PinRef, SdfDebug, camera::Camera2D,
-    edge, node, widget::node_graph,
+    Edge, Node, NodeGraph, PinRef, SdfDebug, camera::Camera2D, edge, node, widget::node_graph,
 };
 pub use node_pin::{NodePin, PinDirection, PinEnd, PinInfo, PinReference, PinSide, node_pin};
 pub use style::{

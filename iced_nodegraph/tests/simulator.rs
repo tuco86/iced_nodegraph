@@ -19,7 +19,7 @@ use iced_nodegraph::{NodeGraph, PinRef, edge, node, pin};
 use iced_test::Simulator;
 
 type Renderer = iced::Renderer;
-type Graph = NodeGraph<'static, usize, usize, (), usize, Msg, Theme, Renderer>;
+type Graph = NodeGraph<'static, usize, usize, (), Msg, Theme, Renderer>;
 type Pin = PinRef<usize, usize>;
 
 /// Captures every interaction callback the graph can emit.

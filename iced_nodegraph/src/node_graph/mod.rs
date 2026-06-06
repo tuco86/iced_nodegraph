@@ -20,16 +20,15 @@
 //!
 //! - [`NodeGraph`] - The main widget container
 //! - [`PinRef`] - Type-safe reference to a pin (generic over ID types)
-//! - [`NodeGraphMessage`] - Internal message type for generic ID support
-//! - [`NodeGraphEvent`] - Simplified event enum using `usize` indices
 //! - [`Camera2D`](camera::Camera2D) - Zoom and pan state management
 //!
 //! ## Event Handling
 //!
-//! The widget supports two patterns for event handling:
-//!
-//! 1. **Individual callbacks** - `on_connect()`, `on_move()`, `on_select()`, etc.
-//! 2. **Unified event handler** - `on_event()` receives all events as [`NodeGraphMessage`]
+//! Interaction is reported through individual callbacks: `on_connect()`,
+//! `on_move()`, `on_select()`, `on_clone()`, `on_delete()`, `on_group_move()`.
+//! Move and select work without the app keeping its own model; the app receives
+//! data on commit. Live drag callbacks (`on_drag_start/update/end`) additionally
+//! report an in-progress drag so it can be observed as it happens.
 //!
 //! ## Styling
 //!
@@ -41,12 +40,11 @@
 use std::collections::HashSet;
 use std::fmt::Debug;
 use std::hash::Hash;
-use std::marker::PhantomData;
 
-use iced::{Color, Length, Point, Size, Vector};
+use iced::{Length, Point, Size, Vector};
 
-use crate::ids::{EdgeId, IdMaps, NodeId, PinId};
-use crate::node_pin::{PinEnd, PinInfo, PinReference};
+use crate::ids::{IdMap, NodeId, PinId};
+use crate::node_pin::{PinEnd, PinInfo};
 use crate::style::{EdgeStatus, EdgeStyle, GraphStyle, NodeStatus, NodeStyle, PinStatus, PinStyle};
 
 /// Per-node style callback: theme + status -> resolved style. Used by [`Node`].
@@ -190,7 +188,9 @@ pub struct SdfDebug {
     pub node_foreground: bool,
 }
 
-/// Information about a drag operation, used for real-time collaboration.
+/// Identifies what an in-progress drag is moving. Delivered to the
+/// [`on_drag_start`](NodeGraph::on_drag_start) callback so the app can observe a
+/// drag live (e.g. to broadcast it), alongside the commit-on-drop callbacks.
 #[derive(Debug, Clone)]
 pub enum DragInfo {
     /// Dragging a single node
@@ -201,121 +201,6 @@ pub enum DragInfo {
     Edge { from_node: usize, from_pin: usize },
     /// Box selection drag
     BoxSelect { start_x: f32, start_y: f32 },
-}
-
-/// State of a remote user for collaborative editing.
-#[derive(Debug, Clone)]
-pub struct RemoteUserState {
-    /// Display nickname
-    pub nickname: String,
-    /// User's assigned color
-    pub color: Color,
-    /// Current cursor position in world space (None if not visible)
-    pub cursor: Option<Point>,
-    /// Node IDs this user has selected
-    pub selected_nodes: Vec<usize>,
-    /// Current drag operation (if any)
-    pub drag: Option<RemoteDrag>,
-}
-
-/// Remote user's current drag operation.
-#[derive(Debug, Clone)]
-pub enum RemoteDrag {
-    /// Dragging a single node
-    Node { node_id: usize, current: Point },
-    /// Dragging a group of nodes
-    Group { node_ids: Vec<usize>, delta: Vector },
-    /// Dragging an edge from a pin
-    Edge {
-        from_node: usize,
-        from_pin: usize,
-        current: Point,
-    },
-    /// Box selection in progress
-    BoxSelect { start: Point, current: Point },
-}
-
-/// Events emitted by the NodeGraph widget.
-#[derive(Debug, Clone)]
-pub enum NodeGraphEvent {
-    EdgeConnected {
-        from: PinReference,
-        to: PinReference,
-    },
-    EdgeDisconnected {
-        from: PinReference,
-        to: PinReference,
-    },
-    NodeMoved {
-        node_id: usize,
-        position: Point,
-    },
-    GroupMoved {
-        node_ids: Vec<usize>,
-        delta: Vector,
-    },
-    SelectionChanged {
-        selected: Vec<usize>,
-    },
-    CloneRequested {
-        node_ids: Vec<usize>,
-    },
-    DeleteRequested {
-        node_ids: Vec<usize>,
-    },
-}
-
-/// Generic message enum for graph interactions with user-defined ID types.
-///
-/// This is the generic version of [`NodeGraphEvent`] that uses your own ID types
-/// instead of `usize`. Wrap this in your application's message enum:
-///
-/// ```rust,ignore
-/// use iced_nodegraph::{NodeGraphMessage, PinRef};
-///
-/// #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-/// enum MyNodeId { Input, Process, Output }
-/// impl iced_nodegraph::NodeId for MyNodeId {}
-///
-/// #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-/// enum MyPinId { DataIn, DataOut }
-/// impl iced_nodegraph::PinId for MyPinId {}
-///
-/// #[derive(Clone, Debug)]
-/// enum AppMessage {
-///     Graph(NodeGraphMessage<MyNodeId, MyPinId>),
-///     // ... other messages
-/// }
-/// ```
-#[derive(Debug, Clone)]
-pub enum NodeGraphMessage<N = usize, P = usize, E = usize>
-where
-    N: NodeId,
-    P: PinId,
-    E: EdgeId,
-{
-    /// An edge was connected between two pins.
-    EdgeConnected {
-        edge_id: E,
-        from: PinRef<N, P>,
-        to: PinRef<N, P>,
-    },
-    /// An edge was disconnected.
-    EdgeDisconnected {
-        edge_id: E,
-        from: PinRef<N, P>,
-        to: PinRef<N, P>,
-    },
-    /// A node was moved to a new position.
-    NodeMoved { node_id: N, position: Point },
-    /// Multiple nodes were moved together.
-    GroupMoved { node_ids: Vec<N>, delta: Vector },
-    /// The selection changed.
-    SelectionChanged { selected: Vec<N> },
-    /// User requested to clone selected nodes.
-    CloneRequested { node_ids: Vec<N> },
-    /// User requested to delete selected nodes.
-    DeleteRequested { node_ids: Vec<N> },
 }
 
 /// Generic pin reference with user-defined ID types.
@@ -338,26 +223,23 @@ impl<N: Clone, P: Clone> PinRef<N, P> {
 /// # Type Parameters
 /// - `N`: Node ID type (defaults to `usize`)
 /// - `P`: Pin ID type (defaults to `usize`)
-/// - `E`: Edge ID type (defaults to `usize`)
 /// - `Message`: Application message type
 /// - `Theme`: Iced theme type (defaults to `iced::Theme`)
 /// - `Renderer`: Iced renderer type (defaults to `iced::Renderer`)
 ///
-/// Users can provide their own ID types by implementing [`NodeId`], [`PinId`], [`EdgeId`].
+/// Users can provide their own ID types by implementing [`NodeId`] and [`PinId`].
 #[allow(missing_debug_implementations)]
 pub struct NodeGraph<
     'a,
     N = usize,
     P = usize,
     UI = (),
-    E = usize,
     Message = (),
     Theme = iced::Theme,
     Renderer = iced::Renderer,
 > where
     N: NodeId,
     P: PinId,
-    E: EdgeId,
 {
     pub(super) size: Size<Length>,
     /// Nodes with position, element, and config overrides.
@@ -378,8 +260,8 @@ pub struct NodeGraph<
         PinRef<N, P>,
         Option<EdgeStyleFn<'a, P, UI, Theme>>,
     )>,
-    /// Bidirectional maps for ID translation.
-    pub(super) id_maps: IdMaps<N, P, E>,
+    /// Maps user node IDs to internal indices for translation at render/event time.
+    pub(super) node_ids: IdMap<N>,
     graph_style: Option<GraphStyle>,
     on_connect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>>,
     on_disconnect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>>,
@@ -391,15 +273,13 @@ pub struct NodeGraph<
     /// External selection using internal indices.
     /// Populated by `selection()` method which converts user IDs to indices.
     external_selection: Option<HashSet<usize>>,
-    // Drag event callbacks for real-time collaboration
+    // Live drag callbacks: fire continuously during a drag (start/update/end),
+    // in addition to the commit-on-drop on_move/on_group_move. They make live
+    // observation of an in-progress drag possible (e.g. collaborative broadcast),
+    // which is the app's concern, not the widget's.
     on_drag_start: Option<Box<dyn Fn(DragInfo) -> Message + 'a>>,
     on_drag_update: Option<Box<dyn Fn(f32, f32) -> Message + 'a>>,
     on_drag_end: Option<Box<dyn Fn() -> Message + 'a>>,
-    // Remote users for collaborative rendering
-    remote_users: Option<&'a [RemoteUserState]>,
-    /// Unified event callback for all graph interactions.
-    /// Alternative to individual callbacks (on_connect, on_move, etc.)
-    on_event: Option<Box<dyn Fn(NodeGraphMessage<N, P, E>) -> Message + 'a>>,
     /// Callback for camera state changes (position, zoom).
     /// Used for tracking viewport state in application for features like spawn-at-center.
     on_camera_change: Option<Box<dyn Fn(Point, f32) -> Message + 'a>>,
@@ -422,16 +302,13 @@ pub struct NodeGraph<
         Option<Box<dyn Fn(PinEnd<'_, N, P, UI>, PinEnd<'_, N, P, UI>) -> bool + 'a>>,
     /// Per-layer SDF tile debug visualization.
     pub(super) sdf_debug: SdfDebug,
-    /// Phantom data for unused type parameter (E is only used in callbacks)
-    _phantom: PhantomData<E>,
 }
 
-impl<N, P, UI, E, Message, Theme, Renderer> Default
-    for NodeGraph<'_, N, P, UI, E, Message, Theme, Renderer>
+impl<N, P, UI, Message, Theme, Renderer> Default
+    for NodeGraph<'_, N, P, UI, Message, Theme, Renderer>
 where
     N: NodeId,
     P: PinId,
-    E: EdgeId,
     Renderer: iced_widget::core::renderer::Renderer,
 {
     fn default() -> Self {
@@ -439,7 +316,7 @@ where
             size: Size::new(Length::Fill, Length::Fill),
             nodes: Vec::new(),
             edges: Vec::new(),
-            id_maps: IdMaps::new(),
+            node_ids: IdMap::new(),
             graph_style: None,
             on_connect: None,
             on_disconnect: None,
@@ -452,8 +329,6 @@ where
             on_drag_start: None,
             on_drag_update: None,
             on_drag_end: None,
-            remote_users: None,
-            on_event: None,
             on_camera_change: None,
             box_select_style_fn: None,
             cutting_tool_style_fn: None,
@@ -461,16 +336,14 @@ where
             initial_camera: None,
             can_connect: None,
             sdf_debug: SdfDebug::default(),
-            _phantom: PhantomData,
         }
     }
 }
 
-impl<'a, N, P, UI, E, Message, Theme, Renderer> NodeGraph<'a, N, P, UI, E, Message, Theme, Renderer>
+impl<'a, N, P, UI, Message, Theme, Renderer> NodeGraph<'a, N, P, UI, Message, Theme, Renderer>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
-    E: EdgeId + 'static,
     Renderer: iced_widget::core::renderer::Renderer,
 {
     /// Sets the initial camera position and zoom level.
@@ -486,7 +359,7 @@ where
     ///
     /// The node will use theme defaults from `default_node_style()`.
     pub fn push_node(&mut self, node: Node<'a, N, P, UI, Message, Theme, Renderer>) {
-        self.id_maps.register_node(node.id);
+        self.node_ids.register(node.id);
         self.nodes.push((
             node.position,
             node.element,
@@ -506,7 +379,7 @@ where
 
     /// Translates internal node index to user's node ID.
     pub(super) fn index_to_node_id(&self, index: usize) -> Option<N> {
-        self.id_maps.node_id(index).cloned()
+        self.node_ids.id(index).cloned()
     }
 
     pub fn graph_style(mut self, style: GraphStyle) -> Self {
@@ -657,22 +530,6 @@ where
         self
     }
 
-    /// Sets remote user states for collaborative rendering.
-    /// Remote users' cursors, selections, and drags will be rendered on the canvas.
-    pub fn remote_users(mut self, users: &'a [RemoteUserState]) -> Self {
-        self.remote_users = Some(users);
-        self
-    }
-
-    /// Sets a unified event callback for all graph interactions.
-    ///
-    /// This is an alternative to using individual callbacks (on_connect, on_move, etc.).
-    /// When set, this callback fires for all graph events, allowing centralized event handling.
-    pub fn on_event(mut self, f: impl Fn(NodeGraphMessage<N, P, E>) -> Message + 'a) -> Self {
-        self.on_event = Some(Box::new(f));
-        self
-    }
-
     /// Sets a callback for when the camera state changes (pan or zoom).
     ///
     /// The callback receives the current camera position and zoom level.
@@ -692,17 +549,9 @@ where
     {
         let indices: HashSet<usize> = selection
             .into_iter()
-            .filter_map(|id| self.id_maps.node_index(id))
+            .filter_map(|id| self.node_ids.index(id))
             .collect();
         self.external_selection = Some(indices);
-        self
-    }
-
-    /// Sets the external selection using internal indices (for advanced use).
-    ///
-    /// Prefer `selection()` which uses user node IDs.
-    pub fn selection_by_indices(mut self, selection: HashSet<usize>) -> Self {
-        self.external_selection = Some(selection);
         self
     }
 
@@ -716,81 +565,6 @@ where
     pub fn height(mut self, height: impl Into<Length>) -> Self {
         self.size.height = height.into();
         self
-    }
-
-    /// Returns the number of nodes in the graph.
-    pub fn node_count(&self) -> usize {
-        self.nodes.len()
-    }
-
-    /// Returns the number of edges in the graph.
-    pub fn edge_count(&self) -> usize {
-        self.edges.len()
-    }
-
-    /// Returns an iterator over all edges as (from, to) pin references.
-    pub fn edges(&self) -> impl Iterator<Item = (&PinRef<N, P>, &PinRef<N, P>)> {
-        self.edges.iter().map(|(from, to, _)| (from, to))
-    }
-
-    /// Returns the position of a node by its user ID.
-    pub fn node_position(&self, node_id: &N) -> Option<Point> {
-        let idx = self.id_maps.node_index(node_id)?;
-        self.nodes.get(idx).map(|(pos, _, _, _)| *pos)
-    }
-
-    /// Returns the position of a node by its internal index.
-    pub fn node_position_by_index(&self, index: usize) -> Option<Point> {
-        self.nodes.get(index).map(|(pos, _, _, _)| *pos)
-    }
-
-    /// Updates a node's position by its ID.
-    ///
-    /// Returns `true` if the node was found and updated, `false` otherwise.
-    pub fn update_node_position(&mut self, node_id: &N, position: Point) -> bool {
-        if let Some(idx) = self.id_maps.node_index(node_id)
-            && let Some((pos, _, _, _)) = self.nodes.get_mut(idx)
-        {
-            *pos = position;
-            return true;
-        }
-        false
-    }
-
-    /// Updates a node's position by its internal index.
-    ///
-    /// Returns `true` if the node was found and updated, `false` otherwise.
-    pub fn update_node_position_by_index(&mut self, index: usize, position: Point) -> bool {
-        if let Some((pos, _, _, _)) = self.nodes.get_mut(index) {
-            *pos = position;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Removes an edge between two pins.
-    ///
-    /// Returns `true` if an edge was found and removed, `false` otherwise.
-    pub fn remove_edge(&mut self, from: &PinRef<N, P>, to: &PinRef<N, P>) -> bool {
-        if let Some(idx) = self.edges.iter().position(|(f, t, _)| f == from && t == to) {
-            self.edges.remove(idx);
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Removes all edges from the graph.
-    pub fn clear_edges(&mut self) {
-        self.edges.clear();
-    }
-
-    /// Removes all nodes and edges from the graph, resetting it to empty.
-    pub fn clear(&mut self) {
-        self.nodes.clear();
-        self.edges.clear();
-        self.id_maps = IdMaps::new();
     }
 
     pub(super) fn elements_iter(
@@ -845,26 +619,6 @@ where
         self.external_selection.as_ref()
     }
 
-    /// Returns the currently selected node IDs (if set via `selection()`).
-    ///
-    /// Returns `None` if no external selection was set.
-    /// Note: This only reflects the selection passed to `selection()`,
-    /// not the internal widget selection state.
-    pub fn selected_nodes(&self) -> Option<Vec<N>> {
-        self.external_selection.as_ref().map(|indices| {
-            indices
-                .iter()
-                .filter_map(|&idx| self.id_maps.node_id(idx).cloned())
-                .collect()
-        })
-    }
-
-    pub(super) fn get_on_event(
-        &self,
-    ) -> Option<&(dyn Fn(NodeGraphMessage<N, P, E>) -> Message + 'a)> {
-        self.on_event.as_deref()
-    }
-
     pub(super) fn on_camera_change_handler(
         &self,
     ) -> Option<&Box<dyn Fn(Point, f32) -> Message + 'a>> {
@@ -876,68 +630,14 @@ where
     pub(super) fn translate_node_ids(&self, indices: &[usize]) -> Vec<N> {
         indices
             .iter()
-            .filter_map(|&idx| self.id_maps.node_id(idx).cloned())
+            .filter_map(|&idx| self.node_ids.id(idx).cloned())
             .collect()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    #[test]
-    fn test_node_graph_event_debug() {
-        let event = NodeGraphEvent::EdgeConnected {
-            from: PinReference::new(0, 1),
-            to: PinReference::new(2, 3),
-        };
-        let debug_str = format!("{:?}", event);
-        assert!(debug_str.contains("EdgeConnected"));
-    }
-
-    #[test]
-    fn test_node_graph_event_clone() {
-        let event = NodeGraphEvent::NodeMoved {
-            node_id: 5,
-            position: Point::new(100.0, 200.0),
-        };
-        let cloned = event.clone();
-        if let NodeGraphEvent::NodeMoved { node_id, position } = cloned {
-            assert_eq!(node_id, 5);
-            assert_eq!(position.x, 100.0);
-            assert_eq!(position.y, 200.0);
-        } else {
-            panic!("Expected NodeMoved");
-        }
-    }
-
-    #[test]
-    fn test_node_graph_event_variants() {
-        // Test all event variants can be created
-        let _ = NodeGraphEvent::EdgeConnected {
-            from: PinReference::new(0, 0),
-            to: PinReference::new(1, 0),
-        };
-        let _ = NodeGraphEvent::EdgeDisconnected {
-            from: PinReference::new(0, 0),
-            to: PinReference::new(1, 0),
-        };
-        let _ = NodeGraphEvent::NodeMoved {
-            node_id: 0,
-            position: Point::ORIGIN,
-        };
-        let _ = NodeGraphEvent::GroupMoved {
-            node_ids: vec![0, 1, 2],
-            delta: Vector::new(10.0, 20.0),
-        };
-        let _ = NodeGraphEvent::SelectionChanged {
-            selected: vec![0, 1],
-        };
-        let _ = NodeGraphEvent::CloneRequested { node_ids: vec![0] };
-        let _ = NodeGraphEvent::DeleteRequested {
-            node_ids: vec![0, 1, 2],
-        };
-    }
+    use crate::PinReference;
 
     #[test]
     fn test_pin_reference_equality() {

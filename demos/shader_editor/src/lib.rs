@@ -383,25 +383,18 @@ impl Application {
 
     fn view(&self) -> Element<'_, Message> {
         // Build node graph
-        let mut graph: ::iced_nodegraph::NodeGraph<
-            usize,
-            usize,
-            ::std::any::TypeId,
-            usize,
-            _,
-            _,
-            _,
-        > = ::iced_nodegraph::NodeGraph::default()
-            .on_connect(|from, to| Message::EdgeConnected { from, to })
-            .on_move(|node_index: usize, new_position| Message::NodeMoved {
-                node_index,
-                new_position,
-            })
-            .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })
-            .on_select(Message::SelectionChanged)
-            .on_group_move(|indices, delta| Message::GroupMoved { indices, delta })
-            .on_camera_change(|position, zoom| Message::CameraChanged { position, zoom })
-            .selection(&self.graph_selection);
+        let mut graph: ::iced_nodegraph::NodeGraph<usize, usize, ::std::any::TypeId, _, _, _> =
+            ::iced_nodegraph::NodeGraph::default()
+                .on_connect(|from, to| Message::EdgeConnected { from, to })
+                .on_move(|node_index: usize, new_position| Message::NodeMoved {
+                    node_index,
+                    new_position,
+                })
+                .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })
+                .on_select(Message::SelectionChanged)
+                .on_group_move(|indices, delta| Message::GroupMoved { indices, delta })
+                .on_camera_change(|position, zoom| Message::CameraChanged { position, zoom })
+                .selection(&self.graph_selection);
 
         // Add all shader graph nodes
         for (node_idx, node) in self.shader_graph.nodes.iter().enumerate() {

@@ -201,7 +201,7 @@ impl App {
 
         // The graph is parameterized over `Port` as its pin payload (`UI`), so it
         // cannot use the `node_graph()` helper (which fixes `UI = ()`).
-        let mut ng: NodeGraph<usize, usize, Port, usize, Message, Theme, iced::Renderer> =
+        let mut ng: NodeGraph<usize, usize, Port, Message, Theme, iced::Renderer> =
             NodeGraph::default()
                 .on_move(|id, position| Message::Moved { id, position })
                 .on_group_move(|ids, delta| Message::GroupMoved { ids, delta })
