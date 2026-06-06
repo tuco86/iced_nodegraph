@@ -18,10 +18,8 @@
 
 use iced::widget::{checkbox, column, container, slider, text};
 use iced::{Color, Element, Point, Theme, Vector};
+use iced_nodegraph::Node;
 use iced_nodegraph::prelude::*;
-use iced_nodegraph::{
-    EdgeStatus, Node, PinInfo, PinStatus, default_edge_style, default_pin_style, edge, node, pin,
-};
 
 fn main() -> iced::Result {
     iced::application(App::default, App::update, App::view)
