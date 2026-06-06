@@ -20,7 +20,6 @@ use iced_widget::core::{
     Clipboard, Layout, Shell, layout, mouse, renderer,
     widget::{self, Tree, tree},
 };
-use std::hash::Hasher;
 use web_time::Instant;
 
 use super::{
@@ -217,14 +216,6 @@ fn push_edge_layers(
 const SNAP_THRESHOLD: f32 = 10.0; // Distance to enter snap zone
 const UNSNAP_THRESHOLD: f32 = 15.0; // Distance to leave snap zone (larger = more stable)
 
-/// Computes a hash for any PinId type.
-/// Used to match pin_id_hash in NodePinState.
-fn compute_pin_hash<P: PinId>(pin_id: &P) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    std::hash::Hash::hash(pin_id, &mut hasher);
-    hasher.finish()
-}
-
 /// Resolves a node's style: theme base, then the optional per-node callback.
 fn resolve_node_style(
     style_fn: Option<&NodeStyleFn<'_, Theme>>,
@@ -251,12 +242,13 @@ fn resolve_edge_style<P: PinId + 'static, UI>(
     }
 }
 
-/// Builds the read-only [`PinInfo`] for a pin state, if its id is of type `P`.
-fn pin_info<'s, P: PinId + 'static, UI>(state: &'s NodePinState<UI>) -> Option<PinInfo<'s, P, UI>> {
-    state
-        .pin_id
-        .downcast_ref::<P>()
-        .map(|id| PinInfo::new(state.direction, id, &state.user_info))
+/// Builds the read-only [`PinInfo`] view onto a pin state.
+fn pin_info<'s, P, UI>(state: &'s NodePinState<P, UI>) -> Option<PinInfo<'s, P, UI>> {
+    Some(PinInfo::new(
+        state.direction,
+        &state.pin_id,
+        &state.user_info,
+    ))
 }
 
 /// Resolves a GraphStyle or uses theme defaults.
@@ -270,8 +262,8 @@ fn resolve_graph_style(style: Option<&GraphStyle>, theme: &Theme) -> GraphStyle 
 /// then the indicator fill color forced to the pin's `color`.
 fn resolve_pin_style<P: PinId + 'static, UI>(
     pin_style_fn: Option<&PinStyleFn<'_, P, UI, Theme>>,
-    state: &NodePinState<UI>,
-    other: Option<&NodePinState<UI>>,
+    state: &NodePinState<P, UI>,
+    other: Option<&NodePinState<P, UI>>,
     theme: &Theme,
     status: PinStatus,
 ) -> PinStyle {
@@ -300,9 +292,9 @@ fn pin_indicator_radius(base_radius: f32, valid_target: bool, time: f32) -> f32 
 /// cutout radius tracks the drawn pin indicator, including the valid-target
 /// pulse. `is_valid_target(pin_idx)` decides which pins pulse.
 fn pin_cutout_circles<P: PinId + 'static, UI>(
-    pins: &[(usize, &NodePinState<UI>, (Point, Point))],
+    pins: &[(usize, &NodePinState<P, UI>, (Point, Point))],
     pin_style_fn: Option<&PinStyleFn<'_, P, UI, Theme>>,
-    other: Option<&NodePinState<UI>>,
+    other: Option<&NodePinState<P, UI>>,
     theme: &Theme,
     time: f32,
     offset: WorldVector,
@@ -447,14 +439,14 @@ where
 
         // The pin an edge drag started from, surfaced as `other` to pin_style so
         // candidate pins can react to what is being dragged toward them.
-        let drag_source: Option<NodePinState<UI>> = match state.dragging {
+        let drag_source: Option<NodePinState<P, UI>> = match state.dragging {
             Dragging::Edge(from_node, from_pin, _)
             | Dragging::EdgeOver(from_node, from_pin, _, _) => tree
                 .children
                 .get(from_node)
                 .zip(layout.children().nth(from_node))
                 .and_then(|(nt, nl)| {
-                    find_pins::<UI>(nt, nl)
+                    find_pins::<P, UI>(nt, nl)
                         .into_iter()
                         .nth(from_pin)
                         .map(|(_, s, _)| s.clone())
@@ -548,20 +540,18 @@ where
                 let from_offset = compute_node_offset(from_node_idx);
                 let to_offset = compute_node_offset(to_node_idx);
 
-                let from_pin_hash = compute_pin_hash(&from.pin_id);
-                let from_pins = find_pins::<UI>(from_node_tree, from_node_layout);
+                let from_pins = find_pins::<P, UI>(from_node_tree, from_node_layout);
                 let Some((_, from_pin_state, (from_pin_pos, _))) = from_pins
                     .iter()
-                    .find(|(_, state, _)| state.pin_id_hash == from_pin_hash)
+                    .find(|(_, state, _)| state.pin_id == from.pin_id)
                 else {
                     continue;
                 };
 
-                let to_pin_hash = compute_pin_hash(&to.pin_id);
-                let to_pins = find_pins::<UI>(to_node_tree, to_node_layout);
+                let to_pins = find_pins::<P, UI>(to_node_tree, to_node_layout);
                 let Some((_, to_pin_state, (to_pin_pos, _))) = to_pins
                     .iter()
-                    .find(|(_, state, _)| state.pin_id_hash == to_pin_hash)
+                    .find(|(_, state, _)| state.pin_id == to.pin_id)
                 else {
                     continue;
                 };
@@ -640,7 +630,7 @@ where
                     layout.children().nth(*from_node_idx),
                 )
             {
-                let from_pins = find_pins::<UI>(from_tree, from_layout);
+                let from_pins = find_pins::<P, UI>(from_tree, from_layout);
                 if let Some((_, from_pin_state, (from_pin_pos, _))) = from_pins.get(*from_pin_idx) {
                     let from_offset = compute_node_offset(*from_node_idx);
                     let start_pos =
@@ -727,7 +717,7 @@ where
                 let position: WorldPoint =
                     (node_layout.bounds().position().into_euclid().to_vector() + offset).to_point();
                 let size = node_layout.bounds().size();
-                let pins = find_pins::<UI>(node_tree, node_layout);
+                let pins = find_pins::<P, UI>(node_tree, node_layout);
                 let cut_circles = pin_cutout_circles(
                     &pins,
                     node_pin_style.as_ref(),
@@ -830,7 +820,7 @@ where
 
             // Pins drive the foreground (border halo plus indicators); the body
             // cutouts they imply are already baked into `node_outline`.
-            let pins = find_pins::<UI>(node_tree, node_layout);
+            let pins = find_pins::<P, UI>(node_tree, node_layout);
 
             // Layer 4a: Node Fill
             let fill_pad = 2.0 / cam_zoom;
@@ -1431,21 +1421,19 @@ where
                                                 };
 
                                             // Get pin positions and sides for bezier calculation
-                                            let from_pin_hash = compute_pin_hash(&from_ref.pin_id);
                                             let from_pin_data = layout
                                                 .children()
                                                 .nth(from_node_idx)
                                                 .and_then(|node_layout| {
                                                     tree.children.get(from_node_idx).and_then(
                                                         |node_tree| {
-                                                            let pins = find_pins::<UI>(
+                                                            let pins = find_pins::<P, UI>(
                                                                 node_tree,
                                                                 node_layout,
                                                             );
                                                             pins.iter()
                                                                 .find(|(_, state, _)| {
-                                                                    state.pin_id_hash
-                                                                        == from_pin_hash
+                                                                    state.pin_id == from_ref.pin_id
                                                                 })
                                                                 .map(|(_, state, (pos, _))| {
                                                                     (*pos, state.side)
@@ -1453,20 +1441,19 @@ where
                                                         },
                                                     )
                                                 });
-                                            let to_pin_hash = compute_pin_hash(&to_ref.pin_id);
                                             let to_pin_data = layout
                                                 .children()
                                                 .nth(to_node_idx)
                                                 .and_then(|node_layout| {
                                                     tree.children.get(to_node_idx).and_then(
                                                         |node_tree| {
-                                                            let pins = find_pins::<UI>(
+                                                            let pins = find_pins::<P, UI>(
                                                                 node_tree,
                                                                 node_layout,
                                                             );
                                                             pins.iter()
                                                                 .find(|(_, state, _)| {
-                                                                    state.pin_id_hash == to_pin_hash
+                                                                    state.pin_id == to_ref.pin_id
                                                                 })
                                                                 .map(|(_, state, (pos, _))| {
                                                                     (*pos, state.side)
@@ -1622,12 +1609,11 @@ where
                                         layout.children().zip(&tree.children).enumerate()
                                     {
                                         for (pin_index, pin_state, (a, b)) in
-                                            find_pins::<UI>(node_tree, node_layout)
+                                            find_pins::<P, UI>(node_tree, node_layout)
                                         {
                                             // Extract from_pin_id when we find the source pin
                                             if node_index == from_node && pin_index == from_pin {
-                                                from_pin_id =
-                                                    pin_state.pin_id.downcast_ref::<P>().cloned();
+                                                from_pin_id = Some(pin_state.pin_id.clone());
                                                 from_dir = Some(pin_state.direction);
                                             }
 
@@ -1640,15 +1626,11 @@ where
                                             if distance < SNAP_THRESHOLD && target_info.is_none() {
                                                 // Check if this pin is in valid_drop_targets
                                                 if valid_targets.contains(&(node_index, pin_index))
-                                                    && let Some(pid) = pin_state
-                                                        .pin_id
-                                                        .downcast_ref::<P>()
-                                                        .cloned()
                                                 {
                                                     target_info = Some((
                                                         node_index,
                                                         pin_index,
-                                                        pid,
+                                                        pin_state.pin_id.clone(),
                                                         pin_state.direction,
                                                     ));
                                                 }
@@ -1714,18 +1696,16 @@ where
                                         layout.children().zip(&tree.children).enumerate()
                                     {
                                         for (pin_index, pin_state, (a, b)) in
-                                            find_pins::<UI>(node_tree, node_layout)
+                                            find_pins::<P, UI>(node_tree, node_layout)
                                         {
                                             // Extract from_pin_id
                                             if node_index == from_node && pin_index == from_pin {
-                                                from_pin_id =
-                                                    pin_state.pin_id.downcast_ref::<P>().cloned();
+                                                from_pin_id = Some(pin_state.pin_id.clone());
                                                 from_dir = Some(pin_state.direction);
                                             }
                                             // Extract to_pin_id and check distance
                                             if node_index == to_node && pin_index == to_pin {
-                                                to_pin_id =
-                                                    pin_state.pin_id.downcast_ref::<P>().cloned();
+                                                to_pin_id = Some(pin_state.pin_id.clone());
                                                 to_dir = Some(pin_state.direction);
                                                 let distance = a
                                                     .distance(cursor_position)
@@ -1953,28 +1933,28 @@ where
                                     };
 
                                     // Get pin positions for both ends of the edge
-                                    let from_pin_hash = compute_pin_hash(&from_ref.pin_id);
                                     let from_pin_pos = layout
                                         .children()
                                         .nth(from_node_idx)
                                         .and_then(|node_layout| {
                                             tree.children.get(from_node_idx).and_then(|node_tree| {
-                                                let pins = find_pins::<UI>(node_tree, node_layout);
+                                                let pins =
+                                                    find_pins::<P, UI>(node_tree, node_layout);
                                                 pins.iter()
                                                     .find(|(_, state, _)| {
-                                                        state.pin_id_hash == from_pin_hash
+                                                        state.pin_id == from_ref.pin_id
                                                     })
                                                     .map(|(_, _, (a, _))| *a)
                                             })
                                         });
-                                    let to_pin_hash = compute_pin_hash(&to_ref.pin_id);
                                     let to_pin_pos = layout.children().nth(to_node_idx).and_then(
                                         |node_layout| {
                                             tree.children.get(to_node_idx).and_then(|node_tree| {
-                                                let pins = find_pins::<UI>(node_tree, node_layout);
+                                                let pins =
+                                                    find_pins::<P, UI>(node_tree, node_layout);
                                                 pins.iter()
                                                     .find(|(_, state, _)| {
-                                                        state.pin_id_hash == to_pin_hash
+                                                        state.pin_id == to_ref.pin_id
                                                     })
                                                     .map(|(_, _, (a, _))| *a)
                                             })
@@ -2024,7 +2004,7 @@ where
                                     let Some(node_tree) = tree.children.get(node_index) else {
                                         continue;
                                     };
-                                    let pins = find_pins::<UI>(node_tree, node_layout);
+                                    let pins = find_pins::<P, UI>(node_tree, node_layout);
                                     // Get node_id for this node_index
                                     let current_node_id =
                                         match self.node_ids.id(node_index).cloned() {
@@ -2045,15 +2025,10 @@ where
                                             // Check if this pin has existing connections
                                             // If it does, "unplug" the clicked end (like pulling a cable)
                                             for (from_ref, to_ref, _style) in &self.edges {
-                                                // Compare using hash-based matching
-                                                let from_pin_hash =
-                                                    compute_pin_hash(&from_ref.pin_id);
-                                                let to_pin_hash = compute_pin_hash(&to_ref.pin_id);
-
                                                 // If we clicked the "from" pin, unplug FROM and drag it
                                                 // Keep TO pin connected, drag away from it
                                                 if from_ref.node_id == current_node_id
-                                                    && from_pin_hash == pin_state.pin_id_hash
+                                                    && from_ref.pin_id == pin_state.pin_id
                                                 {
                                                     // Magnetic plug: grabbing a connected pin
                                                     // does NOT disconnect yet. Enter the snapped
@@ -2084,11 +2059,9 @@ where
                                                             None => continue,
                                                         };
                                                         let to_pins =
-                                                            find_pins::<UI>(to_tree, to_layout);
+                                                            find_pins::<P, UI>(to_tree, to_layout);
                                                         match to_pins.iter().position(
-                                                            |(_, s, _)| {
-                                                                s.pin_id_hash == to_pin_hash
-                                                            },
+                                                            |(_, s, _)| s.pin_id == to_ref.pin_id,
                                                         ) {
                                                             Some(idx) => idx,
                                                             None => continue,
@@ -2119,7 +2092,7 @@ where
                                                 // If we clicked the "to" pin, unplug TO and drag it
                                                 // Keep FROM pin connected, drag away from it
                                                 else if to_ref.node_id == current_node_id
-                                                    && to_pin_hash == pin_state.pin_id_hash
+                                                    && to_ref.pin_id == pin_state.pin_id
                                                 {
                                                     // Magnetic plug: grabbing a connected pin
                                                     // does NOT disconnect yet. Enter the snapped
@@ -2151,12 +2124,12 @@ where
                                                             Some(l) => l,
                                                             None => continue,
                                                         };
-                                                        let from_pins =
-                                                            find_pins::<UI>(from_tree, from_layout);
+                                                        let from_pins = find_pins::<P, UI>(
+                                                            from_tree,
+                                                            from_layout,
+                                                        );
                                                         match from_pins.iter().position(
-                                                            |(_, s, _)| {
-                                                                s.pin_id_hash == from_pin_hash
-                                                            },
+                                                            |(_, s, _)| s.pin_id == from_ref.pin_id,
                                                         ) {
                                                             Some(idx) => idx,
                                                             None => continue,
@@ -2375,26 +2348,26 @@ where
 
 /// Helper function to find all NodePin elements in the tree of a Node.
 /// Returns: Vec of (pin_index, &NodePinState, (Point, Point) positions).
-/// Generic over `UI`; within one graph all pins share the same `UI`, so the tag
-/// match resolves a single concrete `NodePinState<UI>`.
-fn find_pins<'a, UI: 'static>(
+/// Generic over `P` and `UI`; within one graph all pins share the same `P` and
+/// `UI`, so the tag match resolves a single concrete `NodePinState<P, UI>`.
+fn find_pins<'a, P: 'static, UI: 'static>(
     tree: &'a Tree,
     layout: Layout<'a>,
-) -> Vec<(usize, &'a NodePinState<UI>, (Point, Point))> {
+) -> Vec<(usize, &'a NodePinState<P, UI>, (Point, Point))> {
     let mut flat = Vec::new();
     let mut pin_index = 0;
-    inner_find_pins::<UI>(&mut flat, &mut pin_index, layout, tree);
+    inner_find_pins::<P, UI>(&mut flat, &mut pin_index, layout, tree);
     flat
 }
 
-fn inner_find_pins<'a, UI: 'static>(
-    flat: &mut Vec<(usize, &'a NodePinState<UI>, (Point, Point))>,
+fn inner_find_pins<'a, P: 'static, UI: 'static>(
+    flat: &mut Vec<(usize, &'a NodePinState<P, UI>, (Point, Point))>,
     pin_index: &mut usize,
     node_layout: Layout<'a>,
     pin_tree: &'a Tree,
 ) {
-    if pin_tree.tag == tree::Tag::of::<NodePinState<UI>>() {
-        let pin_state = pin_tree.state.downcast_ref::<NodePinState<UI>>();
+    if pin_tree.tag == tree::Tag::of::<NodePinState<P, UI>>() {
+        let pin_state = pin_tree.state.downcast_ref::<NodePinState<P, UI>>();
         let node_bounds = node_layout.bounds();
         let pin_positions = pin_positions(pin_state, node_bounds);
         flat.push((*pin_index, pin_state, pin_positions));
@@ -2402,7 +2375,7 @@ fn inner_find_pins<'a, UI: 'static>(
     }
 
     for child_tree in &pin_tree.children {
-        inner_find_pins::<UI>(flat, pin_index, node_layout, child_tree);
+        inner_find_pins::<P, UI>(flat, pin_index, node_layout, child_tree);
     }
 }
 
@@ -2423,7 +2396,10 @@ fn orient_connection<N, P>(
 
 /// Validates if two pins can be connected based on direction.
 /// Only checks direction compatibility - custom logic is handled by can_connect.
-fn validate_pin_direction<UI>(from_pin: &NodePinState<UI>, to_pin: &NodePinState<UI>) -> bool {
+fn validate_pin_direction<P, UI>(
+    from_pin: &NodePinState<P, UI>,
+    to_pin: &NodePinState<P, UI>,
+) -> bool {
     use crate::node_pin::PinDirection;
 
     // Check direction compatibility:
@@ -2469,7 +2445,7 @@ where
     // Get the source pin state for validation.
     let from_pin_state = tree.children.get(from_node).and_then(|node_tree| {
         layout.children().nth(from_node).and_then(|node_layout| {
-            find_pins::<UI>(node_tree, node_layout)
+            find_pins::<P, UI>(node_tree, node_layout)
                 .into_iter()
                 .nth(from_pin)
                 .map(|(_, state, _)| state.clone())
@@ -2486,7 +2462,7 @@ where
     // Iterate all pins in all nodes
     for (node_index, (node_layout, node_tree)) in layout.children().zip(&tree.children).enumerate()
     {
-        for (pin_index, pin_state, _) in find_pins::<UI>(node_tree, node_layout) {
+        for (pin_index, pin_state, _) in find_pins::<P, UI>(node_tree, node_layout) {
             // Skip source pin
             if node_index == from_node && pin_index == from_pin {
                 continue;
@@ -2499,16 +2475,22 @@ where
 
             if let Some(can_connect) = &graph.can_connect {
                 // Authoritative: the user closure decides, no implicit filter.
-                let (Some(fid), Some(fpid), Some(tid), Some(tpid)) = (
-                    from_node_id.as_ref(),
-                    from_state.pin_id.downcast_ref::<P>(),
-                    graph.node_ids.id(node_index),
-                    pin_state.pin_id.downcast_ref::<P>(),
-                ) else {
+                let (Some(fid), Some(tid)) = (from_node_id.as_ref(), graph.node_ids.id(node_index))
+                else {
                     continue;
                 };
-                let from_end = PinEnd::new(fid, fpid, from_state.direction, &from_state.user_info);
-                let to_end = PinEnd::new(tid, tpid, pin_state.direction, &pin_state.user_info);
+                let from_end = PinEnd::new(
+                    fid,
+                    &from_state.pin_id,
+                    from_state.direction,
+                    &from_state.user_info,
+                );
+                let to_end = PinEnd::new(
+                    tid,
+                    &pin_state.pin_id,
+                    pin_state.direction,
+                    &pin_state.user_info,
+                );
                 if !can_connect(from_end, to_end) {
                     continue;
                 }
@@ -2523,7 +2505,7 @@ where
     valid_targets
 }
 
-fn pin_positions<UI>(state: &NodePinState<UI>, node_bounds: Rectangle) -> (Point, Point) {
+fn pin_positions<P, UI>(state: &NodePinState<P, UI>, node_bounds: Rectangle) -> (Point, Point) {
     if state.side == PinSide::Row {
         (
             pin_position(state.position, PinSide::Left, node_bounds),

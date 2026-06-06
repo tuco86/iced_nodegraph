@@ -37,17 +37,8 @@ use iced_widget::core::{
     Clipboard, Layout, Shell, Widget, layout, mouse, renderer,
     widget::{Tree, tree},
 };
-use std::hash::{Hash, Hasher};
-
 /// Default pin size when no content widget is provided.
 const DEFAULT_PIN_SIZE: Size = Size::new(50.0, 20.0);
-
-/// Compute a stable hash for a pin ID (used for pin identity tracking).
-fn hash_pin_id<P: Hash>(pin_id: &P) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    pin_id.hash(&mut hasher);
-    hasher.finish()
-}
 
 /// Which side of a node this pin attaches to.
 /// Determines the tangent direction for edge bezier curves.
@@ -247,40 +238,16 @@ where
     }
 }
 
-/// Type-erased pin ID that can be cloned and downcast.
-/// Uses Arc to enable Clone without requiring P: Clone.
-#[derive(Clone)]
-pub(crate) struct AnyPinId(std::sync::Arc<dyn std::any::Any + Send + Sync>);
-
-impl AnyPinId {
-    /// Creates a new type-erased pin ID.
-    pub fn new<P: PinId + Send + Sync + 'static>(id: P) -> Self {
-        Self(std::sync::Arc::new(id))
-    }
-
-    /// Attempts to downcast to the original pin ID type.
-    pub fn downcast_ref<P: 'static>(&self) -> Option<&P> {
-        self.0.downcast_ref()
-    }
-}
-
-impl std::fmt::Debug for AnyPinId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("AnyPinId").field(&"<type-erased>").finish()
-    }
-}
-
 /// Internal state for a NodePin widget.
 ///
-/// Generic only over `UI` (the user payload), NOT over `P`: the pin ID is kept
-/// type-erased as a hash plus an [`AnyPinId`]. Within one graph all pins share
-/// the same `UI`, so `find_pins` still matches a single `tree::Tag`.
+/// Generic over `P` (the pin id) and `UI` (the user payload). Within one graph
+/// all pins share the same `P` and `UI`, so `find_pins` matches a single
+/// `tree::Tag`. The pin id is stored directly: matching an edge endpoint is exact
+/// equality, and recovering the user's id is just a borrow (no type erasure).
 #[derive(Debug, Clone)]
-pub(super) struct NodePinState<UI> {
-    /// Hash of the user's pin ID for matching
-    pub pin_id_hash: u64,
-    /// Type-erased pin ID for reverse lookup
-    pub pin_id: AnyPinId,
+pub(super) struct NodePinState<P, UI> {
+    /// The user's pin id.
+    pub pin_id: P,
     pub side: PinSide,
     pub direction: PinDirection,
     pub position: Point,
@@ -300,14 +267,13 @@ where
     Message: 'a,
 {
     fn tag(&self) -> tree::Tag {
-        // Same tag for all pins sharing UI - enables consistent pin finding
-        tree::Tag::of::<NodePinState<UI>>()
+        // Same tag for all pins sharing P and UI - enables consistent pin finding
+        tree::Tag::of::<NodePinState<P, UI>>()
     }
 
     fn state(&self) -> tree::State {
         tree::State::new(NodePinState {
-            pin_id_hash: hash_pin_id(&self.pin_id),
-            pin_id: AnyPinId::new(self.pin_id.clone()),
+            pin_id: self.pin_id.clone(),
             side: self.side,
             direction: self.direction,
             position: Point::new(0.0, 0.0),
@@ -354,9 +320,8 @@ where
         viewport: &Rectangle,
     ) {
         {
-            let state = tree.state.downcast_mut::<NodePinState<UI>>();
-            state.pin_id_hash = hash_pin_id(&self.pin_id);
-            state.pin_id = AnyPinId::new(self.pin_id.clone());
+            let state = tree.state.downcast_mut::<NodePinState<P, UI>>();
+            state.pin_id = self.pin_id.clone();
             state.side = self.side;
             state.direction = self.direction;
             state.position = layout.bounds().center();
