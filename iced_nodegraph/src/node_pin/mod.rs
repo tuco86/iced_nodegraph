@@ -257,7 +257,7 @@ where
 /// Type-erased pin ID that can be cloned and downcast.
 /// Uses Arc to enable Clone without requiring P: Clone.
 #[derive(Clone)]
-pub struct AnyPinId(std::sync::Arc<dyn std::any::Any + Send + Sync>);
+pub(crate) struct AnyPinId(std::sync::Arc<dyn std::any::Any + Send + Sync>);
 
 impl AnyPinId {
     /// Creates a new type-erased pin ID.
