@@ -134,13 +134,19 @@ pub fn default_pin_style(theme: &Theme, _status: PinStatus) -> PinStyle {
 }
 
 /// Complete theme-derived edge style with status feedback: `Idle` is a 2px solid
-/// stroke inheriting the pin colors; `PendingCut` tints the stroke with the
+/// stroke in the theme's secondary color; `PendingCut` tints the stroke with the
 /// theme's edge-cutting color.
+///
+/// The default stroke is a single concrete color. To make an edge follow its
+/// connected pins (e.g. a port-typed color), build the gradient from each
+/// endpoint's [`PinInfo`](crate::PinInfo) in the edge `style` closure and
+/// struct-update over this base.
 pub fn default_edge_style(theme: &Theme, status: EdgeStatus) -> EdgeStyle {
-    // TRANSPARENT stroke ends mean "inherit from the connected pins".
+    let palette = theme.extended_palette();
+    // Unused-color sentinel for the off fields (border, outlines, shadow).
     let none = Color::TRANSPARENT;
     let base = EdgeStyle {
-        stroke_color: none.into(),
+        stroke_color: palette.secondary.base.color.into(),
         pattern: Pattern::solid(2.0),
         stroke_outline_width: 0.0,
         stroke_outline_color: none.into(),

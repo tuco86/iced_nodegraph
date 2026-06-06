@@ -546,7 +546,8 @@ where
     ///     .cutting_tool_style(|theme| Color::from_rgb(1.0, 0.3, 0.3))
     /// ```
     /// Sets the style of the edge being dragged (before it connects). Receives
-    /// the theme; the source pin's color is injected for inheriting stroke ends.
+    /// the theme and the source pin, so the closure can derive the stroke from
+    /// the pin's info (e.g. a port-typed color) for both ends of the loose edge.
     pub fn dragging_edge_style(
         mut self,
         f: impl Fn(&Theme, PinInfo<'_, P, UI>) -> EdgeStyle + 'a,

@@ -6,11 +6,12 @@
 //! grouped fields here.
 //!
 //! Color fields are [`ColorQuad`]s. The stroke `color` is an arc-length gradient
-//! start -> end (`Color::TRANSPARENT` at an end = inherit that pin's color at
-//! draw time). The shadow uses all four quad corners: arc gradient along the
-//! edge crossed with the distance fade to transparent. On/off is a sentinel:
-//! border `width` 0, stroke/border outline `width` 0, shadow `blur` 0 or color
-//! alpha 0.
+//! start -> end. To make an edge follow its connected pins' colors, derive the
+//! quad from each endpoint's [`PinInfo`](crate::PinInfo) in the edge `style`
+//! closure; the style itself carries only concrete colors. The shadow uses all
+//! four quad corners: arc gradient along the edge crossed with the distance fade
+//! to transparent. On/off is a sentinel: border `width` 0, stroke/border outline
+//! `width` 0, shadow `blur` 0 or color alpha 0.
 //!
 use iced::Color;
 use iced_nodegraph_sdf::Pattern;
@@ -21,7 +22,7 @@ use super::color::ColorQuad;
 /// Visual style for an edge.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EdgeStyle {
-    // Stroke (stroke_color: arc gradient start -> end; TRANSPARENT end = inherit pin)
+    // Stroke (stroke_color: arc gradient start -> end)
     /// Stroke color as an arc-length gradient (start pin -> end pin).
     pub stroke_color: ColorQuad,
     /// Stroke pattern (thickness, dash/gap, flow).
@@ -171,7 +172,7 @@ mod tests {
     fn sdf_layers_preserves_stroke_pattern() {
         let mut s = EdgeStyle::data_flow();
         s.pattern = Pattern::dashed(2.0, 12.0, 6.0);
-        let layers = s.sdf_layers(Color::WHITE, Color::BLACK);
+        let layers = s.sdf_layers();
         let stroke = &layers[0]; // stroke is the front layer
         let pat = stroke.style.pattern.expect("stroke lost its pattern");
         assert!(

@@ -1,10 +1,12 @@
 //! A small live logic playground built on iced_nodegraph.
 //!
 //! Every pin carries a `Port` payload (the graph's `UI` type parameter), which
-//! drives two things: the node colors its pins by that payload, and
-//! `can_connect` only joins an output to an input of the SAME port type. So a
-//! `Number` wire (orange) refuses to enter the `AND` gate's `Bool` inputs
-//! (green) - you must run it through the `>0` comparator first.
+//! drives three things: the node colors its pins by that payload, each edge
+//! derives its gradient from the ports it connects (read via `PinInfo::info()`
+//! in the edge `style` closure), and `can_connect` only joins an output to an
+//! input of the SAME port type. So a `Number` wire (orange) refuses to enter the
+//! `AND` gate's `Bool` inputs (green) - you must run it through the `>0`
+//! comparator first.
 //!
 //! The graph is evaluated live every frame: drag the slider or toggle the
 //! switch and the lamp reacts. Unplug a pin (click it) and rewire to build a
@@ -17,7 +19,9 @@
 use iced::widget::{checkbox, column, container, slider, text};
 use iced::{Color, Element, Point, Theme, Vector};
 use iced_nodegraph::prelude::*;
-use iced_nodegraph::{Node, PinInfo, PinStatus, default_pin_style, edge, node, pin};
+use iced_nodegraph::{
+    EdgeStatus, Node, PinInfo, PinStatus, default_edge_style, default_pin_style, edge, node, pin,
+};
 
 fn main() -> iced::Result {
     iced::application(App::default, App::update, App::view)
@@ -115,6 +119,13 @@ enum Message {
     Switch(bool),
 }
 
+/// Edge stroke that follows its endpoints' port colors, laid out output -> input.
+/// The library default is a single concrete color; pin-color inheritance is a
+/// userland pattern: both this and `pin_style` read the same `Port::color()`.
+fn edge_stroke(start: Port, end: Port) -> ColorQuad {
+    ColorQuad::arc(start.color(), end.color())
+}
+
 /// Colors a pin by its `Port` payload (read via `pin.info()`). The node owns the
 /// pin styling; the pin itself carries no style.
 fn pin_style(
@@ -199,6 +210,11 @@ impl App {
                 // Authoritative: opposite directions and matching port type.
                 .can_connect(|from, to| {
                     from.direction() != to.direction() && from.info() == to.info()
+                })
+                // The dragged edge (one loose end) takes the held pin's color.
+                .dragging_edge_style(|theme, pin| EdgeStyle {
+                    stroke_color: edge_stroke(*pin.info(), *pin.info()),
+                    ..default_edge_style(theme, EdgeStatus::Idle)
                 });
 
         ng.push_node(gate(
@@ -280,7 +296,11 @@ impl App {
         ));
 
         for &(from, to) in &self.edges {
-            ng.push_edge(edge(from, to));
+            // Each edge derives its gradient from the two connected pins' ports.
+            ng.push_edge(edge(from, to).style(|theme, status, start, end| EdgeStyle {
+                stroke_color: edge_stroke(*start.info(), *end.info()),
+                ..default_edge_style(theme, status)
+            }));
         }
 
         ng.into()

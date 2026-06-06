@@ -31,11 +31,6 @@ pub(crate) fn color_with_opacity(c: Color, opacity: f32) -> Color {
     }
 }
 
-/// Resolve an edge color, falling back to the pin color when transparent.
-fn resolve_edge_color(color: Color, pin_color: Color) -> Color {
-    if color.a > 0.01 { color } else { pin_color }
-}
-
 /// Build a `Style` from a color quad over a distance band, premultiplying alpha.
 fn quad_style(
     q: &ColorQuad,
@@ -60,16 +55,6 @@ fn quad_style(
 fn quad_stroke(q: &ColorQuad, pattern: Pattern, opacity: f32) -> Style {
     let ht = pattern.thickness * 0.5;
     quad_style(q, -ht, ht, Some(pattern), opacity)
-}
-
-/// Replace transparent quad corners with the connected pin color, per arc side.
-fn quad_resolve_pins(q: &ColorQuad, start_pin: Color, end_pin: Color) -> ColorQuad {
-    ColorQuad {
-        near_start: resolve_edge_color(q.near_start, start_pin),
-        far_start: resolve_edge_color(q.far_start, start_pin),
-        near_end: resolve_edge_color(q.near_end, end_pin),
-        far_end: resolve_edge_color(q.far_end, end_pin),
-    }
 }
 
 /// Which geometry an edge layer is drawn on.
@@ -179,18 +164,17 @@ impl EdgeStyle {
     /// Decompose into SDF layers front-to-back: stroke, optional stroke outline,
     /// optional border (ring, outline, background), then shadow deepest.
     ///
-    /// Colors are in arc-length order (`start_color` at arc 0, `end_color` at arc
-    /// 1); transparent quad corners inherit the given pin colors. No reversal: the
-    /// caller lays the edge out in the intended direction, so gradient, arrow
-    /// pattern and flow all follow the arc-length as-is.
-    pub(crate) fn sdf_layers(&self, start_color: Color, end_color: Color) -> Vec<EdgeLayer> {
+    /// Colors are in arc-length order (`stroke_color.near_start` at arc 0,
+    /// `near_end` at arc 1). No reversal: the caller lays the edge out in the
+    /// intended direction, so gradient, arrow pattern and flow all follow the
+    /// arc-length as-is.
+    pub(crate) fn sdf_layers(&self) -> Vec<EdgeLayer> {
         let mut layers = Vec::with_capacity(6);
 
         // Stroke (front).
-        let stroke_q = quad_resolve_pins(&self.stroke_color, start_color, end_color);
         layers.push(EdgeLayer {
             geometry: EdgeGeometry::Stroke,
-            style: quad_stroke(&stroke_q, self.pattern, 1.0),
+            style: quad_stroke(&self.stroke_color, self.pattern, 1.0),
         });
 
         // Stroke outline (halo behind the stroke).
@@ -212,8 +196,8 @@ impl EdgeStyle {
                 self.pattern.thickness * 0.5 + self.border_gap + self.border_width * 0.5;
             let border_outer = border_center + self.border_width * 0.5;
 
-            let bq = quad_resolve_pins(&self.border_color, start_color, end_color);
-            let mut border_style = quad_stroke(&bq, Pattern::solid(self.border_width), 1.0);
+            let mut border_style =
+                quad_stroke(&self.border_color, Pattern::solid(self.border_width), 1.0);
             border_style.dist_from = -border_outer;
             border_style.dist_to = -border_center + self.border_width * 0.5;
             layers.push(EdgeLayer {

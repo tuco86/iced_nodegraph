@@ -46,11 +46,11 @@ use iced::{
     widget::{container, opaque, stack, text},
     window,
 };
-use iced_nodegraph::{EdgeCurve, PinShape};
 use iced_nodegraph::{
-    EdgeStatus, PinRef, default_edge_style, default_node_style, default_pin_style, edge as ng_edge,
-    node as ng_node,
+    ColorQuad, EdgeStatus, EdgeStyle, PinRef, default_edge_style, default_node_style,
+    default_pin_style, edge as ng_edge, node as ng_node,
 };
+use iced_nodegraph::{EdgeCurve, PinShape};
 use iced_palette::{
     Command, Shortcut, command, command_palette, find_matching_shortcut, focus_input,
     get_filtered_command_index, get_filtered_count, is_toggle_shortcut, navigate_down, navigate_up,
@@ -1723,8 +1723,13 @@ impl Application {
                 )
             })
             .cutting_tool_style(|_theme| iced::Color::from_rgb(1.0, 0.3, 0.3))
-            .dragging_edge_style(move |theme, _source| {
-                drag_overlay.resolve_over(default_edge_style(theme, EdgeStatus::Idle))
+            .dragging_edge_style(move |theme, source| {
+                // The loose edge takes the held pin's data-type color on both ends.
+                let base = EdgeStyle {
+                    stroke_color: ColorQuad::solid(pin_color_for(*source.info())),
+                    ..default_edge_style(theme, EdgeStatus::Idle)
+                };
+                drag_overlay.resolve_over(base)
             });
 
         // Add all nodes from state (in order)
@@ -1921,8 +1926,17 @@ impl Application {
                 let from = PinRef::new(edge_data.from_node.clone(), edge_data.from_pin);
                 let to = PinRef::new(edge_data.to_node.clone(), edge_data.to_pin);
                 let overlay = edge_overlay.clone();
-                ng.push_edge(ng_edge(from, to).style(move |theme, status, _start, _end| {
-                    overlay.resolve_over(default_edge_style(theme, status))
+                ng.push_edge(ng_edge(from, to).style(move |theme, status, start, end| {
+                    // Edges follow their connected pins' data-type colors; the
+                    // Edge Config overlay (if set) overrides the inherited stroke.
+                    let base = EdgeStyle {
+                        stroke_color: ColorQuad::arc(
+                            pin_color_for(*start.info()),
+                            pin_color_for(*end.info()),
+                        ),
+                        ..default_edge_style(theme, status)
+                    };
+                    overlay.resolve_over(base)
                 }));
             }
         }

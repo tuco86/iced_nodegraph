@@ -40,8 +40,6 @@ use crate::{
 };
 use iced_nodegraph_sdf::{Curve, Drawable, Pattern, SdfPrimitive, Style};
 
-use iced::Color;
-
 // Click detection threshold (in world-space pixels)
 const PIN_CLICK_THRESHOLD: f32 = 8.0;
 
@@ -205,10 +203,8 @@ fn push_edge_layers(
     shape: &Drawable,
     shadow_shape: &Drawable,
     style: &EdgeStyle,
-    start_color: Color,
-    end_color: Color,
 ) {
-    for layer in style.sdf_layers(start_color, end_color) {
+    for layer in style.sdf_layers() {
         let drawable = match layer.geometry {
             EdgeGeometry::Stroke => shape,
             EdgeGeometry::Shadow => shadow_shape,
@@ -285,17 +281,6 @@ fn resolve_pin_style<P: PinId + 'static, UI>(
     } else {
         crate::style::default_pin_style(theme, status)
     }
-}
-
-/// The pin's resolved indicator color, for inheriting edge stroke ends.
-fn pin_color<P: PinId + 'static, UI>(
-    pin_style_fn: Option<&PinStyleFn<'_, P, UI, Theme>>,
-    state: &NodePinState<UI>,
-    theme: &Theme,
-) -> Color {
-    resolve_pin_style::<P, UI>(pin_style_fn, state, None, theme, PinStatus::Idle)
-        .color
-        .near_start
 }
 
 /// Pin indicator radius, pulsing when it is a valid drop target.
@@ -589,36 +574,15 @@ where
                 let from_info = pin_info::<P, UI>(from_pin_state);
                 let to_info = pin_info::<P, UI>(to_pin_state);
 
-                // Pin colors come from each pin's owner-node pin_style closure
-                // (pins carry no style); TRANSPARENT stroke ends inherit them.
-                let from_color =
-                    pin_color(self.nodes[from_node_idx].3.as_ref(), from_pin_state, theme);
-                let to_color = pin_color(self.nodes[to_node_idx].3.as_ref(), to_pin_state, theme);
-
                 // Normalize orientation so the OUTPUT pin is the edge start
                 // (output -> input). Gradient, arrow and flow then follow the
                 // data-flow direction regardless of which side was dragged from.
                 let swap = !matches!(from_pin_state.direction, PinDirection::Output)
                     && matches!(to_pin_state.direction, PinDirection::Output);
-                let (
-                    start_pos,
-                    end_pos,
-                    start_side,
-                    end_side,
-                    start_color,
-                    end_color,
-                    start_info,
-                    end_info,
-                ) = if swap {
-                    (
-                        to_pos, from_pos, to_side, from_side, to_color, from_color, to_info,
-                        from_info,
-                    )
+                let (start_pos, end_pos, start_side, end_side, start_info, end_info) = if swap {
+                    (to_pos, from_pos, to_side, from_side, to_info, from_info)
                 } else {
-                    (
-                        from_pos, to_pos, from_side, to_side, from_color, to_color, from_info,
-                        to_info,
-                    )
+                    (from_pos, to_pos, from_side, to_side, from_info, to_info)
                 };
 
                 let edge_status = if pending_cuts.is_some_and(|cuts| cuts.contains(&edge_idx)) {
@@ -637,14 +601,7 @@ where
                 let (shape, shadow_shape) =
                     edge_shapes(&start_pos, &end_pos, start_side, end_side, &edge_style);
 
-                push_edge_layers(
-                    &mut batch,
-                    &shape,
-                    &shadow_shape,
-                    &edge_style,
-                    start_color,
-                    end_color,
-                );
+                push_edge_layers(&mut batch, &shape, &shadow_shape, &edge_style);
             }
 
             batch
@@ -711,9 +668,6 @@ where
                         PinSide::Row => 1,
                     };
 
-                    let from_color =
-                        pin_color(self.nodes[*from_node_idx].3.as_ref(), from_pin_state, theme);
-
                     // Output = start, input = end. Dragging FROM an input pin puts
                     // the held pin at the END and the cursor at the START (flip);
                     // from an output it stays start -> cursor end.
@@ -728,14 +682,7 @@ where
                         edge_shapes(&start_pos, &end_pos, start_side, end_side, &drag_edge_style);
 
                     let mut drag_batch = SdfPrimitive::new();
-                    push_edge_layers(
-                        &mut drag_batch,
-                        &shape,
-                        &shadow_shape,
-                        &drag_edge_style,
-                        from_color,
-                        from_color,
-                    );
+                    push_edge_layers(&mut drag_batch, &shape, &shadow_shape, &drag_edge_style);
 
                     let (cx, cy) = layer_camera(
                         render_context.camera_position,
