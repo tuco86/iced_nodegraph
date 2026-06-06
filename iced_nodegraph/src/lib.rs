@@ -196,13 +196,9 @@
 //! ```
 
 pub use content::{
-    ContentPosition, EdgeRadii, NodeContentStyle, node_content_container, node_footer, node_header,
-    simple_node,
+    ContentPosition, EdgeRadii, NodeContentStyle, node_footer, node_header, simple_node,
 };
-pub use helpers::{
-    CloneResult, DeleteResult, NodeHandle, PinHandle, SelectionHelper, clone_nodes, delete_nodes,
-};
-pub use ids::{EdgeId, IdMap, IdMaps, NodeId, PinId};
+pub use ids::{NodeId, PinId};
 pub use node_graph::{
     Edge, Node, NodeGraph, NodeGraphEvent, NodeGraphMessage, PinRef, SdfDebug, camera::Camera2D,
     edge, node, widget::node_graph,
@@ -222,15 +218,11 @@ pub use style::{
     PinShape,
     PinStatus,
     PinStyle,
-    STANDARD_THEMES,
     SelectionStyle,
     // Built-in status-driven default styles
     default_edge_style,
     default_node_style,
     default_pin_style,
-    is_dark_theme,
-    relative_luminance,
-    theme_name,
 };
 
 // Re-export iced_nodegraph_sdf pattern types for downstream crates
@@ -238,7 +230,6 @@ pub use iced_nodegraph_sdf::Pattern;
 pub use iced_nodegraph_sdf::pattern::PatternType as SdfPatternType;
 
 pub mod content;
-pub mod helpers;
 pub mod ids;
 mod node_graph;
 mod node_pin;

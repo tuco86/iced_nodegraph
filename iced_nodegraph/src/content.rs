@@ -166,42 +166,6 @@ impl NodeContentStyle {
     }
 }
 
-/// Creates a themed label row for node content.
-///
-/// # Example
-/// ```ignore
-/// let label = node_label("Parameter:", NodeContentStyle::input(theme));
-/// ```
-pub fn node_label<'a, Message>(
-    label: impl Into<String>,
-    style: NodeContentStyle,
-) -> Element<'a, Message, Theme, iced::Renderer>
-where
-    Message: Clone + 'a,
-{
-    text(label.into()).size(12).color(style.body_text).into()
-}
-
-/// Creates a themed horizontal separator for nodes.
-///
-/// Note: This is a simple container-based separator since horizontal_rule
-/// may not be available in all Iced versions.
-pub fn node_separator<'a, Message>(
-    style: NodeContentStyle,
-) -> Element<'a, Message, Theme, iced::Renderer>
-where
-    Message: Clone + 'a,
-{
-    container(text(""))
-        .width(Length::Fill)
-        .height(Length::Fixed(1.0))
-        .style(move |_theme: &Theme| container::Style {
-            background: Some(style.accent.into()),
-            ..Default::default()
-        })
-        .into()
-}
-
 /// Corner radii for the two corners along one node edge.
 ///
 /// Accepts a single value (both corners equal) or a `(left, right)` tuple via
@@ -257,39 +221,6 @@ pub(crate) fn section_border_radius(radii: EdgeRadii, position: ContentPosition)
         },
         ContentPosition::Middle => border::Radius::from(0.0),
     }
-}
-
-/// Wraps `content` in a `Length::Fill` rounded-corner container, rounding the
-/// corners at `position` to `radii`.
-///
-/// A thin wrapper over a rounded box: the returned [`Container`] can be styled
-/// and laid out further by the caller. Pass a single radius or a `(left, right)`
-/// tuple. To match a node exactly, pass the node's `corner_radius`.
-///
-/// # Example
-/// ```ignore
-/// let body = node_content_container(my_widgets, 5.0, ContentPosition::Bottom);
-/// let body = node_content_container(my_widgets, (4.0, 8.0), ContentPosition::Top);
-/// ```
-pub fn node_content_container<'a, Message>(
-    content: impl Into<Element<'a, Message, Theme, iced::Renderer>>,
-    radii: impl Into<EdgeRadii>,
-    position: ContentPosition,
-) -> Container<'a, Message, Theme, iced::Renderer>
-where
-    Message: Clone + 'a,
-{
-    let radius = section_border_radius(radii.into(), position);
-
-    container(content)
-        .width(Length::Fill)
-        .style(move |_theme: &Theme| container::Style {
-            border: Border {
-                radius,
-                ..Default::default()
-            },
-            ..Default::default()
-        })
 }
 
 /// Creates a simple node with title bar and content area.
@@ -356,16 +287,6 @@ where
     ]
     .width(Length::Fill)
     .into()
-}
-
-/// Returns theme-aware text color for node content.
-pub fn get_text_color(theme: &Theme) -> Color {
-    theme.extended_palette().background.base.text
-}
-
-/// Returns whether the current theme is dark.
-pub fn is_theme_dark(theme: &Theme) -> bool {
-    theme.extended_palette().is_dark
 }
 
 /// Wraps `content` in a `Length::Fill` header: a rounded box with its top two
