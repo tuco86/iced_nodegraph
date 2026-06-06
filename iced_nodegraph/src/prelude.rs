@@ -7,8 +7,9 @@
 //! helpers. Graph-level configuration set once (`Camera2D`, `GraphStyle`,
 //! `SelectionStyle`, `SdfDebug`) is imported explicitly when opted into.
 
-// Builders: the entry point, the node/edge/pin constructors, and the `pin!` macro.
-pub use crate::{edge, node, node_graph, node_pin, pin};
+// Builders: the entry point, the node/edge/pin constructors and the types they
+// return (named when writing helpers per node type), and the `pin!` macro.
+pub use crate::{Edge, Node, edge, node, node_graph, node_pin, pin};
 
 // Core types named when wiring callbacks and edges.
 pub use crate::{NodeGraph, PinRef};

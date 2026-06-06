@@ -18,7 +18,6 @@
 
 use iced::widget::{checkbox, column, container, slider, text};
 use iced::{Color, Element, Point, Theme, Vector};
-use iced_nodegraph::Node;
 use iced_nodegraph::prelude::*;
 
 fn main() -> iced::Result {
