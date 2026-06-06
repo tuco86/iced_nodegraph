@@ -916,6 +916,88 @@ fn wheel_zoom_keeps_world_point_under_cursor() {
 }
 
 // ---------------------------------------------------------------------------
+// Hit detection under zoom + pan: the real widget pipeline must locate pins and
+// edges when the camera is NOT at the default (zoom 1, no pan), so world pixels
+// differ from screen pixels. The other tests run at zoom 1 (world == screen),
+// which never exercises the screen<->world transform in hit detection.
+//
+// World->screen with camera (position, zoom): screen = (world + position) * zoom.
+// ---------------------------------------------------------------------------
+
+const CAM_POS: Point = Point::new(50.0, 50.0);
+const CAM_ZOOM: f32 = 2.0;
+
+/// Maps a world point to its screen pixel under the (CAM_POS, CAM_ZOOM) camera.
+fn world_to_screen(world: Point) -> Point {
+    Point::new(
+        (world.x + CAM_POS.x) * CAM_ZOOM,
+        (world.y + CAM_POS.y) * CAM_ZOOM,
+    )
+}
+
+/// The same two single-pin nodes as `pin_graph`, but viewed through a zoomed and
+/// panned camera, so pin anchors land at non-trivial screen pixels.
+fn zoomed_pin_graph(seed_edge: bool) -> Element<'static, Msg, Theme, Renderer> {
+    let mut ng: Graph = NodeGraph::default()
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .initial_camera(CAM_POS, CAM_ZOOM)
+        .on_connect(Msg::Connect)
+        .on_disconnect(Msg::Disconnect);
+    ng.push_node(node(
+        0usize,
+        OUT_POS,
+        pin!(Right, 0usize, pin_body(), Output),
+    ));
+    ng.push_node(node(1usize, IN_POS, pin!(Left, 0usize, pin_body(), Input)));
+    if seed_edge {
+        ng.push_edge(edge(PinRef::new(0, 0), PinRef::new(1, 0)));
+    }
+    ng.into()
+}
+
+#[test]
+fn drag_connects_under_zoom_and_pan() {
+    // The output and input anchors are world points; their screen pixels depend
+    // on the camera. Correct screen->world hit detection means dragging between
+    // the two screen pixels connects them just as it does at zoom 1.
+    let mut ui = Simulator::new(zoomed_pin_graph(false));
+    drag(
+        &mut ui,
+        world_to_screen(out_anchor()),
+        world_to_screen(in_anchor()),
+    );
+
+    let msgs = messages(ui);
+    assert!(
+        msgs.contains(&Msg::Connect(PinRef::new(0, 0), PinRef::new(1, 0))),
+        "dragging output -> input under zoom+pan must connect them: {msgs:?}",
+    );
+}
+
+#[test]
+fn ctrl_click_on_edge_disconnects_under_zoom_and_pan() {
+    // Ctrl+click on the edge midpoint (in screen space) must hit the edge line
+    // even though world != screen, exercising edge hit detection under zoom.
+    let mut ui = Simulator::new(zoomed_pin_graph(true));
+    // Both anchors share a world y, so the bezier midpoint sits on that y.
+    let mid_world = Point::new((out_anchor().x + in_anchor().x) / 2.0, out_anchor().y);
+    let mid = world_to_screen(mid_world);
+    ui.point_at(mid);
+    ui.simulate([
+        iced::Event::Keyboard(keyboard::Event::ModifiersChanged(cmd())),
+        moved(mid),
+    ]);
+    ui.simulate([press(), release()]);
+
+    let msgs = messages(ui);
+    assert!(
+        msgs.contains(&Msg::Disconnect(PinRef::new(0, 0), PinRef::new(1, 0))),
+        "ctrl+click on the edge under zoom+pan must disconnect it: {msgs:?}",
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Shift-click toggles selection off.
 // ---------------------------------------------------------------------------
 

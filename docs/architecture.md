@@ -33,8 +33,7 @@ iced_nodegraph/                    # Workspace root
 |       |   |-- widget.rs          # iced Widget trait: layout, events, draw
 |       |   |-- camera.rs          # 2D zoom/pan transforms
 |       |   |-- euclid.rs          # Type-safe World/Screen coordinates
-|       |   |-- state.rs           # Interaction and drag state
-|       |   `-- interaction_tests.rs
+|       |   `-- state.rs           # Interaction and drag state
 |       |-- node_pin/mod.rs        # NodePin widget, PinReference, PinSide
 |       `-- style/
 |           |-- mod.rs             # NodeStyle, EdgeStyle, PinStyle, GraphStyle

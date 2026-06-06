@@ -190,9 +190,6 @@ pub struct SdfDebug {
     pub node_foreground: bool,
 }
 
-#[cfg(test)]
-mod interaction_tests;
-
 /// Information about a drag operation, used for real-time collaboration.
 #[derive(Debug, Clone)]
 pub enum DragInfo {
