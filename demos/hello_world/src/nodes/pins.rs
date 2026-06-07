@@ -42,6 +42,9 @@ pub struct PinShapeData;
 /// Marker type for pattern type selector pins
 pub struct PatternTypeData;
 
+/// Marker type for 2D vector pins (e.g. shadow offset)
+pub struct Vec2Data;
+
 /// Marker type for node configuration bundle pins
 pub struct NodeConfigData;
 
@@ -94,38 +97,73 @@ pub mod input {
     pub const COLOR: &str = "color";
 }
 
-/// Pin labels for configuration nodes.
-pub mod config {
-    /// Config passthrough pin (input and output)
+/// Shared plumbing pins for configuration node chains: the inheritance
+/// passthrough, the typed config outputs, and the apply-node inputs. Per-field
+/// pins live in the per-target [`node`], [`pin`], and [`edge`] submodules.
+pub mod cfg {
+    /// Config passthrough input pin (inherit from a parent config node)
     pub const CONFIG: &str = "config";
 
-    // === Config Output Pins (typed) ===
+    // === Typed Config Output Pins ===
 
     /// NodeConfig output pin
-    pub const NODE_OUT: &str = "node_cfg";
+    pub const NODE_OUT: &str = "node_config";
 
     /// EdgeConfig output pin
-    pub const EDGE_OUT: &str = "edge_cfg";
+    pub const EDGE_OUT: &str = "edge_config";
 
     /// PinConfig output pin
-    pub const PIN_OUT: &str = "pin_cfg";
+    pub const PIN_OUT: &str = "pin_config";
 
-    /// ShadowConfig output pin
-    pub const SHADOW_OUT: &str = "shadow_cfg";
+    // === Apply Node Inputs ===
 
-    // === Edge Config Pins ===
+    /// Node config input pin (apply nodes)
+    pub const NODE_CONFIG: &str = "node";
 
-    /// Start color input pin
-    pub const START: &str = "start";
+    /// Edge config input pin (apply nodes)
+    pub const EDGE_CONFIG: &str = "edge";
 
-    /// End color input pin
-    pub const END: &str = "end";
+    /// Pin config input pin (apply nodes)
+    pub const PIN_CONFIG: &str = "pin";
 
-    /// Thickness input pin
-    pub const THICK: &str = "thick";
+    /// Toggle on/off input pin
+    pub const ON: &str = "on";
 
-    /// Curve type input pin
-    pub const CURVE: &str = "curve";
+    /// Target ID input pin (apply to node)
+    pub const TARGET: &str = "target";
+}
+
+/// NodeConfig field pins, mirroring [`iced_nodegraph::NodeStyle`]. The `border`
+/// width feeds the border `Pattern` thickness; the `pattern` group shapes the
+/// same border stroke (dash/gap/angle/flow). All color pins carry a `ColorQuad`
+/// (a solid `Color` coerces in).
+pub mod node {
+    // === Fill ===
+
+    /// Fill color input pin
+    pub const FILL_COLOR: &str = "fill_color";
+
+    /// Corner radius input pin
+    pub const CORNER_RADIUS: &str = "corner_radius";
+
+    /// Opacity input pin
+    pub const OPACITY: &str = "opacity";
+
+    // === Border ===
+
+    /// Border color input pin
+    pub const BORDER_COLOR: &str = "border_color";
+
+    /// Border width input pin (border pattern thickness)
+    pub const BORDER_WIDTH: &str = "border_width";
+
+    /// Border outline width input pin
+    pub const BORDER_OUTLINE_WIDTH: &str = "border_outline_width";
+
+    /// Border outline color input pin
+    pub const BORDER_OUTLINE_COLOR: &str = "border_outline_color";
+
+    // === Border Pattern ===
 
     /// Pattern type input pin
     pub const PATTERN: &str = "pattern";
@@ -142,141 +180,139 @@ pub mod config {
     /// Animation speed input pin (0 = off, > 0 = animated)
     pub const SPEED: &str = "speed";
 
-    // === Border Config Pins ===
-
-    /// Border toggle input pin
-    pub const BORDER: &str = "border";
-
-    /// Border width input pin
-    pub const BORDER_WIDTH: &str = "b.width";
-
-    /// Border gap input pin
-    pub const BORDER_GAP: &str = "b.gap";
-
-    /// Border start color input pin
-    pub const BORDER_START_COLOR: &str = "b.start";
-
-    /// Border end color input pin
-    pub const BORDER_END_COLOR: &str = "b.end";
-
-    // === Outline Config Pins (unified edge outline) ===
-
-    /// Outline toggle
-    pub const OUTLINE: &str = "ol";
-
-    /// Outline width
-    pub const OUTLINE_WIDTH: &str = "ol.w";
-
-    /// Outline start color (TRANSPARENT = inherit from source pin)
-    pub const OUTLINE_START_COLOR: &str = "ol.sc";
-
-    /// Outline end color (TRANSPARENT = inherit from target pin)
-    pub const OUTLINE_END_COLOR: &str = "ol.ec";
-
-    /// Outline stroke toggle (outline around pattern/dashes)
-    pub const OUTLINE_STROKE: &str = "ol.str";
-
-    /// Outline border inner toggle (at border inner edge)
-    pub const OUTLINE_BORDER_INNER: &str = "ol.bi";
-
-    /// Outline border outer toggle (at border outer edge)
-    pub const OUTLINE_BORDER_OUTER: &str = "ol.bo";
-
-    // === Stroke Outline Config Pins ===
-
-    /// Stroke outline thickness input pin
-    pub const STROKE_OL_THICK: &str = "so.w";
-
-    /// Stroke outline color input pin
-    pub const STROKE_OL_COLOR: &str = "so.c";
-
-    // === Border Background Config Pins ===
-
-    /// Border background color input pin
-    pub const BORDER_BG: &str = "b.bg";
-
-    /// Border background end color input pin
-    pub const BORDER_BG_END: &str = "b.bge";
-
-    /// Border outline thickness input pin
-    pub const BORDER_OL_THICK: &str = "bo.w";
-
-    /// Border outline color input pin
-    pub const BORDER_OL_COLOR: &str = "bo.c";
-
-    // === Shadow Config Pins ===
-
-    /// Shadow toggle input pin
-    pub const SHADOW: &str = "shadow";
-
-    /// Shadow blur input pin
-    pub const SHADOW_BLUR: &str = "s.blur";
-
-    /// Shadow expand input pin
-    pub const SHADOW_EXPAND: &str = "s.exp";
-
-    /// Shadow offset input pin (combined, sets both x and y)
-    pub const SHADOW_OFFSET: &str = "s.offs";
-
-    /// Shadow offset X input pin (for ShadowConfig node and edge shadow)
-    pub const SHADOW_OFFSET_X: &str = "off_x";
-
-    /// Shadow offset Y input pin (for ShadowConfig node and edge shadow)
-    pub const SHADOW_OFFSET_Y: &str = "off_y";
+    // === Shadow ===
 
     /// Shadow color input pin
-    pub const SHADOW_COLOR: &str = "s.color";
+    pub const SHADOW_COLOR: &str = "shadow_color";
 
-    /// Shadow end color input pin
-    pub const SHADOW_END_COLOR: &str = "s.cend";
+    /// Shadow distance (blur half-width) input pin
+    pub const SHADOW_DISTANCE: &str = "shadow_distance";
 
-    // === Node Config Pins ===
+    /// Shadow offset input pin (2D vector)
+    pub const SHADOW_OFFSET: &str = "shadow_offset";
+}
 
-    /// Background color input pin
-    pub const BG_COLOR: &str = "bg";
-
-    /// Border radius input pin
-    pub const RADIUS: &str = "radius";
-
-    /// Border width input pin (node)
-    pub const WIDTH: &str = "width";
-
-    /// Border color input pin (node)
+/// PinConfig field pins, mirroring [`iced_nodegraph::PinStyle`].
+pub mod pin {
+    /// Indicator color input pin
     pub const COLOR: &str = "color";
 
-    /// Opacity input pin
-    pub const OPACITY: &str = "opacity";
+    /// Indicator radius input pin
+    pub const RADIUS: &str = "radius";
 
-    // === Pin Config Pins ===
-
-    /// Pin size input pin
-    pub const SIZE: &str = "size";
-
-    /// Pin shape input pin
+    /// Indicator shape input pin
     pub const SHAPE: &str = "shape";
 
-    /// Pin glow input pin
-    pub const GLOW: &str = "glow";
+    /// Border color input pin
+    pub const BORDER_COLOR: &str = "border_color";
 
-    /// Pin pulse input pin
-    pub const PULSE: &str = "pulse";
+    /// Border width input pin
+    pub const BORDER_WIDTH: &str = "border_width";
+}
 
-    // === Apply Nodes ===
+/// EdgeConfig field pins, mirroring [`iced_nodegraph::EdgeStyle`]. Each color is
+/// a single `ColorQuad` pin (the start/end gradient is encoded in the quad, so
+/// there is no separate "end" pin).
+pub mod edge {
+    // === Stroke ===
 
-    /// Node config input pin (apply nodes)
-    pub const NODE_CONFIG: &str = "node";
+    /// Stroke color input pin (arc gradient start -> end encoded in the quad)
+    pub const STROKE_COLOR: &str = "stroke_color";
 
-    /// Edge config input pin (apply nodes)
-    pub const EDGE_CONFIG: &str = "edge";
+    /// Thickness input pin
+    pub const THICKNESS: &str = "thickness";
 
-    /// Pin config input pin (apply nodes)
-    pub const PIN_CONFIG: &str = "pin";
+    /// Curve type input pin
+    pub const CURVE: &str = "curve";
 
-    /// Toggle on/off input pin
-    pub const ON: &str = "on";
+    /// Stroke outline width input pin
+    pub const STROKE_OUTLINE_WIDTH: &str = "stroke_outline_width";
 
-    /// Target ID input pin (apply to node)
-    pub const TARGET: &str = "target";
+    /// Stroke outline color input pin
+    pub const STROKE_OUTLINE_COLOR: &str = "stroke_outline_color";
+
+    // === Pattern ===
+
+    /// Pattern type input pin
+    pub const PATTERN: &str = "pattern";
+
+    /// Dash length input pin
+    pub const DASH: &str = "dash";
+
+    /// Gap length input pin
+    pub const GAP: &str = "gap";
+
+    /// Angle input pin
+    pub const ANGLE: &str = "angle";
+
+    /// Animation speed input pin (0 = off, > 0 = animated)
+    pub const SPEED: &str = "speed";
+
+    // === Border ===
+
+    /// Border width input pin
+    pub const BORDER_WIDTH: &str = "border_width";
+
+    /// Border gap input pin
+    pub const BORDER_GAP: &str = "border_gap";
+
+    /// Border color input pin
+    pub const BORDER_COLOR: &str = "border_color";
+
+    /// Border background color input pin
+    pub const BORDER_BACKGROUND: &str = "border_background";
+
+    /// Border outline width input pin
+    pub const BORDER_OUTLINE_WIDTH: &str = "border_outline_width";
+
+    /// Border outline color input pin
+    pub const BORDER_OUTLINE_COLOR: &str = "border_outline_color";
+
+    // === Shadow ===
+
+    /// Shadow blur input pin
+    pub const SHADOW_BLUR: &str = "shadow_blur";
+
+    /// Shadow expand input pin
+    pub const SHADOW_EXPAND: &str = "shadow_expand";
+
+    /// Shadow color input pin
+    pub const SHADOW_COLOR: &str = "shadow_color";
+
+    /// Shadow offset input pin (2D vector)
+    pub const SHADOW_OFFSET: &str = "shadow_offset";
+}
+
+/// Builder node pins: combine primitive inputs into a `ColorQuad` or a 2D
+/// vector that feeds the single-pin color/offset inputs above.
+pub mod build {
+    // === ColorQuad builder (4 corners -> 1 quad) ===
+
+    /// Near-start corner color input
+    pub const NEAR_START: &str = "near_start";
+
+    /// Near-end corner color input
+    pub const NEAR_END: &str = "near_end";
+
+    /// Far-start corner color input
+    pub const FAR_START: &str = "far_start";
+
+    /// Far-end corner color input
+    pub const FAR_END: &str = "far_end";
+
+    /// ColorQuad output
+    pub const QUAD_OUT: &str = "quad";
+
+    // === Vec2 builder (x, y -> vec2) ===
+
+    /// X component input
+    pub const X: &str = "x";
+
+    /// Y component input
+    pub const Y: &str = "y";
+
+    /// Vec2 output
+    pub const VEC2_OUT: &str = "vec2";
 }
 
 /// Pin labels for math nodes.

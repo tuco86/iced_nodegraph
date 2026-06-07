@@ -8,7 +8,7 @@ use iced::{
     alignment::Horizontal,
     widget::{column, container, row, text},
 };
-use iced_nodegraph::{PinShape, pin};
+use iced_nodegraph::{ColorQuad, PinShape, pin};
 
 use crate::nodes::{colors, node_title_bar, pins};
 use crate::style_overlay::PinOverlay;
@@ -19,10 +19,10 @@ pub struct PinConfigInputs {
     /// Parent overlay to inherit from
     pub config_in: Option<PinOverlay>,
     /// Individual field overrides
-    pub color: Option<Color>,
+    pub color: Option<ColorQuad>,
     pub radius: Option<f32>,
     pub shape: Option<PinShape>,
-    pub border_color: Option<Color>,
+    pub border_color: Option<ColorQuad>,
     pub border_width: Option<f32>,
 }
 
@@ -67,7 +67,7 @@ where
     let config_row = row![
         pin!(
             Left,
-            pins::config::CONFIG,
+            pins::cfg::CONFIG,
             text("in").size(10),
             Input,
             ::std::any::TypeId::of::<pins::PinConfigData>()
@@ -75,7 +75,7 @@ where
         container(text("")).width(Length::Fill),
         pin!(
             Right,
-            pins::config::PIN_OUT,
+            pins::cfg::PIN_OUT,
             text("out").size(10),
             Output,
             ::std::any::TypeId::of::<pins::PinConfigData>()
@@ -116,7 +116,7 @@ where
     let color_row = row![
         pin!(
             Left,
-            pins::config::COLOR,
+            pins::pin::COLOR,
             text("color").size(10),
             Input,
             ::std::any::TypeId::of::<pins::ColorData>()
@@ -131,7 +131,7 @@ where
     let radius_row = row![
         pin!(
             Left,
-            pins::config::SIZE,
+            pins::pin::RADIUS,
             text("radius").size(10),
             Input,
             ::std::any::TypeId::of::<pins::Float>()
@@ -160,7 +160,7 @@ where
     let shape_row = row![
         pin!(
             Left,
-            pins::config::SHAPE,
+            pins::pin::SHAPE,
             text("shape").size(10),
             Input,
             ::std::any::TypeId::of::<pins::PinShapeData>()
@@ -193,7 +193,7 @@ where
     let border_color_row = row![
         pin!(
             Left,
-            pins::config::GLOW,
+            pins::pin::BORDER_COLOR,
             text("border").size(10),
             Input,
             ::std::any::TypeId::of::<pins::ColorData>()
@@ -208,7 +208,7 @@ where
     let border_width_row = row![
         pin!(
             Left,
-            pins::config::PULSE,
+            pins::pin::BORDER_WIDTH,
             text("width").size(10),
             Input,
             ::std::any::TypeId::of::<pins::Float>()

@@ -10,9 +10,12 @@
 //! concrete base). They mirror the library style structs field-for-field where
 //! the editor exposes them.
 
+use iced::Color;
 use iced_nodegraph::{ColorQuad, EdgeCurve, EdgeStyle, NodeStyle, Pattern, PinShape, PinStyle};
 
-/// Overlay over [`NodeStyle`]: the fields the node-config editor exposes.
+/// Overlay over [`NodeStyle`]: mirrors every field, since the node-config editor
+/// exposes them all. Shadow color is a plain [`Color`] (not a [`ColorQuad`]),
+/// matching `NodeStyle::shadow_color`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct NodeOverlay {
     pub fill_color: Option<ColorQuad>,
@@ -20,6 +23,11 @@ pub struct NodeOverlay {
     pub opacity: Option<f32>,
     pub border_color: Option<ColorQuad>,
     pub border_pattern: Option<Pattern>,
+    pub border_outline_width: Option<f32>,
+    pub border_outline_color: Option<ColorQuad>,
+    pub shadow_color: Option<Color>,
+    pub shadow_distance: Option<f32>,
+    pub shadow_offset: Option<(f32, f32)>,
 }
 
 impl NodeOverlay {
@@ -47,6 +55,26 @@ impl NodeOverlay {
         self.border_pattern = Some(v.into());
         self
     }
+    pub fn border_outline_width(mut self, v: impl Into<f32>) -> Self {
+        self.border_outline_width = Some(v.into());
+        self
+    }
+    pub fn border_outline_color(mut self, v: impl Into<ColorQuad>) -> Self {
+        self.border_outline_color = Some(v.into());
+        self
+    }
+    pub fn shadow_color(mut self, v: impl Into<Color>) -> Self {
+        self.shadow_color = Some(v.into());
+        self
+    }
+    pub fn shadow_distance(mut self, v: impl Into<f32>) -> Self {
+        self.shadow_distance = Some(v.into());
+        self
+    }
+    pub fn shadow_offset(mut self, v: impl Into<(f32, f32)>) -> Self {
+        self.shadow_offset = Some(v.into());
+        self
+    }
 
     /// Layers `self` over `other`; `self` wins where set. Stays partial.
     pub fn merge(&self, other: &Self) -> Self {
@@ -56,6 +84,11 @@ impl NodeOverlay {
             opacity: self.opacity.or(other.opacity),
             border_color: self.border_color.or(other.border_color),
             border_pattern: self.border_pattern.or(other.border_pattern),
+            border_outline_width: self.border_outline_width.or(other.border_outline_width),
+            border_outline_color: self.border_outline_color.or(other.border_outline_color),
+            shadow_color: self.shadow_color.or(other.shadow_color),
+            shadow_distance: self.shadow_distance.or(other.shadow_distance),
+            shadow_offset: self.shadow_offset.or(other.shadow_offset),
         }
     }
 
@@ -75,6 +108,21 @@ impl NodeOverlay {
         }
         if let Some(v) = self.border_pattern {
             base.border_pattern = v;
+        }
+        if let Some(v) = self.border_outline_width {
+            base.border_outline_width = v;
+        }
+        if let Some(v) = self.border_outline_color {
+            base.border_outline_color = v;
+        }
+        if let Some(v) = self.shadow_color {
+            base.shadow_color = v;
+        }
+        if let Some(v) = self.shadow_distance {
+            base.shadow_distance = v;
+        }
+        if let Some(v) = self.shadow_offset {
+            base.shadow_offset = v;
         }
         base
     }

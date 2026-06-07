@@ -17,9 +17,9 @@ use std::path::PathBuf;
 
 use crate::ids::{EdgeId, NodeId};
 use crate::nodes::{
-    BoolToggleConfig, ConfigNodeType, EdgeConfigInputs, EdgeSections, FloatSliderConfig,
-    InputNodeType, IntSliderConfig, MathNodeState, MathOperation, NodeConfigInputs, NodeSections,
-    NodeType, PatternType, PinConfigInputs,
+    BoolToggleConfig, ColorQuadNode, ConfigNodeType, EdgeConfigInputs, EdgeSections,
+    FloatSliderConfig, InputNodeType, IntSliderConfig, MathNodeState, MathOperation,
+    NodeConfigInputs, NodeSections, NodeType, PatternType, PinConfigInputs, Vec2Node,
 };
 use iced_nodegraph::{EdgeCurve, PinShape};
 
@@ -60,6 +60,10 @@ impl SavedEdgeSections {
 pub struct SavedNodeSections {
     pub fill: bool,
     pub border: bool,
+    #[serde(default)]
+    pub pattern: bool,
+    #[serde(default)]
+    pub shadow: bool,
 }
 
 impl From<&NodeSections> for SavedNodeSections {
@@ -67,6 +71,8 @@ impl From<&NodeSections> for SavedNodeSections {
         Self {
             fill: s.fill,
             border: s.border,
+            pattern: s.pattern,
+            shadow: s.shadow,
         }
     }
 }
@@ -76,6 +82,8 @@ impl SavedNodeSections {
         NodeSections {
             fill: self.fill,
             border: self.border,
+            pattern: self.pattern,
+            shadow: self.shadow,
         }
     }
 }
@@ -167,6 +175,8 @@ pub enum SavedNodeType {
     Math {
         operation: String,
     },
+    ColorQuad,
+    Vec2,
 }
 
 /// Saved edge connection with stable IDs.
@@ -216,70 +226,58 @@ pub fn to_static_pin_label(label: &str) -> &'static str {
         // Input pins
         s if s == input::VALUE => input::VALUE,
         s if s == input::COLOR => input::COLOR,
-        // Config pins
-        s if s == config::CONFIG => config::CONFIG,
-        s if s == config::START => config::START,
-        s if s == config::END => config::END,
-        s if s == config::THICK => config::THICK,
-        s if s == config::CURVE => config::CURVE,
-        s if s == config::PATTERN => config::PATTERN,
-        s if s == config::DASH => config::DASH,
-        s if s == config::GAP => config::GAP,
-        s if s == config::ANGLE => config::ANGLE,
-        s if s == config::SPEED => config::SPEED,
-        // Border config pins
-        s if s == config::BORDER => config::BORDER,
-        s if s == config::BORDER_WIDTH => config::BORDER_WIDTH,
-        s if s == config::BORDER_GAP => config::BORDER_GAP,
-        s if s == config::BORDER_START_COLOR => config::BORDER_START_COLOR,
-        s if s == config::BORDER_END_COLOR => config::BORDER_END_COLOR,
-        // Unified outline config pins
-        s if s == config::OUTLINE => config::OUTLINE,
-        s if s == config::OUTLINE_WIDTH => config::OUTLINE_WIDTH,
-        s if s == config::OUTLINE_START_COLOR => config::OUTLINE_START_COLOR,
-        s if s == config::OUTLINE_END_COLOR => config::OUTLINE_END_COLOR,
-        s if s == config::OUTLINE_STROKE => config::OUTLINE_STROKE,
-        s if s == config::OUTLINE_BORDER_INNER => config::OUTLINE_BORDER_INNER,
-        s if s == config::OUTLINE_BORDER_OUTER => config::OUTLINE_BORDER_OUTER,
-        // Stroke outline config pins
-        s if s == config::STROKE_OL_THICK => config::STROKE_OL_THICK,
-        s if s == config::STROKE_OL_COLOR => config::STROKE_OL_COLOR,
-        // Border background/outline config pins
-        s if s == config::BORDER_BG => config::BORDER_BG,
-        s if s == config::BORDER_BG_END => config::BORDER_BG_END,
-        s if s == config::BORDER_OL_THICK => config::BORDER_OL_THICK,
-        s if s == config::BORDER_OL_COLOR => config::BORDER_OL_COLOR,
-        // Shadow config pins
-        s if s == config::SHADOW => config::SHADOW,
-        s if s == config::SHADOW_BLUR => config::SHADOW_BLUR,
-        s if s == config::SHADOW_EXPAND => config::SHADOW_EXPAND,
-        s if s == config::SHADOW_OFFSET => config::SHADOW_OFFSET,
-        s if s == config::SHADOW_OFFSET_X => config::SHADOW_OFFSET_X,
-        s if s == config::SHADOW_OFFSET_Y => config::SHADOW_OFFSET_Y,
-        s if s == config::SHADOW_COLOR => config::SHADOW_COLOR,
-        s if s == config::SHADOW_END_COLOR => config::SHADOW_END_COLOR,
-        // Node config pins
-        s if s == config::BG_COLOR => config::BG_COLOR,
-        s if s == config::RADIUS => config::RADIUS,
-        s if s == config::WIDTH => config::WIDTH,
-        s if s == config::COLOR => config::COLOR,
-        s if s == config::OPACITY => config::OPACITY,
-        // Pin config pins
-        s if s == config::SIZE => config::SIZE,
-        s if s == config::SHAPE => config::SHAPE,
-        s if s == config::GLOW => config::GLOW,
-        s if s == config::PULSE => config::PULSE,
-        // Apply node pins
-        s if s == config::NODE_CONFIG => config::NODE_CONFIG,
-        s if s == config::EDGE_CONFIG => config::EDGE_CONFIG,
-        s if s == config::PIN_CONFIG => config::PIN_CONFIG,
-        s if s == config::ON => config::ON,
-        s if s == config::TARGET => config::TARGET,
-        // Typed config output pins
-        s if s == config::NODE_OUT => config::NODE_OUT,
-        s if s == config::EDGE_OUT => config::EDGE_OUT,
-        s if s == config::PIN_OUT => config::PIN_OUT,
-        s if s == config::SHADOW_OUT => config::SHADOW_OUT,
+        // Shared config plumbing + apply node pins
+        s if s == cfg::CONFIG => cfg::CONFIG,
+        s if s == cfg::NODE_OUT => cfg::NODE_OUT,
+        s if s == cfg::EDGE_OUT => cfg::EDGE_OUT,
+        s if s == cfg::PIN_OUT => cfg::PIN_OUT,
+        s if s == cfg::NODE_CONFIG => cfg::NODE_CONFIG,
+        s if s == cfg::EDGE_CONFIG => cfg::EDGE_CONFIG,
+        s if s == cfg::PIN_CONFIG => cfg::PIN_CONFIG,
+        s if s == cfg::ON => cfg::ON,
+        s if s == cfg::TARGET => cfg::TARGET,
+        // Node config field pins (snake_case). Several label strings are shared
+        // across node/pin/edge nodes (e.g. "border_color", "pattern"); the first
+        // matching arm wins and returns the same string, so the duplicates below
+        // are harmless.
+        s if s == node::FILL_COLOR => node::FILL_COLOR,
+        s if s == node::CORNER_RADIUS => node::CORNER_RADIUS,
+        s if s == node::OPACITY => node::OPACITY,
+        s if s == node::BORDER_COLOR => node::BORDER_COLOR,
+        s if s == node::BORDER_WIDTH => node::BORDER_WIDTH,
+        s if s == node::BORDER_OUTLINE_WIDTH => node::BORDER_OUTLINE_WIDTH,
+        s if s == node::BORDER_OUTLINE_COLOR => node::BORDER_OUTLINE_COLOR,
+        s if s == node::PATTERN => node::PATTERN,
+        s if s == node::DASH => node::DASH,
+        s if s == node::GAP => node::GAP,
+        s if s == node::ANGLE => node::ANGLE,
+        s if s == node::SPEED => node::SPEED,
+        s if s == node::SHADOW_COLOR => node::SHADOW_COLOR,
+        s if s == node::SHADOW_DISTANCE => node::SHADOW_DISTANCE,
+        s if s == node::SHADOW_OFFSET => node::SHADOW_OFFSET,
+        // Pin config field pins
+        s if s == pin::COLOR => pin::COLOR,
+        s if s == pin::RADIUS => pin::RADIUS,
+        s if s == pin::SHAPE => pin::SHAPE,
+        // Edge config field pins
+        s if s == edge::STROKE_COLOR => edge::STROKE_COLOR,
+        s if s == edge::THICKNESS => edge::THICKNESS,
+        s if s == edge::CURVE => edge::CURVE,
+        s if s == edge::STROKE_OUTLINE_WIDTH => edge::STROKE_OUTLINE_WIDTH,
+        s if s == edge::STROKE_OUTLINE_COLOR => edge::STROKE_OUTLINE_COLOR,
+        s if s == edge::BORDER_GAP => edge::BORDER_GAP,
+        s if s == edge::BORDER_BACKGROUND => edge::BORDER_BACKGROUND,
+        s if s == edge::SHADOW_BLUR => edge::SHADOW_BLUR,
+        s if s == edge::SHADOW_EXPAND => edge::SHADOW_EXPAND,
+        // Builder node pins
+        s if s == build::NEAR_START => build::NEAR_START,
+        s if s == build::NEAR_END => build::NEAR_END,
+        s if s == build::FAR_START => build::FAR_START,
+        s if s == build::FAR_END => build::FAR_END,
+        s if s == build::QUAD_OUT => build::QUAD_OUT,
+        s if s == build::X => build::X,
+        s if s == build::Y => build::Y,
+        s if s == build::VEC2_OUT => build::VEC2_OUT,
         // Math pins
         s if s == math::A => math::A,
         s if s == math::B => math::B,
@@ -482,6 +480,8 @@ impl SavedNodeType {
             NodeType::Math(state) => SavedNodeType::Math {
                 operation: math_op_to_string(&state.operation),
             },
+            NodeType::ColorQuad(_) => SavedNodeType::ColorQuad,
+            NodeType::Vec2(_) => SavedNodeType::Vec2,
         }
     }
 
@@ -572,6 +572,8 @@ impl SavedNodeType {
             SavedNodeType::Math { operation } => {
                 NodeType::Math(MathNodeState::new(string_to_math_op(operation)))
             }
+            SavedNodeType::ColorQuad => NodeType::ColorQuad(ColorQuadNode::default()),
+            SavedNodeType::Vec2 => NodeType::Vec2(Vec2Node::default()),
         }
     }
 }

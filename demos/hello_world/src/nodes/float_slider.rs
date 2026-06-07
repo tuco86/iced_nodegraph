@@ -235,50 +235,34 @@ where
             .clone()
             .unwrap_or_else(|| format!("{}", config.step));
 
-        // Min input - track edits, apply on Enter
+        // Min input - apply live once the text parses to a valid value. The raw
+        // text is kept as a buffer so partial input ("-", "1.") stays editable
+        // without snapping. Enter only normalizes the buffer to the applied value.
         let min_input = {
             let cfg = config.clone();
             let on_cfg = on_config_change.clone();
             let on_cfg2 = on_config_change.clone();
+            let submit_cfg = config.clone();
             row![
                 text("Min").size(10).color(colors::TEXT_MUTED).width(30),
                 text_input("", &min_display)
                     .on_input(move |s| {
-                        // Just store the edit, don't validate yet
-                        on_cfg(FloatSliderConfig {
-                            min_edit: Some(s),
+                        let mut next = FloatSliderConfig {
+                            min_edit: Some(s.clone()),
                             ..cfg.clone()
-                        })
-                    })
-                    .on_submit({
-                        let cfg = config.clone();
-                        // On Enter: parse, validate, and apply
-                        if let Some(ref edit) = config.min_edit {
-                            if let Ok(v) = edit.parse::<f32>() {
-                                if v.is_finite() && v < cfg.max {
-                                    on_cfg2(FloatSliderConfig {
-                                        min: v,
-                                        min_edit: None,
-                                        ..cfg
-                                    })
-                                } else {
-                                    // Invalid: reset to current value
-                                    on_cfg2(FloatSliderConfig {
-                                        min_edit: None,
-                                        ..cfg
-                                    })
-                                }
-                            } else {
-                                // Parse failed: reset
-                                on_cfg2(FloatSliderConfig {
-                                    min_edit: None,
-                                    ..cfg
-                                })
-                            }
-                        } else {
-                            on_cfg2(cfg)
+                        };
+                        if let Ok(v) = s.parse::<f32>()
+                            && v.is_finite()
+                            && v < next.max
+                        {
+                            next.min = v;
                         }
+                        on_cfg(next)
                     })
+                    .on_submit(on_cfg2(FloatSliderConfig {
+                        min_edit: None,
+                        ..submit_cfg.clone()
+                    }))
                     .size(10)
                     .width(Length::Fixed(60.0))
                     .padding(4)
@@ -288,46 +272,32 @@ where
             .align_y(iced::Alignment::Center)
         };
 
-        // Max input - track edits, apply on Enter
+        // Max input - apply live once valid; Enter normalizes the buffer.
         let max_input = {
             let cfg = config.clone();
             let on_cfg = on_config_change.clone();
             let on_cfg2 = on_config_change.clone();
+            let submit_cfg = config.clone();
             row![
                 text("Max").size(10).color(colors::TEXT_MUTED).width(30),
                 text_input("", &max_display)
                     .on_input(move |s| {
-                        on_cfg(FloatSliderConfig {
-                            max_edit: Some(s),
+                        let mut next = FloatSliderConfig {
+                            max_edit: Some(s.clone()),
                             ..cfg.clone()
-                        })
-                    })
-                    .on_submit({
-                        let cfg = config.clone();
-                        if let Some(ref edit) = config.max_edit {
-                            if let Ok(v) = edit.parse::<f32>() {
-                                if v.is_finite() && v > cfg.min {
-                                    on_cfg2(FloatSliderConfig {
-                                        max: v,
-                                        max_edit: None,
-                                        ..cfg
-                                    })
-                                } else {
-                                    on_cfg2(FloatSliderConfig {
-                                        max_edit: None,
-                                        ..cfg
-                                    })
-                                }
-                            } else {
-                                on_cfg2(FloatSliderConfig {
-                                    max_edit: None,
-                                    ..cfg
-                                })
-                            }
-                        } else {
-                            on_cfg2(cfg)
+                        };
+                        if let Ok(v) = s.parse::<f32>()
+                            && v.is_finite()
+                            && v > next.min
+                        {
+                            next.max = v;
                         }
+                        on_cfg(next)
                     })
+                    .on_submit(on_cfg2(FloatSliderConfig {
+                        max_edit: None,
+                        ..submit_cfg.clone()
+                    }))
                     .size(10)
                     .width(Length::Fixed(60.0))
                     .padding(4)
@@ -337,46 +307,32 @@ where
             .align_y(iced::Alignment::Center)
         };
 
-        // Step input - track edits, apply on Enter
+        // Step input - apply live once valid (> 0); Enter normalizes the buffer.
         let step_input = {
             let cfg = config.clone();
             let on_cfg = on_config_change.clone();
             let on_cfg2 = on_config_change;
+            let submit_cfg = config.clone();
             row![
                 text("Step").size(10).color(colors::TEXT_MUTED).width(30),
                 text_input("", &step_display)
                     .on_input(move |s| {
-                        on_cfg(FloatSliderConfig {
-                            step_edit: Some(s),
+                        let mut next = FloatSliderConfig {
+                            step_edit: Some(s.clone()),
                             ..cfg.clone()
-                        })
-                    })
-                    .on_submit({
-                        let cfg = config.clone();
-                        if let Some(ref edit) = config.step_edit {
-                            if let Ok(v) = edit.parse::<f32>() {
-                                if v.is_finite() && v > 0.0 {
-                                    on_cfg2(FloatSliderConfig {
-                                        step: v,
-                                        step_edit: None,
-                                        ..cfg
-                                    })
-                                } else {
-                                    on_cfg2(FloatSliderConfig {
-                                        step_edit: None,
-                                        ..cfg
-                                    })
-                                }
-                            } else {
-                                on_cfg2(FloatSliderConfig {
-                                    step_edit: None,
-                                    ..cfg
-                                })
-                            }
-                        } else {
-                            on_cfg2(cfg)
+                        };
+                        if let Ok(v) = s.parse::<f32>()
+                            && v.is_finite()
+                            && v > 0.0
+                        {
+                            next.step = v;
                         }
+                        on_cfg(next)
                     })
+                    .on_submit(on_cfg2(FloatSliderConfig {
+                        step_edit: None,
+                        ..submit_cfg.clone()
+                    }))
                     .size(10)
                     .width(Length::Fixed(60.0))
                     .padding(4)

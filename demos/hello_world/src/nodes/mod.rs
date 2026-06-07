@@ -3,6 +3,7 @@
 mod bool_toggle;
 mod calendar;
 mod color_picker;
+mod combine;
 pub mod config;
 mod email_parser;
 mod email_trigger;
@@ -16,6 +17,7 @@ pub mod pins;
 pub use bool_toggle::{BoolToggleConfig, bool_toggle_node};
 pub use calendar::calendar_node;
 pub use color_picker::{color_picker_node, color_preset_node};
+pub use combine::{color_quad_node, vec2_node};
 pub use config::{
     EdgeConfigInputs, EdgeSection, EdgeSections, NodeConfigInputs, NodeSection, NodeSections,
     PatternType, PinConfigInputs, apply_to_graph_node, apply_to_node_node, edge_config_node,
@@ -37,7 +39,7 @@ use iced::{
     alignment::Horizontal,
     widget::{Container, Row, container, row, text},
 };
-use iced_nodegraph::{EdgeCurve, PinShape, node_header};
+use iced_nodegraph::{ColorQuad, EdgeCurve, PinShape, node_header};
 
 use crate::style_overlay::{EdgeOverlay, NodeOverlay, PinOverlay};
 
@@ -98,6 +100,11 @@ pub enum NodeValue {
     EdgeCurve(EdgeCurve),
     PinShape(PinShape),
     PatternType(PatternType),
+    /// Four-corner color gradient. A plain `Color` coerces to a solid quad via
+    /// [`NodeValue::as_color_quad`], so color pins accept both.
+    ColorQuad(ColorQuad),
+    /// 2D vector (e.g. shadow offset).
+    Vec2(f32, f32),
     // Style overlays for config-node chains (partial overlays layered over the
     // theme base at draw time).
     NodeConfig(NodeOverlay),
@@ -152,6 +159,23 @@ impl NodeValue {
     pub fn as_pattern_type(&self) -> Option<PatternType> {
         match self {
             NodeValue::PatternType(p) => Some(*p),
+            _ => None,
+        }
+    }
+
+    /// Reads a color quad. A plain [`NodeValue::Color`] coerces to a solid quad,
+    /// so every color pin accepts both a picker and the ColorQuad builder.
+    pub fn as_color_quad(&self) -> Option<ColorQuad> {
+        match self {
+            NodeValue::ColorQuad(q) => Some(*q),
+            NodeValue::Color(c) => Some(ColorQuad::solid(*c)),
+            _ => None,
+        }
+    }
+
+    pub fn as_vec2(&self) -> Option<(f32, f32)> {
+        match self {
+            NodeValue::Vec2(x, y) => Some((*x, *y)),
             _ => None,
         }
     }
@@ -269,6 +293,44 @@ impl MathNodeState {
     }
 }
 
+/// Builder node that combines four corner colors into a single [`ColorQuad`].
+/// Unset corners default to transparent. Its inputs are filled from incoming
+/// color connections during value propagation.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ColorQuadNode {
+    pub near_start: Option<Color>,
+    pub near_end: Option<Color>,
+    pub far_start: Option<Color>,
+    pub far_end: Option<Color>,
+}
+
+impl ColorQuadNode {
+    /// Builds the quad from the four corners (unset = transparent).
+    pub fn quad(&self) -> ColorQuad {
+        ColorQuad::corners(
+            self.near_start.unwrap_or(Color::TRANSPARENT),
+            self.near_end.unwrap_or(Color::TRANSPARENT),
+            self.far_start.unwrap_or(Color::TRANSPARENT),
+            self.far_end.unwrap_or(Color::TRANSPARENT),
+        )
+    }
+}
+
+/// Builder node that combines two scalars into a 2D vector (e.g. shadow offset).
+/// Unset components default to zero.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Vec2Node {
+    pub x: Option<f32>,
+    pub y: Option<f32>,
+}
+
+impl Vec2Node {
+    /// Builds the vector from its components (unset = 0).
+    pub fn vec2(&self) -> (f32, f32) {
+        (self.x.unwrap_or(0.0), self.y.unwrap_or(0.0))
+    }
+}
+
 /// Input node types that produce values
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputNodeType {
@@ -341,6 +403,10 @@ pub enum NodeType {
     Config(ConfigNodeType),
     /// Math nodes that compute values from inputs
     Math(MathNodeState),
+    /// Combines four corner colors into a single ColorQuad
+    ColorQuad(ColorQuadNode),
+    /// Combines two scalars into a 2D vector
+    Vec2(Vec2Node),
 }
 
 #[allow(dead_code)]
@@ -366,6 +432,8 @@ impl NodeType {
                 ConfigNodeType::ApplyToNode { .. } => "Apply to Node",
             },
             Self::Math(state) => state.operation.name(),
+            Self::ColorQuad(_) => "Color Quad",
+            Self::Vec2(_) => "Vec2",
         }
     }
 
@@ -374,6 +442,11 @@ impl NodeType {
         match self {
             Self::Input(input) => Some(input.output_value()),
             Self::Math(state) => state.result().map(NodeValue::Float),
+            Self::ColorQuad(state) => Some(NodeValue::ColorQuad(state.quad())),
+            Self::Vec2(state) => {
+                let (x, y) = state.vec2();
+                Some(NodeValue::Vec2(x, y))
+            }
             Self::Workflow(_) | Self::Config(_) => None,
         }
     }

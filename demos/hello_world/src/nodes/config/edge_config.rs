@@ -1,10 +1,12 @@
 //! Edge Configuration Node
 //!
 //! Builds an EdgeConfig from individual field inputs with inheritance support.
+//! Each color is a single `ColorQuad` pin (the start/end gradient is encoded in
+//! the quad), and the shadow offset is a single 2D vector pin.
 
 use demo_common::NodeContentStyle;
 use iced::{
-    Color, Length,
+    Length,
     widget::{column, container, row, text},
 };
 use iced_nodegraph::{ColorQuad, EdgeCurve, Pattern, pin};
@@ -67,12 +69,11 @@ pub struct EdgeConfigInputs {
     pub config_in: Option<EdgeOverlay>,
 
     // --- Stroke ---
-    pub start_color: Option<Color>,
-    pub end_color: Option<Color>,
+    pub stroke_color: Option<ColorQuad>,
     pub thickness: Option<f32>,
     pub curve: Option<EdgeCurve>,
-    pub stroke_outline_thickness: Option<f32>,
-    pub stroke_outline_color: Option<Color>,
+    pub stroke_outline_width: Option<f32>,
+    pub stroke_outline_color: Option<ColorQuad>,
 
     // --- Pattern ---
     pub pattern_type: Option<PatternType>,
@@ -83,22 +84,18 @@ pub struct EdgeConfigInputs {
     pub animation_speed: Option<f32>,
 
     // --- Border ---
-    pub border_thickness: Option<f32>,
+    pub border_width: Option<f32>,
     pub border_gap: Option<f32>,
-    pub border_color: Option<Color>,
-    pub border_color_end: Option<Color>,
-    pub border_background: Option<Color>,
-    pub border_background_end: Option<Color>,
-    pub border_outline_thickness: Option<f32>,
-    pub border_outline_color: Option<Color>,
+    pub border_color: Option<ColorQuad>,
+    pub border_background: Option<ColorQuad>,
+    pub border_outline_width: Option<f32>,
+    pub border_outline_color: Option<ColorQuad>,
 
     // --- Shadow ---
     pub shadow_expand: Option<f32>,
     pub shadow_blur: Option<f32>,
-    pub shadow_color: Option<Color>,
-    pub shadow_color_end: Option<Color>,
-    pub shadow_offset_x: Option<f32>,
-    pub shadow_offset_y: Option<f32>,
+    pub shadow_color: Option<ColorQuad>,
+    pub shadow_offset: Option<(f32, f32)>,
 
     // --- Debug ---
     pub tile_debug: bool,
@@ -106,15 +103,11 @@ pub struct EdgeConfigInputs {
 
 impl EdgeConfigInputs {
     /// Builds the overlay by setting this node's fields, then merging over the parent.
-    /// Colors map to arc-length gradients (start -> end); TRANSPARENT = inherit pin.
     pub fn build(&self) -> EdgeOverlay {
         let mut p = EdgeOverlay::new();
 
-        if self.start_color.is_some() || self.end_color.is_some() {
-            p = p.stroke_color(ColorQuad::arc(
-                self.start_color.unwrap_or(Color::TRANSPARENT),
-                self.end_color.unwrap_or(Color::TRANSPARENT),
-            ));
+        if let Some(c) = self.stroke_color {
+            p = p.stroke_color(c);
         }
         if let Some(pat) = self.build_pattern() {
             p = p.pattern(pat);
@@ -123,43 +116,34 @@ impl EdgeConfigInputs {
             p = p.curve(c);
         }
         // Stroke outline
-        if let Some(w) = self.stroke_outline_thickness {
+        if let Some(w) = self.stroke_outline_width {
             p = p.stroke_outline_width(w);
         }
         if let Some(c) = self.stroke_outline_color {
             p = p.stroke_outline_color(c);
         }
         // Border ring
-        if let Some(w) = self.border_thickness {
+        if let Some(w) = self.border_width {
             p = p.border_width(w);
         }
         if let Some(g) = self.border_gap {
             p = p.border_gap(g);
         }
-        if self.border_color.is_some() || self.border_color_end.is_some() {
-            p = p.border_color(ColorQuad::arc(
-                self.border_color.unwrap_or(Color::TRANSPARENT),
-                self.border_color_end.unwrap_or(Color::TRANSPARENT),
-            ));
+        if let Some(c) = self.border_color {
+            p = p.border_color(c);
         }
-        if self.border_background.is_some() || self.border_background_end.is_some() {
-            p = p.border_background(ColorQuad::arc(
-                self.border_background.unwrap_or(Color::TRANSPARENT),
-                self.border_background_end.unwrap_or(Color::TRANSPARENT),
-            ));
+        if let Some(c) = self.border_background {
+            p = p.border_background(c);
         }
-        if let Some(w) = self.border_outline_thickness {
+        if let Some(w) = self.border_outline_width {
             p = p.border_outline_width(w);
         }
         if let Some(c) = self.border_outline_color {
             p = p.border_outline_color(c);
         }
         // Shadow
-        if self.shadow_color.is_some() || self.shadow_color_end.is_some() {
-            p = p.shadow_color(ColorQuad::arc(
-                self.shadow_color.unwrap_or(Color::TRANSPARENT),
-                self.shadow_color_end.unwrap_or(Color::TRANSPARENT),
-            ));
+        if let Some(c) = self.shadow_color {
+            p = p.shadow_color(c);
         }
         if let Some(v) = self.shadow_expand {
             p = p.shadow_expand(v);
@@ -167,11 +151,8 @@ impl EdgeConfigInputs {
         if let Some(v) = self.shadow_blur {
             p = p.shadow_blur(v);
         }
-        if self.shadow_offset_x.is_some() || self.shadow_offset_y.is_some() {
-            p = p.shadow_offset((
-                self.shadow_offset_x.unwrap_or(0.0),
-                self.shadow_offset_y.unwrap_or(0.0),
-            ));
+        if let Some(off) = self.shadow_offset {
+            p = p.shadow_offset(off);
         }
 
         match &self.config_in {
@@ -241,7 +222,7 @@ where
     let config_row = row![
         pin!(
             Left,
-            pins::config::CONFIG,
+            pins::cfg::CONFIG,
             text("in").size(10),
             Input,
             ::std::any::TypeId::of::<pins::EdgeConfigData>()
@@ -249,7 +230,7 @@ where
         container(text("")).width(Length::Fill),
         pin!(
             Right,
-            pins::config::EDGE_OUT,
+            pins::cfg::EDGE_OUT,
             text("out").size(10),
             Output,
             ::std::any::TypeId::of::<pins::EdgeConfigData>()
@@ -277,6 +258,10 @@ where
         .pattern_angle
         .map(|v| format!("{:.0} deg", v.to_degrees()))
         .unwrap_or_else(|| "--".to_string());
+    let offset_display = inputs
+        .shadow_offset
+        .map(|(x, y)| format!("{:.1}, {:.1}", x, y))
+        .unwrap_or_else(|| "--".to_string());
 
     // --- Stroke section ---
     push_section(
@@ -286,12 +271,11 @@ where
         on_toggle(EdgeSection::Stroke),
         (!sections.stroke).then(|| {
             collapsed_pin_row![
-                (pins::config::START, pins::ColorData),
-                (pins::config::END, pins::ColorData),
-                (pins::config::THICK, pins::Float),
-                (pins::config::CURVE, pins::EdgeCurveData),
-                (pins::config::STROKE_OL_THICK, pins::Float),
-                (pins::config::STROKE_OL_COLOR, pins::ColorData)
+                (pins::edge::STROKE_COLOR, pins::ColorData),
+                (pins::edge::THICKNESS, pins::Float),
+                (pins::edge::CURVE, pins::EdgeCurveData),
+                (pins::edge::STROKE_OUTLINE_WIDTH, pins::Float),
+                (pins::edge::STROKE_OUTLINE_COLOR, pins::ColorData)
             ]
             .into()
         }),
@@ -299,8 +283,8 @@ where
             pin_row(
                 pin!(
                     Left,
-                    pins::config::START,
-                    text("start").size(10),
+                    pins::edge::STROKE_COLOR,
+                    text("color").size(10),
                     Input,
                     ::std::any::TypeId::of::<pins::ColorData>()
                 ),
@@ -310,19 +294,8 @@ where
             pin_row(
                 pin!(
                     Left,
-                    pins::config::END,
-                    text("end").size(10),
-                    Input,
-                    ::std::any::TypeId::of::<pins::ColorData>()
-                ),
-                color_swatch(result.stroke_color.map(|q| q.near_end)),
-            )
-            .into(),
-            pin_row(
-                pin!(
-                    Left,
-                    pins::config::THICK,
-                    text("thick").size(10),
+                    pins::edge::THICKNESS,
+                    text("thickness").size(10),
                     Input,
                     ::std::any::TypeId::of::<pins::Float>()
                 ),
@@ -332,7 +305,7 @@ where
             pin_row(
                 pin!(
                     Left,
-                    pins::config::CURVE,
+                    pins::edge::CURVE,
                     text("curve").size(10),
                     Input,
                     ::std::any::TypeId::of::<pins::EdgeCurveData>()
@@ -343,23 +316,23 @@ where
             pin_row(
                 pin!(
                     Left,
-                    pins::config::STROKE_OL_THICK,
-                    text("s.ol.w").size(10),
+                    pins::edge::STROKE_OUTLINE_WIDTH,
+                    text("outline width").size(10),
                     Input,
                     ::std::any::TypeId::of::<pins::Float>()
                 ),
-                value_display(fmt_float(inputs.stroke_outline_thickness, 1)),
+                value_display(fmt_float(inputs.stroke_outline_width, 1)),
             )
             .into(),
             pin_row(
                 pin!(
                     Left,
-                    pins::config::STROKE_OL_COLOR,
-                    text("s.ol.c").size(10),
+                    pins::edge::STROKE_OUTLINE_COLOR,
+                    text("outline color").size(10),
                     Input,
                     ::std::any::TypeId::of::<pins::ColorData>()
                 ),
-                color_swatch(inputs.stroke_outline_color),
+                color_swatch(inputs.stroke_outline_color.map(|q| q.near_start)),
             )
             .into(),
         ],
@@ -373,11 +346,11 @@ where
         on_toggle(EdgeSection::Pattern),
         (!sections.pattern).then(|| {
             collapsed_pin_row![
-                (pins::config::PATTERN, pins::PatternTypeData),
-                (pins::config::DASH, pins::Float),
-                (pins::config::GAP, pins::Float),
-                (pins::config::ANGLE, pins::Float),
-                (pins::config::SPEED, pins::Float)
+                (pins::edge::PATTERN, pins::PatternTypeData),
+                (pins::edge::DASH, pins::Float),
+                (pins::edge::GAP, pins::Float),
+                (pins::edge::ANGLE, pins::Float),
+                (pins::edge::SPEED, pins::Float)
             ]
             .into()
         }),
@@ -385,7 +358,7 @@ where
             pin_row(
                 pin!(
                     Left,
-                    pins::config::PATTERN,
+                    pins::edge::PATTERN,
                     text("pattern").size(10),
                     Input,
                     ::std::any::TypeId::of::<pins::PatternTypeData>()
@@ -396,7 +369,7 @@ where
             pin_row(
                 pin!(
                     Left,
-                    pins::config::DASH,
+                    pins::edge::DASH,
                     text("dash").size(10),
                     Input,
                     ::std::any::TypeId::of::<pins::Float>()
@@ -407,7 +380,7 @@ where
             pin_row(
                 pin!(
                     Left,
-                    pins::config::GAP,
+                    pins::edge::GAP,
                     text("gap").size(10),
                     Input,
                     ::std::any::TypeId::of::<pins::Float>()
@@ -418,7 +391,7 @@ where
             pin_row(
                 pin!(
                     Left,
-                    pins::config::ANGLE,
+                    pins::edge::ANGLE,
                     text("angle").size(10),
                     Input,
                     ::std::any::TypeId::of::<pins::Float>()
@@ -429,7 +402,7 @@ where
             pin_row(
                 pin!(
                     Left,
-                    pins::config::SPEED,
+                    pins::edge::SPEED,
                     text("speed").size(10),
                     Input,
                     ::std::any::TypeId::of::<pins::Float>()
@@ -448,14 +421,12 @@ where
         on_toggle(EdgeSection::Border),
         (!sections.border).then(|| {
             collapsed_pin_row![
-                (pins::config::BORDER_WIDTH, pins::Float),
-                (pins::config::BORDER_GAP, pins::Float),
-                (pins::config::BORDER_START_COLOR, pins::ColorData),
-                (pins::config::BORDER_END_COLOR, pins::ColorData),
-                (pins::config::BORDER_BG, pins::ColorData),
-                (pins::config::BORDER_BG_END, pins::ColorData),
-                (pins::config::BORDER_OL_THICK, pins::Float),
-                (pins::config::BORDER_OL_COLOR, pins::ColorData)
+                (pins::edge::BORDER_WIDTH, pins::Float),
+                (pins::edge::BORDER_GAP, pins::Float),
+                (pins::edge::BORDER_COLOR, pins::ColorData),
+                (pins::edge::BORDER_BACKGROUND, pins::ColorData),
+                (pins::edge::BORDER_OUTLINE_WIDTH, pins::Float),
+                (pins::edge::BORDER_OUTLINE_COLOR, pins::ColorData)
             ]
             .into()
         }),
@@ -463,19 +434,19 @@ where
             pin_row(
                 pin!(
                     Left,
-                    pins::config::BORDER_WIDTH,
-                    text("b.thick").size(10),
+                    pins::edge::BORDER_WIDTH,
+                    text("width").size(10),
                     Input,
                     ::std::any::TypeId::of::<pins::Float>()
                 ),
-                value_display(fmt_float(inputs.border_thickness, 1)),
+                value_display(fmt_float(inputs.border_width, 1)),
             )
             .into(),
             pin_row(
                 pin!(
                     Left,
-                    pins::config::BORDER_GAP,
-                    text("b.gap").size(10),
+                    pins::edge::BORDER_GAP,
+                    text("gap").size(10),
                     Input,
                     ::std::any::TypeId::of::<pins::Float>()
                 ),
@@ -485,67 +456,45 @@ where
             pin_row(
                 pin!(
                     Left,
-                    pins::config::BORDER_START_COLOR,
-                    text("b.start").size(10),
+                    pins::edge::BORDER_COLOR,
+                    text("color").size(10),
                     Input,
                     ::std::any::TypeId::of::<pins::ColorData>()
                 ),
-                color_swatch(inputs.border_color),
+                color_swatch(inputs.border_color.map(|q| q.near_start)),
             )
             .into(),
             pin_row(
                 pin!(
                     Left,
-                    pins::config::BORDER_END_COLOR,
-                    text("b.end").size(10),
+                    pins::edge::BORDER_BACKGROUND,
+                    text("background").size(10),
                     Input,
                     ::std::any::TypeId::of::<pins::ColorData>()
                 ),
-                color_swatch(inputs.border_color_end),
+                color_swatch(inputs.border_background.map(|q| q.near_start)),
             )
             .into(),
             pin_row(
                 pin!(
                     Left,
-                    pins::config::BORDER_BG,
-                    text("b.bg").size(10),
-                    Input,
-                    ::std::any::TypeId::of::<pins::ColorData>()
-                ),
-                color_swatch(inputs.border_background),
-            )
-            .into(),
-            pin_row(
-                pin!(
-                    Left,
-                    pins::config::BORDER_BG_END,
-                    text("b.bge").size(10),
-                    Input,
-                    ::std::any::TypeId::of::<pins::ColorData>()
-                ),
-                color_swatch(inputs.border_background_end),
-            )
-            .into(),
-            pin_row(
-                pin!(
-                    Left,
-                    pins::config::BORDER_OL_THICK,
-                    text("bo.w").size(10),
+                    pins::edge::BORDER_OUTLINE_WIDTH,
+                    text("outline width").size(10),
                     Input,
                     ::std::any::TypeId::of::<pins::Float>()
                 ),
-                value_display(fmt_float(inputs.border_outline_thickness, 1)),
+                value_display(fmt_float(inputs.border_outline_width, 1)),
             )
             .into(),
             pin_row(
                 pin!(
                     Left,
-                    pins::config::BORDER_OL_COLOR,
-                    text("bo.c").size(10),
+                    pins::edge::BORDER_OUTLINE_COLOR,
+                    text("outline color").size(10),
                     Input,
                     ::std::any::TypeId::of::<pins::ColorData>()
                 ),
-                color_swatch(inputs.border_outline_color),
+                color_swatch(inputs.border_outline_color.map(|q| q.near_start)),
             )
             .into(),
         ],
@@ -559,12 +508,10 @@ where
         on_toggle(EdgeSection::Shadow),
         (!sections.shadow).then(|| {
             collapsed_pin_row![
-                (pins::config::SHADOW_BLUR, pins::Float),
-                (pins::config::SHADOW_EXPAND, pins::Float),
-                (pins::config::SHADOW_COLOR, pins::ColorData),
-                (pins::config::SHADOW_END_COLOR, pins::ColorData),
-                (pins::config::SHADOW_OFFSET_X, pins::Float),
-                (pins::config::SHADOW_OFFSET_Y, pins::Float)
+                (pins::edge::SHADOW_BLUR, pins::Float),
+                (pins::edge::SHADOW_EXPAND, pins::Float),
+                (pins::edge::SHADOW_COLOR, pins::ColorData),
+                (pins::edge::SHADOW_OFFSET, pins::Vec2Data)
             ]
             .into()
         }),
@@ -572,8 +519,8 @@ where
             pin_row(
                 pin!(
                     Left,
-                    pins::config::SHADOW_BLUR,
-                    text("s.blur").size(10),
+                    pins::edge::SHADOW_BLUR,
+                    text("blur").size(10),
                     Input,
                     ::std::any::TypeId::of::<pins::Float>()
                 ),
@@ -583,8 +530,8 @@ where
             pin_row(
                 pin!(
                     Left,
-                    pins::config::SHADOW_EXPAND,
-                    text("s.exp").size(10),
+                    pins::edge::SHADOW_EXPAND,
+                    text("expand").size(10),
                     Input,
                     ::std::any::TypeId::of::<pins::Float>()
                 ),
@@ -594,45 +541,23 @@ where
             pin_row(
                 pin!(
                     Left,
-                    pins::config::SHADOW_COLOR,
-                    text("s.color").size(10),
+                    pins::edge::SHADOW_COLOR,
+                    text("color").size(10),
                     Input,
                     ::std::any::TypeId::of::<pins::ColorData>()
                 ),
-                color_swatch(inputs.shadow_color),
+                color_swatch(inputs.shadow_color.map(|q| q.near_start)),
             )
             .into(),
             pin_row(
                 pin!(
                     Left,
-                    pins::config::SHADOW_END_COLOR,
-                    text("s.cend").size(10),
+                    pins::edge::SHADOW_OFFSET,
+                    text("offset").size(10),
                     Input,
-                    ::std::any::TypeId::of::<pins::ColorData>()
+                    ::std::any::TypeId::of::<pins::Vec2Data>()
                 ),
-                color_swatch(inputs.shadow_color_end),
-            )
-            .into(),
-            pin_row(
-                pin!(
-                    Left,
-                    pins::config::SHADOW_OFFSET_X,
-                    text("s.off.x").size(10),
-                    Input,
-                    ::std::any::TypeId::of::<pins::Float>()
-                ),
-                value_display(fmt_float(inputs.shadow_offset_x, 1)),
-            )
-            .into(),
-            pin_row(
-                pin!(
-                    Left,
-                    pins::config::SHADOW_OFFSET_Y,
-                    text("s.off.y").size(10),
-                    Input,
-                    ::std::any::TypeId::of::<pins::Float>()
-                ),
-                value_display(fmt_float(inputs.shadow_offset_y, 1)),
+                value_display(offset_display),
             )
             .into(),
         ],

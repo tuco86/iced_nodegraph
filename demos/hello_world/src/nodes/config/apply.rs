@@ -29,7 +29,7 @@ where
     let node_config_row = row![
         pin!(
             Left,
-            pins::config::NODE_CONFIG,
+            pins::cfg::NODE_CONFIG,
             text("nodes").size(10),
             Input,
             ::std::any::TypeId::of::<pins::NodeConfigData>()
@@ -45,7 +45,7 @@ where
     let edge_config_row = row![
         pin!(
             Left,
-            pins::config::EDGE_CONFIG,
+            pins::cfg::EDGE_CONFIG,
             text("edges").size(10),
             Input,
             ::std::any::TypeId::of::<pins::EdgeConfigData>()
@@ -61,7 +61,7 @@ where
     let pin_config_row = row![
         pin!(
             Left,
-            pins::config::PIN_CONFIG,
+            pins::cfg::PIN_CONFIG,
             text("pins").size(10),
             Input,
             ::std::any::TypeId::of::<pins::PinConfigData>()
@@ -98,7 +98,7 @@ where
     let config_row = row![
         pin!(
             Left,
-            pins::config::NODE_CONFIG,
+            pins::cfg::NODE_CONFIG,
             text("config").size(10),
             Input,
             ::std::any::TypeId::of::<pins::NodeConfigData>()
@@ -114,7 +114,7 @@ where
     let target_row = row![
         pin!(
             Left,
-            pins::config::TARGET,
+            pins::cfg::TARGET,
             text("target").size(10),
             Input,
             ::std::any::TypeId::of::<pins::Int>()

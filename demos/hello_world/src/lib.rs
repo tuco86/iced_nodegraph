@@ -57,13 +57,13 @@ use iced_palette::{
 };
 use ids::{EdgeId, NodeId, PinLabel, generate_edge_id, generate_node_id};
 use nodes::{
-    BoolToggleConfig, ConfigNodeType, EdgeConfigInputs, EdgeSection, EdgeSections,
+    BoolToggleConfig, ColorQuadNode, ConfigNodeType, EdgeConfigInputs, EdgeSection, EdgeSections,
     FloatSliderConfig, InputNodeType, IntSliderConfig, MathNodeState, MathOperation,
     NodeConfigInputs, NodeSection, NodeSections, NodeType, NodeValue, PatternType, PinConfigInputs,
-    apply_to_graph_node, apply_to_node_node, bool_toggle_node, color_picker_node,
-    color_preset_node, edge_config_node, edge_curve_selector_node, float_slider_node,
-    int_slider_node, math_node, node, node_config_node, pattern_type_selector_node,
-    pin_config_node, pin_shape_selector_node,
+    Vec2Node, apply_to_graph_node, apply_to_node_node, bool_toggle_node, color_picker_node,
+    color_preset_node, color_quad_node, edge_config_node, edge_curve_selector_node,
+    float_slider_node, int_slider_node, math_node, node, node_config_node,
+    pattern_type_selector_node, pin_config_node, pin_shape_selector_node, vec2_node,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use persistence::EdgeData;
@@ -176,6 +176,13 @@ enum ApplicationMessage {
     },
     // State export for Claude
     ExportState,
+    /// Reset the entire app to its initial state (clears graph, config, and the
+    /// persisted save file).
+    Reset,
+    /// Move keyboard focus to the next / previous focusable widget (Tab /
+    /// Shift+Tab), e.g. between a slider node's min/max/step fields.
+    FocusNext,
+    FocusPrevious,
     // Input node value changes
     SliderChanged {
         node_id: NodeId,
@@ -505,6 +512,25 @@ impl Application {
         Self::default()
     }
 
+    /// Resets the entire app to its initial state, keeping only the live window
+    /// geometry so the OS window does not jump. Clears any stale config/style and
+    /// overwrites the persisted save file with the fresh default.
+    fn reset_to_default(&mut self) {
+        let viewport_size = self.viewport_size;
+        let window_position = self.window_position;
+        let window_size = self.window_size;
+        let window_maximized = self.window_maximized;
+        *self = Self {
+            viewport_size,
+            window_position,
+            window_size,
+            window_maximized,
+            ..Self::default()
+        };
+        self.propagate_values();
+        self.save_state();
+    }
+
     /// Saves current state to disk (native only).
     #[cfg(not(target_arch = "wasm32"))]
     fn save_state(&self) {
@@ -590,6 +616,12 @@ impl Application {
                     }
                     NodeType::Math(state) => {
                         output.push_str(&format!("  Type: Math({:?})\n", state));
+                    }
+                    NodeType::ColorQuad(state) => {
+                        output.push_str(&format!("  Type: ColorQuad({:?})\n", state));
+                    }
+                    NodeType::Vec2(state) => {
+                        output.push_str(&format!("  Type: Vec2({:?})\n", state));
                     }
                 }
                 output.push('\n');
@@ -699,8 +731,6 @@ impl Application {
 
     /// Propagates values from input nodes to connected config nodes
     fn propagate_values(&mut self) {
-        use nodes::pins::math as pin_math;
-
         let mut new_computed = ComputedStyle::default();
         self.pending_configs.clear();
 
@@ -732,6 +762,8 @@ impl Application {
                     state.input_a = None;
                     state.input_b = None;
                 }
+                NodeType::ColorQuad(state) => *state = ColorQuadNode::default(),
+                NodeType::Vec2(state) => *state = Vec2Node::default(),
                 _ => {}
             }
         }
@@ -747,50 +779,28 @@ impl Application {
             let mut changed = false;
 
             for edge in &edges_snapshot {
-                // Get source node's output value
-                let source_value = self
+                // Feed the target's combiner inputs (Math/ColorQuad/Vec2) from the
+                // source's output, in both edge directions (edges connect either way).
+                let forward = self
                     .nodes
                     .get(&edge.from_node)
                     .and_then(|(_, t)| t.output_value());
-
-                if let Some(value) = source_value {
-                    // Try to apply to target if it's a Math node
-                    if let Some((_, NodeType::Math(state))) = self.nodes.get_mut(&edge.to_node) {
-                        // Math pins: A, B (inputs), result (output)
-                        if let Some(float_val) = value.as_float() {
-                            if edge.to_pin == pin_math::A {
-                                if state.input_a != Some(float_val) {
-                                    state.input_a = Some(float_val);
-                                    changed = true;
-                                }
-                            } else if edge.to_pin == pin_math::B && state.input_b != Some(float_val)
-                            {
-                                state.input_b = Some(float_val);
-                                changed = true;
-                            }
-                        }
-                    }
+                if let Some(value) = forward
+                    && let Some((_, node)) = self.nodes.get_mut(&edge.to_node)
+                    && feed_combiner_input(node, &edge.to_pin, &value)
+                {
+                    changed = true;
                 }
 
-                // Also check reverse direction (edges can connect either way)
-                let source_value = self
+                let reverse = self
                     .nodes
                     .get(&edge.to_node)
                     .and_then(|(_, t)| t.output_value());
-
-                if let Some(value) = source_value
-                    && let Some((_, NodeType::Math(state))) = self.nodes.get_mut(&edge.from_node)
-                    && let Some(float_val) = value.as_float()
+                if let Some(value) = reverse
+                    && let Some((_, node)) = self.nodes.get_mut(&edge.from_node)
+                    && feed_combiner_input(node, &edge.from_pin, &value)
                 {
-                    if edge.from_pin == pin_math::A {
-                        if state.input_a != Some(float_val) {
-                            state.input_a = Some(float_val);
-                            changed = true;
-                        }
-                    } else if edge.from_pin == pin_math::B && state.input_b != Some(float_val) {
-                        state.input_b = Some(float_val);
-                        changed = true;
-                    }
+                    changed = true;
                 }
             }
 
@@ -829,6 +839,20 @@ impl Application {
                     && let Some(result) = state.result()
                 {
                     let value = NodeValue::Float(result);
+                    self.apply_value_to_config_node(&edge.from_node, &edge.from_pin, &value);
+                }
+                // Handle Builder (ColorQuad/Vec2) → Config connections
+                if let (NodeType::ColorQuad(_) | NodeType::Vec2(_), NodeType::Config(_)) =
+                    (&from_type, &to_type)
+                    && let Some(value) = from_type.output_value()
+                {
+                    self.apply_value_to_config_node(&edge.to_node, &edge.to_pin, &value);
+                }
+                // Handle Config → Builder connections (reverse direction)
+                if let (NodeType::Config(_), NodeType::ColorQuad(_) | NodeType::Vec2(_)) =
+                    (&from_type, &to_type)
+                    && let Some(value) = to_type.output_value()
+                {
                     self.apply_value_to_config_node(&edge.from_node, &edge.from_pin, &value);
                 }
             }
@@ -883,7 +907,7 @@ impl Application {
         pin_label: &PinLabel,
         value: &NodeValue,
     ) {
-        use nodes::pins::config as pin;
+        use nodes::pins::{cfg, edge as epin, node as npin, pin as ppin};
 
         let Some((_, node_type)) = self.nodes.get_mut(node_id) else {
             return;
@@ -895,92 +919,103 @@ impl Application {
 
         match config {
             ConfigNodeType::NodeConfig(inputs) => {
-                // NodeConfig pin labels: config, bg, color, width, radius, opacity, shadow
-                if *pin_label == pin::BG_COLOR {
-                    inputs.fill_color = value.as_color();
-                } else if *pin_label == pin::COLOR {
-                    inputs.border_color = value.as_color();
-                } else if *pin_label == pin::WIDTH {
-                    inputs.border_width = value.as_float();
-                } else if *pin_label == pin::RADIUS {
+                // NodeConfig pin labels mirror NodeStyle: fill, border, pattern, shadow
+                if *pin_label == npin::FILL_COLOR {
+                    inputs.fill_color = value.as_color_quad();
+                } else if *pin_label == npin::CORNER_RADIUS {
                     inputs.corner_radius = value.as_float();
-                } else if *pin_label == pin::OPACITY {
+                } else if *pin_label == npin::OPACITY {
                     inputs.opacity = value.as_float();
+                } else if *pin_label == npin::BORDER_COLOR {
+                    inputs.border_color = value.as_color_quad();
+                } else if *pin_label == npin::BORDER_WIDTH {
+                    inputs.border_width = value.as_float();
+                } else if *pin_label == npin::BORDER_OUTLINE_WIDTH {
+                    inputs.border_outline_width = value.as_float();
+                } else if *pin_label == npin::BORDER_OUTLINE_COLOR {
+                    inputs.border_outline_color = value.as_color_quad();
+                } else if *pin_label == npin::PATTERN {
+                    inputs.pattern_type = value.as_pattern_type();
+                } else if *pin_label == npin::DASH {
+                    inputs.dash_length = value.as_float();
+                } else if *pin_label == npin::GAP {
+                    inputs.gap_length = value.as_float();
+                } else if *pin_label == npin::ANGLE {
+                    // Convert degrees from slider to radians for pattern angle
+                    inputs.pattern_angle = value.as_float().map(|deg| deg.to_radians());
+                } else if *pin_label == npin::SPEED {
+                    inputs.animation_speed = value.as_float();
+                } else if *pin_label == npin::SHADOW_COLOR {
+                    inputs.shadow_color = value.as_color_quad();
+                } else if *pin_label == npin::SHADOW_DISTANCE {
+                    inputs.shadow_distance = value.as_float();
+                } else if *pin_label == npin::SHADOW_OFFSET {
+                    inputs.shadow_offset = value.as_vec2();
                 }
             }
             ConfigNodeType::EdgeConfig(inputs) => {
                 // EdgeConfig pin labels
-                if *pin_label == pin::START {
-                    inputs.start_color = value.as_color();
-                } else if *pin_label == pin::END {
-                    inputs.end_color = value.as_color();
-                } else if *pin_label == pin::THICK {
+                if *pin_label == epin::STROKE_COLOR {
+                    inputs.stroke_color = value.as_color_quad();
+                } else if *pin_label == epin::THICKNESS {
                     inputs.thickness = value.as_float();
-                } else if *pin_label == pin::CURVE {
+                } else if *pin_label == epin::CURVE {
                     inputs.curve = value.as_edge_curve();
-                } else if *pin_label == pin::PATTERN {
+                } else if *pin_label == epin::PATTERN {
                     inputs.pattern_type = value.as_pattern_type();
-                } else if *pin_label == pin::DASH {
+                } else if *pin_label == epin::DASH {
                     inputs.dash_length = value.as_float();
-                } else if *pin_label == pin::GAP {
+                } else if *pin_label == epin::GAP {
                     inputs.gap_length = value.as_float();
-                } else if *pin_label == pin::ANGLE {
+                } else if *pin_label == epin::ANGLE {
                     // Convert degrees from slider to radians for pattern angle
                     inputs.pattern_angle = value.as_float().map(|deg| deg.to_radians());
-                } else if *pin_label == pin::SPEED {
+                } else if *pin_label == epin::SPEED {
                     inputs.animation_speed = value.as_float();
                 // Stroke outline
-                } else if *pin_label == pin::STROKE_OL_THICK {
-                    inputs.stroke_outline_thickness = value.as_float();
-                } else if *pin_label == pin::STROKE_OL_COLOR {
-                    inputs.stroke_outline_color = value.as_color();
+                } else if *pin_label == epin::STROKE_OUTLINE_WIDTH {
+                    inputs.stroke_outline_width = value.as_float();
+                } else if *pin_label == epin::STROKE_OUTLINE_COLOR {
+                    inputs.stroke_outline_color = value.as_color_quad();
                 // Border settings
-                } else if *pin_label == pin::BORDER_WIDTH {
-                    inputs.border_thickness = value.as_float();
-                } else if *pin_label == pin::BORDER_GAP {
+                } else if *pin_label == epin::BORDER_WIDTH {
+                    inputs.border_width = value.as_float();
+                } else if *pin_label == epin::BORDER_GAP {
                     inputs.border_gap = value.as_float();
-                } else if *pin_label == pin::BORDER_START_COLOR {
-                    inputs.border_color = value.as_color();
-                } else if *pin_label == pin::BORDER_END_COLOR {
-                    inputs.border_color_end = value.as_color();
-                } else if *pin_label == pin::BORDER_BG {
-                    inputs.border_background = value.as_color();
-                } else if *pin_label == pin::BORDER_BG_END {
-                    inputs.border_background_end = value.as_color();
-                } else if *pin_label == pin::BORDER_OL_THICK {
-                    inputs.border_outline_thickness = value.as_float();
-                } else if *pin_label == pin::BORDER_OL_COLOR {
-                    inputs.border_outline_color = value.as_color();
+                } else if *pin_label == epin::BORDER_COLOR {
+                    inputs.border_color = value.as_color_quad();
+                } else if *pin_label == epin::BORDER_BACKGROUND {
+                    inputs.border_background = value.as_color_quad();
+                } else if *pin_label == epin::BORDER_OUTLINE_WIDTH {
+                    inputs.border_outline_width = value.as_float();
+                } else if *pin_label == epin::BORDER_OUTLINE_COLOR {
+                    inputs.border_outline_color = value.as_color_quad();
                 // Shadow settings
-                } else if *pin_label == pin::SHADOW_BLUR {
+                } else if *pin_label == epin::SHADOW_BLUR {
                     inputs.shadow_blur = value.as_float();
-                } else if *pin_label == pin::SHADOW_EXPAND {
+                } else if *pin_label == epin::SHADOW_EXPAND {
                     inputs.shadow_expand = value.as_float();
-                } else if *pin_label == pin::SHADOW_COLOR {
-                    inputs.shadow_color = value.as_color();
-                } else if *pin_label == pin::SHADOW_END_COLOR {
-                    inputs.shadow_color_end = value.as_color();
-                } else if *pin_label == pin::SHADOW_OFFSET_X {
-                    inputs.shadow_offset_x = value.as_float();
-                } else if *pin_label == pin::SHADOW_OFFSET_Y {
-                    inputs.shadow_offset_y = value.as_float();
+                } else if *pin_label == epin::SHADOW_COLOR {
+                    inputs.shadow_color = value.as_color_quad();
+                } else if *pin_label == epin::SHADOW_OFFSET {
+                    inputs.shadow_offset = value.as_vec2();
                 }
             }
             ConfigNodeType::PinConfig(inputs) => {
-                // PinConfig pin labels
-                if *pin_label == pin::COLOR {
-                    inputs.color = value.as_color();
-                } else if *pin_label == pin::SIZE {
+                // PinConfig pin labels mirror PinStyle
+                if *pin_label == ppin::COLOR {
+                    inputs.color = value.as_color_quad();
+                } else if *pin_label == ppin::RADIUS {
                     inputs.radius = value.as_float();
-                } else if *pin_label == pin::SHAPE {
+                } else if *pin_label == ppin::SHAPE {
                     inputs.shape = value.as_pin_shape();
-                } else if *pin_label == pin::GLOW {
-                    inputs.border_color = value.as_color();
-                } else if *pin_label == pin::PULSE {
+                } else if *pin_label == ppin::BORDER_COLOR {
+                    inputs.border_color = value.as_color_quad();
+                } else if *pin_label == ppin::BORDER_WIDTH {
                     inputs.border_width = value.as_float();
                 }
             }
-            ConfigNodeType::ApplyToNode { target_id, .. } if *pin_label == pin::TARGET => {
+            ConfigNodeType::ApplyToNode { target_id, .. } if *pin_label == cfg::TARGET => {
                 *target_id = value.as_int();
             }
             _ => {}
@@ -995,7 +1030,7 @@ impl Application {
         apply_node_id: &NodeId,
         apply_pin_label: &PinLabel,
     ) {
-        use nodes::pins::config as pin;
+        use nodes::pins::cfg as pin;
 
         // Build the config from the CURRENT state of the config node (not the snapshot)
         let built_config = match self.nodes.get(config_node_id) {
@@ -1249,6 +1284,7 @@ impl Application {
                                 self.selected_nodes = HashSet::from([new_id]);
                                 self.command_palette_open = false;
                                 self.palette_view = PaletteView::Main;
+                                self.save_state();
                                 Task::none()
                             }
                             ApplicationMessage::ChangeTheme(theme) => {
@@ -1257,12 +1293,17 @@ impl Application {
                                 self.palette_original_theme = None;
                                 self.command_palette_open = false;
                                 self.palette_view = PaletteView::Main;
+                                self.save_state();
                                 Task::none()
                             }
                             ApplicationMessage::ExportState => {
                                 self.command_palette_open = false;
                                 self.palette_view = PaletteView::Main;
                                 self.export_state_to_file();
+                                Task::none()
+                            }
+                            ApplicationMessage::Reset => {
+                                self.reset_to_default();
                                 Task::none()
                             }
                             _ => Task::none(),
@@ -1344,6 +1385,12 @@ impl Application {
                 self.export_state_to_file();
                 Task::none()
             }
+            ApplicationMessage::Reset => {
+                self.reset_to_default();
+                Task::none()
+            }
+            ApplicationMessage::FocusNext => iced::widget::operation::focus_next(),
+            ApplicationMessage::FocusPrevious => iced::widget::operation::focus_previous(),
             ApplicationMessage::SelectionChanged(node_ids) => {
                 self.selected_nodes = node_ids.into_iter().collect();
                 Task::none()
@@ -1564,6 +1611,8 @@ impl Application {
                 match section {
                     NodeSection::Fill => sections.fill = !sections.fill,
                     NodeSection::Border => sections.border = !sections.border,
+                    NodeSection::Pattern => sections.pattern = !sections.pattern,
+                    NodeSection::Shadow => sections.shadow = !sections.shadow,
                 }
                 Task::none()
             }
@@ -1694,8 +1743,13 @@ impl Application {
             .on_select(ApplicationMessage::SelectionChanged)
             .on_clone(ApplicationMessage::CloneNodes)
             .on_delete(ApplicationMessage::DeleteNodes)
-            .on_camera_change(|position, zoom| ApplicationMessage::CameraChanged { position, zoom })
-            .initial_camera(self.camera_position, self.camera_zoom)
+            .on_pan(|position, zoom| ApplicationMessage::CameraChanged { position, zoom })
+            .view(self.camera_position, self.camera_zoom)
+            // A connection is valid only between opposite directions (output ->
+            // input) carrying the same data type (the pin's TypeId marker). Color
+            // and ColorQuad share the `ColorData` marker, so a color pin accepts
+            // both a picker and the ColorQuad builder; Vec2 only matches Vec2.
+            .can_connect(|from, to| from.direction() != to.direction() && from.info() == to.info())
             // Selection highlight and pending-cut feedback are handled internally
             // by the widget; per-node/edge styling flows through push_*_styled.
             .box_select_style(|_theme| {
@@ -1874,6 +1928,8 @@ impl Application {
                     } => apply_to_node_node(theme, *has_node_config, *target_id),
                 },
                 NodeType::Math(state) => math_node(theme, state),
+                NodeType::ColorQuad(state) => color_quad_node(theme, state),
+                NodeType::Vec2(state) => vec2_node(theme, state),
             };
 
             // Apply the computed overlay to workflow nodes only (not input/config
@@ -1983,6 +2039,9 @@ impl Application {
                         .description("Export graph state to file for Claude")
                         .shortcut(Shortcut::cmd('e'))
                         .action(ApplicationMessage::ExportState),
+                    command("reset", "Reset")
+                        .description("Reset the app to its initial state")
+                        .action(ApplicationMessage::Reset),
                 ];
                 ("Command Palette", commands)
             }
@@ -2147,6 +2206,17 @@ impl Application {
                                 PinConfigInputs::default(),
                             )),
                         }),
+                    // Builder nodes
+                    command("color_quad", "Color Quad")
+                        .description("Combine 4 corner colors into one ColorQuad")
+                        .action(ApplicationMessage::SpawnNode {
+                            node_type: NodeType::ColorQuad(ColorQuadNode::default()),
+                        }),
+                    command("vec2", "Vec2")
+                        .description("Combine x and y into a 2D vector (e.g. offset)")
+                        .action(ApplicationMessage::SpawnNode {
+                            node_type: NodeType::Vec2(Vec2Node::default()),
+                        }),
                     // Apply nodes
                     command("apply_to_graph", "Apply to Graph")
                         .description("Apply configs to all nodes/edges in graph")
@@ -2199,6 +2269,62 @@ impl Application {
     }
 }
 
+/// Feeds a propagated `value` into a combiner node's input pin (Math, ColorQuad,
+/// or Vec2). Returns true if the stored input changed, so the propagation loop
+/// knows to keep iterating. No-op for any other node type or unknown pin.
+fn feed_combiner_input(node: &mut NodeType, pin: &PinLabel, value: &NodeValue) -> bool {
+    use nodes::pins::{build as pin_build, math as pin_math};
+
+    let mut changed = false;
+    match node {
+        NodeType::Math(state) => {
+            if let Some(f) = value.as_float() {
+                if *pin == pin_math::A && state.input_a != Some(f) {
+                    state.input_a = Some(f);
+                    changed = true;
+                } else if *pin == pin_math::B && state.input_b != Some(f) {
+                    state.input_b = Some(f);
+                    changed = true;
+                }
+            }
+        }
+        NodeType::ColorQuad(state) => {
+            if let Some(c) = value.as_color() {
+                let slot = if *pin == pin_build::NEAR_START {
+                    Some(&mut state.near_start)
+                } else if *pin == pin_build::NEAR_END {
+                    Some(&mut state.near_end)
+                } else if *pin == pin_build::FAR_START {
+                    Some(&mut state.far_start)
+                } else if *pin == pin_build::FAR_END {
+                    Some(&mut state.far_end)
+                } else {
+                    None
+                };
+                if let Some(slot) = slot
+                    && *slot != Some(c)
+                {
+                    *slot = Some(c);
+                    changed = true;
+                }
+            }
+        }
+        NodeType::Vec2(state) => {
+            if let Some(f) = value.as_float() {
+                if *pin == pin_build::X && state.x != Some(f) {
+                    state.x = Some(f);
+                    changed = true;
+                } else if *pin == pin_build::Y && state.y != Some(f) {
+                    state.y = Some(f);
+                    changed = true;
+                }
+            }
+        }
+        _ => {}
+    }
+    changed
+}
+
 fn handle_keyboard_event(
     event: Event,
     _status: iced::event::Status,
@@ -2218,6 +2344,13 @@ fn handle_keyboard_event(
             }
 
             match key {
+                keyboard::Key::Named(keyboard::key::Named::Tab) => {
+                    if modifiers.shift() {
+                        Some(ApplicationMessage::FocusPrevious)
+                    } else {
+                        Some(ApplicationMessage::FocusNext)
+                    }
+                }
                 keyboard::Key::Named(keyboard::key::Named::ArrowUp) => {
                     Some(ApplicationMessage::CommandPaletteNavigateUp)
                 }
@@ -2390,6 +2523,30 @@ mod tests {
     }
 
     #[test]
+    fn test_node_config_shadow_resolves() {
+        use iced_nodegraph::{ColorQuad, NodeStyle};
+
+        // A NodeConfig with shadow fields set must carry them through build()
+        // (overlay) and resolve_over() (concrete style) unchanged.
+        let inputs = NodeConfigInputs {
+            shadow_color: Some(ColorQuad::solid(Color::from_rgb(1.0, 0.0, 0.0))),
+            shadow_distance: Some(12.0),
+            shadow_offset: Some((4.0, 6.0)),
+            ..Default::default()
+        };
+        let overlay = inputs.build();
+        assert_eq!(overlay.shadow_color, Some(Color::from_rgb(1.0, 0.0, 0.0)));
+        assert_eq!(overlay.shadow_distance, Some(12.0));
+        assert_eq!(overlay.shadow_offset, Some((4.0, 6.0)));
+
+        // NodeStyle::comment() has no shadow; the overlay must install one.
+        let resolved = overlay.resolve_over(NodeStyle::comment());
+        assert_eq!(resolved.shadow_color, Color::from_rgb(1.0, 0.0, 0.0));
+        assert_eq!(resolved.shadow_distance, 12.0);
+        assert_eq!(resolved.shadow_offset, (4.0, 6.0));
+    }
+
+    #[test]
     fn test_computed_style_edge_overlay() {
         let style = ComputedStyle::default();
         assert!(style.edge.pattern.is_none());
@@ -2408,11 +2565,13 @@ mod tests {
     fn test_edge_config_inputs_pattern_type_dashed() {
         use iced_nodegraph::SdfPatternType;
 
-        let mut inputs = EdgeConfigInputs::default();
-        inputs.pattern_type = Some(PatternType::Dashed);
-        inputs.thickness = Some(3.0);
-        inputs.dash_length = Some(10.0);
-        inputs.gap_length = Some(5.0);
+        let inputs = EdgeConfigInputs {
+            pattern_type: Some(PatternType::Dashed),
+            thickness: Some(3.0),
+            dash_length: Some(10.0),
+            gap_length: Some(5.0),
+            ..Default::default()
+        };
 
         let config = inputs.build();
         let pattern = config.pattern.expect("pattern should be Some");
@@ -2428,8 +2587,10 @@ mod tests {
     fn test_edge_config_inputs_pattern_type_arrowed() {
         use iced_nodegraph::SdfPatternType;
 
-        let mut inputs = EdgeConfigInputs::default();
-        inputs.pattern_type = Some(PatternType::Arrowed);
+        let inputs = EdgeConfigInputs {
+            pattern_type: Some(PatternType::Arrowed),
+            ..Default::default()
+        };
 
         let config = inputs.build();
         let pattern = config.pattern.expect("pattern should be Some");
@@ -2444,10 +2605,12 @@ mod tests {
     fn test_edge_config_inputs_pattern_type_dotted() {
         use iced_nodegraph::SdfPatternType;
 
-        let mut inputs = EdgeConfigInputs::default();
-        inputs.pattern_type = Some(PatternType::Dotted);
-        inputs.dot_radius = Some(3.0);
-        inputs.gap_length = Some(4.0);
+        let inputs = EdgeConfigInputs {
+            pattern_type: Some(PatternType::Dotted),
+            dot_radius: Some(3.0),
+            gap_length: Some(4.0),
+            ..Default::default()
+        };
 
         let config = inputs.build();
         let pattern = config.pattern.expect("pattern should be Some");
@@ -2462,8 +2625,10 @@ mod tests {
     fn test_edge_config_inputs_pattern_type_dash_dotted() {
         use iced_nodegraph::SdfPatternType;
 
-        let mut inputs = EdgeConfigInputs::default();
-        inputs.pattern_type = Some(PatternType::DashDotted);
+        let inputs = EdgeConfigInputs {
+            pattern_type: Some(PatternType::DashDotted),
+            ..Default::default()
+        };
 
         let config = inputs.build();
         let pattern = config.pattern.expect("pattern should be Some");
@@ -2480,18 +2645,22 @@ mod tests {
         // Pattern, border, shadow must all survive
         use iced_nodegraph::SdfPatternType;
 
-        let mut inputs = EdgeConfigInputs::default();
-        inputs.pattern_type = Some(PatternType::Dashed);
-        inputs.thickness = Some(4.0);
-        inputs.dash_length = Some(8.0);
-        inputs.gap_length = Some(4.0);
-        inputs.animation_speed = Some(50.0);
-        inputs.start_color = Some(Color::from_rgb(1.0, 0.0, 0.0));
-        inputs.end_color = Some(Color::from_rgb(0.0, 0.0, 1.0));
-        inputs.border_thickness = Some(2.0);
-        inputs.border_gap = Some(1.0);
-        inputs.shadow_blur = Some(6.0);
-        inputs.shadow_expand = Some(3.0);
+        let inputs = EdgeConfigInputs {
+            pattern_type: Some(PatternType::Dashed),
+            thickness: Some(4.0),
+            dash_length: Some(8.0),
+            gap_length: Some(4.0),
+            animation_speed: Some(50.0),
+            stroke_color: Some(iced_nodegraph::ColorQuad::arc(
+                Color::from_rgb(1.0, 0.0, 0.0),
+                Color::from_rgb(0.0, 0.0, 1.0),
+            )),
+            border_width: Some(2.0),
+            border_gap: Some(1.0),
+            shadow_blur: Some(6.0),
+            shadow_expand: Some(3.0),
+            ..Default::default()
+        };
 
         let config = inputs.build();
 
