@@ -1932,13 +1932,11 @@ impl Application {
                 NodeType::Vec2(state) => vec2_node(theme, state),
             };
 
-            // Apply the computed overlay to workflow nodes only (not input/config
-            // nodes); the per-node closure resolves it over the theme base.
-            let overlay = if matches!(node_type, NodeType::Workflow(_)) {
-                self.computed_style.node.merge(&node_defaults)
-            } else {
-                node_defaults.clone()
-            };
+            // Apply the computed node-config overlay to every node ("Apply to
+            // Graph" means the whole graph); the per-node closure resolves it
+            // over the theme base. With no config connected, computed_style.node
+            // is empty and this is just node_defaults.
+            let overlay = self.computed_style.node.merge(&node_defaults);
             // Pins: the per-pin data-type color wins, then the global Pin Config
             // overlay (radius/shape/border from an ApplyToGraph chain), then the
             // status default fills the rest.
@@ -2506,6 +2504,208 @@ mod tests {
         assert!(style.pin.color.is_some());
         assert_eq!(style.pin.radius, Some(10.0));
         assert_eq!(style.pin.shape, Some(PinShape::Diamond));
+    }
+
+    #[test]
+    fn test_node_config_chain_applies_to_computed_style() {
+        // Full chain: ColorPicker -> NodeConfig.fill_color, NodeConfig -> ApplyToGraph.
+        // After propagation, computed_style.node must carry the fill color.
+        let mut app = Application::default();
+        app.nodes.clear();
+        app.node_order.clear();
+        app.edges.clear();
+        app.edge_order.clear();
+
+        let red = Color::from_rgb(1.0, 0.0, 0.0);
+        let picker = generate_node_id();
+        let cfg = generate_node_id();
+        let apply = generate_node_id();
+        let p = Point::new(0.0, 0.0);
+        app.nodes.insert(
+            picker.clone(),
+            (
+                p,
+                NodeType::Input(InputNodeType::ColorPicker { color: red }),
+            ),
+        );
+        app.nodes.insert(
+            cfg.clone(),
+            (
+                p,
+                NodeType::Config(ConfigNodeType::NodeConfig(NodeConfigInputs::default())),
+            ),
+        );
+        app.nodes.insert(
+            apply.clone(),
+            (
+                p,
+                NodeType::Config(ConfigNodeType::ApplyToGraph {
+                    has_node_config: false,
+                    has_edge_config: false,
+                    has_pin_config: false,
+                }),
+            ),
+        );
+
+        let e1 = generate_edge_id();
+        app.edges.insert(
+            e1.clone(),
+            EdgeData {
+                from_node: picker.clone(),
+                from_pin: nodes::pins::input::COLOR,
+                to_node: cfg.clone(),
+                to_pin: nodes::pins::node::FILL_COLOR,
+            },
+        );
+        app.edge_order.push(e1);
+        let e2 = generate_edge_id();
+        app.edges.insert(
+            e2.clone(),
+            EdgeData {
+                from_node: cfg.clone(),
+                from_pin: nodes::pins::cfg::NODE_OUT,
+                to_node: apply.clone(),
+                to_pin: nodes::pins::cfg::NODE_CONFIG,
+            },
+        );
+        app.edge_order.push(e2);
+
+        app.propagate_values();
+
+        // The ApplyToGraph must have registered the node config...
+        if let Some((
+            _,
+            NodeType::Config(ConfigNodeType::ApplyToGraph {
+                has_node_config, ..
+            }),
+        )) = app.nodes.get(&apply)
+        {
+            assert!(
+                *has_node_config,
+                "ApplyToGraph did not register node config"
+            );
+        } else {
+            panic!("apply node missing");
+        }
+        // ...and the computed style must carry the fill color.
+        assert_eq!(
+            app.computed_style.node.fill_color.map(|q| q.near_start),
+            Some(red),
+            "computed node style did not receive the config fill color",
+        );
+    }
+
+    #[test]
+    fn test_node_config_shadow_chain_with_vec2() {
+        // The user's exact scenario: ColorPicker -> shadow_color, slider ->
+        // shadow_distance, two sliders -> Vec2 -> shadow_offset, NodeConfig ->
+        // ApplyToGraph. Exercises the Vec2 builder propagation too.
+        let mut app = Application::default();
+        app.nodes.clear();
+        app.node_order.clear();
+        app.edges.clear();
+        app.edge_order.clear();
+
+        let red = Color::from_rgb(1.0, 0.0, 0.0);
+        let p = Point::new(0.0, 0.0);
+        let slider = |v: f32| {
+            NodeType::Input(InputNodeType::FloatSlider {
+                config: FloatSliderConfig::default(),
+                value: v,
+            })
+        };
+        let picker = generate_node_id();
+        let dist = generate_node_id();
+        let sx = generate_node_id();
+        let sy = generate_node_id();
+        let vec2 = generate_node_id();
+        let cfg = generate_node_id();
+        let apply = generate_node_id();
+        app.nodes.insert(
+            picker.clone(),
+            (
+                p,
+                NodeType::Input(InputNodeType::ColorPicker { color: red }),
+            ),
+        );
+        app.nodes.insert(dist.clone(), (p, slider(8.0)));
+        app.nodes.insert(sx.clone(), (p, slider(5.0)));
+        app.nodes.insert(sy.clone(), (p, slider(7.0)));
+        app.nodes
+            .insert(vec2.clone(), (p, NodeType::Vec2(Vec2Node::default())));
+        app.nodes.insert(
+            cfg.clone(),
+            (
+                p,
+                NodeType::Config(ConfigNodeType::NodeConfig(NodeConfigInputs::default())),
+            ),
+        );
+        app.nodes.insert(
+            apply.clone(),
+            (
+                p,
+                NodeType::Config(ConfigNodeType::ApplyToGraph {
+                    has_node_config: false,
+                    has_edge_config: false,
+                    has_pin_config: false,
+                }),
+            ),
+        );
+
+        use nodes::pins;
+        let mut edge = |from: NodeId, fp: PinLabel, to: NodeId, tp: PinLabel| {
+            let e = generate_edge_id();
+            app.edges.insert(
+                e.clone(),
+                EdgeData {
+                    from_node: from,
+                    from_pin: fp,
+                    to_node: to,
+                    to_pin: tp,
+                },
+            );
+            app.edge_order.push(e);
+        };
+        edge(
+            picker,
+            pins::input::COLOR,
+            cfg.clone(),
+            pins::node::SHADOW_COLOR,
+        );
+        edge(
+            dist,
+            pins::input::VALUE,
+            cfg.clone(),
+            pins::node::SHADOW_DISTANCE,
+        );
+        edge(sx, pins::input::VALUE, vec2.clone(), pins::build::X);
+        edge(sy, pins::input::VALUE, vec2.clone(), pins::build::Y);
+        edge(
+            vec2,
+            pins::build::VEC2_OUT,
+            cfg.clone(),
+            pins::node::SHADOW_OFFSET,
+        );
+        edge(cfg, pins::cfg::NODE_OUT, apply, pins::cfg::NODE_CONFIG);
+
+        app.propagate_values();
+
+        let node = &app.computed_style.node;
+        assert_eq!(
+            node.shadow_color,
+            Some(red),
+            "shadow color did not propagate",
+        );
+        assert_eq!(
+            node.shadow_distance,
+            Some(8.0),
+            "shadow distance did not propagate",
+        );
+        assert_eq!(
+            node.shadow_offset,
+            Some((5.0, 7.0)),
+            "shadow offset (via Vec2 builder) did not propagate",
+        );
     }
 
     #[test]
