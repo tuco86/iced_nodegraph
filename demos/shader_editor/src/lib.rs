@@ -377,7 +377,7 @@ impl Application {
                 .on_move(|delta, indices| Message::NodesMoved { delta, indices })
                 .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })
                 .on_select(Message::SelectionChanged)
-                .on_camera_change(|position, zoom| Message::CameraChanged { position, zoom })
+                .on_pan(|position, zoom| Message::CameraChanged { position, zoom })
                 .selection(&self.graph_selection);
 
         // Add all shader graph nodes

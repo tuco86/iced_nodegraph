@@ -460,7 +460,7 @@ fn camera_graph() -> Element<'static, Msg, Theme, Renderer> {
     let mut ng: Graph = NodeGraph::default()
         .width(Length::Fill)
         .height(Length::Fill)
-        .on_camera_change(Msg::Camera);
+        .on_pan(Msg::Camera);
     ng.push_node(node(
         0usize,
         Point::new(100.0, 100.0),
@@ -712,7 +712,7 @@ fn overlaid_graph() -> Element<'static, Msg, Theme, Renderer> {
     let mut ng: Graph = NodeGraph::default()
         .width(Length::Fill)
         .height(Length::Fill)
-        .on_camera_change(Msg::Camera);
+        .on_pan(Msg::Camera);
     ng.push_node(node(
         0usize,
         Point::new(100.0, 100.0),
@@ -934,7 +934,7 @@ fn zoomed_pin_graph(seed_edge: bool) -> Element<'static, Msg, Theme, Renderer> {
     let mut ng: Graph = NodeGraph::default()
         .width(Length::Fill)
         .height(Length::Fill)
-        .initial_camera(CAM_POS, CAM_ZOOM)
+        .view(CAM_POS, CAM_ZOOM)
         .on_connect(Msg::Connect)
         .on_disconnect(Msg::Disconnect);
     ng.push_node(node(

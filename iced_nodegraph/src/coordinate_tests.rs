@@ -169,7 +169,7 @@ fn draw_at_origin(
     let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Rec> = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
-        .initial_camera(camera_pos, camera_zoom);
+        .view(camera_pos, camera_zoom);
     graph.push_node(node(0_usize, node_world, Element::from(ContentProbe)));
 
     let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Rec>);
@@ -185,8 +185,8 @@ fn draw_at_origin(
     let layout = Layout::with_offset(widget_origin, &layout_node);
     let viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
 
-    // One update applies `initial_camera` into the widget state (it is gated to
-    // run once); the event itself is a no-op for our measurement.
+    // One update syncs `view()` into the widget camera (the host value differs
+    // from the unset last-synced value); the event itself is a no-op here.
     let mut msgs: Vec<()> = Vec::new();
     let mut shell = iced_widget::core::Shell::new(&mut msgs);
     let mut clipboard = clipboard::Null;
@@ -264,7 +264,7 @@ fn click_select(
     let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Rec> = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
-        .initial_camera(camera_pos, camera_zoom)
+        .view(camera_pos, camera_zoom)
         .on_select(move |ids| {
             *sel.borrow_mut() = Some(ids);
         });
@@ -286,8 +286,8 @@ fn click_select(
     let mut clipboard = clipboard::Null;
     let cursor = mouse::Cursor::Available(screen);
 
-    // First a CursorMoved so the widget applies initial_camera and tracks the
-    // cursor, then the press that performs the hit-test and selection.
+    // First a CursorMoved so the widget syncs `view()` and tracks the cursor,
+    // then the press that performs the hit-test and selection.
     for event in [
         iced::Event::Mouse(mouse::Event::CursorMoved { position: screen }),
         iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
@@ -431,7 +431,7 @@ fn box_select_primitives(
     let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Rec> = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
-        .initial_camera(Point::ORIGIN, camera_zoom)
+        .view(Point::ORIGIN, camera_zoom)
         .on_select(|_ids| {});
     // Node far from the drag so the press starts a box select, not a node click.
     graph.push_node(node(

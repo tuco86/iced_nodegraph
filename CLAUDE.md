@@ -308,8 +308,14 @@ ng.on_move(|delta, node_ids| Message)    // delta: Vector, node_ids: Vec<N> (sin
 ng.on_select(|selected_ids| Message)     // selected_ids: Vec<N>
 ng.on_clone(|node_ids| Message)
 ng.on_delete(|node_ids| Message)
+ng.on_pan(|pos, zoom| Message)           // commit-on-release for pan AND zoom
 ng.can_connect(|from, to| bool)          // live snap validation during drag
 ng.selection(&selected_set)              // highlight + z-order selected nodes
+ng.view(pos, zoom)                        // controlled camera; host owns pos/zoom (pairs with on_pan)
 ```
+
+The camera is a controlled value just like selection: the host keeps `pos`/`zoom`
+in its model, feeds them via `view()`, and updates them from `on_pan`. Pushing a
+new `view()` (e.g. resetting to origin) snaps the widget camera there.
 
 When adding features, maintain the coordinate system abstractions and use `iced_nodegraph_sdf` Layer/Pattern API for custom rendering.

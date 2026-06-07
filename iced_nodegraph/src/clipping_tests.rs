@@ -308,7 +308,7 @@ fn run_update_with_cursor(graph_w: f32, graph_h: f32, cursor: mouse::Cursor) -> 
 
     let camera_changed = Rc::new(Cell::new(false));
     let cc = camera_changed.clone();
-    let mut graph = base_graph.on_camera_change(move |_pos, _zoom| cc.set(true));
+    let mut graph = base_graph.on_pan(move |_pos, _zoom| cc.set(true));
 
     let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Stub>);
     let renderer = Stub;

@@ -1199,15 +1199,20 @@ where
     ) {
         let state = tree.state.downcast_mut::<NodeGraphState>();
 
-        // Apply initial camera from persistence (only once)
-        if !state.camera_initialized {
-            if let Some((position, zoom)) = self.initial_camera {
-                state.camera = super::camera::Camera2D::with_zoom_and_position(
-                    zoom,
-                    WorldPoint::new(position.x, position.y),
-                );
-            }
-            state.camera_initialized = true;
+        // Sync the host-controlled view (`view()`) into the camera, but only when
+        // the host changed it since we last synced. Comparing against the live
+        // camera would also fire while the user is mid pan/zoom (before the
+        // matching `on_pan` round-trips back into `view`), clobbering the
+        // interaction with a stale value. Same race-avoidance as selection.
+        if let Some(view) = self.view_value()
+            && state.last_synced_view != Some(view)
+        {
+            let (position, zoom) = view;
+            state.camera = super::camera::Camera2D::with_zoom_and_position(
+                zoom,
+                WorldPoint::new(position.x, position.y),
+            );
+            state.last_synced_view = Some(view);
         }
 
         // Refresh the viewport origin so screen->layout mapping (cursor hit-tests,
@@ -1334,8 +1339,8 @@ where
 
             state.camera = state.camera.zoom_at(cursor_pos, zoom_delta);
 
-            // Emit camera change event
-            if let Some(handler) = self.on_camera_change_handler() {
+            // Commit the new camera (zoom shifts position too).
+            if let Some(handler) = self.on_pan_handler() {
                 let pos = state.camera.position();
                 shell.publish(handler(Point::new(pos.x, pos.y), state.camera.zoom()));
             }
@@ -1540,8 +1545,8 @@ where
                                     let offset = cursor_position - origin;
                                     state.camera = state.camera.move_by(offset);
 
-                                    // Emit camera change event
-                                    if let Some(handler) = self.on_camera_change_handler() {
+                                    // Commit the new camera position on pan release.
+                                    if let Some(handler) = self.on_pan_handler() {
                                         let pos = state.camera.position();
                                         shell.publish(handler(
                                             Point::new(pos.x, pos.y),

@@ -304,9 +304,10 @@ pub struct NodeGraph<
     on_drag_start: Option<Box<dyn Fn(DragInfo) -> Message + 'a>>,
     on_drag_update: Option<Box<dyn Fn(f32, f32) -> Message + 'a>>,
     on_drag_end: Option<Box<dyn Fn() -> Message + 'a>>,
-    /// Callback for camera state changes (position, zoom).
-    /// Used for tracking viewport state in application for features like spawn-at-center.
-    on_camera_change: Option<Box<dyn Fn(Point, f32) -> Message + 'a>>,
+    /// Commit callback for pan/zoom: fires with the new camera (position, zoom)
+    /// when the user finishes a pan drag or zooms. The host stores it and feeds
+    /// it back via `view()`, mirroring `on_move` / `selection`.
+    on_pan: Option<Box<dyn Fn(Point, f32) -> Message + 'a>>,
     /// Style callback for box selection overlay.
     /// Returns (fill_color, border_color).
     pub(super) box_select_style_fn: Option<Box<dyn Fn(&Theme) -> (iced::Color, iced::Color) + 'a>>,
@@ -316,9 +317,11 @@ pub struct NodeGraph<
     /// Style for the edge being dragged (theme -> resolved style). The graph
     /// injects the source pin's color for inheriting (TRANSPARENT) stroke ends.
     pub(super) dragging_edge_style_fn: Option<DragEdgeStyleFn<'a, P, UI, Theme>>,
-    /// Initial camera position and zoom to restore on first render.
-    /// Applied once when the widget state is created, then controlled by user interaction.
-    pub(super) initial_camera: Option<(Point, f32)>,
+    /// Host-controlled camera (world position + zoom). The widget syncs its
+    /// internal camera to this whenever the host changes it, while still running
+    /// pan/zoom interaction internally and committing via `on_pan`. Mirrors the
+    /// `selection()` / `on_select` controlled pattern.
+    pub(super) view: Option<(Point, f32)>,
     /// Custom validation callback for pin connection compatibility.
     /// When set, it is authoritative in `compute_valid_targets` (the built-in
     /// direction check only applies as the default when this is unset).
@@ -352,11 +355,11 @@ where
             on_drag_start: None,
             on_drag_update: None,
             on_drag_end: None,
-            on_camera_change: None,
+            on_pan: None,
             box_select_style_fn: None,
             cutting_tool_style_fn: None,
             dragging_edge_style_fn: None,
-            initial_camera: None,
+            view: None,
             can_connect: None,
             sdf_debug: SdfDebug::default(),
         }
@@ -370,12 +373,16 @@ where
     E: EdgeId + 'static,
     Renderer: iced_widget::core::renderer::Renderer,
 {
-    /// Sets the initial camera position and zoom level.
+    /// Sets the host-controlled camera (world position + zoom).
     ///
-    /// This is used to restore camera state from persistence.
-    /// Applied once when the widget state is created, then controlled by user interaction.
-    pub fn initial_camera(mut self, position: Point, zoom: f32) -> Self {
-        self.initial_camera = Some((position, zoom));
+    /// The widget snaps its camera to this whenever the host changes the value,
+    /// while still running pan/zoom interaction internally and committing through
+    /// [`on_pan`](Self::on_pan). This is the controlled-component counterpart to
+    /// `on_pan`, exactly like `selection()` is to `on_select`: feed back what
+    /// `on_pan` reports and the view stays in sync; push a new value (e.g. a reset
+    /// to origin) and the view snaps there.
+    pub fn view(mut self, position: Point, zoom: f32) -> Self {
+        self.view = Some((position, zoom));
         self
     }
 
@@ -560,12 +567,14 @@ where
         self
     }
 
-    /// Sets a callback for when the camera state changes (pan or zoom).
+    /// Sets the commit callback for pan/zoom.
     ///
-    /// The callback receives the current camera position and zoom level.
-    /// Useful for tracking viewport state for features like spawn-at-screen-center.
-    pub fn on_camera_change(mut self, f: impl Fn(Point, f32) -> Message + 'a) -> Self {
-        self.on_camera_change = Some(Box::new(f));
+    /// Fires with the new camera position and zoom when the user finishes a pan
+    /// drag or zooms (zoom shifts position too, so both report together). Store
+    /// the value and feed it back via [`view`](Self::view) to keep the controlled
+    /// camera in sync.
+    pub fn on_pan(mut self, f: impl Fn(Point, f32) -> Message + 'a) -> Self {
+        self.on_pan = Some(Box::new(f));
         self
     }
 
@@ -644,10 +653,11 @@ where
         self.external_selection.as_ref()
     }
 
-    pub(super) fn on_camera_change_handler(
-        &self,
-    ) -> Option<&Box<dyn Fn(Point, f32) -> Message + 'a>> {
-        self.on_camera_change.as_ref()
+    pub(super) fn on_pan_handler(&self) -> Option<&Box<dyn Fn(Point, f32) -> Message + 'a>> {
+        self.on_pan.as_ref()
+    }
+    pub(super) fn view_value(&self) -> Option<(Point, f32)> {
+        self.view
     }
 
     /// Translates a list of internal node indices to user IDs.

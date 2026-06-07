@@ -9,7 +9,7 @@
 
 use super::camera::Camera2D;
 use super::euclid::WorldPoint;
-use iced::keyboard;
+use iced::{Point, keyboard};
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use web_time::Instant;
@@ -51,9 +51,12 @@ pub(super) struct NodeGraphState {
     /// Contains (node_index, pin_index) pairs that are valid connection targets.
     /// Only populated during Edge/EdgeOver dragging states.
     pub(super) valid_drop_targets: HashSet<(usize, usize)>,
-    /// Tracks if the initial camera has been applied from the widget config.
-    /// Once true, camera is controlled by user interaction only.
-    pub(super) camera_initialized: bool,
+    /// Last host-provided view (`view()`) that we synced into `camera`. Lets us
+    /// tell apart "host pushed a new camera" (sync needed) from "internal pan/zoom
+    /// changed the camera but the matching `on_pan` has not yet round-tripped
+    /// back into `view`" (syncing would clobber it). Mirrors
+    /// `last_synced_external` for selection.
+    pub(super) last_synced_view: Option<(Point, f32)>,
     /// Set during draw() when any SDF primitive has active animations.
     /// Read during update() to drive continuous redraws via shell.request_redraw().
     pub(super) sdf_animated: Cell<bool>,
@@ -78,7 +81,7 @@ impl Default for NodeGraphState {
             modifiers: keyboard::Modifiers::default(),
             left_mouse_down: false,
             valid_drop_targets: HashSet::new(),
-            camera_initialized: false,
+            last_synced_view: None,
             sdf_animated: Cell::new(false),
             node_z: HashMap::new(),
             z_counter: 0,
