@@ -2125,3 +2125,64 @@ fn tiling_alignment_is_invisible() {
          tiling must be invisible. First diffs (x,y): {first:?}",
     );
 }
+
+/// A node shadow is a single outward distance band (full at the silhouette,
+/// fading to nothing at `d`). Walking outward across the edge, its alpha must
+/// fall monotonically with no local brightening: any dip-then-recover is the
+/// premultiplied-compositing seam that multi-band tilings produced (#15).
+#[test]
+fn shadow_band_outward_alpha_has_no_seam() {
+    let renderer = TestRenderer::new();
+    let width = 128u32;
+    let height = 128u32;
+    let zoom = 1.0;
+
+    let radius = 20.0;
+    let d = 12.0; // ramp spans ~12px so a seam, if any, is several pixels wide
+    let shape = Curve::circle([0.0, 0.0], radius);
+    // One band: full alpha at dist 0, transparent at dist d. Opaque white so
+    // the alpha channel reads the band coverage directly.
+    let style = Style {
+        near_start: iced::Color::WHITE,
+        near_end: iced::Color::WHITE,
+        far_start: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.0),
+        far_end: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.0),
+        dist_from: 0.0,
+        dist_to: d,
+        pattern: None,
+        distance_field: false,
+    };
+
+    let pixels = renderer.render(&[(&shape, &style)], width, height, zoom);
+
+    // Camera centers world (0,0) at screen (w/2, h/2); +x is world distance.
+    let cx = width / 2;
+    let cy = height / 2;
+    // Walk from just past the silhouette's AA zone (r+2) out to past the edge.
+    let r0 = radius as u32 + 2;
+    let r1 = (radius + d) as u32 + 4;
+    let alphas: Vec<u8> = (r0..=r1)
+        .map(|r| TestRenderer::pixel_at(&pixels, width, cx + r, cy)[3])
+        .collect();
+
+    let peak = *alphas.iter().max().unwrap();
+    assert!(
+        peak > 200,
+        "shadow band never reaches full strength: {alphas:?}"
+    );
+    assert!(
+        *alphas.last().unwrap() < 40,
+        "shadow band did not fade out past its distance: {alphas:?}",
+    );
+    // After the peak the ramp must only descend (allow a small AA tolerance).
+    let peak_idx = alphas.iter().position(|&a| a == peak).unwrap();
+    for i in peak_idx..alphas.len() - 1 {
+        assert!(
+            alphas[i + 1] <= alphas[i] + 4,
+            "alpha rose from {} to {} at offset {} (seam): {alphas:?}",
+            alphas[i],
+            alphas[i + 1],
+            i + 1,
+        );
+    }
+}

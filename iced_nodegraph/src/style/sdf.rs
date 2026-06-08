@@ -123,15 +123,16 @@ impl NodeStyle {
         self.shadow_distance > 0.0 && self.shadow_color.a > 0.0
     }
 
-    /// Shadow as three distance bands over the node's (offset) SDF silhouette.
+    /// Shadow as a single outward band over the node's (offset) SDF silhouette.
     ///
-    /// Distance is negative inside the shape, positive outside. The interior is
-    /// full shadow; a ramp blurs across the edge (alpha 1.0 just inside -> 0.5
-    /// at the boundary -> 0.0 just outside), so the node reads as floating with
-    /// a crisp-yet-soft edge that follows pin cutouts. Only `shadow_color`'s
-    /// alpha sets the strength; the bands modulate it. `shadow_distance` is the
-    /// blur half-width. Bands are coplanar and tile the distance axis without
-    /// overlap, meeting at matching alpha so the composite is continuous.
+    /// Distance is negative inside the shape, positive outside. The shadow is an
+    /// outside-only glow: full strength at the silhouette (`dist = 0`), fading
+    /// to nothing at `shadow_distance`. The node body covers `dist < 0`, so no
+    /// interior band is needed. A single entry has no internal boundary, so its
+    /// soft edge is one smoothstep with nothing to double-antialias - earlier
+    /// multi-band tilings produced light seams where two coplanar bands each
+    /// half-antialiased a shared boundary. Only `shadow_color`'s alpha sets the
+    /// strength; `shadow_distance` is the glow width.
     pub(crate) fn shadow_sdf_layers(&self, opacity: f32) -> Vec<Style> {
         let d = self.shadow_distance.max(0.001);
         let base = self.shadow_color;
@@ -152,11 +153,30 @@ impl NodeStyle {
             pattern: None,
             distance_field: false,
         };
-        vec![
-            band(0.5, 0.0, 0.0, d),   // outside edge: 0.5 -> 0
-            band(1.0, 0.5, -d, 0.0),  // inside edge: 1.0 -> 0.5
-            band(1.0, 1.0, -1e6, -d), // interior: full shadow
-        ]
+        vec![band(1.0, 0.0, 0.0, d)] // full at the silhouette -> 0 at d
+    }
+}
+
+#[cfg(test)]
+mod shadow_tests {
+    use super::NodeStyle;
+
+    /// The shadow is one outward band from the silhouette so it has no internal
+    /// boundary to seam: full alpha at `dist = 0`, transparent at `dist = d`.
+    #[test]
+    fn shadow_is_single_band_from_zero() {
+        let style = NodeStyle::input();
+        let layers = style.shadow_sdf_layers(1.0);
+
+        assert_eq!(layers.len(), 1, "shadow must be a single band");
+        let band = &layers[0];
+        assert_eq!(band.dist_from, 0.0, "band starts at the silhouette");
+        assert_eq!(band.dist_to, style.shadow_distance, "band ends at distance");
+        assert_eq!(
+            band.near_start.a, style.shadow_color.a,
+            "full at silhouette"
+        );
+        assert_eq!(band.far_start.a, 0.0, "transparent at the outer edge");
     }
 }
 
