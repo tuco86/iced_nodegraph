@@ -42,8 +42,10 @@ bands" falls out of this.
 
 Idioms:
 - solid fill: `[(0, c), (0, transparent)]` - opaque inside, AA silhouette at 0.
-- outward glow / node shadow: `[(0, transparent), (0, c), (d, transparent)]` -
-  nothing inside, appears at the silhouette, fades to 0 at `d`.
+- node shadow: `[(0, c), (d, transparent)]` - full inside the (offset)
+  silhouette (held below stop 0), fading to 0 at `d`.
+- outward-only glow (`Style::shadow` primitive): `[(0, transparent), (0, c),
+  (d, transparent)]` - nothing inside, appears at the silhouette, fades to 0.
 - clipped band `[from,to]` (border ring): `[(from, transp), (from, c), (to, c),
   (to, transp)]`.
 

@@ -41,9 +41,9 @@ pub struct NodeStyle {
     pub border_outline_color: ColorQuad,
 
     // Shadow. The widget renders the node's real SDF silhouette (with pin
-    // cutouts), offset by `shadow_offset`, as a single outward band: full
-    // shadow at the silhouette fading to nothing at `shadow_distance`. Only the
-    // base color is user-facing; the band derives its alpha from it. Alpha 0
+    // cutouts), offset by `shadow_offset`, as a single stop chain: full shadow
+    // inside the silhouette, fading to nothing at `shadow_distance`. Only the
+    // base color is user-facing; the chain derives its alpha from it. Alpha 0
     // or distance 0 = no shadow.
     /// Base shadow color. The widget modulates its alpha across the bands.
     pub shadow_color: Color,
