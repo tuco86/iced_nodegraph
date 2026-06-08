@@ -16,6 +16,7 @@ use iced::advanced::widget::{Tree, Widget};
 use iced::advanced::{Layout, layout, mouse, renderer};
 use iced::{
     Background, Color, Element, Length, Pixels, Point, Rectangle, Size, Theme, Transformation,
+    Vector,
 };
 use iced_widget::core::clipboard;
 use iced_widget::core::image;
@@ -450,5 +451,102 @@ fn update_clips_child_viewport_to_graph_bounds() {
     assert!(
         recorded.width <= 200.0 && recorded.height <= 200.0,
         "child update viewport {recorded:?} should be clipped to NodeGraph bounds (200x200)",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Node-content clip edge cases: the innermost clip the node content draws under
+// must be `node_bounds ∩ graph_viewport`. At the default camera (zoom 1, no
+// pan) layout space equals screen space, so we can assert directly in pixels.
+// Recorder leaf is 40x20 (see `ViewportRecorder::size`).
+// ---------------------------------------------------------------------------
+
+/// Draws a 200x200 graph (at `widget_origin`) holding one recorder node at
+/// `node_world`, and returns the innermost clip the node content was drawn
+/// under. `None` means the content layer was never reached.
+fn content_clip_at(widget_origin: Vector, node_world: Point) -> Option<Rectangle> {
+    CHILD_CLIP.with(|c| c.set(None));
+    let (mut graph, _on_draw, _on_update) = build_graph_with_recorder(200.0, 200.0, node_world);
+
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Stub>);
+    let mut renderer = Stub;
+    let layout_node = graph.layout(
+        &mut tree,
+        &renderer,
+        &layout::Limits::new(Size::ZERO, Size::new(1024.0, 768.0)),
+    );
+    let layout = Layout::with_offset(widget_origin, &layout_node);
+    let outer = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
+    graph.draw(
+        &tree,
+        &mut renderer,
+        &Theme::Light,
+        &renderer::Style {
+            text_color: Color::BLACK,
+        },
+        layout,
+        mouse::Cursor::Unavailable,
+        &outer,
+    );
+    CHILD_CLIP.with(|c| c.get())
+}
+
+#[test]
+fn content_clip_at_left_edge_does_not_go_negative() {
+    // Node spans world (-20, 50)..(20, 70): 20px hang past the left edge. The
+    // clip must start at the graph left (x=0), not at the node's -20.
+    let clip = content_clip_at(Vector::ZERO, Point::new(-20.0, 50.0))
+        .expect("node content was never drawn under a clip layer");
+    assert!(
+        clip.x >= -0.5,
+        "left-straddling content clip {clip:?} must not extend past the graph left edge (0)",
+    );
+}
+
+#[test]
+fn content_clip_at_top_edge_does_not_go_negative() {
+    // Node spans world (50, -10)..(90, 10): hangs past the top edge.
+    let clip = content_clip_at(Vector::ZERO, Point::new(50.0, -10.0))
+        .expect("node content was never drawn under a clip layer");
+    assert!(
+        clip.y >= -0.5,
+        "top-straddling content clip {clip:?} must not extend past the graph top edge (0)",
+    );
+}
+
+#[test]
+fn content_clip_fully_inside_is_not_overclipped() {
+    // A node well inside must be clipped to its OWN bounds (40x20), not widened
+    // to the graph and not shrunk below the node.
+    let clip = content_clip_at(Vector::ZERO, Point::new(50.0, 50.0))
+        .expect("node content was never drawn under a clip layer");
+    assert!(
+        (clip.width - 40.0).abs() < 1.0 && (clip.height - 20.0).abs() < 1.0,
+        "fully-inside content clip {clip:?} should match the node bounds (40x20)",
+    );
+}
+
+#[test]
+fn content_clip_fully_outside_is_empty() {
+    // A node entirely outside the graph: the content layer is still visited, but
+    // its clip collapses to zero area (nothing of it may paint).
+    let clip = content_clip_at(Vector::ZERO, Point::new(500.0, 500.0))
+        .expect("node content was never drawn under a clip layer");
+    assert!(
+        clip.width == 0.0 && clip.height == 0.0,
+        "fully-outside content clip {clip:?} must have zero area",
+    );
+}
+
+#[test]
+fn content_clip_respects_nonzero_widget_origin() {
+    // Graph placed at (0, 100) (e.g. below a toolbar); node at world (50, 50)
+    // lands at screen (50, 150). The clip must sit within the graph's screen
+    // bounds [100, 300] vertically, proving the origin term is carried.
+    let clip = content_clip_at(Vector::new(0.0, 100.0), Point::new(50.0, 50.0))
+        .expect("node content was never drawn under a clip layer");
+    assert!(
+        clip.y >= 99.5 && clip.y + clip.height <= 300.5,
+        "content clip {clip:?} must stay within the origin-offset graph bounds (y 100..300)",
     );
 }

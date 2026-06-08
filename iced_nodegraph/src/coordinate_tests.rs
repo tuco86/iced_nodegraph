@@ -540,3 +540,120 @@ fn box_select_renders_where_dragged_at_nonzero_origin() {
         "no selection-box primitive near dragged rect {expect:?}; got {prims:?}",
     );
 }
+
+// ---------------------------------------------------------------------------
+// SDF culling: a node whose screen bounds fall entirely outside the graph must
+// not emit its fill/border/pin primitives (clipped_shape_bounds returns None).
+// The shadow batch is intentionally NOT per-node culled (it clips to the whole
+// graph), so it surfaces as a full-area (~400x400) primitive; assertions target
+// the small node-fill-sized primitive specifically.
+// ---------------------------------------------------------------------------
+
+/// The small node-fill/border SDF primitive, if one was recorded. Unlike
+/// `node_fill_primitive` this does not panic when the node was culled, and the
+/// full-area shadow primitive is excluded by the size filter.
+fn find_node_fill(rec: &Recorded) -> Option<Rectangle> {
+    rec.primitives
+        .iter()
+        .copied()
+        .find(|p| p.width <= 120.0 && p.height <= 120.0)
+}
+
+#[test]
+fn node_far_offscreen_culls_sdf() {
+    // Node at world (900, 900); graph is 400x400 at the origin -> entirely past
+    // the right/bottom edge.
+    let rec = draw_at_origin(Vector::ZERO, Point::new(900.0, 900.0), Point::ORIGIN, 1.0);
+    assert!(
+        find_node_fill(&rec).is_none(),
+        "a node entirely off-screen must not emit a fill primitive: {:?}",
+        rec.primitives,
+    );
+}
+
+#[test]
+fn node_offscreen_negative_culls_sdf() {
+    // Node spanning (-200,-200)..(-160,-180): off the top-left with no overlap.
+    let rec = draw_at_origin(Vector::ZERO, Point::new(-200.0, -200.0), Point::ORIGIN, 1.0);
+    assert!(
+        find_node_fill(&rec).is_none(),
+        "a node off the top-left must be culled: {:?}",
+        rec.primitives,
+    );
+}
+
+#[test]
+fn node_onscreen_emits_sdf() {
+    // Control: a node well inside the graph emits its fill primitive.
+    let rec = draw_at_origin(Vector::ZERO, Point::new(100.0, 100.0), Point::ORIGIN, 1.0);
+    assert!(
+        find_node_fill(&rec).is_some(),
+        "an on-screen node must emit a fill primitive: {:?}",
+        rec.primitives,
+    );
+}
+
+#[test]
+fn node_straddling_right_edge_clips_to_bounds() {
+    // Node at world x=380 (graph 400 wide) spans 380..420, 20px past the edge.
+    // The fill clip is intersected with the graph bounds, never past x=400.
+    let rec = draw_at_origin(Vector::ZERO, Point::new(380.0, 100.0), Point::ORIGIN, 1.0);
+    let fill = find_node_fill(&rec).expect("a straddling node still emits a clipped fill");
+    assert!(
+        fill.x + fill.width <= 400.5,
+        "fill clip {fill:?} must not extend past the graph right edge (400)",
+    );
+}
+
+#[test]
+fn node_barely_onscreen_not_culled() {
+    // Node at world x=399 (graph 400) overlaps the graph by ~1px -> kept.
+    let rec = draw_at_origin(Vector::ZERO, Point::new(399.0, 100.0), Point::ORIGIN, 1.0);
+    assert!(
+        find_node_fill(&rec).is_some(),
+        "a 1px overlap must keep the node's fill: {:?}",
+        rec.primitives,
+    );
+}
+
+#[test]
+fn pan_culls_then_restores_sdf() {
+    // Same node world position; only the camera pan differs. screen_x =
+    // (world + pos) * zoom. world=100, zoom=1: pos.x=400 -> screen 500 (off the
+    // 400-wide graph, culled); pos.x=0 -> screen 100 (on-screen, emitted).
+    let off = draw_at_origin(
+        Vector::ZERO,
+        Point::new(100.0, 100.0),
+        Point::new(400.0, 0.0),
+        1.0,
+    );
+    assert!(
+        find_node_fill(&off).is_none(),
+        "panning the node off-screen must cull its fill: {:?}",
+        off.primitives,
+    );
+    let on = draw_at_origin(Vector::ZERO, Point::new(100.0, 100.0), Point::ORIGIN, 1.0);
+    assert!(
+        find_node_fill(&on).is_some(),
+        "panning the node back on-screen must emit its fill again",
+    );
+}
+
+#[test]
+fn culling_holds_under_zoom() {
+    // Under zoom the screen bounds grow: a node at world (250, 250) sits inside
+    // the 400px graph at zoom 1, but at zoom 2 its top-left maps to screen
+    // (500, 500) -- off-screen -> culled.
+    let on = draw_at_origin(Vector::ZERO, Point::new(250.0, 250.0), Point::ORIGIN, 1.0);
+    assert!(
+        find_node_fill(&on).is_some(),
+        "node at (250,250) must be visible at zoom 1: {:?}",
+        on.primitives,
+    );
+    let off = draw_at_origin(Vector::ZERO, Point::new(250.0, 250.0), Point::ORIGIN, 2.0);
+    assert!(
+        find_node_fill(&off).is_none(),
+        "the same node must cull once zoom pushes it off-screen: {:?}",
+        off.primitives,
+    );
+}

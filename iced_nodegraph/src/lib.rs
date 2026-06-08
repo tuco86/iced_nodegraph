@@ -230,6 +230,8 @@ pub mod style;
 mod clipping_tests;
 #[cfg(test)]
 mod coordinate_tests;
+#[cfg(test)]
+mod overlay_tests;
 
 // Re-export iced for downstream crates
 pub use iced;
