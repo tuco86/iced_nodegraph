@@ -17,7 +17,7 @@
 
 use iced::{Element, Event, Length, Point, Rectangle, Size, Theme, Vector, keyboard};
 use iced_widget::core::{
-    Clipboard, Layout, Shell, layout, mouse, renderer,
+    Clipboard, Layout, Shell, layout, mouse, overlay, renderer,
     widget::{self, Tree, tree},
 };
 use web_time::Instant;
@@ -329,6 +329,99 @@ fn pin_cutout_circles<P: PinId + 'static, UI>(
         }
     }
     cuts
+}
+
+/// Camera-aware wrapper for node pop-out overlays (combo box menus, tooltips).
+///
+/// Node elements lay out — and produce their overlays — in the widget's
+/// layout-absolute space, while node content is drawn through the camera
+/// transform. This wrapper applies that same transform to the pop-out so it
+/// stays anchored to and scales with the node beneath it, and maps the screen
+/// cursor back into layout-absolute space for the wrapped overlay's
+/// hit-testing (the inverse of the draw transform, mirroring
+/// [`Camera2D::cursor_screen_to_layout`]).
+struct CameraOverlay<'a, Message, Renderer> {
+    content: overlay::Element<'a, Message, iced::Theme, Renderer>,
+    camera: super::camera::Camera2D,
+}
+
+impl<Message, Renderer> overlay::Overlay<Message, iced::Theme, Renderer>
+    for CameraOverlay<'_, Message, Renderer>
+where
+    Renderer: iced_widget::core::renderer::Renderer,
+{
+    fn layout(&mut self, renderer: &Renderer, bounds: Size) -> layout::Node {
+        self.content.as_overlay_mut().layout(renderer, bounds)
+    }
+
+    fn draw(
+        &self,
+        renderer: &mut Renderer,
+        theme: &iced::Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+    ) {
+        let cursor = self.camera.cursor_screen_to_layout(cursor);
+        renderer.with_transformation(self.camera.layer_transformation(), |renderer| {
+            self.content
+                .as_overlay()
+                .draw(renderer, theme, style, layout, cursor);
+        });
+    }
+
+    fn update(
+        &mut self,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+    ) {
+        let cursor = self.camera.cursor_screen_to_layout(cursor);
+        self.content
+            .as_overlay_mut()
+            .update(event, layout, cursor, renderer, clipboard, shell);
+    }
+
+    fn mouse_interaction(
+        &self,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &Renderer,
+    ) -> mouse::Interaction {
+        let cursor = self.camera.cursor_screen_to_layout(cursor);
+        self.content
+            .as_overlay()
+            .mouse_interaction(layout, cursor, renderer)
+    }
+
+    fn operate(
+        &mut self,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn widget::Operation,
+    ) {
+        self.content
+            .as_overlay_mut()
+            .operate(layout, renderer, operation);
+    }
+
+    fn overlay<'c>(
+        &'c mut self,
+        layout: Layout<'c>,
+        renderer: &Renderer,
+    ) -> Option<overlay::Element<'c, Message, iced::Theme, Renderer>> {
+        let camera = self.camera;
+        self.content
+            .as_overlay_mut()
+            .overlay(layout, renderer)
+            .map(|content| {
+                overlay::Element::new(Box::new(CameraOverlay { content, camera })
+                    as Box<dyn overlay::Overlay<Message, iced::Theme, Renderer>>)
+            })
+    }
 }
 
 impl<N, P, E, UI, Message, Renderer> iced_widget::core::Widget<Message, iced::Theme, Renderer>
@@ -1184,6 +1277,56 @@ where
                 .as_widget_mut()
                 .operate(node_tree, node_layout, renderer, operation);
         }
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'b>,
+        renderer: &Renderer,
+        viewport: &Rectangle,
+        _translation: Vector,
+    ) -> Option<overlay::Element<'b, Message, iced::Theme, Renderer>> {
+        // Iced collects pop-out widgets (combo box menus, tooltips, vanilla
+        // `menu`) only through `Widget::overlay`. Without forwarding it to the
+        // node elements, their underlying widgets draw fine but the pop-out
+        // never appears. Mirror the camera the draw/update paths use so the
+        // pop-out anchors and scales with the node content beneath it.
+        let state = tree.state.downcast_ref::<NodeGraphState>();
+        let camera = state
+            .camera
+            .with_viewport_origin(layout.bounds().position().into_euclid().to_vector());
+
+        // Collect each node's overlay (most yield None). Child layouts are in
+        // the widget's layout-absolute space; `CameraOverlay` applies the
+        // world->screen transform, so the child anchors in that space (zero
+        // extra translation) just as it does during draw.
+        let children: Vec<overlay::Element<'b, Message, iced::Theme, Renderer>> = self
+            .nodes
+            .iter_mut()
+            .map(|(_, _, element, _, _)| element)
+            .zip(&mut tree.children)
+            .zip(layout.children())
+            .filter_map(|((element, node_tree), node_layout)| {
+                element.as_widget_mut().overlay(
+                    node_tree,
+                    node_layout,
+                    renderer,
+                    viewport,
+                    Vector::ZERO,
+                )
+            })
+            .collect();
+
+        if children.is_empty() {
+            return None;
+        }
+
+        let content = overlay::Group::with_children(children).overlay();
+        Some(overlay::Element::new(Box::new(CameraOverlay {
+            content,
+            camera,
+        })))
     }
 
     fn update(

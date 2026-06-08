@@ -278,6 +278,23 @@ impl Camera2D {
         }
     }
 
+    /// The renderer transformation that maps the widget's layout-absolute space
+    /// (`viewport_origin + world`) to screen space, i.e. the same mapping
+    /// applied to node content in [`draw_with`](Self::draw_with).
+    ///
+    /// A layout point `p` (= `viewport_origin + world`) is drawn at
+    /// `screen = zoom * p + v`, where `v = viewport_origin * (1 - zoom) + zoom *
+    /// position`. Composed as `translate(v) * scale(zoom)` so the renderer
+    /// applies `scale * p` first, then the translation. Shared with the overlay
+    /// path so pop-outs (combo box menus, tooltips) anchor and scale exactly
+    /// like the node content under them.
+    pub fn layer_transformation(&self) -> iced::Transformation {
+        let zoom = self.zoom.get();
+        let v_x = self.viewport_origin.x * (1.0 - zoom) + zoom * self.position.x;
+        let v_y = self.viewport_origin.y * (1.0 - zoom) + zoom * self.position.y;
+        iced::Transformation::translate(v_x, v_y) * iced::Transformation::scale(zoom)
+    }
+
     pub fn draw_with<F, Renderer>(
         self,
         renderer: &mut Renderer,
@@ -291,20 +308,7 @@ impl Camera2D {
         let transformed_cursor = self.cursor_screen_to_layout(cursor);
         let world_viewport = self.viewport_screen_to_layout(viewport);
 
-        // Child layouts arrive in absolute coordinates: a child at world point w
-        // has layout position `viewport_origin + w`. We want it drawn at
-        // `screen = viewport_origin + (w + position) * zoom`. For a layout point
-        // p (= viewport_origin + w) that is:
-        //   screen = zoom * p + v,  where v = viewport_origin * (1 - zoom) + zoom * position
-        // Composed as translate(v) * scale(zoom) so the renderer applies
-        // `scale * p` first, then the translation.
-        let zoom = self.zoom.get();
-        let v_x = self.viewport_origin.x * (1.0 - zoom) + zoom * self.position.x;
-        let v_y = self.viewport_origin.y * (1.0 - zoom) + zoom * self.position.y;
-        let transform =
-            iced::Transformation::translate(v_x, v_y) * iced::Transformation::scale(zoom);
-
-        renderer.with_transformation(transform, |renderer| {
+        renderer.with_transformation(self.layer_transformation(), |renderer| {
             f(renderer, &world_viewport, transformed_cursor)
         })
     }
@@ -325,7 +329,7 @@ impl Camera2D {
     /// positions, so they must use this space; drag deltas and emitted node
     /// positions are relative or use stored world coordinates, so the origin
     /// term cancels there.
-    fn cursor_screen_to_layout(&self, cursor: mouse::Cursor) -> mouse::Cursor {
+    pub fn cursor_screen_to_layout(&self, cursor: mouse::Cursor) -> mouse::Cursor {
         let to_world = self.screen_to_world();
         let map = |pos: iced::Point| -> iced::Point {
             let w = to_world.transform_point(pos.into_euclid());
