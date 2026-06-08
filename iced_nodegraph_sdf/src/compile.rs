@@ -4,7 +4,7 @@ use iced::Color;
 
 use crate::drawable::Drawable;
 use crate::pipeline::types::{GpuDrawEntry, GpuSegment, GpuStyle, GpuVec4};
-use crate::style::Style;
+use crate::style::{MAX_STOPS, Style};
 
 const FLAG_CLOSED: u32 = 1; // entry.flags
 const SEG_FLAG_SIGNED: u32 = 1; // segment.flags
@@ -74,13 +74,25 @@ fn compile_style(style: &Style) -> GpuStyle {
         None => (0, 0.0, 0.0, 0.0, 0.0, 0.0),
     };
 
+    debug_assert!(
+        style.stops.len() <= MAX_STOPS,
+        "style has {} stops, max is {MAX_STOPS}",
+        style.stops.len(),
+    );
+    let mut stop_start = [GpuVec4::ZERO; MAX_STOPS];
+    let mut stop_end = [GpuVec4::ZERO; MAX_STOPS];
+    let mut stop_dist = [GpuVec4::ZERO; MAX_STOPS / 4];
+    for (i, s) in style.stops.iter().take(MAX_STOPS).enumerate() {
+        stop_start[i] = c2v(s.start);
+        stop_end[i] = c2v(s.end);
+        stop_dist[i / 4].0[i % 4] = s.dist;
+    }
+
     GpuStyle {
-        near_start: c2v(style.near_start),
-        near_end: c2v(style.near_end),
-        far_start: c2v(style.far_start),
-        far_end: c2v(style.far_end),
-        dist_from: style.dist_from,
-        dist_to: style.dist_to,
+        stop_start,
+        stop_end,
+        stop_dist,
+        stop_count: style.stops.len().min(MAX_STOPS) as u32,
         flags,
         pattern_type,
         pattern_thickness,
@@ -88,8 +100,5 @@ fn compile_style(style: &Style) -> GpuStyle {
         pattern_param1: p1,
         pattern_param2: p2,
         flow_speed,
-        _pad0: 0.0,
-        _pad1: 0.0,
-        _pad2: 0.0,
     }
 }

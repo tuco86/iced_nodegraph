@@ -1074,16 +1074,7 @@ fn bezier_multi_style_no_row_artifacts() {
         iced::Color::from_rgb(0.8, 0.6, 0.2),
         Pattern::solid(14.0), // thickness > stroke = border behind
     );
-    let shadow = Style {
-        near_start: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3),
-        near_end: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3),
-        far_start: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.0),
-        far_end: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.0),
-        dist_from: 0.0,
-        dist_to: 10.0,
-        pattern: None,
-        distance_field: false,
-    };
+    let shadow = Style::shadow(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3), 10.0);
 
     let pixels = renderer.render(
         &[(&bezier, &stroke), (&bezier, &border), (&bezier, &shadow)],
@@ -1165,16 +1156,7 @@ fn edge_editor_defaults_no_row_artifacts() {
         iced::Color::from_rgba(1.0, 0.3, 0.2, 1.0),
         Pattern::solid(border_total),
     );
-    let shadow = Style {
-        near_start: iced::Color::from_rgba(0.0, 0.0, 0.1, 0.35),
-        near_end: iced::Color::from_rgba(0.0, 0.0, 0.1, 0.35),
-        far_start: iced::Color::from_rgba(0.0, 0.0, 0.1, 0.0),
-        far_end: iced::Color::from_rgba(0.0, 0.0, 0.1, 0.0),
-        dist_from: 0.0,
-        dist_to: 10.0,
-        pattern: None,
-        distance_field: false,
-    };
+    let shadow = Style::shadow(iced::Color::from_rgba(0.0, 0.0, 0.1, 0.35), 10.0);
 
     // Each style applied to both edges (like SdfEdgeCanvas does)
     let mut drawables: Vec<(&crate::drawable::Drawable, &Style)> = Vec::new();
@@ -1484,16 +1466,7 @@ fn no_missing_rows_in_stroke() {
         iced::Color::from_rgba(1.0, 0.3, 0.2, 1.0),
         Pattern::solid(border_total),
     );
-    let shadow = Style {
-        near_start: iced::Color::from_rgba(0.0, 0.0, 0.1, 0.35),
-        near_end: iced::Color::from_rgba(0.0, 0.0, 0.1, 0.35),
-        far_start: iced::Color::from_rgba(0.0, 0.0, 0.1, 0.0),
-        far_end: iced::Color::from_rgba(0.0, 0.0, 0.1, 0.0),
-        dist_from: 0.0,
-        dist_to: 10.0,
-        pattern: None,
-        distance_field: false,
-    };
+    let shadow = Style::shadow(iced::Color::from_rgba(0.0, 0.0, 0.1, 0.35), 10.0);
 
     let edges = [&fwd, &mir];
     let styles_list = [&stroke, &outline, &border, &shadow];
@@ -1903,16 +1876,7 @@ fn dump_edge_editor_center() {
         c(0.1, 1.0, 0.1, 1.0),
         Pattern::solid(6.0 + 2.0 * 2.0 + 3.0 * 2.0),
     );
-    let shadow = Style {
-        near_start: c(0.3, 0.3, 1.0, 0.9),
-        near_end: c(0.3, 0.3, 1.0, 0.9),
-        far_start: c(0.3, 0.3, 1.0, 0.0),
-        far_end: c(0.3, 0.3, 1.0, 0.0),
-        dist_from: 0.0,
-        dist_to: 10.0,
-        pattern: None,
-        distance_field: false,
-    };
+    let shadow = Style::shadow(c(0.3, 0.3, 1.0, 0.9), 10.0);
 
     // SdfEdgeCanvas order: each style applied to both edges, front-to-back.
     let edges = [&fwd, &mir];
@@ -2140,18 +2104,9 @@ fn shadow_band_outward_alpha_has_no_seam() {
     let radius = 20.0;
     let d = 12.0; // ramp spans ~12px so a seam, if any, is several pixels wide
     let shape = Curve::circle([0.0, 0.0], radius);
-    // One band: full alpha at dist 0, transparent at dist d. Opaque white so
-    // the alpha channel reads the band coverage directly.
-    let style = Style {
-        near_start: iced::Color::WHITE,
-        near_end: iced::Color::WHITE,
-        far_start: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.0),
-        far_end: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.0),
-        dist_from: 0.0,
-        dist_to: d,
-        pattern: None,
-        distance_field: false,
-    };
+    // Outward glow: full at the silhouette, fading to transparent at d. Opaque
+    // white so the alpha channel reads the band coverage directly.
+    let style = Style::shadow(iced::Color::WHITE, d);
 
     let pixels = renderer.render(&[(&shape, &style)], width, height, zoom);
 
@@ -2185,4 +2140,56 @@ fn shadow_band_outward_alpha_has_no_seam() {
             i + 1,
         );
     }
+}
+
+/// Two abutting opaque bands in ONE stop chain (the case that seamed when built
+/// as separate composited entries) must stay fully opaque across their shared
+/// boundary - the chain is evaluated in a single pass, so no premultiplied dip.
+#[test]
+fn abutting_chain_bands_stay_opaque_across_boundary() {
+    let renderer = TestRenderer::new();
+    let width = 128u32;
+    let height = 128u32;
+    let zoom = 1.0;
+
+    let radius = 20.0;
+    let red = iced::Color::from_rgb(0.9, 0.1, 0.1);
+    let green = iced::Color::from_rgb(0.1, 0.9, 0.1);
+    let clear = |c: iced::Color| iced::Color { a: 0.0, ..c };
+    // Red ring [0,10] abutting a green ring [10,20], both opaque, one chain.
+    let style = Style {
+        stops: vec![
+            crate::style::Stop::new(0.0, clear(red)),
+            crate::style::Stop::new(0.0, red),
+            crate::style::Stop::new(10.0, red),
+            crate::style::Stop::new(10.0, green),
+            crate::style::Stop::new(20.0, green),
+            crate::style::Stop::new(20.0, clear(green)),
+        ],
+        pattern: None,
+        distance_field: false,
+    };
+    let shape = Curve::circle([0.0, 0.0], radius);
+    let pixels = renderer.render(&[(&shape, &style)], width, height, zoom);
+
+    let cx = width / 2;
+    let cy = height / 2;
+    // Walk across the whole [0,20] band, including the red|green boundary at 10.
+    let mut min_alpha = 255u8;
+    for off in 2..=18 {
+        let a = TestRenderer::pixel_at(&pixels, width, cx + radius as u32 + off, cy)[3];
+        min_alpha = min_alpha.min(a);
+    }
+    assert!(
+        min_alpha > 230,
+        "chain dipped to alpha {min_alpha} across the shared boundary (seam)",
+    );
+    // Sanity: both colors are actually present (red inner, green outer).
+    let inner = TestRenderer::pixel_at(&pixels, width, cx + radius as u32 + 4, cy);
+    let outer = TestRenderer::pixel_at(&pixels, width, cx + radius as u32 + 15, cy);
+    assert!(inner[0] > inner[1], "inner band should read red: {inner:?}");
+    assert!(
+        outer[1] > outer[0],
+        "outer band should read green: {outer:?}"
+    );
 }

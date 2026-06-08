@@ -8,15 +8,16 @@
 //! curves); this module owns appearance (which layers exist and their distance
 //! bands).
 //!
-//! A color field is a [`ColorQuad`]: its four corners map directly onto the four
-//! corners of an `iced_nodegraph_sdf::Style` (arc-length axis start->end crossed with the
-//! distance axis near->far).
+//! A color field is a [`ColorQuad`]; a draw layer is an `iced_nodegraph_sdf::Style`
+//! whose distance profile is a chain of stops (a continuous cross-section
+//! evaluated in one pass), so an effect's bands never composite against each
+//! other and cannot seam at a shared boundary.
 //!
 //! Layer order matters: the first layer in a returned list is drawn closest to
 //! the viewer (lowest SDF z-order), the last is deepest.
 
 use iced::Color;
-use iced_nodegraph_sdf::{Pattern, Style};
+use iced_nodegraph_sdf::{Pattern, Stop, Style};
 
 use crate::node_pin::PinDirection;
 
@@ -31,30 +32,47 @@ pub(crate) fn color_with_opacity(c: Color, opacity: f32) -> Color {
     }
 }
 
-/// Build a `Style` from a color quad over a distance band, premultiplying alpha.
-fn quad_style(
-    q: &ColorQuad,
-    dist_from: f32,
-    dist_to: f32,
-    pattern: Option<Pattern>,
-    opacity: f32,
-) -> Style {
+/// Same color with zero alpha.
+fn transparent(c: Color) -> Color {
+    Color { a: 0.0, ..c }
+}
+
+/// A quad's arc-color pair (`start` at arc 0, `end` at arc 1) at its near edge.
+fn quad_arc(q: &ColorQuad, opacity: f32) -> (Color, Color) {
+    (
+        color_with_opacity(q.near_start, opacity),
+        color_with_opacity(q.near_end, opacity),
+    )
+}
+
+/// A clipped color band over `[from, to]`: transparent outside, the quad's near
+/// colors at `from` and far colors at `to`, antialiased at both edges. Built as
+/// a four-stop chain so it is one self-contained entry (no inter-band seam).
+fn quad_band(q: &ColorQuad, from: f32, to: f32, opacity: f32) -> Style {
+    let ns = color_with_opacity(q.near_start, opacity);
+    let ne = color_with_opacity(q.near_end, opacity);
+    let fs = color_with_opacity(q.far_start, opacity);
+    let fe = color_with_opacity(q.far_end, opacity);
     Style {
-        near_start: color_with_opacity(q.near_start, opacity),
-        near_end: color_with_opacity(q.near_end, opacity),
-        far_start: color_with_opacity(q.far_start, opacity),
-        far_end: color_with_opacity(q.far_end, opacity),
-        dist_from,
-        dist_to,
-        pattern,
+        stops: vec![
+            Stop::grad(from, transparent(ns), transparent(ne)),
+            Stop::grad(from, ns, ne),
+            Stop::grad(to, fs, fe),
+            Stop::grad(to, transparent(fs), transparent(fe)),
+        ],
+        pattern: None,
         distance_field: false,
     }
 }
 
-/// Stroke style from a quad: distance band is the pattern half-thickness.
+/// Stroke style from a quad: the pattern lays the stroke out along the contour.
 fn quad_stroke(q: &ColorQuad, pattern: Pattern, opacity: f32) -> Style {
-    let ht = pattern.thickness * 0.5;
-    quad_style(q, -ht, ht, Some(pattern), opacity)
+    let (start, end) = quad_arc(q, opacity);
+    Style {
+        stops: vec![Stop::grad(0.0, start, end)],
+        pattern: Some(pattern),
+        distance_field: false,
+    }
 }
 
 /// Which geometry an edge layer is drawn on.
@@ -79,43 +97,67 @@ pub(crate) struct EdgeLayer {
 impl NodeStyle {
     /// Solid fill layer for the node body, premultiplied by `opacity`.
     pub(crate) fn fill_sdf_style(&self, opacity: f32) -> Style {
-        quad_style(&self.fill_color, -1e6, 0.0, None, opacity)
+        quad_band(&self.fill_color, -1e6, 0.0, opacity)
     }
 
-    /// Border layers, front-to-back: main stroke then optional outline halo.
-    /// Empty when the border pattern thickness is zero.
+    /// Border layers, front-to-back. Empty when the border pattern thickness is
+    /// zero.
     ///
     /// The border sits on the OUTSIDE of the node silhouette so it never eats
-    /// into the body or content: a solid border is a plain outward band
-    /// `[0, bw]` (the renderer honours distance bands for unpatterned styles),
-    /// drawn flush against the body edge. A patterned border keeps its
-    /// dash/dot layout centered on the contour, since the pattern's cross
-    /// section is fixed to the silhouette.
+    /// into the body or content. A solid border plus its outline form one
+    /// continuous outward profile, so they are emitted as a single stop chain
+    /// (`border` over `[0, bw]`, `outline` over `[bw, bw + 2*ow]`): one entry,
+    /// no inter-band seam. A patterned border keeps its dash/dot layout centered
+    /// on the contour, so it stays a pattern stroke with the outline behind it.
     pub(crate) fn border_sdf_layers(&self, opacity: f32) -> Vec<Style> {
-        let mut layers = Vec::new();
         let bw = self.border_pattern.thickness;
-        if bw > 0.0 {
-            if self.border_pattern.is_solid() {
-                layers.push(quad_style(&self.border_color, 0.0, bw, None, opacity));
-            } else {
-                layers.push(quad_stroke(
-                    &self.border_color,
-                    self.border_pattern,
-                    opacity,
-                ));
-            }
-            if self.border_outline_width > 0.0 {
+        if bw <= 0.0 {
+            return Vec::new();
+        }
+        let has_outline = self.border_outline_width > 0.0;
+
+        if !self.border_pattern.is_solid() {
+            // Patterned border: dashed/dotted stroke centered on the contour,
+            // with a solid outline band behind it.
+            let mut layers = vec![quad_stroke(
+                &self.border_color,
+                self.border_pattern,
+                opacity,
+            )];
+            if has_outline {
                 let ow = self.border_outline_width;
-                layers.push(quad_style(
+                layers.push(quad_band(
                     &self.border_outline_color,
                     0.0,
                     bw + ow * 2.0,
-                    None,
                     opacity,
                 ));
             }
+            return layers;
         }
-        layers
+
+        // Solid border + outline as one outward chain on the silhouette.
+        let (bs, be) = quad_arc(&self.border_color, opacity);
+        let mut stops = vec![
+            Stop::grad(0.0, transparent(bs), transparent(be)),
+            Stop::grad(0.0, bs, be),
+        ];
+        if has_outline {
+            let outer = bw + self.border_outline_width * 2.0;
+            let (os, oe) = quad_arc(&self.border_outline_color, opacity);
+            stops.push(Stop::grad(bw, bs, be));
+            stops.push(Stop::grad(bw, os, oe));
+            stops.push(Stop::grad(outer, os, oe));
+            stops.push(Stop::grad(outer, transparent(os), transparent(oe)));
+        } else {
+            stops.push(Stop::grad(bw, bs, be));
+            stops.push(Stop::grad(bw, transparent(bs), transparent(be)));
+        }
+        vec![Style {
+            stops,
+            pattern: None,
+            distance_field: false,
+        }]
     }
 
     /// Whether the shadow is visible (alpha and distance both nonzero).
@@ -123,37 +165,35 @@ impl NodeStyle {
         self.shadow_distance > 0.0 && self.shadow_color.a > 0.0
     }
 
-    /// Shadow as a single outward band over the node's (offset) SDF silhouette.
+    /// Shadow as a single outward-glow stop chain over the (offset) silhouette.
     ///
-    /// Distance is negative inside the shape, positive outside. The shadow is an
-    /// outside-only glow: full strength at the silhouette (`dist = 0`), fading
-    /// to nothing at `shadow_distance`. The node body covers `dist < 0`, so no
-    /// interior band is needed. A single entry has no internal boundary, so its
-    /// soft edge is one smoothstep with nothing to double-antialias - earlier
-    /// multi-band tilings produced light seams where two coplanar bands each
-    /// half-antialiased a shared boundary. Only `shadow_color`'s alpha sets the
-    /// strength; `shadow_distance` is the glow width.
+    /// Distance is negative inside the shape, positive outside. The chain is
+    /// nothing inside, full strength at the silhouette (`dist = 0`), fading to
+    /// transparent at `shadow_distance`. Being one entry, it has no internal
+    /// boundary to double-antialias - the earlier multi-band tiling produced
+    /// light seams where two coplanar same-color bands each half-antialiased a
+    /// shared boundary and premultiplied compositing dipped below full alpha.
+    /// Only `shadow_color`'s alpha sets the strength; `shadow_distance` is the
+    /// glow width.
     pub(crate) fn shadow_sdf_layers(&self, opacity: f32) -> Vec<Style> {
         let d = self.shadow_distance.max(0.001);
-        let base = self.shadow_color;
-        let alpha = base.a * opacity;
-        // `shadow_color` scaled to a fraction of the full shadow alpha.
-        let shade = |mul: f32| Color {
-            a: alpha * mul,
-            ..base
+        let full = Color {
+            a: self.shadow_color.a * opacity,
+            ..self.shadow_color
         };
-        // A flat-color band: `near` at `from`, `far` at `to` (see Style axes).
-        let band = |near_mul: f32, far_mul: f32, from: f32, to: f32| Style {
-            near_start: shade(near_mul),
-            near_end: shade(near_mul),
-            far_start: shade(far_mul),
-            far_end: shade(far_mul),
-            dist_from: from,
-            dist_to: to,
+        let none = transparent(full);
+        // Outward glow as one chain: nothing inside, full at the silhouette,
+        // fading to transparent at `d`. One entry, so no internal boundary to
+        // double-antialias.
+        vec![Style {
+            stops: vec![
+                Stop::new(0.0, none),
+                Stop::new(0.0, full),
+                Stop::new(d, none),
+            ],
             pattern: None,
             distance_field: false,
-        };
-        vec![band(1.0, 0.0, 0.0, d)] // full at the silhouette -> 0 at d
+        }]
     }
 }
 
@@ -161,22 +201,29 @@ impl NodeStyle {
 mod shadow_tests {
     use super::NodeStyle;
 
-    /// The shadow is one outward band from the silhouette so it has no internal
-    /// boundary to seam: full alpha at `dist = 0`, transparent at `dist = d`.
+    /// The shadow is one chain (no separate composited bands to seam): nothing
+    /// inside, full alpha at the silhouette (`dist = 0`), transparent at `d`.
     #[test]
-    fn shadow_is_single_band_from_zero() {
+    fn shadow_is_single_outward_chain() {
         let style = NodeStyle::input();
         let layers = style.shadow_sdf_layers(1.0);
 
-        assert_eq!(layers.len(), 1, "shadow must be a single band");
-        let band = &layers[0];
-        assert_eq!(band.dist_from, 0.0, "band starts at the silhouette");
-        assert_eq!(band.dist_to, style.shadow_distance, "band ends at distance");
+        assert_eq!(layers.len(), 1, "shadow must be a single entry");
+        let stops = &layers[0].stops;
         assert_eq!(
-            band.near_start.a, style.shadow_color.a,
-            "full at silhouette"
+            stops.len(),
+            3,
+            "outward glow: transparent, full, transparent"
         );
-        assert_eq!(band.far_start.a, 0.0, "transparent at the outer edge");
+        assert_eq!(stops[0].dist, 0.0);
+        assert_eq!(stops[0].start.a, 0.0, "nothing inside the silhouette");
+        assert_eq!(stops[1].dist, 0.0);
+        assert_eq!(stops[1].start.a, style.shadow_color.a, "full at silhouette");
+        assert_eq!(
+            stops[2].dist, style.shadow_distance,
+            "fades out at distance"
+        );
+        assert_eq!(stops[2].start.a, 0.0, "transparent at the outer edge");
     }
 }
 
@@ -210,31 +257,24 @@ impl EdgeStyle {
             });
         }
 
-        // Border ring (behind stroke).
+        // Border ring (behind stroke): a solid pattern stroke centered on the
+        // contour, thickness `border_width`.
         if self.border_width > 0.0 {
             let border_center =
                 self.pattern.thickness * 0.5 + self.border_gap + self.border_width * 0.5;
             let border_outer = border_center + self.border_width * 0.5;
 
-            let mut border_style =
-                quad_stroke(&self.border_color, Pattern::solid(self.border_width), 1.0);
-            border_style.dist_from = -border_outer;
-            border_style.dist_to = -border_center + self.border_width * 0.5;
             layers.push(EdgeLayer {
                 geometry: EdgeGeometry::Stroke,
-                style: border_style,
+                style: quad_stroke(&self.border_color, Pattern::solid(self.border_width), 1.0),
             });
 
             if self.border_outline_width > 0.0 {
                 let outline_pat =
                     Pattern::solid(self.border_width + self.border_outline_width * 2.0);
-                let mut outline_style = quad_stroke(&self.border_outline_color, outline_pat, 1.0);
-                outline_style.dist_from = -border_outer - self.border_outline_width;
-                outline_style.dist_to =
-                    -border_center + self.border_width * 0.5 + self.border_outline_width;
                 layers.push(EdgeLayer {
                     geometry: EdgeGeometry::Stroke,
-                    style: outline_style,
+                    style: quad_stroke(&self.border_outline_color, outline_pat, 1.0),
                 });
             }
 
@@ -243,22 +283,21 @@ impl EdgeStyle {
             {
                 layers.push(EdgeLayer {
                     geometry: EdgeGeometry::Stroke,
-                    style: quad_style(&self.border_background, -1e6, border_outer, None, 1.0),
+                    style: quad_band(&self.border_background, -1e6, border_outer, 1.0),
                 });
             }
         }
 
-        // Shadow (deepest).
+        // Shadow (deepest): a soft blur band across the stroke edge.
         if self.shadow_blur > 0.0
             && (self.shadow_color.near_start.a > 0.0 || self.shadow_color.near_end.a > 0.0)
         {
             layers.push(EdgeLayer {
                 geometry: EdgeGeometry::Shadow,
-                style: quad_style(
+                style: quad_band(
                     &self.shadow_color,
                     -self.shadow_expand,
                     self.shadow_expand + self.shadow_blur.max(0.001),
-                    None,
                     1.0,
                 ),
             });
@@ -277,16 +316,14 @@ impl PinStyle {
             // Hollow ring for inputs.
             quad_stroke(&self.color, Pattern::solid(indicator_r * 0.8), 1.0)
         } else {
-            quad_style(&self.color, -1e6, 0.0, None, 1.0)
+            quad_band(&self.color, -1e6, 0.0, 1.0)
         };
         layers.push(fill);
 
         if self.border_width > 0.0
             && (self.border_color.near_start.a > 0.0 || self.border_color.near_end.a > 0.0)
         {
-            layers.push(
-                quad_style(&self.border_color, -1e6, 0.0, None, 1.0).expand(self.border_width),
-            );
+            layers.push(quad_band(&self.border_color, -1e6, 0.0, 1.0).expand(self.border_width));
         }
         layers
     }

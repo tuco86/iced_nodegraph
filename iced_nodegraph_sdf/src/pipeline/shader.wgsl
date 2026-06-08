@@ -79,13 +79,14 @@ struct GpuDrawEntry {
     tiling_params: vec4<f32>,
 }
 
+// MAX_STOPS must match `style::MAX_STOPS` on the Rust side.
+const MAX_STOPS: u32 = 8u;
+
 struct GpuStyle {
-    near_start: vec4<f32>,
-    near_end: vec4<f32>,
-    far_start: vec4<f32>,
-    far_end: vec4<f32>,
-    dist_from: f32,
-    dist_to: f32,
+    stop_start: array<vec4<f32>, 8>,
+    stop_end: array<vec4<f32>, 8>,
+    stop_dist: array<vec4<f32>, 2>,
+    stop_count: u32,
     flags: u32,
     pattern_type: u32,
     pattern_thickness: f32,
@@ -93,9 +94,20 @@ struct GpuStyle {
     pattern_param1: f32,
     pattern_param2: f32,
     flow_speed: f32,
-    _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
+}
+
+// Signed distance of stop `i` (distances are packed 4 per vec4).
+fn stop_dist_at(style: GpuStyle, i: u32) -> f32 {
+    return style.stop_dist[i / 4u][i % 4u];
+}
+
+// Largest active stop distance (outermost extent on the distance axis).
+fn style_max_dist(style: GpuStyle) -> f32 {
+    var m = stop_dist_at(style, 0u);
+    for (var i = 1u; i < style.stop_count; i++) {
+        m = max(m, stop_dist_at(style, i));
+    }
+    return m;
 }
 
 struct ComputeUniforms {
@@ -469,36 +481,39 @@ fn render_style(sdf: SdfResult, style: GpuStyle, draw: DrawData, total_arc: f32)
         // Pattern uses world-space u (sdf.u) for dash layout
         dist = apply_pattern(dist, sdf, style, draw.time);
 
-        let color = mix(style.near_start, style.near_end, arc_t);
+        let color = mix(style.stop_start[0], style.stop_end[0], arc_t);
         let alpha = color.a * (1.0 - smoothstep(-aa, aa, dist));
         if alpha < 0.001 { return vec4(0.0); }
         return vec4(color.rgb * alpha, alpha);
     }
 
-    let near = mix(style.near_start, style.near_end, arc_t);
-    let far = mix(style.far_start, style.far_end, arc_t);
-
-    let range = style.dist_to - style.dist_from;
-    var color: vec4<f32>;
-    if range > 0.001 {
-        let dist_t = clamp((dist - style.dist_from) / range, 0.0, 1.0);
-        color = mix(near, far, dist_t);
-    } else {
-        color = near;
+    // Distance-stop chain: hold the first stop below it, blend each consecutive
+    // pair with smoothstep over their interval (widened to at least one pixel so
+    // a zero-width step is a crisp AA edge), hold the last stop above it. One
+    // continuous evaluation - no per-band compositing, so abutting bands never
+    // seam.
+    var color = mix(style.stop_start[0], style.stop_end[0], arc_t);
+    for (var i = 0u; i + 1u < style.stop_count; i++) {
+        let cj = mix(style.stop_start[i + 1u], style.stop_end[i + 1u], arc_t);
+        var lo = stop_dist_at(style, i);
+        var hi = stop_dist_at(style, i + 1u);
+        if hi - lo < aa {
+            let m = (lo + hi) * 0.5;
+            lo = m - aa * 0.5;
+            hi = m + aa * 0.5;
+        }
+        let t = smoothstep(lo, hi, dist);
+        color = mix(color, cj, t);
     }
 
-    // Analytic AA at distance boundaries (see `aa` derivation above).
-    let alpha_from = smoothstep(style.dist_from - aa, style.dist_from + aa, dist);
-    let alpha_to = 1.0 - smoothstep(style.dist_to - aa, style.dist_to + aa, dist);
-    let alpha = color.a * alpha_from * alpha_to;
-
+    let alpha = color.a;
     if alpha < 0.001 { return vec4(0.0); }
     return vec4(color.rgb * alpha, alpha);
 }
 
 fn render_distance_field(d: f32, style: GpuStyle, draw: DrawData) -> vec4<f32> {
-    let outside_col = style.near_start.rgb;
-    let inside_col = style.far_start.rgb;
+    let outside_col = style.stop_start[0].rgb;
+    let inside_col = style.stop_end[0].rgb;
     let dn = d * draw.camera_zoom * draw.scale_factor * 0.003;
     var col = select(inside_col, outside_col, d > 0.0);
     col *= 1.0 - exp(-6.0 * abs(dn));
@@ -796,10 +811,10 @@ fn cs_build_index(@builtin(global_invocation_id) gid: vec3<u32>) {
             entry_visible = true; // conservative, per-segment check below
         } else if (entry.flags & FLAG_CLOSED) != 0u {
             // Closed fill: signed dist from nearest segment
-            entry_visible = (best_signed_dist - thd) < style.dist_to + 0.5;
+            entry_visible = (best_signed_dist - thd) < style_max_dist(style) + 0.5;
         } else {
             // Open curve: unsigned distance
-            entry_visible = (min_abs_dist - thd) < style.dist_to + 0.5;
+            entry_visible = (min_abs_dist - thd) < style_max_dist(style) + 0.5;
         }
 
         if !entry_visible { continue; }

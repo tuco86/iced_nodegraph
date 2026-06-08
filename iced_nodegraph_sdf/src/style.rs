@@ -1,166 +1,173 @@
-//! Unified 4-color style system.
+//! Distance-stop style system.
 //!
-//! Each style defines a 2D color field:
-//! - Arc-length axis (0..1): near_start → near_end
-//! - Distance axis (dist_from..dist_to): near → far
+//! A style colours a shape along two axes:
+//! - Arc-length axis (0..1): each stop's `start` -> `end` follows the contour.
+//! - Distance axis: a chain of [`Stop`]s, ascending by `dist` (negative inside
+//!   the shape, positive outside), evaluated as one piecewise-`smoothstep`
+//!   gradient in a single fragment pass.
 //!
-//! ```text
-//!                 arc=0              arc=1
-//! dist_from:  near_start         near_end
-//! dist_to:    far_start          far_end
-//! ```
+//! Evaluation at signed distance `d`:
+//! - `d <= stops[0].dist`: hold `stops[0]` (clamped).
+//! - between consecutive stops: `smoothstep`-blend, the transition window
+//!   widened to at least one pixel so a zero-width step is a crisp antialiased
+//!   edge and a wide band is a soft gradient.
+//! - `d >= stops[last].dist`: hold `stops[last]` (clamped).
+//!
+//! A region disappears by ending at a transparent stop; a gap is a transparent
+//! stop between opaque ones. Because the whole profile is one entry, bands never
+//! composite against each other, so abutting bands cannot seam.
 
 use iced::Color;
 
 use crate::pattern::Pattern;
 
-/// Rendering style: 4 corner colors + distance range + optional pattern.
+/// Largest stop chain the GPU style supports. Keep in sync with `shader.wgsl`.
+pub const MAX_STOPS: usize = 8;
+
+/// Same colour with zero alpha.
+fn transparent(c: Color) -> Color {
+    Color { a: 0.0, ..c }
+}
+
+/// One stop in a style's distance profile: an arc-length colour pair (`start`
+/// at arc 0, `end` at arc 1) placed at signed distance `dist`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Stop {
+    /// Signed distance (negative inside the shape, positive outside).
+    pub dist: f32,
+    /// Colour at arc 0.
+    pub start: Color,
+    /// Colour at arc 1.
+    pub end: Color,
+}
+
+impl Stop {
+    /// Flat-colour stop (same colour across the arc).
+    pub fn new(dist: f32, color: Color) -> Self {
+        Self {
+            dist,
+            start: color,
+            end: color,
+        }
+    }
+
+    /// Arc-gradient stop (`start` at arc 0, `end` at arc 1).
+    pub fn grad(dist: f32, start: Color, end: Color) -> Self {
+        Self { dist, start, end }
+    }
+}
+
+/// Rendering style: a distance-stop chain + optional pattern.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Style {
-    /// Color at (arc=0, dist=dist_from).
-    pub near_start: Color,
-    /// Color at (arc=1, dist=dist_from).
-    pub near_end: Color,
-    /// Color at (arc=0, dist=dist_to).
-    pub far_start: Color,
-    /// Color at (arc=1, dist=dist_to).
-    pub far_end: Color,
-    /// Inner distance boundary.
-    pub dist_from: f32,
-    /// Outer distance boundary.
-    pub dist_to: f32,
-    /// Optional pattern (modifies effective distance).
+    /// Distance stops, ascending by `dist`. Never empty.
+    pub stops: Vec<Stop>,
+    /// Optional pattern (stroke layout along the contour).
     pub pattern: Option<Pattern>,
     /// Special: IQ distance field visualization.
     pub distance_field: bool,
 }
 
 impl Style {
-    /// Solid color fill (interior of closed shape).
+    /// Solid color fill (interior of closed shape): opaque inside, antialiased
+    /// silhouette at distance 0, transparent outside.
     pub fn solid(color: Color) -> Self {
-        Self::uniform(color, -1e6, 0.0)
+        Self::bare(vec![
+            Stop::new(0.0, color),
+            Stop::new(0.0, transparent(color)),
+        ])
     }
 
     /// Stroke with uniform color and thickness.
     pub fn stroke(color: Color, pattern: Pattern) -> Self {
-        let ht = pattern.thickness * 0.5;
         Self {
-            near_start: color,
-            near_end: color,
-            far_start: color,
-            far_end: color,
-            dist_from: -ht,
-            dist_to: ht,
+            stops: vec![Stop::new(0.0, color)],
             pattern: Some(pattern),
             distance_field: false,
         }
     }
 
-    /// Arc-length gradient (start → end) over a fill.
+    /// Arc-length gradient (start -> end) over a fill.
     pub fn arc_gradient(start: Color, end: Color) -> Self {
-        Self {
-            near_start: start,
-            near_end: end,
-            far_start: start,
-            far_end: end,
-            dist_from: -1e6,
-            dist_to: 0.0,
-            pattern: None,
-            distance_field: false,
-        }
+        Self::bare(vec![
+            Stop::grad(0.0, start, end),
+            Stop::grad(0.0, transparent(start), transparent(end)),
+        ])
     }
 
     /// Arc-length gradient stroke with pattern.
     pub fn arc_gradient_stroke(start: Color, end: Color, pattern: Pattern) -> Self {
-        let ht = pattern.thickness * 0.5;
         Self {
-            near_start: start,
-            near_end: end,
-            far_start: start,
-            far_end: end,
-            dist_from: -ht,
-            dist_to: ht,
+            stops: vec![Stop::grad(0.0, start, end)],
             pattern: Some(pattern),
             distance_field: false,
         }
     }
 
-    /// Shadow: color fades to transparent over distance range.
+    /// Outward glow: nothing inside, full color at the silhouette, fading to
+    /// transparent at `radius`.
     pub fn shadow(color: Color, radius: f32) -> Self {
-        let transparent = Color::from_rgba(color.r, color.g, color.b, 0.0);
-        Self {
-            near_start: color,
-            near_end: color,
-            far_start: transparent,
-            far_end: transparent,
-            dist_from: 0.0,
-            dist_to: radius,
-            pattern: None,
-            distance_field: false,
-        }
+        Self::bare(vec![
+            Stop::new(0.0, transparent(color)),
+            Stop::new(0.0, color),
+            Stop::new(radius.max(0.001), transparent(color)),
+        ])
     }
 
-    /// Blur helper: same as shadow but covers both sides.
+    /// Blur helper: color fades to transparent across both sides of the edge.
     pub fn blur(color: Color, radius: f32) -> Self {
-        let transparent = Color::from_rgba(color.r, color.g, color.b, 0.0);
-        Self {
-            near_start: color,
-            near_end: color,
-            far_start: transparent,
-            far_end: transparent,
-            dist_from: -radius,
-            dist_to: radius,
-            pattern: None,
-            distance_field: false,
-        }
+        let r = radius.max(0.001);
+        Self::bare(vec![
+            Stop::new(-r, transparent(color)),
+            Stop::new(-r, color),
+            Stop::new(r, transparent(color)),
+        ])
     }
 
-    /// IQ distance field visualization.
+    /// IQ distance field visualization (`start` = outside, `end` = inside).
     pub fn distance_field() -> Self {
         Self {
-            near_start: Color::from_rgb(0.9, 0.6, 0.3), // outside: orange
-            near_end: Color::from_rgb(0.9, 0.6, 0.3),
-            far_start: Color::from_rgb(0.65, 0.85, 1.0), // inside: blue
-            far_end: Color::from_rgb(0.65, 0.85, 1.0),
-            dist_from: 0.0,
-            dist_to: 0.0,
+            stops: vec![Stop::grad(
+                0.0,
+                Color::from_rgb(0.9, 0.6, 0.3),   // outside: orange
+                Color::from_rgb(0.65, 0.85, 1.0), // inside: blue
+            )],
             pattern: None,
             distance_field: true,
         }
     }
 
-    /// Set pattern.
+    /// Set pattern (turns the style into a stroke laid out along the contour).
     pub fn with_pattern(mut self, pattern: Pattern) -> Self {
-        let ht = pattern.thickness * 0.5;
         self.pattern = Some(pattern);
-        self.dist_from = -ht;
-        self.dist_to = ht;
         self
     }
 
-    /// Set distance range explicitly.
+    /// Replace the chain with a clipped band `[from, to]` of the current first
+    /// color: transparent outside the band, antialiased at both edges.
     pub fn dist_range(mut self, from: f32, to: f32) -> Self {
-        self.dist_from = from;
-        self.dist_to = to;
+        let c = self.stops.first().map_or(Color::WHITE, |s| s.start);
+        self.stops = vec![
+            Stop::new(from, transparent(c)),
+            Stop::new(from, c),
+            Stop::new(to, c),
+            Stop::new(to, transparent(c)),
+        ];
         self
     }
 
-    /// Expand the distance range outward.
+    /// Expand the profile outward: each stop moves away from distance 0.
     pub fn expand(mut self, amount: f32) -> Self {
-        self.dist_from -= amount;
-        self.dist_to += amount;
+        for s in &mut self.stops {
+            s.dist += if s.dist < 0.0 { -amount } else { amount };
+        }
         self
     }
 
-    /// Uniform color over a distance range.
-    fn uniform(color: Color, from: f32, to: f32) -> Self {
+    /// Style with no pattern and no distance field.
+    fn bare(stops: Vec<Stop>) -> Self {
         Self {
-            near_start: color,
-            near_end: color,
-            far_start: color,
-            far_end: color,
-            dist_from: from,
-            dist_to: to,
+            stops,
             pattern: None,
             distance_field: false,
         }
@@ -171,26 +178,33 @@ impl Style {
         self.pattern.as_ref().is_some_and(|p| p.is_animated())
     }
 
-    /// Whether this style is a fill (no pattern, negative distance visible).
+    /// Whether this style fills the interior (no pattern, opaque innermost stop).
     pub fn is_fill(&self) -> bool {
-        self.pattern.is_none() && self.dist_from < -100.0
+        self.pattern.is_none()
+            && self
+                .stops
+                .first()
+                .is_some_and(|s| s.start.a > 0.0 || s.end.a > 0.0)
     }
 
     /// World-space extent this style draws beyond the shape boundary.
     ///
-    /// Use this to size cull/clip padding so a layer is never clipped early.
-    /// For a `closed` (filled) shape only the outward band counts: the interior
-    /// (very negative `dist_from`) is fill, not overdraw. For an open stroke
-    /// both sides of the curve lie outside the shape, so the larger magnitude
-    /// of the two distance bounds applies. `distance_field` styles are unbounded.
+    /// Sizes cull/clip padding so a layer is never clipped early. For a `closed`
+    /// (filled) shape only the outward stops count; the interior is fill, not
+    /// overdraw. For an open stroke both sides of the curve lie outside the
+    /// shape, so the larger magnitude bound applies. A pattern adds its half
+    /// thickness. `distance_field` styles are unbounded.
     pub fn extent(&self, closed: bool) -> f32 {
         if self.distance_field {
             return f32::INFINITY;
         }
+        let pat = self.pattern.as_ref().map_or(0.0, |p| p.thickness * 0.5);
+        let max_d = self.stops.iter().map(|s| s.dist).fold(0.0_f32, f32::max);
+        let min_d = self.stops.iter().map(|s| s.dist).fold(0.0_f32, f32::min);
         if closed {
-            self.dist_to.max(0.0)
+            max_d.max(0.0) + pat
         } else {
-            self.dist_to.max(-self.dist_from).max(0.0)
+            max_d.max(-min_d).max(0.0) + pat
         }
     }
 }

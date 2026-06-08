@@ -702,13 +702,14 @@ impl EdgeEditor {
         if self.shadow_visible {
             let sc = rgba(&self.shadow_color);
             let se = rgba(&self.shadow_color_end);
+            let clear = |c: iced::Color| iced::Color { a: 0.0, ..c };
             styles.push(Style {
-                near_start: sc,
-                near_end: sc,
-                far_start: se,
-                far_end: se,
-                dist_from: 0.0,
-                dist_to: self.shadow_expand,
+                stops: vec![
+                    iced_nodegraph_sdf::Stop::new(0.0, clear(sc)),
+                    iced_nodegraph_sdf::Stop::new(0.0, sc),
+                    iced_nodegraph_sdf::Stop::new(self.shadow_expand, se),
+                    iced_nodegraph_sdf::Stop::new(self.shadow_expand, clear(se)),
+                ],
                 pattern: None,
                 distance_field: false,
             });

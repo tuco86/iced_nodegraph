@@ -110,22 +110,20 @@ pub(crate) struct GpuDrawEntry {
     pub tiling_params: GpuVec4,
 }
 
-/// Rendering style: 4 corner colors + distance range + pattern.
-/// 128 bytes (8 x vec4).
+/// Rendering style: a distance-stop chain + pattern. `MAX_STOPS` stops, each a
+/// pair of arc colors (`stop_start` at arc 0, `stop_end` at arc 1) at a signed
+/// distance. Distances are packed 4 per vec4 in `stop_dist`. Layout must match
+/// the WGSL `GpuStyle`.
 #[derive(Clone, Debug, ShaderType)]
 pub(crate) struct GpuStyle {
-    /// Color at (arc=0, dist=from).
-    pub near_start: GpuVec4,
-    /// Color at (arc=1, dist=from).
-    pub near_end: GpuVec4,
-    /// Color at (arc=0, dist=to).
-    pub far_start: GpuVec4,
-    /// Color at (arc=1, dist=to).
-    pub far_end: GpuVec4,
-    /// Inner distance boundary.
-    pub dist_from: f32,
-    /// Outer distance boundary.
-    pub dist_to: f32,
+    /// Per-stop color at arc 0.
+    pub stop_start: [GpuVec4; crate::style::MAX_STOPS],
+    /// Per-stop color at arc 1.
+    pub stop_end: [GpuVec4; crate::style::MAX_STOPS],
+    /// Per-stop signed distance, packed 4 per vec4 (`MAX_STOPS / 4` vec4s).
+    pub stop_dist: [GpuVec4; crate::style::MAX_STOPS / 4],
+    /// Number of active stops (1..=MAX_STOPS).
+    pub stop_count: u32,
     /// Flags.
     pub flags: u32,
     /// Pattern type.
@@ -136,9 +134,6 @@ pub(crate) struct GpuStyle {
     pub pattern_param1: f32,
     pub pattern_param2: f32,
     pub flow_speed: f32,
-    pub _pad0: f32,
-    pub _pad1: f32,
-    pub _pad2: f32,
 }
 
 /// Per-draw-call parameters.
@@ -217,12 +212,10 @@ impl Default for GpuDrawEntry {
 impl Default for GpuStyle {
     fn default() -> Self {
         Self {
-            near_start: GpuVec4::new(1.0, 1.0, 1.0, 1.0),
-            near_end: GpuVec4::new(1.0, 1.0, 1.0, 1.0),
-            far_start: GpuVec4::new(1.0, 1.0, 1.0, 1.0),
-            far_end: GpuVec4::new(1.0, 1.0, 1.0, 1.0),
-            dist_from: -1e6,
-            dist_to: 0.0,
+            stop_start: [GpuVec4::new(1.0, 1.0, 1.0, 1.0); crate::style::MAX_STOPS],
+            stop_end: [GpuVec4::new(1.0, 1.0, 1.0, 1.0); crate::style::MAX_STOPS],
+            stop_dist: [GpuVec4::ZERO; crate::style::MAX_STOPS / 4],
+            stop_count: 1,
             flags: 0,
             pattern_type: 0,
             pattern_thickness: 1.0,
@@ -230,9 +223,6 @@ impl Default for GpuStyle {
             pattern_param1: 0.0,
             pattern_param2: 0.0,
             flow_speed: 0.0,
-            _pad0: 0.0,
-            _pad1: 0.0,
-            _pad2: 0.0,
         }
     }
 }

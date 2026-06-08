@@ -47,5 +47,5 @@ pub use drawable::Drawable;
 pub use pattern::Pattern;
 pub use pipeline::types::SdfStats;
 pub use primitive::{SdfPrimitive, sdf_stats};
-pub use style::Style;
+pub use style::{Stop, Style};
 pub use tiling::Tiling;
