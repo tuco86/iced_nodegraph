@@ -601,7 +601,113 @@ where
         };
 
         // ========================================
-        // Layer 2: Edges (batched into single draw call)
+        // Per-node geometry, built once and shared by the node shadows (below)
+        // and the fill/border (Layer 4). The silhouette (body minus pin cutouts)
+        // is the expensive boolean, so it is never built twice: the shadow clones
+        // and shifts it by the shadow offset rather than rebuilding it.
+        // ========================================
+        struct NodeGeom {
+            outline: Drawable,
+            resolved: NodeStyle,
+            offset: WorldVector,
+            position: WorldPoint,
+            size: Size,
+        }
+        let node_geoms: Vec<Option<NodeGeom>> = (0..self.nodes.len())
+            .map(|node_index| {
+                let (_id, _position, _element, node_style, node_pin_style) =
+                    &self.nodes[node_index];
+                let node_layout = layout.children().nth(node_index)?;
+                let node_tree = tree.children.get(node_index)?;
+                let status = if state.selected_nodes.contains(&node_index) {
+                    NodeStatus::Selected
+                } else {
+                    NodeStatus::Idle
+                };
+                let resolved = resolve_node_style(node_style.as_ref(), theme, status);
+                let offset = compute_node_offset(node_index);
+                let position: WorldPoint =
+                    (node_layout.bounds().position().into_euclid().to_vector() + offset).to_point();
+                let size = node_layout.bounds().size();
+                let pins = find_pins::<P, UI>(node_tree, node_layout);
+                let cut_circles = pin_cutout_circles(
+                    &pins,
+                    node_pin_style.as_ref(),
+                    drag_source.as_ref(),
+                    theme,
+                    time,
+                    offset,
+                    |pin_idx| {
+                        is_edge_dragging
+                            && state.valid_drop_targets.contains(&(node_index, pin_idx))
+                    },
+                );
+                let body = Curve::rounded_rect(
+                    [
+                        position.x + size.width * 0.5,
+                        position.y + size.height * 0.5,
+                    ],
+                    [size.width * 0.5, size.height * 0.5],
+                    resolved.corner_radius,
+                );
+                let outline = iced_nodegraph_sdf::boolean::difference_many(&body, &cut_circles);
+                Some(NodeGeom {
+                    outline,
+                    resolved,
+                    offset,
+                    position,
+                    size,
+                })
+            })
+            .collect();
+
+        // ========================================
+        // Node shadows (batched). Drawn BEFORE the edges so a node's filled
+        // shadow sits behind the connections and never covers them; the node
+        // body (Layer 4) still paints over both.
+        // ========================================
+        {
+            let mut shadow_batch = SdfPrimitive::new();
+            let cam_zoom = render_context.camera_zoom;
+
+            for &node_index in &z_indices {
+                let Some(geom) = node_geoms[node_index].as_ref() else {
+                    continue;
+                };
+                if !geom.resolved.has_shadow() {
+                    continue;
+                }
+                // Reuse the node silhouette, shifted by the shadow offset, then
+                // build the soft shadow chain over it.
+                let (ox, oy) = geom.resolved.shadow_offset;
+                let shadow_outline = geom.outline.translated(ox, oy);
+                for band in geom.resolved.shadow_sdf_layers(geom.resolved.opacity) {
+                    shadow_batch.push(&shadow_outline, &band);
+                }
+            }
+
+            if !shadow_batch.is_empty() {
+                let wo = layout.bounds().position();
+                let (cx, cy) = layer_camera(
+                    render_context.camera_position,
+                    cam_zoom,
+                    wo,
+                    layout.bounds(),
+                );
+                renderer.with_layer(layout.bounds(), |renderer| {
+                    renderer.draw_primitive(
+                        layout.bounds(),
+                        shadow_batch
+                            .camera(cx, cy, cam_zoom)
+                            .time(render_context.time)
+                            .debug_tiles(self.sdf_debug.shadows),
+                    );
+                });
+            }
+        }
+
+        // ========================================
+        // Edges (batched into single draw call), drawn over the node shadows.
         // ========================================
         let edge_batch = {
             let pending_cuts = match &state.dragging {
@@ -782,110 +888,6 @@ where
                 }
             }
         });
-
-        // ========================================
-        // Per-node geometry, built once and shared by the shadow (Layer 3) and
-        // the fill/border (Layer 4). The silhouette (body minus pin cutouts) is
-        // the expensive boolean, so it is never built twice: the shadow clones
-        // and shifts it by the shadow offset rather than rebuilding it.
-        // ========================================
-        struct NodeGeom {
-            outline: Drawable,
-            resolved: NodeStyle,
-            offset: WorldVector,
-            position: WorldPoint,
-            size: Size,
-        }
-        let node_geoms: Vec<Option<NodeGeom>> = (0..self.nodes.len())
-            .map(|node_index| {
-                let (_id, _position, _element, node_style, node_pin_style) =
-                    &self.nodes[node_index];
-                let node_layout = layout.children().nth(node_index)?;
-                let node_tree = tree.children.get(node_index)?;
-                let status = if state.selected_nodes.contains(&node_index) {
-                    NodeStatus::Selected
-                } else {
-                    NodeStatus::Idle
-                };
-                let resolved = resolve_node_style(node_style.as_ref(), theme, status);
-                let offset = compute_node_offset(node_index);
-                let position: WorldPoint =
-                    (node_layout.bounds().position().into_euclid().to_vector() + offset).to_point();
-                let size = node_layout.bounds().size();
-                let pins = find_pins::<P, UI>(node_tree, node_layout);
-                let cut_circles = pin_cutout_circles(
-                    &pins,
-                    node_pin_style.as_ref(),
-                    drag_source.as_ref(),
-                    theme,
-                    time,
-                    offset,
-                    |pin_idx| {
-                        is_edge_dragging
-                            && state.valid_drop_targets.contains(&(node_index, pin_idx))
-                    },
-                );
-                let body = Curve::rounded_rect(
-                    [
-                        position.x + size.width * 0.5,
-                        position.y + size.height * 0.5,
-                    ],
-                    [size.width * 0.5, size.height * 0.5],
-                    resolved.corner_radius,
-                );
-                let outline = iced_nodegraph_sdf::boolean::difference_many(&body, &cut_circles);
-                Some(NodeGeom {
-                    outline,
-                    resolved,
-                    offset,
-                    position,
-                    size,
-                })
-            })
-            .collect();
-
-        // ========================================
-        // Layer 3: Node shadows (batched)
-        // ========================================
-        {
-            let mut shadow_batch = SdfPrimitive::new();
-            let cam_zoom = render_context.camera_zoom;
-
-            for &node_index in &z_indices {
-                let Some(geom) = node_geoms[node_index].as_ref() else {
-                    continue;
-                };
-                if !geom.resolved.has_shadow() {
-                    continue;
-                }
-                // Reuse the node silhouette, shifted by the shadow offset, then
-                // build the soft three-band shadow over it.
-                let (ox, oy) = geom.resolved.shadow_offset;
-                let shadow_outline = geom.outline.translated(ox, oy);
-                for band in geom.resolved.shadow_sdf_layers(geom.resolved.opacity) {
-                    shadow_batch.push(&shadow_outline, &band);
-                }
-            }
-
-            if !shadow_batch.is_empty() {
-                let wo = layout.bounds().position();
-                let (cx, cy) = layer_camera(
-                    render_context.camera_position,
-                    cam_zoom,
-                    wo,
-                    layout.bounds(),
-                );
-                renderer.with_layer(layout.bounds(), |renderer| {
-                    renderer.draw_primitive(
-                        layout.bounds(),
-                        shadow_batch
-                            .camera(cx, cy, cam_zoom)
-                            .time(render_context.time)
-                            .debug_tiles(self.sdf_debug.shadows),
-                    );
-                });
-            }
-        }
 
         // ========================================
         // Layers 4..N: Nodes (each node gets 3 sub-layers)
