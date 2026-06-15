@@ -98,8 +98,8 @@ cargo run -p sdf_basic                 # iced_nodegraph_sdf example
 ```bash
 cargo build -p iced_nodegraph          # Core library
 cargo build --workspace                # Everything
-cargo test -p iced_nodegraph           # 69 unit tests
-cargo test -p iced_nodegraph_sdf                 # 34 unit tests
+cargo test -p iced_nodegraph           # Core library tests
+cargo test -p iced_nodegraph_sdf       # SDF engine tests
 cargo clippy --workspace -- -D warnings
 ```
 
@@ -130,11 +130,13 @@ iced_nodegraph/                    # Workspace root
 │       └── prelude.rs             # Convenience re-exports
 ├── iced_nodegraph_sdf/                      # SDF rendering engine
 │   └── src/
-│       ├── shape.rs               # SDF primitives and CSG operations
-│       ├── eval.rs                # CPU-side SDF evaluation (hit testing)
-│       ├── layer.rs               # Rendering layers (fill, stroke, shadow)
+│       ├── drawable.rs            # Segment-based shapes (lines, arcs, beziers)
+│       ├── curve.rs               # Shape builders (rect, rounded_rect, circle)
+│       ├── boolean.rs             # Boolean ops (union, difference) on contours
+│       ├── style.rs               # Distance-stop style chains
 │       ├── pattern.rs             # Stroke patterns (dashed, arrowed, dotted)
-│       ├── compile.rs             # SDF tree to RPN compiler
+│       ├── tiling.rs              # Tiling backgrounds (grid, dots, ...)
+│       ├── compile.rs             # Drawable + Style -> GPU buffers
 │       ├── primitive.rs           # Iced rendering primitive
 │       └── pipeline/              # WGPU pipeline, buffers, shader
 └── demos/                         # Demo applications
@@ -144,12 +146,12 @@ iced_nodegraph/                    # Workspace root
 
 The renderer uses signed distance fields evaluated on the GPU:
 
-1. **Compile** - SDF shape trees are compiled to RPN (reverse Polish notation)
-2. **Upload** - Shapes, ops, and layers are written to GPU storage buffers
-3. **Spatial Index** - A compute shader builds a per-tile shape list for culling
-4. **Render** - Fragment shader evaluates only relevant shapes per pixel via tile lookup
+1. **Compile** - shape contours (segments) and styles are compiled to GPU data
+2. **Upload** - segments, draw entries, and styles are written to GPU storage buffers
+3. **Spatial Index** - a compute shader builds a per-tile segment list for culling
+4. **Render** - the fragment shader evaluates only the segments in each pixel's tile
 
-All geometry (nodes, edges, pins, shadows, outlines) is rendered through this single pipeline. Layers control appearance: fill, gradient, stroke pattern, blur, expand, and outline.
+All geometry (nodes, edges, pins, shadows, outlines) is rendered through this single pipeline. A style is a distance-stop chain controlling appearance: fill, gradient, stroke pattern, border, and shadow.
 
 ### Coordinate System
 
@@ -164,7 +166,7 @@ Transformations are compile-time checked. See [`camera.rs`](iced_nodegraph/src/n
 
 | Action | Input |
 |--------|-------|
-| Pan | Middle mouse drag |
+| Pan | Right mouse drag |
 | Zoom | Scroll wheel (at cursor) |
 | Connect | Drag from pin to pin |
 | Disconnect | Click connected pin to unplug |

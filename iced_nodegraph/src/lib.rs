@@ -20,8 +20,9 @@
 //! - **Interactive Connections** - Drag to connect, click edges to re-route (cable-like unplugging)
 //! - **Selection** - Multi-select with box selection, clone (Ctrl+D), delete (Delete key)
 //! - **Zoom & Pan** - Smooth infinite canvas navigation with [`Camera2D`]
-//! - **GPU Rendering** - High-performance visualization with custom WGPU shaders
-//! - **Smooth Animations** - Monitor-synchronized pin pulsing and transitions
+//! - **SDF Rendering** - High-performance visualization via signed-distance fields (`iced_nodegraph_sdf`)
+//! - **Spatial Index** - A GPU tile index culls geometry per pixel, scaling to large graphs
+//! - **Pin Feedback** - Valid drop targets pulse while dragging an edge
 //! - **Theme Support** - Integrates with Iced's theming system
 //!
 //! ## Quick Start
@@ -119,10 +120,10 @@
 //! ## Platform Support
 //!
 //! ### Native (Windows, macOS, Linux)
-//! Full WGPU with custom shaders for high-performance rendering.
+//! Full WGPU rendering via signed-distance fields (`iced_nodegraph_sdf`).
 //!
 //! ### WebAssembly (Browser)
-//! WebGPU acceleration with fallback to WebGL where needed.
+//! WebGPU only - there is no WebGL fallback. Chrome/Chromium is recommended.
 //!
 //! ## Architecture
 //!
@@ -142,18 +143,20 @@
 //!
 //! See [`Camera2D`] for implementation details and comprehensive test coverage.
 //!
-//! ### Custom Rendering
+//! ### SDF Rendering
 //!
-//! Uses WGPU shaders for high-performance rendering:
-//! - Background/Foreground layers for proper rendering order
-//! - GPU-accelerated with custom vertex/fragment shaders
-//! - Cross-platform support (native WGPU + WebGPU)
+//! Nodes, edges, pins and overlays are drawn with signed-distance fields via the
+//! in-tree `iced_nodegraph_sdf` crate - there are no hand-written vertex or
+//! fragment shaders in this crate:
+//! - Layered compositing for correct draw order (shadows, edges, node bodies)
+//! - A GPU tile index culls geometry per pixel, scaling to large graphs
+//! - Cross-platform (native WGPU + WebGPU)
 //!
 //! ## Interaction
 //!
 //! | Action | Input |
 //! |--------|-------|
-//! | Pan canvas | Middle mouse drag |
+//! | Pan canvas | Right mouse drag |
 //! | Zoom | Mouse wheel (maintains cursor position) |
 //! | Connect pins | Left-click source pin, drag to target |
 //! | Re-route edge | Click on edge endpoint to unplug |

@@ -1,7 +1,7 @@
 //! Common imports for building a node graph view.
 //!
 //! `use iced_nodegraph::prelude::*;` pulls in the vocabulary reached for in
-//! almost every `view()`: the builders, [`PinRef`](crate::PinRef), the pin and
+//! almost every `view()`: the builders, [`PinRef`], the pin and
 //! status types used by `style`/`can_connect` closures, the concrete style
 //! structs with their theme-derived `default_*` bases, and the node-content
 //! helpers. Graph-level configuration set once (`Camera2D`, `GraphStyle`,
