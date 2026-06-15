@@ -230,14 +230,23 @@ pub enum DragInfo<N = usize, P = usize> {
 }
 
 /// Type-safe reference to a pin: a `node_id` paired with a `pin_id`, generic over
-/// your id types. Construct with `PinRef::new(node_id, pin_id)`.
+/// your id types.
+///
+/// The fields are public by design. `PinRef` is a transparent id pair with no
+/// invariants to uphold: any node/pin id combination is structurally valid, and
+/// whether two pins may actually connect is decided elsewhere (e.g. via
+/// [`can_connect`](NodeGraph::can_connect)). Build it with a struct literal or
+/// [`PinRef::new`], and match or destructure it freely.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PinRef<N, P> {
+    /// The node's user id.
     pub node_id: N,
+    /// The pin's user id within its node.
     pub pin_id: P,
 }
 
 impl<N: Clone, P: Clone> PinRef<N, P> {
+    /// Creates a pin reference from a node id and a pin id.
     pub fn new(node_id: N, pin_id: P) -> Self {
         Self { node_id, pin_id }
     }
@@ -290,7 +299,7 @@ pub struct NodeGraph<
         PinRef<N, P>,
         Option<EdgeStyleFn<'a, P, UI, Theme>>,
     )>,
-    graph_style: Option<GraphStyle>,
+    graph_style: Option<Box<dyn Fn(&Theme) -> GraphStyle + 'a>>,
     on_connect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>>,
     on_disconnect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>>,
     on_move: Option<Box<dyn Fn(Vector, Vec<N>) -> Message + 'a>>,
@@ -428,8 +437,14 @@ where
         self.nodes.iter().position(|(n, ..)| n == id)
     }
 
-    pub fn graph_style(mut self, style: GraphStyle) -> Self {
-        self.graph_style = Some(style);
+    /// Sets the graph chrome style (background, etc.) as a theme-derived closure.
+    ///
+    /// Mirrors the other style setters (`box_select_style`, `dragging_edge_style`,
+    /// `cutting_tool_style`) and the per-node/edge/pin `.style()` closures: every
+    /// style entry point on the widget is a `Fn(&Theme) -> _`. For a static style,
+    /// ignore the theme argument: `.graph_style(|_| GraphStyle { ..base })`.
+    pub fn graph_style(mut self, f: impl Fn(&Theme) -> GraphStyle + 'a) -> Self {
+        self.graph_style = Some(Box::new(f));
         self
     }
 

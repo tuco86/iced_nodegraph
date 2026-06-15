@@ -251,13 +251,6 @@ fn pin_info<'s, P, UI>(state: &'s NodePinState<P, UI>) -> Option<PinInfo<'s, P, 
     ))
 }
 
-/// Resolves a GraphStyle or uses theme defaults.
-fn resolve_graph_style(style: Option<&GraphStyle>, theme: &Theme) -> GraphStyle {
-    style
-        .cloned()
-        .unwrap_or_else(|| GraphStyle::from_theme(theme))
-}
-
 /// Resolves a pin's drawn style: theme base merged with the per-pin overlay,
 /// then the indicator fill color forced to the pin's `color`.
 fn resolve_pin_style<P: PinId + 'static, UI>(
@@ -523,7 +516,11 @@ where
         render_context.camera_position = camera.position();
 
         // Resolve styles
-        let resolved_graph = resolve_graph_style(self.graph_style.as_ref(), theme);
+        let resolved_graph = if let Some(ref style_fn) = self.graph_style {
+            style_fn(theme)
+        } else {
+            GraphStyle::from_theme(theme)
+        };
 
         // Check if we're edge dragging
         let is_edge_dragging = matches!(
