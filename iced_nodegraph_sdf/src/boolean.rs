@@ -255,8 +255,13 @@ fn line_arc(
         return Vec::new();
     }
     let sq = disc.max(0.0).sqrt();
+    // The two roots are (-bb +/- sq) / (2*aa), so their separation in the line
+    // parameter t is sq/aa; multiplied by the segment length |d| = sqrt(aa) that
+    // is sq/sqrt(aa) - the world-space distance between the two intersection
+    // points. Comparing it to the world-unit EPS (1e-3) keeps this tangency test
+    // consistent with every other distance check in this module.
     let roots = if sq / aa.sqrt() < EPS {
-        // Tangent: a single contact point.
+        // Tangent: the two contacts coincide within EPS, treat as one point.
         vec![-bb / (2.0 * aa)]
     } else {
         vec![(-bb - sq) / (2.0 * aa), (-bb + sq) / (2.0 * aa)]
