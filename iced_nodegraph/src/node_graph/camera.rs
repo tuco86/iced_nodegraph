@@ -828,6 +828,72 @@ mod tests {
             world_after_zoom
         );
     }
+
+    // === Viewport-origin layout transforms ===
+    // These three functions map into the widget's layout-absolute space
+    // (viewport_origin + world) and were previously only exercised indirectly.
+    // The cases below use a non-1 zoom and non-zero origin so every term of
+    // each formula is load-bearing (mutation-audit regressions).
+
+    #[test]
+    fn test_layer_transformation_matches_world_to_screen() {
+        // The renderer transform must map a layout point (viewport_origin +
+        // world) to exactly where world_to_screen places that world point.
+        let camera = Camera2D::with_zoom_and_position(2.0, WorldPoint::new(10.0, 20.0))
+            .with_viewport_origin(ScreenVector::new(40.0, 100.0));
+        let world = WorldPoint::new(30.0, 5.0);
+
+        let layout_point = iced::Point::new(40.0 + world.x, 100.0 + world.y);
+        let via_layer = layout_point * camera.layer_transformation();
+        let via_world_to_screen = camera.world_to_screen().transform_point(world);
+
+        // Both equal the value pinned by test_world_to_screen_with_viewport_origin.
+        assert!(approx_eq(via_layer.x, 120.0), "x: got {}", via_layer.x);
+        assert!(approx_eq(via_layer.y, 150.0), "y: got {}", via_layer.y);
+        assert!(approx_eq(via_layer.x, via_world_to_screen.x), "layer vs w2s x");
+        assert!(approx_eq(via_layer.y, via_world_to_screen.y), "layer vs w2s y");
+    }
+
+    #[test]
+    fn test_cursor_screen_to_layout_adds_origin() {
+        // Mapping a screen cursor yields screen_to_world(cursor) shifted into
+        // layout space by the viewport origin.
+        let camera = Camera2D::with_zoom_and_position(2.0, WorldPoint::new(10.0, 20.0))
+            .with_viewport_origin(ScreenVector::new(40.0, 100.0));
+        let cursor = mouse::Cursor::Available(iced::Point::new(120.0, 150.0));
+
+        let mapped = match camera.cursor_screen_to_layout(cursor) {
+            mouse::Cursor::Available(p) => p,
+            other => panic!("expected available cursor, got {other:?}"),
+        };
+
+        // screen_to_world((120,150)) = (30,5); + origin (40,100) = (70,105).
+        assert!(approx_eq(mapped.x, 70.0), "x: got {}", mapped.x);
+        assert!(approx_eq(mapped.y, 105.0), "y: got {}", mapped.y);
+    }
+
+    #[test]
+    fn test_viewport_screen_to_layout_rect() {
+        // The visible viewport rectangle maps to layout-absolute space:
+        // origin = (screen - viewport_origin) / zoom - position + viewport_origin,
+        // size  = screen_size / zoom.
+        let camera = Camera2D::with_zoom_and_position(2.0, WorldPoint::new(10.0, 20.0))
+            .with_viewport_origin(ScreenVector::new(40.0, 100.0));
+        let viewport = Rectangle {
+            x: 120.0,
+            y: 150.0,
+            width: 800.0,
+            height: 600.0,
+        };
+
+        let layout = camera.viewport_screen_to_layout(&viewport);
+
+        // x = (120-40)/2 - 10 + 40 = 70 ; y = (150-100)/2 - 20 + 100 = 105.
+        assert!(approx_eq(layout.x, 70.0), "x: got {}", layout.x);
+        assert!(approx_eq(layout.y, 105.0), "y: got {}", layout.y);
+        assert!(approx_eq(layout.width, 400.0), "w: got {}", layout.width);
+        assert!(approx_eq(layout.height, 300.0), "h: got {}", layout.height);
+    }
 }
 
 /// Property tests generalizing the example-based invariants above over a

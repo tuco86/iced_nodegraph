@@ -12,6 +12,9 @@
 # Local cargo config with path patches (not for CI)
 /.cargo/config.toml
 
+# cargo-mutants output (transient audit artifact)
+/mutants.out
+
 # Claude Code temp files
 tmpclaude-*
 nul
