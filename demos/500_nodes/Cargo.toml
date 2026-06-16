@@ -27,7 +27,7 @@ wasm = [
 iced_nodegraph.workspace = true
 iced_nodegraph_sdf.workspace = true
 # webgl feature adds WebGL2 fallback for browsers without WebGPU (ignored on native)
-iced = { workspace = true, features = ["advanced", "wgpu", "tokio", "webgl"] }
+iced = { workspace = true, features = ["advanced", "wgpu", "tokio", "webgl", "canvas"] }
 
 # WASM-specific dependencies
 wasm-bindgen = { workspace = true, optional = true }
@@ -36,4 +36,4 @@ console_error_panic_hook = { workspace = true, optional = true }
 
 # WASM: Embed Fira Sans font (system fonts not available in browser)
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-iced = { workspace = true, features = ["advanced", "wgpu", "tokio", "webgl", "fira-sans"] }
+iced = { workspace = true, features = ["advanced", "wgpu", "tokio", "webgl", "fira-sans", "canvas"] }
