@@ -15,8 +15,8 @@ euclid.workspace = true
 iced_nodegraph_sdf.workspace = true
 iced_wgpu.workspace = true
 iced_widget.workspace = true
-# webgl feature adds WebGL2 fallback for browsers without WebGPU (ignored on native)
-iced = { workspace = true, features = ["advanced", "wgpu", "tokio", "webgl"] }
+# WebGPU only - there is no WebGL fallback (see crate docs).
+iced = { workspace = true, features = ["advanced", "wgpu", "tokio"] }
 web-time.workspace = true
 
 # Force newer versions to reduce duplicates where possible
@@ -24,10 +24,6 @@ web-time.workspace = true
 bitflags.workspace = true
 thiserror.workspace = true
 rustc-hash.workspace = true
-
-# WASM: Enable WebGL in iced_wgpu for fallback support
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-iced_wgpu = { workspace = true, features = ["webgl"] }
 
 [dev-dependencies]
 iced_test = { workspace = true }
