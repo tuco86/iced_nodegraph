@@ -34,10 +34,11 @@ use crate::{
     node_graph::euclid::{IntoEuclid, ScreenPoint, WorldPoint},
     node_pin::{NodePinState, PinEnd, PinInfo},
     style::{
-        EdgeGeometry, EdgeStatus, EdgeStyle, GraphStyle, NodeStatus, NodeStyle, PinStatus, PinStyle,
+        EdgeGeometry, EdgeStatus, EdgeStyle, GraphStyle, NodeStatus, NodeStyle, PinStatus,
+        PinStyle, TilingKind,
     },
 };
-use iced_nodegraph_sdf::{Curve, Drawable, Pattern, SdfPrimitive, Style};
+use iced_nodegraph_sdf::{Curve, Drawable, Pattern, SdfPrimitive, Style, Tiling};
 
 // Click detection threshold (in world-space pixels)
 const PIN_CLICK_THRESHOLD: f32 = 8.0;
@@ -559,6 +560,40 @@ where
                 iced_widget::core::Background::Color(resolved_graph.background_color),
             );
         });
+
+        // Tiling background (grid/dots/...) over the solid fill, behind nodes.
+        // Drawn with the camera so it pans/zooms; sd_tiling repeats it infinitely.
+        if let Some(tiling) = resolved_graph.tiling {
+            let drawable = match tiling.kind {
+                TilingKind::Grid => Tiling::grid(tiling.spacing, tiling.spacing, tiling.thickness),
+                TilingKind::Dots => Tiling::dots(tiling.spacing, tiling.spacing, tiling.thickness),
+                TilingKind::Triangles => Tiling::triangles(tiling.spacing, tiling.thickness),
+                TilingKind::Hex => Tiling::hex(tiling.spacing, tiling.thickness),
+            };
+            // Grid/triangle/hex give the unsigned distance to the line, so their
+            // thickness comes from the style; dots bake the radius into the field.
+            let style = match tiling.kind {
+                TilingKind::Dots => Style::solid(tiling.color),
+                _ => Style::solid(tiling.color).expand(tiling.thickness * 0.5),
+            };
+            let mut bg_batch = SdfPrimitive::new();
+            bg_batch.push(&drawable, &style);
+            let wo = layout.bounds().position();
+            let (cx, cy) = layer_camera(
+                render_context.camera_position,
+                render_context.camera_zoom,
+                wo,
+                layout.bounds(),
+            );
+            renderer.with_layer(layout.bounds(), |renderer| {
+                renderer.draw_primitive(
+                    layout.bounds(),
+                    bg_batch
+                        .camera(cx, cy, render_context.camera_zoom)
+                        .time(render_context.time),
+                );
+            });
+        }
 
         // ========================================
         // Collect edge data with resolved positions

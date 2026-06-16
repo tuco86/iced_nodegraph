@@ -96,11 +96,85 @@ pub enum EdgeCurve {
 // Graph Style
 // ============================================================================
 
+/// The repeating pattern of a [`TilingBackground`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TilingKind {
+    /// Rectangular grid lines.
+    #[default]
+    Grid,
+    /// Array of dots.
+    Dots,
+    /// Equilateral triangle grid.
+    Triangles,
+    /// Regular hexagonal grid.
+    Hex,
+}
+
+/// A tiling background (grid, dots, ...) drawn over the canvas
+/// [`background_color`](GraphStyle::background_color), panning and zooming with
+/// the camera and repeating infinitely across the viewport.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TilingBackground {
+    /// Which repeating pattern to draw.
+    pub kind: TilingKind,
+    /// Cell pitch in world units (grid/triangle/hex line spacing, or dot spacing).
+    pub spacing: f32,
+    /// Line thickness for `Grid`/`Triangles`/`Hex`, or dot radius for `Dots`,
+    /// in world units.
+    pub thickness: f32,
+    /// Pattern color.
+    pub color: Color,
+}
+
+impl TilingBackground {
+    /// Grid lines with the given spacing, line thickness and color.
+    pub fn grid(spacing: f32, thickness: f32, color: Color) -> Self {
+        Self {
+            kind: TilingKind::Grid,
+            spacing,
+            thickness,
+            color,
+        }
+    }
+
+    /// Dot array with the given spacing, dot radius and color.
+    pub fn dots(spacing: f32, radius: f32, color: Color) -> Self {
+        Self {
+            kind: TilingKind::Dots,
+            spacing,
+            thickness: radius,
+            color,
+        }
+    }
+
+    /// Equilateral triangle grid with the given edge spacing, thickness and color.
+    pub fn triangles(spacing: f32, thickness: f32, color: Color) -> Self {
+        Self {
+            kind: TilingKind::Triangles,
+            spacing,
+            thickness,
+            color,
+        }
+    }
+
+    /// Hexagonal grid with the given flat-to-flat spacing, thickness and color.
+    pub fn hex(spacing: f32, thickness: f32, color: Color) -> Self {
+        Self {
+            kind: TilingKind::Hex,
+            spacing,
+            thickness,
+            color,
+        }
+    }
+}
+
 /// Complete graph style configuration.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GraphStyle {
     /// Background color for the canvas.
     pub background_color: Color,
+    /// Optional tiling drawn over `background_color` (grid, dots, ...).
+    pub tiling: Option<TilingBackground>,
     /// Drag edge color when connection is invalid.
     pub drag_edge_color: Color,
     /// Drag edge color when connection is valid.
@@ -115,6 +189,7 @@ impl Default for GraphStyle {
             background_color: Color::from_rgb(0.08, 0.08, 0.09),
             drag_edge_color: Color::from_rgb(0.9, 0.6, 0.3),
             drag_edge_valid_color: Color::from_rgb(0.3, 0.8, 0.5),
+            tiling: None,
             selection_style: SelectionStyle::default(),
         }
     }
@@ -145,6 +220,12 @@ impl GraphStyle {
         self
     }
 
+    /// Sets a tiling background (grid, dots, ...) drawn over `background_color`.
+    pub fn tiling(mut self, tiling: TilingBackground) -> Self {
+        self.tiling = Some(tiling);
+        self
+    }
+
     /// Creates a dark theme graph style.
     pub fn dark() -> Self {
         Self::default()
@@ -156,6 +237,7 @@ impl GraphStyle {
             background_color: Color::from_rgb(0.95, 0.95, 0.96),
             drag_edge_color: Color::from_rgb(0.8, 0.5, 0.2),
             drag_edge_valid_color: Color::from_rgb(0.2, 0.7, 0.4),
+            tiling: None,
             selection_style: SelectionStyle::default(),
         }
     }
@@ -180,6 +262,7 @@ impl GraphStyle {
                     success.g * 0.9,
                     success.b * 0.6,
                 ),
+                tiling: None,
                 selection_style: SelectionStyle::from_theme(theme),
             }
         } else {
@@ -199,6 +282,7 @@ impl GraphStyle {
                     success.g * 0.8,
                     success.b * 0.5,
                 ),
+                tiling: None,
                 selection_style: SelectionStyle::from_theme(theme),
             }
         }

@@ -40,8 +40,8 @@ use iced::{
     window,
 };
 use iced_nodegraph::{
-    NodeStatus, NodeStyle, Pattern, PinDirection, PinInfo, PinRef, PinStatus, PinStyle,
-    SelectionStyle, default_pin_style, edge, node,
+    GraphStyle, NodeStatus, NodeStyle, Pattern, PinDirection, PinInfo, PinRef, PinStatus, PinStyle,
+    SelectionStyle, TilingBackground, default_pin_style, edge, node,
 };
 use nodes::styled_node;
 use std::collections::HashSet;
@@ -471,7 +471,15 @@ impl Application {
                 .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })
                 .on_move(|delta, indices| Message::NodesMoved { delta, indices })
                 .on_select(Message::SelectionChanged)
-                .selection(&self.graph_selection);
+                .selection(&self.graph_selection)
+                .graph_style(|theme: &Theme| {
+                    let line = theme.extended_palette().background.strong.color;
+                    GraphStyle::from_theme(theme).tiling(TilingBackground::grid(
+                        40.0,
+                        1.0,
+                        iced::Color { a: 0.5, ..line },
+                    ))
+                });
 
         for (index, (position, name, style)) in self.nodes.iter().enumerate() {
             // The demo stores a fully resolved style per node; the callback

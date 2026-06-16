@@ -205,6 +205,9 @@ pub use style::{
     PinStatus,
     PinStyle,
     SelectionStyle,
+    // Tiling background (grid/dots/...) for GraphStyle
+    TilingBackground,
+    TilingKind,
     // Built-in status-driven default styles
     default_edge_style,
     default_node_style,
