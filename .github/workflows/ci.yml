@@ -52,8 +52,15 @@ jobs:
       - name: Clippy
         run: cargo clippy -p iced_nodegraph -p iced_nodegraph_sdf -- -D warnings
 
-      - name: Test
-        run: cargo test -p iced_nodegraph -p iced_nodegraph_sdf
+      - name: Test (iced_nodegraph)
+        run: cargo test -p iced_nodegraph
+
+      # The SDF pixel tests each spin up a full wgpu device and render through
+      # the software Vulkan driver. Running them in parallel oversubscribes the
+      # runner's few CPU cores and can make a device poll exceed its timeout, so
+      # serialize them - lavapipe handles one device at a time reliably.
+      - name: Test (iced_nodegraph_sdf, serialized GPU tests)
+        run: cargo test -p iced_nodegraph_sdf -- --test-threads=1
 
   semver:
     name: Semver checks
