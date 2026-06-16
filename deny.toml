@@ -1,0 +1,56 @@
+# cargo-deny configuration. Run with `cargo deny check`.
+#
+# Pre-publish supply-chain gate (see plan/dependency-audit): screens the full
+# dependency tree for security advisories, license surprises, and unexpected
+# sources before the first crates.io release.
+
+[advisories]
+# Fail on any crate whose installed version was yanked from the registry.
+yanked = "deny"
+ignore = [
+    # paste is unmaintained (no security vulnerability). It is pulled in
+    # transitively by the wgpu/iced stack and cannot be removed from here.
+    # Tracked so the ignore stays auditable; revisit when upstream drops it.
+    "RUSTSEC-2024-0436",
+]
+
+[licenses]
+# Permissive allowlist appropriate for an MIT-licensed library. Every entry is
+# present in the current dependency tree (verified via `cargo deny list`).
+# Copyleft (GPL/LGPL) is intentionally absent: the crates that offer those
+# (self_cell, r-efi) are dual-licensed and satisfied by MIT/Apache-2.0.
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "0BSD",
+    "ISC",
+    "Zlib",
+    "BSL-1.0",
+    "CC0-1.0",
+    "Unicode-3.0",
+    # Weak (file-level) copyleft; pulled in by `directories` (option-ext).
+    # Linking against it does not affect this crate's MIT licensing.
+    "MPL-2.0",
+]
+confidence-threshold = 0.8
+
+[bans]
+# The wgpu/winit/iced tree legitimately carries duplicate versions of common
+# crates (bitflags, hashbrown, windows-sys, ...). Surface them without failing.
+multiple-versions = "warn"
+wildcards = "deny"
+# The demos depend on the in-tree crates via `*` path dependencies (the
+# workspace pattern). Those are local, not registry wildcards, so allow them
+# while still denying real `*` version requirements on published crates.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+# Only the public registry is allowed. The in-tree crates are path
+# dependencies, which are not registry/git sources and need no entry here.
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

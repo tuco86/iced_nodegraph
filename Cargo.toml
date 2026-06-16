@@ -20,9 +20,10 @@ license = "MIT"
 repository = "https://github.com/tuco86/iced_nodegraph"
 
 [workspace.dependencies]
-# Core libraries
-iced_nodegraph = { path = "iced_nodegraph" }
-iced_nodegraph_sdf = { path = "iced_nodegraph_sdf" }
+# Core libraries. The `version` is required for publishing: crates.io strips
+# the path and uses the version, so a versionless path dep cannot be published.
+iced_nodegraph = { path = "iced_nodegraph", version = "0.1.0" }
+iced_nodegraph_sdf = { path = "iced_nodegraph_sdf", version = "0.1.0" }
 demo_common = { path = "demos/common" }
 
 # Iced framework
