@@ -7,8 +7,8 @@
 //!
 use iced::Color;
 
+use super::ColorQuad;
 use super::PinShape;
-use super::color::ColorQuad;
 
 /// Visual style for a pin indicator.
 #[derive(Debug, Clone, PartialEq)]

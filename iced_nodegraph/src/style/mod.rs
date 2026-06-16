@@ -11,18 +11,20 @@
 
 use iced::{Color, Theme};
 
-mod color;
 mod defaults;
 mod edge;
 mod node;
 mod pin;
 mod sdf;
 
-pub use color::ColorQuad;
 pub use defaults::{default_edge_style, default_node_style, default_pin_style};
 pub use edge::EdgeStyle;
 pub use node::NodeStyle;
 pub use pin::PinStyle;
+
+// `ColorQuad` lives in iced_nodegraph_sdf (the Style/Stop builders consume it
+// directly); re-exported here so it stays part of this crate's style surface.
+pub use iced_nodegraph_sdf::ColorQuad;
 
 // SDF layer decomposition (crate-internal, used by the widget renderer).
 pub(crate) use sdf::EdgeGeometry;

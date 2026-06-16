@@ -16,8 +16,8 @@
 use iced::Color;
 use iced_nodegraph_sdf::Pattern;
 
+use super::ColorQuad;
 use super::EdgeCurve;
-use super::color::ColorQuad;
 
 /// Visual style for an edge.
 #[derive(Debug, Clone, PartialEq)]

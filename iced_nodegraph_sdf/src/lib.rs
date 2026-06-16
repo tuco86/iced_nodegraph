@@ -35,6 +35,7 @@
 //! ```
 
 pub mod boolean;
+pub mod color;
 pub mod curve;
 pub mod drawable;
 pub mod pattern;
@@ -47,6 +48,7 @@ pub mod primitive;
 pub(crate) mod shared;
 
 // Public API re-exports
+pub use color::ColorQuad;
 pub use curve::{Curve, ShapeBuilder};
 pub use drawable::Drawable;
 pub use pattern::Pattern;

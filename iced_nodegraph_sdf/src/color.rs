@@ -1,10 +1,13 @@
-//! `ColorQuad`: the four corner colors of an iced_nodegraph_sdf `Style`.
+//! `ColorQuad`: the four corner colors of a [`Style`](crate::Style)'s 2D color
+//! field.
 //!
-//! An iced_nodegraph_sdf style is always a 2D color field: the arc-length axis
-//! (start -> end) crossed with the distance axis (near -> far). `ColorQuad`
-//! packages those four corners uniformly so node/edge/pin styles can expose the
-//! full gradient capability through a single field type, with constructors for
-//! the common cases. `From<Color>` keeps the solid case a one-liner.
+//! A style is always a 2D color field: the arc-length axis (start -> end)
+//! crossed with the distance axis (near -> far). `ColorQuad` packages those four
+//! corners uniformly so callers can express the full gradient capability through
+//! a single value, with constructors for the common cases. `From<Color>` keeps
+//! the solid case a one-liner. The [`Style::quad_band`](crate::Style::quad_band)
+//! and [`Style::quad_stroke`](crate::Style::quad_stroke) builders consume it
+//! directly.
 
 use iced::Color;
 
@@ -67,6 +70,26 @@ impl ColorQuad {
     pub fn fade(color: Color) -> Self {
         Self::dist(color, Color::from_rgba(color.r, color.g, color.b, 0.0))
     }
+
+    /// The near arc-color pair: `(near_start, near_end)`. The colors a stroke or
+    /// a band's near edge uses.
+    pub fn arc_pair(&self) -> (Color, Color) {
+        (self.near_start, self.near_end)
+    }
+
+    /// All four corners with their alpha multiplied by `opacity`.
+    pub fn with_opacity(self, opacity: f32) -> Self {
+        let f = |c: Color| Color {
+            a: c.a * opacity,
+            ..c
+        };
+        Self {
+            near_start: f(self.near_start),
+            near_end: f(self.near_end),
+            far_start: f(self.far_start),
+            far_end: f(self.far_end),
+        }
+    }
 }
 
 impl From<Color> for ColorQuad {
@@ -105,5 +128,22 @@ mod tests {
             q,
             ColorQuad::corners(corners.0, corners.1, corners.2, corners.3)
         );
+    }
+
+    #[test]
+    fn with_opacity_scales_all_alphas() {
+        let q = ColorQuad::corners(
+            Color::from_rgba(1.0, 0.0, 0.0, 1.0),
+            Color::from_rgba(0.0, 1.0, 0.0, 0.5),
+            Color::from_rgba(0.0, 0.0, 1.0, 0.8),
+            Color::from_rgba(1.0, 1.0, 1.0, 0.2),
+        )
+        .with_opacity(0.5);
+        assert_eq!(q.near_start.a, 0.5);
+        assert_eq!(q.near_end.a, 0.25);
+        assert_eq!(q.far_start.a, 0.4);
+        assert!((q.far_end.a - 0.1).abs() < 1e-6);
+        // Color channels untouched.
+        assert_eq!(q.near_start.r, 1.0);
     }
 }

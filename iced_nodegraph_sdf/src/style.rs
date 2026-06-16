@@ -19,6 +19,7 @@
 
 use iced::Color;
 
+use crate::color::ColorQuad;
 use crate::pattern::Pattern;
 
 /// Largest stop chain the GPU style supports. Keep in sync with `shader.wgsl`.
@@ -97,6 +98,35 @@ impl Style {
 
     /// Arc-length gradient stroke with pattern.
     pub fn arc_gradient_stroke(start: Color, end: Color, pattern: Pattern) -> Self {
+        Self {
+            stops: vec![Stop::grad(0.0, start, end)],
+            pattern: Some(pattern),
+            distance_field: false,
+        }
+    }
+
+    /// A clipped color band over `[from, to]` from a [`ColorQuad`]: transparent
+    /// outside, the quad's near colors at `from` and far colors at `to`,
+    /// antialiased at both edges. Built as a four-stop chain so it is one
+    /// self-contained entry (no inter-band seam). Apply opacity to the quad with
+    /// [`ColorQuad::with_opacity`] before calling if needed.
+    pub fn quad_band(quad: &ColorQuad, from: f32, to: f32) -> Self {
+        Self::bare(vec![
+            Stop::grad(
+                from,
+                transparent(quad.near_start),
+                transparent(quad.near_end),
+            ),
+            Stop::grad(from, quad.near_start, quad.near_end),
+            Stop::grad(to, quad.far_start, quad.far_end),
+            Stop::grad(to, transparent(quad.far_start), transparent(quad.far_end)),
+        ])
+    }
+
+    /// Stroke whose arc colors come from a [`ColorQuad`]'s near pair; the pattern
+    /// lays the stroke out along the contour.
+    pub fn quad_stroke(quad: &ColorQuad, pattern: Pattern) -> Self {
+        let (start, end) = quad.arc_pair();
         Self {
             stops: vec![Stop::grad(0.0, start, end)],
             pattern: Some(pattern),

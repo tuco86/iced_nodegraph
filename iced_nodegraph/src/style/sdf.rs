@@ -8,10 +8,11 @@
 //! curves); this module owns appearance (which layers exist and their distance
 //! bands).
 //!
-//! A color field is a [`ColorQuad`]; a draw layer is an `iced_nodegraph_sdf::Style`
-//! whose distance profile is a chain of stops (a continuous cross-section
-//! evaluated in one pass), so an effect's bands never composite against each
-//! other and cannot seam at a shared boundary.
+//! A color field is a [`ColorQuad`](super::ColorQuad); the band/stroke chains are
+//! built by [`Style::quad_band`] and [`Style::quad_stroke`] in the SDF crate,
+//! which consume a `ColorQuad` directly. This module only chooses distance
+//! ranges and premultiplies node opacity onto the quad via
+//! [`ColorQuad::with_opacity`](super::ColorQuad::with_opacity).
 //!
 //! Layer order matters: the first layer in a returned list is drawn closest to
 //! the viewer (lowest SDF z-order), the last is deepest.
@@ -21,58 +22,11 @@ use iced_nodegraph_sdf::{Pattern, Stop, Style};
 
 use crate::node_pin::PinDirection;
 
-use super::color::ColorQuad;
 use super::{EdgeStyle, NodeStyle, PinStyle};
-
-/// Apply opacity to a color by multiplying its alpha channel.
-pub(crate) fn color_with_opacity(c: Color, opacity: f32) -> Color {
-    Color {
-        a: c.a * opacity,
-        ..c
-    }
-}
 
 /// Same color with zero alpha.
 fn transparent(c: Color) -> Color {
     Color { a: 0.0, ..c }
-}
-
-/// A quad's arc-color pair (`start` at arc 0, `end` at arc 1) at its near edge.
-fn quad_arc(q: &ColorQuad, opacity: f32) -> (Color, Color) {
-    (
-        color_with_opacity(q.near_start, opacity),
-        color_with_opacity(q.near_end, opacity),
-    )
-}
-
-/// A clipped color band over `[from, to]`: transparent outside, the quad's near
-/// colors at `from` and far colors at `to`, antialiased at both edges. Built as
-/// a four-stop chain so it is one self-contained entry (no inter-band seam).
-fn quad_band(q: &ColorQuad, from: f32, to: f32, opacity: f32) -> Style {
-    let ns = color_with_opacity(q.near_start, opacity);
-    let ne = color_with_opacity(q.near_end, opacity);
-    let fs = color_with_opacity(q.far_start, opacity);
-    let fe = color_with_opacity(q.far_end, opacity);
-    Style {
-        stops: vec![
-            Stop::grad(from, transparent(ns), transparent(ne)),
-            Stop::grad(from, ns, ne),
-            Stop::grad(to, fs, fe),
-            Stop::grad(to, transparent(fs), transparent(fe)),
-        ],
-        pattern: None,
-        distance_field: false,
-    }
-}
-
-/// Stroke style from a quad: the pattern lays the stroke out along the contour.
-fn quad_stroke(q: &ColorQuad, pattern: Pattern, opacity: f32) -> Style {
-    let (start, end) = quad_arc(q, opacity);
-    Style {
-        stops: vec![Stop::grad(0.0, start, end)],
-        pattern: Some(pattern),
-        distance_field: false,
-    }
 }
 
 /// Which geometry an edge layer is drawn on.
@@ -97,7 +51,7 @@ pub(crate) struct EdgeLayer {
 impl NodeStyle {
     /// Solid fill layer for the node body, premultiplied by `opacity`.
     pub(crate) fn fill_sdf_style(&self, opacity: f32) -> Style {
-        quad_band(&self.fill_color, -1e6, 0.0, opacity)
+        Style::quad_band(&self.fill_color.with_opacity(opacity), -1e6, 0.0)
     }
 
     /// Border layers, front-to-back. Empty when the border pattern thickness is
@@ -119,32 +73,30 @@ impl NodeStyle {
         if !self.border_pattern.is_solid() {
             // Patterned border: dashed/dotted stroke centered on the contour,
             // with a solid outline band behind it.
-            let mut layers = vec![quad_stroke(
-                &self.border_color,
+            let mut layers = vec![Style::quad_stroke(
+                &self.border_color.with_opacity(opacity),
                 self.border_pattern,
-                opacity,
             )];
             if has_outline {
                 let ow = self.border_outline_width;
-                layers.push(quad_band(
-                    &self.border_outline_color,
+                layers.push(Style::quad_band(
+                    &self.border_outline_color.with_opacity(opacity),
                     0.0,
                     bw + ow * 2.0,
-                    opacity,
                 ));
             }
             return layers;
         }
 
         // Solid border + outline as one outward chain on the silhouette.
-        let (bs, be) = quad_arc(&self.border_color, opacity);
+        let (bs, be) = self.border_color.with_opacity(opacity).arc_pair();
         let mut stops = vec![
             Stop::grad(0.0, transparent(bs), transparent(be)),
             Stop::grad(0.0, bs, be),
         ];
         if has_outline {
             let outer = bw + self.border_outline_width * 2.0;
-            let (os, oe) = quad_arc(&self.border_outline_color, opacity);
+            let (os, oe) = self.border_outline_color.with_opacity(opacity).arc_pair();
             stops.push(Stop::grad(bw, bs, be));
             stops.push(Stop::grad(bw, os, oe));
             stops.push(Stop::grad(outer, os, oe));
@@ -240,7 +192,7 @@ impl EdgeStyle {
         // Stroke (front).
         layers.push(EdgeLayer {
             geometry: EdgeGeometry::Stroke,
-            style: quad_stroke(&self.stroke_color, self.pattern, 1.0),
+            style: Style::quad_stroke(&self.stroke_color, self.pattern),
         });
 
         // Stroke outline (halo behind the stroke).
@@ -252,7 +204,7 @@ impl EdgeStyle {
                 Pattern::solid(self.pattern.thickness + self.stroke_outline_width * 2.0);
             layers.push(EdgeLayer {
                 geometry: EdgeGeometry::Stroke,
-                style: quad_stroke(&self.stroke_outline_color, outline_pat, 1.0),
+                style: Style::quad_stroke(&self.stroke_outline_color, outline_pat),
             });
         }
 
@@ -265,7 +217,7 @@ impl EdgeStyle {
 
             layers.push(EdgeLayer {
                 geometry: EdgeGeometry::Stroke,
-                style: quad_stroke(&self.border_color, Pattern::solid(self.border_width), 1.0),
+                style: Style::quad_stroke(&self.border_color, Pattern::solid(self.border_width)),
             });
 
             if self.border_outline_width > 0.0 {
@@ -273,7 +225,7 @@ impl EdgeStyle {
                     Pattern::solid(self.border_width + self.border_outline_width * 2.0);
                 layers.push(EdgeLayer {
                     geometry: EdgeGeometry::Stroke,
-                    style: quad_stroke(&self.border_outline_color, outline_pat, 1.0),
+                    style: Style::quad_stroke(&self.border_outline_color, outline_pat),
                 });
             }
 
@@ -282,7 +234,7 @@ impl EdgeStyle {
             {
                 layers.push(EdgeLayer {
                     geometry: EdgeGeometry::Stroke,
-                    style: quad_band(&self.border_background, -1e6, border_outer, 1.0),
+                    style: Style::quad_band(&self.border_background, -1e6, border_outer),
                 });
             }
         }
@@ -293,11 +245,10 @@ impl EdgeStyle {
         {
             layers.push(EdgeLayer {
                 geometry: EdgeGeometry::Shadow,
-                style: quad_band(
+                style: Style::quad_band(
                     &self.shadow_color,
                     -self.shadow_expand,
                     self.shadow_expand + self.shadow_blur.max(0.001),
-                    1.0,
                 ),
             });
         }
@@ -313,16 +264,16 @@ impl PinStyle {
         let mut layers = Vec::with_capacity(2);
         let fill = if direction == PinDirection::Input {
             // Hollow ring for inputs.
-            quad_stroke(&self.color, Pattern::solid(indicator_r * 0.8), 1.0)
+            Style::quad_stroke(&self.color, Pattern::solid(indicator_r * 0.8))
         } else {
-            quad_band(&self.color, -1e6, 0.0, 1.0)
+            Style::quad_band(&self.color, -1e6, 0.0)
         };
         layers.push(fill);
 
         if self.border_width > 0.0
             && (self.border_color.near_start.a > 0.0 || self.border_color.near_end.a > 0.0)
         {
-            layers.push(quad_band(&self.border_color, -1e6, 0.0, 1.0).expand(self.border_width));
+            layers.push(Style::quad_band(&self.border_color, -1e6, 0.0).expand(self.border_width));
         }
         layers
     }

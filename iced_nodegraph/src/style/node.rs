@@ -14,7 +14,7 @@
 use iced::Color;
 use iced_nodegraph_sdf::Pattern;
 
-use super::color::ColorQuad;
+use super::ColorQuad;
 
 /// Visual style for a node.
 ///
