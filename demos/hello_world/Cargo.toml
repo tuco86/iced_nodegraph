@@ -32,7 +32,7 @@ iced_palette.workspace = true
 # Persistence (native only)
 serde = { workspace = true }
 serde_json = { workspace = true }
-directories = "5.0"
+directories = "6.0"
 
 # ID generation
 nanoid = "0.4"
