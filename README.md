@@ -67,15 +67,16 @@ fn view(&self) -> Element<Message> {
     ng.push_node(node(1, Point::new(525.0, 175.0), another_node()));
 
     // An edge connects two pins, addressed by PinRef::new(node_id, pin_id).
-    ng.push_edge(edge(PinRef::new(0, 0), PinRef::new(1, 0)));
+    // edge! defaults the edge id to (); use edge(from, to, id) for a custom id.
+    ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)));
 
     ng.into()
 }
 ```
 
-`node(..)` and `edge(..)` return builders, so per-node and per-edge styling can be
+`node(..)` and `edge!(..)` return builders, so per-node and per-edge styling can be
 chained before pushing: `node(id, pos, w).style(..).pin_style(..)` and
-`edge(from, to).style(..)`.
+`edge!(from, to).style(..)`.
 
 See [`demos/hello_world/`](demos/hello_world/) for a complete working example.
 
@@ -139,8 +140,7 @@ iced_nodegraph/                    # Workspace root
 │       ├── node_graph/            # Main widget + camera + state
 │       ├── node_pin/              # Pin widget
 │       ├── style/                 # Styling and config types
-│       ├── content.rs             # Layout helpers (header, footer, simple_node)
-│       ├── helpers.rs             # Clone, delete, selection utilities
+│       ├── content.rs             # Layout helpers (node_header, node_footer)
 │       ├── ids.rs                 # Generic ID system
 │       └── prelude.rs             # Convenience re-exports
 ├── iced_nodegraph_sdf/                      # SDF rendering engine

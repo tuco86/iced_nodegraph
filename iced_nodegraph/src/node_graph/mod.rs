@@ -517,15 +517,6 @@ where
         self
     }
 
-    /// Sets a style callback for the edge cutting tool overlay.
-    ///
-    /// The callback receives the theme and returns the line color.
-    ///
-    /// # Example
-    /// ```ignore
-    /// node_graph()
-    ///     .cutting_tool_style(|theme| Color::from_rgb(1.0, 0.3, 0.3))
-    /// ```
     /// Sets the style of the edge being dragged (before it connects). Receives
     /// the theme and the source pin, so the closure can derive the stroke from
     /// the pin's info (e.g. a port-typed color) for both ends of the loose edge.
@@ -537,6 +528,15 @@ where
         self
     }
 
+    /// Sets a style callback for the edge cutting tool overlay.
+    ///
+    /// The callback receives the theme and returns the line color.
+    ///
+    /// # Example
+    /// ```ignore
+    /// node_graph()
+    ///     .cutting_tool_style(|theme| Color::from_rgb(1.0, 0.3, 0.3))
+    /// ```
     pub fn cutting_tool_style(mut self, f: impl Fn(&Theme) -> iced::Color + 'a) -> Self {
         self.cutting_tool_style_fn = Some(Box::new(f));
         self
