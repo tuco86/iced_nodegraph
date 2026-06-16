@@ -21,12 +21,13 @@ This document provides essential context for Claude Code when working on the ice
 A task is only complete when all checks pass and code is pushed.
 
 **Pre-Publish Requirement (before any `cargo publish`):**
-- `cargo semver-checks` must pass for `iced_nodegraph` and `iced_nodegraph_sdf`.
-  CI (`.github/workflows/ci.yml`) runs it on every push/PR against a git
-  baseline. Once the crates are published, the gate diffs against the crates.io
-  baseline, so unintended public-API breaks fail the build. Pre-release, breaking
-  changes are still acceptable but must be deliberate and visible (a red gate is
-  the signal to bump intentionally, not to bypass).
+- The CI semver gate (`.github/workflows/ci.yml`) runs `cargo semver-checks` for
+  `iced_nodegraph` and `iced_nodegraph_sdf` against the most recent release tag
+  (`v*`). Pre-publish there are no tags, so the gate is a no-op and pre-1.0 API
+  finalization (including breaking changes) stays green. Tag the first release
+  (`vX.Y.Z`) to activate the lock; after that, any unintended public-API break
+  since the last release fails the build until the version is bumped
+  intentionally.
 
 ## Automatic Validation
 

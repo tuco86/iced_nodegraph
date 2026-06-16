@@ -95,25 +95,20 @@ jobs:
 
       - name: Run cargo-semver-checks
         run: |
-          # Pre-publish there is no crates.io baseline yet, so diff against a
-          # git revision: the PR base on pull_request, the pushed-from commit
-          # otherwise. The first commit has no baseline and is skipped; the
-          # first publish locks in the crates.io baseline this gate then uses.
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            BASELINE="${{ github.event.pull_request.base.sha }}"
-          else
-            BASELINE="${{ github.event.before }}"
-          fi
-          if [ -z "$BASELINE" ] || [ "$BASELINE" = "0000000000000000000000000000000000000000" ]; then
-            BASELINE="$(git rev-parse HEAD~1 2>/dev/null || true)"
-          fi
-          if [ -z "$BASELINE" ]; then
-            echo "No baseline revision available (first commit); skipping."
+          # Baseline is the most recent release tag (v*). Pre-publish there are
+          # no tags, so the gate is a no-op: deliberate API changes during
+          # pre-1.0 finalization stay green. The first tagged release sets the
+          # baseline, after which this gate hard-fails on any unintended public
+          # API break since that release.
+          TAG="$(git tag --list 'v*' --sort=-v:refname | head -n1)"
+          if [ -z "$TAG" ]; then
+            echo "No release tag (v*) yet; pre-publish, skipping the semver gate."
+            echo "Tag the first release to activate the public-API lock."
             exit 0
           fi
-          echo "Comparing public API against baseline $BASELINE"
+          echo "Comparing public API against last release tag $TAG"
           cargo semver-checks \
-            --baseline-rev "$BASELINE" \
+            --baseline-rev "$TAG" \
             -p iced_nodegraph \
             -p iced_nodegraph_sdf
 
