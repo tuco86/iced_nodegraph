@@ -24,6 +24,16 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      # The iced_nodegraph_sdf pixel tests render through wgpu and need a GPU
+      # adapter. The runner has none, so provide Mesa's software Vulkan driver
+      # (lavapipe); wgpu's Vulkan backend then finds it headlessly.
+      - name: Install software Vulkan (lavapipe)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers libvulkan1 vulkan-tools
+        env:
+          DEBIAN_FRONTEND: noninteractive
+
       - name: Cache Cargo dependencies
         uses: actions/cache@v4
         with:
