@@ -20,6 +20,14 @@ This document provides essential context for Claude Code when working on the ice
 
 A task is only complete when all checks pass and code is pushed.
 
+**Pre-Publish Requirement (before any `cargo publish`):**
+- `cargo semver-checks` must pass for `iced_nodegraph` and `iced_nodegraph_sdf`.
+  CI (`.github/workflows/ci.yml`) runs it on every push/PR against a git
+  baseline. Once the crates are published, the gate diffs against the crates.io
+  baseline, so unintended public-API breaks fail the build. Pre-release, breaking
+  changes are still acceptable but must be deliberate and visible (a red gate is
+  the signal to bump intentionally, not to bypass).
+
 ## Automatic Validation
 
 **Via SubagentStop hook:**

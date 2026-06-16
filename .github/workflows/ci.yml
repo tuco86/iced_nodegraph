@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+# Native-only. The wasm32-unknown-unknown target check stays in the local
+# pre-push checklist (see CLAUDE.md).
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: fmt / clippy / test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-ci-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-ci-
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy -p iced_nodegraph -p iced_nodegraph_sdf -- -D warnings
+
+      - name: Test
+        run: cargo test -p iced_nodegraph -p iced_nodegraph_sdf
+
+  semver:
+    name: Semver checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Full history so a git revision can serve as the semver baseline
+          # before the first crates.io publish.
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-semver-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-semver-
+
+      - name: Install cargo-semver-checks
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-semver-checks
+
+      - name: Run cargo-semver-checks
+        run: |
+          # Pre-publish there is no crates.io baseline yet, so diff against a
+          # git revision: the PR base on pull_request, the pushed-from commit
+          # otherwise. The first commit has no baseline and is skipped; the
+          # first publish locks in the crates.io baseline this gate then uses.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASELINE="${{ github.event.pull_request.base.sha }}"
+          else
+            BASELINE="${{ github.event.before }}"
+          fi
+          if [ -z "$BASELINE" ] || [ "$BASELINE" = "0000000000000000000000000000000000000000" ]; then
+            BASELINE="$(git rev-parse HEAD~1 2>/dev/null || true)"
+          fi
+          if [ -z "$BASELINE" ]; then
+            echo "No baseline revision available (first commit); skipping."
+            exit 0
+          fi
+          echo "Comparing public API against baseline $BASELINE"
+          cargo semver-checks \
+            --baseline-rev "$BASELINE" \
+            -p iced_nodegraph \
+            -p iced_nodegraph_sdf
