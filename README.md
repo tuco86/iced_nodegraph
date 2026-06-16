@@ -115,6 +115,21 @@ cargo clippy --workspace -- -D warnings
 
 Requires `wasm-pack` and a WebGPU-capable browser (Chrome/Chromium recommended).
 
+## Benchmarks
+
+The CPU-side per-frame cost (building node silhouettes, layering, and stroking
+edges into one SDF primitive - the work the `info()` callback times) is measured
+with criterion:
+
+```bash
+cargo bench -p iced_nodegraph        # frame_prep: 100 / 500 / 2000 nodes
+```
+
+The cost scales roughly linearly with element count. Indicative figures on an
+Apple Silicon dev machine: ~1.2 ms at 100 nodes, ~6 ms at 500 nodes (the
+`demo_500_nodes` scale), ~22 ms at 2000 nodes. Per-pixel culling runs separately
+on the GPU (a compute-shader tile index), so it is not part of this CPU figure.
+
 ## Architecture
 
 ```
