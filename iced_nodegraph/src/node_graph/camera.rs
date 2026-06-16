@@ -850,8 +850,14 @@ mod tests {
         // Both equal the value pinned by test_world_to_screen_with_viewport_origin.
         assert!(approx_eq(via_layer.x, 120.0), "x: got {}", via_layer.x);
         assert!(approx_eq(via_layer.y, 150.0), "y: got {}", via_layer.y);
-        assert!(approx_eq(via_layer.x, via_world_to_screen.x), "layer vs w2s x");
-        assert!(approx_eq(via_layer.y, via_world_to_screen.y), "layer vs w2s y");
+        assert!(
+            approx_eq(via_layer.x, via_world_to_screen.x),
+            "layer vs w2s x"
+        );
+        assert!(
+            approx_eq(via_layer.y, via_world_to_screen.y),
+            "layer vs w2s y"
+        );
     }
 
     #[test]
