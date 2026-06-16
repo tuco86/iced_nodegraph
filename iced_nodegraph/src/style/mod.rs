@@ -248,6 +248,15 @@ impl GraphStyle {
         let bg = palette.background.base.color;
         let secondary = palette.secondary.base.color;
         let success = palette.success.base.color;
+        // Subtle theme-derived grid as the default canvas backdrop.
+        let grid = TilingBackground::grid(
+            40.0,
+            1.0,
+            Color {
+                a: 0.35,
+                ..palette.background.strong.color
+            },
+        );
 
         if palette.is_dark {
             Self {
@@ -262,7 +271,7 @@ impl GraphStyle {
                     success.g * 0.9,
                     success.b * 0.6,
                 ),
-                tiling: None,
+                tiling: Some(grid),
                 selection_style: SelectionStyle::from_theme(theme),
             }
         } else {
@@ -282,7 +291,7 @@ impl GraphStyle {
                     success.g * 0.8,
                     success.b * 0.5,
                 ),
-                tiling: None,
+                tiling: Some(grid),
                 selection_style: SelectionStyle::from_theme(theme),
             }
         }
