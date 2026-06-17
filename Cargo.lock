@@ -822,7 +822,7 @@ checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 
 [[package]]
 name = "demo_500_nodes"
-version = "0.1.0"
+version = "0.2.0-dev"
 dependencies = [
  "console_error_panic_hook",
  "iced",
@@ -834,7 +834,7 @@ dependencies = [
 
 [[package]]
 name = "demo_common"
-version = "0.1.0"
+version = "0.2.0-dev"
 dependencies = [
  "iced",
  "iced_nodegraph",
@@ -843,7 +843,7 @@ dependencies = [
 
 [[package]]
 name = "demo_hello_world"
-version = "0.1.0"
+version = "0.2.0-dev"
 dependencies = [
  "console_error_panic_hook",
  "demo_common",
@@ -861,7 +861,7 @@ dependencies = [
 
 [[package]]
 name = "demo_interaction"
-version = "0.1.0"
+version = "0.2.0-dev"
 dependencies = [
  "console_error_panic_hook",
  "demo_common",
@@ -873,7 +873,7 @@ dependencies = [
 
 [[package]]
 name = "demo_shader_editor"
-version = "0.1.0"
+version = "0.2.0-dev"
 dependencies = [
  "console_error_panic_hook",
  "iced",
@@ -885,7 +885,7 @@ dependencies = [
 
 [[package]]
 name = "demo_styling"
-version = "0.1.0"
+version = "0.2.0-dev"
 dependencies = [
  "console_error_panic_hook",
  "demo_common",
@@ -1680,7 +1680,7 @@ dependencies = [
 
 [[package]]
 name = "iced_nodegraph"
-version = "0.1.0"
+version = "0.2.0-dev"
 dependencies = [
  "bitflags 2.13.0",
  "criterion",
@@ -1698,7 +1698,7 @@ dependencies = [
 
 [[package]]
 name = "iced_nodegraph_sdf"
-version = "0.1.0"
+version = "0.2.0-dev"
 dependencies = [
  "bytemuck",
  "encase",
@@ -3337,7 +3337,7 @@ dependencies = [
 
 [[package]]
 name = "sdf_basic"
-version = "0.1.0"
+version = "0.2.0-dev"
 dependencies = [
  "iced",
  "iced_aw",
