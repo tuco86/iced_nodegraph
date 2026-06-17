@@ -23,11 +23,13 @@ A task is only complete when all checks pass and code is pushed.
 **Pre-Publish Requirement (before any `cargo publish`):**
 - The CI semver gate (`.github/workflows/ci.yml`) runs `cargo semver-checks` for
   `iced_nodegraph` and `iced_nodegraph_sdf` against the most recent release tag
-  (`v*`). Pre-publish there are no tags, so the gate is a no-op and pre-1.0 API
-  finalization (including breaking changes) stays green. Tag the first release
-  (`vX.Y.Z`) to activate the lock; after that, any unintended public-API break
-  since the last release fails the build until the version is bumped
-  intentionally.
+  (`v*`). The first release (`v0.1.0`) is tagged, so the gate is now ACTIVE: any
+  public-API break since the last release fails the build until the version is
+  bumped to match. Under Cargo's 0.x semver rules a breaking change requires a
+  minor bump (`0.1.x` -> `0.2.0`); additive, non-breaking changes are a patch
+  bump (`0.1.0` -> `0.1.1`). Do not break the public API casually anymore -
+  prefer additive changes, and when a break is genuinely warranted, make it
+  deliberately and bump the minor version in the same change.
 
 ## Automatic Validation
 
@@ -65,15 +67,89 @@ Use the `code-reviewer` agent for reviewing significant code changes before comm
 
 ## Project Status
 
-**Pre-Release**: This project has not been published to crates.io yet. No backwards compatibility is required - breaking API changes are acceptable.
+**Released, pre-1.0 (`v0.1.0`)**: The project is published to crates.io. It is
+still pre-1.0 (beta), so the API is not frozen and breaking changes are allowed
+when justified - but they are no longer free. Treat the public API as
+stabilizing: prefer additive, backwards-compatible changes; reserve breaks for
+cases that genuinely warrant them. Every public-API break must be intentional
+and paired with the appropriate version bump (a minor bump under 0.x semver, see
+the Pre-Publish Requirement above). The semver gate enforces this against the
+last release tag.
 
 ## Documentation Standards
 
-**CRITICAL**: Use minimal, professional language in all documentation:
-- **NO EMOJIS** in code comments, documentation, or console output
-- Use clear, technical language without informal expressions
-- Status indicators: "VERIFIED", "TESTED", "INCOMPLETE" instead of emoji symbols
-- Professional tone in all user-facing text and developer documentation
+### Guiding principle: a legible API needs little documentation
+
+Documentation is the second line of defense, not the first. A clear name, a
+precise type, and a well-shaped signature carry more than any prose can. When an
+item is hard to document because it is confusing, fix the API (rename, retype,
+split) instead of papering over it with words. Docs exist to add the knowledge a
+signature *cannot* carry - never to restate it.
+
+The failure mode to prevent is slop: doc comments that paraphrase the signature,
+assert behavior nobody verified, or pad coverage. Empirically, a comment that
+restates the code is noise (it adds no knowledge), and a comment that asserts
+unverified behavior is worse than none - it is a "bad comment" that misleads
+readers into bugs and is indistinguishable from a correct one. A doc comment must
+earn its place; if it would only repeat the signature, leave it off.
+
+### Tone
+
+- NO EMOJIS in code comments, documentation, or console output.
+- Clear, technical language. No informal expressions, no marketing.
+- Status indicators in prose: "VERIFIED", "TESTED", "INCOMPLETE" (not symbols).
+
+### When you do document a public item
+
+Apply these when documenting a `fn`, `struct`, `enum`, `trait`, `method`,
+`macro`, `type`, or module - especially in a bulk pass.
+
+MUST:
+- Open with one short summary sentence, third-person present indicative
+  ("Returns the world position.", not "This function returns..."). rustdoc uses
+  line 1 as the item summary.
+- Add only knowledge the signature cannot convey: intent / the "why", domain
+  relationships, how the item combines with others, assumptions, invariants,
+  non-obvious cost. This is exactly the content readers need most and get least.
+- Document the failure surfaces that apply: `# Errors` for a `Result`-returning
+  fn (what each variant means), `# Panics` for a fn that can panic (the
+  condition), `# Safety` for every `unsafe fn` (caller invariants).
+- Section order, include only what applies:
+  summary -> prose -> `# Examples` -> `# Panics` -> `# Errors` -> `# Safety`.
+  Always plural `# Examples`.
+
+MUST NOT:
+- Restate the signature or types ("Returns a `usize`" on `-> usize` is slop).
+- Assert behavior not derivable from the signature without having verified it
+  against the body or a known contract.
+- Add filler, or a doc comment that exists only to satisfy a coverage rule.
+
+### Examples and doctests
+
+- Add a `# Examples` doctest where an example genuinely helps a reader use the
+  item correctly. Do not force trivial examples onto self-evident items
+  (getters, `Default`, obvious constructors) - link to a richer example instead.
+- Examples must be complete and copy-paste-ready (no `...`, no pseudo-code) and
+  must compile: the doctest is the correctness check that keeps the example from
+  going stale.
+- Where an example would return `Result`, use `?`, never `unwrap`/`try!`
+  (users copy examples verbatim).
+- For examples that need a renderer/window/event loop (most widget usage), mark
+  the fence `no_run` - it still compiles (and stays correct) but is not executed.
+  Use `ignore` only when it cannot even compile in a doctest context.
+
+### Uncertainty handling (critical for a bulk pass)
+
+- If behavior is not derivable from the signature, read the function body before
+  writing the behavioral claim.
+- If it remains unverifiable from the code (external state, runtime config,
+  caller contract), state only what is verifiable and omit the speculative part.
+  Prefer a doctest that demonstrates verified behavior over prose asserting it.
+
+### Crate / module level
+
+- Each module gets a short overview: purpose, main capabilities, and one
+  code-oriented quick-start, so both concept-first and code-first readers land.
 
 ## Tool Usage Preferences
 
@@ -82,7 +158,7 @@ Use the `code-reviewer` agent for reviewing significant code changes before comm
 | Task | Tool | Example |
 |------|------|---------|
 | Find definition | `mcp__cclsp__find_definition` | `symbol_name: "NodeGraph"` |
-| Find all usages | `mcp__cclsp__find_references` | `symbol_name: "edge_defaults"` |
+| Find all usages | `mcp__cclsp__find_references` | `symbol_name: "push_edge"` |
 | Rename symbol | `mcp__cclsp__rename_symbol` | `symbol_name: "old", new_name: "new"` |
 | Get diagnostics | `mcp__cclsp__get_diagnostics` | `file_path: "src/lib.rs"` |
 
@@ -98,7 +174,7 @@ Use the `code-reviewer` agent for reviewing significant code changes before comm
 - LSP server unavailable
 
 **Common patterns to follow:**
-- When adding a new global config field, use `find_references` on `pin_defaults` to see the pattern
+- When adding a new style field, use `find_references` on `default_node_style` to see the pattern
 - When modifying NodeGraph API, check usages in demos with `find_references`
 
 ## Architecture Overview
@@ -145,8 +221,9 @@ The project uses **euclid** crate for type-safe coordinate transformations:
 ### Widget Architecture
 - **NodeGraph** (`src/node_graph/mod.rs`) - Main container widget managing nodes and edges
 - **NodePin** (`src/node_pin/mod.rs`) - Connection points with `PinSide` enum (Left/Right/Top/Bottom/Row)
-- **PinReference** (`src/node_pin/mod.rs`) - Type-safe identifier for pin connections (`node_id`, `pin_id`)
-- **NodeGraphEvent** (`src/node_graph/mod.rs`) - Unified event enum for all graph interactions
+- **PinRef** (`src/node_graph/mod.rs`) - Type-safe identifier for pin connections (`node_id`, `pin_id`), generic over `N`/`P`
+- **PinEnd** (`src/node_pin/mod.rs`) - Endpoint view passed to `can_connect` (ids, direction, user info)
+- **Callbacks** (`src/node_graph/mod.rs`) - `Fn -> Message` handlers (`on_connect`, `on_move`, ...) instead of an event enum
 - **State Management** (`src/node_graph/state.rs`) - Handles dragging states and camera state
 
 ### SDF-Based Rendering
@@ -154,10 +231,10 @@ Uses **iced_nodegraph_sdf** for high-performance node graph rendering:
 - Nodes, edges, pins, and overlays rendered via SDF `Layer` + `Pattern` API
 - `Pattern` controls stroke appearance (solid, dashed, dotted, arrowed, etc.)
 - `Layer` composites fill, gradient, outline, blur, and expand effects
-- Background is a solid color (no grid shader)
+- Background is theme-driven via `GraphStyle`, with optional `TilingBackground` (`TilingKind`: grid/dots/triangle/hex)
 
 **Edge System**: Fully functional with type-safe API:
-- `push_edge(PinReference, PinReference)` adds connections between pins
+- `push_edge(edge!(from, to))` adds connections between pins (endpoints are `PinRef`)
 - Edge dragging and static edge rendering both work
 - SDF renders edges with bezier curves and configurable patterns
 
@@ -219,10 +296,13 @@ let world_cursor: WorldPoint = camera.screen_to_world().transform_point(cursor_p
 - `EDGE_CLICK_THRESHOLD = 8.0` pixels (in world space)
 
 ### Style System Pattern
-Styles use `iced_nodegraph_sdf::Pattern` and `Layer` directly:
-- `EdgeStyle` has `pattern: Pattern` for stroke appearance, optional `EdgeBorder` and `EdgeShadow`
-- `NodeStyle` has optional `NodeBorder` (with `pattern: Pattern`) and `NodeShadow`
-- Config types (`NodeConfig`, `EdgeConfig`) use `Option<T>` for partial overrides with `merge()`
+Styles are concrete, flat structs (no `Option`/`merge` config layer):
+- `NodeStyle` has flat `fill_color`, `border_color`, `border_pattern: Pattern`,
+  `border_outline_*`, and `shadow_*` fields (colors are `ColorQuad`)
+- `EdgeStyle` has `pattern: Pattern` for the stroke plus flat `border_*` and
+  `shadow_*` fields; `PinStyle` mirrors the same shape
+- Override via struct-update over the theme default inside a `.style()` closure:
+  `NodeStyle { fill_color, ..default_node_style(theme, status) }`
 - `Pattern::solid(width)`, `Pattern::dashed(w, dash, gap)`, etc. for stroke patterns
 
 ## Key Integration Points
@@ -244,14 +324,14 @@ Styles use `iced_nodegraph_sdf::Pattern` and `Layer` directly:
 
 | Module | Purpose | Key Types |
 |--------|---------|-----------|
-| `node_graph/mod.rs` | Main widget, events | `NodeGraph`, `NodeGraphEvent`, `DragInfo` |
+| `node_graph/mod.rs` | Main widget, builders | `NodeGraph`, `Node`, `Edge`, `PinRef`, `DragInfo` |
 | `node_graph/widget.rs` | Widget trait impl | `node_graph()` constructor |
 | `node_graph/camera.rs` | Zoom/pan transforms | `Camera2D`, coordinate math |
 | `node_graph/euclid.rs` | Type-safe coords | `WorldPoint`, `ScreenPoint`, `IntoIced` |
 | `node_graph/state.rs` | Interaction state | `State`, `DragState` |
-| `node_pin/mod.rs` | Connection points | `NodePin`, `PinReference`, `PinSide` |
-| `style/mod.rs` | Theming | `NodeStyle`, `EdgeStyle`, `GraphStyle` |
-| `style/config.rs` | Partial overrides | `NodeConfig`, `EdgeConfig` (merge pattern) |
+| `node_pin/mod.rs` | Connection points | `NodePin`, `PinEnd`, `PinInfo`, `PinSide` |
+| `style/{node,edge,pin}.rs` | Theming | `NodeStyle`, `EdgeStyle`, `PinStyle`, `GraphStyle` |
+| `style/defaults.rs` | Theme defaults | `default_node_style()`, `default_edge_style()`, `default_pin_style()` |
 | `content.rs` | Layout helpers | `node_header()`, `node_footer()`, `simple_node()` |
 | `helpers.rs` | Utilities | `clone_nodes()`, `delete_nodes()`, `SelectionHelper` |
 
@@ -260,7 +340,7 @@ Styles use `iced_nodegraph_sdf::Pattern` and `Layer` directly:
 | Demo | Purpose | Key Patterns |
 |------|---------|--------------|
 | `hello_world/` | Basic usage | Node creation, connections |
-| `styling/` | Customization | `NodeConfig`, `EdgeConfig` usage |
+| `styling/` | Customization | `.style()` closures, `NodeStyle`/`EdgeStyle` |
 | `500_nodes/` | Performance | Procedural generation |
 | `shader_editor/` | Complex app | Compiler, live preview |
 
@@ -281,36 +361,36 @@ lib.rs (public API)
 
 ### Core Types
 ```rust
-// Type-safe pin reference
-pub struct PinReference {
-    pub node_id: usize,
-    pub pin_id: usize,
-}
-
-// Unified event enum
-pub enum NodeGraphEvent {
-    EdgeConnected { from: PinReference, to: PinReference },
-    EdgeDisconnected { from: PinReference, to: PinReference },
-    NodesMoved { delta: Vector, node_ids: Vec<usize> },
-    SelectionChanged { selected: Vec<usize> },
-    CloneRequested { node_ids: Vec<usize> },
-    DeleteRequested { node_ids: Vec<usize> },
+// Type-safe pin reference, generic over node id N and pin id P.
+// PinReference (the old usize/usize struct) no longer exists - use PinRef.
+pub struct PinRef<N = usize, P = usize> {
+    pub node_id: N,
+    pub pin_id: P,
 }
 ```
 
+There is no `NodeGraphEvent` enum. The widget reports through `Fn -> Message`
+callbacks (`on_connect`, `on_move`, ...); the host defines its own `Message`
+enum and maps each callback to one of its variants.
+
 ### NodeGraph Methods
 The widget is generic over node id `N` and pin id `P` (both default to `usize`).
-A connection endpoint is a `PinRef<N, P> { node_id, pin_id }`; `PinReference` is
-the `PinRef<usize, usize>` specialization. Each node is pushed with an explicit
-id as the first argument.
+A connection endpoint is a `PinRef<N, P> { node_id, pin_id }`. Nodes and edges
+are built with the `node(...)` / `edge!(...)` constructors and pushed as whole
+builder values; styling is attached to the builder via a `.style()` closure
+(there is no `push_node_styled` / `push_edge_styled`, and no `NodeConfig` /
+`EdgeConfig`).
 ```rust
-// Adding content (node_id comes first)
-ng.push_node(node_id, position, element);
-ng.push_node_styled(node_id, position, element, NodeConfig);
-ng.push_edge(PinRef::new(0, 0), PinRef::new(1, 0));
-ng.push_edge_styled(from, to, EdgeStyle);
+// Adding content: build with node()/edge!, then push the builder
+ng.push_node(node(node_id, position, element));
+ng.push_node(node(node_id, position, element)
+    .style(|theme, status| NodeStyle { ..default_node_style(theme, status) })
+    .pin_style(|theme, status, info| PinStyle { ..default_pin_style(theme, status) }));
+ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)));
+ng.push_edge(edge!(from, to)
+    .style(|theme, status, from_pin, to_pin| EdgeStyle { ..default_edge_style(theme, status) }));
 
-// Event handlers (callbacks receive PinRef endpoints, not split node/pin ids)
+// Event handlers (callbacks return the host's own Message)
 ng.on_connect(|from, to| Message)        // from, to: PinRef<N, P>
 ng.on_disconnect(|from, to| Message)
 ng.on_move(|delta, node_ids| Message)    // delta: Vector, node_ids: Vec<N> (single or group)
@@ -318,7 +398,11 @@ ng.on_select(|selected_ids| Message)     // selected_ids: Vec<N>
 ng.on_clone(|node_ids| Message)
 ng.on_delete(|node_ids| Message)
 ng.on_pan(|pos, zoom| Message)           // commit-on-release for pan AND zoom
-ng.can_connect(|from, to| bool)          // live snap validation during drag
+ng.on_info(|info| Message)               // per-frame GraphInfo metrics
+ng.on_drag_start(|drag| Message)         // low-level drag hooks (DragInfo<N, P>)
+ng.on_drag_update(|pos| Message)
+ng.on_drag_end(|| Message)
+ng.can_connect(|from, to| bool)          // from, to: PinEnd<'_, N, P, UI> (not PinRef)
 ng.selection(&selected_set)              // highlight + z-order selected nodes
 ng.view(pos, zoom)                        // controlled camera; host owns pos/zoom (pairs with on_pan)
 ```

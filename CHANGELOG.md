@@ -13,7 +13,7 @@ Initial release.
 
 - Node graph editor widget for Iced 0.14 with type-safe coordinate transforms
   (`WorldPoint`/`ScreenPoint`, `Camera2D` zoom/pan, zoom-at-cursor).
-- Type-safe `PinRef`/`PinReference` connection endpoints and `pin!()` macro.
+- Type-safe `PinRef` connection endpoints and `pin!()` macro.
 - Interactive node dragging, single- and multi-select, box selection, group move.
 - Clone (Ctrl+D) and delete (Delete) with selection sync across all demos.
 - Controlled camera and selection via `view()`/`selection()`, with `on_pan`,

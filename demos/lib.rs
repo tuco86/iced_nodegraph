@@ -92,7 +92,8 @@
 //!     `-- shader_editor/
 //! ```
 //!
-//! See [`docs/architecture.md`](../docs/architecture.md) for complete workspace documentation.
+//! See the root `README.md` for the project overview and the
+//! `iced_nodegraph_sdf/ARCHITECTURE.md` for the SDF renderer design.
 
 #![allow(unused)]
 
