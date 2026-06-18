@@ -10,6 +10,7 @@ keywords = ["iced", "sdf", "distance-field", "gpu", "segment"]
 categories = ["gui", "graphics", "rendering"]
 
 [dependencies]
+bitflags.workspace = true
 bytemuck.workspace = true
 glam.workspace = true
 encase.workspace = true

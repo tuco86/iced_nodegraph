@@ -502,6 +502,13 @@ where
             time,
         };
 
+        // Cursor in window-logical coordinates for the hovered-tile debug mode;
+        // each SDF layer maps it to tile-local pixels. Off-widget when absent.
+        let (mouse_x, mouse_y) = cursor
+            .position()
+            .map(|p| (p.x, p.y))
+            .unwrap_or((f32::MIN, f32::MIN));
+
         // Handle panning when dragging the graph
         if let Dragging::Graph(origin) = state.dragging
             && let Some(cursor_position) = cursor.position()
@@ -734,7 +741,8 @@ where
                         shadow_batch
                             .camera(cx, cy, cam_zoom)
                             .time(render_context.time)
-                            .debug_tiles(self.sdf_debug.shadows),
+                            .debug(self.sdf_debug.layer_flags(self.sdf_debug.shadows))
+                            .mouse(mouse_x, mouse_y),
                     );
                 });
             }
@@ -853,7 +861,8 @@ where
                     edge_batch
                         .camera(cx, cy, render_context.camera_zoom)
                         .time(render_context.time)
-                        .debug_tiles(self.sdf_debug.edges),
+                        .debug(self.sdf_debug.layer_flags(self.sdf_debug.edges))
+                        .mouse(mouse_x, mouse_y),
                 );
             }
 
@@ -980,7 +989,8 @@ where
                         fill_batch
                             .camera(cx, cy, cam_zoom)
                             .time(render_context.time)
-                            .debug_tiles(self.sdf_debug.node_fill),
+                            .debug(self.sdf_debug.layer_flags(self.sdf_debug.node_fill))
+                            .mouse(mouse_x, mouse_y),
                     );
                 });
             }
@@ -1164,7 +1174,8 @@ where
                             fg_batch
                                 .camera(cx, cy, cam_zoom)
                                 .time(render_context.time)
-                                .debug_tiles(self.sdf_debug.node_foreground),
+                                .debug(self.sdf_debug.layer_flags(self.sdf_debug.node_foreground))
+                                .mouse(mouse_x, mouse_y),
                         );
                     });
                 }

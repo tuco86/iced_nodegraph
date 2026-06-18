@@ -133,6 +133,8 @@ enum ApplicationMessage {
     ToggleDebugShadows,
     ToggleDebugFill,
     ToggleDebugForeground,
+    ToggleDebugDistanceField,
+    ToggleDebugHoveredTile,
     Info(GraphInfo),
 }
 
@@ -199,6 +201,12 @@ impl Application {
             }
             ApplicationMessage::ToggleDebugForeground => {
                 self.sdf_debug.node_foreground = !self.sdf_debug.node_foreground
+            }
+            ApplicationMessage::ToggleDebugDistanceField => {
+                self.sdf_debug.distance_field = !self.sdf_debug.distance_field
+            }
+            ApplicationMessage::ToggleDebugHoveredTile => {
+                self.sdf_debug.hovered_tile = !self.sdf_debug.hovered_tile
             }
             ApplicationMessage::Info(info) => {
                 let frame: Vec<f32> = info
@@ -334,6 +342,16 @@ impl Application {
             checkbox(self.sdf_debug.node_foreground)
                 .label("Foreground")
                 .on_toggle(|_| ApplicationMessage::ToggleDebugForeground)
+                .size(14)
+                .text_size(12),
+            checkbox(self.sdf_debug.distance_field)
+                .label("IQ Field")
+                .on_toggle(|_| ApplicationMessage::ToggleDebugDistanceField)
+                .size(14)
+                .text_size(12),
+            checkbox(self.sdf_debug.hovered_tile)
+                .label("Hovered Tile")
+                .on_toggle(|_| ApplicationMessage::ToggleDebugHoveredTile)
                 .size(14)
                 .text_size(12),
         ]

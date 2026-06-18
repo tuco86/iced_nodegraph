@@ -189,8 +189,7 @@ impl TestRenderer {
             grid_rows,
             tile_base: 0,
             _pad0: 0,
-            _pad1: 0,
-            _pad2: 0,
+            mouse_px: GpuVec2::ZERO,
         };
 
         self.execute_render(
@@ -465,8 +464,7 @@ impl TestRenderer {
             grid_rows,
             tile_base: 0,
             _pad0: 0,
-            _pad1: 0,
-            _pad2: 0,
+            mouse_px: GpuVec2::ZERO,
         };
 
         // Encode to GPU format via encase
@@ -739,8 +737,7 @@ impl TestRenderer {
             grid_rows,
             tile_base: 0,
             _pad0: 0,
-            _pad1: 0,
-            _pad2: 0,
+            mouse_px: GpuVec2::ZERO,
         };
         self.execute_render(
             &gpu_entries,

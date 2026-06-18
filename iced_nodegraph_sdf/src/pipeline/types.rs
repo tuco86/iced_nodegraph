@@ -162,8 +162,8 @@ pub(crate) struct DrawData {
     /// Tile base offset into tile buffers.
     pub tile_base: u32,
     pub _pad0: u32,
-    pub _pad1: u32,
-    pub _pad2: u32,
+    /// Cursor in tile-local physical pixels, for the hovered-tile debug mode.
+    pub mouse_px: GpuVec2,
 }
 
 /// Minimal compute uniform: just the index into DrawData storage buffer.
@@ -242,8 +242,7 @@ impl Default for DrawData {
             grid_rows: 0,
             tile_base: 0,
             _pad0: 0,
-            _pad1: 0,
-            _pad2: 0,
+            mouse_px: GpuVec2::ZERO,
         }
     }
 }

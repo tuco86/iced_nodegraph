@@ -1700,6 +1700,7 @@ dependencies = [
 name = "iced_nodegraph_sdf"
 version = "0.2.0-dev"
 dependencies = [
+ "bitflags 2.13.0",
  "bytemuck",
  "encase",
  "glam",

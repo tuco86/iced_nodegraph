@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use web_time::Instant;
 
+use bitflags::bitflags;
 use encase::ShaderSize;
 use iced::Rectangle;
 use iced::wgpu::{
@@ -40,6 +41,28 @@ const MAX_SLOTS_PER_TILE: u32 = 32;
 // Each slot = 2 u32s (segment_idx, style_idx)
 const SLOT_STRIDE: u32 = MAX_SLOTS_PER_TILE * 2;
 
+bitflags! {
+    /// Per-draw SDF debug visualization modes. The bit values are mirrored by
+    /// matching `DEBUG_*` constants in `shader.wgsl`; keep them in sync.
+    ///
+    /// Modes are independent and may be combined, but [`DebugFlags::DISTANCE_FIELD`]
+    /// and [`DebugFlags::HOVERED_TILE`] both replace normal band rendering, so the
+    /// last one evaluated wins where they overlap.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    pub struct DebugFlags: u32 {
+        /// Overlay tile borders, tinted by slot occupancy (green to red on a
+        /// log scale), and mark empty tiles. Diagnoses the spatial index.
+        const TILE_HEATMAP = 1 << 0;
+        /// Replace band rendering with the raw IQ distance field of each entry.
+        const DISTANCE_FIELD = 1 << 1;
+        /// Show the IQ distance field built from only the segments held by the
+        /// tile under the cursor, plus an occupancy readout bar. Visualizes what
+        /// a single tile's 32-slot buffer actually contains (and whether it
+        /// overflowed). Requires a mouse position (see [`SdfPrimitive::mouse`]).
+        const HOVERED_TILE = 1 << 2;
+    }
+}
+
 #[derive(Debug, Clone)]
 struct DrawEntry {
     drawable: Drawable,
@@ -53,7 +76,11 @@ pub struct SdfPrimitive {
     pub camera_position: (f32, f32),
     pub camera_zoom: f32,
     pub time: f32,
-    pub debug_flags: u32,
+    pub debug: DebugFlags,
+    /// Cursor position in window-logical coordinates (the same space as the
+    /// widget bounds passed to `prepare`). `prepare` maps it to tile-local
+    /// physical pixels for [`DebugFlags::HOVERED_TILE`]. Off-widget by default.
+    pub mouse: (f32, f32),
 }
 
 impl SdfPrimitive {
@@ -63,7 +90,8 @@ impl SdfPrimitive {
             camera_position: (0.0, 0.0),
             camera_zoom: 1.0,
             time: 0.0,
-            debug_flags: 0,
+            debug: DebugFlags::empty(),
+            mouse: (f32::MIN, f32::MIN),
         }
     }
 
@@ -95,12 +123,15 @@ impl SdfPrimitive {
         self.time = time;
         self
     }
-    pub fn debug_flags(mut self, flags: u32) -> Self {
-        self.debug_flags = flags;
+    pub fn debug(mut self, flags: DebugFlags) -> Self {
+        self.debug = flags;
         self
     }
-    pub fn debug_tiles(self, enabled: bool) -> Self {
-        self.debug_flags(if enabled { 1 } else { 0 })
+    /// Sets the cursor position (window-logical coordinates) used by
+    /// [`DebugFlags::HOVERED_TILE`]. No effect unless that flag is set.
+    pub fn mouse(mut self, x: f32, y: f32) -> Self {
+        self.mouse = (x, y);
+        self
     }
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
@@ -463,6 +494,12 @@ impl Primitive for SdfPrimitive {
             &pipeline.compute_uniform_scratch,
         );
 
+        // Cursor in tile-local physical pixels (matches the shader's `local_px`).
+        let mouse_px = types::GpuVec2::new(
+            (self.mouse.0 - bounds.x) * scale,
+            (self.mouse.1 - bounds.y) * scale,
+        );
+
         // Push DrawData
         let _ = pipeline.draw_data_buffer.push(
             device,
@@ -473,15 +510,14 @@ impl Primitive for SdfPrimitive {
                 camera_zoom: self.camera_zoom,
                 scale_factor: scale,
                 time: self.time,
-                debug_flags: self.debug_flags,
+                debug_flags: self.debug.bits(),
                 entry_count,
                 entry_start,
                 grid_cols,
                 grid_rows,
                 tile_base,
                 _pad0: 0,
-                _pad1: 0,
-                _pad2: 0,
+                mouse_px,
             },
         );
 

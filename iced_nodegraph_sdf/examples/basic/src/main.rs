@@ -3,7 +3,7 @@ use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use iced::widget::{button, checkbox, column, container, pick_list, row, scrollable, slider, text};
 use iced::{Color, Element, Fill, Length, Rectangle, Size, Subscription, Theme};
-use iced_nodegraph_sdf::{Curve, Drawable, Pattern, SdfPrimitive, Style, Tiling};
+use iced_nodegraph_sdf::{Curve, DebugFlags, Drawable, Pattern, SdfPrimitive, Style, Tiling};
 
 fn main() -> iced::Result {
     iced::application(App::default, App::update, App::view)
@@ -1422,7 +1422,11 @@ where
             b,
             prim.camera(b.width * 0.5 / z, b.height * 0.5 / z, z)
                 .time(self.time)
-                .debug_tiles(self.debug_tiles),
+                .debug(if self.debug_tiles {
+                    DebugFlags::TILE_HEATMAP
+                } else {
+                    DebugFlags::empty()
+                }),
         );
     }
 }
@@ -1484,7 +1488,11 @@ where
             b,
             prim.camera(b.width * 0.5 / z, b.height * 0.5 / z, z)
                 .time(self.time)
-                .debug_tiles(self.debug_tiles),
+                .debug(if self.debug_tiles {
+                    DebugFlags::TILE_HEATMAP
+                } else {
+                    DebugFlags::empty()
+                }),
         );
     }
 }
@@ -1549,7 +1557,11 @@ where
             b,
             prim.camera(b.width * 0.5 / z, b.height * 0.5 / z, z)
                 .time(self.time)
-                .debug_tiles(self.debug_tiles),
+                .debug(if self.debug_tiles {
+                    DebugFlags::TILE_HEATMAP
+                } else {
+                    DebugFlags::empty()
+                }),
         );
     }
 }

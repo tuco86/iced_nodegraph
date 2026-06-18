@@ -53,6 +53,6 @@ pub use curve::{Curve, ShapeBuilder};
 pub use drawable::Drawable;
 pub use pattern::Pattern;
 pub use pipeline::types::SdfStats;
-pub use primitive::{SdfPrimitive, sdf_stats};
+pub use primitive::{DebugFlags, SdfPrimitive, sdf_stats};
 pub use style::{Stop, Style};
 pub use tiling::Tiling;

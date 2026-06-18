@@ -27,6 +27,12 @@ const FLAG_CLOSED: u32 = 1u;
 const STYLE_FLAG_HAS_PATTERN: u32 = 1u;
 const STYLE_FLAG_DISTANCE_FIELD: u32 = 2u;
 
+// Debug visualization modes (DrawData.debug_flags). Mirror `DebugFlags` in
+// primitive.rs.
+const DEBUG_TILE_HEATMAP: u32 = 1u;
+const DEBUG_DISTANCE_FIELD: u32 = 2u;
+const DEBUG_HOVERED_TILE: u32 = 4u;
+
 // segment.flags (in _pad0 slot)
 const SEG_FLAG_SIGNED: u32 = 1u;
 
@@ -52,8 +58,7 @@ struct DrawData {
     grid_rows: u32,
     tile_base: u32,
     _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
+    mouse_px: vec2<f32>,
 }
 
 struct GpuSegment {
@@ -457,7 +462,8 @@ fn segment_total_arc(seg_idx: u32) -> f32 {
 
 // total_arc: total arc-length of the contour (for normalizing u to 0..1)
 fn render_style(sdf: SdfResult, style: GpuStyle, draw: DrawData, total_arc: f32) -> vec4<f32> {
-    if (style.flags & STYLE_FLAG_DISTANCE_FIELD) != 0u {
+    if (style.flags & STYLE_FLAG_DISTANCE_FIELD) != 0u
+        || (draw.debug_flags & DEBUG_DISTANCE_FIELD) != 0u {
         return render_distance_field(sdf.dist, style, draw);
     }
 
@@ -614,6 +620,72 @@ fn vs_main(@builtin(vertex_index) vid: u32, @builtin(instance_index) iid: u32) -
 // Fragment Shader
 // ============================================================================
 
+// Hovered-tile inspector: render the IQ distance field built from ONLY the
+// segments held by the tile under the cursor, plus an occupancy readout. Makes
+// a single tile's 32-slot buffer (and any overflow) directly visible.
+fn render_hovered_tile(draw: DrawData, local_px: vec2<f32>, world_p: vec2<f32>) -> vec4<f32> {
+    let mcol = u32(draw.mouse_px.x / TILE_SIZE);
+    let mrow = u32(draw.mouse_px.y / TILE_SIZE);
+    if draw.mouse_px.x < 0.0 || draw.mouse_px.y < 0.0
+        || mcol >= draw.grid_cols || mrow >= draw.grid_rows {
+        // Cursor outside this layer's grid: contribute nothing (discarded).
+        return vec4(0.0);
+    }
+
+    let htile = draw.tile_base + mrow * draw.grid_cols + mcol;
+    let hcount = tile_counts[htile];
+    let hbase = htile * SLOT_STRIDE;
+
+    // Nearest segment among the hovered tile's slots (regular segments only).
+    var best_abs = 1e30;
+    var best_signed = 1e30;
+    var best_style = 0u;
+    var found = false;
+    var k = 0u;
+    while k < hcount {
+        let rs = tile_slots[hbase + k * 2u];
+        if (rs & TILING_BIT) == 0u {
+            let sdf = eval_single_segment(world_p, rs);
+            let ad = abs(sdf.dist);
+            if ad < best_abs {
+                best_abs = ad;
+                best_signed = sdf.dist;
+                best_style = tile_slots[hbase + k * 2u + 1u];
+                found = true;
+            }
+        }
+        k++;
+    }
+
+    var col: vec4<f32>;
+    if found {
+        col = render_distance_field(best_signed, styles[best_style], draw);
+    } else {
+        col = vec4(0.02, 0.02, 0.04, 1.0);
+    }
+
+    // Outline the hovered tile cell so its position is unambiguous.
+    if u32(local_px.x / TILE_SIZE) == mcol && u32(local_px.y / TILE_SIZE) == mrow {
+        let lx = local_px.x - f32(mcol) * TILE_SIZE;
+        let ly = local_px.y - f32(mrow) * TILE_SIZE;
+        let edge = min(min(lx, ly), min(TILE_SIZE - lx, TILE_SIZE - ly));
+        if edge < 1.0 {
+            col = mix(col, vec4(1.0, 1.0, 0.0, 1.0), 0.9);
+        }
+    }
+
+    // Occupancy readout: a heat bar along the bottom edge. Width tracks
+    // count / MAX_SLOTS; full red means the tile is saturated (overflow risk).
+    let grid_w = f32(draw.grid_cols) * TILE_SIZE;
+    let grid_h = f32(draw.grid_rows) * TILE_SIZE;
+    let frac = f32(hcount) / f32(MAX_SLOTS_PER_TILE);
+    if local_px.y > grid_h - 6.0 && local_px.x < grid_w * frac {
+        col = vec4(frac, 1.0 - frac, 0.0, 1.0);
+    }
+
+    return col;
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let draw = draws[in.draw_idx];
@@ -623,6 +695,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let cs = draw.camera_zoom * draw.scale_factor;
     let world_p = local_px / cs - draw.camera_position;
+
+    if (draw.debug_flags & DEBUG_HOVERED_TILE) != 0u && draw.grid_cols > 0u {
+        let hovered = render_hovered_tile(draw, local_px, world_p);
+        if hovered.a < 0.001 { discard; }
+        return hovered;
+    }
 
     var acc = vec4(0.0);
 
@@ -635,7 +713,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let count = tile_counts[tile_idx];
 
         if count == 0u {
-            if (draw.debug_flags & 1u) != 0u {
+            if (draw.debug_flags & DEBUG_TILE_HEATMAP) != 0u {
                 return vec4(0.0, 0.05, 0.0, 0.1);
             }
             discard;
@@ -708,7 +786,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // Debug: tile borders with slot count heat map
-    if (draw.debug_flags & 1u) != 0u && draw.grid_cols > 0u {
+    if (draw.debug_flags & DEBUG_TILE_HEATMAP) != 0u && draw.grid_cols > 0u {
         let tile_col = u32(local_px.x / TILE_SIZE);
         let tile_row = u32(local_px.y / TILE_SIZE);
         let tile_idx = draw.tile_base + tile_row * draw.grid_cols + tile_col;

@@ -43,6 +43,7 @@ use std::hash::Hash;
 use std::time::Duration;
 
 use iced::{Length, Point, Size, Vector};
+use iced_nodegraph_sdf::DebugFlags as SdfDebugFlags;
 
 use crate::ids::{EdgeId, NodeId, PinId};
 use crate::node_pin::{PinEnd, PinInfo};
@@ -203,13 +204,36 @@ pub(crate) struct RenderContext {
     pub time: f32,
 }
 
-/// Per-layer SDF tile debug toggles.
+/// SDF debug visualization controls.
+///
+/// `edges`/`shadows`/`node_fill`/`node_foreground` toggle the tile-occupancy
+/// heat map per render layer. `distance_field` and `hovered_tile` are graph-wide
+/// modes applied to every layer: the raw IQ distance field, and the
+/// cursor-tile slot inspector. Both replace normal band rendering, so a lower
+/// layer's output may be hidden behind a higher one.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SdfDebug {
     pub edges: bool,
     pub shadows: bool,
     pub node_fill: bool,
     pub node_foreground: bool,
+    /// Render the raw IQ distance field instead of band fills (all layers).
+    pub distance_field: bool,
+    /// Inspect the tile under the cursor: show only its slot contents as an IQ
+    /// field, with an occupancy readout bar. Visualizes per-tile slot overflow.
+    pub hovered_tile: bool,
+}
+
+impl SdfDebug {
+    /// Combines the per-layer heat-map toggle with the graph-wide modes into the
+    /// flag set passed to one primitive layer.
+    pub(super) fn layer_flags(self, heatmap: bool) -> SdfDebugFlags {
+        let mut flags = SdfDebugFlags::empty();
+        flags.set(SdfDebugFlags::TILE_HEATMAP, heatmap);
+        flags.set(SdfDebugFlags::DISTANCE_FIELD, self.distance_field);
+        flags.set(SdfDebugFlags::HOVERED_TILE, self.hovered_tile);
+        flags
+    }
 }
 
 /// Counts for one element kind in a frame: how many exist, how many are in view,

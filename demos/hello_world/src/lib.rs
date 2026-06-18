@@ -2098,9 +2098,7 @@ impl Application {
         if tile_debug {
             ng = ng.sdf_debug(iced_nodegraph::SdfDebug {
                 edges: true,
-                shadows: false,
-                node_fill: false,
-                node_foreground: false,
+                ..Default::default()
             });
         }
 
