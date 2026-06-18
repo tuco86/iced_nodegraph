@@ -5,6 +5,8 @@
 
 #![cfg(test)]
 
+use std::sync::{Mutex, MutexGuard, OnceLock};
+
 use encase::{ShaderSize, ShaderType, StorageBuffer, UniformBuffer, internal::WriteInto};
 use wgpu::util::DeviceExt;
 use wgpu::*;
@@ -19,6 +21,27 @@ use crate::style::Style;
 const TILE_SIZE: f32 = 16.0;
 const MAX_SLOTS_PER_TILE: u32 = 32;
 const SLOT_STRIDE: u32 = MAX_SLOTS_PER_TILE * 2;
+
+/// One significant tiled-vs-untiled pixel mismatch: `(x, y, tiled, untiled, delta)`.
+type PixelDiff = (u32, u32, [u8; 4], [u8; 4], i32);
+
+/// Shared headless renderer for all pixel tests.
+///
+/// A real application owns exactly one wgpu device (iced creates it once); every
+/// `SdfPrimitive` draws through it. The tests mirror that: one device, created
+/// lazily and reused, rather than a fresh `Instance`/`Adapter`/`Device` per test.
+/// Creating many independent devices concurrently (the default `cargo test`
+/// thread pool) deadlocks some drivers; sharing one and serializing GPU work
+/// behind the mutex removes that footgun so the suite runs under the default
+/// parallel runner. The lock is poison-tolerant so one failing test does not
+/// cascade into the rest.
+fn shared_renderer() -> MutexGuard<'static, TestRenderer> {
+    static SHARED: OnceLock<Mutex<TestRenderer>> = OnceLock::new();
+    SHARED
+        .get_or_init(|| Mutex::new(TestRenderer::new()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
 
 /// Headless SDF renderer for pixel-level testing.
 struct TestRenderer {
@@ -862,7 +885,7 @@ fn bgl_storage_rw(binding: u32, min_size: u64) -> BindGroupLayoutEntry {
 /// All pixels on the stroke must have the same alpha.
 #[test]
 fn solid_stroke_no_tile_seams() {
-    let renderer = TestRenderer::new();
+    let renderer = shared_renderer();
     let width = 128u32;
     let height = 64u32;
     let zoom = 1.0;
@@ -905,7 +928,7 @@ fn solid_stroke_no_tile_seams() {
 /// neighbors have significantly higher alpha (indicating a culling gap).
 #[test]
 fn dashed_stroke_no_tile_seams() {
-    let renderer = TestRenderer::new();
+    let renderer = shared_renderer();
     let width = 128u32;
     let height = 64u32;
     let zoom = 1.0;
@@ -948,7 +971,7 @@ fn dashed_stroke_no_tile_seams() {
 /// pixel renders opaque — pre-fix, alternating tile-shaped chunks dropped.
 #[test]
 fn tight_overshoot_bezier_renders_without_holes() {
-    let renderer = TestRenderer::new();
+    let renderer = shared_renderer();
     let width = 256u32;
     let height = 128u32;
     let zoom = 1.0;
@@ -1013,7 +1036,7 @@ fn tight_overshoot_bezier_renders_without_holes() {
 /// within tens of percent, not >50% drop.
 #[test]
 fn dashed_stroke_at_angle_preserves_coverage() {
-    let renderer = TestRenderer::new();
+    let renderer = shared_renderer();
     let width = 384u32;
     let height = 96u32;
     let zoom = 1.0;
@@ -1057,7 +1080,7 @@ fn dashed_stroke_at_angle_preserves_coverage() {
 /// consistent with their vertical neighbors.
 #[test]
 fn bezier_multi_style_no_row_artifacts() {
-    let renderer = TestRenderer::new();
+    let renderer = shared_renderer();
     let width = 128u32;
     let height = 128u32;
     let zoom = 1.0;
@@ -1124,7 +1147,7 @@ fn bezier_multi_style_no_row_artifacts() {
 /// Must not show horizontal 1-pixel artifacts at tile row boundaries.
 #[test]
 fn edge_editor_defaults_no_row_artifacts() {
-    let renderer = TestRenderer::new();
+    let renderer = shared_renderer();
     // Simulate a canvas region similar to the edge editor at typical window size
     let width = 800u32;
     let height = 500u32;
@@ -1169,7 +1192,7 @@ fn edge_editor_defaults_no_row_artifacts() {
     let untiled = renderer.render_opts(&drawables, width, height, zoom, false);
 
     // Find visible pixels where tiled and untiled differ significantly.
-    let mut significant_diffs: Vec<(u32, u32, [u8; 4], [u8; 4], i32)> = Vec::new();
+    let mut significant_diffs: Vec<PixelDiff> = Vec::new();
     for y in 0..height {
         for x in 0..width {
             let t = TestRenderer::pixel_at(&tiled, width, x, y);
@@ -1211,7 +1234,7 @@ fn edge_editor_defaults_no_row_artifacts() {
 /// Tests the untiled path to isolate SDF evaluation from tiling.
 #[test]
 fn bezier_stroke_edge_is_smooth() {
-    let renderer = TestRenderer::new();
+    let renderer = shared_renderer();
     let width = 800u32;
     let height = 500u32;
     let extent = 160.0_f32;
@@ -1436,7 +1459,7 @@ fn cpu_bez_deriv2(p0: &[f32; 2], p1: &[f32; 2], p2: &[f32; 2], p3: &[f32; 2], t:
 /// The stroke center should have consistent alpha - any drop at y%16==0 is a bug.
 #[test]
 fn no_missing_rows_in_stroke() {
-    let renderer = TestRenderer::new();
+    let renderer = shared_renderer();
     let width = 800u32;
     let height = 500u32;
     let extent = 160.0_f32;
@@ -1513,7 +1536,7 @@ fn no_missing_rows_in_stroke() {
 #[test]
 #[ignore]
 fn diagnose_wobble_at_288() {
-    let renderer = TestRenderer::new();
+    let renderer = shared_renderer();
     let width = 800u32;
     let height = 500u32;
     let extent = 160.0_f32;
@@ -1541,7 +1564,7 @@ fn diagnose_wobble_at_288() {
 /// Distance field visualization must show two distinct colors (signed).
 #[test]
 fn distance_field_shows_both_sides() {
-    let renderer = TestRenderer::new();
+    let renderer = shared_renderer();
     let width = 128u32;
     let height = 128u32;
     let zoom = 1.0;
@@ -1579,7 +1602,7 @@ fn distance_field_shows_both_sides() {
 /// can't silently regress if the shader's local-pixel convention changes.
 #[test]
 fn bounds_origin_shift_preserves_shape_position() {
-    let renderer = TestRenderer::new();
+    let renderer = shared_renderer();
     let width = 256u32;
     let height = 128u32;
     let zoom = 1.0;
@@ -1627,7 +1650,7 @@ fn bounds_origin_shift_preserves_shape_position() {
 
     // Sample a row of pixels through the shape center on both images.
     // The shape should appear at the same screen position in both.
-    let cy = (height / 2) as u32;
+    let cy = height / 2;
     let mut mismatches = Vec::new();
     for x in 20..width - 20 {
         let bp = TestRenderer::pixel_at(&baseline, width, x, cy);
@@ -1660,7 +1683,7 @@ fn bounds_origin_shift_preserves_shape_position() {
 /// all around the shape — no missing edges or culling holes along the contour.
 #[test]
 fn closed_stroke_border_complete() {
-    let renderer = TestRenderer::new();
+    let renderer = shared_renderer();
     let width = 256u32;
     let height = 128u32;
     let zoom = 1.0;
@@ -1696,7 +1719,7 @@ fn closed_stroke_border_complete() {
 /// not be culled.
 #[test]
 fn closed_solid_fill_large_no_interior_holes() {
-    let renderer = TestRenderer::new();
+    let renderer = shared_renderer();
     let width = 512u32;
     let height = 256u32;
     let zoom = 1.0;
@@ -1736,7 +1759,7 @@ fn closed_solid_fill_large_no_interior_holes() {
 /// covering the node body adjacent to each pin.
 #[test]
 fn closed_circle_solid_fill_does_not_leak_outside() {
-    let renderer = TestRenderer::new();
+    let renderer = shared_renderer();
     let width = 128u32;
     let height = 128u32;
     let zoom = 1.0;
@@ -1788,7 +1811,7 @@ fn closed_circle_solid_fill_does_not_leak_outside() {
 /// Tiles deep inside the shape must not be culled.
 #[test]
 fn closed_solid_fill_no_interior_holes() {
-    let renderer = TestRenderer::new();
+    let renderer = shared_renderer();
     let width = 128u32;
     let height = 128u32;
     let zoom = 1.0;
@@ -1849,7 +1872,7 @@ fn save_rgba_png(path: &str, width: u32, height: u32, pixels: &[[u8; 4]], bg: [u
 #[test]
 #[ignore]
 fn dump_edge_editor_center() {
-    let renderer = TestRenderer::new();
+    let renderer = shared_renderer();
     let width = 160u32;
     let height = 80u32;
     let scale = 2.0_f32;
@@ -1947,7 +1970,7 @@ fn dump_edge_editor_center() {
 /// with tile boundaries. This is the single-edge form of the reported artifact.
 #[test]
 fn bezier_stroke_edge_is_smooth_tiled_hidpi() {
-    let renderer = TestRenderer::new();
+    let renderer = shared_renderer();
     let width = 512u32;
     let height = 384u32;
     let scale = 2.0_f32;
@@ -2011,7 +2034,7 @@ fn bezier_stroke_edge_is_smooth_tiled_hidpi() {
 /// boundary). Reproduces the 1px seam seen in the sdf_basic edge editor.
 #[test]
 fn tiling_alignment_is_invisible() {
-    let r = TestRenderer::new();
+    let r = shared_renderer();
     let (w, h) = (256u32, 256u32);
     let zoom = 0.7_f32;
     let scale = 2.0_f32; // 4K-style HiDPI, as in the bug report
@@ -2093,7 +2116,7 @@ fn tiling_alignment_is_invisible() {
 /// premultiplied-compositing seam that multi-band tilings produced (#15).
 #[test]
 fn shadow_band_outward_alpha_has_no_seam() {
-    let renderer = TestRenderer::new();
+    let renderer = shared_renderer();
     let width = 128u32;
     let height = 128u32;
     let zoom = 1.0;
@@ -2144,7 +2167,7 @@ fn shadow_band_outward_alpha_has_no_seam() {
 /// boundary - the chain is evaluated in a single pass, so no premultiplied dip.
 #[test]
 fn abutting_chain_bands_stay_opaque_across_boundary() {
-    let renderer = TestRenderer::new();
+    let renderer = shared_renderer();
     let width = 128u32;
     let height = 128u32;
     let zoom = 1.0;
