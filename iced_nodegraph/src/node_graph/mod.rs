@@ -475,7 +475,18 @@ where
     /// Adds a node with the given ID and default styling.
     ///
     /// The node will use theme defaults from `default_node_style()`.
+    ///
+    /// Node IDs must be unique: lookups resolve to the first match, so a duplicate
+    /// id silently shadows another node (e.g. it renders doubled while dragging). In
+    /// debug builds this asserts uniqueness; prefer a stable id from your data (a DB
+    /// key, `uuid::Uuid`, a typed newtype) over a hand-managed counter.
     pub fn push_node(&mut self, node: Node<'a, N, P, UI, Message, Theme, Renderer>) {
+        debug_assert!(
+            !self.nodes.iter().any(|(n, ..)| n == &node.id),
+            "duplicate node id {:?}: lookups resolve to the first match, so duplicate \
+             ids render and behave undefined - node ids must be unique",
+            node.id,
+        );
         self.nodes.push((
             node.id,
             node.position,

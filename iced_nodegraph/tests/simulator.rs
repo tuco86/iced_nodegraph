@@ -819,6 +819,26 @@ fn backspace_in_focused_text_input_does_not_delete_node() {
 }
 
 // ---------------------------------------------------------------------------
+// Duplicate node id: debug-build guard (node_index resolves to the first match,
+// so a duplicate id renders/behaves undefined). Edge ids are intentionally NOT
+// guarded - `edge!` defaults them to `()` and edges are addressed by index.
+// ---------------------------------------------------------------------------
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "duplicate node id")]
+fn push_node_rejects_duplicate_id_in_debug() {
+    let mut ng: Graph = NodeGraph::default();
+    let body = || {
+        container(text("n"))
+            .width(Length::Fixed(NODE_W))
+            .height(Length::Fixed(NODE_H))
+    };
+    ng.push_node(node(7usize, Point::new(0.0, 0.0), body()));
+    ng.push_node(node(7usize, Point::new(50.0, 50.0), body()));
+}
+
+// ---------------------------------------------------------------------------
 // Connection validation (no can_connect): direction + self-pin rules.
 //
 // Duplicate-edge rejection is intentionally NOT a widget guarantee - it is the
