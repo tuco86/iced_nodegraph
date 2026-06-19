@@ -99,6 +99,28 @@ fn layer_camera(
     (cx, cy)
 }
 
+/// Submits an SDF primitive and records whether it animates into `animated`.
+///
+/// Routing every primitive through one boundary keeps the on-demand redraw flag
+/// complete across all layers - edges, fills, node borders, pins, overlays - rather
+/// than edges only. `update()` reads the flag to keep an animated `.flow()` pattern
+/// redrawing without the host driving a frame clock. Detection must live here on the
+/// widget side: the GPU `prepare` step sees the primitive but has no `shell` to
+/// request a redraw.
+fn draw_sdf<Renderer>(
+    renderer: &mut Renderer,
+    animated: &std::cell::Cell<bool>,
+    clip: Rectangle,
+    primitive: SdfPrimitive,
+) where
+    Renderer: iced_wgpu::primitive::Renderer,
+{
+    if primitive.has_animations() {
+        animated.set(true);
+    }
+    renderer.draw_primitive(clip, primitive);
+}
+
 fn world_bbox_to_screen_bounds(
     x0: f32,
     y0: f32,
@@ -474,6 +496,10 @@ where
         viewport: &Rectangle,
     ) {
         let state = tree.state.downcast_ref::<NodeGraphState>();
+        // Recompute the animation flag from the primitives actually submitted this
+        // frame (each `draw_sdf` ORs its primitive in); reset first so removing the
+        // last animated style lets the redraw loop wind down.
+        state.sdf_animated.set(false);
         // Refresh the camera's viewport origin from the widget's screen position
         // so SDF layers, child content, and hit-testing stay aligned when the
         // graph is not at the window origin (e.g. below a toolbar).
@@ -593,7 +619,9 @@ where
                 layout.bounds(),
             );
             renderer.with_layer(layout.bounds(), |renderer| {
-                renderer.draw_primitive(
+                draw_sdf(
+                    renderer,
+                    &state.sdf_animated,
                     layout.bounds(),
                     bg_batch
                         .camera(cx, cy, render_context.camera_zoom)
@@ -736,7 +764,9 @@ where
                     layout.bounds(),
                 );
                 renderer.with_layer(layout.bounds(), |renderer| {
-                    renderer.draw_primitive(
+                    draw_sdf(
+                        renderer,
+                        &state.sdf_animated,
                         layout.bounds(),
                         shadow_batch
                             .camera(cx, cy, cam_zoom)
@@ -839,9 +869,6 @@ where
             batch
         };
 
-        // Detect SDF animations (e.g. edge flow_speed) for on-demand redraw.
-        state.sdf_animated.set(edge_batch.has_animations());
-
         renderer.with_layer(layout.bounds(), |renderer| {
             // Batched static edges (single draw call)
             // Batches clipped to the full graph bounds use the bounds origin as
@@ -856,7 +883,9 @@ where
                     wo,
                     layout.bounds(),
                 );
-                renderer.draw_primitive(
+                draw_sdf(
+                    renderer,
+                    &state.sdf_animated,
                     layout.bounds(),
                     edge_batch
                         .camera(cx, cy, render_context.camera_zoom)
@@ -923,7 +952,9 @@ where
                         wo,
                         layout.bounds(),
                     );
-                    renderer.draw_primitive(
+                    draw_sdf(
+                        renderer,
+                        &state.sdf_animated,
                         layout.bounds(),
                         drag_batch
                             .camera(cx, cy, render_context.camera_zoom)
@@ -984,7 +1015,9 @@ where
                 renderer.with_layer(layout.bounds(), |renderer| {
                     let mut fill_batch = SdfPrimitive::new();
                     fill_batch.push(&node_outline, &resolved.fill_sdf_style(opacity));
-                    renderer.draw_primitive(
+                    draw_sdf(
+                        renderer,
+                        &state.sdf_animated,
                         fill_clip,
                         fill_batch
                             .camera(cx, cy, cam_zoom)
@@ -1169,7 +1202,9 @@ where
                         fg_clip,
                     );
                     renderer.with_layer(layout.bounds(), |renderer| {
-                        renderer.draw_primitive(
+                        draw_sdf(
+                            renderer,
+                            &state.sdf_animated,
                             fg_clip,
                             fg_batch
                                 .camera(cx, cy, cam_zoom)
@@ -1241,7 +1276,7 @@ where
                     .time(render_context.time);
 
                 renderer.with_layer(layout.bounds(), |renderer| {
-                    renderer.draw_primitive(select_clip, select_primitive);
+                    draw_sdf(renderer, &state.sdf_animated, select_clip, select_primitive);
                 });
             }
         }
@@ -1289,7 +1324,12 @@ where
                     .time(render_context.time);
 
                 renderer.with_layer(layout.bounds(), |renderer| {
-                    renderer.draw_primitive(cutting_clip, cutting_primitive);
+                    draw_sdf(
+                        renderer,
+                        &state.sdf_animated,
+                        cutting_clip,
+                        cutting_primitive,
+                    );
                 });
             }
         }
