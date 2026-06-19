@@ -72,6 +72,59 @@
 //! ### [`Camera2D`]
 //! Programmatic access to zoom and pan state.
 //!
+//! ## Styling
+//!
+//! Node, edge and pin styles are concrete flat structs. Override fields with
+//! struct-update over a theme-derived default inside a `.style()` closure:
+//!
+//! ```ignore
+//! node(0, pos, body).style(|theme, status| NodeStyle {
+//!     fill_color: ColorQuad::solid(Color::from_rgb(0.2, 0.3, 0.5)),
+//!     ..default_node_style(theme, status)
+//! });
+//! ```
+//!
+//! ### Ready-made presets
+//!
+//! Reach for these before hand-rolling a look:
+//! - Nodes: [`NodeStyle::input`] (blue), [`NodeStyle::process`] (green),
+//!   [`NodeStyle::output`] (orange).
+//! - Edges: [`EdgeStyle::error`] (red animated marching-ants with a border ring),
+//!   [`EdgeStyle::disabled`] (gray dashed), [`EdgeStyle::highlighted`] (yellow with
+//!   a soft ring), [`EdgeStyle::data_flow`] (blue), [`EdgeStyle::debug`] (dotted
+//!   cyan straight line).
+//!
+//! ```ignore
+//! edge!(from, to).style(|_theme, _status, _from, _to| EdgeStyle::error());
+//! ```
+//!
+//! ### Stroke patterns
+//!
+//! [`Pattern`] (re-exported from `iced_nodegraph_sdf`) controls every stroke:
+//! `Pattern::solid(width)`, `Pattern::dashed(width, dash, gap)`,
+//! `Pattern::dotted(spacing, radius)`, plus `.flow(speed)` to animate it along the
+//! stroke. An animated pattern self-drives redraws - no host frame loop needed.
+//!
+//! ### Per-node status
+//!
+//! The style closure intentionally does not receive the node id: your `view` loop
+//! already has it (and any per-node status). Derive the status there and pass it in;
+//! a shared function keeps it DRY across nodes:
+//!
+//! ```ignore
+//! for n in &self.nodes {
+//!     let working = self.is_working(n.id);
+//!     ng.push_node(node(n.id, n.pos, body).style(move |theme, status| {
+//!         let base = default_node_style(theme, status);
+//!         if working {
+//!             NodeStyle { border_pattern: Pattern::dashed(2.0, 6.0, 4.0).flow(40.0), ..base }
+//!         } else {
+//!             base
+//!         }
+//!     }));
+//! }
+//! ```
+//!
 //! ## Demonstration Projects
 //!
 //! ### [hello_world](https://github.com/tuco86/iced_nodegraph/tree/main/demos/hello_world)
@@ -174,6 +227,24 @@
 //! - **Unsnap**: Moving away from the snapped pin fires `EdgeDisconnected`
 //! - **Release**: Releasing the mouse while snapped keeps the connection;
 //!   releasing while not snapped discards the drag
+//!
+//! ### What the host owns
+//!
+//! The widget is stateless between frames and never mutates your data model, so a
+//! few invariants are yours to enforce:
+//!
+//! - **Edge dedupe.** `on_connect` fires on every snap during a drag (not on
+//!   release), so one drag can report several connections. The default
+//!   [`can_connect`](NodeGraph::can_connect) already rejects a second edge into an
+//!   occupied input; for replace-on-drop instead, drop that rule (see
+//!   [`connection`]) and remove the prior edge whose input matches in your
+//!   `on_connect` handler - `to` is always the input pin.
+//! - **Unique node ids.** Lookups resolve to the first match, so reuse renders a
+//!   node doubled. Prefer a stable id from your data - a database key, `uuid::Uuid`,
+//!   or a typed newtype - over a hand-managed counter (collision-proof, and it
+//!   survives multi-client collaboration); debug builds assert uniqueness.
+//! - **Applying moves/deletes/clones.** `on_move` / `on_delete` / `on_clone` report
+//!   intent; your model applies it and feeds the result back on the next `view`.
 //!
 //! ## Diagnostics
 //!

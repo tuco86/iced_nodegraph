@@ -617,12 +617,27 @@ where
     }
 
     /// Sets a callback for when an edge is connected between two pins.
+    ///
+    /// `from` is always the OUTPUT pin and `to` always the INPUT pin, whichever way
+    /// the user dragged: the widget normalizes orientation to the rendered data
+    /// flow. So `to` is the key when enforcing one edge per input (see the
+    /// crate-level "What the host owns").
+    ///
+    /// Fires on SNAP during a drag, not on release - a single drag can emit several
+    /// connect/disconnect pairs as the edge snaps and unsnaps. Treat it as live
+    /// state, not a commit.
+    ///
+    /// Required to start an edge drag: without this callback, pressing a pin selects
+    /// its node instead (a dropped edge could not be persisted anyway).
     pub fn on_connect(mut self, f: impl Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a) -> Self {
         self.on_connect = Some(Box::new(f));
         self
     }
 
     /// Sets a callback for when an edge is disconnected between two pins.
+    ///
+    /// Like [`on_connect`](Self::on_connect), the pair is normalized output-first
+    /// (`from` = output, `to` = input).
     pub fn on_disconnect(mut self, f: impl Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a) -> Self {
         self.on_disconnect = Some(Box::new(f));
         self
@@ -634,6 +649,10 @@ where
     /// of moved node IDs. Dragging a single node reports that one node; dragging a
     /// selection reports the whole group. In both cases the app applies the same
     /// delta to every listed node.
+    ///
+    /// Required for node dragging: node positions live in the host, so without this
+    /// callback a drag has nowhere to land and the widget keeps nodes stationary
+    /// (selection still works).
     pub fn on_move(mut self, f: impl Fn(Vector, Vec<N>) -> Message + 'a) -> Self {
         self.on_move = Some(Box::new(f));
         self
@@ -643,6 +662,9 @@ where
     ///
     /// The callback receives the list of currently selected node IDs.
     /// Fires on click-select, box-select, and Shift+click multi-select.
+    ///
+    /// The widget keeps its own selection regardless; to make the host the source
+    /// of truth, feed the reported value back via [`selection`](Self::selection).
     pub fn on_select(mut self, f: impl Fn(Vec<N>) -> Message + 'a) -> Self {
         self.on_select = Some(Box::new(f));
         self
@@ -712,10 +734,16 @@ where
         self
     }
 
-    /// Sets the external selection using user node IDs.
+    /// Sets the host-controlled selection using user node IDs.
     ///
-    /// The IDs are converted to internal indices. Unknown IDs are ignored.
-    /// This allows controlling which nodes are selected from outside the widget.
+    /// The IDs are converted to internal indices; unknown IDs are ignored.
+    ///
+    /// Optional: the widget tracks selection internally and reports it through
+    /// [`on_select`](Self::on_select), so an uncontrolled graph works without this.
+    /// Feed it only when the host is the source of truth - to drive selection
+    /// programmatically (select-all, clear, restore from a save). This is the
+    /// controlled-component counterpart to `on_select`, exactly like
+    /// [`view`](Self::view) is to `on_pan`.
     pub fn selection<'b>(mut self, selection: impl IntoIterator<Item = &'b N>) -> Self
     where
         N: 'b,

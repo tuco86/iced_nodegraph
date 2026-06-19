@@ -78,6 +78,15 @@ fn view(&self) -> Element<Message> {
 chained before pushing: `node(id, pos, w).style(..).pin_style(..)` and
 `edge!(from, to).style(..)`.
 
+### Styling presets
+
+Ready-made looks save reinventing them: `NodeStyle::input()` / `process()` /
+`output()` and `EdgeStyle::error()` / `disabled()` / `highlighted()` (plus
+`data_flow()` and `debug()`). Strokes use `Pattern` (`solid` / `dashed` / `dotted`,
+with `.flow(speed)` to animate). A full cookbook - presets, the struct-update
+override idiom, and per-node status styling - is in the
+[crate docs](https://tuco86.github.io/iced_nodegraph/iced_nodegraph/).
+
 See [`demos/hello_world/`](demos/hello_world/) for a complete working example.
 
 ### Running Demos
