@@ -580,12 +580,28 @@ where
     /// Sets a validation callback for pin connection compatibility.
     ///
     /// When set, this callback is authoritative: it receives both endpoints as
-    /// [`PinEnd`] views (node id, pin id, direction, user info) and returns
-    /// `true` if they can connect. No implicit direction filtering is applied;
-    /// inspect [`PinEnd::direction`] yourself if you need it.
+    /// [`PinEnd`] views (node id, pin id, direction, occupancy, user info) and
+    /// returns `true` if they can connect.
     ///
-    /// When not set, the built-in direction check applies (Output<->Input,
-    /// `Both` connects to anything).
+    /// # Warning
+    ///
+    /// Setting this REPLACES the built-in checks; they do not auto-compose, and
+    /// there is no opt-out flag. A closure that only inspects payloads would re-allow
+    /// same-direction, self-node, and double-booked-input connections. Re-include the
+    /// built-in rules with
+    /// [`default_can_connect`](crate::connection::default_can_connect):
+    ///
+    /// ```ignore
+    /// use iced_nodegraph::connection::default_can_connect;
+    /// ng.can_connect(|from, to| default_can_connect(from, to) && from.info() == to.info());
+    /// ```
+    ///
+    /// Or pick individual predicates ([`direction_ok`](crate::connection::direction_ok),
+    /// [`not_same_node`](crate::connection::not_same_node),
+    /// [`input_not_occupied`](crate::connection::input_not_occupied)).
+    ///
+    /// When not set, the widget applies `default_can_connect` (direction, not-same-
+    /// node, one-edge-per-input).
     pub fn can_connect(
         mut self,
         f: impl Fn(PinEnd<'_, N, P, UI>, PinEnd<'_, N, P, UI>) -> bool + 'a,

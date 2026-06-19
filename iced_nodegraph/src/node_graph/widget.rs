@@ -2420,6 +2420,7 @@ where
                                                             layout,
                                                             to_node_idx,
                                                             to_pin_idx,
+                                                            Some((from_ref, to_ref)),
                                                         );
                                                         let state = tree
                                                             .state
@@ -2490,6 +2491,7 @@ where
                                                             layout,
                                                             from_node_idx,
                                                             from_pin_idx,
+                                                            Some((from_ref, to_ref)),
                                                         );
                                                         let state = tree
                                                             .state
@@ -2513,7 +2515,7 @@ where
                                             // a new edge): start a fresh drag.
                                             // Compute valid targets ONCE at drag-start
                                             let valid_targets = compute_valid_targets(
-                                                self, tree, layout, node_index, pin_index,
+                                                self, tree, layout, node_index, pin_index, None,
                                             );
                                             let state = tree.state.downcast_mut::<NodeGraphState>();
                                             state.valid_drop_targets = valid_targets;
@@ -2748,29 +2750,6 @@ fn orient_connection<N, P>(
     if swap { (to, from) } else { (from, to) }
 }
 
-/// Validates if two pins can be connected based on direction.
-/// Only checks direction compatibility - custom logic is handled by can_connect.
-fn validate_pin_direction<P, UI>(
-    from_pin: &NodePinState<P, UI>,
-    to_pin: &NodePinState<P, UI>,
-) -> bool {
-    use crate::node_pin::PinDirection;
-
-    // Check direction compatibility:
-    // - Output can connect to Input or Both
-    // - Input can connect to Output or Both
-    // - Both can connect to anything
-    match (from_pin.direction, to_pin.direction) {
-        // Both can connect to anything
-        (PinDirection::Both, _) | (_, PinDirection::Both) => true,
-        // Output -> Input or Input -> Output is valid
-        (PinDirection::Output, PinDirection::Input)
-        | (PinDirection::Input, PinDirection::Output) => true,
-        // Same direction is not allowed (Output->Output or Input->Input)
-        _ => false,
-    }
-}
-
 /// Computes valid drop targets for edge dragging.
 ///
 /// Called ONCE at drag-start to determine which pins are valid connection targets.
@@ -2780,13 +2759,19 @@ fn validate_pin_direction<P, UI>(
 /// 1. It's not the source pin (can't connect to self)
 /// 2. It is not interaction-disabled
 /// 3. The `can_connect` closure accepts the pair (authoritative when set);
-///    otherwise the built-in direction check passes (Output<->Input, Both).
+///    otherwise [`default_can_connect`](crate::connection::default_can_connect)
+///    (direction + not-same-node + one-edge-per-input) accepts it.
+///
+/// `excluded_edge` is the edge currently being re-routed (its endpoints), left out
+/// of the occupancy check so it can be dropped back onto its own input. Pass `None`
+/// when starting a fresh edge.
 fn compute_valid_targets<N, P, E, UI, Message, Renderer>(
     graph: &NodeGraph<'_, N, P, UI, Message, iced::Theme, Renderer, E>,
     tree: &Tree,
     layout: Layout<'_>,
     from_node: usize,
     from_pin: usize,
+    excluded_edge: Option<(&PinRef<N, P>, &PinRef<N, P>)>,
 ) -> std::collections::HashSet<(usize, usize)>
 where
     N: NodeId + 'static,
@@ -2811,8 +2796,18 @@ where
         return valid_targets;
     };
 
-    // Source node id, only needed when can_connect is set.
     let from_node_id = graph.node_id_at(from_node);
+
+    // Pins already holding an edge, consulted by `input_not_occupied`. The edge
+    // currently being dragged (when re-routing an existing connection) is excluded,
+    // so its own input still reads as free and can be dropped back onto.
+    let occupied: std::collections::HashSet<(&N, &P)> = graph
+        .edges
+        .iter()
+        .filter(|(_, from, to, _)| excluded_edge != Some((from, to)))
+        .flat_map(|(_, from, to, _)| [(&from.node_id, &from.pin_id), (&to.node_id, &to.pin_id)])
+        .collect();
+    let is_occupied = |node_id: &N, pin_id: &P| occupied.contains(&(node_id, pin_id));
 
     // Iterate all pins in all nodes
     for (node_index, (node_layout, node_tree)) in layout.children().zip(&tree.children).enumerate()
@@ -2828,27 +2823,30 @@ where
                 continue;
             }
 
-            if let Some(can_connect) = &graph.can_connect {
-                // Authoritative: the user closure decides, no implicit filter.
-                let (Some(fid), Some(tid)) = (from_node_id, graph.node_id_at(node_index)) else {
-                    continue;
-                };
-                let from_end = PinEnd::new(
-                    fid,
-                    &from_state.pin_id,
-                    from_state.direction,
-                    &from_state.user_info,
-                );
-                let to_end = PinEnd::new(
-                    tid,
-                    &pin_state.pin_id,
-                    pin_state.direction,
-                    &pin_state.user_info,
-                );
-                if !can_connect(from_end, to_end) {
-                    continue;
-                }
-            } else if !validate_pin_direction(&from_state, pin_state) {
+            let (Some(fid), Some(tid)) = (from_node_id, graph.node_id_at(node_index)) else {
+                continue;
+            };
+            let from_end = PinEnd::new(
+                fid,
+                &from_state.pin_id,
+                from_state.direction,
+                &from_state.user_info,
+                is_occupied(fid, &from_state.pin_id),
+            );
+            let to_end = PinEnd::new(
+                tid,
+                &pin_state.pin_id,
+                pin_state.direction,
+                &pin_state.user_info,
+                is_occupied(tid, &pin_state.pin_id),
+            );
+            // `can_connect` is authoritative when set; otherwise the built-in default
+            // (direction + not-same-node + one-edge-per-input) applies.
+            let accepted = match &graph.can_connect {
+                Some(can_connect) => can_connect(from_end, to_end),
+                None => crate::connection::default_can_connect(from_end, to_end),
+            };
+            if !accepted {
                 continue;
             }
 

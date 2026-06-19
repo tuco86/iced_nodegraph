@@ -183,6 +183,7 @@
 //! register a callback with [`NodeGraph::on_info`]; it delivers a [`GraphInfo`]
 //! each redraw.
 
+pub use connection::{default_can_connect, direction_ok, input_not_occupied, not_same_node};
 pub use content::{EdgeRadii, node_footer, node_header};
 pub use ids::{EdgeId, NodeId, PinId};
 pub use node_graph::{
@@ -218,6 +219,7 @@ pub use style::{
 pub use iced_nodegraph_sdf::Pattern;
 pub use iced_nodegraph_sdf::pattern::PatternType as SdfPatternType;
 
+pub mod connection;
 pub mod content;
 pub mod ids;
 mod node_graph;

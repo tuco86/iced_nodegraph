@@ -120,7 +120,19 @@ pub struct PinEnd<'a, N, P, UI = ()> {
     pin_id: &'a P,
     direction: PinDirection,
     info: &'a UI,
+    is_occupied: bool,
 }
+
+// Hand-written so `PinEnd` stays `Copy` for any `N`/`P`/`UI` (it only holds shared
+// references); a derive would add spurious `N: Copy`/`P: Copy`/`UI: Copy` bounds and
+// stop `can_connect` helpers from passing it to several predicates by value.
+impl<N, P, UI> Clone for PinEnd<'_, N, P, UI> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<N, P, UI> Copy for PinEnd<'_, N, P, UI> {}
 
 impl<'a, N, P, UI> PinEnd<'a, N, P, UI> {
     pub(crate) fn new(
@@ -128,12 +140,14 @@ impl<'a, N, P, UI> PinEnd<'a, N, P, UI> {
         pin_id: &'a P,
         direction: PinDirection,
         info: &'a UI,
+        is_occupied: bool,
     ) -> Self {
         Self {
             node_id,
             pin_id,
             direction,
             info,
+            is_occupied,
         }
     }
 
@@ -155,6 +169,15 @@ impl<'a, N, P, UI> PinEnd<'a, N, P, UI> {
     /// The pin's user-defined payload set via [`NodePin::info`].
     pub fn info(&self) -> &UI {
         self.info
+    }
+
+    /// Whether this pin already holds at least one edge.
+    ///
+    /// The edge currently being dragged is excluded, so a connection re-routed
+    /// back onto its own input reports that input as free. See
+    /// [`input_not_occupied`](crate::connection::input_not_occupied).
+    pub fn is_occupied(&self) -> bool {
+        self.is_occupied
     }
 }
 

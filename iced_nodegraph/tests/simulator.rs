@@ -634,6 +634,67 @@ fn rewire_grabbed_pin_to_another_pin() {
     );
 }
 
+#[test]
+fn rewire_back_to_own_input_reconnects() {
+    // Grab the input end of 0:0 -> 1:0, pull it past the threshold (disconnect),
+    // then drop it back on the SAME input 1:0. Under the default
+    // (input_not_occupied), this only works because the edge being dragged is
+    // excluded from the occupancy check, so its own input stays a valid target.
+    let mut ui = Simulator::new(rewire_graph());
+    let grab = in_anchor();
+
+    ui.point_at(grab);
+    ui.simulate([moved(grab), press()]);
+    let midway = Point::new(grab.x, 220.0); // clear node 1 pin past UNSNAP_THRESHOLD
+    ui.point_at(midway);
+    ui.simulate([moved(midway)]);
+    ui.point_at(grab); // back onto the original input
+    ui.simulate([moved(grab), release()]);
+
+    let msgs = messages(ui);
+    assert!(
+        msgs.iter().any(|m| matches!(m, Msg::Disconnect(_, _))),
+        "popping the edge off its input must disconnect first: {msgs:?}",
+    );
+    assert!(
+        msgs.contains(&Msg::Connect(PinRef::new(0, 0), PinRef::new(1, 0))),
+        "dropping back on the original input must reconnect it: {msgs:?}",
+    );
+}
+
+#[test]
+fn default_rejects_second_edge_to_occupied_input() {
+    // No can_connect: the built-in default enforces one-edge-per-input. Input 1:0
+    // is already wired from 0:0, so dragging a second output (2:0) onto it must not
+    // connect.
+    let mut ng: Graph = NodeGraph::default()
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .on_connect(Msg::Connect);
+    ng.push_node(node(
+        0usize,
+        OUT_POS,
+        pin!(Right, 0usize, pin_body(), Output),
+    ));
+    ng.push_node(node(1usize, IN_POS, pin!(Left, 0usize, pin_body(), Input)));
+    ng.push_node(node(
+        2usize,
+        Point::new(OUT_POS.x, 300.0),
+        pin!(Right, 0usize, pin_body(), Output),
+    ));
+    ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)));
+    let mut ui = Simulator::new(Element::from(ng));
+
+    let from = Point::new(OUT_POS.x + NODE_W, 300.0 + NODE_H / 2.0); // node 2 right pin
+    drag(&mut ui, from, in_anchor());
+
+    let msgs = messages(ui);
+    assert!(
+        !msgs.contains(&Msg::Connect(PinRef::new(2, 0), PinRef::new(1, 0))),
+        "default one-edge-per-input must reject a second edge to an occupied input: {msgs:?}",
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Occluded interactions: a node body on top covering another node pin.
 //

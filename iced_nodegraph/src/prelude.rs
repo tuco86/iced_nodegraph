@@ -17,6 +17,10 @@ pub use crate::{NodeGraph, PinRef};
 // Pin and status vocabulary passed to `style` / `pin_style` / `can_connect` closures.
 pub use crate::{EdgeStatus, NodeStatus, PinDirection, PinEnd, PinInfo, PinSide, PinStatus};
 
+// Composable `can_connect` predicates (compose `default_can_connect` to keep the
+// built-in rules when overriding validation).
+pub use crate::connection::{default_can_connect, direction_ok, input_not_occupied, not_same_node};
+
 // Concrete style structs and their theme-derived defaults to layer overrides over.
 pub use crate::{
     ColorQuad, EdgeCurve, EdgeStyle, NodeStyle, Pattern, PinShape, PinStyle, default_edge_style,
