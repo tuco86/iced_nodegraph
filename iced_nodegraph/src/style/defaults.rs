@@ -29,62 +29,30 @@ use super::{
 /// border.
 pub fn default_node_style(theme: &Theme, status: NodeStatus) -> NodeStyle {
     let palette = theme.extended_palette();
-    let bg = palette.background.base.color;
-    let bg_weak = palette.background.weak.color;
-    // Pull the theme's primary accent into the node so it reads as part of the
-    // theme rather than neutral gray. The body keeps a faint tint; the border
-    // carries most of the accent signal.
-    let accent = palette.primary.base.color;
 
-    // Linear color blend, t in [0, 1] from a toward b.
-    let mix = |a: Color, b: Color, t: f32| {
-        Color::from_rgb(
-            a.r + (b.r - a.r) * t,
-            a.g + (b.g - a.g) * t,
-            a.b + (b.b - a.b) * t,
-        )
-    };
+    // A node is a raised surface over the canvas. iced fills its container
+    // surfaces (`container::rounded_box`) with `background.weak` and draws
+    // dividers/borders (`rule`, the slider rail) one ramp step up at
+    // `background.strong`. We follow that: a neutral background-ramp border,
+    // not a primary tint - the accent is reserved for the selection border,
+    // exactly as iced reserves `primary` for active/selected affordances. The
+    // ramp is perceptual (oklch) and self-adapts to dark/light, so no hand mix.
+    let fill = palette.background.weak.color;
+    let border = palette.background.strong.color;
 
-    /// Accent share mixed into the node body fill.
-    const FILL_TINT: f32 = 0.08;
-    /// Accent share mixed into the node border.
-    const BORDER_TINT: f32 = 0.55;
-
-    let (node_fill, node_border, opacity, shadow_color, shadow_distance) = if palette.is_dark {
-        let neutral_fill = Color::from_rgb(
-            bg.r + (bg_weak.r - bg.r) * 0.3,
-            bg.g + (bg_weak.g - bg.g) * 0.3,
-            bg.b + (bg_weak.b - bg.b) * 0.3,
-        );
-        let nb = mix(bg_weak, accent, BORDER_TINT);
-        (
-            mix(neutral_fill, accent, FILL_TINT),
-            Color::from_rgba(nb.r, nb.g, nb.b, 0.85),
-            0.75,
-            Color::from_rgba(0.0, 0.0, 0.0, 0.3),
-            4.0,
-        )
+    // Opacity and shadow are genuinely light/dark dependent (a black shadow
+    // reads differently against a dark canvas), not theme-hue mappings.
+    let (opacity, shadow_color, shadow_distance) = if palette.is_dark {
+        (0.75, Color::from_rgba(0.0, 0.0, 0.0, 0.3), 4.0)
     } else {
-        let neutral_fill = Color::from_rgb(
-            bg.r - (bg.r - bg_weak.r) * 0.15,
-            bg.g - (bg.g - bg_weak.g) * 0.15,
-            bg.b - (bg.b - bg_weak.b) * 0.15,
-        );
-        let nb = mix(bg_weak, accent, BORDER_TINT);
-        (
-            mix(neutral_fill, accent, FILL_TINT),
-            Color::from_rgba(nb.r, nb.g, nb.b, 0.9),
-            0.85,
-            Color::from_rgba(0.0, 0.0, 0.0, 0.22),
-            6.0,
-        )
+        (0.85, Color::from_rgba(0.0, 0.0, 0.0, 0.22), 6.0)
     };
 
     let base = NodeStyle {
-        fill_color: node_fill.into(),
+        fill_color: fill.into(),
         corner_radius: 5.0,
         opacity,
-        border_color: node_border.into(),
+        border_color: border.into(),
         border_pattern: Pattern::solid(1.0),
         border_outline_width: 0.0,
         border_outline_color: Color::TRANSPARENT.into(),
@@ -110,26 +78,17 @@ pub fn default_node_style(theme: &Theme, status: NodeStatus) -> NodeStyle {
 /// applied by the widget, so both states share the same base.
 pub fn default_pin_style(theme: &Theme, _status: PinStatus) -> PinStyle {
     let palette = theme.extended_palette();
-    let secondary = palette.secondary.base.color;
-    let text = palette.background.base.text;
 
-    if palette.is_dark {
-        PinStyle {
-            color: Color::from_rgba(secondary.r, secondary.g, secondary.b, 0.7).into(),
-            radius: 6.0,
-            shape: PinShape::Circle,
-            border_color: Color::TRANSPARENT.into(),
-            border_width: 0.0,
-        }
-    } else {
-        PinStyle {
-            color: Color::from_rgba(secondary.r * 0.7, secondary.g * 0.7, secondary.b * 0.7, 0.8)
-                .into(),
-            radius: 6.0,
-            shape: PinShape::Circle,
-            border_color: Color::from_rgba(text.r, text.g, text.b, 0.3).into(),
-            border_width: 1.0,
-        }
+    // Pins are the node graph's interactive marks - the role iced gives to
+    // slider handles and radio dots, which all paint in `primary`. A filled dot
+    // needs no border (the slider handle is borderless too); the palette accent
+    // adapts to dark/light on its own, so no per-theme channel scaling.
+    PinStyle {
+        color: palette.primary.base.color.into(),
+        radius: 6.0,
+        shape: PinShape::Circle,
+        border_color: Color::TRANSPARENT.into(),
+        border_width: 0.0,
     }
 }
 

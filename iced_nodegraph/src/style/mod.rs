@@ -247,10 +247,10 @@ impl GraphStyle {
     /// Creates a graph style derived from an iced Theme.
     pub fn from_theme(theme: &Theme) -> Self {
         let palette = theme.extended_palette();
-        let bg = palette.background.base.color;
-        let secondary = palette.secondary.base.color;
-        let success = palette.success.base.color;
-        // Subtle theme-derived grid as the default canvas backdrop.
+
+        // The canvas is the theme's true window background; nodes ride above it
+        // on `background.weak`, so elevation comes from the palette ramp rather
+        // than hand-darkening. A faint `background.strong` grid sits on top.
         let grid = TilingBackground::grid(
             40.0,
             1.0,
@@ -260,42 +260,14 @@ impl GraphStyle {
             },
         );
 
-        if palette.is_dark {
-            Self {
-                background_color: Color::from_rgb(bg.r * 0.7, bg.g * 0.7, bg.b * 0.7),
-                drag_edge_color: Color::from_rgb(
-                    secondary.r * 0.9 + 0.1,
-                    secondary.g * 0.6,
-                    secondary.b * 0.3,
-                ),
-                drag_edge_valid_color: Color::from_rgb(
-                    success.r * 0.6,
-                    success.g * 0.9,
-                    success.b * 0.6,
-                ),
-                tiling: Some(grid),
-                selection_style: SelectionStyle::from_theme(theme),
-            }
-        } else {
-            Self {
-                background_color: Color::from_rgb(
-                    bg.r * 0.98 + 0.02,
-                    bg.g * 0.98 + 0.02,
-                    bg.b * 0.98 + 0.02,
-                ),
-                drag_edge_color: Color::from_rgb(
-                    secondary.r * 0.8,
-                    secondary.g * 0.5,
-                    secondary.b * 0.2,
-                ),
-                drag_edge_valid_color: Color::from_rgb(
-                    success.r * 0.5,
-                    success.g * 0.8,
-                    success.b * 0.5,
-                ),
-                tiling: Some(grid),
-                selection_style: SelectionStyle::from_theme(theme),
-            }
+        Self {
+            background_color: palette.background.base.color,
+            // Drag feedback by semantic role: amber while pending (no valid
+            // target yet), green once the target is valid.
+            drag_edge_color: palette.warning.base.color,
+            drag_edge_valid_color: palette.success.base.color,
+            tiling: Some(grid),
+            selection_style: SelectionStyle::from_theme(theme),
         }
     }
 }
@@ -377,34 +349,17 @@ impl SelectionStyle {
         let palette = theme.extended_palette();
         let primary = palette.primary.base.color;
 
-        if palette.is_dark {
-            Self {
-                selected_border_color: primary,
-                selected_border_width: 2.5,
-                box_select_fill: Color::from_rgba(primary.r, primary.g, primary.b, 0.15),
-                box_select_border: Color::from_rgba(primary.r, primary.g, primary.b, 0.6),
-                edge_cutting_color: Color::from_rgb(1.0, 0.3, 0.3),
-                hover_glow_color: Color::from_rgb(
-                    primary.r * 0.7 + 0.3,
-                    primary.g * 0.7 + 0.3,
-                    primary.b * 0.9 + 0.1,
-                ),
-                hover_glow_radius: 6.0,
-            }
-        } else {
-            Self {
-                selected_border_color: primary,
-                selected_border_width: 2.5,
-                box_select_fill: Color::from_rgba(primary.r, primary.g, primary.b, 0.12),
-                box_select_border: Color::from_rgba(primary.r, primary.g, primary.b, 0.5),
-                edge_cutting_color: Color::from_rgb(0.9, 0.2, 0.2),
-                hover_glow_color: Color::from_rgb(
-                    primary.r * 0.8,
-                    primary.g * 0.8,
-                    primary.b * 0.9,
-                ),
-                hover_glow_radius: 5.0,
-            }
+        Self {
+            selected_border_color: primary,
+            selected_border_width: 2.5,
+            // Translucent overlays must stay alpha-based; the hue is the accent.
+            box_select_fill: Color { a: 0.15, ..primary },
+            box_select_border: Color { a: 0.6, ..primary },
+            // A cut is destructive: danger, theme-driven instead of hardcoded red.
+            edge_cutting_color: palette.danger.base.color,
+            // A soft primary wash for the hover glow (cf. radio hover background).
+            hover_glow_color: palette.primary.weak.color,
+            hover_glow_radius: 6.0,
         }
     }
 }
