@@ -2773,6 +2773,140 @@ fn buffer_write_at_updates_one_slot() {
     readback.unmap();
 }
 
+/// Full-frame (CPU build + GPU upload/compute/render + fence) wall-clock for the
+/// 500-node scene: v2 (world-baked `difference_many` per node) vs v3 (recipe +
+/// shape cache + GPU instancing). Records the "CPU plus GPU time" comparison the
+/// plan's order-of-magnitude expectation targets, and enforces the per-frame
+/// cost gate (v3 must not be slower than v2). Wall-clock fences GPU completion
+/// (the WASM-safe alternative to timestamp queries, per the plan's R3 note).
+#[test]
+fn frame_time_v3_not_slower_than_v2() {
+    use iced_wgpu::graphics::Viewport;
+    use iced_wgpu::primitive::{Pipeline, Primitive};
+    use std::time::Instant;
+
+    let r = shared_renderer();
+    let (w, h) = (1024u32, 768u32);
+    let cols = 23usize; // ~500 on a grid
+    let n = 500usize;
+    let style = Style::solid(iced::Color::from_rgb(0.2, 0.2, 0.25));
+    let border = Style::stroke(iced::Color::from_rgb(0.6, 0.6, 0.7), Pattern::solid(2.0));
+
+    // Local body recipe (identical for every node) and its cut params.
+    let half = [60.0f32, 34.0f32];
+    let radius = 8.0f32;
+    let cut_offsets = [[-60.0f32, -12.0f32], [-60.0, 12.0], [60.0, 0.0]];
+    let recipe = crate::recipe::ShapeExpr::Difference {
+        base: Box::new(crate::recipe::ShapeExpr::RoundedRect { half, radius }),
+        cuts: cut_offsets
+            .iter()
+            .map(|c| crate::recipe::ShapeExpr::Circle {
+                center: *c,
+                radius: 4.0,
+            })
+            .collect(),
+    };
+    let positions: Vec<[f32; 2]> = (0..n)
+        .map(|i| [(i % cols) as f32 * 200.0, (i / cols) as f32 * 110.0])
+        .collect();
+
+    let target = r.device.create_texture(&TextureDescriptor {
+        label: None,
+        size: Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: TextureDimension::D2,
+        format: TextureFormat::Rgba8Unorm,
+        usage: TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let view = target.create_view(&TextureViewDescriptor::default());
+    let viewport = Viewport::with_physical_size(iced::Size::new(w, h), 1.0);
+    let bounds = iced::Rectangle::new(iced::Point::ORIGIN, iced::Size::new(w as f32, h as f32));
+
+    // One full frame through the real pipeline, fenced to GPU completion.
+    let run_frame = |pipeline: &mut crate::primitive::SdfPipeline,
+                     prim: &crate::primitive::SdfPrimitive| {
+        Pipeline::trim(pipeline);
+        prim.prepare(pipeline, &r.device, &r.queue, &bounds, &viewport);
+        let mut enc = r
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+        {
+            let mut pass = enc.begin_render_pass(&RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(Color::TRANSPARENT),
+                        store: StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            prim.draw(pipeline, &mut pass);
+        }
+        let idx = r.queue.submit(std::iter::once(enc.finish()));
+        r.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(idx),
+                timeout: Some(std::time::Duration::from_secs(10)),
+            })
+            .unwrap();
+    };
+
+    let median = |which: u8| -> f64 {
+        let mut pipeline =
+            crate::primitive::SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
+        let mut samples = Vec::new();
+        for _ in 0..12 {
+            let t0 = Instant::now();
+            // Rebuild the primitive each frame (as the widget does), so the
+            // measurement includes the per-node boolean (v2) or the cached
+            // recipe + instancing (v3).
+            let mut prim = crate::primitive::SdfPrimitive::with_capacity(n * 2);
+            for p in &positions {
+                if which == 2 {
+                    let body = Curve::rounded_rect(*p, half, radius);
+                    let cuts: Vec<_> = cut_offsets
+                        .iter()
+                        .map(|c| Curve::circle([p[0] + c[0], p[1] + c[1]], 4.0))
+                        .collect();
+                    let outline = crate::boolean::difference_many(&body, &cuts);
+                    prim.push(&outline, &style);
+                    prim.push(&outline, &border);
+                } else {
+                    prim.push_recipe(recipe.clone(), *p, &style);
+                    prim.push_recipe(recipe.clone(), *p, &border);
+                }
+            }
+            run_frame(&mut pipeline, &prim);
+            samples.push(t0.elapsed().as_secs_f64() * 1000.0);
+        }
+        samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        samples[samples.len() / 2]
+    };
+
+    let v2 = median(2);
+    let v3 = median(3);
+    println!(
+        "500-node full frame (CPU+GPU, ms): v2={v2:.3} v3={v3:.3} ratio={:.2}x",
+        v2 / v3
+    );
+    assert!(
+        v3 <= v2 * 1.05,
+        "cost gate: v3 frame {v3:.3}ms must not exceed v2 {v2:.3}ms",
+    );
+}
+
 /// GPU instancing (Phase B): N identical node-body recipes at different
 /// positions upload ONE shape's segments to the GPU, not N copies. This is the
 /// memory-bandwidth half of the dedup - the per-instance translate on the
