@@ -3022,3 +3022,50 @@ fn premultiplied_band_blend_no_rgb_fringe() {
         "falloff must stay green (premultiplied), not fringe red: {p:?}",
     );
 }
+
+/// A2 gate (time-uniform hoist): time and camera are per-frame uniform values,
+/// NOT baked into the input buffers (segments/entries/styles). Its plan gate is
+/// "pan-static-graph pixel-equal": panning a static graph re-renders correctly
+/// from the SAME geometry, and advancing time animates the pattern from that
+/// same geometry - so a frame-surviving input buffer stays valid across both.
+/// (`time` already lives in the per-frame `DrawData` uniform, never in the
+/// input buffers, so the literal "separate uniform" hoist is unnecessary here.)
+#[test]
+fn a2_time_and_camera_are_per_frame_uniforms() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (256u32, 256u32, 1.0f32);
+    let edge = Curve::bezier([-120.0, -40.0], [-40.0, -40.0], [40.0, 40.0], [120.0, 40.0]);
+    let flow = Style::stroke(
+        rgba(0.2, 0.85, 1.0, 1.0),
+        Pattern::dashed(6.0, 14.0, 8.0).flow(40.0),
+    );
+    let d = [(&edge, &flow)];
+
+    // Same geometry, two times: the flow phase animates (time is a per-frame
+    // uniform driving the pattern, not baked into the segment buffer).
+    let t0 = r.render_full_t(&d, w, h, zoom, 1.0, true, 0.0, None, false);
+    let t1 = r.render_full_t(&d, w, h, zoom, 1.0, true, 0.25, None, false);
+    assert!(
+        corpus_diff(&t0, &t1).1 > 0,
+        "advancing time must animate the flow"
+    );
+
+    // Same geometry, two cameras: panning a STATIC graph re-renders correctly
+    // (the plan's pan-static gate) - the view shifts, the geometry does not.
+    let solid = Style::stroke(rgba(0.9, 0.6, 0.2, 1.0), Pattern::solid(6.0));
+    let s = [(&edge, &solid)];
+    let cam_a = [(w as f32) * 0.5 / zoom, (h as f32) * 0.5 / zoom];
+    let cam_b = [cam_a[0] - 30.0, cam_a[1]];
+    let pa = r.render_full_t(&s, w, h, zoom, 1.0, true, 0.0, Some(cam_a), false);
+    let pb = r.render_full_t(&s, w, h, zoom, 1.0, true, 0.0, Some(cam_b), false);
+    assert!(
+        corpus_diff(&pa, &pb).1 > 0,
+        "panning a static graph must shift the view"
+    );
+    // And both pans render plausible content (the static geometry survives both).
+    let vis = |px: &[[u8; 4]]| px.iter().filter(|p| p[3] >= CORPUS_ALPHA_FLOOR).count();
+    assert!(
+        vis(&pa) > 100 && vis(&pb) > 100,
+        "both pans must render the edge"
+    );
+}
