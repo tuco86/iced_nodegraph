@@ -883,9 +883,22 @@ fn cs_build_index(@builtin(global_invocation_id) gid: vec3<u32>) {
         // instance translate. The slot key is the entry (command) index.
         let lp = world_pos - entry.translate;
 
-        // Tilings: always include, store entry_idx with TILING_BIT marker
+        // Tilings: cull by EVALUATION like any SDF (D7), not "always include".
+        // Sample `sd_tiling` at the tile center plus its four corners (corners
+        // restore conservativeness for HEX, whose round-to-nearest field is not
+        // 1-Lipschitz across cell seams) and include only tiles a feature
+        // reaches. Opaque / fine-spacing tilings still reach every tile; a
+        // transparent-gap tiling auto-prunes its empty tiles.
         if entry.entry_type == ENTRY_TILING {
-            cs_push_slot(slot_base, &count, i | TILING_BIT, i);
+            let ht = TILE_SIZE * 0.5 * inv_cs;
+            var td = sd_tiling(world_pos, entry.tiling_type, entry.tiling_params).dist;
+            td = min(td, sd_tiling(world_pos + vec2(ht, ht), entry.tiling_type, entry.tiling_params).dist);
+            td = min(td, sd_tiling(world_pos + vec2(-ht, ht), entry.tiling_type, entry.tiling_params).dist);
+            td = min(td, sd_tiling(world_pos + vec2(ht, -ht), entry.tiling_type, entry.tiling_params).dist);
+            td = min(td, sd_tiling(world_pos + vec2(-ht, -ht), entry.tiling_type, entry.tiling_params).dist);
+            if td - thd <= style_max_dist(style) + 0.5 {
+                cs_push_slot(slot_base, &count, i | TILING_BIT, i);
+            }
             continue;
         }
 
