@@ -13,7 +13,16 @@
 //! per-pixel tile culling, which happens on the GPU (a compute shader), not the
 //! CPU.
 //!
-//! Run with: `cargo bench -p iced_nodegraph`
+//! Run with: `cargo bench -p iced_nodegraph --bench frame_prep`
+//! (target the bench explicitly; a plain `cargo bench` also compiles the lib
+//! unit tests, where an unrelated mock currently fails under the bench profile.)
+//!
+//! v2 BASELINE (frozen for the SDF v3 rewrite, STEP 0). 500 nodes / 640 edges,
+//! post pin-pulse removal, this machine: CPU prepare ~9.35 ms
+//! (range [9.18, 9.54] ms), dominated by the `difference_many` boolean. This is
+//! the CPU half of the order-of-magnitude target (cut to ~1 ms). The GPU half
+//! (fragment + compute via timestamp queries, R3) is recorded separately when
+//! the GPU-path benchmark lands.
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use iced::Color;
