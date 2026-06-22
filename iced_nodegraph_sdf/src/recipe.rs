@@ -21,6 +21,8 @@
 
 #![allow(dead_code)]
 
+use std::collections::HashMap;
+
 use crate::boolean;
 use crate::curve::Curve;
 use crate::drawable::Drawable;
@@ -142,6 +144,99 @@ impl ShapeExpr {
     }
 }
 
+/// One cached, evaluated shape: the expensive local-frame arcs, plus the frame
+/// tick it was last used on (for LRU eviction).
+struct CachedShape {
+    drawable: Drawable,
+    last_used: u64,
+}
+
+/// Frame-surviving cache of evaluated shapes, keyed by recipe hash (Improvement
+/// A). A unique shape's boolean->arcs runs once and is reused on every later
+/// frame; only the per-instance translate changes. An LRU bound caps memory.
+///
+/// Only STABLE shapes (node bodies) are fed here. Ephemeral geometry - edges,
+/// whose arcs change whenever an endpoint moves - is never a `ShapeExpr`, so it
+/// structurally bypasses the cache and cannot churn the LRU.
+pub(crate) struct ShapeCache {
+    map: HashMap<u64, CachedShape>,
+    capacity: usize,
+    tick: u64,
+    hits: u64,
+    misses: u64,
+}
+
+impl ShapeCache {
+    pub(crate) fn new(capacity: usize) -> Self {
+        Self {
+            map: HashMap::new(),
+            capacity: capacity.max(1),
+            tick: 0,
+            hits: 0,
+            misses: 0,
+        }
+    }
+
+    /// Local-frame geometry for `recipe`, evaluating and caching on a miss and
+    /// reusing the cached arcs on a hit. The returned drawable is position-free;
+    /// the caller places it with the per-instance translate.
+    pub(crate) fn get_or_eval(&mut self, recipe: &ShapeExpr) -> &Drawable {
+        let h = recipe.recipe_hash();
+        self.tick += 1;
+        let tick = self.tick;
+        if self.map.contains_key(&h) {
+            self.hits += 1;
+            self.map.get_mut(&h).unwrap().last_used = tick;
+        } else {
+            self.misses += 1;
+            let drawable = recipe.evaluate();
+            // Evict before insert so capacity is a hard bound. Never evicts the
+            // entry being inserted (it is not in the map yet).
+            self.evict_to_capacity(self.capacity - 1);
+            self.map.insert(
+                h,
+                CachedShape {
+                    drawable,
+                    last_used: tick,
+                },
+            );
+        }
+        &self.map.get(&h).unwrap().drawable
+    }
+
+    /// Evict least-recently-used entries until at most `target` remain.
+    fn evict_to_capacity(&mut self, target: usize) {
+        while self.map.len() > target {
+            let Some((&victim, _)) = self.map.iter().min_by_key(|(_, c)| c.last_used) else {
+                break;
+            };
+            self.map.remove(&victim);
+        }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    /// Fraction of `get_or_eval` calls that hit the cache, over the cache's
+    /// lifetime. ~1.0 on a static graph is the R4 contract.
+    pub(crate) fn hit_rate(&self) -> f32 {
+        let total = self.hits + self.misses;
+        if total == 0 {
+            0.0
+        } else {
+            self.hits as f32 / total as f32
+        }
+    }
+
+    pub(crate) fn hits(&self) -> u64 {
+        self.hits
+    }
+    pub(crate) fn misses(&self) -> u64 {
+        self.misses
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,6 +349,69 @@ mod tests {
                 "bounds differ at {i}: {a:?} vs {b:?}"
             );
         }
+    }
+
+    #[test]
+    fn cache_reuses_identical_shapes() {
+        // The headline: N identical nodes pay for ONE boolean evaluation. A
+        // 5-node and a 500-node graph hit the same floor at the shape level.
+        let mut cache = ShapeCache::new(64);
+        for _ in 0..500 {
+            let _ = cache.get_or_eval(&node_body());
+        }
+        assert_eq!(cache.len(), 1, "500 identical recipes must occupy one slot");
+        assert_eq!(cache.misses(), 1, "the boolean evaluates exactly once");
+        assert_eq!(cache.hits(), 499);
+        assert!((cache.hit_rate() - 499.0 / 500.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cache_miss_then_hit_same_geometry() {
+        let mut cache = ShapeCache::new(64);
+        let first = cache.get_or_eval(&node_body()).clone();
+        let second = cache.get_or_eval(&node_body()).clone();
+        assert_eq!(first.segment_count(), second.segment_count());
+        assert_eq!(cache.misses(), 1);
+        assert_eq!(cache.hits(), 1);
+    }
+
+    #[test]
+    fn cache_evicts_least_recently_used() {
+        // Capacity 2. Insert A, B; touch A (now B is LRU); insert C -> B evicted.
+        let mut cache = ShapeCache::new(2);
+        let a = ShapeExpr::Circle {
+            center: [0.0, 0.0],
+            radius: 1.0,
+        };
+        let b = ShapeExpr::Circle {
+            center: [0.0, 0.0],
+            radius: 2.0,
+        };
+        let c = ShapeExpr::Circle {
+            center: [0.0, 0.0],
+            radius: 3.0,
+        };
+        cache.get_or_eval(&a);
+        cache.get_or_eval(&b);
+        cache.get_or_eval(&a); // touch A so B becomes least-recently-used
+        cache.get_or_eval(&c); // inserts C, must evict B
+        assert_eq!(cache.len(), 2);
+
+        // A and C are present (hits, no new miss); B is gone (a fresh miss).
+        let misses_before = cache.misses();
+        cache.get_or_eval(&a);
+        cache.get_or_eval(&c);
+        assert_eq!(
+            cache.misses(),
+            misses_before,
+            "A and C should still be cached"
+        );
+        cache.get_or_eval(&b);
+        assert_eq!(
+            cache.misses(),
+            misses_before + 1,
+            "B should have been evicted"
+        );
     }
 
     #[test]
