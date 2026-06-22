@@ -129,6 +129,21 @@ pub(crate) fn compile_local_at(
         });
     }
 
+    entry_referencing(local, style, z_order, translate, segment_start)
+}
+
+/// Build a command for `local` placed at `translate` that REFERENCES an existing
+/// segment range (`segment_start`), pushing NO segments. This is the GPU
+/// instancing path: when an identical shape's segments are already in the buffer
+/// this frame, every further instance is one tiny command pointing at the shared
+/// range, so 500 identical nodes upload one shape's segments, not 500 copies.
+pub(crate) fn entry_referencing(
+    local: &Drawable,
+    style: &Style,
+    z_order: u32,
+    translate: [f32; 2],
+    segment_start: u32,
+) -> (GpuDrawEntry, GpuStyle) {
     let mut flags = 0u32;
     if local.is_closed {
         flags |= FLAG_CLOSED;
@@ -242,5 +257,26 @@ mod tests {
                 "world bounds differ at {i}",
             );
         }
+    }
+
+    /// A command that REFERENCES a shared segment range (GPU instancing) is
+    /// byte-identical to the full compile's command - so a second instance can
+    /// skip the segment upload and still render the same.
+    #[test]
+    fn entry_referencing_matches_full_command() {
+        let local = Curve::rounded_rect([0.0, 0.0], [40.0, 25.0], 6.0);
+        let t = [100.0, 50.0];
+        let style = Style::solid(iced::Color::WHITE);
+
+        let mut segs = Vec::new();
+        let (full, _) = compile_local_at(&local, &style, 3, t, 0, &mut segs);
+        let (refd, _) = entry_referencing(&local, &style, 3, t, 0);
+
+        assert_eq!(full.segment_start, refd.segment_start);
+        assert_eq!(full.segment_count, refd.segment_count);
+        assert_eq!(full.translate.0, refd.translate.0);
+        assert_eq!(full.bounds.0, refd.bounds.0);
+        assert_eq!(full.flags, refd.flags);
+        assert_eq!(full.entry_type, refd.entry_type);
     }
 }

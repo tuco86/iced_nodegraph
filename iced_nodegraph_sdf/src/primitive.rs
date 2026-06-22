@@ -18,7 +18,9 @@ use iced::wgpu::{
 use iced_wgpu::graphics::Viewport;
 use iced_wgpu::primitive::{Pipeline, Primitive};
 
-use crate::compile::{compile_drawable, compile_local_at};
+use std::collections::HashMap;
+
+use crate::compile::{compile_drawable, compile_local_at, entry_referencing};
 use crate::drawable::Drawable;
 use crate::pipeline::{buffer, types};
 use crate::recipe::{ShapeCache, ShapeExpr};
@@ -214,6 +216,11 @@ pub struct SdfPipeline {
     /// persistent pipeline, NOT the per-frame primitive, and is deliberately not
     /// cleared by `trim` so a unique shape's boolean runs once across frames.
     shape_cache: ShapeCache,
+    /// Per-FRAME map recipe-hash -> segment_start in this frame's segment buffer.
+    /// The first instance of a shape uploads its segments; every later identical
+    /// instance is a command referencing that range (GPU instancing). Cleared by
+    /// `trim` because the segment buffer is rebuilt each frame.
+    frame_shape_slots: HashMap<u64, u32>,
 }
 
 fn create_tile_buffers(device: &Device, cap: u32) -> (iced::wgpu::Buffer, iced::wgpu::Buffer) {
@@ -403,6 +410,7 @@ impl Pipeline for SdfPipeline {
             segment_scratch: Vec::new(),
             frame_stats: types::SdfStats::default(),
             shape_cache: ShapeCache::new(4096),
+            frame_shape_slots: HashMap::new(),
         }
     }
 
@@ -416,6 +424,7 @@ impl Pipeline for SdfPipeline {
         self.entries_buffer.clear();
         self.segments_buffer.clear();
         self.styles_buffer.clear();
+        self.frame_shape_slots.clear();
         self.total_tiles = 0;
         self.draw_index.store(0, Ordering::Relaxed);
     }
@@ -460,14 +469,23 @@ impl Primitive for SdfPrimitive {
                     // translate. The clone breaks the cache borrow before the
                     // segment buffer is touched; it copies arcs, not the boolean.
                     let local = pipeline.shape_cache.get_or_eval(expr).clone();
-                    compile_local_at(
-                        &local,
-                        &entry.style,
-                        i as u32,
-                        *translate,
-                        segment_offset,
-                        &mut pipeline.segment_scratch,
-                    )
+                    let hash = expr.recipe_hash();
+                    if let Some(&shared_start) = pipeline.frame_shape_slots.get(&hash) {
+                        // Segments already uploaded this frame: one tiny command
+                        // referencing the shared range, NO segment upload.
+                        entry_referencing(&local, &entry.style, i as u32, *translate, shared_start)
+                    } else {
+                        // First instance: upload segments and record the range.
+                        pipeline.frame_shape_slots.insert(hash, segment_offset);
+                        compile_local_at(
+                            &local,
+                            &entry.style,
+                            i as u32,
+                            *translate,
+                            segment_offset,
+                            &mut pipeline.segment_scratch,
+                        )
+                    }
                 }
             };
 
