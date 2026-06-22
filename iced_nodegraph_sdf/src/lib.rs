@@ -40,6 +40,7 @@ pub mod color;
 pub mod curve;
 pub mod drawable;
 pub mod pattern;
+pub(crate) mod recipe;
 pub mod style;
 pub mod tiling;
 
