@@ -2839,10 +2839,16 @@ fn frame_time_v3_not_slower_than_v2() {
     let bounds = iced::Rectangle::new(iced::Point::ORIGIN, iced::Size::new(w as f32, h as f32));
 
     // One full frame through the real pipeline, fenced to GPU completion.
+    // Returns the CPU(trim+prepare) time in ms - the actual per-frame work the
+    // GPU pipeline adds, EXCLUDING the synchronous GPU fence below (real async
+    // rendering does not block on it; only this measurement does).
     let run_frame = |pipeline: &mut crate::primitive::SdfPipeline,
-                     prim: &crate::primitive::SdfPrimitive| {
+                     prim: &crate::primitive::SdfPrimitive|
+     -> f64 {
+        let t_prep = Instant::now();
         Pipeline::trim(pipeline);
         prim.prepare(pipeline, &r.device, &r.queue, &bounds, &viewport);
+        let prep_ms = t_prep.elapsed().as_secs_f64() * 1000.0;
         let mut enc = r
             .device
             .create_command_encoder(&CommandEncoderDescriptor::default());
@@ -2871,12 +2877,19 @@ fn frame_time_v3_not_slower_than_v2() {
                 timeout: Some(std::time::Duration::from_secs(10)),
             })
             .unwrap();
+        prep_ms
     };
 
-    let median = |which: u8| -> (f64, Option<f64>) {
+    let med = |v: &mut Vec<f64>| {
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        v[v.len() / 2]
+    };
+    // Returns (full wall-clock ms, per-frame WORK ms = build+prepare, no fence).
+    let median = |which: u8| -> (f64, f64, Option<f64>) {
         let mut pipeline =
             crate::primitive::SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
-        let mut samples = Vec::new();
+        let mut full = Vec::new();
+        let mut work = Vec::new();
         for _ in 0..12 {
             let t0 = Instant::now();
             // Rebuild the primitive each frame (as the widget does), so the
@@ -2898,18 +2911,24 @@ fn frame_time_v3_not_slower_than_v2() {
                     prim.push_recipe(recipe.clone(), *p, &border);
                 }
             }
-            run_frame(&mut pipeline, &prim);
-            samples.push(t0.elapsed().as_secs_f64() * 1000.0);
+            let build_ms = t0.elapsed().as_secs_f64() * 1000.0;
+            let prep_ms = run_frame(&mut pipeline, &prim);
+            full.push(t0.elapsed().as_secs_f64() * 1000.0);
+            work.push(build_ms + prep_ms);
         }
-        samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
         // GPU-only cull time (R3), isolated from the fence/submit overhead that
         // dominates the synchronous wall-clock frame.
         let compute = pipeline.last_compute_ms(&r.device);
-        (samples[samples.len() / 2], compute)
+        (med(&mut full), med(&mut work), compute)
     };
 
-    let (v2, v2c) = median(2);
-    let (v3, v3c) = median(3);
+    let (v2, v2w, v2c) = median(2);
+    let (v3, v3w, v3c) = median(3);
+    println!(
+        "500-node per-frame WORK (build+prepare, no fence, ms): v2={v2w:.3} v3={v3w:.3} \
+         ratio={:.2}x  <- the actual CPU+compute per-frame cost",
+        v2w / v3w,
+    );
     println!(
         "500-node full frame (CPU+GPU wall-clock, ms): v2={v2:.3} v3={v3:.3} ratio={:.2}x",
         v2 / v3,

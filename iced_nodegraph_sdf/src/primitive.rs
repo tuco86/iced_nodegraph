@@ -533,30 +533,38 @@ impl Primitive for SdfPrimitive {
         let scale = viewport.scale_factor();
         let entry_start = pipeline.entries_buffer.len() as u32;
 
-        for (i, entry) in self.entries.iter().enumerate() {
-            pipeline.segment_scratch.clear();
+        // Accumulate this primitive's GPU data, then upload each buffer in ONE
+        // bulk write. The old per-entry pushes issued ~3 `queue.write_buffer`
+        // calls per entry (1500+ per frame for 500 nodes) - that submission
+        // overhead, not the boolean, was what remained of v3's per-frame cost.
+        let seg_base = pipeline.segments_buffer.len() as u32;
+        let style_base = pipeline.styles_buffer.len() as u32;
+        let mut seg_batch = std::mem::take(&mut pipeline.segment_scratch);
+        seg_batch.clear();
+        let mut style_batch: Vec<types::GpuStyle> = Vec::with_capacity(self.entries.len());
+        let mut entry_batch: Vec<types::GpuDrawEntry> = Vec::with_capacity(self.entries.len());
 
-            let segment_offset = pipeline.segments_buffer.len() as u32;
+        for (i, entry) in self.entries.iter().enumerate() {
+            let segment_offset = seg_base + seg_batch.len() as u32;
             let (mut gpu_entry, gpu_style) = match &entry.source {
                 EntrySource::Drawable(drawable) => compile_drawable(
                     drawable,
                     &entry.style,
                     i as u32,
                     segment_offset,
-                    &mut pipeline.segment_scratch,
+                    &mut seg_batch,
                 ),
                 EntrySource::Recipe { expr, translate } => {
                     // Evaluate once (cached across frames), then place by
                     // translate. The clone breaks the cache borrow before the
-                    // segment buffer is touched; it copies arcs, not the boolean.
+                    // batch is touched; it copies arcs, not the boolean.
                     let local = pipeline.shape_cache.get_or_eval(expr).clone();
                     let hash = expr.recipe_hash();
                     if let Some(&shared_start) = pipeline.frame_shape_slots.get(&hash) {
-                        // Segments already uploaded this frame: one tiny command
-                        // referencing the shared range, NO segment upload.
+                        // Segments already in the batch this frame: one tiny
+                        // command referencing the shared range, NO new segments.
                         entry_referencing(&local, &entry.style, i as u32, *translate, shared_start)
                     } else {
-                        // First instance: upload segments and record the range.
                         pipeline.frame_shape_slots.insert(hash, segment_offset);
                         compile_local_at(
                             &local,
@@ -564,24 +572,27 @@ impl Primitive for SdfPrimitive {
                             i as u32,
                             *translate,
                             segment_offset,
-                            &mut pipeline.segment_scratch,
+                            &mut seg_batch,
                         )
                     }
                 }
             };
-
-            if !pipeline.segment_scratch.is_empty() {
-                let _ =
-                    pipeline
-                        .segments_buffer
-                        .push_bulk(device, queue, &pipeline.segment_scratch);
-            }
-
-            let style_idx = pipeline.styles_buffer.push(device, queue, gpu_style);
-            gpu_entry.style_idx = style_idx as u32;
-
-            let _ = pipeline.entries_buffer.push(device, queue, gpu_entry);
+            gpu_entry.style_idx = style_base + style_batch.len() as u32;
+            style_batch.push(gpu_style);
+            entry_batch.push(gpu_entry);
         }
+
+        let _ = pipeline
+            .segments_buffer
+            .push_bulk(device, queue, &seg_batch);
+        let _ = pipeline
+            .styles_buffer
+            .push_bulk(device, queue, &style_batch);
+        let _ = pipeline
+            .entries_buffer
+            .push_bulk(device, queue, &entry_batch);
+        seg_batch.clear();
+        pipeline.segment_scratch = seg_batch; // restore the reused allocation
 
         let entry_count = self.entries.len() as u32;
         let camera_pos = types::GpuVec2::new(self.camera_position.0, self.camera_position.1);
