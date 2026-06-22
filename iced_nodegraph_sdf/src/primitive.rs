@@ -18,9 +18,10 @@ use iced::wgpu::{
 use iced_wgpu::graphics::Viewport;
 use iced_wgpu::primitive::{Pipeline, Primitive};
 
-use crate::compile::compile_drawable;
+use crate::compile::{compile_drawable, compile_local_at};
 use crate::drawable::Drawable;
 use crate::pipeline::{buffer, types};
+use crate::recipe::{ShapeCache, ShapeExpr};
 use crate::shared::SharedSdfResources;
 use crate::style::Style;
 
@@ -63,9 +64,21 @@ bitflags! {
     }
 }
 
+/// Where a draw entry's geometry comes from. `Drawable` is the world-baked v2
+/// path; `Recipe` is the v3 dedup path - a position-free shape evaluated once by
+/// the pipeline's frame-surviving `ShapeCache` and placed by `translate`.
+#[derive(Debug, Clone)]
+enum EntrySource {
+    Drawable(Drawable),
+    Recipe {
+        expr: ShapeExpr,
+        translate: [f32; 2],
+    },
+}
+
 #[derive(Debug, Clone)]
 struct DrawEntry {
-    drawable: Drawable,
+    source: EntrySource,
     style: Style,
 }
 
@@ -107,7 +120,26 @@ impl SdfPrimitive {
     /// supply a screen rectangle.
     pub fn push(&mut self, drawable: &Drawable, style: &Style) -> &mut Self {
         self.entries.push(DrawEntry {
-            drawable: drawable.clone(),
+            source: EntrySource::Drawable(drawable.clone()),
+            style: style.clone(),
+        });
+        self
+    }
+
+    /// Append a cacheable shape recipe placed at world `translate` (the v3 dedup
+    /// path). The pipeline evaluates the recipe once via its frame-surviving
+    /// `ShapeCache` and reuses the geometry for every identical shape, so N
+    /// identical nodes pay for ONE boolean. Geometry is stored local with the
+    /// placement carried as a per-instance translate; it renders identically to
+    /// the equivalent world-baked [`push`].
+    pub fn push_recipe(
+        &mut self,
+        expr: ShapeExpr,
+        translate: [f32; 2],
+        style: &Style,
+    ) -> &mut Self {
+        self.entries.push(DrawEntry {
+            source: EntrySource::Recipe { expr, translate },
             style: style.clone(),
         });
         self
@@ -178,6 +210,10 @@ pub struct SdfPipeline {
     draw_index: AtomicU32,
     segment_scratch: Vec<types::GpuSegment>,
     frame_stats: types::SdfStats,
+    /// Frame-surviving cache of evaluated shape recipes (v3 dedup). Lives on the
+    /// persistent pipeline, NOT the per-frame primitive, and is deliberately not
+    /// cleared by `trim` so a unique shape's boolean runs once across frames.
+    shape_cache: ShapeCache,
 }
 
 fn create_tile_buffers(device: &Device, cap: u32) -> (iced::wgpu::Buffer, iced::wgpu::Buffer) {
@@ -366,6 +402,7 @@ impl Pipeline for SdfPipeline {
             draw_index: AtomicU32::new(0),
             segment_scratch: Vec::new(),
             frame_stats: types::SdfStats::default(),
+            shape_cache: ShapeCache::new(4096),
         }
     }
 
@@ -410,13 +447,29 @@ impl Primitive for SdfPrimitive {
             pipeline.segment_scratch.clear();
 
             let segment_offset = pipeline.segments_buffer.len() as u32;
-            let (mut gpu_entry, gpu_style) = compile_drawable(
-                &entry.drawable,
-                &entry.style,
-                i as u32,
-                segment_offset,
-                &mut pipeline.segment_scratch,
-            );
+            let (mut gpu_entry, gpu_style) = match &entry.source {
+                EntrySource::Drawable(drawable) => compile_drawable(
+                    drawable,
+                    &entry.style,
+                    i as u32,
+                    segment_offset,
+                    &mut pipeline.segment_scratch,
+                ),
+                EntrySource::Recipe { expr, translate } => {
+                    // Evaluate once (cached across frames), then place by
+                    // translate. The clone breaks the cache borrow before the
+                    // segment buffer is touched; it copies arcs, not the boolean.
+                    let local = pipeline.shape_cache.get_or_eval(expr).clone();
+                    compile_local_at(
+                        &local,
+                        &entry.style,
+                        i as u32,
+                        *translate,
+                        segment_offset,
+                        &mut pipeline.segment_scratch,
+                    )
+                }
+            };
 
             if !pipeline.segment_scratch.is_empty() {
                 let _ =
