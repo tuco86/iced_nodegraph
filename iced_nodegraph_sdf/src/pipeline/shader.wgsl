@@ -574,7 +574,12 @@ fn apply_pattern(dist: f32, sdf: SdfResult, style: GpuStyle, time: f32) -> f32 {
             let nearest = round(shifted_u / period) * period;
             let dist_along = shifted_u - nearest;
             let dd = abs(vec2(dist_along, dist)) - vec2(dash * 0.5, half_t);
-            return length(max(dd, vec2(0.0))) + min(max(dd.x, dd.y), 0.0);
+            let box_d = length(max(dd, vec2(0.0))) + min(max(dd.x, dd.y), 0.0);
+            // Lipschitz correction (A3): the box is measured in the sheared
+            // (u,dist) frame (|grad|=sec(angle)), over-estimating distance by
+            // 1/cos(angle). Multiply by cos(angle) to restore |grad|=1 so the
+            // analytic AA band on diagonal dash ends is the right width.
+            return box_d * cos(angle);
         }
         case PATTERN_ARROWED: {
             let segment = style.pattern_param0;
@@ -585,7 +590,8 @@ fn apply_pattern(dist: f32, sdf: SdfResult, style: GpuStyle, time: f32) -> f32 {
             let nearest = round(shifted_u / period) * period;
             let dist_along = shifted_u - nearest;
             let dd = abs(vec2(dist_along, dist)) - vec2(segment * 0.5, half_t);
-            return length(max(dd, vec2(0.0))) + min(max(dd.x, dd.y), 0.0);
+            let box_d = length(max(dd, vec2(0.0))) + min(max(dd.x, dd.y), 0.0);
+            return box_d * cos(angle); // Lipschitz correction (A3), see PATTERN_DASHED.
         }
         case PATTERN_DOTTED: {
             let spacing = style.pattern_param0;
