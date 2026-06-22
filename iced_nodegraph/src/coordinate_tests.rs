@@ -657,3 +657,113 @@ fn culling_holds_under_zoom() {
         off.primitives,
     );
 }
+
+// ---------------------------------------------------------------------------
+// Recipe-hash stability (R4 / keystone). THE highest-risk unvalidated
+// assumption behind the SDF v3 rewrite: that an unchanged node emits a
+// byte-identical geometry recipe across frames. Node geometry is built from
+// `node_layout.bounds()`; if iced layout jittered sub-ULP, or if any node
+// geometry still depended on `time` (the pin-cutout pulse, now removed), the
+// recipe would differ frame-to-frame and dedup / arena / instancing would all
+// collapse. Driving the real widget's draw path through iced layout for 120
+// frames while wall-clock `time` advances, the per-node geometry fingerprint
+// (the SDF clip bounds, which are a pure function of the recipe operands) must
+// stay identical. This is the gate that must hold before any arena work.
+// ---------------------------------------------------------------------------
+
+/// Bit-exact fingerprint of a recorded frame's geometry: every SDF primitive
+/// clip rect and content quad, serialized as raw `f32` bits (so -0.0 != 0.0 and
+/// NaN payloads are caught, per the native-vs-wasm hash contract).
+fn geometry_fingerprint(rec: &Recorded) -> Vec<u32> {
+    let mut bits = Vec::new();
+    let mut push = |r: &Rectangle| {
+        bits.extend_from_slice(&[
+            r.x.to_bits(),
+            r.y.to_bits(),
+            r.width.to_bits(),
+            r.height.to_bits(),
+        ]);
+    };
+    for r in &rec.primitives {
+        push(r);
+    }
+    for r in &rec.quads {
+        push(r);
+    }
+    bits
+}
+
+#[test]
+fn recipe_hash_is_stable_across_120_frames() {
+    // A static three-node graph (no edges, so only node geometry is under test).
+    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Rec> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .view(Point::ORIGIN, 1.0);
+    for (i, p) in [(30.0, 40.0), (140.0, 90.0), (60.0, 220.0)]
+        .into_iter()
+        .enumerate()
+    {
+        graph.push_node(node(i, Point::new(p.0, p.1), Element::from(ContentProbe)));
+    }
+
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Rec>);
+    let layout_node = graph.layout(
+        &mut tree,
+        &Rec::new(Rc::new(RefCell::new(Recorded::default()))),
+        &layout::Limits::new(Size::ZERO, Size::new(1024.0, 768.0)),
+    );
+    let layout = Layout::with_offset(Vector::ZERO, &layout_node);
+    let viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
+
+    let mut reference: Option<Vec<u32>> = None;
+    for frame in 0..120 {
+        let out = Rc::new(RefCell::new(Recorded::default()));
+        let mut renderer = Rec::new(out.clone());
+
+        // A no-op cursor move per frame both syncs `view()` and lets the widget
+        // advance its wall-clock animation time, so `time` genuinely varies
+        // across the 120 frames while the geometry must not.
+        let mut msgs: Vec<()> = Vec::new();
+        let mut shell = iced_widget::core::Shell::new(&mut msgs);
+        let mut clipboard = clipboard::Null;
+        graph.update(
+            &mut tree,
+            &iced::Event::Mouse(mouse::Event::CursorMoved {
+                position: Point::new(-1.0, -1.0),
+            }),
+            layout,
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+
+        graph.draw(
+            &tree,
+            &mut renderer,
+            &Theme::Dark,
+            &renderer::Style {
+                text_color: Color::WHITE,
+            },
+            layout,
+            mouse::Cursor::Unavailable,
+            &viewport,
+        );
+
+        let fp = geometry_fingerprint(&out.borrow());
+        assert!(
+            !fp.is_empty(),
+            "frame {frame} recorded no geometry; the harness drew nothing",
+        );
+        match &reference {
+            None => reference = Some(fp),
+            Some(r) => assert!(
+                *r == fp,
+                "node geometry recipe changed on frame {frame}: the recipe is \
+                 not hash-stable, so dedup/arena/instancing cannot be trusted",
+            ),
+        }
+    }
+}
