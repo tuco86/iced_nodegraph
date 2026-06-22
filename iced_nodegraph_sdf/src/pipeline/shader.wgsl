@@ -853,30 +853,71 @@ fn cs_push_slot(base: u32, count: ptr<function, u32>, seg_idx: u32, style_idx: u
     }
 }
 
+// Two-level (regional) cull: candidates of one 16x16-tile workgroup, gathered
+// in workgroup memory so each fine tile scans the region's candidates instead of
+// every entry. 256 = the workgroup's thread count and a generous regional cap.
+const MAX_WG_CANDIDATES: u32 = 256u;
+var<workgroup> wg_candidates: array<u32, 256>;
+var<workgroup> wg_count: atomic<u32>;
+
 @compute @workgroup_size(16, 16, 1)
-fn cs_build_index(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn cs_build_index(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(local_invocation_index) lid: u32,
+) {
     let draw = cs_draws[cs_uniforms.draw_index];
+    let inv_cs = 1.0 / (draw.camera_zoom * draw.scale_factor);
+    let thd = TILE_SIZE * 0.70710678 * inv_cs; // tile half diagonal in world
+
+    // --- Regional candidate binning (two-level cull). EVERY thread participates
+    // (no early return before the barrier - WGSL requires uniform control flow
+    // there): cooperatively gather entries whose world AABB reaches this
+    // workgroup's 16x16-tile (256px) region, so the per-fine-tile loop below
+    // scans only the region candidates, not all entries.
+    let wg_col0 = wid.x * 16u;
+    let wg_row0 = wid.y * 16u;
+    let wg_min = vec2(f32(wg_col0) * TILE_SIZE, f32(wg_row0) * TILE_SIZE) * inv_cs
+        - draw.camera_position;
+    let wg_max = vec2(f32(wg_col0 + 16u) * TILE_SIZE, f32(wg_row0 + 16u) * TILE_SIZE) * inv_cs
+        - draw.camera_position;
+
+    if lid == 0u { atomicStore(&wg_count, 0u); }
+    workgroupBarrier();
+
+    let entry_end = draw.entry_start + draw.entry_count;
+    for (var bi: u32 = draw.entry_start + lid; bi < entry_end; bi = bi + 256u) {
+        let e = cs_entries[bi];
+        let st = cs_styles[e.style_idx];
+        let er = style_max_dist(st) + pattern_perp_reach(st) + thd + 1.0;
+        let eb = e.bounds;
+        if eb.z + er >= wg_min.x && eb.x - er <= wg_max.x
+            && eb.w + er >= wg_min.y && eb.y - er <= wg_max.y {
+            let slot = atomicAdd(&wg_count, 1u);
+            if slot < MAX_WG_CANDIDATES { wg_candidates[slot] = bi; }
+        }
+    }
+    workgroupBarrier();
+    let cand_count = min(atomicLoad(&wg_count), MAX_WG_CANDIDATES);
+
+    // --- Per-fine-tile cull over the region candidates ---
     let col = gid.x;
     let row = gid.y;
-
     if col >= draw.grid_cols || row >= draw.grid_rows { return; }
 
     let local_tile_idx = row * draw.grid_cols + col;
     let global_tile_idx = draw.tile_base + local_tile_idx;
-
     let local_center = vec2(
         (f32(col) + 0.5) * TILE_SIZE,
         (f32(row) + 0.5) * TILE_SIZE,
     );
-    let inv_cs = 1.0 / (draw.camera_zoom * draw.scale_factor);
     let world_pos = local_center * inv_cs - draw.camera_position;
-    let thd = TILE_SIZE * 0.70710678 * inv_cs; // tile half diagonal in world
 
     var count: u32 = 0u;
     let slot_base = global_tile_idx * SLOT_STRIDE;
 
-    let entry_end = draw.entry_start + draw.entry_count;
-    for (var i: u32 = draw.entry_start; i < entry_end; i++) {
+    for (var ci: u32 = 0u; ci < cand_count; ci = ci + 1u) {
+        let i = wg_candidates[ci];
         let entry = cs_entries[i];
         let style = cs_styles[entry.style_idx];
         // Segments are local; evaluate at the tile center shifted by the
