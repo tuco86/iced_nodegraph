@@ -64,8 +64,9 @@ struct DrawData {
 struct GpuSegment {
     segment_type: u32,
     flags: u32,
-    _pad1: u32,
-    _pad2: u32,
+    // Per-instance placement (v3 keystone): geometry is local, evaluated against
+    // `world_p - translate`. `(0,0)` (v2 default) leaves geometry world-baked.
+    translate: vec2<f32>,
     geom0: vec4<f32>,
     geom1: vec4<f32>,
     arc_range: vec4<f32>,
@@ -431,11 +432,14 @@ fn sd_tiling(p: vec2<f32>, tiling_type: u32, params: vec4<f32>) -> SdfResult {
 }
 
 fn eval_segment(p: vec2<f32>, seg: GpuSegment) -> SdfResult {
+    // v3 keystone: geometry is local, placed by a per-instance translate. v2
+    // leaves translate (0,0), so lp == p. Distance is translation-invariant.
+    let lp = p - seg.translate;
     switch seg.segment_type {
-        case SEG_LINE: { return sd_line(p, seg.geom0.xy, seg.geom0.zw); }
-        case SEG_ARC: { return sd_arc_segment(p, seg.geom0.xy, seg.geom0.z, seg.geom0.w, seg.geom1.x); }
-        case SEG_CUBIC: { return sd_bezier(p, seg.geom0.xy, seg.geom0.zw, seg.geom1.xy, seg.geom1.zw); }
-        case SEG_POINT: { return sd_point(p, seg.geom0.xy, seg.geom0.z); }
+        case SEG_LINE: { return sd_line(lp, seg.geom0.xy, seg.geom0.zw); }
+        case SEG_ARC: { return sd_arc_segment(lp, seg.geom0.xy, seg.geom0.z, seg.geom0.w, seg.geom1.x); }
+        case SEG_CUBIC: { return sd_bezier(lp, seg.geom0.xy, seg.geom0.zw, seg.geom1.xy, seg.geom1.zw); }
+        case SEG_POINT: { return sd_point(lp, seg.geom0.xy, seg.geom0.z); }
         default: { return SdfResult(1e10, 0.0); }
     }
 }

@@ -1,9 +1,11 @@
 //! Compilation: Drawable + Style -> GPU data.
 
+use std::borrow::Cow;
+
 use iced::Color;
 
 use crate::drawable::Drawable;
-use crate::pipeline::types::{GpuDrawEntry, GpuSegment, GpuStyle, GpuVec4};
+use crate::pipeline::types::{GpuDrawEntry, GpuSegment, GpuStyle, GpuVec2, GpuVec4};
 use crate::style::{MAX_STOPS, Style};
 
 const FLAG_CLOSED: u32 = 1; // entry.flags
@@ -11,7 +13,8 @@ const SEG_FLAG_SIGNED: u32 = 1; // segment.flags
 const STYLE_FLAG_HAS_PATTERN: u32 = 1;
 const STYLE_FLAG_DISTANCE_FIELD: u32 = 2;
 
-/// Compile a drawable and style into GPU data.
+/// Compile a drawable and style into GPU data, world-baked (v2). Equivalent to
+/// [`compile_drawable_at`] with origin `(0,0)`.
 pub(crate) fn compile_drawable(
     drawable: &Drawable,
     style: &Style,
@@ -19,14 +22,48 @@ pub(crate) fn compile_drawable(
     segment_base: u32,
     out_segments: &mut Vec<GpuSegment>,
 ) -> (GpuDrawEntry, GpuStyle) {
+    compile_drawable_at(
+        drawable,
+        style,
+        z_order,
+        [0.0, 0.0],
+        segment_base,
+        out_segments,
+    )
+}
+
+/// Compile a drawable with its geometry stored in a LOCAL frame around `origin`
+/// and `origin` carried as the per-segment translate (the v3 keystone). The
+/// entry's `bounds` stay world-space (`= local bounds + origin`). With
+/// `origin == (0,0)` this is byte-identical to v2's world-baked compile.
+///
+/// Because a translate preserves distance (`|grad| = 1`), the rendered result
+/// is independent of `origin`: two identical shapes at different positions then
+/// produce identical local geometry, differing only in the translate - the
+/// property dedup relies on. Tilings are analytic (no segments), so `origin` is
+/// ignored for them.
+pub(crate) fn compile_drawable_at(
+    drawable: &Drawable,
+    style: &Style,
+    z_order: u32,
+    origin: [f32; 2],
+    segment_base: u32,
+    out_segments: &mut Vec<GpuSegment>,
+) -> (GpuDrawEntry, GpuStyle) {
     let segment_start = segment_base + out_segments.len() as u32;
 
-    for seg in &drawable.segments {
+    // Geometry stored local; placement carried in the per-segment translate.
+    let local = if origin == [0.0, 0.0] {
+        Cow::Borrowed(drawable)
+    } else {
+        Cow::Owned(drawable.translated(-origin[0], -origin[1]))
+    };
+
+    for seg in &local.segments {
         out_segments.push(GpuSegment {
             segment_type: seg.segment_type as u32,
             flags: if seg.signed { SEG_FLAG_SIGNED } else { 0 },
-            _pad1: 0,
-            _pad2: 0,
+            translate: GpuVec2(origin),
             geom0: GpuVec4(seg.geom0),
             geom1: GpuVec4(seg.geom1),
             arc_range: GpuVec4([seg.arc_start, seg.arc_end, drawable.total_arc_length, 0.0]),
@@ -43,6 +80,8 @@ pub(crate) fn compile_drawable(
         style_idx: 0,
         z_order,
         flags,
+        // World-space AABB: invariant to the local/translate split (the
+        // original world bounds = local bounds + origin).
         bounds: GpuVec4(drawable.bounds),
         segment_start,
         segment_count: drawable.segments.len() as u32,

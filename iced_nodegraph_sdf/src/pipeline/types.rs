@@ -75,8 +75,13 @@ pub(crate) struct GpuSegment {
     pub segment_type: u32,
     /// Segment flags. Bit 0: signed (part of closed contour).
     pub flags: u32,
-    pub _pad1: u32,
-    pub _pad2: u32,
+    /// Per-instance placement (v3 keystone). Geometry in `geom0`/`geom1` is
+    /// stored in a local frame; the shader evaluates against
+    /// `world_p - translate` so identical shapes at different positions share
+    /// geometry. `(0,0)` (the v2 default) leaves geometry world-baked, so the
+    /// rendered result is unchanged. Distance is translation-invariant, so AA
+    /// and band thresholds need no adjustment.
+    pub translate: GpuVec2,
     /// Primary geometry. Line: (ax,ay,bx,by). Bezier: (p0x,p0y,p1x,p1y). Arc: (cx,cy,r,start_angle).
     pub geom0: GpuVec4,
     /// Secondary geometry. Bezier: (p2x,p2y,p3x,p3y). Arc: (sweep_angle,0,0,0).
@@ -183,8 +188,7 @@ impl Default for GpuSegment {
         Self {
             segment_type: 0,
             flags: 0,
-            _pad1: 0,
-            _pad2: 0,
+            translate: GpuVec2::ZERO,
             geom0: GpuVec4::ZERO,
             geom1: GpuVec4::ZERO,
             arc_range: GpuVec4::ZERO,

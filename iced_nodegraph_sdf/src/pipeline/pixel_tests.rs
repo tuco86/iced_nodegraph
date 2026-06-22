@@ -446,7 +446,9 @@ impl TestRenderer {
         scale: f32,
         use_tiles: bool,
     ) -> Vec<[u8; 4]> {
-        self.render_full_t(drawables, width, height, zoom, scale, use_tiles, 0.0, None)
+        self.render_full_t(
+            drawables, width, height, zoom, scale, use_tiles, 0.0, None, false,
+        )
     }
 
     /// Like [`render_full`] but with an explicit animation `time` (so animated
@@ -465,6 +467,7 @@ impl TestRenderer {
         use_tiles: bool,
         time: f32,
         camera: Option<[f32; 2]>,
+        localize: bool,
     ) -> Vec<[u8; 4]> {
         // Compile Rust -> GPU data
         let mut gpu_segments = Vec::new();
@@ -473,10 +476,25 @@ impl TestRenderer {
 
         for (i, (drawable, style)) in drawables.iter().enumerate() {
             let seg_offset = gpu_segments.len() as u32;
-            let (mut entry, gpu_style) =
-                compile_drawable(drawable, style, i as u32, 0, &mut gpu_segments);
+            // When localizing (the v3 keystone), store geometry in a frame
+            // around the drawable's bounds-center and carry that origin as the
+            // per-segment translate. Tilings have no segments, so leave them.
+            let origin = if localize && drawable.segment_count() > 0 {
+                let b = drawable.bounds();
+                [(b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5]
+            } else {
+                [0.0, 0.0]
+            };
+            let (mut entry, gpu_style) = crate::compile::compile_drawable_at(
+                drawable,
+                style,
+                i as u32,
+                origin,
+                0,
+                &mut gpu_segments,
+            );
             entry.style_idx = gpu_styles.len() as u32;
-            // Fix segment_start: compile_drawable uses segment_base=0, offset is already correct
+            // Fix segment_start: compile uses segment_base=0, offset is already correct
             entry.segment_start = seg_offset;
             gpu_entries.push(entry);
             gpu_styles.push(gpu_style);
@@ -2493,6 +2511,24 @@ fn render_scene_v2(r: &TestRenderer, scene: &Scene, use_tiles: bool) -> Vec<[u8;
         use_tiles,
         scene.time,
         scene.camera,
+        false,
+    )
+}
+
+/// Render a corpus scene through the v3 keystone path: geometry localized to
+/// each drawable's bounds-center, placement carried in the per-segment
+/// translate. By translate invariance this must be pixel-identical to v2.
+fn render_scene_v3(r: &TestRenderer, scene: &Scene, use_tiles: bool) -> Vec<[u8; 4]> {
+    r.render_full_t(
+        &scene.pairs(),
+        scene.width,
+        scene.height,
+        scene.zoom,
+        1.0,
+        use_tiles,
+        scene.time,
+        scene.camera,
+        true,
     )
 }
 
@@ -2562,6 +2598,27 @@ fn corpus_scenes_render_plausible_coverage() {
              0% means it rendered nothing, ~100% means a fill-everywhere bug",
             scene.name,
             frac * 100.0,
+        );
+    }
+}
+
+/// Phase A1 keystone gate: the v3 local-geometry + per-instance translate path
+/// is pixel-equivalent to the v2 world-baked path on every corpus scene. This
+/// is the translate-invariance proof (`|grad| = 1`, so distances - and thus AA
+/// and band thresholds - are unchanged) that the whole dedup/arena architecture
+/// rests on. Phase A gates on pixel-equality only.
+#[test]
+fn corpus_v3_localized_matches_v2() {
+    let r = shared_renderer();
+    for scene in corpus() {
+        let v2 = render_scene_v2(&r, &scene, true);
+        let v3 = render_scene_v3(&r, &scene, true);
+        let (worst, over, sample) = corpus_diff(&v2, &v3);
+        assert!(
+            over == 0,
+            "scene `{}`: v3 localized vs v2 differs on {over} visible pixels \
+             (worst per-channel {worst}). First: {sample:?}",
+            scene.name,
         );
     }
 }
