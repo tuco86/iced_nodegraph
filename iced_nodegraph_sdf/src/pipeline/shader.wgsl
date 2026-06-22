@@ -119,6 +119,19 @@ fn style_max_dist(style: GpuStyle) -> f32 {
     return m;
 }
 
+// Perpendicular half-reach of a pattern's stroke: the widest distance a feature
+// can occupy ACROSS the contour, independent of `time` and the along-u dash/dot
+// layout (C1). Half thickness for line-like patterns; the dot radius can exceed
+// it for the dotted families.
+fn pattern_perp_reach(style: GpuStyle) -> f32 {
+    let half_t = style.pattern_thickness * 0.5;
+    switch style.pattern_type {
+        case PATTERN_DOTTED: { return max(half_t, style.pattern_param1); }
+        case PATTERN_DASH_DOTTED, PATTERN_ARROW_DOTTED: { return max(half_t, style.pattern_param2); }
+        default: { return half_t; }
+    }
+}
+
 struct ComputeUniforms {
     draw_index: u32,
     _pad0: u32,
@@ -916,21 +929,18 @@ fn cs_build_index(@builtin(global_invocation_id) gid: vec3<u32>) {
             let r = eval_segment(lp, seg);
 
             if has_pattern {
-                // Pattern: per-segment culling with pattern evaluation.
-                // Dashed/Arrowed shear `shifted_u = u + dist*tan(angle)`, so a
-                // pixel within the tile can shift `dist_along` by up to
-                // thd*|tan(angle)| beyond what tile-center evaluation sees.
-                // Widen the cull margin in that case to avoid dropping whole
-                // tiles for any plausible angle.
-                let sdf = cs_eval_segment(lp, seg_idx);
-                let eff = apply_pattern(sdf.dist, sdf, style, draw.time);
-                var cull_margin = thd;
+                // C1: cull against the pattern's PERPENDICULAR envelope (as if
+                // SOLID), ignoring the along-u dash/dot/flow structure - so the
+                // cull is TIME-INDEPENDENT. Conservative over-inclusion: a gap
+                // tile may get the command and render transparent. A sheared
+                // dash/arrow leans by up to thd*|tan| at the open-contour end.
+                var reach = pattern_perp_reach(style) + style_max_dist(style);
                 if style.pattern_type == PATTERN_DASHED
                     || style.pattern_type == PATTERN_ARROWED
                 {
-                    cull_margin = thd * (1.0 + abs(tan(style.pattern_param2)));
+                    reach = reach + thd * abs(tan(style.pattern_param2));
                 }
-                if eff <= cull_margin {
+                if abs(r.dist) - thd <= reach {
                     cs_push_slot(slot_base, &count, seg_idx, i);
                 }
             } else {
