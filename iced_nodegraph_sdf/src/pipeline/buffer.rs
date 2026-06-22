@@ -51,6 +51,11 @@ impl<T: ShaderSize> Buffer<T> {
         self.buffer_wgpu.as_entire_binding()
     }
 
+    /// The underlying GPU buffer (e.g. as a `copy_buffer_to_buffer` source).
+    pub fn wgpu_buffer(&self) -> &wgpu::Buffer {
+        &self.buffer_wgpu
+    }
+
     pub fn len(&self) -> usize {
         self.buffer_vec.len()
     }
@@ -151,6 +156,31 @@ impl<T: ShaderSize> Buffer<T> {
             queue.write_buffer(&self.buffer_wgpu, offset as u64, &self.scratch);
         }
         start_slot
+    }
+
+    /// Overwrite the item at an existing `index` in place - one slot, CPU mirror
+    /// and GPU buffer, no growth and no full rewrite. This is the basis for
+    /// incremental command updates (R2): dragging one node rewrites ONE command
+    /// instead of the whole buffer, so update cost scales with nodes-moved, not
+    /// nodes-total. Panics if `index` is out of bounds.
+    pub fn write_at(&mut self, queue: &wgpu::Queue, index: usize, item: T)
+    where
+        T: ShaderType + ShaderSize + WriteInto,
+    {
+        assert!(
+            index < self.buffer_vec.len(),
+            "write_at index {index} out of bounds (len {})",
+            self.buffer_vec.len(),
+        );
+        let item_size = T::SHADER_SIZE.get() as usize;
+        self.buffer_vec[index] = item;
+        self.scratch.clear();
+        self.scratch.resize(item_size, 0);
+        let mut writer = encase::StorageBuffer::new(&mut self.scratch[..]);
+        writer
+            .write(&self.buffer_vec[index])
+            .expect("Failed to write to storage buffer");
+        queue.write_buffer(&self.buffer_wgpu, (index * item_size) as u64, &self.scratch);
     }
 
     pub fn clear(&mut self) {

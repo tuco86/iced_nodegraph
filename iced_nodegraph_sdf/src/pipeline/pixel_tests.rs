@@ -2724,3 +2724,51 @@ fn corpus_v2_tiled_matches_untiled() {
         );
     }
 }
+
+/// B0 primitive: `Buffer::write_at` rewrites exactly one slot in place (the
+/// basis for R2 incremental command updates), leaving its neighbours untouched.
+/// Reuses the shared device (a second device risks the documented multi-device
+/// deadlock).
+#[test]
+fn buffer_write_at_updates_one_slot() {
+    let r = shared_renderer();
+    let mut buf: crate::pipeline::buffer::Buffer<GpuVec4> = crate::pipeline::buffer::Buffer::new(
+        &r.device,
+        Some("write_at_test"),
+        BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
+    );
+    let _ = buf.push(&r.device, &r.queue, GpuVec4::new(1.0, 1.0, 1.0, 1.0));
+    let _ = buf.push(&r.device, &r.queue, GpuVec4::new(2.0, 2.0, 2.0, 2.0));
+    let _ = buf.push(&r.device, &r.queue, GpuVec4::new(3.0, 3.0, 3.0, 3.0));
+
+    buf.write_at(&r.queue, 1, GpuVec4::new(9.0, 9.0, 9.0, 9.0));
+
+    let item_size = GpuVec4::SHADER_SIZE.get() as usize;
+    let total = (item_size * 3) as u64;
+    let readback = r.device.create_buffer(&BufferDescriptor {
+        label: None,
+        size: total,
+        usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut enc = r
+        .device
+        .create_command_encoder(&CommandEncoderDescriptor::default());
+    enc.copy_buffer_to_buffer(buf.wgpu_buffer(), 0, &readback, 0, total);
+    let idx = r.queue.submit(std::iter::once(enc.finish()));
+    let slice = readback.slice(..);
+    slice.map_async(MapMode::Read, |_| {});
+    r.device
+        .poll(wgpu::PollType::Wait {
+            submission_index: Some(idx),
+            timeout: Some(std::time::Duration::from_secs(5)),
+        })
+        .unwrap();
+    let data = slice.get_mapped_range();
+    let floats: &[f32] = bytemuck::cast_slice(&data);
+    assert_eq!(floats[0], 1.0, "slot 0 must be untouched");
+    assert_eq!(floats[4], 9.0, "slot 1 must be rewritten");
+    assert_eq!(floats[8], 3.0, "slot 2 must be untouched");
+    drop(data);
+    readback.unmap();
+}
