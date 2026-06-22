@@ -40,7 +40,7 @@ pub mod color;
 pub mod curve;
 pub mod drawable;
 pub mod pattern;
-pub(crate) mod recipe;
+pub mod recipe;
 pub mod style;
 pub mod tiling;
 
@@ -59,5 +59,6 @@ pub use drawable::Drawable;
 pub use pattern::Pattern;
 pub use pipeline::types::SdfStats;
 pub use primitive::{DebugFlags, SdfPrimitive, sdf_stats};
+pub use recipe::{ShapeCache, ShapeExpr};
 pub use style::{Stop, Style};
 pub use tiling::Tiling;

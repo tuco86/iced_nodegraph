@@ -19,8 +19,6 @@
 //! Hashes COMPOSE: a shape's hash is a pure function of its sub-expression
 //! hashes, so `base - union(cuts)` shared across nodes shares a cache slot.
 
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 
 use crate::boolean;
@@ -32,7 +30,7 @@ use crate::drawable::Drawable;
 /// per-instance translate. `evaluate` materializes the arcs; `recipe_hash` keys
 /// the cache on the definition.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum ShapeExpr {
+pub enum ShapeExpr {
     /// Rounded rectangle centered on the local origin.
     RoundedRect { half: [f32; 2], radius: f32 },
     /// Circle at a local offset (e.g. a pin cutout relative to the body center).
@@ -121,7 +119,7 @@ impl ShapeExpr {
 
     /// Content-addressed hash of the DEFINITION (not the evaluated arcs).
     /// Placement-stable: equal for two identical shapes at different positions.
-    pub(crate) fn recipe_hash(&self) -> u64 {
+    pub fn recipe_hash(&self) -> u64 {
         let mut h = Fnv::new();
         self.hash_into(&mut h);
         h.finish()
@@ -129,7 +127,7 @@ impl ShapeExpr {
 
     /// Materialize the recipe to local-frame geometry (the expensive step the
     /// cache stores). Delegates to the existing evaluators.
-    pub(crate) fn evaluate(&self) -> Drawable {
+    pub fn evaluate(&self) -> Drawable {
         match self {
             ShapeExpr::RoundedRect { half, radius } => {
                 Curve::rounded_rect([0.0, 0.0], *half, *radius)
@@ -158,7 +156,7 @@ struct CachedShape {
 /// Only STABLE shapes (node bodies) are fed here. Ephemeral geometry - edges,
 /// whose arcs change whenever an endpoint moves - is never a `ShapeExpr`, so it
 /// structurally bypasses the cache and cannot churn the LRU.
-pub(crate) struct ShapeCache {
+pub struct ShapeCache {
     map: HashMap<u64, CachedShape>,
     capacity: usize,
     tick: u64,
@@ -167,7 +165,7 @@ pub(crate) struct ShapeCache {
 }
 
 impl ShapeCache {
-    pub(crate) fn new(capacity: usize) -> Self {
+    pub fn new(capacity: usize) -> Self {
         Self {
             map: HashMap::new(),
             capacity: capacity.max(1),
@@ -180,7 +178,7 @@ impl ShapeCache {
     /// Local-frame geometry for `recipe`, evaluating and caching on a miss and
     /// reusing the cached arcs on a hit. The returned drawable is position-free;
     /// the caller places it with the per-instance translate.
-    pub(crate) fn get_or_eval(&mut self, recipe: &ShapeExpr) -> &Drawable {
+    pub fn get_or_eval(&mut self, recipe: &ShapeExpr) -> &Drawable {
         let h = recipe.recipe_hash();
         self.tick += 1;
         let tick = self.tick;
@@ -214,13 +212,18 @@ impl ShapeCache {
         }
     }
 
-    pub(crate) fn len(&self) -> usize {
+    /// Number of distinct shapes currently cached.
+    pub fn len(&self) -> usize {
         self.map.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
     }
 
     /// Fraction of `get_or_eval` calls that hit the cache, over the cache's
     /// lifetime. ~1.0 on a static graph is the R4 contract.
-    pub(crate) fn hit_rate(&self) -> f32 {
+    pub fn hit_rate(&self) -> f32 {
         let total = self.hits + self.misses;
         if total == 0 {
             0.0
@@ -229,10 +232,10 @@ impl ShapeCache {
         }
     }
 
-    pub(crate) fn hits(&self) -> u64 {
+    pub fn hits(&self) -> u64 {
         self.hits
     }
-    pub(crate) fn misses(&self) -> u64 {
+    pub fn misses(&self) -> u64 {
         self.misses
     }
 }
