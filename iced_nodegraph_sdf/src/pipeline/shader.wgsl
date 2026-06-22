@@ -902,6 +902,18 @@ fn cs_build_index(@builtin(global_invocation_id) gid: vec3<u32>) {
             continue;
         }
 
+        // Spatial pre-cull (shapes): skip entries whose world AABB - expanded by
+        // the tile half-diagonal and the style/pattern outward reach - does not
+        // contain this tile center. A cheap bounds test that avoids per-segment
+        // evaluation for the many far entries, so the cull is NOT O(tiles x all
+        // entries). Over-inclusion only (the margin is conservative).
+        let er = thd + style_max_dist(style) + pattern_perp_reach(style) + 0.5;
+        let eb = entry.bounds;
+        if world_pos.x < eb.x - er || world_pos.x > eb.z + er
+            || world_pos.y < eb.y - er || world_pos.y > eb.w + er {
+            continue;
+        }
+
         let has_pattern = (style.flags & STYLE_FLAG_HAS_PATTERN) != 0u;
 
         // Pass 1: find nearest segment (by absolute distance) at tile center
