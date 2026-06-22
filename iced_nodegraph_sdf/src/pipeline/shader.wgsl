@@ -517,9 +517,17 @@ fn render_style(sdf: SdfResult, style: GpuStyle, draw: DrawData, total_arc: f32)
     // a zero-width step is a crisp AA edge), hold the last stop above it. One
     // continuous evaluation - no per-band compositing, so abutting bands never
     // seam.
-    var color = mix(style.stop_start[0], style.stop_end[0], arc_t);
+    // Blend the stop chain in PREMULTIPLIED space (A3 band-fold fix). Mixing
+    // straight-alpha RGBA toward a stop with different alpha pulls RGB toward the
+    // (near-)transparent stop's RGB and fringes the falloff - visible on soft
+    // shadows/glows where a transparent outer stop meets an opaque one.
+    // Premultiplied mixing avoids it. For stops at equal alpha the result is
+    // identical to a straight-space mix, so opaque/abutting bands are unchanged.
+    let c0 = mix(style.stop_start[0], style.stop_end[0], arc_t);
+    var acc = vec4(c0.rgb * c0.a, c0.a);
     for (var i = 0u; i + 1u < style.stop_count; i++) {
         let cj = mix(style.stop_start[i + 1u], style.stop_end[i + 1u], arc_t);
+        let pcj = vec4(cj.rgb * cj.a, cj.a);
         var lo = stop_dist_at(style, i);
         var hi = stop_dist_at(style, i + 1u);
         if hi - lo < aa {
@@ -528,12 +536,13 @@ fn render_style(sdf: SdfResult, style: GpuStyle, draw: DrawData, total_arc: f32)
             hi = m + aa * 0.5;
         }
         let t = smoothstep(lo, hi, dist);
-        color = mix(color, cj, t);
+        acc = mix(acc, pcj, t);
     }
 
-    let alpha = color.a;
+    let alpha = acc.a;
     if alpha < 0.001 { return vec4(0.0); }
-    return vec4(color.rgb * alpha, alpha);
+    // `acc.rgb` is already premultiplied.
+    return vec4(acc.rgb, alpha);
 }
 
 fn render_distance_field(d: f32, style: GpuStyle, draw: DrawData) -> vec4<f32> {

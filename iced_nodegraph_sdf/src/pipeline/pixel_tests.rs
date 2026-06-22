@@ -2988,3 +2988,37 @@ fn gpu_instancing_shares_segment_range() {
         pipeline.segment_count(),
     );
 }
+
+/// A3 band-fold premultiplied blend: a falloff from opaque GREEN to TRANSPARENT
+/// RED must stay green through the fade, not fringe toward red. Straight-alpha
+/// in-loop mixing (the old behavior) pulls RGB toward the transparent stop's red
+/// and fails this; premultiplied mixing keeps it green.
+#[test]
+fn premultiplied_band_blend_no_rgb_fringe() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (256u32, 256u32, 1.0f32);
+    let green = iced::Color::from_rgba(0.0, 1.0, 0.0, 1.0);
+    let red_clear = iced::Color::from_rgba(1.0, 0.0, 0.0, 0.0);
+    let style = Style {
+        stops: vec![
+            crate::style::Stop::new(0.0, green),
+            crate::style::Stop::new(15.0, red_clear),
+        ],
+        pattern: None,
+        distance_field: false,
+    };
+    let radius = 50.0_f32;
+    let circle = Curve::circle([0.0, 0.0], radius);
+    let px = r.render_opts(&[(&circle, &style)], w, h, zoom, true);
+
+    // ~7 world px outside the edge (mid-falloff). Auto-camera centers world 0 at
+    // the viewport center, so world (radius+7, 0) -> screen (128 + 57, 128).
+    let sx = w / 2 + radius as u32 + 7;
+    let sy = h / 2;
+    let p = TestRenderer::pixel_at(&px, w, sx, sy);
+    assert!(p[3] > 40, "falloff pixel should be visible: {p:?}");
+    assert!(
+        p[1] as i32 > p[0] as i32 + 40,
+        "falloff must stay green (premultiplied), not fringe red: {p:?}",
+    );
+}
