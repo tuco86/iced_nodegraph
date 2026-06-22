@@ -52,8 +52,6 @@ struct TestRenderer {
     render_group0_layout: BindGroupLayout,
     compute_group0_layout: BindGroupLayout,
     compute_group1_layout: BindGroupLayout,
-    /// Whether the device has `TIMESTAMP_QUERY` (GPU-work timing available).
-    timestamps: bool,
 }
 
 impl TestRenderer {
@@ -156,7 +154,6 @@ impl TestRenderer {
             render_group0_layout,
             compute_group0_layout,
             compute_group1_layout,
-            timestamps,
         }
     }
 
@@ -2876,7 +2873,7 @@ fn frame_time_v3_not_slower_than_v2() {
             .unwrap();
     };
 
-    let median = |which: u8| -> f64 {
+    let median = |which: u8| -> (f64, Option<f64>) {
         let mut pipeline =
             crate::primitive::SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
         let mut samples = Vec::new();
@@ -2905,17 +2902,24 @@ fn frame_time_v3_not_slower_than_v2() {
             samples.push(t0.elapsed().as_secs_f64() * 1000.0);
         }
         samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        samples[samples.len() / 2]
+        // GPU-only cull time (R3), isolated from the fence/submit overhead that
+        // dominates the synchronous wall-clock frame.
+        let compute = pipeline.last_compute_ms(&r.device);
+        (samples[samples.len() / 2], compute)
     };
 
-    let v2 = median(2);
-    let v3 = median(3);
+    let (v2, v2c) = median(2);
+    let (v3, v3c) = median(3);
     println!(
-        "500-node full frame (CPU+GPU, ms): v2={v2:.3} v3={v3:.3} ratio={:.2}x \
-         [gpu_timestamps={}]",
+        "500-node full frame (CPU+GPU wall-clock, ms): v2={v2:.3} v3={v3:.3} ratio={:.2}x",
         v2 / v3,
-        r.timestamps,
     );
+    if let (Some(c2), Some(c3)) = (v2c, v3c) {
+        println!(
+            "500-node cull GPU-only (R3 timestamps, ms): v2={c2:.4} v3={c3:.4} ratio={:.2}x",
+            c2 / c3.max(1e-6),
+        );
+    }
     assert!(
         v3 <= v2 * 1.05,
         "cost gate: v3 frame {v3:.3}ms must not exceed v2 {v2:.3}ms",
