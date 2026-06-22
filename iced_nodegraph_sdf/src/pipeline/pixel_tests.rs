@@ -2623,6 +2623,86 @@ fn corpus_v3_localized_matches_v2() {
     }
 }
 
+/// Phase A4 gate: an edge rendered as a v3 arc-spline (bezier approximated by
+/// arcs/lines) is pixel-equal to the v2 cubic-bezier edge WITHIN AA TOLERANCE.
+/// The arc-spline is within `tol` world units of the curve, so the SDF differs
+/// by <= `tol`: a thin sub-pixel delta confined to the antialiased edge band,
+/// never a structural divergence (this is the plan's accepted delta, not the
+/// bit-identical bar). Asserts the two renders are structurally identical (no
+/// pixel grossly different) and only a thin edge band differs.
+#[test]
+fn arc_spline_edge_matches_bezier() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (256u32, 256u32, 1.0f32);
+    let cps = (
+        glam::Vec2::new(-120.0, -40.0),
+        glam::Vec2::new(-40.0, -40.0),
+        glam::Vec2::new(40.0, 40.0),
+        glam::Vec2::new(120.0, 40.0),
+    );
+    let bez = Curve::bezier(
+        [cps.0.x, cps.0.y],
+        [cps.1.x, cps.1.y],
+        [cps.2.x, cps.2.y],
+        [cps.3.x, cps.3.y],
+    );
+    // Zoom-aware fine tolerance (sub-pixel at this zoom).
+    let tol = 0.1 / zoom;
+    let arcs = crate::drawable::Drawable::bezier_arcs(cps.0, cps.1, cps.2, cps.3, tol);
+
+    // Arc-length must match so dash spacing / flow stay aligned with v2.
+    let rel_len = (arcs.total_arc_length() - bez.total_arc_length()).abs() / bez.total_arc_length();
+    assert!(
+        rel_len < 0.01,
+        "arc-spline arc-length drifted {rel_len} from bezier"
+    );
+
+    let color = rgba(0.2, 0.85, 1.0, 1.0);
+    for (name, style) in [
+        ("solid", Style::stroke(color, Pattern::solid(6.0))),
+        (
+            "dashed",
+            Style::stroke(color, Pattern::dashed(6.0, 14.0, 8.0)),
+        ),
+    ] {
+        let v2 = r.render_opts(&[(&bez, &style)], w, h, zoom, true);
+        let v3 = r.render_opts(&[(&arcs, &style)], w, h, zoom, true);
+
+        let total = v2.len();
+        let mut visible = 0usize;
+        let mut differ = 0usize; // per-channel diff over a clear threshold
+        let mut worst = 0i32;
+        for (a, b) in v2.iter().zip(v3.iter()) {
+            if a[3] < CORPUS_ALPHA_FLOOR && b[3] < CORPUS_ALPHA_FLOOR {
+                continue;
+            }
+            visible += 1;
+            let d = (0..4)
+                .map(|c| (a[c] as i32 - b[c] as i32).abs())
+                .max()
+                .unwrap();
+            worst = worst.max(d);
+            if d > 16 {
+                differ += 1;
+            }
+        }
+        // No structural divergence (a missing/extra arc would blow this up).
+        assert!(
+            worst < 140,
+            "edge `{name}`: worst per-channel diff {worst} indicates a structural \
+             arc-spline error, not a sub-pixel edge delta",
+        );
+        // Only a thin AA edge band may differ; the bulk must match exactly.
+        let frac = differ as f32 / visible.max(1) as f32;
+        assert!(
+            frac < 0.04,
+            "edge `{name}`: {:.1}% of visible pixels differ (>{differ} px of \
+             {visible}); expected only a thin sub-pixel edge band. total={total}",
+            frac * 100.0,
+        );
+    }
+}
+
 /// STEP 0 gate, part (b): the tiled spatial-index path matches the brute-force
 /// untiled path within AA tolerance on every corpus scene. This is the v2
 /// self-diff-zero oracle that v3 must later reproduce.

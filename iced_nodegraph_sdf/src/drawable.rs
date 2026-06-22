@@ -230,6 +230,88 @@ impl Drawable {
         }
     }
 
+    /// Approximate a cubic bezier as an arc-spline drawable (the v3 "arcs-only"
+    /// edge): the cubic is fit by circular arcs and lines within `tol` world
+    /// units, deleting the per-pixel bezier SDF. Segments carry cumulative
+    /// arc length so dash spacing and flow speed match the bezier's `u`.
+    // Wired into the widget edge build path under `sdf-v3` in a later step; for
+    // now exercised by the arc-spline golden gate.
+    #[allow(dead_code)]
+    pub(crate) fn bezier_arcs(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, tol: f32) -> Self {
+        use crate::biarc::{ArcPiece, cubic_to_arcs};
+
+        let pieces = cubic_to_arcs(p0, p1, p2, p3, tol);
+        let mut segments = Vec::with_capacity(pieces.len());
+        let mut cum = 0.0_f32;
+        let (mut minx, mut miny) = (f32::INFINITY, f32::INFINITY);
+        let (mut maxx, mut maxy) = (f32::NEG_INFINITY, f32::NEG_INFINITY);
+        let mut acc = |p: Vec2| {
+            minx = minx.min(p.x);
+            miny = miny.min(p.y);
+            maxx = maxx.max(p.x);
+            maxy = maxy.max(p.y);
+        };
+
+        for piece in &pieces {
+            let len = piece.length();
+            let (segment_type, geom0, geom1) = match *piece {
+                ArcPiece::Arc {
+                    center,
+                    radius,
+                    start_angle,
+                    sweep,
+                    start,
+                    end,
+                    ..
+                } => {
+                    acc(start);
+                    acc(end);
+                    // Exact arc bbox: endpoints plus any cardinal extreme the
+                    // sweep actually crosses (a tight bound for culling).
+                    for k in 0..4 {
+                        let theta = k as f32 * std::f32::consts::FRAC_PI_2;
+                        if angle_in_arc(start_angle, sweep, theta) {
+                            acc(center + Vec2::new(theta.cos(), theta.sin()) * radius);
+                        }
+                    }
+                    (
+                        SegmentType::Arc,
+                        [center.x, center.y, radius, start_angle],
+                        [sweep, 0.0, 0.0, 0.0],
+                    )
+                }
+                ArcPiece::Line { start, end, .. } => {
+                    acc(start);
+                    acc(end);
+                    (
+                        SegmentType::Line,
+                        [start.x, start.y, end.x, end.y],
+                        [0.0; 4],
+                    )
+                }
+            };
+            segments.push(Segment {
+                segment_type,
+                signed: false,
+                geom0,
+                geom1,
+                arc_start: cum,
+                arc_end: cum + len,
+            });
+            cum += len;
+        }
+
+        Self {
+            drawable_type: DrawableType::CurveSegment,
+            segments,
+            total_arc_length: cum,
+            bounds: [minx, miny, maxx, maxy],
+            is_closed: false,
+            tiling_type: None,
+            tiling_params: [0.0; 4],
+        }
+    }
+
     /// Assemble a closed shape from segments produced by a boolean operation.
     pub(crate) fn from_boolean_segments(
         segments: Vec<Segment>,
@@ -264,6 +346,16 @@ impl Drawable {
             tiling_params: params,
         }
     }
+}
+
+/// Whether the cardinal angle `theta` lies within the arc that starts at
+/// `start_angle` and turns by signed `sweep` (radians). Used for tight arc bbox.
+#[allow(dead_code)]
+fn angle_in_arc(start_angle: f32, sweep: f32, theta: f32) -> bool {
+    let lo = start_angle.min(start_angle + sweep);
+    let span = sweep.abs();
+    let d = (theta - lo).rem_euclid(std::f32::consts::TAU);
+    d <= span + 1e-4
 }
 
 /// Compute cubic bezier arc length using 5-point Gauss-Legendre quadrature.
