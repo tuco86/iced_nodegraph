@@ -418,6 +418,51 @@ mod tests {
     }
 
     #[test]
+    fn node_body_recipe_matches_world_difference() {
+        // Mirrors the widget's v3 emission: a body recipe (RoundedRect minus pin
+        // circles at LOCAL offsets) evaluated and translated to the body center
+        // must equal the v2 world-baked `difference_many`. This validates the
+        // widget builds the right recipe; the cache + translate then render it.
+        let half = [80.0, 45.0];
+        let radius = 8.0;
+        let center = [300.0, -120.0];
+        let pin_world = [
+            [center[0] - half[0], center[1] - 20.0],
+            [center[0] + half[0], center[1] + 15.0],
+        ];
+        let pin_r = 5.0;
+
+        let recipe = ShapeExpr::Difference {
+            base: Box::new(ShapeExpr::RoundedRect { half, radius }),
+            cuts: pin_world
+                .iter()
+                .map(|p| ShapeExpr::Circle {
+                    center: [p[0] - center[0], p[1] - center[1]],
+                    radius: pin_r,
+                })
+                .collect(),
+        };
+        let from_recipe = recipe.evaluate().translated(center[0], center[1]);
+
+        let body = Curve::rounded_rect(center, half, radius);
+        let cuts: Vec<Drawable> = pin_world.iter().map(|p| Curve::circle(*p, pin_r)).collect();
+        let world = boolean::difference_many(&body, &cuts);
+
+        assert_eq!(from_recipe.segment_count(), world.segment_count());
+        for (a, b) in from_recipe.segments.iter().zip(world.segments.iter()) {
+            assert_eq!(a.segment_type, b.segment_type);
+            for i in 0..4 {
+                assert!(
+                    (a.geom0[i] - b.geom0[i]).abs() < 1e-2,
+                    "geom0 {:?} vs {:?}",
+                    a.geom0,
+                    b.geom0,
+                );
+            }
+        }
+    }
+
+    #[test]
     fn local_evaluate_plus_translate_equals_world() {
         // Evaluating local then translating by the declared origin reproduces the
         // world shape - the bridge to A1's `compile_drawable_at`.

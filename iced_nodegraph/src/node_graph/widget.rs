@@ -297,14 +297,18 @@ fn resolve_pin_style<P: PinId + 'static, UI>(
 /// shadow offset) so the shadow's holes line up exactly with the body's. The
 /// cutout radius tracks the drawn pin indicator. `is_valid_target(pin_idx)`
 /// selects the valid-target pin style; the cutout radius is static (no pulse).
-fn pin_cutout_circles<P: PinId + 'static, UI>(
+/// World-space `(center, radius)` of each pin cutout - the shared source for
+/// both the v2 difference cuts (`Curve::circle` + `difference_many`) and the v3
+/// recipe cuts (`ShapeExpr::Circle` at local offsets). One source guarantees the
+/// two backends punch identical holes.
+fn pin_cutout_params<P: PinId + 'static, UI>(
     pins: &[(usize, &NodePinState<P, UI>, (Point, Point))],
     pin_style_fn: Option<&PinStyleFn<'_, P, UI, Theme>>,
     other: Option<&NodePinState<P, UI>>,
     theme: &Theme,
     offset: WorldVector,
     mut is_valid_target: impl FnMut(usize) -> bool,
-) -> Vec<Drawable> {
+) -> Vec<([f32; 2], f32)> {
     let mut cuts = Vec::new();
     for (pin_idx, (_pin_index, pin_state, (pos_a, pos_b))) in pins.iter().enumerate() {
         let valid = is_valid_target(pin_idx);
@@ -327,10 +331,7 @@ fn pin_cutout_circles<P: PinId + 'static, UI>(
             std::slice::from_ref(pos_a)
         };
         for pos in positions {
-            cuts.push(Curve::circle(
-                [pos.x + offset.x, pos.y + offset.y],
-                cutout_r,
-            ));
+            cuts.push(([pos.x + offset.x, pos.y + offset.y], cutout_r));
         }
     }
     cuts
@@ -663,11 +664,40 @@ where
         // and shifts it by the shadow offset rather than rebuilding it.
         // ========================================
         struct NodeGeom {
+            // v2 stores the evaluated silhouette; v3 stores the position-free
+            // recipe and the body center (translate), so the boolean is deduped
+            // by the pipeline's shape cache instead of run per node.
+            #[cfg(not(feature = "sdf-v3"))]
             outline: Drawable,
+            #[cfg(feature = "sdf-v3")]
+            recipe: iced_nodegraph_sdf::ShapeExpr,
+            #[cfg(feature = "sdf-v3")]
+            center: [f32; 2],
             resolved: NodeStyle,
             offset: WorldVector,
             position: WorldPoint,
             size: Size,
+        }
+        impl NodeGeom {
+            /// Push the node silhouette to `batch` with `style`, shifted by
+            /// `extra` (the shadow offset, or zero for fill/border). v2 pushes the
+            /// evaluated outline; v3 pushes the cached recipe placed by translate.
+            #[allow(unused_variables)]
+            fn push_body(
+                &self,
+                batch: &mut SdfPrimitive,
+                style: &iced_nodegraph_sdf::Style,
+                extra: (f32, f32),
+            ) {
+                #[cfg(feature = "sdf-v3")]
+                batch.push_recipe(
+                    self.recipe.clone(),
+                    [self.center[0] + extra.0, self.center[1] + extra.1],
+                    style,
+                );
+                #[cfg(not(feature = "sdf-v3"))]
+                batch.push(&self.outline.translated(extra.0, extra.1), style);
+            }
         }
         let t_geom_start = Instant::now();
         let node_geoms: Vec<Option<NodeGeom>> = (0..self.nodes.len())
@@ -687,7 +717,9 @@ where
                     (node_layout.bounds().position().into_euclid().to_vector() + offset).to_point();
                 let size = node_layout.bounds().size();
                 let pins = find_pins::<P, UI>(node_tree, node_layout);
-                let cut_circles = pin_cutout_circles(
+                let half = [size.width * 0.5, size.height * 0.5];
+                let center = [position.x + half[0], position.y + half[1]];
+                let cut_params = pin_cutout_params(
                     &pins,
                     node_pin_style.as_ref(),
                     drag_source.as_ref(),
@@ -698,17 +730,41 @@ where
                             && state.valid_drop_targets.contains(&(node_index, pin_idx))
                     },
                 );
-                let body = Curve::rounded_rect(
-                    [
-                        position.x + size.width * 0.5,
-                        position.y + size.height * 0.5,
-                    ],
-                    [size.width * 0.5, size.height * 0.5],
-                    resolved.corner_radius,
-                );
-                let outline = iced_nodegraph_sdf::boolean::difference_many(&body, &cut_circles);
+
+                #[cfg(not(feature = "sdf-v3"))]
+                let outline = {
+                    let body = Curve::rounded_rect(center, half, resolved.corner_radius);
+                    let cuts: Vec<Drawable> = cut_params
+                        .iter()
+                        .map(|&(c, r)| Curve::circle(c, r))
+                        .collect();
+                    iced_nodegraph_sdf::boolean::difference_many(&body, &cuts)
+                };
+                // Cuts are stored in the LOCAL frame (relative to the body
+                // center), so two identical nodes at different positions share a
+                // recipe and the drag offset lives entirely in `center`.
+                #[cfg(feature = "sdf-v3")]
+                let recipe = iced_nodegraph_sdf::ShapeExpr::Difference {
+                    base: Box::new(iced_nodegraph_sdf::ShapeExpr::RoundedRect {
+                        half,
+                        radius: resolved.corner_radius,
+                    }),
+                    cuts: cut_params
+                        .iter()
+                        .map(|&(c, r)| iced_nodegraph_sdf::ShapeExpr::Circle {
+                            center: [c[0] - center[0], c[1] - center[1]],
+                            radius: r,
+                        })
+                        .collect(),
+                };
+
                 Some(NodeGeom {
+                    #[cfg(not(feature = "sdf-v3"))]
                     outline,
+                    #[cfg(feature = "sdf-v3")]
+                    recipe,
+                    #[cfg(feature = "sdf-v3")]
+                    center,
                     resolved,
                     offset,
                     position,
@@ -737,9 +793,8 @@ where
                 // Reuse the node silhouette, shifted by the shadow offset, then
                 // build the soft shadow chain over it.
                 let (ox, oy) = geom.resolved.shadow_offset;
-                let shadow_outline = geom.outline.translated(ox, oy);
                 for band in geom.resolved.shadow_sdf_layers(geom.resolved.opacity) {
-                    shadow_batch.push(&shadow_outline, &band);
+                    geom.push_body(&mut shadow_batch, &band, (ox, oy));
                 }
             }
 
@@ -972,9 +1027,9 @@ where
             let offset = geom.offset;
             let node_position = geom.position;
             let node_size = geom.size;
-            // The silhouette (body minus pin cutouts) was built once in the
-            // per-node pre-pass; reuse it here for fill and border.
-            let node_outline = geom.outline.clone();
+            // The silhouette (body minus pin cutouts) was prepared once in the
+            // per-node pre-pass; `geom.push_body` reuses it for fill and border
+            // (v2: the evaluated outline; v3: the cached recipe).
 
             let opacity = resolved.opacity;
             let cam_zoom = render_context.camera_zoom;
@@ -1002,7 +1057,11 @@ where
                 );
                 renderer.with_layer(layout.bounds(), |renderer| {
                     let mut fill_batch = SdfPrimitive::new();
-                    fill_batch.push(&node_outline, &resolved.fill_sdf_style(opacity));
+                    geom.push_body(
+                        &mut fill_batch,
+                        &resolved.fill_sdf_style(opacity),
+                        (0.0, 0.0),
+                    );
                     draw_sdf(
                         renderer,
                         &state.sdf_animated,
@@ -1100,7 +1159,8 @@ where
                 if !border_layers.is_empty() {
                     let border_pad = border_layers
                         .iter()
-                        .map(|s| s.extent(node_outline.is_closed()))
+                        // The node body is always a closed shape.
+                        .map(|s| s.extent(true))
                         .fold(0.0_f32, f32::max)
                         + 2.0 / cam_zoom;
                     let bb = world_bbox_to_screen_bounds(
@@ -1113,7 +1173,7 @@ where
                     );
 
                     for style in &border_layers {
-                        fg_batch.push(&node_outline, style);
+                        geom.push_body(&mut fg_batch, style, (0.0, 0.0));
                     }
 
                     fg_min_x = fg_min_x.min(bb[0]);
