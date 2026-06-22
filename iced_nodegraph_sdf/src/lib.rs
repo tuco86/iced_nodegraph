@@ -47,6 +47,9 @@ pub(crate) mod pipeline;
 pub mod primitive;
 pub(crate) mod shared;
 
+#[cfg(feature = "sdf-v3")]
+pub mod v3;
+
 // Public API re-exports
 pub use color::ColorQuad;
 pub use curve::{Curve, ShapeBuilder};
