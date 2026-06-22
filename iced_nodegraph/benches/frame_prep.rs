@@ -29,8 +29,15 @@
 //!   - 2000 nodes: 39.9 ms -> 2.25 ms   (~18x; the gap widens with node count -
 //!     v2 is O(n) booleans, v3 is ~1 boolean + cheap O(n) placement).
 //! This is the CPU half of the order-of-magnitude target and EXCEEDS it (~20x vs
-//! the ~10x expectation). The GPU half (fragment + compute via timestamp queries,
-//! R3) is recorded separately once the v3 backend is wired into the live pipeline.
+//! the ~10x expectation).
+//!
+//! GPU MEMORY half (instancing, proven by `gpu_instancing_shares_segment_range`):
+//! with the per-instance translate on the command, N identical node bodies upload
+//! ONE shape's segments instead of N copies. For 500 identical nodes that is a
+//! ~500x reduction in per-frame segment-buffer upload - the memory-bandwidth axis
+//! the field-reported iGPU bottleneck is bound on. The GPU fragment/compute TIME
+//! half is unchanged by instancing (same tiles) and needs Phase C (two-level
+//! tiling + layer collapse) plus R3 timestamps to reduce and record.
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use iced::Color;
