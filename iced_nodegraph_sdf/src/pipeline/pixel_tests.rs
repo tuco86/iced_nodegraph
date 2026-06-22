@@ -52,6 +52,8 @@ struct TestRenderer {
     render_group0_layout: BindGroupLayout,
     compute_group0_layout: BindGroupLayout,
     compute_group1_layout: BindGroupLayout,
+    /// Whether the device has `TIMESTAMP_QUERY` (GPU-work timing available).
+    timestamps: bool,
 }
 
 impl TestRenderer {
@@ -67,9 +69,19 @@ impl TestRenderer {
         }))
         .expect("No GPU adapter found");
 
+        // Request TIMESTAMP_QUERY when the adapter supports it (R3): lets the
+        // GPU-work measurement isolate compute+render time from CPU/submit
+        // overhead. Absent (e.g. on WASM/WebGPU) the tests fall back to
+        // wall-clock, per the plan's R3 note.
+        let timestamps = adapter.features().contains(Features::TIMESTAMP_QUERY);
+        let required_features = if timestamps {
+            Features::TIMESTAMP_QUERY
+        } else {
+            Features::empty()
+        };
         let (device, queue) = pollster::block_on(adapter.request_device(&DeviceDescriptor {
             label: Some("sdf_test_device"),
-            required_features: Features::empty(),
+            required_features,
             required_limits: Limits::default(),
             ..Default::default()
         }))
@@ -144,6 +156,7 @@ impl TestRenderer {
             render_group0_layout,
             compute_group0_layout,
             compute_group1_layout,
+            timestamps,
         }
     }
 
@@ -2898,8 +2911,10 @@ fn frame_time_v3_not_slower_than_v2() {
     let v2 = median(2);
     let v3 = median(3);
     println!(
-        "500-node full frame (CPU+GPU, ms): v2={v2:.3} v3={v3:.3} ratio={:.2}x",
-        v2 / v3
+        "500-node full frame (CPU+GPU, ms): v2={v2:.3} v3={v3:.3} ratio={:.2}x \
+         [gpu_timestamps={}]",
+        v2 / v3,
+        r.timestamps,
     );
     assert!(
         v3 <= v2 * 1.05,
