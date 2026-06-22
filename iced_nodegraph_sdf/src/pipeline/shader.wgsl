@@ -532,8 +532,21 @@ fn render_style(sdf: SdfResult, style: GpuStyle, draw: DrawData, total_arc: f32)
         var hi = stop_dist_at(style, i + 1u);
         if hi - lo < aa {
             let m = (lo + hi) * 0.5;
-            lo = m - aa * 0.5;
-            hi = m + aa * 0.5;
+            var nlo = m - aa * 0.5;
+            var nhi = m + aa * 0.5;
+            // A3 widening clamp: a sub-aa interval is widened to >= aa for AA,
+            // but if two adjacent intervals both widen and OVERLAP, the thin band
+            // between them is attenuated or vanishes. Cap the expansion at the
+            // midpoint to each neighbouring stop so widened intervals abut
+            // instead of overlapping. (No effect when stops are >~aa apart.)
+            if i > 0u {
+                nlo = max(nlo, (stop_dist_at(style, i - 1u) + lo) * 0.5);
+            }
+            if i + 2u < style.stop_count {
+                nhi = min(nhi, (hi + stop_dist_at(style, i + 2u)) * 0.5);
+            }
+            lo = nlo;
+            hi = nhi;
         }
         let t = smoothstep(lo, hi, dist);
         acc = mix(acc, pcj, t);
