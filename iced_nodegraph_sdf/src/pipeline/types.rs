@@ -75,14 +75,9 @@ pub(crate) struct GpuSegment {
     pub segment_type: u32,
     /// Segment flags. Bit 0: signed (part of closed contour).
     pub flags: u32,
-    /// Per-instance placement (v3 keystone). Geometry in `geom0`/`geom1` is
-    /// stored in a local frame; the shader evaluates against
-    /// `world_p - translate` so identical shapes at different positions share
-    /// geometry. `(0,0)` (the v2 default) leaves geometry world-baked, so the
-    /// rendered result is unchanged. Distance is translation-invariant, so AA
-    /// and band thresholds need no adjustment.
-    pub translate: GpuVec2,
-    /// Primary geometry. Line: (ax,ay,bx,by). Bezier: (p0x,p0y,p1x,p1y). Arc: (cx,cy,r,start_angle).
+    pub _pad1: u32,
+    pub _pad2: u32,
+    /// Primary geometry, in the entry's LOCAL frame. Line: (ax,ay,bx,by). Bezier: (p0x,p0y,p1x,p1y). Arc: (cx,cy,r,start_angle).
     pub geom0: GpuVec4,
     /// Secondary geometry. Bezier: (p2x,p2y,p3x,p3y). Arc: (sweep_angle,0,0,0).
     pub geom1: GpuVec4,
@@ -90,8 +85,8 @@ pub(crate) struct GpuSegment {
     pub arc_range: GpuVec4,
 }
 
-/// A draw entry: a unit in the spatial index.
-/// 64 bytes (4 x vec4).
+/// A draw entry / command: a unit in the spatial index.
+/// 80 bytes (5 x vec4).
 #[derive(Clone, Debug, ShaderType)]
 pub(crate) struct GpuDrawEntry {
     /// Entry type: 0=curve_segment, 1=shape, 2=tiling.
@@ -113,6 +108,13 @@ pub(crate) struct GpuDrawEntry {
     pub _pad: u32,
     /// Tiling params: (spacing_x, spacing_y, thickness/radius, 0).
     pub tiling_params: GpuVec4,
+    /// Per-INSTANCE placement (D1). The entry's segments are stored in a local
+    /// frame; the shader evaluates them against `world_p - translate`. `(0,0)`
+    /// (the v2 default) leaves geometry world-baked. Holding the translate on
+    /// the command (not the segment) lets identical shapes at different
+    /// positions share ONE segment range - the GPU-instancing prerequisite.
+    pub translate: GpuVec2,
+    pub _translate_pad: GpuVec2,
 }
 
 /// Rendering style: a distance-stop chain + pattern. `MAX_STOPS` stops, each a
@@ -188,7 +190,8 @@ impl Default for GpuSegment {
         Self {
             segment_type: 0,
             flags: 0,
-            translate: GpuVec2::ZERO,
+            _pad1: 0,
+            _pad2: 0,
             geom0: GpuVec4::ZERO,
             geom1: GpuVec4::ZERO,
             arc_range: GpuVec4::ZERO,
@@ -209,6 +212,8 @@ impl Default for GpuDrawEntry {
             tiling_type: 0,
             _pad: 0,
             tiling_params: GpuVec4::ZERO,
+            translate: GpuVec2::ZERO,
+            _translate_pad: GpuVec2::ZERO,
         }
     }
 }
@@ -273,7 +278,7 @@ mod tests {
     #[test]
     fn test_gpu_draw_entry_size() {
         let size = GpuDrawEntry::SHADER_SIZE.get();
-        assert_eq!(size, 64, "GpuDrawEntry should be 64 bytes");
+        assert_eq!(size, 80, "GpuDrawEntry should be 80 bytes");
     }
 
     #[test]

@@ -63,7 +63,8 @@ pub(crate) fn compile_drawable_at(
         out_segments.push(GpuSegment {
             segment_type: seg.segment_type as u32,
             flags: if seg.signed { SEG_FLAG_SIGNED } else { 0 },
-            translate: GpuVec2(origin),
+            _pad1: 0,
+            _pad2: 0,
             geom0: GpuVec4(seg.geom0),
             geom1: GpuVec4(seg.geom1),
             arc_range: GpuVec4([seg.arc_start, seg.arc_end, drawable.total_arc_length, 0.0]),
@@ -88,6 +89,10 @@ pub(crate) fn compile_drawable_at(
         tiling_type: drawable.tiling_type.map_or(0, |t| t as u32),
         _pad: 0,
         tiling_params: GpuVec4(drawable.tiling_params),
+        // Per-instance placement: the segments above are local; the shader adds
+        // this back. Identical shapes share segments, differing only here.
+        translate: GpuVec2(origin),
+        _translate_pad: GpuVec2([0.0, 0.0]),
     };
 
     let gpu_style = compile_style(style);
@@ -116,7 +121,8 @@ pub(crate) fn compile_local_at(
         out_segments.push(GpuSegment {
             segment_type: seg.segment_type as u32,
             flags: if seg.signed { SEG_FLAG_SIGNED } else { 0 },
-            translate: GpuVec2(translate),
+            _pad1: 0,
+            _pad2: 0,
             geom0: GpuVec4(seg.geom0),
             geom1: GpuVec4(seg.geom1),
             arc_range: GpuVec4([seg.arc_start, seg.arc_end, local.total_arc_length, 0.0]),
@@ -145,6 +151,8 @@ pub(crate) fn compile_local_at(
         tiling_type: local.tiling_type.map_or(0, |t| t as u32),
         _pad: 0,
         tiling_params: GpuVec4(local.tiling_params),
+        translate: GpuVec2(translate),
+        _translate_pad: GpuVec2([0.0, 0.0]),
     };
 
     (entry, compile_style(style))
@@ -221,12 +229,13 @@ mod tests {
         assert_eq!(segs_local.len(), segs_world.len());
         for (a, b) in segs_local.iter().zip(segs_world.iter()) {
             assert_eq!(a.segment_type, b.segment_type);
-            assert_eq!(a.translate.0, b.translate.0);
             for i in 0..4 {
                 assert!((a.geom0.0[i] - b.geom0.0[i]).abs() < 1e-3);
                 assert!((a.geom1.0[i] - b.geom1.0[i]).abs() < 1e-3);
             }
         }
+        // The per-instance translate now lives on the entry, equal for both.
+        assert_eq!(e_local.translate.0, e_world.translate.0);
         for i in 0..4 {
             assert!(
                 (e_local.bounds.0[i] - e_world.bounds.0[i]).abs() < 1e-3,

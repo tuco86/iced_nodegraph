@@ -64,9 +64,8 @@ struct DrawData {
 struct GpuSegment {
     segment_type: u32,
     flags: u32,
-    // Per-instance placement (v3 keystone): geometry is local, evaluated against
-    // `world_p - translate`. `(0,0)` (v2 default) leaves geometry world-baked.
-    translate: vec2<f32>,
+    _pad1: u32,
+    _pad2: u32,
     geom0: vec4<f32>,
     geom1: vec4<f32>,
     arc_range: vec4<f32>,
@@ -83,6 +82,10 @@ struct GpuDrawEntry {
     tiling_type: u32,
     _pad: u32,
     tiling_params: vec4<f32>,
+    // Per-INSTANCE placement (D1): the entry's segments are local; evaluate at
+    // `world_p - translate`. `(0,0)` (v2 default) leaves geometry world-baked.
+    translate: vec2<f32>,
+    _translate_pad: vec2<f32>,
 }
 
 // MAX_STOPS must match `style::MAX_STOPS` on the Rust side.
@@ -432,14 +435,13 @@ fn sd_tiling(p: vec2<f32>, tiling_type: u32, params: vec4<f32>) -> SdfResult {
 }
 
 fn eval_segment(p: vec2<f32>, seg: GpuSegment) -> SdfResult {
-    // v3 keystone: geometry is local, placed by a per-instance translate. v2
-    // leaves translate (0,0), so lp == p. Distance is translation-invariant.
-    let lp = p - seg.translate;
+    // Segments are stored in the entry's local frame; the caller passes
+    // `world_p - entry.translate`. Distance is translation-invariant.
     switch seg.segment_type {
-        case SEG_LINE: { return sd_line(lp, seg.geom0.xy, seg.geom0.zw); }
-        case SEG_ARC: { return sd_arc_segment(lp, seg.geom0.xy, seg.geom0.z, seg.geom0.w, seg.geom1.x); }
-        case SEG_CUBIC: { return sd_bezier(lp, seg.geom0.xy, seg.geom0.zw, seg.geom1.xy, seg.geom1.zw); }
-        case SEG_POINT: { return sd_point(lp, seg.geom0.xy, seg.geom0.z); }
+        case SEG_LINE: { return sd_line(p, seg.geom0.xy, seg.geom0.zw); }
+        case SEG_ARC: { return sd_arc_segment(p, seg.geom0.xy, seg.geom0.z, seg.geom0.w, seg.geom1.x); }
+        case SEG_CUBIC: { return sd_bezier(p, seg.geom0.xy, seg.geom0.zw, seg.geom1.xy, seg.geom1.zw); }
+        case SEG_POINT: { return sd_point(p, seg.geom0.xy, seg.geom0.z); }
         default: { return SdfResult(1e10, 0.0); }
     }
 }
@@ -723,20 +725,21 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             discard;
         }
 
-        // Each slot = 2 u32s: (segment_idx_or_tiling, style_idx)
-        // Group by style: for same style, find nearest segment per pixel.
+        // Each slot = 2 u32s: (segment_idx_or_tiling, entry_idx). Group by
+        // entry: for one shape, find the nearest segment per pixel. The entry
+        // (command) carries the per-instance translate and the style index, so
+        // identical shapes can share one segment range and differ only here.
         let slot_base = tile_idx * SLOT_STRIDE;
         var i = 0u;
         while i < count {
             if acc.a >= 0.999 { break; }
             let raw_seg = tile_slots[slot_base + i * 2u];
-            let first_sty = tile_slots[slot_base + i * 2u + 1u];
-            let style = styles[first_sty];
+            let first_entry = tile_slots[slot_base + i * 2u + 1u];
+            let entry = draw_entries[first_entry];
+            let style = styles[entry.style_idx];
 
             // Check for tiling marker
             if (raw_seg & TILING_BIT) != 0u {
-                let entry_idx = raw_seg & ~TILING_BIT;
-                let entry = draw_entries[entry_idx];
                 let sdf = sd_tiling(world_p, entry.tiling_type, entry.tiling_params);
                 let frag = render_style(sdf, style, draw, 0.0);
                 acc = acc + frag * (1.0 - acc.a);
@@ -744,16 +747,18 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 continue;
             }
 
-            // Regular segments: find nearest among consecutive same-style slots
-            var best_sdf = eval_single_segment(world_p, raw_seg);
+            // Segments are stored local; shift the eval point by the instance
+            // translate. Find the nearest among this entry's consecutive slots.
+            let lp = world_p - entry.translate;
+            var best_sdf = eval_single_segment(lp, raw_seg);
             var best_abs = abs(best_sdf.dist);
             var best_seg = raw_seg;
             i++;
 
-            while i < count && tile_slots[slot_base + i * 2u + 1u] == first_sty {
+            while i < count && tile_slots[slot_base + i * 2u + 1u] == first_entry {
                 let next_seg = tile_slots[slot_base + i * 2u];
                 if (next_seg & TILING_BIT) != 0u { break; }
-                let sdf = eval_single_segment(world_p, next_seg);
+                let sdf = eval_single_segment(lp, next_seg);
                 let ad = abs(sdf.dist);
                 if ad < best_abs {
                     best_abs = ad;
@@ -779,9 +784,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 let frag = render_style(sdf, style, draw, 0.0);
                 acc = acc + frag * (1.0 - acc.a);
             } else {
+                let lp = world_p - entry.translate;
                 for (var s = 0u; s < entry.segment_count; s++) {
                     let seg_idx = entry.segment_start + s;
-                    let sdf = eval_single_segment(world_p, seg_idx);
+                    let sdf = eval_single_segment(lp, seg_idx);
                     let frag = render_style(sdf, style, draw, segment_total_arc(seg_idx));
                     acc = acc + frag * (1.0 - acc.a);
                 }
@@ -860,11 +866,13 @@ fn cs_build_index(@builtin(global_invocation_id) gid: vec3<u32>) {
     for (var i: u32 = draw.entry_start; i < entry_end; i++) {
         let entry = cs_entries[i];
         let style = cs_styles[entry.style_idx];
-        let sty_idx = entry.style_idx;
+        // Segments are local; evaluate at the tile center shifted by the
+        // instance translate. The slot key is the entry (command) index.
+        let lp = world_pos - entry.translate;
 
         // Tilings: always include, store entry_idx with TILING_BIT marker
         if entry.entry_type == ENTRY_TILING {
-            cs_push_slot(slot_base, &count, i | TILING_BIT, sty_idx);
+            cs_push_slot(slot_base, &count, i | TILING_BIT, i);
             continue;
         }
 
@@ -875,7 +883,7 @@ fn cs_build_index(@builtin(global_invocation_id) gid: vec3<u32>) {
         var best_signed_dist = 0.0;
         for (var s: u32 = 0u; s < entry.segment_count; s++) {
             let seg = cs_segments[entry.segment_start + s];
-            let r = eval_segment(world_pos, seg);
+            let r = eval_segment(lp, seg);
             let ad = abs(r.dist);
             if ad < min_abs_dist {
                 min_abs_dist = ad;
@@ -905,7 +913,7 @@ fn cs_build_index(@builtin(global_invocation_id) gid: vec3<u32>) {
         for (var s: u32 = 0u; s < entry.segment_count; s++) {
             let seg_idx = entry.segment_start + s;
             let seg = cs_segments[seg_idx];
-            let r = eval_segment(world_pos, seg);
+            let r = eval_segment(lp, seg);
 
             if has_pattern {
                 // Pattern: per-segment culling with pattern evaluation.
@@ -914,7 +922,7 @@ fn cs_build_index(@builtin(global_invocation_id) gid: vec3<u32>) {
                 // thd*|tan(angle)| beyond what tile-center evaluation sees.
                 // Widen the cull margin in that case to avoid dropping whole
                 // tiles for any plausible angle.
-                let sdf = cs_eval_segment(world_pos, seg_idx);
+                let sdf = cs_eval_segment(lp, seg_idx);
                 let eff = apply_pattern(sdf.dist, sdf, style, draw.time);
                 var cull_margin = thd;
                 if style.pattern_type == PATTERN_DASHED
@@ -923,12 +931,12 @@ fn cs_build_index(@builtin(global_invocation_id) gid: vec3<u32>) {
                     cull_margin = thd * (1.0 + abs(tan(style.pattern_param2)));
                 }
                 if eff <= cull_margin {
-                    cs_push_slot(slot_base, &count, seg_idx, sty_idx);
+                    cs_push_slot(slot_base, &count, seg_idx, i);
                 }
             } else {
                 // Fill/DF: push segments that could be nearest at any pixel
                 if abs(r.dist) <= proximity {
-                    cs_push_slot(slot_base, &count, seg_idx, sty_idx);
+                    cs_push_slot(slot_base, &count, seg_idx, i);
                 }
             }
         }
