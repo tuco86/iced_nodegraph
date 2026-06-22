@@ -291,28 +291,17 @@ fn resolve_pin_style<P: PinId + 'static, UI>(
     }
 }
 
-/// Pin indicator radius, pulsing when it is a valid drop target.
-fn pin_indicator_radius(base_radius: f32, valid_target: bool, time: f32) -> f32 {
-    if valid_target {
-        let pulse = (time * 6.0).sin() * 0.5 + 0.5;
-        base_radius * (1.0 + pulse * 0.5)
-    } else {
-        base_radius
-    }
-}
-
 /// Circular pin cutouts that puncture a node body, translated by `(tx, ty)`.
 ///
 /// Shared by the node fill (drag offset only) and the shadow (drag offset plus
 /// shadow offset) so the shadow's holes line up exactly with the body's. The
-/// cutout radius tracks the drawn pin indicator, including the valid-target
-/// pulse. `is_valid_target(pin_idx)` decides which pins pulse.
+/// cutout radius tracks the drawn pin indicator. `is_valid_target(pin_idx)`
+/// selects the valid-target pin style; the cutout radius is static (no pulse).
 fn pin_cutout_circles<P: PinId + 'static, UI>(
     pins: &[(usize, &NodePinState<P, UI>, (Point, Point))],
     pin_style_fn: Option<&PinStyleFn<'_, P, UI, Theme>>,
     other: Option<&NodePinState<P, UI>>,
     theme: &Theme,
-    time: f32,
     offset: WorldVector,
     mut is_valid_target: impl FnMut(usize) -> bool,
 ) -> Vec<Drawable> {
@@ -326,7 +315,7 @@ fn pin_cutout_circles<P: PinId + 'static, UI>(
         };
         let pin_style =
             resolve_pin_style::<P, UI>(pin_style_fn, pin_state, other, theme, pin_status);
-        let indicator_r = pin_indicator_radius(pin_style.radius, valid, time) * 0.4;
+        let indicator_r = pin_style.radius * 0.4;
         let cutout_r = indicator_r + pin_style.border_width;
         if cutout_r <= 0.01 {
             continue;
@@ -703,7 +692,6 @@ where
                     node_pin_style.as_ref(),
                     drag_source.as_ref(),
                     theme,
-                    time,
                     offset,
                     |pin_idx| {
                         is_edge_dragging
@@ -1150,8 +1138,7 @@ where
                         theme,
                         pin_status,
                     );
-                    let radius = pin_indicator_radius(pin_style.radius, is_valid_target, time);
-                    let indicator_r = radius * 0.4;
+                    let indicator_r = pin_style.radius * 0.4;
                     let pin_world: WorldPoint =
                         (pin_pos.into_euclid().to_vector() + offset).to_point();
                     let pw = [pin_world.x, pin_world.y];
