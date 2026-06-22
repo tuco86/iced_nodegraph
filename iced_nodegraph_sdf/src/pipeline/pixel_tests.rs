@@ -446,6 +446,26 @@ impl TestRenderer {
         scale: f32,
         use_tiles: bool,
     ) -> Vec<[u8; 4]> {
+        self.render_full_t(drawables, width, height, zoom, scale, use_tiles, 0.0, None)
+    }
+
+    /// Like [`render_full`] but with an explicit animation `time` (so animated
+    /// scenes can be pinned to a fixed value for deterministic diffing) and an
+    /// optional world-space `camera` override (so far-from-origin scenes can be
+    /// brought into view). `camera` is `camera_position`; `None` auto-centers
+    /// world origin at the viewport center.
+    #[allow(clippy::too_many_arguments)]
+    fn render_full_t(
+        &self,
+        drawables: &[(&crate::drawable::Drawable, &Style)],
+        width: u32,
+        height: u32,
+        zoom: f32,
+        scale: f32,
+        use_tiles: bool,
+        time: f32,
+        camera: Option<[f32; 2]>,
+    ) -> Vec<[u8; 4]> {
         // Compile Rust -> GPU data
         let mut gpu_segments = Vec::new();
         let mut gpu_entries = Vec::new();
@@ -471,15 +491,15 @@ impl TestRenderer {
         };
 
         let cs = zoom * scale;
-        let cam_x = (width as f32) * 0.5 / cs;
-        let cam_y = (height as f32) * 0.5 / cs;
+        let [cam_x, cam_y] =
+            camera.unwrap_or([(width as f32) * 0.5 / cs, (height as f32) * 0.5 / cs]);
 
         let draw_data = DrawData {
             bounds_origin: GpuVec2::new(0.0, 0.0),
             camera_position: GpuVec2::new(cam_x, cam_y),
             camera_zoom: zoom,
             scale_factor: scale,
-            time: 0.0,
+            time,
             debug_flags: 0,
             entry_count: gpu_entries.len() as u32,
             entry_start: 0,
@@ -2212,4 +2232,358 @@ fn abutting_chain_bands_stay_opaque_across_boundary() {
         outer[1] > outer[0],
         "outer band should read green: {outer:?}"
     );
+}
+
+// ===========================================================================
+// Golden corpus (STEP 0): the v2-vs-(v2/v3) oracle.
+//
+// Each scene is a self-contained (Drawable, Style) set rendered at a fixed
+// resolution / zoom / time. The corpus spans every pattern, every tiling, a
+// segment-dense pin node, deep z-overlap, far-from-origin coordinates, and a
+// pinned-time animated edge. The STEP 0 gate is v2-vs-v2 self-consistency:
+// (a) byte-identical across repeated renders (determinism), and (b) the tiled
+// spatial-index path matches the brute-force untiled path within AA tolerance
+// (the existing dual-path oracle, generalized over the whole corpus). When v3
+// lands behind `sdf-v3`, the same corpus diffs v3 against this v2 oracle.
+// ===========================================================================
+
+use crate::drawable::Drawable;
+use crate::tiling::Tiling;
+
+/// Per-channel AA tolerance for the tiled-vs-untiled oracle on visible pixels.
+const CORPUS_AA_TOL: i32 = 3;
+/// Alpha below which a pixel is treated as background (ignored by the oracle).
+const CORPUS_ALPHA_FLOOR: u8 = 100;
+
+/// One golden-corpus scene: owned geometry + per-item style, plus the camera
+/// setup needed to frame it. Items are listed in z-order (first drawn first,
+/// i.e. farthest from the viewer).
+struct Scene {
+    name: &'static str,
+    width: u32,
+    height: u32,
+    zoom: f32,
+    /// Pinned animation time (seconds); fixed so animated scenes diff
+    /// deterministically.
+    time: f32,
+    /// Explicit `camera_position`, or `None` to auto-center the world origin.
+    camera: Option<[f32; 2]>,
+    /// Whether the brute-force "untiled" path is a valid cross-check. The
+    /// untiled fallback (`shader.wgsl` `grid_cols == 0`) evaluates the style
+    /// once PER SEGMENT and composites, instead of folding all of an entry's
+    /// segments into one nearest-distance SDF the way the tiled path does. It
+    /// is therefore only correct when every entry is a SINGLE segment (strokes,
+    /// beziers, tilings); a multi-segment fill (rounded rect, pin node) renders
+    /// wrong under it. Multi-segment scenes are still covered by the
+    /// determinism gate and the future v3-vs-v2-tiled diff; they just cannot
+    /// use the tiled-vs-untiled oracle.
+    untiled_safe: bool,
+    items: Vec<(Drawable, Style)>,
+}
+
+impl Scene {
+    fn pairs(&self) -> Vec<(&Drawable, &Style)> {
+        self.items.iter().map(|(d, s)| (d, s)).collect()
+    }
+}
+
+fn rgba(r: f32, g: f32, b: f32, a: f32) -> iced::Color {
+    iced::Color::from_rgba(r, g, b, a)
+}
+
+/// The standard crossing-S edge used by the pattern scenes (matches the edge
+/// editor default so pattern layout is exercised at a real curvature).
+fn corpus_edge() -> Drawable {
+    Curve::bezier([-120.0, -40.0], [-40.0, -40.0], [40.0, 40.0], [120.0, 40.0])
+}
+
+/// `camera_position` that centers world point `p` in a `w`x`h` viewport at
+/// `zoom` (scale 1.0). Mirrors `render_full`'s auto-center math.
+fn camera_centered_on(p: [f32; 2], w: u32, h: u32, zoom: f32) -> [f32; 2] {
+    [
+        (w as f32) * 0.5 / zoom - p[0],
+        (h as f32) * 0.5 / zoom - p[1],
+    ]
+}
+
+/// A segment-dense pin node: a rounded body punched by a ring of pin cutouts,
+/// composed into ONE shape via `difference_many` (the `boolean.rs` pin path).
+fn pin_dense_node(center: [f32; 2]) -> Drawable {
+    let body = Curve::rounded_rect(center, [70.0, 44.0], 10.0);
+    let mut cuts = Vec::new();
+    // Small cutouts centered on the left and right borders, mirroring the
+    // widget's pin punches: each is a notch in the boundary, the composed
+    // contour stays simple.
+    for i in 0..6 {
+        let t = -30.0 + i as f32 * 12.0;
+        cuts.push(Curve::circle([center[0] - 70.0, center[1] + t], 3.5));
+        cuts.push(Curve::circle([center[0] + 70.0, center[1] + t], 3.5));
+    }
+    crate::boolean::difference_many(&body, &cuts)
+}
+
+fn corpus() -> Vec<Scene> {
+    let mut scenes = Vec::new();
+
+    // --- Every pattern type, as a stroked edge ---
+    let stroke_color = rgba(0.2, 0.85, 1.0, 1.0);
+    let patterns: [(&'static str, Pattern); 6] = [
+        ("pattern_solid", Pattern::solid(6.0)),
+        ("pattern_dashed", Pattern::dashed(6.0, 14.0, 8.0)),
+        ("pattern_arrowed", Pattern::arrowed(6.0, 16.0, 9.0)),
+        ("pattern_dotted", Pattern::dotted(12.0, 4.0)),
+        (
+            "pattern_dash_dotted",
+            Pattern::dash_dotted(6.0, 14.0, 8.0, 3.0),
+        ),
+        (
+            "pattern_arrow_dotted",
+            Pattern::arrow_dotted(6.0, 12.0, 8.0, 3.0),
+        ),
+    ];
+    for (name, pat) in patterns {
+        scenes.push(Scene {
+            name,
+            width: 256,
+            height: 256,
+            zoom: 1.0,
+            time: 0.0,
+            camera: None,
+            untiled_safe: true,
+            items: vec![(corpus_edge(), Style::stroke(stroke_color, pat))],
+        });
+    }
+
+    // --- Pinned-time animated flowing dashed edge ---
+    scenes.push(Scene {
+        name: "animated_flow_dashed",
+        width: 256,
+        height: 256,
+        zoom: 1.0,
+        time: 0.37,
+        camera: None,
+        untiled_safe: true,
+        items: vec![(
+            corpus_edge(),
+            Style::stroke(stroke_color, Pattern::dashed(6.0, 14.0, 8.0).flow(40.0)),
+        )],
+    });
+
+    // --- Every tiling background ---
+    let tile_color = rgba(0.5, 0.55, 0.65, 1.0);
+    let tilings: [(&'static str, Drawable, Style); 4] = [
+        (
+            "tiling_grid",
+            Tiling::grid(32.0, 32.0, 1.5),
+            Style::solid(tile_color).expand(0.75),
+        ),
+        (
+            "tiling_dots",
+            Tiling::dots(32.0, 32.0, 3.0),
+            Style::solid(tile_color),
+        ),
+        (
+            "tiling_triangles",
+            Tiling::triangles(40.0, 1.5),
+            Style::solid(tile_color).expand(0.75),
+        ),
+        (
+            "tiling_hex",
+            Tiling::hex(40.0, 1.5),
+            Style::solid(tile_color).expand(0.75),
+        ),
+    ];
+    for (name, drawable, style) in tilings {
+        scenes.push(Scene {
+            name,
+            width: 256,
+            height: 256,
+            zoom: 1.0,
+            time: 0.0,
+            camera: None,
+            untiled_safe: true,
+            items: vec![(drawable, style)],
+        });
+    }
+
+    // --- Segment-dense pin node (exercises one shape with ~20 segments) ---
+    scenes.push(Scene {
+        name: "pin_dense_node",
+        width: 256,
+        height: 256,
+        zoom: 1.4,
+        time: 0.0,
+        camera: None,
+        untiled_safe: false,
+        items: vec![(
+            pin_dense_node([0.0, 0.0]),
+            Style::solid(rgba(0.3, 0.6, 0.9, 1.0)),
+        )],
+    });
+
+    // --- Deep z-overlap: a stack of staggered filled rects ---
+    {
+        // Six staggered rects (4 segments each = 24 slots) all overlapping at
+        // the center: within the single-tile slot budget so the untiled oracle
+        // applies, while still exercising the z-order composite.
+        let mut items = Vec::new();
+        for i in 0..6 {
+            let f = i as f32;
+            let c = Curve::rect([-25.0 + f * 10.0, -25.0 + f * 10.0], [34.0, 34.0]);
+            let col = rgba(0.15 + f * 0.13, 0.9 - f * 0.1, 0.4 + f * 0.08, 0.85);
+            items.push((c, Style::solid(col)));
+        }
+        scenes.push(Scene {
+            name: "z_deep_overlap",
+            width: 256,
+            height: 256,
+            zoom: 1.2,
+            time: 0.0,
+            camera: None,
+            untiled_safe: false,
+            items,
+        });
+    }
+
+    // --- Far-from-origin coordinates (precision: tiled must match untiled) ---
+    {
+        let p = [20000.0, 20000.0];
+        scenes.push(Scene {
+            name: "far_origin_node",
+            width: 256,
+            height: 256,
+            zoom: 1.2,
+            time: 0.0,
+            camera: Some(camera_centered_on(p, 256, 256, 1.2)),
+            untiled_safe: false,
+            items: vec![(
+                Curve::rounded_rect(p, [70.0, 44.0], 10.0),
+                Style::solid(rgba(0.85, 0.55, 0.3, 1.0)),
+            )],
+        });
+    }
+
+    // --- Segment-dense pin node at a far origin (overflow + precision) ---
+    {
+        let p = [-15000.0, 12000.0];
+        scenes.push(Scene {
+            name: "pin_dense_far_origin",
+            width: 256,
+            height: 256,
+            zoom: 1.4,
+            time: 0.0,
+            camera: Some(camera_centered_on(p, 256, 256, 1.4)),
+            untiled_safe: false,
+            items: vec![(pin_dense_node(p), Style::solid(rgba(0.3, 0.6, 0.9, 1.0)))],
+        });
+    }
+
+    scenes
+}
+
+/// Render a corpus scene through the v2 SDF path with the tile spatial index
+/// on or off.
+fn render_scene_v2(r: &TestRenderer, scene: &Scene, use_tiles: bool) -> Vec<[u8; 4]> {
+    r.render_full_t(
+        &scene.pairs(),
+        scene.width,
+        scene.height,
+        scene.zoom,
+        1.0,
+        use_tiles,
+        scene.time,
+        scene.camera,
+    )
+}
+
+/// Result of [`corpus_diff`]: worst per-channel diff, count exceeding
+/// `CORPUS_AA_TOL`, and the first offending `(index, a, b)` sample.
+type CorpusDiff = (i32, usize, Option<(usize, [u8; 4], [u8; 4])>);
+
+/// Worst per-channel diff over visible pixels, plus the count exceeding
+/// `CORPUS_AA_TOL` and the first offending sample.
+fn corpus_diff(a: &[[u8; 4]], b: &[[u8; 4]]) -> CorpusDiff {
+    let mut worst = 0i32;
+    let mut over = 0usize;
+    let mut sample = None;
+    for (i, (pa, pb)) in a.iter().zip(b.iter()).enumerate() {
+        if pa[3] < CORPUS_ALPHA_FLOOR && pb[3] < CORPUS_ALPHA_FLOOR {
+            continue;
+        }
+        let d = (0..4)
+            .map(|c| (pa[c] as i32 - pb[c] as i32).abs())
+            .max()
+            .unwrap();
+        worst = worst.max(d);
+        if d > CORPUS_AA_TOL {
+            over += 1;
+            if sample.is_none() {
+                sample = Some((i, *pa, *pb));
+            }
+        }
+    }
+    (worst, over, sample)
+}
+
+/// STEP 0 gate, part (a): the v2 oracle is deterministic. Rendering a scene
+/// twice yields a byte-identical framebuffer, so any future v3 diff reflects a
+/// real change, not renderer nondeterminism.
+#[test]
+fn corpus_v2_is_deterministic() {
+    let r = shared_renderer();
+    for scene in corpus() {
+        let a = render_scene_v2(&r, &scene, true);
+        let b = render_scene_v2(&r, &scene, true);
+        assert!(
+            a == b,
+            "scene `{}` is not deterministic across repeated renders",
+            scene.name,
+        );
+    }
+}
+
+/// Oracle sanity: every corpus scene renders a plausible amount of content in
+/// the shipping tiled path. Rules out the two silent-failure modes the
+/// determinism gate alone would miss: a scene that renders nothing (so
+/// determinism passes trivially) and a scene that fills the whole viewport (the
+/// segment-overflow sign inversion). Each scene must cover between 1% and 92%
+/// of the viewport with visible pixels.
+#[test]
+fn corpus_scenes_render_plausible_coverage() {
+    let r = shared_renderer();
+    for scene in corpus() {
+        let px = render_scene_v2(&r, &scene, true);
+        let total = px.len() as f32;
+        let visible = px.iter().filter(|p| p[3] >= CORPUS_ALPHA_FLOOR).count() as f32;
+        let frac = visible / total;
+        assert!(
+            (0.01..=0.92).contains(&frac),
+            "scene `{}` covers {:.1}% of the viewport (expected 1%..92%); \
+             0% means it rendered nothing, ~100% means a fill-everywhere bug",
+            scene.name,
+            frac * 100.0,
+        );
+    }
+}
+
+/// STEP 0 gate, part (b): the tiled spatial-index path matches the brute-force
+/// untiled path within AA tolerance on every corpus scene. This is the v2
+/// self-diff-zero oracle that v3 must later reproduce.
+#[test]
+fn corpus_v2_tiled_matches_untiled() {
+    let r = shared_renderer();
+    for scene in corpus() {
+        if !scene.untiled_safe {
+            continue;
+        }
+        let tiled = render_scene_v2(&r, &scene, true);
+        let untiled = render_scene_v2(&r, &scene, false);
+        let (worst, over, sample) = corpus_diff(&tiled, &untiled);
+        assert!(
+            over == 0,
+            "scene `{}`: tiled vs untiled differs on {over} visible pixels \
+             (worst per-channel {worst}). First: {sample:?}",
+            scene.name,
+        );
+    }
 }
