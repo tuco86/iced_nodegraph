@@ -34,6 +34,7 @@
 //! let prim = prim.camera(cam_x, cam_y, zoom).time(elapsed);
 //! ```
 
+pub(crate) mod biarc;
 pub mod boolean;
 pub mod color;
 pub mod curve;
