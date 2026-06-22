@@ -2772,3 +2772,47 @@ fn buffer_write_at_updates_one_slot() {
     drop(data);
     readback.unmap();
 }
+
+/// GPU instancing (Phase B): N identical node-body recipes at different
+/// positions upload ONE shape's segments to the GPU, not N copies. This is the
+/// memory-bandwidth half of the dedup - the per-instance translate on the
+/// command lets many commands reference one shared segment range.
+#[test]
+fn gpu_instancing_shares_segment_range() {
+    use iced_wgpu::graphics::Viewport;
+    use iced_wgpu::primitive::{Pipeline, Primitive};
+
+    let r = shared_renderer();
+    let mut pipeline =
+        crate::primitive::SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
+
+    let recipe = crate::recipe::ShapeExpr::Difference {
+        base: Box::new(crate::recipe::ShapeExpr::RoundedRect {
+            half: [40.0, 25.0],
+            radius: 6.0,
+        }),
+        cuts: vec![crate::recipe::ShapeExpr::Circle {
+            center: [-40.0, 0.0],
+            radius: 4.0,
+        }],
+    };
+    let style = Style::solid(iced::Color::WHITE);
+
+    let mut prim = crate::primitive::SdfPrimitive::new();
+    for i in 0..100u32 {
+        prim.push_recipe(recipe.clone(), [i as f32 * 100.0, 0.0], &style);
+    }
+
+    let viewport = Viewport::with_physical_size(iced::Size::new(800, 600), 1.0);
+    let bounds = iced::Rectangle::new(iced::Point::ORIGIN, iced::Size::new(800.0, 600.0));
+    prim.prepare(&mut pipeline, &r.device, &r.queue, &bounds, &viewport);
+
+    let one_shape = recipe.evaluate().segment_count();
+    assert_eq!(
+        pipeline.segment_count(),
+        one_shape,
+        "100 identical recipes must upload ONE shape's {one_shape} segments, \
+         got {} (instancing not sharing the range)",
+        pipeline.segment_count(),
+    );
+}

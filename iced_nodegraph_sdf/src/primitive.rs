@@ -223,6 +223,15 @@ pub struct SdfPipeline {
     frame_shape_slots: HashMap<u64, u32>,
 }
 
+impl SdfPipeline {
+    /// Number of `GpuSegment`s currently uploaded (this frame). With GPU
+    /// instancing, identical shapes contribute their segments ONCE, so this
+    /// tracks unique-shape geometry, not draw count.
+    pub fn segment_count(&self) -> usize {
+        self.segments_buffer.len()
+    }
+}
+
 fn create_tile_buffers(device: &Device, cap: u32) -> (iced::wgpu::Buffer, iced::wgpu::Buffer) {
     let cap = cap.max(1) as u64;
     let usage = BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC;
