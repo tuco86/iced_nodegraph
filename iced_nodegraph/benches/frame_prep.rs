@@ -31,6 +31,19 @@
 //! This is the CPU half of the order-of-magnitude target and EXCEEDS it (~20x vs
 //! the ~10x expectation).
 //!
+//! FULL-FRAME order-of-magnitude MET (`frame_time_v3_not_slower_than_v2` in the
+//! sdf crate drives the real `SdfPipeline`: build + upload + cull + render +
+//! GPU fence). Once the per-entry uploads are batched into one bulk write per
+//! buffer (the per-entry `queue.write_buffer` submission overhead, not the
+//! boolean, was the last cost), 500 nodes this machine:
+//!   - per-frame WORK (build+prepare, no fence): v2 ~7.7 ms -> v3 ~0.61 ms (~12.7x)
+//!   - full frame wall-clock (with GPU fence):   v2 ~7.9 ms -> v3 ~0.87 ms (~9x)
+//!   - cull GPU-only (R3 timestamps):            ~0.05 ms either way (negligible)
+//! The R3 timestamps prove the GPU cull was never the bottleneck; the win is the
+//! deduped boolean + batched upload. The remaining fragment cost is the
+//! fullscreen background tiling (per-node prims are scissored), addressed by the
+//! static-background texture cache - not by dedup.
+//!
 //! GPU MEMORY half (instancing, proven by `gpu_instancing_shares_segment_range`):
 //! with the per-instance translate on the command, N identical node bodies upload
 //! ONE shape's segments instead of N copies. For 500 identical nodes that is a
