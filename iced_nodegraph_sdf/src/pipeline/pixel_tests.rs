@@ -2800,6 +2800,86 @@ fn corpus_v2_tiled_matches_untiled() {
     }
 }
 
+/// C1 correctness guard (Phase C): the tile cull bins against the pattern's
+/// PERPENDICULAR envelope and is conservative - every tile that renders a
+/// non-zero pixel must have been binned, for EVERY pattern at EVERY angle
+/// (under-inclusion is the bug; over-inclusion is fine). Verified through the
+/// tiled-vs-untiled oracle: the untiled path applies no cull, so if the cull
+/// dropped a tile the tiled render would be MISSING pixels the untiled render
+/// has. A single straight stroke is one segment (untiled-safe), swept across
+/// angles that straddle tile boundaries.
+#[test]
+fn c1_cull_conservative_for_all_patterns_at_swept_angles() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (256u32, 256u32, 1.0f32);
+    let color = rgba(0.9, 0.7, 0.2, 1.0);
+    let patterns = [
+        ("solid", Pattern::solid(6.0)),
+        ("dashed", Pattern::dashed(6.0, 14.0, 8.0)),
+        ("dotted", Pattern::dotted(16.0, 5.0)),
+        ("arrowed", Pattern::arrowed(7.0, 18.0, 10.0)),
+        ("arrow_dotted", Pattern::arrow_dotted(6.0, 16.0, 9.0, 4.0)),
+    ];
+    let angles_deg = [0.0f32, 17.0, 33.0, 45.0, 61.0, 79.0, 90.0, 113.0, 135.0];
+    let l = 110.0f32;
+    for (pname, pat) in patterns {
+        let style = Style::stroke(color, pat);
+        for deg in angles_deg {
+            let a = deg.to_radians();
+            let (c, s) = (a.cos(), a.sin());
+            let line = Curve::line([-l * c, -l * s], [l * c, l * s]);
+            let tiled = r.render_opts(&[(&line, &style)], w, h, zoom, true);
+            let untiled = r.render_opts(&[(&line, &style)], w, h, zoom, false);
+            let (worst, over, sample) = corpus_diff(&tiled, &untiled);
+            assert!(
+                over == 0,
+                "C1 cull dropped pixels: pattern `{pname}` at {deg} deg - \
+                 {over} px differ (worst {worst}). First: {sample:?}",
+            );
+        }
+    }
+}
+
+/// C2 correctness guard (Phase C): when a 16px tile overflows its 32-slot budget,
+/// the result degrades DETERMINISTICALLY and never flickers. The cull keeps the
+/// NEAREST segments by distance-to-tile-centre (not insertion order), so even
+/// though the regional candidate gather uses nondeterministic atomics, the kept
+/// set - and thus the rendered output - is identical every frame. Renders a
+/// segment-dense overlapping stack (far exceeding 32 slots in central tiles)
+/// many times and asserts byte-identical output across all frames.
+#[test]
+fn c2_overflow_is_deterministic_no_flicker() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (256u32, 256u32, 1.0f32);
+    // ~40 overlapping circles crowded into the centre: each is several segments,
+    // so the central 16px tiles hold far more than the 32-slot budget.
+    let mut drawables = Vec::new();
+    for i in 0..40u32 {
+        let a = i as f32 * 0.41;
+        let rad = 6.0 + (i % 5) as f32;
+        let cx = (a.cos()) * 10.0;
+        let cy = (a.sin()) * 10.0;
+        drawables.push(Curve::circle([cx, cy], rad));
+    }
+    let style = Style::solid(rgba(0.3, 0.6, 0.9, 1.0));
+    let refs: Vec<(&Drawable, &Style)> = drawables.iter().map(|d| (d, &style)).collect();
+
+    let first = r.render_opts(&refs, w, h, zoom, true);
+    for frame in 1..64u32 {
+        let again = r.render_opts(&refs, w, h, zoom, true);
+        let differ = first
+            .iter()
+            .zip(again.iter())
+            .filter(|(a, b)| a != b)
+            .count();
+        assert!(
+            differ == 0,
+            "C2 overflow flickered: frame {frame} differs from frame 0 on \
+             {differ} pixels (nondeterministic overflow drop)",
+        );
+    }
+}
+
 /// B0 primitive: `Buffer::write_at` rewrites exactly one slot in place (the
 /// basis for R2 incremental command updates), leaving its neighbours untouched.
 /// Reuses the shared device (a second device risks the documented multi-device
