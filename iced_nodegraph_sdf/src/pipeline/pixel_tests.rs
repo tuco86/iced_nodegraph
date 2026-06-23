@@ -3069,3 +3069,37 @@ fn a2_time_and_camera_are_per_frame_uniforms() {
         "both pans must render the edge"
     );
 }
+
+/// Regression (found in the 500-node visual sign-off): the two-level cull bins a
+/// region's candidates into a 256-slot workgroup array; when MORE than 256
+/// entries crowd one 256px region (e.g. zoomed far out), candidates past 256 were
+/// silently dropped, so edges vanished. The overflow fallback (scan all entries
+/// for the tile) must render every entry. Single-segment circles make the untiled
+/// brute-force path a faithful oracle.
+#[test]
+fn crowded_region_over_256_entries_no_dropped_shapes() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (256u32, 256u32, 1.0f32);
+    let mut circles = Vec::new();
+    for gy in 0..18 {
+        for gx in 0..18 {
+            let x = -110.0 + gx as f32 * 13.0;
+            let y = -110.0 + gy as f32 * 13.0;
+            circles.push(Curve::circle([x, y], 4.0));
+        }
+    } // 324 shapes in one 256px workgroup region -> exceeds the 256 cap
+    let style = Style::solid(rgba(1.0, 1.0, 1.0, 1.0));
+    let d: Vec<_> = circles.iter().map(|c| (c, &style)).collect();
+
+    let tiled = r.render_opts(&d, w, h, zoom, true);
+    let untiled = r.render_opts(&d, w, h, zoom, false);
+    let vis = |px: &[[u8; 4]]| px.iter().filter(|p| p[3] >= CORPUS_ALPHA_FLOOR).count();
+    let (vt, vu) = (vis(&tiled), vis(&untiled));
+    assert!(vu > 1000, "oracle coverage too low: {vu}");
+    let ratio = vt as f32 / vu as f32;
+    assert!(
+        ratio > 0.97,
+        "tiled cull dropped crowded entries: {vt}/{vu} = {:.0}% (overflow fallback broken)",
+        ratio * 100.0,
+    );
+}

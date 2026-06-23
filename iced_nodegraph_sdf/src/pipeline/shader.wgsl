@@ -926,7 +926,15 @@ fn cs_build_index(
         }
     }
     workgroupBarrier();
-    let cand_count = min(atomicLoad(&wg_count), MAX_WG_CANDIDATES);
+    // If the region produced MORE candidates than the bin holds, the binning is
+    // incomplete - fall back to scanning every entry for this tile so no entry is
+    // ever dropped (correctness over the fast path). This triggers when many
+    // entries crowd one 256px region, e.g. zoomed far out; without it the excess
+    // candidates (often edges) silently vanished. The fast candidate path stays
+    // for the common, non-crowded case.
+    let total_cand = atomicLoad(&wg_count);
+    let overflow = total_cand > MAX_WG_CANDIDATES;
+    let cand_count = min(total_cand, MAX_WG_CANDIDATES);
 
     // --- Per-fine-tile cull over the region candidates ---
     let col = gid.x;
@@ -944,8 +952,10 @@ fn cs_build_index(
     var count: u32 = 0u;
     let slot_base = global_tile_idx * SLOT_STRIDE;
 
-    for (var ci: u32 = 0u; ci < cand_count; ci = ci + 1u) {
-        let i = wg_candidates[ci];
+    let scan_count = select(cand_count, draw.entry_count, overflow);
+    for (var ci: u32 = 0u; ci < scan_count; ci = ci + 1u) {
+        var i: u32;
+        if overflow { i = draw.entry_start + ci; } else { i = wg_candidates[ci]; }
         let entry = cs_entries[i];
         let style = cs_styles[entry.style_idx];
         // Segments are local; evaluate at the tile center shifted by the
