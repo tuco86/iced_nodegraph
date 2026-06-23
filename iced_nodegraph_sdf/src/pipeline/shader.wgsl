@@ -495,7 +495,7 @@ fn segment_total_arc(seg_idx: u32) -> f32 {
 // ============================================================================
 
 // total_arc: total arc-length of the contour (for normalizing u to 0..1)
-fn render_style(sdf: SdfResult, style: GpuStyle, draw: DrawData, total_arc: f32) -> vec4<f32> {
+fn render_style(sdf: SdfResult, style: GpuStyle, draw: DrawData, total_arc: f32, is_closed: bool) -> vec4<f32> {
     if (style.flags & STYLE_FLAG_DISTANCE_FIELD) != 0u
         || (draw.debug_flags & DEBUG_DISTANCE_FIELD) != 0u {
         return render_distance_field(sdf.dist, style, draw);
@@ -519,7 +519,7 @@ fn render_style(sdf: SdfResult, style: GpuStyle, draw: DrawData, total_arc: f32)
 
     if (style.flags & STYLE_FLAG_HAS_PATTERN) != 0u {
         // Pattern uses world-space u (sdf.u) for dash layout
-        dist = apply_pattern(dist, sdf, style, draw.time);
+        dist = apply_pattern(dist, sdf, style, draw.time, is_closed);
 
         let color = mix(style.stop_start[0], style.stop_end[0], arc_t);
         let alpha = color.a * (1.0 - smoothstep(-aa, aa, dist));
@@ -585,7 +585,7 @@ fn render_distance_field(d: f32, style: GpuStyle, draw: DrawData) -> vec4<f32> {
     return vec4(col, 1.0);
 }
 
-fn apply_pattern(dist: f32, sdf: SdfResult, style: GpuStyle, time: f32) -> f32 {
+fn apply_pattern(dist: f32, sdf: SdfResult, style: GpuStyle, time: f32, is_closed: bool) -> f32 {
     let thickness = style.pattern_thickness;
     let half_t = thickness * 0.5;
     var u = sdf.u;
@@ -626,7 +626,22 @@ fn apply_pattern(dist: f32, sdf: SdfResult, style: GpuStyle, time: f32) -> f32 {
             let radius = style.pattern_param1;
             let nearest = round(u / spacing) * spacing;
             let dist_to_center = abs(u - nearest);
-            return length(vec2(dist_to_center, dist)) - radius;
+            let feature = length(vec2(dist_to_center, dist)) - radius;
+            if is_closed {
+                // Sign-aware composition (A3): on a CLOSED contour the interior
+                // is negative, so a full dot bulging inward breaks the inner
+                // edge. Union the dots' OUTER half (clip to dist>=0) with a plain
+                // inner closed line: min(plain_band, max(feature, -dist)). Both
+                // min/max of 1-Lipschitz fields stay 1-Lipschitz, so AA is free.
+                // TUNING (called out per plan, not baked silently): the feature
+                // sits on the centerline and the inner line is a thin symmetric
+                // band (<=2px), NOT the full dot radius - which would swallow the
+                // bumps. Open contours keep the mirrored symmetric dot below.
+                let inner_half = min(half_t, 2.0);
+                let plain_band = abs(dist) - inner_half;
+                return min(plain_band, max(feature, -dist));
+            }
+            return feature;
         }
         case PATTERN_DASH_DOTTED: {
             let dash = style.pattern_param0;
@@ -804,7 +819,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             // Check for tiling marker
             if (raw_seg & TILING_BIT) != 0u {
                 let sdf = sd_tiling(world_p, entry.tiling_type, entry.tiling_params);
-                let frag = render_style(sdf, style, draw, 0.0);
+                let frag = render_style(sdf, style, draw, 0.0, false);
                 acc = acc + frag * (1.0 - acc.a);
                 i++;
                 continue;
@@ -831,7 +846,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 i++;
             }
 
-            let frag = render_style(best_sdf, style, draw, segment_total_arc(best_seg));
+            let frag = render_style(best_sdf, style, draw, segment_total_arc(best_seg), (entry.flags & FLAG_CLOSED) != 0u);
             acc = acc + frag * (1.0 - acc.a);
         }
     } else {
@@ -844,14 +859,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let style = styles[entry.style_idx];
             if entry.entry_type == ENTRY_TILING {
                 let sdf = sd_tiling(world_p, entry.tiling_type, entry.tiling_params);
-                let frag = render_style(sdf, style, draw, 0.0);
+                let frag = render_style(sdf, style, draw, 0.0, false);
                 acc = acc + frag * (1.0 - acc.a);
             } else {
                 let lp = world_p - entry.translate;
                 for (var s = 0u; s < entry.segment_count; s++) {
                     let seg_idx = entry.segment_start + s;
                     let sdf = eval_single_segment(lp, seg_idx);
-                    let frag = render_style(sdf, style, draw, segment_total_arc(seg_idx));
+                    let frag = render_style(sdf, style, draw, segment_total_arc(seg_idx), (entry.flags & FLAG_CLOSED) != 0u);
                     acc = acc + frag * (1.0 - acc.a);
                 }
             }

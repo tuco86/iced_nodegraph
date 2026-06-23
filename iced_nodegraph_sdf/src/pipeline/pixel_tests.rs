@@ -3239,3 +3239,42 @@ fn transfer_gamma_warps_blend_toward_near_stop() {
         "Gamma must bias toward the near (red) stop vs Linear: lin {pl:?} gam {pg:?}",
     );
 }
+
+/// A3 sign-aware patterns new-capability golden: a DOTTED pattern on a CLOSED
+/// contour keeps its dots on the OUTER half plus a thin inner line, so the
+/// interior stays clean (no inward dot bulge). At dist -4 inside the contour the
+/// old symmetric dot was opaque; sign-aware leaves it transparent. The dots still
+/// appear on the outer half. Gated as a NEW capability, not a v2 match.
+#[test]
+fn sign_aware_dotted_border_no_inward_bulge() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (256u32, 256u32, 1.0f32);
+    let circle = Curve::circle([0.0, 0.0], 30.0);
+    let style = Style::stroke(rgba(1.0, 1.0, 1.0, 1.0), Pattern::dotted(14.0, 5.0));
+    let px = r.render_opts(&[(&circle, &style)], w, h, zoom, true);
+    let at = |radius: f32, deg: f32| -> [u8; 4] {
+        let a = deg.to_radians();
+        let sx = (128.0 + radius * a.cos()) as u32;
+        let sy = (128.0 + radius * a.sin()) as u32;
+        TestRenderer::pixel_at(&px, w, sx, sy)
+    };
+    let mut inner_opaque = 0; // dist ~ -4 (inside): must be clean
+    let mut outer_opaque = 0; // dist ~ +3 (outside): dots present
+    for k in 0..72 {
+        let deg = k as f32 * 5.0;
+        if at(26.0, deg)[3] >= CORPUS_ALPHA_FLOOR {
+            inner_opaque += 1;
+        }
+        if at(33.0, deg)[3] >= CORPUS_ALPHA_FLOOR {
+            outer_opaque += 1;
+        }
+    }
+    assert!(
+        inner_opaque <= 4,
+        "dots bulged inward (not sign-aware): {inner_opaque}/72"
+    );
+    assert!(
+        outer_opaque >= 6,
+        "dots missing on the outer half: {outer_opaque}/72"
+    );
+}
