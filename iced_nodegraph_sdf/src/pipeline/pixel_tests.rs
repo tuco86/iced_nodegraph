@@ -3331,6 +3331,159 @@ fn r1_fill_rate_resolution_sweep_v2_vs_v3() {
     println!("R1 worst 4K v3/v2 ratio: {worst_4k_ratio:.2}x (gate <= 1.15x)");
 }
 
+/// Static-background texture cache (Phase C, v3): a cache hit/populate blit must
+/// be pixel-identical to a direct render, and a camera change must invalidate the
+/// cache (render direct again, different pixels). The no-regression rule: the
+/// FIRST sight of a key renders direct (v2 path); only a repeated key populates
+/// the texture and then blits it - so a continuously panning scene never blits.
+#[cfg(feature = "sdf-v3")]
+#[test]
+fn bg_cache_blit_matches_direct_and_invalidates() {
+    use iced_wgpu::graphics::Viewport;
+    use iced_wgpu::primitive::{Pipeline, Primitive};
+
+    let r = shared_renderer();
+    let mut pipeline =
+        crate::primitive::SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
+    let (w, h) = (256u32, 256u32); // 256*4 = aligned bytes_per_row, no padding
+    let viewport = Viewport::with_physical_size(iced::Size::new(w, h), 1.0);
+    let bounds = iced::Rectangle::new(iced::Point::ORIGIN, iced::Size::new(w as f32, h as f32));
+
+    let target = r.device.create_texture(&TextureDescriptor {
+        label: None,
+        size: Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: TextureDimension::D2,
+        format: TextureFormat::Rgba8Unorm,
+        usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = target.create_view(&TextureViewDescriptor::default());
+    let readback = r.device.create_buffer(&BufferDescriptor {
+        label: None,
+        size: (w * h * 4) as u64,
+        usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+
+    let tiling = crate::tiling::Tiling::grid(32.0, 32.0, 1.5);
+    let style = Style::solid(rgba(0.5, 0.55, 0.65, 1.0));
+    let make = |cx: f32| {
+        let mut p = crate::primitive::SdfPrimitive::new();
+        p.push(&tiling, &style);
+        p.camera(cx, 20.0, 1.0).background()
+    };
+
+    let run = |pipeline: &mut crate::primitive::SdfPipeline,
+               prim: &crate::primitive::SdfPrimitive|
+     -> Vec<[u8; 4]> {
+        Pipeline::trim(pipeline);
+        prim.prepare(pipeline, &r.device, &r.queue, &bounds, &viewport);
+        let mut enc = r
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+        {
+            let mut pass = enc.begin_render_pass(&RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(Color::TRANSPARENT),
+                        store: StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            prim.draw(&*pipeline, &mut pass);
+        }
+        enc.copy_texture_to_buffer(
+            target.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(w * 4),
+                    rows_per_image: None,
+                },
+            },
+            Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        let idx = r.queue.submit(std::iter::once(enc.finish()));
+        r.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(idx),
+                timeout: None,
+            })
+            .unwrap();
+        let slice = readback.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        r.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            })
+            .unwrap();
+        let data = slice.get_mapped_range();
+        let px: Vec<[u8; 4]> = data
+            .chunks_exact(4)
+            .map(|c| [c[0], c[1], c[2], c[3]])
+            .collect();
+        drop(data);
+        readback.unmap();
+        px
+    };
+
+    let f1 = run(&mut pipeline, &make(10.0));
+    assert!(
+        !pipeline.bg_cache_blitted(),
+        "frame 1 (first key sight) must render direct, no regression on dynamic frames",
+    );
+    let f2 = run(&mut pipeline, &make(10.0));
+    assert!(
+        pipeline.bg_cache_blitted(),
+        "frame 2 (key repeated) must populate the cache and blit",
+    );
+    let f3 = run(&mut pipeline, &make(10.0));
+    assert!(
+        pipeline.bg_cache_blitted(),
+        "frame 3 must blit the cached texture"
+    );
+
+    assert_eq!(
+        f1, f2,
+        "populate+blit must be pixel-identical to a direct render"
+    );
+    assert_eq!(
+        f1, f3,
+        "cache-hit blit must be pixel-identical to a direct render"
+    );
+
+    // A camera change invalidates: render direct again, and the panned grid must
+    // differ from the original frame.
+    let f4 = run(&mut pipeline, &make(70.0));
+    assert!(
+        !pipeline.bg_cache_blitted(),
+        "a changed camera must invalidate the cache and render direct",
+    );
+    assert_ne!(
+        f1, f4,
+        "panning the background must change the rendered pixels"
+    );
+}
+
 /// GPU instancing (Phase B): N identical node-body recipes at different
 /// positions upload ONE shape's segments to the GPU, not N copies. This is the
 /// memory-bandwidth half of the dedup - the per-instance translate on the
