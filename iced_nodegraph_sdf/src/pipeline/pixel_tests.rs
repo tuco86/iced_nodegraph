@@ -2651,12 +2651,10 @@ fn arc_spline_edge_matches_bezier() {
         glam::Vec2::new(40.0, 40.0),
         glam::Vec2::new(120.0, 40.0),
     );
-    let bez = Curve::bezier(
-        [cps.0.x, cps.0.y],
-        [cps.1.x, cps.1.y],
-        [cps.2.x, cps.2.y],
-        [cps.3.x, cps.3.y],
-    );
+    // The oracle is the TRUE cubic (SEG_CUBIC / sd_bezier), not another
+    // arc-spline: `Curve::bezier` now itself fits arcs, so comparing against it
+    // would be arc-spline-vs-arc-spline and could not catch an arc-spline error.
+    let bez = crate::drawable::Drawable::single_bezier(cps.0, cps.1, cps.2, cps.3);
     // Zoom-aware fine tolerance (sub-pixel at this zoom).
     let tol = 0.1 / zoom;
     let arcs = crate::drawable::Drawable::bezier_arcs(cps.0, cps.1, cps.2, cps.3, tol);
@@ -2709,6 +2707,72 @@ fn arc_spline_edge_matches_bezier() {
             frac < 0.04,
             "edge `{name}`: {:.1}% of visible pixels differ (>{differ} px of \
              {visible}); expected only a thin sub-pixel edge band. total={total}",
+            frac * 100.0,
+        );
+    }
+}
+
+/// Backward / looping edge: a "backward" graph edge (output-right pin to a node
+/// to the LEFT) has bezier control points that point away from each other, so
+/// the cubic self-loops. The arc-spline of such a curve must still match the
+/// true cubic - a full-circle or giant-arc artifact here (the reported bug)
+/// blows up the diff. Rendered against the SEG_CUBIC oracle, not another
+/// arc-spline. Also sweeps a non-origin offset (world-space fit precision).
+#[test]
+fn backward_edge_arc_spline_matches_cubic() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (400u32, 300u32, 1.0f32);
+    // Centered backward-loop control polygon (output heads right, target is left).
+    let bases = [
+        (
+            glam::Vec2::new(100.0, -25.0),
+            glam::Vec2::new(180.0, -25.0),
+            glam::Vec2::new(-180.0, 25.0),
+            glam::Vec2::new(-100.0, 25.0),
+        ),
+        // A vertical-ish backward edge (top/bottom pins) for a second config.
+        (
+            glam::Vec2::new(-30.0, -90.0),
+            glam::Vec2::new(-30.0, 0.0),
+            glam::Vec2::new(30.0, 0.0),
+            glam::Vec2::new(30.0, -90.0),
+        ),
+    ];
+    let color = rgba(0.2, 0.85, 1.0, 1.0);
+    let style = Style::stroke(color, Pattern::solid(6.0));
+    for (i, (a, b, c, d)) in bases.into_iter().enumerate() {
+        let bez = crate::drawable::Drawable::single_bezier(a, b, c, d);
+        let arcs = crate::drawable::Drawable::bezier_arcs(a, b, c, d, 0.1 / zoom);
+
+        let v2 = r.render_opts(&[(&bez, &style)], w, h, zoom, true);
+        let v3 = r.render_opts(&[(&arcs, &style)], w, h, zoom, true);
+
+        let mut visible = 0usize;
+        let mut differ = 0usize;
+        let mut worst = 0i32;
+        for (x, y) in v2.iter().zip(v3.iter()) {
+            if x[3] < CORPUS_ALPHA_FLOOR && y[3] < CORPUS_ALPHA_FLOOR {
+                continue;
+            }
+            visible += 1;
+            let dd = (0..4)
+                .map(|cc| (x[cc] as i32 - y[cc] as i32).abs())
+                .max()
+                .unwrap();
+            worst = worst.max(dd);
+            if dd > 16 {
+                differ += 1;
+            }
+        }
+        let frac = differ as f32 / visible.max(1) as f32;
+        assert!(
+            worst < 140,
+            "backward edge {i}: worst diff {worst} - arc-spline diverged from \
+             the cubic (full-circle/giant-arc artifact)",
+        );
+        assert!(
+            frac < 0.05,
+            "backward edge {i}: {:.1}% pixels differ - structural arc-spline error",
             frac * 100.0,
         );
     }

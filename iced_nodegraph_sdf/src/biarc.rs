@@ -73,19 +73,26 @@ fn split(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t: f32) -> ([Vec2; 4], [Vec2; 4
 }
 
 /// Circumcircle of three points: `(center, radius)`. None if (near-)collinear.
+///
+/// Computed in a frame translated so `a` is at the origin. Edges are fit in WORLD
+/// coordinates, and the circumcenter formula squares the operands; with absolute
+/// coordinates far from the origin those squares are huge and their differences
+/// (which should be small) lose f32 precision catastrophically, collapsing the
+/// fit into a giant or near-full-circle arc. Translating to a local frame keeps
+/// the squared terms small and the result stable.
 fn circle_through(a: Vec2, b: Vec2, c: Vec2) -> Option<(Vec2, f32)> {
-    // Solve for the center equidistant from a, b, c.
-    let d = 2.0 * ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x));
+    let bl = b - a;
+    let cl = c - a;
+    let d = 2.0 * (bl.x * cl.y - bl.y * cl.x);
     if d.abs() < 1e-9 {
         return None;
     }
-    let a2 = a.length_squared();
-    let b2 = b.length_squared();
-    let c2 = c.length_squared();
-    let ux = ((a2) * (b.y - c.y) + (b2) * (c.y - a.y) + (c2) * (a.y - b.y)) / d;
-    let uy = ((a2) * (c.x - b.x) + (b2) * (a.x - c.x) + (c2) * (b.x - a.x)) / d;
-    let center = Vec2::new(ux, uy);
-    Some((center, center.distance(a)))
+    let b2 = bl.length_squared();
+    let c2 = cl.length_squared();
+    let ux = (cl.y * b2 - bl.y * c2) / d;
+    let uy = (bl.x * c2 - cl.x * b2) / d;
+    let local_center = Vec2::new(ux, uy);
+    Some((a + local_center, local_center.length()))
 }
 
 /// Signed sweep from `start` to `end` about `center`, taking the direction that
@@ -143,32 +150,60 @@ fn deviation(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, fit: Option<(Vec2, f32)>) -
     worst
 }
 
+/// A single arc may never bend more than this in one piece. A cubic sub-piece
+/// with monotone curvature bends well under half a turn; a fit that reports a
+/// larger sweep is the noisy near-straight / wrong-direction case that renders
+/// as a giant arc or full circle (the deviation gate is blind to it, since it
+/// only measures distance to the CIRCLE, not the chosen ARC). Such a piece is
+/// subdivided instead, so the artifact cannot reach the GPU.
+const MAX_ARC_SWEEP: f32 = std::f32::consts::PI * 0.95;
+
+fn line_piece(start: Vec2, end: Vec2) -> ArcPiece {
+    ArcPiece::Line {
+        start,
+        end,
+        length: start.distance(end),
+    }
+}
+
 fn recurse(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, tol: f32, depth: u32, out: &mut Vec<ArcPiece>) {
+    // Chord-first: a piece within tolerance of its straight chord is a line.
+    // This is exact and stable, and it sidesteps the unstable arc fit a
+    // near-straight piece induces (a far-off circle center whose sweep direction
+    // is numerical noise) - the source of the "giant arc" artifact.
+    if deviation(p0, p1, p2, p3, None) <= tol {
+        out.push(line_piece(p0, p3));
+        return;
+    }
+
     let mid = bezier_point(p0, p1, p2, p3, 0.5);
     let fit = circle_through(p0, mid, p3);
+    let arc = fit.map(|(center, radius)| {
+        let (start_angle, sweep) = signed_sweep(center, p0, mid, p3);
+        (center, radius, start_angle, sweep)
+    });
     let dev = deviation(p0, p1, p2, p3, fit);
+    let sweep_ok = arc.is_some_and(|(_, _, _, sweep)| sweep.abs() <= MAX_ARC_SWEEP);
 
     // 12 levels = up to 4096 pieces, a hard backstop against pathological input.
-    if dev <= tol || depth >= 12 {
-        match fit {
-            Some((center, radius)) => {
-                let (start_angle, sweep) = signed_sweep(center, p0, mid, p3);
-                out.push(ArcPiece::Arc {
-                    center,
-                    radius,
-                    start_angle,
-                    sweep,
-                    start: p0,
-                    end: p3,
-                    length: radius * sweep.abs(),
-                });
-            }
-            None => out.push(ArcPiece::Line {
-                start: p0,
-                end: p3,
-                length: p0.distance(p3),
-            }),
-        }
+    let terminal = depth >= 12;
+    if sweep_ok && (dev <= tol || terminal) {
+        let (center, radius, start_angle, sweep) = arc.unwrap();
+        out.push(ArcPiece::Arc {
+            center,
+            radius,
+            start_angle,
+            sweep,
+            start: p0,
+            end: p3,
+            length: radius * sweep.abs(),
+        });
+        return;
+    }
+    if terminal {
+        // Out of subdivision budget with no sane arc: a chord line is the safe
+        // last resort (the piece is tiny at this depth, so the error is small).
+        out.push(line_piece(p0, p3));
         return;
     }
 
@@ -294,6 +329,171 @@ mod tests {
         assert!(
             pieces.iter().all(|p| matches!(p, ArcPiece::Line { .. })),
             "a straight cubic should yield only lines: {pieces:?}",
+        );
+    }
+
+    #[test]
+    fn far_from_origin_curve_within_tolerance() {
+        // Edges are built at WORLD coordinates (not localized), so a curve far
+        // from the origin must fit just as well as one at the origin. If the
+        // circumcircle is computed in absolute coords, the large squared terms
+        // lose f32 precision and the fit collapses to a giant/near-full-circle
+        // arc - the reported "some edges become full circles" bug.
+        // Sweep an offset AND a near-straight backward edge (the common
+        // node-graph case: output-right to input-left, horizontal tangents).
+        let tol = 0.25;
+        for &off in &[
+            Vec2::new(0.0, 0.0),
+            Vec2::new(1800.0, -1200.0),
+            Vec2::new(40000.0, 25000.0),
+        ] {
+            // A gentle near-straight edge: tiny bow over a long span. This is the
+            // case that fits a huge-radius circle whose sweep direction is noisy.
+            let curves = [
+                (
+                    Vec2::new(-150.0, 0.0),
+                    Vec2::new(-50.0, 1.0),
+                    Vec2::new(50.0, -1.0),
+                    Vec2::new(150.0, 0.0),
+                ),
+                (
+                    Vec2::new(-120.0, -40.0),
+                    Vec2::new(-40.0, -40.0),
+                    Vec2::new(40.0, 40.0),
+                    Vec2::new(120.0, 40.0),
+                ),
+            ];
+            for (a, b, c, d) in curves {
+                let (p0, p1, p2, p3) = (a + off, b + off, c + off, d + off);
+                let pieces = cubic_to_arcs(p0, p1, p2, p3, tol);
+                let dev = spline_deviation(p0, p1, p2, p3, &pieces);
+                assert!(
+                    dev <= tol * 1.5,
+                    "off={off:?} deviation {dev} exceeded tol {tol}; pieces={pieces:?}",
+                );
+                for piece in &pieces {
+                    if let ArcPiece::Arc { radius, sweep, .. } = *piece {
+                        assert!(
+                            sweep.abs() < std::f32::consts::PI,
+                            "off={off:?}: arc sweep {sweep} implausibly large; pieces={pieces:?}",
+                        );
+                        assert!(
+                            radius < 1.0e6,
+                            "off={off:?}: arc radius {radius} absurd; pieces={pieces:?}",
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn backward_edge_loop_no_giant_arc() {
+        // The real failure: a "backward" edge (output-right pin to a target node
+        // to the LEFT) has control points pointing away from each other, so the
+        // cubic loops. p0->cp0 heads right, cp1->p3 heads left from far left.
+        let tol = 0.05; // the widget's edge tolerance
+        for &off in &[Vec2::new(0.0, 0.0), Vec2::new(2400.0, -900.0)] {
+            let p0 = Vec2::new(0.0, 0.0) + off;
+            let cp0 = Vec2::new(80.0, 0.0) + off;
+            let cp1 = Vec2::new(-280.0, 50.0) + off;
+            let p3 = Vec2::new(-200.0, 50.0) + off;
+            let pieces = cubic_to_arcs(p0, cp0, cp1, p3, tol);
+            let dev = spline_deviation(p0, cp0, cp1, p3, &pieces);
+            assert!(
+                dev <= tol * 2.0,
+                "off={off:?} backward-edge deviation {dev} exceeded tol {tol}; \
+                 pieces={pieces:?}",
+            );
+            for piece in &pieces {
+                if let ArcPiece::Arc { radius, sweep, .. } = *piece {
+                    assert!(
+                        sweep.abs() <= std::f32::consts::PI + 1e-3,
+                        "off={off:?}: giant sweep {sweep}; pieces={pieces:?}",
+                    );
+                    assert!(radius < 1.0e6, "off={off:?}: absurd radius {radius}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn widget_edge_configs_never_giant_arc_or_full_circle() {
+        // Brute-force the exact edge geometry the widget builds: every pin-side
+        // tangent pair, endpoints in all relative directions (forward, backward,
+        // vertical, diagonal, short, long), at the origin and far from it. The
+        // arc-spline of every such cubic must stay within tolerance and must
+        // never contain a giant-radius or near-full-circle arc - the two reported
+        // artifacts. This is the permanent regression guard for the edge bug.
+        let dirs = [
+            Vec2::new(-1.0, 0.0), // Left
+            Vec2::new(1.0, 0.0),  // Right
+            Vec2::new(0.0, -1.0), // Top
+            Vec2::new(0.0, 1.0),  // Bottom
+        ];
+        let deltas = [
+            Vec2::new(200.0, 0.0),
+            Vec2::new(-200.0, 0.0), // backward
+            Vec2::new(0.0, 150.0),
+            Vec2::new(0.0, -150.0),
+            Vec2::new(-180.0, 60.0), // backward + offset
+            Vec2::new(220.0, -140.0),
+            Vec2::new(15.0, 5.0),    // very short
+            Vec2::new(-12.0, -40.0), // short backward
+        ];
+        let offsets = [
+            Vec2::ZERO,
+            Vec2::new(1500.0, -900.0),
+            Vec2::new(-3000.0, 2000.0),
+        ];
+        let tol = 0.05_f32; // the widget's edge tolerance
+
+        let mut worst_dev = 0.0_f32;
+        let mut max_sweep = 0.0_f32;
+        let mut max_radius = 0.0_f32;
+        for &off in &offsets {
+            for &delta in &deltas {
+                for &df in &dirs {
+                    for &dt in &dirs {
+                        let p0 = off;
+                        let p3 = off + delta;
+                        // mirror adaptive_bezier_length: min(80, half dist, >=1).
+                        let l = 80.0_f32.min(delta.length() * 0.5).max(1.0);
+                        let cp0 = p0 + df * l;
+                        let cp1 = p3 + dt * l;
+                        let pieces = cubic_to_arcs(p0, cp0, cp1, p3, tol);
+                        assert!(!pieces.is_empty());
+                        let dev = spline_deviation(p0, cp0, cp1, p3, &pieces);
+                        worst_dev = worst_dev.max(dev);
+                        for piece in &pieces {
+                            if let ArcPiece::Arc { radius, sweep, .. } = *piece {
+                                max_sweep = max_sweep.max(sweep.abs());
+                                max_radius = max_radius.max(radius);
+                                assert!(
+                                    sweep.abs() <= std::f32::consts::PI,
+                                    "FULL-CIRCLE artifact: sweep={sweep} off={off:?} \
+                                     delta={delta:?} df={df:?} dt={dt:?}; pieces={pieces:?}",
+                                );
+                                assert!(
+                                    radius < 1.0e6,
+                                    "GIANT-ARC artifact: radius={radius} off={off:?} \
+                                     delta={delta:?} df={df:?} dt={dt:?}",
+                                );
+                            }
+                        }
+                        assert!(
+                            dev <= tol * 3.0,
+                            "deviation {dev} off={off:?} delta={delta:?} df={df:?} dt={dt:?}",
+                        );
+                    }
+                }
+            }
+        }
+        // Sanity: the suite actually exercised arcs (not all lines).
+        assert!(max_sweep > 0.0, "no arcs were produced - test is vacuous");
+        eprintln!(
+            "edge configs: worst_dev={worst_dev:.4} max_sweep={max_sweep:.3} \
+             max_radius={max_radius:.1}"
         );
     }
 
