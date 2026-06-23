@@ -28,6 +28,7 @@
 //!   - 500 nodes:  9.56 ms -> 0.476 ms  (~20x)
 //!   - 2000 nodes: 39.9 ms -> 2.25 ms   (~18x; the gap widens with node count -
 //!     v2 is O(n) booleans, v3 is ~1 boolean + cheap O(n) placement).
+//!
 //! This is the CPU half of the order-of-magnitude target and EXCEEDS it (~20x vs
 //! the ~10x expectation).
 //!
@@ -39,6 +40,7 @@
 //!   - per-frame WORK (build+prepare, no fence): v2 ~7.7 ms -> v3 ~0.61 ms (~12.7x)
 //!   - full frame wall-clock (with GPU fence):   v2 ~7.9 ms -> v3 ~0.87 ms (~9x)
 //!   - cull GPU-only (R3 timestamps):            ~0.05 ms either way (negligible)
+//!
 //! The R3 timestamps prove the GPU cull was never the bottleneck; the win is the
 //! deduped boolean + batched upload. The remaining fragment cost is the
 //! fullscreen background tiling (per-node prims are scissored), addressed by the
