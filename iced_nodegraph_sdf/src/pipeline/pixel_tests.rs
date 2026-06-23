@@ -3103,3 +3103,35 @@ fn crowded_region_over_256_entries_no_dropped_shapes() {
         ratio * 100.0,
     );
 }
+
+/// Zoomed-OUT variant of the crowded-region regression: many entries spread over
+/// a wide world area, rendered zoomed out so each screen-space region covers many
+/// of them - the exact condition (per the 500-node sign-off) where the region
+/// cull used to overflow and drop edges. Per-tile density stays low, so this
+/// isolates the region-overflow fallback, not the per-tile slot cap.
+#[test]
+fn zoomed_out_many_entries_no_dropped_shapes() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (256u32, 256u32, 0.35f32);
+    let mut circles = Vec::new();
+    for gy in 0..20 {
+        for gx in 0..20 {
+            let x = -340.0 + gx as f32 * 36.0;
+            let y = -340.0 + gy as f32 * 36.0;
+            circles.push(Curve::circle([x, y], 6.0));
+        }
+    } // 400 shapes over a wide area -> one zoomed-out region holds >256
+    let style = Style::solid(rgba(1.0, 1.0, 1.0, 1.0));
+    let d: Vec<_> = circles.iter().map(|c| (c, &style)).collect();
+    let tiled = r.render_opts(&d, w, h, zoom, true);
+    let untiled = r.render_opts(&d, w, h, zoom, false);
+    let vis = |px: &[[u8; 4]]| px.iter().filter(|p| p[3] >= CORPUS_ALPHA_FLOOR).count();
+    let (vt, vu) = (vis(&tiled), vis(&untiled));
+    assert!(vu > 300, "oracle coverage too low: {vu}");
+    let ratio = vt as f32 / vu as f32;
+    assert!(
+        ratio > 0.95,
+        "zoomed-out cull dropped entries: {vt}/{vu} = {:.0}%",
+        ratio * 100.0,
+    );
+}
