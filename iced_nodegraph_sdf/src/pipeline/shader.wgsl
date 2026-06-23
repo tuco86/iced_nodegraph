@@ -692,12 +692,19 @@ fn render_hovered_tile(draw: DrawData, local_px: vec2<f32>, world_p: vec2<f32>) 
     while k < hcount {
         let rs = tile_slots[hbase + k * 2u];
         if (rs & TILING_BIT) == 0u {
-            let sdf = eval_single_segment(world_p, rs);
+            // Slot value 2 is the ENTRY index (matching the main render path):
+            // segments are LOCAL, so evaluate at world_p minus the entry's
+            // translate, and resolve the style through entry.style_idx. (The old
+            // code evaluated raw world_p and read the entry index as a style
+            // index - broken since the keystone translate + batched styles.)
+            let e_idx = tile_slots[hbase + k * 2u + 1u];
+            let entry = draw_entries[e_idx];
+            let sdf = eval_single_segment(world_p - entry.translate, rs);
             let ad = abs(sdf.dist);
             if ad < best_abs {
                 best_abs = ad;
                 best_signed = sdf.dist;
-                best_style = tile_slots[hbase + k * 2u + 1u];
+                best_style = entry.style_idx;
                 found = true;
             }
         }
