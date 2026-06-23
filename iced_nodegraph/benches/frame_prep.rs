@@ -21,16 +21,30 @@
 //! post pin-pulse removal, this machine: CPU prepare ~9.35 ms
 //! (range [9.18, 9.54] ms), dominated by the `difference_many` boolean.
 //!
-//! v3 vs v2 CPU prepare COMPARISON (`v2` vs `v3_cached`, this machine). v3 fetches
-//! the node silhouette from the frame-surviving `ShapeCache` (one boolean for all
-//! identical bodies) and places it by translate, instead of re-running the
-//! boolean per node:
-//!   - 500 nodes:  9.56 ms -> 0.476 ms  (~20x)
-//!   - 2000 nodes: 39.9 ms -> 2.25 ms   (~18x; the gap widens with node count -
-//!     v2 is O(n) booleans, v3 is ~1 boolean + cheap O(n) placement).
+//! NODE-BODY dedup in ISOLATION (`v2` vs `v3_cached` measured BEFORE A4 wired
+//! arc-spline edges, when `Curve::bezier` just stored 4 control points): v3
+//! fetches the node silhouette from the frame-surviving `ShapeCache` (one boolean
+//! for all identical bodies) and places it by translate, instead of re-running
+//! the boolean per node:
+//!   - 500 nodes:  ~9.56 ms -> ~0.48 ms  (~20x), 2000 nodes ~18x.
+//! For the NODE BOOLEAN this is the CPU half of the order-of-magnitude and meets
+//! it. But it is NOT the full-scene number - see the post-A4 correction below.
 //!
-//! This is the CPU half of the order-of-magnitude target and EXCEEDS it (~20x vs
-//! the ~10x expectation).
+//! POST-A4 CORRECTION (this benchmark, WITH edges, current measurement). A4 made
+//! `Curve::bezier` fit an arc-spline (biarc subdivision) on the CPU to delete the
+//! per-pixel cubic solver from the shader - moving edge cost from GPU-per-pixel to
+//! CPU-per-frame-build. The scene here has 640 edges (1.28/node), so the edge
+//! build now DOMINATES the v3 prepare and is a shared floor for both paths:
+//!   - 500 nodes:  v2 ~14.2 ms -> v3 ~4.34 ms  (~3.3x)
+//!   - of v3's 4.34 ms, ~3.8 ms is the 640-edge biarc build (~6 us/edge); the
+//!     deduped node bodies are <0.5 ms (the 20x above, now a small slice).
+//! So a realistic edged graph sees ~3x on CPU prepare, NOT 10x: the node-boolean
+//! dedup win is real but the arc-spline edge BUILD became the new bottleneck (the
+//! plan assumed edges stay cheap to rebuild; A4 invalidated that premise - the
+//! plan's "look again" signal). The order-of-magnitude holds on the edgeless
+//! node-only scene (`frame_time_v3_not_slower_than_v2`, ~12x) and on GPU memory
+//! (instancing). Cutting the edge floor (cache static-edge arc-splines by
+//! endpoint, or cheapen biarc) is the open follow-up.
 //!
 //! FULL-FRAME order-of-magnitude MET (`frame_time_v3_not_slower_than_v2` in the
 //! sdf crate drives the real `SdfPipeline`: build + upload + cull + render +
