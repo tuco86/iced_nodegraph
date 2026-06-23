@@ -863,12 +863,25 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 acc = acc + frag * (1.0 - acc.a);
             } else {
                 let lp = world_p - entry.translate;
-                for (var s = 0u; s < entry.segment_count; s++) {
+                // Fold to the NEAREST segment (as the tiled path does) so a
+                // multi-segment entry renders as ONE contour, not N overlapping
+                // per-segment strokes. Without this the untiled fallback double-AAs
+                // every join, which a multi-segment edge (e.g. an arc-spline
+                // bezier) makes visible as wobble.
+                var best_sdf = eval_single_segment(lp, entry.segment_start);
+                var best_abs = abs(best_sdf.dist);
+                var best_seg = entry.segment_start;
+                for (var s = 1u; s < entry.segment_count; s++) {
                     let seg_idx = entry.segment_start + s;
                     let sdf = eval_single_segment(lp, seg_idx);
-                    let frag = render_style(sdf, style, draw, segment_total_arc(seg_idx), (entry.flags & FLAG_CLOSED) != 0u);
-                    acc = acc + frag * (1.0 - acc.a);
+                    if abs(sdf.dist) < best_abs {
+                        best_abs = abs(sdf.dist);
+                        best_sdf = sdf;
+                        best_seg = seg_idx;
+                    }
                 }
+                let frag = render_style(best_sdf, style, draw, segment_total_arc(best_seg), (entry.flags & FLAG_CLOSED) != 0u);
+                acc = acc + frag * (1.0 - acc.a);
             }
         }
     }
