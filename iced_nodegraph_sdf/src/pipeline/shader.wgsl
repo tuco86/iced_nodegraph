@@ -873,11 +873,37 @@ fn cs_eval_segment(p: vec2<f32>, seg_idx: u32) -> SdfResult {
     return r;
 }
 
-fn cs_push_slot(base: u32, count: ptr<function, u32>, seg_idx: u32, style_idx: u32) {
+fn cs_push_slot(
+    base: u32,
+    count: ptr<function, u32>,
+    slot_dist: ptr<function, array<f32, 32>>,
+    seg_idx: u32,
+    style_idx: u32,
+    prio: f32,
+) {
     if *count < MAX_SLOTS_PER_TILE {
         cs_tile_slots[base + *count * 2u] = seg_idx;
         cs_tile_slots[base + *count * 2u + 1u] = style_idx;
+        (*slot_dist)[*count] = prio;
         *count += 1u;
+    } else {
+        // Tile full: keep the NEAREST MAX_SLOTS_PER_TILE entries - replace the
+        // farthest slot if this one is nearer. Without this a crowded tile kept
+        // an arbitrary first 32 by scan order, which could drop near segments
+        // (the ones that dominate the tile's pixels) in favour of far ones.
+        var maxi = 0u;
+        var maxd = (*slot_dist)[0];
+        for (var k = 1u; k < MAX_SLOTS_PER_TILE; k = k + 1u) {
+            if (*slot_dist)[k] > maxd {
+                maxd = (*slot_dist)[k];
+                maxi = k;
+            }
+        }
+        if prio < maxd {
+            cs_tile_slots[base + maxi * 2u] = seg_idx;
+            cs_tile_slots[base + maxi * 2u + 1u] = style_idx;
+            (*slot_dist)[maxi] = prio;
+        }
     }
 }
 
@@ -950,6 +976,10 @@ fn cs_build_index(
     let world_pos = local_center * inv_cs - draw.camera_position;
 
     var count: u32 = 0u;
+    // Parallel to the tile slots: each pushed entry's priority (|dist| to the
+    // tile centre) so an overflowing tile keeps the NEAREST entries (see
+    // cs_push_slot). Only read when a tile exceeds MAX_SLOTS_PER_TILE.
+    var slot_dist: array<f32, 32>;
     let slot_base = global_tile_idx * SLOT_STRIDE;
 
     let scan_count = select(cand_count, draw.entry_count, overflow);
@@ -976,7 +1006,9 @@ fn cs_build_index(
             td = min(td, sd_tiling(world_pos + vec2(ht, -ht), entry.tiling_type, entry.tiling_params).dist);
             td = min(td, sd_tiling(world_pos + vec2(-ht, -ht), entry.tiling_type, entry.tiling_params).dist);
             if td - thd <= style_max_dist(style) + 0.5 {
-                cs_push_slot(slot_base, &count, i | TILING_BIT, i);
+                // Tilings usually cover the whole tile; prioritise them (td is
+                // small/negative inside the feature) so they survive overflow.
+                cs_push_slot(slot_base, &count, &slot_dist, i | TILING_BIT, i, td);
             }
             continue;
         }
@@ -1045,12 +1077,12 @@ fn cs_build_index(
                     reach = reach + thd * abs(tan(style.pattern_param2));
                 }
                 if abs(r.dist) - thd <= reach {
-                    cs_push_slot(slot_base, &count, seg_idx, i);
+                    cs_push_slot(slot_base, &count, &slot_dist, seg_idx, i, abs(r.dist));
                 }
             } else {
                 // Fill/DF: push segments that could be nearest at any pixel
                 if abs(r.dist) <= proximity {
-                    cs_push_slot(slot_base, &count, seg_idx, i);
+                    cs_push_slot(slot_base, &count, &slot_dist, seg_idx, i, abs(r.dist));
                 }
             }
         }

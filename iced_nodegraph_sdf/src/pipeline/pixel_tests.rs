@@ -3135,3 +3135,31 @@ fn zoomed_out_many_entries_no_dropped_shapes() {
         ratio * 100.0,
     );
 }
+
+/// A tile holding more than MAX_SLOTS_PER_TILE segments must keep the NEAREST
+/// ones, not an arbitrary first-32 by scan order. A near, tile-filling shape
+/// pushed LAST (highest scan index) would be dropped by first-32; keep-nearest
+/// retains it because its |dist| at the tile centre is smallest.
+#[test]
+fn overflowing_tile_keeps_nearest_not_first() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (16u32, 16u32, 1.0f32); // a single 16px tile
+    let white = Style::stroke(rgba(1.0, 1.0, 1.0, 1.0), Pattern::solid(1.0));
+    let mut rings: Vec<crate::drawable::Drawable> = Vec::new();
+    for k in 0..36 {
+        let a = k as f32 / 36.0 * std::f32::consts::TAU;
+        rings.push(Curve::circle([a.cos() * 7.0, a.sin() * 7.0], 0.8));
+    }
+    let near = Curve::circle([0.0, 0.0], 2.0);
+    let red = Style::stroke(rgba(1.0, 0.1, 0.1, 1.0), Pattern::solid(8.0));
+    let mut d: Vec<(&crate::drawable::Drawable, &Style)> =
+        rings.iter().map(|c| (c, &white)).collect();
+    d.push((&near, &red));
+
+    let px = r.render_opts(&d, w, h, zoom, true);
+    let p = TestRenderer::pixel_at(&px, w, 8, 8);
+    assert!(
+        p[0] as i32 > p[1] as i32 + 40 && p[0] as i32 > p[2] as i32 + 40,
+        "overflowing tile must keep the nearest (red) shape pushed last, got {p:?}",
+    );
+}
