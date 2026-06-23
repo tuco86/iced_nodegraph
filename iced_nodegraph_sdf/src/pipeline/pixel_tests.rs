@@ -2990,6 +2990,68 @@ fn gpu_instancing_shares_segment_range() {
     );
 }
 
+/// R4 cache-hit-rate contract, driven through the LIVE pipeline (not just the
+/// unit `ShapeCache`): a static graph of N identical-shape nodes rendered for
+/// 120 frames must converge to ~100% shape-cache hits - one boolean evaluation
+/// total, every later instance and every later frame a hit. This is the
+/// "5-node and 500-node pay the same floor" contract the whole v3 win rests on.
+/// It also re-confirms per-frame GPU instancing across frames: each frame
+/// uploads ONE shape's segments regardless of node count.
+#[test]
+fn r4_static_graph_cache_hit_rate_is_full() {
+    use iced_wgpu::graphics::Viewport;
+    use iced_wgpu::primitive::{Pipeline, Primitive};
+
+    let r = shared_renderer();
+    let mut pipeline =
+        crate::primitive::SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
+
+    let recipe = crate::recipe::ShapeExpr::Difference {
+        base: Box::new(crate::recipe::ShapeExpr::RoundedRect {
+            half: [40.0, 25.0],
+            radius: 6.0,
+        }),
+        cuts: vec![crate::recipe::ShapeExpr::Circle {
+            center: [-40.0, 0.0],
+            radius: 4.0,
+        }],
+    };
+    let style = Style::solid(iced::Color::WHITE);
+    let one_shape = recipe.evaluate().segment_count();
+
+    let viewport = Viewport::with_physical_size(iced::Size::new(800, 600), 1.0);
+    let bounds = iced::Rectangle::new(iced::Point::ORIGIN, iced::Size::new(800.0, 600.0));
+
+    const NODES: u32 = 50;
+    const FRAMES: u32 = 120;
+    for _ in 0..FRAMES {
+        let mut prim = crate::primitive::SdfPrimitive::new();
+        for i in 0..NODES {
+            prim.push_recipe(recipe.clone(), [i as f32 * 14.0, 0.0], &style);
+        }
+        prim.prepare(&mut pipeline, &r.device, &r.queue, &bounds, &viewport);
+        // Each frame uploads ONE shape's segments (instancing), not NODES of them.
+        assert_eq!(
+            pipeline.segment_count(),
+            one_shape,
+            "instancing must upload one shape per frame, not {NODES}",
+        );
+        Pipeline::trim(&mut pipeline);
+    }
+
+    // Exactly one boolean evaluation across the whole run; everything else a hit.
+    assert_eq!(
+        pipeline.cache_misses(),
+        1,
+        "the boolean must evaluate exactly once over {FRAMES} frames",
+    );
+    let rate = pipeline.cache_hit_rate();
+    assert!(
+        rate > 0.999,
+        "static-graph hit-rate must be ~100% (R4), got {rate}",
+    );
+}
+
 /// A3 band-fold premultiplied blend: a falloff from opaque GREEN to TRANSPARENT
 /// RED must stay green through the fade, not fringe toward red. Straight-alpha
 /// in-loop mixing (the old behavior) pulls RGB toward the transparent stop's red

@@ -31,6 +31,11 @@ static LAST_STATS: Mutex<types::SdfStats> = Mutex::new(types::SdfStats {
     entry_count: 0,
     tile_count: 0,
     prepare_cpu_us: 0,
+    unique_shapes: 0,
+    segment_count: 0,
+    cache_hits: 0,
+    cache_misses: 0,
+    cache_hit_rate: 0.0,
 });
 
 /// Read performance statistics from the last completed frame.
@@ -271,6 +276,17 @@ impl SdfPipeline {
         self.segments_buffer.len()
     }
 
+    /// Shape-cache hit rate over the pipeline's lifetime (Improvement A). ~1.0 on
+    /// a static graph is the R4 contract.
+    pub fn cache_hit_rate(&self) -> f32 {
+        self.shape_cache.hit_rate()
+    }
+
+    /// Shape-cache misses (boolean->arcs evaluations) over the lifetime.
+    pub fn cache_misses(&self) -> u64 {
+        self.shape_cache.misses()
+    }
+
     /// Cull-compute GPU time of the last `prepare`, in milliseconds, when the
     /// device supports timestamps (R3). Blocks to map the readback, so use it in
     /// measurements, not the render loop. `None` without `TIMESTAMP_QUERY`.
@@ -496,7 +512,13 @@ impl Pipeline for SdfPipeline {
     }
 
     fn trim(&mut self) {
+        // Capture frame metrics from the buffers/cache BEFORE clearing them.
         self.frame_stats.tile_count = self.total_tiles;
+        self.frame_stats.segment_count = self.segments_buffer.len() as u32;
+        self.frame_stats.unique_shapes = self.frame_shape_slots.len() as u32;
+        self.frame_stats.cache_hits = self.shape_cache.hits();
+        self.frame_stats.cache_misses = self.shape_cache.misses();
+        self.frame_stats.cache_hit_rate = self.shape_cache.hit_rate();
         if let Ok(mut s) = LAST_STATS.lock() {
             *s = self.frame_stats.clone();
         }

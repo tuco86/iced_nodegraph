@@ -266,12 +266,36 @@ impl Default for DrawData {
     }
 }
 
-/// Performance statistics.
+/// Performance statistics from the last completed frame.
+///
+/// `#[non_exhaustive]` so new metrics stay a semver-additive patch: the v3 gates
+/// read these counters, and "v3 is faster" is an opinion without them. The dedup
+/// metrics (`cache_*`, `unique_shapes`, `segment_count`) quantify Improvement A:
+/// on a static graph `cache_hit_rate` -> ~1.0 (the R4 contract) and
+/// `unique_shapes` << `entry_count` when many nodes share a shape.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct SdfStats {
+    /// Draw commands submitted this frame (one per fill/border/shadow/edge).
     pub entry_count: u32,
+    /// Spatial-index tiles allocated this frame.
     pub tile_count: u32,
+    /// CPU time spent in `prepare` this frame.
     pub prepare_cpu_us: u64,
+    /// Distinct shapes whose geometry was uploaded this frame (after dedup). The
+    /// per-frame GPU-instancing analogue of the shape cache: identical shapes
+    /// upload their segments ONCE, so this is << `entry_count` on repeated nodes.
+    pub unique_shapes: u32,
+    /// `GpuSegment`s uploaded this frame. With instancing this tracks
+    /// unique-shape geometry, not draw count.
+    pub segment_count: u32,
+    /// Shape-cache hits over the pipeline's lifetime (Improvement A).
+    pub cache_hits: u64,
+    /// Shape-cache misses (each a boolean->arcs evaluation) over the lifetime.
+    pub cache_misses: u64,
+    /// `cache_hits / (cache_hits + cache_misses)`; ~1.0 on a static graph is the
+    /// R4 cache-hit-rate contract.
+    pub cache_hit_rate: f32,
 }
 
 #[cfg(test)]
