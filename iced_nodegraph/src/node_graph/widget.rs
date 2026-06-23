@@ -615,7 +615,12 @@ where
                     layout.bounds(),
                     bg_batch
                         .camera(cx, cy, render_context.camera_zoom)
-                        .time(render_context.time),
+                        .time(render_context.time)
+                        // Mark the full-coverage tiling background as cacheable.
+                        // Inert under v2; under sdf-v3 the pipeline blits a cached
+                        // texture on camera-static frames instead of re-running the
+                        // one fullscreen fragment pass the cull cannot prune.
+                        .background(),
                 );
             });
         }
