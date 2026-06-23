@@ -109,6 +109,7 @@ impl NodeStyle {
             stops,
             pattern: None,
             distance_field: false,
+            transfer: Default::default(),
         }]
     }
 
@@ -143,6 +144,7 @@ impl NodeStyle {
             stops: vec![Stop::new(-d, full), Stop::new(d, none)],
             pattern: None,
             distance_field: false,
+            transfer: Default::default(),
         }]
     }
 }

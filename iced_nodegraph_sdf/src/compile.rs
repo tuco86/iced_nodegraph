@@ -6,7 +6,7 @@ use iced::Color;
 
 use crate::drawable::Drawable;
 use crate::pipeline::types::{GpuDrawEntry, GpuSegment, GpuStyle, GpuVec2, GpuVec4};
-use crate::style::{MAX_STOPS, Style};
+use crate::style::{MAX_STOPS, Style, Transfer};
 
 const FLAG_CLOSED: u32 = 1; // entry.flags
 const SEG_FLAG_SIGNED: u32 = 1; // segment.flags
@@ -205,6 +205,12 @@ fn compile_style(style: &Style) -> GpuStyle {
         stop_dist[i / 4].0[i % 4] = s.dist;
     }
 
+    let (transfer_type, transfer_param) = match style.transfer {
+        Transfer::Linear => (0u32, 0.0),
+        Transfer::Smoothstep => (1, 0.0),
+        Transfer::Gamma(g) => (2, g),
+    };
+
     GpuStyle {
         stop_start,
         stop_end,
@@ -217,6 +223,10 @@ fn compile_style(style: &Style) -> GpuStyle {
         pattern_param1: p1,
         pattern_param2: p2,
         flow_speed,
+        transfer_type,
+        transfer_param,
+        _transfer_pad0: 0,
+        _transfer_pad1: 0,
     }
 }
 

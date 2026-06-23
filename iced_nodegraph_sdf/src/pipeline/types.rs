@@ -141,6 +141,12 @@ pub(crate) struct GpuStyle {
     pub pattern_param1: f32,
     pub pattern_param2: f32,
     pub flow_speed: f32,
+    /// Transfer warp (A3): 0=linear, 1=smoothstep, 2=gamma.
+    pub transfer_type: u32,
+    /// Transfer parameter (gamma exponent when `transfer_type == 2`).
+    pub transfer_param: f32,
+    pub _transfer_pad0: u32,
+    pub _transfer_pad1: u32,
 }
 
 /// Per-draw-call parameters.
@@ -232,6 +238,10 @@ impl Default for GpuStyle {
             pattern_param1: 0.0,
             pattern_param2: 0.0,
             flow_speed: 0.0,
+            transfer_type: 0,
+            transfer_param: 0.0,
+            _transfer_pad0: 0,
+            _transfer_pad1: 0,
         }
     }
 }

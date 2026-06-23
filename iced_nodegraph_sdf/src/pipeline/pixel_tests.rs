@@ -2236,6 +2236,7 @@ fn abutting_chain_bands_stay_opaque_across_boundary() {
         ],
         pattern: None,
         distance_field: false,
+        transfer: Default::default(),
     };
     let shape = Curve::circle([0.0, 0.0], radius);
     let pixels = renderer.render(&[(&shape, &style)], width, height, zoom);
@@ -3006,6 +3007,7 @@ fn premultiplied_band_blend_no_rgb_fringe() {
         ],
         pattern: None,
         distance_field: false,
+        transfer: Default::default(),
     };
     let radius = 50.0_f32;
     let circle = Curve::circle([0.0, 0.0], radius);
@@ -3197,5 +3199,43 @@ fn many_multiseg_nodes_localized_matches_world_tiled() {
     assert!(
         over < 200,
         "v3 localized != v2 at node-grid scale: worst {worst}, over {over}, {sample:?}",
+    );
+}
+
+/// A3 transfer (variant B) new-capability golden: a Gamma transfer warps the
+/// stop-blend parameter `t`, biasing a RED->BLUE falloff toward the near (red)
+/// stop versus the Linear identity. Gated as a NEW capability (it deliberately
+/// differs from the untransformed render), not a v2 match.
+#[test]
+fn transfer_gamma_warps_blend_toward_near_stop() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (256u32, 256u32, 1.0f32);
+    let red = rgba(1.0, 0.0, 0.0, 1.0);
+    let blue = rgba(0.0, 0.0, 1.0, 1.0);
+    let mk = |t: crate::style::Transfer| crate::style::Style {
+        stops: vec![
+            crate::style::Stop::new(0.0, red),
+            crate::style::Stop::new(20.0, blue),
+        ],
+        pattern: None,
+        distance_field: false,
+        transfer: t,
+    };
+    let circle = Curve::circle([0.0, 0.0], 30.0);
+    let lin = mk(crate::style::Transfer::Linear);
+    let gam = mk(crate::style::Transfer::Gamma(2.5));
+    let px_lin = r.render_opts(&[(&circle, &lin)], w, h, zoom, true);
+    let px_gam = r.render_opts(&[(&circle, &gam)], w, h, zoom, true);
+    // ~10px outside the edge (mid-falloff): world (40,0) -> screen (128+40, 128).
+    let (sx, sy) = (w / 2 + 40, h / 2);
+    let pl = TestRenderer::pixel_at(&px_lin, w, sx, sy);
+    let pg = TestRenderer::pixel_at(&px_gam, w, sx, sy);
+    assert!(
+        pl[3] > 200 && pg[3] > 200,
+        "falloff must be opaque: {pl:?} {pg:?}"
+    );
+    assert!(
+        pg[0] as i32 > pl[0] as i32 + 40,
+        "Gamma must bias toward the near (red) stop vs Linear: lin {pl:?} gam {pg:?}",
     );
 }

@@ -103,6 +103,21 @@ struct GpuStyle {
     pattern_param1: f32,
     pattern_param2: f32,
     flow_speed: f32,
+    transfer_type: u32,
+    transfer_param: f32,
+    _transfer_pad0: u32,
+    _transfer_pad1: u32,
+}
+
+// A3 transfer (variant B): a color-domain warp on the post-smoothstep blend t.
+// 0=linear (identity), 1=smoothstep, 2=gamma(param). Never touches `dist`.
+fn apply_transfer(t: f32, kind: u32, param: f32) -> f32 {
+    if kind == 1u {
+        return t * t * (3.0 - 2.0 * t);
+    } else if kind == 2u {
+        return pow(t, max(param, 1e-4));
+    }
+    return t;
 }
 
 // Signed distance of stop `i` (distances are packed 4 per vec4).
@@ -548,7 +563,7 @@ fn render_style(sdf: SdfResult, style: GpuStyle, draw: DrawData, total_arc: f32)
             lo = nlo;
             hi = nhi;
         }
-        let t = smoothstep(lo, hi, dist);
+        let t = apply_transfer(smoothstep(lo, hi, dist), style.transfer_type, style.transfer_param);
         acc = mix(acc, pcj, t);
     }
 

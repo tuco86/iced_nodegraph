@@ -58,6 +58,23 @@ impl Stop {
     }
 }
 
+/// A unary warp on the post-smoothstep blend parameter `t` in the distance-stop
+/// fold (A3 transfer, variant B). It is COLOR-domain - it reshapes how one stop
+/// eases into the next without moving any stop or touching `dist`. [`Transfer::Linear`]
+/// is the identity and the default, so adding a transfer never changes an existing
+/// style's output.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum Transfer {
+    /// Identity: `t' = t` (no change).
+    #[default]
+    Linear,
+    /// Smoothstep easing `3t^2 - 2t^3`, softening both ends of each blend.
+    Smoothstep,
+    /// `t' = t^exponent`. Exponent > 1 biases the blend toward the near stop,
+    /// < 1 toward the far stop. Used for perceptual/radial falloff shaping.
+    Gamma(f32),
+}
+
 /// Rendering style: a distance-stop chain + optional pattern.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Style {
@@ -67,6 +84,9 @@ pub struct Style {
     pub pattern: Option<Pattern>,
     /// Special: IQ distance field visualization.
     pub distance_field: bool,
+    /// Color-domain warp on the stop-blend parameter. Defaults to
+    /// [`Transfer::Linear`] (identity).
+    pub transfer: Transfer,
 }
 
 impl Style {
@@ -85,6 +105,7 @@ impl Style {
             stops: vec![Stop::new(0.0, color)],
             pattern: Some(pattern),
             distance_field: false,
+            transfer: Transfer::Linear,
         }
     }
 
@@ -102,6 +123,7 @@ impl Style {
             stops: vec![Stop::grad(0.0, start, end)],
             pattern: Some(pattern),
             distance_field: false,
+            transfer: Transfer::Linear,
         }
     }
 
@@ -131,6 +153,7 @@ impl Style {
             stops: vec![Stop::grad(0.0, start, end)],
             pattern: Some(pattern),
             distance_field: false,
+            transfer: Transfer::Linear,
         }
     }
 
@@ -164,12 +187,19 @@ impl Style {
             )],
             pattern: None,
             distance_field: true,
+            transfer: Transfer::Linear,
         }
     }
 
     /// Set pattern (turns the style into a stroke laid out along the contour).
     pub fn with_pattern(mut self, pattern: Pattern) -> Self {
         self.pattern = Some(pattern);
+        self
+    }
+
+    /// Set the color-domain [`Transfer`] warp on the stop-blend parameter.
+    pub fn transfer(mut self, transfer: Transfer) -> Self {
+        self.transfer = transfer;
         self
     }
 
@@ -200,6 +230,7 @@ impl Style {
             stops,
             pattern: None,
             distance_field: false,
+            transfer: Transfer::Linear,
         }
     }
 
