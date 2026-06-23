@@ -3163,3 +3163,39 @@ fn overflowing_tile_keeps_nearest_not_first() {
         "overflowing tile must keep the nearest (red) shape pushed last, got {p:?}",
     );
 }
+
+/// At-scale integration gate: many realistic multi-segment nodes (rounded-rect
+/// minus pin cutouts, as the widget builds) rendered through the REAL tiled cull,
+/// v3 keystone (localized geometry + translate) vs v2 (world-baked). Exercises the
+/// cull + keystone together at node-grid scale - the path the 500-node demo runs,
+/// where the sign-off found bugs the small corpus scenes missed.
+#[test]
+fn many_multiseg_nodes_localized_matches_world_tiled() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (512u32, 384u32, 1.0f32);
+    let half = [40.0f32, 22.0f32];
+    let radius = 6.0f32;
+    let cut_offsets = [[-40.0f32, -8.0], [-40.0, 8.0], [40.0, 0.0]];
+    let (n, cols) = (24usize, 6usize);
+    let mut nodes: Vec<crate::drawable::Drawable> = Vec::new();
+    for i in 0..n {
+        let p = [(i % cols) as f32 * 80.0, (i / cols) as f32 * 60.0];
+        let body = Curve::rounded_rect(p, half, radius);
+        let cuts: Vec<_> = cut_offsets
+            .iter()
+            .map(|c| Curve::circle([p[0] + c[0], p[1] + c[1]], 3.0))
+            .collect();
+        nodes.push(crate::boolean::difference_many(&body, &cuts));
+    }
+    let style = Style::solid(rgba(0.8, 0.85, 0.9, 1.0));
+    let d: Vec<(&crate::drawable::Drawable, &Style)> =
+        nodes.iter().map(|nd| (nd, &style)).collect();
+
+    let v3 = r.render_full_t(&d, w, h, zoom, 1.0, true, 0.0, None, true);
+    let v2 = r.render_full_t(&d, w, h, zoom, 1.0, true, 0.0, None, false);
+    let (worst, over, sample) = corpus_diff(&v3, &v2);
+    assert!(
+        over < 200,
+        "v3 localized != v2 at node-grid scale: worst {worst}, over {over}, {sample:?}",
+    );
+}
