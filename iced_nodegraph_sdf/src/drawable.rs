@@ -205,7 +205,11 @@ impl Drawable {
         }
     }
 
-    /// Create a cubic bezier segment drawable (convenience for Curve::single_bezier).
+    /// Create a single raw cubic-bezier-segment drawable. Retained as a test
+    /// reference for the shader's `sd_bezier` path (still used by the connected
+    /// `ShapeBuilder::bezier_to`); the EDGE build path now fits an arc-spline via
+    /// [`Drawable::bezier_arcs`] (A4), so this no longer feeds production geometry.
+    #[allow(dead_code)]
     pub(crate) fn single_bezier(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2) -> Self {
         let length = bezier_arc_length(p0, p1, p2, p3);
         let min_x = p0.x.min(p1.x).min(p2.x).min(p3.x);

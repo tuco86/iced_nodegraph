@@ -53,11 +53,16 @@ impl Curve {
         p2: impl Into<[f32; 2]>,
         p3: impl Into<[f32; 2]>,
     ) -> Drawable {
-        Drawable::single_bezier(
+        // A4 arcs-only: fit the cubic with a biarc spline on the CPU so the
+        // shader needs no cubic solver. `tol` is sub-pixel at zoom 1, keeping the
+        // approximation within the AA bar; the spline preserves arc-length so
+        // dash/flow parametrization matches the cubic.
+        Drawable::bezier_arcs(
             Vec2::from(p0.into()),
             Vec2::from(p1.into()),
             Vec2::from(p2.into()),
             Vec2::from(p3.into()),
+            0.05,
         )
     }
 
