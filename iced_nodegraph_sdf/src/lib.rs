@@ -21,16 +21,19 @@
 //! # Rendering
 //!
 //! ```no_run
-//! use iced_nodegraph_sdf::{Curve, Style, Pattern, SdfPrimitive};
+//! use iced_nodegraph_sdf::{Shape, Style, Pattern, SdfPrimitive};
 //! use iced::Color;
 //!
 //! let (cam_x, cam_y, zoom, elapsed) = (0.0, 0.0, 1.0, 0.0);
 //!
-//! let edge = Curve::bezier([0.0, 0.0], [30.0, -20.0], [70.0, 20.0], [100.0, 0.0]);
+//! // A node body: a rounded box with two pin cutouts, authored as set algebra.
+//! let node = Shape::rounded_box([160.0, 90.0], [8.0; 4])
+//!     - Shape::circle(5.0).translate([-80.0, -20.0])
+//!     - Shape::circle(5.0).translate([80.0, 20.0]);
 //! let style = Style::stroke(Color::WHITE, Pattern::solid(2.0));
 //!
 //! let mut prim = SdfPrimitive::new();
-//! prim.push(&edge, &style);
+//! prim.push(&node, &style, [300.0, 200.0]); // placed at world (300, 200)
 //! let prim = prim.camera(cam_x, cam_y, zoom).time(elapsed);
 //! ```
 
@@ -40,7 +43,7 @@ pub mod color;
 pub mod curve;
 pub mod drawable;
 pub mod pattern;
-pub mod recipe;
+mod shape;
 pub mod style;
 pub mod tiling;
 
@@ -49,7 +52,6 @@ pub(crate) mod pipeline;
 pub mod primitive;
 pub(crate) mod shared;
 
-#[cfg(feature = "sdf-v3")]
 pub mod v3;
 
 // Public API re-exports
@@ -59,6 +61,6 @@ pub use drawable::Drawable;
 pub use pattern::Pattern;
 pub use pipeline::types::SdfStats;
 pub use primitive::{DebugFlags, SdfPrimitive, sdf_stats};
-pub use recipe::{ShapeCache, ShapeExpr};
+pub use shape::{Shape, ShapeCache};
 pub use style::{Stop, Style, Transfer};
 pub use tiling::Tiling;

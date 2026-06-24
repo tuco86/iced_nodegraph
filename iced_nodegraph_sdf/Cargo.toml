@@ -9,13 +9,6 @@ license.workspace = true
 keywords = ["iced", "sdf", "distance-field", "gpu", "segment"]
 categories = ["gui", "graphics", "rendering"]
 
-[features]
-# Selects the v3 normalized/instanced SDF backend (default-off). v2 is the
-# shipping default; v3 is built side-by-side behind this gate until it meets the
-# acceptance bar (golden pixel-equivalence + no per-frame cost regression) on
-# every corpus scene. Enabling this does not change the public widget API.
-sdf-v3 = []
-
 [dependencies]
 bitflags.workspace = true
 bytemuck.workspace = true

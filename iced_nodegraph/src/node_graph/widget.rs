@@ -38,7 +38,7 @@ use crate::{
         PinStyle, TilingKind,
     },
 };
-use iced_nodegraph_sdf::{Curve, Drawable, Pattern, SdfPrimitive, Style, Tiling};
+use iced_nodegraph_sdf::{Pattern, SdfPrimitive, Shape, Style, Tiling};
 
 // Click detection threshold (in world-space pixels)
 const PIN_CLICK_THRESHOLD: f32 = 8.0;
@@ -167,19 +167,21 @@ fn pin_side_direction(side: u32) -> [f32; 2] {
     }
 }
 
-/// Construct an SDF drawable for an edge based on curve type and pin sides.
-fn edge_drawable(
+/// Construct the open `Shape` for an edge based on curve type and pin sides. The
+/// geometry is world-space (edges are ephemeral, never deduped), so callers push
+/// it with a zero placement.
+fn edge_shape(
     start: &WorldPoint,
     end: &WorldPoint,
     start_side: u32,
     end_side: u32,
     curve: &crate::style::EdgeCurve,
-) -> Drawable {
+) -> Shape {
     let p0 = [start.x, start.y];
     let p1 = [end.x, end.y];
 
     match curve {
-        crate::style::EdgeCurve::Line => Curve::line(p0, p1),
+        crate::style::EdgeCurve::Line => Shape::line(p0, p1),
         _ => {
             // Bezier: compute control points from pin tangent directions
             let dir_from = pin_side_direction(start_side);
@@ -187,12 +189,12 @@ fn edge_drawable(
             let l = adaptive_bezier_length(p0, p1);
             let cp0 = [p0[0] + dir_from[0] * l, p0[1] + dir_from[1] * l];
             let cp1 = [p1[0] + dir_to[0] * l, p1[1] + dir_to[1] * l];
-            Curve::bezier(p0, cp0, cp1, p1)
+            Shape::bezier(p0, cp0, cp1, p1)
         }
     }
 }
 
-/// Build the stroke drawable for an edge plus its shadow drawable.
+/// Build the stroke `Shape` for an edge plus its shadow shape.
 ///
 /// The shadow shares the stroke geometry, shifted by `style.shadow.offset` when
 /// non-zero (otherwise it is a clone of the stroke shape).
@@ -202,15 +204,15 @@ fn edge_shapes(
     start_side: u32,
     end_side: u32,
     style: &EdgeStyle,
-) -> (Drawable, Drawable) {
-    let shape = edge_drawable(start, end, start_side, end_side, &style.curve);
+) -> (Shape, Shape) {
+    let shape = edge_shape(start, end, start_side, end_side, &style.curve);
     let has_shadow = style.shadow_blur > 0.0
         && (style.shadow_color.near_start.a > 0.0 || style.shadow_color.near_end.a > 0.0);
     let shadow_shape = if has_shadow && style.shadow_offset != (0.0, 0.0) {
         let (ox, oy) = style.shadow_offset;
         let s_start = WorldPoint::new(start.x + ox, start.y + oy);
         let s_end = WorldPoint::new(end.x + ox, end.y + oy);
-        edge_drawable(&s_start, &s_end, start_side, end_side, &style.curve)
+        edge_shape(&s_start, &s_end, start_side, end_side, &style.curve)
     } else {
         shape.clone()
     };
@@ -218,20 +220,20 @@ fn edge_shapes(
 }
 
 /// Push the SDF layers of `style` for an edge onto `batch`, choosing the stroke
-/// or shadow drawable per layer. Layer order and styling live in
-/// [`EdgeStyle::sdf_layers`].
+/// or shadow shape per layer. Edge geometry is world-space, so placement is zero.
+/// Layer order and styling live in [`EdgeStyle::sdf_layers`].
 fn push_edge_layers(
     batch: &mut SdfPrimitive,
-    shape: &Drawable,
-    shadow_shape: &Drawable,
+    shape: &Shape,
+    shadow_shape: &Shape,
     style: &EdgeStyle,
 ) {
     for layer in style.sdf_layers() {
-        let drawable = match layer.geometry {
+        let shape = match layer.geometry {
             EdgeGeometry::Stroke => shape,
             EdgeGeometry::Shadow => shadow_shape,
         };
-        batch.push(drawable, &layer.style);
+        batch.push(shape, &layer.style, [0.0, 0.0]);
     }
 }
 
@@ -587,12 +589,12 @@ where
         // Tiling background (grid/dots/...) over the solid fill, behind nodes.
         // Drawn with the camera so it pans/zooms; sd_tiling repeats it infinitely.
         if let Some(tiling) = resolved_graph.tiling {
-            let drawable = match tiling.kind {
+            let tiling_shape = Shape::tiling(match tiling.kind {
                 TilingKind::Grid => Tiling::grid(tiling.spacing, tiling.spacing, tiling.thickness),
                 TilingKind::Dots => Tiling::dots(tiling.spacing, tiling.spacing, tiling.thickness),
                 TilingKind::Triangles => Tiling::triangles(tiling.spacing, tiling.thickness),
                 TilingKind::Hex => Tiling::hex(tiling.spacing, tiling.thickness),
-            };
+            });
             // Grid/triangle/hex give the unsigned distance to the line, so their
             // thickness comes from the style; dots bake the radius into the field.
             let style = match tiling.kind {
@@ -600,7 +602,7 @@ where
                 _ => Style::solid(tiling.color).expand(tiling.thickness * 0.5),
             };
             let mut bg_batch = SdfPrimitive::new();
-            bg_batch.push(&drawable, &style);
+            bg_batch.push(&tiling_shape, &style, [0.0, 0.0]);
             let wo = layout.bounds().position();
             let (cx, cy) = layer_camera(
                 render_context.camera_position,
@@ -669,14 +671,11 @@ where
         // and shifts it by the shadow offset rather than rebuilding it.
         // ========================================
         struct NodeGeom {
-            // v2 stores the evaluated silhouette; v3 stores the position-free
-            // recipe and the body center (translate), so the boolean is deduped
-            // by the pipeline's shape cache instead of run per node.
-            #[cfg(not(feature = "sdf-v3"))]
-            outline: Drawable,
-            #[cfg(feature = "sdf-v3")]
-            recipe: iced_nodegraph_sdf::ShapeExpr,
-            #[cfg(feature = "sdf-v3")]
+            // The position-free shape (body minus pin cutouts) in its LOCAL frame
+            // (centred on the origin), plus the node's world centre (the
+            // per-instance placement). Two identical nodes at different positions
+            // share one cache slot: the shape hashes equal, only `center` differs.
+            shape: Shape,
             center: [f32; 2],
             resolved: NodeStyle,
             offset: WorldVector,
@@ -684,24 +683,20 @@ where
             size: Size,
         }
         impl NodeGeom {
-            /// Push the node silhouette to `batch` with `style`, shifted by
-            /// `extra` (the shadow offset, or zero for fill/border). v2 pushes the
-            /// evaluated outline; v3 pushes the cached recipe placed by translate.
-            #[allow(unused_variables)]
+            /// Push the node silhouette to `batch` with `style`, placed at the
+            /// node centre shifted by `extra` (the shadow offset, or zero for
+            /// fill/border).
             fn push_body(
                 &self,
                 batch: &mut SdfPrimitive,
                 style: &iced_nodegraph_sdf::Style,
                 extra: (f32, f32),
             ) {
-                #[cfg(feature = "sdf-v3")]
-                batch.push_recipe(
-                    self.recipe.clone(),
-                    [self.center[0] + extra.0, self.center[1] + extra.1],
+                batch.push(
+                    &self.shape,
                     style,
+                    [self.center[0] + extra.0, self.center[1] + extra.1],
                 );
-                #[cfg(not(feature = "sdf-v3"))]
-                batch.push(&self.outline.translated(extra.0, extra.1), style);
             }
         }
         let t_geom_start = Instant::now();
@@ -722,8 +717,10 @@ where
                     (node_layout.bounds().position().into_euclid().to_vector() + offset).to_point();
                 let size = node_layout.bounds().size();
                 let pins = find_pins::<P, UI>(node_tree, node_layout);
-                let half = [size.width * 0.5, size.height * 0.5];
-                let center = [position.x + half[0], position.y + half[1]];
+                let center = [
+                    position.x + size.width * 0.5,
+                    position.y + size.height * 0.5,
+                ];
                 let cut_params = pin_cutout_params(
                     &pins,
                     node_pin_style.as_ref(),
@@ -736,39 +733,19 @@ where
                     },
                 );
 
-                #[cfg(not(feature = "sdf-v3"))]
-                let outline = {
-                    let body = Curve::rounded_rect(center, half, resolved.corner_radius);
-                    let cuts: Vec<Drawable> = cut_params
-                        .iter()
-                        .map(|&(c, r)| Curve::circle(c, r))
-                        .collect();
-                    iced_nodegraph_sdf::boolean::difference_many(&body, &cuts)
-                };
-                // Cuts are stored in the LOCAL frame (relative to the body
-                // center), so two identical nodes at different positions share a
-                // recipe and the drag offset lives entirely in `center`.
-                #[cfg(feature = "sdf-v3")]
-                let recipe = iced_nodegraph_sdf::ShapeExpr::Difference {
-                    base: Box::new(iced_nodegraph_sdf::ShapeExpr::RoundedRect {
-                        half,
-                        radius: resolved.corner_radius,
-                    }),
-                    cuts: cut_params
-                        .iter()
-                        .map(|&(c, r)| iced_nodegraph_sdf::ShapeExpr::Circle {
-                            center: [c[0] - center[0], c[1] - center[1]],
-                            radius: r,
-                        })
-                        .collect(),
-                };
+                // Body = a centre-origin rounded box; each pin cut sits at a LOCAL
+                // offset relative to the body centre, so two identical nodes at
+                // different positions share a recipe (the position lives entirely
+                // in `center`). `box - cut0 - cut1 - ...` as authored.
+                let mut shape =
+                    Shape::rounded_box([size.width, size.height], [resolved.corner_radius; 4]);
+                for &(c, r) in &cut_params {
+                    shape =
+                        shape - Shape::circle(r).translate([c[0] - center[0], c[1] - center[1]]);
+                }
 
                 Some(NodeGeom {
-                    #[cfg(not(feature = "sdf-v3"))]
-                    outline,
-                    #[cfg(feature = "sdf-v3")]
-                    recipe,
-                    #[cfg(feature = "sdf-v3")]
+                    shape,
                     center,
                     resolved,
                     offset,
@@ -1208,20 +1185,25 @@ where
                         (pin_pos.into_euclid().to_vector() + offset).to_point();
                     let pw = [pin_world.x, pin_world.y];
 
-                    let pin_shape = match pin_style.shape {
+                    // Pin shapes are centred on the pin, and so is every
+                    // primitive's origin, so the placement is just the pin
+                    // position - and identical pins share a recipe.
+                    let (pin_shape, pin_place) = match pin_style.shape {
                         crate::style::PinShape::Square => {
-                            Curve::rect(pw, [indicator_r * 0.7, indicator_r * 0.7])
+                            let h = indicator_r * 0.7;
+                            (Shape::rounded_box([2.0 * h, 2.0 * h], [0.0; 4]), pw)
                         }
-                        _ => Curve::circle(pw, indicator_r),
+                        _ => (Shape::circle(indicator_r), pw),
                     };
 
                     let pin_layers = pin_style.sdf_layers(pin_state.direction, indicator_r);
                     // Bounds: shape radius plus the largest layer extent beyond
-                    // the shape boundary (input ring, border ring).
+                    // the shape boundary (input ring, border ring). Pins are
+                    // closed shapes.
                     let pin_pad = indicator_r
                         + pin_layers
                             .iter()
-                            .map(|s| s.extent(pin_shape.is_closed()))
+                            .map(|s| s.extent(true))
                             .fold(0.0_f32, f32::max)
                         + 2.0 / cam_zoom;
                     let pin_bounds = world_bbox_to_screen_bounds(
@@ -1234,7 +1216,7 @@ where
                     );
 
                     for style in &pin_layers {
-                        fg_batch.push(&pin_shape, style);
+                        fg_batch.push(&pin_shape, style, pin_place);
                     }
 
                     fg_min_x = fg_min_x.min(pin_bounds[0]);
@@ -1308,14 +1290,17 @@ where
             );
 
             if let Some(select_clip) = clipped_shape_bounds(select_bounds, layout.bounds()) {
-                let select_shape = Curve::rect(center, half_size);
+                let select_shape =
+                    Shape::rounded_box([half_size[0] * 2.0, half_size[1] * 2.0], [0.0; 4]);
+                let select_place = center;
                 let mut select_batch = SdfPrimitive::with_capacity(2);
                 // Border (front), fill (behind)
                 select_batch.push(
                     &select_shape,
                     &Style::stroke(border_color, Pattern::solid(border_width)),
+                    select_place,
                 );
-                select_batch.push(&select_shape, &Style::solid(fill_color));
+                select_batch.push(&select_shape, &Style::solid(fill_color), select_place);
 
                 let (cx, cy) = layer_camera(
                     render_context.camera_position,
@@ -1362,8 +1347,9 @@ where
             if let Some(cutting_clip) = clipped_shape_bounds(cutting_bounds, layout.bounds()) {
                 let mut cutting_batch = SdfPrimitive::new();
                 cutting_batch.push(
-                    &Curve::line([start.x, start.y], [cursor_world.x, cursor_world.y]),
+                    &Shape::line([start.x, start.y], [cursor_world.x, cursor_world.y]),
                     &Style::stroke(cutting_color, Pattern::solid(EDGE_CUT_LINE_WIDTH)),
+                    [0.0, 0.0],
                 );
                 let (cx, cy) = layer_camera(
                     render_context.camera_position,

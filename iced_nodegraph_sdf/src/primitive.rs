@@ -20,10 +20,9 @@ use iced_wgpu::primitive::{Pipeline, Primitive};
 
 use std::collections::HashMap;
 
-use crate::compile::{compile_drawable, compile_local_at, entry_referencing};
-use crate::drawable::Drawable;
+use crate::compile::{compile_local_at, entry_referencing};
 use crate::pipeline::{buffer, types};
-use crate::recipe::{ShapeCache, ShapeExpr};
+use crate::shape::{Shape, ShapeCache};
 use crate::shared::SharedSdfResources;
 use crate::style::Style;
 
@@ -71,21 +70,13 @@ bitflags! {
     }
 }
 
-/// Where a draw entry's geometry comes from. `Drawable` is the world-baked v2
-/// path; `Recipe` is the v3 dedup path - a position-free shape evaluated once by
-/// the pipeline's frame-surviving `ShapeCache` and placed by `translate`.
-#[derive(Debug, Clone)]
-enum EntrySource {
-    Drawable(Drawable),
-    Recipe {
-        expr: ShapeExpr,
-        translate: [f32; 2],
-    },
-}
-
+/// One queued draw: a position-free [`Shape`] (evaluated once by the pipeline's
+/// frame-surviving `ShapeCache` when cacheable) placed at world `placement` (the
+/// per-instance translate, excluded from the cache key), with its band `style`.
 #[derive(Debug, Clone)]
 struct DrawEntry {
-    source: EntrySource,
+    shape: Shape,
+    placement: [f32; 2],
     style: Style,
 }
 
@@ -129,31 +120,18 @@ impl SdfPrimitive {
         }
     }
 
-    /// Append a drawable with its style. The pipeline derives a per-draw AABB
-    /// on the GPU from the drawable's world-space bounds, so callers do not
-    /// supply a screen rectangle.
-    pub fn push(&mut self, drawable: &Drawable, style: &Style) -> &mut Self {
+    /// Append a [`Shape`] with its `style`, placed at world `placement`. This is
+    /// the single geometry input. The pipeline evaluates the shape once via its
+    /// frame-surviving `ShapeCache` (for cacheable booleans) and reuses the
+    /// geometry for every identical shape, so N identical nodes pay for ONE
+    /// boolean; `placement` is carried as a per-instance translate, kept OUT of
+    /// the cache key so two identical shapes at different positions share a slot.
+    /// The per-draw AABB is derived on the GPU from the evaluated geometry, so
+    /// callers do not supply a screen rectangle.
+    pub fn push(&mut self, shape: &Shape, style: &Style, placement: [f32; 2]) -> &mut Self {
         self.entries.push(DrawEntry {
-            source: EntrySource::Drawable(drawable.clone()),
-            style: style.clone(),
-        });
-        self
-    }
-
-    /// Append a cacheable shape recipe placed at world `translate` (the v3 dedup
-    /// path). The pipeline evaluates the recipe once via its frame-surviving
-    /// `ShapeCache` and reuses the geometry for every identical shape, so N
-    /// identical nodes pay for ONE boolean. Geometry is stored local with the
-    /// placement carried as a per-instance translate; it renders identically to
-    /// the equivalent world-baked [`push`].
-    pub fn push_recipe(
-        &mut self,
-        expr: ShapeExpr,
-        translate: [f32; 2],
-        style: &Style,
-    ) -> &mut Self {
-        self.entries.push(DrawEntry {
-            source: EntrySource::Recipe { expr, translate },
+            shape: shape.clone(),
+            placement,
             style: style.clone(),
         });
         self
@@ -198,10 +176,8 @@ impl SdfPrimitive {
 }
 
 /// FNV-1a hasher for the background cache key (deterministic, native==wasm).
-#[cfg(feature = "sdf-v3")]
 struct KeyHasher(u64);
 
-#[cfg(feature = "sdf-v3")]
 impl KeyHasher {
     fn new() -> Self {
         Self(0xcbf2_9ce4_8422_2325)
@@ -229,7 +205,6 @@ impl KeyHasher {
     }
 }
 
-#[cfg(feature = "sdf-v3")]
 impl SdfPrimitive {
     /// Content key for the static-background cache, or `None` when this primitive
     /// is not a cacheable background. Only PURE, non-animated, un-patterned
@@ -257,17 +232,15 @@ impl SdfPrimitive {
         h.u32(grid_cols);
         h.u32(grid_rows);
         for e in &self.entries {
-            let EntrySource::Drawable(d) = &e.source else {
+            let Shape::Tiling(t) = &e.shape else {
                 return None;
             };
-            if d.drawable_type != crate::drawable::DrawableType::Tiling
-                || e.style.is_animated()
-                || e.style.pattern.is_some()
-            {
+            if e.style.is_animated() || e.style.pattern.is_some() {
                 return None;
             }
-            h.u32(d.tiling_type.map_or(255, |t| t as u32));
-            for p in d.tiling_params {
+            let (tt, params) = t.to_gpu();
+            h.u32(tt as u32);
+            for p in params {
                 h.f32(p);
             }
             h.u32(e.style.stops.len() as u32);
@@ -337,12 +310,10 @@ pub struct SdfPipeline {
     compute_timer: Option<ComputeTimer>,
     /// Static-background texture cache (Phase C). Survives frames; only the v3
     /// backend ever populates it (the widget marks the background primitive).
-    #[cfg(feature = "sdf-v3")]
     bg_cache: crate::pipeline::bg_cache::BgCache,
     /// Draw-call index of the background this frame when it should be blitted
     /// from the cache instead of rendered (cache populate/hit); `None` = render
     /// the background normally (direct, v2 path).
-    #[cfg(feature = "sdf-v3")]
     bg_blit_index: Option<u32>,
 }
 
@@ -406,7 +377,6 @@ impl SdfPipeline {
     /// Whether the most recently prepared frame served its background from the
     /// texture cache (blit) instead of rendering it directly. Diagnostic hook for
     /// the static-background cache gate.
-    #[cfg(feature = "sdf-v3")]
     pub fn bg_cache_blitted(&self) -> bool {
         self.bg_blit_index.is_some()
     }
@@ -632,9 +602,7 @@ impl Pipeline for SdfPipeline {
             } else {
                 None
             },
-            #[cfg(feature = "sdf-v3")]
             bg_cache: crate::pipeline::bg_cache::BgCache::new(device, format),
-            #[cfg(feature = "sdf-v3")]
             bg_blit_index: None,
         }
     }
@@ -658,7 +626,6 @@ impl Pipeline for SdfPipeline {
         self.frame_shape_slots.clear();
         self.total_tiles = 0;
         self.draw_index.store(0, Ordering::Relaxed);
-        #[cfg(feature = "sdf-v3")]
         {
             self.bg_blit_index = None;
         }
@@ -700,37 +667,39 @@ impl Primitive for SdfPrimitive {
 
         for (i, entry) in self.entries.iter().enumerate() {
             let segment_offset = seg_base + seg_batch.len() as u32;
-            let (mut gpu_entry, gpu_style) = match &entry.source {
-                EntrySource::Drawable(drawable) => compile_drawable(
-                    drawable,
-                    &entry.style,
-                    i as u32,
-                    segment_offset,
-                    &mut seg_batch,
-                ),
-                EntrySource::Recipe { expr, translate } => {
-                    // Evaluate once (cached across frames), then place by
-                    // translate. The clone breaks the cache borrow before the
-                    // batch is touched; it copies arcs, not the boolean.
-                    let local = pipeline.shape_cache.get_or_eval(expr).clone();
-                    let hash = expr.recipe_hash();
-                    if let Some(&shared_start) = pipeline.frame_shape_slots.get(&hash) {
-                        // Segments already in the batch this frame: one tiny
-                        // command referencing the shared range, NO new segments.
-                        entry_referencing(&local, &entry.style, i as u32, *translate, shared_start)
-                    } else {
-                        pipeline.frame_shape_slots.insert(hash, segment_offset);
-                        compile_local_at(
-                            &local,
-                            &entry.style,
-                            i as u32,
-                            *translate,
-                            segment_offset,
-                            &mut seg_batch,
-                        )
-                    }
-                }
+            // Evaluate the shape to LOCAL geometry: cacheable booleans come from
+            // the frame-surviving cache (one boolean for all identical shapes);
+            // cheap primitives and ephemeral strokes (edges) evaluate fresh. The
+            // clone breaks the cache borrow before the batch is touched; it
+            // copies arcs, not the boolean.
+            let local = if entry.shape.is_cacheable() {
+                pipeline.shape_cache.get_or_eval(&entry.shape).clone()
+            } else {
+                entry.shape.evaluate()
             };
+            let hash = entry.shape.hash();
+            let (mut gpu_entry, gpu_style) =
+                if let Some(&shared_start) = pipeline.frame_shape_slots.get(&hash) {
+                    // Segments already in the batch this frame: one tiny command
+                    // referencing the shared range, NO new segments uploaded.
+                    entry_referencing(
+                        &local,
+                        &entry.style,
+                        i as u32,
+                        entry.placement,
+                        shared_start,
+                    )
+                } else {
+                    pipeline.frame_shape_slots.insert(hash, segment_offset);
+                    compile_local_at(
+                        &local,
+                        &entry.style,
+                        i as u32,
+                        entry.placement,
+                        segment_offset,
+                        &mut seg_batch,
+                    )
+                };
             gpu_entry.style_idx = style_base + style_batch.len() as u32;
             style_batch.push(gpu_style);
             entry_batch.push(gpu_entry);
@@ -910,7 +879,6 @@ impl Primitive for SdfPrimitive {
         // or blit a cached frame. The compute pass above built this primitive's
         // tile index and `render_group0` references its buffers, so the cache can
         // render the background here using the same pipeline + instance index.
-        #[cfg(feature = "sdf-v3")]
         if self.cache_background {
             use crate::pipeline::bg_cache::BgMode;
             let key = self.background_key(
@@ -966,7 +934,6 @@ impl Primitive for SdfPrimitive {
         let draw_idx = pipeline.draw_index.fetch_add(1, Ordering::Relaxed);
         // Static-background cache hit/populate: blit the cached texture instead
         // of running the fullscreen SDF fragment pass (the fill-rate win).
-        #[cfg(feature = "sdf-v3")]
         if pipeline.bg_blit_index == Some(draw_idx) {
             pipeline.bg_cache.blit(render_pass);
             return true;
@@ -993,9 +960,9 @@ mod tests {
     #[test]
     fn test_primitive_push() {
         let mut p = SdfPrimitive::new();
-        let d = crate::curve::Curve::line([0.0, 0.0], [10.0, 0.0]);
+        let shape = Shape::line([0.0, 0.0], [10.0, 0.0]);
         let s = Style::stroke(iced::Color::WHITE, crate::pattern::Pattern::solid(2.0));
-        p.push(&d, &s);
+        p.push(&shape, &s, [0.0, 0.0]);
         assert_eq!(p.entry_count(), 1);
     }
 }

@@ -10,11 +10,6 @@ readme = "../README.md"
 keywords = ["iced", "gui", "node-graph", "widget"]
 categories = ["gui", "graphics", "visualization"]
 
-[features]
-# Re-export of the SDF crate's default-off v3 backend selector. See
-# `iced_nodegraph_sdf`'s `sdf-v3` feature; the public widget API is unchanged.
-sdf-v3 = ["iced_nodegraph_sdf/sdf-v3"]
-
 [dependencies]
 euclid.workspace = true
 iced_nodegraph_sdf.workspace = true

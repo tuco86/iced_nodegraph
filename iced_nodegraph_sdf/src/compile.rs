@@ -13,8 +13,11 @@ const SEG_FLAG_SIGNED: u32 = 1; // segment.flags
 const STYLE_FLAG_HAS_PATTERN: u32 = 1;
 const STYLE_FLAG_DISTANCE_FIELD: u32 = 2;
 
-/// Compile a drawable and style into GPU data, world-baked (v2). Equivalent to
-/// [`compile_drawable_at`] with origin `(0,0)`.
+/// Compile a drawable and style into GPU data, world-baked. Equivalent to
+/// [`compile_drawable_at`] with origin `(0,0)`. The production path goes through
+/// [`compile_local_at`] (a `Shape` evaluated to local geometry); this direct
+/// drawable compile is retained for the pixel-test oracle harness.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn compile_drawable(
     drawable: &Drawable,
     style: &Style,
@@ -42,6 +45,7 @@ pub(crate) fn compile_drawable(
 /// produce identical local geometry, differing only in the translate - the
 /// property dedup relies on. Tilings are analytic (no segments), so `origin` is
 /// ignored for them.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn compile_drawable_at(
     drawable: &Drawable,
     style: &Style,
