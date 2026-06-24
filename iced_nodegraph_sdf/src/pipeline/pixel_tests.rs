@@ -1155,6 +1155,115 @@ impl TestRenderer {
         px
     }
 
+    /// Render SEVERAL `SdfPrimitive`s through ONE `SdfPipeline` in order (prepare
+    /// all, then draw all) - the real multi-primitive frame. Each prepare allocates
+    /// its own tile region (`tile_base` accumulates), so enough primitives grow the
+    /// tile buffer mid-frame and exercise the growth-with-copy path that a single
+    /// primitive never hits. `width` must be a multiple of 64.
+    fn render_primitives(
+        &self,
+        prims: &[&crate::primitive::SdfPrimitive],
+        width: u32,
+        height: u32,
+    ) -> Vec<[u8; 4]> {
+        use iced_wgpu::graphics::Viewport;
+        use iced_wgpu::primitive::{Pipeline, Primitive};
+
+        let mut pipeline = crate::primitive::SdfPipeline::new(
+            &self.device,
+            &self.queue,
+            TextureFormat::Rgba8Unorm,
+        );
+        let viewport = Viewport::with_physical_size(iced::Size::new(width, height), 1.0);
+        let bounds = iced::Rectangle::new(
+            iced::Point::ORIGIN,
+            iced::Size::new(width as f32, height as f32),
+        );
+
+        let target = self.device.create_texture(&TextureDescriptor {
+            label: None,
+            size: Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba8Unorm,
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = target.create_view(&TextureViewDescriptor::default());
+        let readback = self.device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: (width * height * 4) as u64,
+            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        Pipeline::trim(&mut pipeline);
+        for p in prims {
+            p.prepare(&mut pipeline, &self.device, &self.queue, &bounds, &viewport);
+        }
+        let mut enc = self
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+        {
+            let mut pass = enc.begin_render_pass(&RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(Color::TRANSPARENT),
+                        store: StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            for p in prims {
+                p.draw(&pipeline, &mut pass);
+            }
+        }
+        enc.copy_texture_to_buffer(
+            target.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(width * 4),
+                    rows_per_image: None,
+                },
+            },
+            Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        let idx = self.queue.submit(Some(enc.finish()));
+        let slice = readback.slice(..);
+        slice.map_async(MapMode::Read, |_| {});
+        self.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(idx),
+                timeout: Some(std::time::Duration::from_secs(5)),
+            })
+            .unwrap();
+        let data = slice.get_mapped_range();
+        let px: Vec<[u8; 4]> = data
+            .chunks_exact(4)
+            .map(|c| [c[0], c[1], c[2], c[3]])
+            .collect();
+        drop(data);
+        readback.unmap();
+        px
+    }
+
     fn create_storage<T: ShaderType + ShaderSize + WriteInto>(&self, items: &[T]) -> Buffer {
         let mut scratch = Vec::new();
         let mut writer = StorageBuffer::new(&mut scratch);
@@ -4269,4 +4378,63 @@ fn long_edge_zoomed_out_stays_a_stroke() {
             "long edge (len {len}, zoom {zoom}) rendered as boxes: {g} green px",
         );
     }
+}
+
+/// An edge in a MULTI-PRIMITIVE frame must survive the tile-buffer growth that
+/// later primitives trigger. The demo frame is bg + shadows + nodes + edges + pins
+/// (and 45029 tiles), so the tile buffer grows several times mid-frame, each time
+/// copy-preserving earlier primitives' tile regions. If that copy garbles the edge
+/// primitive's region (it is NOT the last), the edge renders wrong - a candidate
+/// for the reported boxes. The edge is rendered FIRST, then filler primitives each
+/// allocate a full grid and force growth past the initial 256-tile capacity.
+#[test]
+fn edge_survives_multi_primitive_tile_growth() {
+    use crate::primitive::SdfPrimitive;
+    use crate::shape::Shape;
+
+    let r = shared_renderer();
+    let (w, h) = (256u32, 256u32); // 16x16 = 256 tiles per primitive = the capacity
+    let green = Style::stroke(rgba(0.0, 1.0, 0.0, 1.0), Pattern::solid(3.0));
+    let red = Style::solid(rgba(1.0, 0.0, 0.0, 1.0));
+
+    let mut edge = SdfPrimitive::new();
+    edge.push(
+        &Shape::bezier([-70.0, -70.0], [-10.0, -70.0], [10.0, 70.0], [70.0, 70.0]),
+        &green,
+        [0.0, 0.0],
+    );
+    let edge = edge.camera(128.0, 128.0, 1.0);
+
+    // Eight filler primitives, each a full grid (256 tiles), drive the tile buffer
+    // through several growths after the edge's region is already populated.
+    let fillers: Vec<SdfPrimitive> = (0..8)
+        .map(|i| {
+            let mut p = SdfPrimitive::new();
+            p.push(
+                &Shape::circle(4.0).translate([-90.0, -90.0 + i as f32]),
+                &red,
+                [0.0, 0.0],
+            );
+            p.camera(128.0, 128.0, 1.0)
+        })
+        .collect();
+
+    let mut prims: Vec<&SdfPrimitive> = vec![&edge];
+    prims.extend(fillers.iter());
+    let px = r.render_primitives(&prims, w, h);
+
+    let g = px
+        .iter()
+        .filter(|p| {
+            (p[1] as i32) > (p[0] as i32) + 40 && (p[1] as i32) > (p[2] as i32) + 40 && p[1] > 80
+        })
+        .count();
+    eprintln!(
+        "edge green after {} primitives (tile growth): {g} px",
+        prims.len()
+    );
+    assert!(
+        g < 6000,
+        "edge garbled by multi-primitive tile growth: {g} green px",
+    );
 }
