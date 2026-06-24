@@ -926,7 +926,7 @@ fn cs_eval_segment(p: vec2<f32>, seg_idx: u32) -> SdfResult {
 fn cs_push_slot(
     base: u32,
     count: ptr<function, u32>,
-    slot_dist: ptr<function, array<f32, 32>>,
+    slot_dist: ptr<function, array<f32, MAX_SLOTS_PER_TILE>>,
     seg_idx: u32,
     style_idx: u32,
     prio: f32,
@@ -1029,7 +1029,7 @@ fn cs_build_index(
     // Parallel to the tile slots: each pushed entry's priority (|dist| to the
     // tile centre) so an overflowing tile keeps the NEAREST entries (see
     // cs_push_slot). Only read when a tile exceeds MAX_SLOTS_PER_TILE.
-    var slot_dist: array<f32, 32>;
+    var slot_dist: array<f32, MAX_SLOTS_PER_TILE>;
     let slot_base = global_tile_idx * SLOT_STRIDE;
 
     let scan_count = select(cand_count, draw.entry_count, overflow);

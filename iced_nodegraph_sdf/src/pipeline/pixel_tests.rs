@@ -447,6 +447,221 @@ impl TestRenderer {
         pixels
     }
 
+    /// Run ONLY the compute cull for `drawables` and read its two output buffers
+    /// (the spatial index) straight back, so a test can inspect what the two-level
+    /// cull placed in each tile - the validation step BEFORE pixels. Camera is
+    /// `camera_position` (world); the tile grid covers the whole viewport. The
+    /// drawables are world-baked (translate `(0,0)`), so the slot's second u32 is
+    /// the draw-entry index = the index into `drawables` - which is what lets a
+    /// test ask "did edge N reach any tile?".
+    /// Run ONLY the compute cull with an explicit `compute_pipeline` and per-tile
+    /// `slots_per_tile`, reading its two output buffers straight back. The pipeline
+    /// is a parameter so a test can sweep `MAX_SLOTS_PER_TILE` (recompiled into a
+    /// variant pipeline via [`compute_pipeline_capped`]) and measure when the cull
+    /// stops dropping entries.
+    #[allow(clippy::too_many_arguments)]
+    fn cull_readback_with(
+        &self,
+        compute_pipeline: &ComputePipeline,
+        slots_per_tile: u32,
+        drawables: &[(&crate::drawable::Drawable, &Style)],
+        width: u32,
+        height: u32,
+        zoom: f32,
+        camera_position: [f32; 2],
+    ) -> CullReadback {
+        let mut gpu_segments = Vec::new();
+        let mut gpu_entries = Vec::new();
+        let mut gpu_styles = Vec::new();
+        for (i, (drawable, style)) in drawables.iter().enumerate() {
+            let seg_offset = gpu_segments.len() as u32;
+            let (mut entry, gpu_style) =
+                compile_drawable(drawable, style, i as u32, 0, &mut gpu_segments);
+            entry.style_idx = gpu_styles.len() as u32;
+            entry.segment_start = seg_offset;
+            gpu_entries.push(entry);
+            gpu_styles.push(gpu_style);
+        }
+
+        let grid_cols = (width as f32 / TILE_SIZE).ceil() as u32;
+        let grid_rows = (height as f32 / TILE_SIZE).ceil() as u32;
+        let total_tiles = (grid_cols * grid_rows).max(1);
+
+        let draw_data = DrawData {
+            bounds_origin: GpuVec2::ZERO,
+            camera_position: GpuVec2::new(camera_position[0], camera_position[1]),
+            camera_zoom: zoom,
+            scale_factor: 1.0,
+            time: 0.0,
+            debug_flags: 0,
+            entry_count: gpu_entries.len() as u32,
+            entry_start: 0,
+            grid_cols,
+            grid_rows,
+            tile_base: 0,
+            _pad0: 0,
+            mouse_px: GpuVec2::ZERO,
+        };
+
+        let draws_buf = self.create_storage(&[draw_data]);
+        let entries_buf = self.create_storage(&gpu_entries);
+        let segments_buf = self.create_storage(&gpu_segments);
+        let styles_buf = self.create_storage(&gpu_styles);
+
+        let slot_stride = slots_per_tile * 2;
+        let counts_bytes = total_tiles as u64 * 4;
+        let slots_bytes = total_tiles as u64 * slot_stride as u64 * 4;
+        let usage = BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC;
+        let tile_counts_buf = self.device.create_buffer(&BufferDescriptor {
+            label: Some("cull_counts"),
+            size: counts_bytes,
+            usage,
+            mapped_at_creation: false,
+        });
+        let tile_slots_buf = self.device.create_buffer(&BufferDescriptor {
+            label: Some("cull_slots"),
+            size: slots_bytes,
+            usage,
+            mapped_at_creation: false,
+        });
+
+        let cu_buf = self.create_uniform(&ComputeUniforms {
+            draw_index: 0,
+            _pad0: 0,
+            _pad1: 0,
+            _pad2: 0,
+        });
+        let compute_bg0 = self.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &self.compute_group0_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: draws_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: entries_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: segments_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: styles_buf.as_entire_binding(),
+                },
+            ],
+        });
+        let compute_bg1 = self.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &self.compute_group1_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: cu_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: tile_counts_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: tile_slots_buf.as_entire_binding(),
+                },
+            ],
+        });
+
+        let counts_rb = self.device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: counts_bytes,
+            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let slots_rb = self.device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: slots_bytes,
+            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+        {
+            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+            pass.set_pipeline(compute_pipeline);
+            pass.set_bind_group(0, &compute_bg0, &[]);
+            pass.set_bind_group(1, &compute_bg1, &[]);
+            pass.dispatch_workgroups(grid_cols.div_ceil(16), grid_rows.div_ceil(16), 1);
+        }
+        encoder.copy_buffer_to_buffer(&tile_counts_buf, 0, &counts_rb, 0, counts_bytes);
+        encoder.copy_buffer_to_buffer(&tile_slots_buf, 0, &slots_rb, 0, slots_bytes);
+        let idx = self.queue.submit(Some(encoder.finish()));
+
+        let cs = counts_rb.slice(..);
+        let ss = slots_rb.slice(..);
+        cs.map_async(MapMode::Read, |_| {});
+        ss.map_async(MapMode::Read, |_| {});
+        self.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(idx),
+                timeout: Some(std::time::Duration::from_secs(5)),
+            })
+            .unwrap();
+        let counts: Vec<u32> = bytemuck::cast_slice(&cs.get_mapped_range()).to_vec();
+        let slots: Vec<[u32; 2]> = bytemuck::cast_slice::<_, u32>(&ss.get_mapped_range())
+            .chunks_exact(2)
+            .map(|c| [c[0], c[1]])
+            .collect();
+        counts_rb.unmap();
+        slots_rb.unmap();
+
+        CullReadback {
+            grid_cols,
+            grid_rows,
+            slots_per_tile,
+            counts,
+            slots,
+        }
+    }
+
+    /// A compute pipeline identical to the production cull but with
+    /// `MAX_SLOTS_PER_TILE` (and the derived `SLOT_STRIDE`) recompiled to `cap`,
+    /// so a test can sweep the per-tile slot budget. Only the two `const` lines are
+    /// rewritten; the slot arrays size off `MAX_SLOTS_PER_TILE`, so they follow.
+    fn compute_pipeline_capped(&self, cap: u32) -> ComputePipeline {
+        let src = include_str!("shader.wgsl")
+            .replace(
+                "const MAX_SLOTS_PER_TILE: u32 = 32u;",
+                &format!("const MAX_SLOTS_PER_TILE: u32 = {cap}u;"),
+            )
+            .replace(
+                "const SLOT_STRIDE: u32 = 64u;",
+                &format!("const SLOT_STRIDE: u32 = {}u;", cap * 2),
+            );
+        let module = self.device.create_shader_module(ShaderModuleDescriptor {
+            label: Some("sdf_cull_capped"),
+            source: ShaderSource::Wgsl(std::borrow::Cow::Owned(src)),
+        });
+        let layout = self
+            .device
+            .create_pipeline_layout(&PipelineLayoutDescriptor {
+                label: None,
+                bind_group_layouts: &[&self.compute_group0_layout, &self.compute_group1_layout],
+                ..Default::default()
+            });
+        self.device
+            .create_compute_pipeline(&ComputePipelineDescriptor {
+                label: Some("sdf_cull_capped"),
+                layout: Some(&layout),
+                module: &module,
+                entry_point: Some("cs_build_index"),
+                compilation_options: PipelineCompilationOptions::default(),
+                cache: None,
+            })
+    }
+
     fn render_full(
         &self,
         drawables: &[(&crate::drawable::Drawable, &Style)],
@@ -3366,5 +3581,188 @@ fn sign_aware_dotted_border_no_inward_bulge() {
     assert!(
         outer_opaque >= 6,
         "dots missing on the outer half: {outer_opaque}/72"
+    );
+}
+
+/// The compute cull's two output buffers, read straight back for inspection: the
+/// per-tile occupancy and slot list (the spatial index). The slot's second u32 is
+/// the draw-entry index (world-baked compile, translate `(0,0)`), so a test can
+/// ask which draw entries a tile actually holds.
+struct CullReadback {
+    grid_cols: u32,
+    grid_rows: u32,
+    /// Per-tile slot capacity this readback ran with (`MAX_SLOTS_PER_TILE` by
+    /// default; the cap sweep varies it). Sets the per-tile stride into `slots`.
+    slots_per_tile: u32,
+    counts: Vec<u32>,
+    /// Flattened `tile * slots_per_tile + slot` -> `[seg_idx, entry_idx]`.
+    slots: Vec<[u32; 2]>,
+}
+
+impl CullReadback {
+    /// Whether any slot of ANY tile references draw-entry `entry_idx`.
+    fn entry_indexed_anywhere(&self, entry_idx: u32) -> bool {
+        let stride = self.slots_per_tile as usize;
+        for (t, &n) in self.counts.iter().enumerate() {
+            for k in 0..n as usize {
+                if self.slots[t * stride + k][1] == entry_idx {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn tiles_at_cap(&self) -> usize {
+        self.counts
+            .iter()
+            .filter(|&&c| c >= self.slots_per_tile)
+            .count()
+    }
+
+    fn max_count(&self) -> u32 {
+        self.counts.iter().copied().max().unwrap_or(0)
+    }
+
+    /// Tile columns whose every tile is empty (a fully-empty column reads as a
+    /// gray vertical bar when a background fills the rest).
+    fn empty_columns(&self) -> usize {
+        (0..self.grid_cols)
+            .filter(|&col| {
+                (0..self.grid_rows)
+                    .all(|row| self.counts[(row * self.grid_cols + col) as usize] == 0)
+            })
+            .count()
+    }
+}
+
+/// The demo-scale zoomed-out node+edge grid the 500-node demo runs (25x20 nodes,
+/// 640 fan-out edges from a few source pins), the scene where edges were reported
+/// missing. Returns owned drawables (nodes `0..n`, then edges) plus the viewport
+/// `(w, h)`, the fit `zoom`, the centred `camera`, and `n`.
+#[allow(clippy::type_complexity)]
+fn edge_grid_cull_scene() -> (
+    Vec<crate::drawable::Drawable>,
+    Vec<crate::drawable::Drawable>,
+    u32,
+    u32,
+    f32,
+    [f32; 2],
+    usize,
+) {
+    let (w, h) = (600u32, 400u32);
+    let (cols, rows) = (25usize, 20usize);
+    let (sx, sy) = (90.0f32, 80.0f32);
+    let zoom = (w as f32 / (cols as f32 * sx)).min(h as f32 / (rows as f32 * sy)) * 0.92;
+    let cam = [
+        w as f32 * 0.5 / zoom - cols as f32 * sx * 0.5,
+        h as f32 * 0.5 / zoom - rows as f32 * sy * 0.5,
+    ];
+
+    let n = cols * rows;
+    let half = [35.0f32, 30.0];
+    let mut nodes = Vec::with_capacity(n);
+    for i in 0..n {
+        let (c, rr) = ((i % cols) as f32, (i / cols) as f32);
+        nodes.push(Curve::rounded_rect([c * sx, rr * sy], half, 6.0));
+    }
+    let sources = 16usize;
+    let mut edges = Vec::new();
+    for e in 0..640usize {
+        let from = e % sources;
+        let to = sources + (e * 7 + 3) % (n - sources);
+        if to == from {
+            continue;
+        }
+        let (fc, fr) = ((from % cols) as f32, (from / cols) as f32);
+        let (tc, tr) = ((to % cols) as f32, (to / cols) as f32);
+        let a = [fc * sx + half[0], fr * sy];
+        let b = [tc * sx - half[0], tr * sy];
+        let dx = (b[0] - a[0]).abs().max(sx);
+        edges.push(Curve::bezier(
+            a,
+            [a[0] + dx * 0.5, a[1]],
+            [b[0] - dx * 0.5, b[1]],
+            b,
+        ));
+    }
+    (nodes, edges, w, h, zoom, cam, n)
+}
+
+/// Visible edges (world bounds intersect the viewport) absent from EVERY tile of
+/// `cull` - the directly-measurable "missing edges" count. `n` is the node count;
+/// edge `ei` is draw-entry `n + ei`.
+fn missing_visible_edges(
+    cull: &CullReadback,
+    edges: &[crate::drawable::Drawable],
+    n: usize,
+    w: u32,
+    h: u32,
+    zoom: f32,
+    cam: [f32; 2],
+) -> usize {
+    let (wx0, wy0) = (-cam[0], -cam[1]);
+    let (wx1, wy1) = (w as f32 / zoom - cam[0], h as f32 / zoom - cam[1]);
+    edges
+        .iter()
+        .enumerate()
+        .filter(|(ei, edge)| {
+            let b = edge.bounds();
+            let visible = b[2] >= wx0 && b[0] <= wx1 && b[3] >= wy0 && b[1] <= wy1;
+            visible && !cull.entry_indexed_anywhere((n + ei) as u32)
+        })
+        .count()
+}
+
+/// Per-tile slot-cap sweep over the two-level cull, on the demo-scale grid: for
+/// each `MAX_SLOTS_PER_TILE` candidate, recompile the cull, read the spatial index
+/// straight back, and report how many visible edges it drops, tile saturation, and
+/// the slot-buffer cost. This LOCALIZES the missing-edges bug to Layer 2 (per-tile
+/// budget) and quantifies the capacity needed to stop dropping edges - the data to
+/// choose a fix. Asserts the default cap (32) drops edges while a large-enough cap
+/// drops none (capacity is the root cause), so the sweep stays a live regression.
+#[test]
+fn cull_cap_sweep_localizes_edge_drops() {
+    let r = shared_renderer();
+    let (nodes, edges, w, h, zoom, cam, n) = edge_grid_cull_scene();
+    let node_style = Style::solid(rgba(0.8, 0.85, 0.9, 1.0));
+    let edge_style = Style::stroke(rgba(0.0, 1.0, 0.0, 1.0), Pattern::solid(2.0));
+    let mut d: Vec<(&crate::drawable::Drawable, &Style)> =
+        nodes.iter().map(|nd| (nd, &node_style)).collect();
+    for e in &edges {
+        d.push((e, &edge_style));
+    }
+
+    let caps = [32u32, 64, 128, 256];
+    let mut results = Vec::new();
+    for &cap in &caps {
+        let pipeline = r.compute_pipeline_capped(cap);
+        let cull = r.cull_readback_with(&pipeline, cap, &d, w, h, zoom, cam);
+        let missing = missing_visible_edges(&cull, &edges, n, w, h, zoom, cam);
+        let slot_kb = cull.counts.len() as u64 * (cap as u64 * 2) * 4 / 1024;
+        eprintln!(
+            "cap {cap:>3}: max count {:>3}, {:>3} tiles at cap, {} edges MISSING, \
+             {} empty cols, slot buffer {} KB",
+            cull.max_count(),
+            cull.tiles_at_cap(),
+            missing,
+            cull.empty_columns(),
+            slot_kb,
+        );
+        results.push((cap, missing));
+    }
+
+    let at_default = results[0].1;
+    let at_largest = results.last().unwrap().1;
+    assert!(
+        at_default > 0,
+        "expected the default {}-slot cap to drop edges on this dense scene",
+        caps[0],
+    );
+    assert_eq!(
+        at_largest,
+        0,
+        "even a {}-slot cap still drops edges - the budget is not the (whole) cause",
+        caps.last().unwrap(),
     );
 }
