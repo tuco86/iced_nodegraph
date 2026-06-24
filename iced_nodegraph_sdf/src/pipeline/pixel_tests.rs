@@ -1051,6 +1051,110 @@ impl TestRenderer {
         )
     }
 
+    /// Render an `SdfPrimitive` through the REAL `SdfPipeline` (prepare + draw) to
+    /// RGBA pixels - the production path, so a test sees exactly what the widget
+    /// would draw (dedup, translate, cull, fragment), not a hand-built dispatch.
+    /// `width` must be a multiple of 64 so `bytes_per_row` needs no padding.
+    fn render_primitive(
+        &self,
+        prim: &crate::primitive::SdfPrimitive,
+        width: u32,
+        height: u32,
+    ) -> Vec<[u8; 4]> {
+        use iced_wgpu::graphics::Viewport;
+        use iced_wgpu::primitive::{Pipeline, Primitive};
+
+        let mut pipeline = crate::primitive::SdfPipeline::new(
+            &self.device,
+            &self.queue,
+            TextureFormat::Rgba8Unorm,
+        );
+        let viewport = Viewport::with_physical_size(iced::Size::new(width, height), 1.0);
+        let bounds = iced::Rectangle::new(
+            iced::Point::ORIGIN,
+            iced::Size::new(width as f32, height as f32),
+        );
+
+        let target = self.device.create_texture(&TextureDescriptor {
+            label: None,
+            size: Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba8Unorm,
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = target.create_view(&TextureViewDescriptor::default());
+        let readback = self.device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: (width * height * 4) as u64,
+            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        Pipeline::trim(&mut pipeline);
+        prim.prepare(&mut pipeline, &self.device, &self.queue, &bounds, &viewport);
+        let mut enc = self
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+        {
+            let mut pass = enc.begin_render_pass(&RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(Color::TRANSPARENT),
+                        store: StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            prim.draw(&pipeline, &mut pass);
+        }
+        enc.copy_texture_to_buffer(
+            target.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(width * 4),
+                    rows_per_image: None,
+                },
+            },
+            Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        let idx = self.queue.submit(Some(enc.finish()));
+        let slice = readback.slice(..);
+        slice.map_async(MapMode::Read, |_| {});
+        self.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(idx),
+                timeout: Some(std::time::Duration::from_secs(5)),
+            })
+            .unwrap();
+        let data = slice.get_mapped_range();
+        let px: Vec<[u8; 4]> = data
+            .chunks_exact(4)
+            .map(|c| [c[0], c[1], c[2], c[3]])
+            .collect();
+        drop(data);
+        readback.unmap();
+        px
+    }
+
     fn create_storage<T: ShaderType + ShaderSize + WriteInto>(&self, items: &[T]) -> Buffer {
         let mut scratch = Vec::new();
         let mut writer = StorageBuffer::new(&mut scratch);
@@ -3972,4 +4076,197 @@ fn prepare_gives_distinct_edges_distinct_ranges() {
         "distinct edges collapsed onto shared ranges (false dedup): {:?}",
         (0..6).map(|i| entries[i].segment_start).collect::<Vec<_>>(),
     );
+}
+
+/// A stroked edge must render as a thin STROKE, not a solid fill of its bounding
+/// box (the reported regression: some edges paint as a filled AABB in edge colour,
+/// diagonals collapsing to smaller per-segment boxes). Sweeps a range of edge
+/// orientations and aggressive tangents through the REAL pipeline and asserts the
+/// green coverage stays stroke-sized, not box-sized.
+#[test]
+fn diagonal_edge_renders_as_stroke_not_box() {
+    use crate::primitive::SdfPrimitive;
+    use crate::shape::Shape;
+
+    let r = shared_renderer();
+    let (w, h) = (256u32, 256u32);
+    let green = Style::stroke(rgba(0.0, 1.0, 0.0, 1.0), Pattern::solid(3.0));
+
+    // (label, p0, cp0, cp1, p1) - all in world coords centred near the origin,
+    // mixing orientations and aggressive tangents (the widget builds edges with
+    // pin-direction tangents that overshoot, so vertical/diagonal edges swing far).
+    type Cfg = (&'static str, [f32; 2], [f32; 2], [f32; 2], [f32; 2]);
+    let configs: [Cfg; 7] = [
+        (
+            "horizontal",
+            [-80.0, 0.0],
+            [-20.0, 0.0],
+            [20.0, 0.0],
+            [80.0, 0.0],
+        ),
+        (
+            "diagonal",
+            [-70.0, -70.0],
+            [-10.0, -70.0],
+            [10.0, 70.0],
+            [70.0, 70.0],
+        ),
+        (
+            "vertical-htan",
+            [0.0, -60.0],
+            [90.0, -60.0],
+            [-90.0, 60.0],
+            [0.0, 60.0],
+        ),
+        (
+            "crossed-cusp",
+            [-40.0, 0.0],
+            [60.0, 0.0],
+            [-60.0, 0.0],
+            [40.0, 0.0],
+        ),
+        (
+            "huge-tangent",
+            [0.0, -50.0],
+            [400.0, -50.0],
+            [-400.0, 50.0],
+            [0.0, 50.0],
+        ),
+        (
+            "short-bigtan",
+            [-8.0, -8.0],
+            [120.0, -8.0],
+            [-120.0, 8.0],
+            [8.0, 8.0],
+        ),
+        (
+            "backwards",
+            [60.0, -50.0],
+            [120.0, -50.0],
+            [-120.0, 50.0],
+            [-60.0, 50.0],
+        ),
+    ];
+
+    let mut worst = (0usize, "", 0u32);
+    for (i, (label, p0, c0, c1, p1)) in configs.iter().enumerate() {
+        let mut prim = SdfPrimitive::new();
+        // A leading entry so the edge under test is never entry 0 (real batches).
+        prim.push(
+            &Shape::line([-100.0, 95.0], [100.0, 95.0]),
+            &green,
+            [0.0, 0.0],
+        );
+        prim.push(&Shape::bezier(*p0, *c0, *c1, *p1), &green, [0.0, 0.0]);
+        let prim = prim.camera(128.0, 128.0, 1.0); // world origin at viewport centre
+        let px = r.render_primitive(&prim, w, h);
+        let g = px
+            .iter()
+            .filter(|p| {
+                (p[1] as i32) > (p[0] as i32) + 40
+                    && (p[1] as i32) > (p[2] as i32) + 40
+                    && p[1] > 80
+            })
+            .count() as u32;
+        eprintln!("config {i} {label}: {g} green px");
+        if g > worst.2 {
+            worst = (i, label, g);
+        }
+    }
+
+    // A leading 200px line (~600px) plus one bezier stroke (~few hundred px) is a
+    // few thousand px; a filled bounding box would be 5-6 figures.
+    assert!(
+        worst.2 < 8000,
+        "edge '{}' (config {}) rendered as a filled box: {} green px",
+        worst.1,
+        worst.0,
+        worst.2,
+    );
+}
+
+/// Edges are WORLD-BAKED (pushed with placement `[0,0]`, geometry in absolute
+/// world coords) - unlike nodes (local geometry + a per-instance translate). The
+/// 500-node demo spreads nodes thousands of units from the origin, so an edge's
+/// bezier control points (and its biarc arc centres/radii) reach large magnitudes
+/// where f32 loses precision. This renders ONE diagonal edge at growing world
+/// offsets, viewport-centred each time, and asserts it stays a thin stroke - a
+/// filled-box blowup at large offset is the reported "edges as boxes" regression.
+#[test]
+fn edge_at_large_world_coords_stays_a_stroke() {
+    use crate::primitive::SdfPrimitive;
+    use crate::shape::Shape;
+
+    let r = shared_renderer();
+    let (w, h) = (256u32, 256u32);
+    let green = Style::stroke(rgba(0.0, 1.0, 0.0, 1.0), Pattern::solid(3.0));
+
+    for &off in &[0.0f32, 500.0, 3000.0, 30000.0, 300_000.0] {
+        let e = Shape::bezier(
+            [-70.0 + off, -70.0 + off],
+            [-10.0 + off, -70.0 + off],
+            [10.0 + off, 70.0 + off],
+            [70.0 + off, 70.0 + off],
+        );
+        let mut prim = SdfPrimitive::new();
+        prim.push(&e, &green, [0.0, 0.0]);
+        // Camera so the edge centre (off, off) lands at the viewport centre.
+        let prim = prim.camera(128.0 - off, 128.0 - off, 1.0);
+        let px = r.render_primitive(&prim, w, h);
+        let g = px
+            .iter()
+            .filter(|p| {
+                (p[1] as i32) > (p[0] as i32) + 40
+                    && (p[1] as i32) > (p[2] as i32) + 40
+                    && p[1] > 80
+            })
+            .count();
+        eprintln!("world offset {off:>8}: {g} green px");
+        assert!(
+            g < 6000,
+            "edge at world offset {off} rendered as a filled box: {g} green px (f32 precision)",
+        );
+    }
+}
+
+/// Long cross-graph edges viewed ZOOMED OUT (the demo's actual condition for the
+/// reported boxes): a long bezier biarc-subdivides into many arcs, each spanning a
+/// large world region; zoomed out, a per-segment AABB fill would read as the small
+/// boxes the user saw. Asserts the edge stays a thin stroke at several lengths/zooms.
+#[test]
+fn long_edge_zoomed_out_stays_a_stroke() {
+    use crate::primitive::SdfPrimitive;
+    use crate::shape::Shape;
+
+    let r = shared_renderer();
+    let (w, h) = (256u32, 256u32);
+    let green = Style::stroke(rgba(0.0, 1.0, 0.0, 1.0), Pattern::solid(3.0));
+
+    for &(len, zoom) in &[(400.0f32, 0.5), (2000.0, 0.1), (6000.0, 0.03)] {
+        // Diagonal-ish bezier with horizontal pin tangents (the widget's shape).
+        let e = Shape::bezier(
+            [-len, -len * 0.6],
+            [-len * 0.3, -len * 0.6],
+            [len * 0.3, len * 0.6],
+            [len, len * 0.6],
+        );
+        let mut prim = SdfPrimitive::new();
+        prim.push(&e, &green, [0.0, 0.0]);
+        // World origin at the viewport centre: world = screen/zoom - cam => cam = 128/zoom.
+        let prim = prim.camera(128.0 / zoom, 128.0 / zoom, zoom);
+        let px = r.render_primitive(&prim, w, h);
+        let g = px
+            .iter()
+            .filter(|p| {
+                (p[1] as i32) > (p[0] as i32) + 40
+                    && (p[1] as i32) > (p[2] as i32) + 40
+                    && p[1] > 80
+            })
+            .count();
+        eprintln!("len {len:>6} zoom {zoom}: {g} green px");
+        assert!(
+            g < 8000,
+            "long edge (len {len}, zoom {zoom}) rendered as boxes: {g} green px",
+        );
+    }
 }
