@@ -4438,3 +4438,64 @@ fn edge_survives_multi_primitive_tile_growth() {
         "edge garbled by multi-primitive tile growth: {g} green px",
     );
 }
+
+/// The widget builds edges with HORIZONTAL pin tangents and `adaptive_bezier_length`
+/// (`L = min(80, dist/2)`). When the output pin is to the RIGHT of the input
+/// (a "backwards" edge), the control points overshoot PAST each other and the
+/// bezier curls into a loop - the widget's own comment warns "the SDF cannot
+/// resolve cleanly and the cull drops along the inner side". This replicates that
+/// exact shape across forward/backward/short configs and asserts each renders as a
+/// thin stroke, not a filled AABB (the reported boxes).
+#[test]
+fn widget_edge_shape_renders_as_stroke() {
+    use crate::primitive::SdfPrimitive;
+    use crate::shape::Shape;
+
+    // The widget's edge: Right (output) pin tangent +x, Left (input) pin tangent -x.
+    fn widget_edge(p0: [f32; 2], p1: [f32; 2]) -> Shape {
+        let d = ((p1[0] - p0[0]).powi(2) + (p1[1] - p0[1]).powi(2)).sqrt();
+        let l = 80.0f32.min(d * 0.5).max(1.0);
+        Shape::bezier(p0, [p0[0] + l, p0[1]], [p1[0] - l, p1[1]], p1)
+    }
+
+    let r = shared_renderer();
+    let (w, h) = (256u32, 256u32);
+    let green = Style::stroke(rgba(0.0, 1.0, 0.0, 1.0), Pattern::solid(2.0));
+
+    let configs: [(&str, [f32; 2], [f32; 2]); 8] = [
+        ("forward", [-60.0, 0.0], [60.0, 0.0]),
+        ("backward-flat", [60.0, 0.0], [-60.0, 0.0]),
+        ("backward-tilt", [60.0, -10.0], [-60.0, 10.0]),
+        ("backward-short", [30.0, -5.0], [-30.0, 5.0]),
+        ("backward-tiny", [12.0, -2.0], [-12.0, 2.0]),
+        ("backward-steep", [10.0, 60.0], [-10.0, -60.0]),
+        ("backward-diag", [50.0, -50.0], [-50.0, 50.0]),
+        ("near-coincident", [6.0, 1.0], [-6.0, -1.0]),
+    ];
+
+    let mut worst = ("", 0u32);
+    for (label, p0, p1) in configs {
+        let mut prim = SdfPrimitive::new();
+        prim.push(&widget_edge(p0, p1), &green, [0.0, 0.0]);
+        let prim = prim.camera(128.0, 128.0, 1.0);
+        let px = r.render_primitive(&prim, w, h);
+        let g = px
+            .iter()
+            .filter(|p| {
+                (p[1] as i32) > (p[0] as i32) + 40
+                    && (p[1] as i32) > (p[2] as i32) + 40
+                    && p[1] > 80
+            })
+            .count() as u32;
+        eprintln!("{label:>16}: {g} green px");
+        if g > worst.1 {
+            worst = (label, g);
+        }
+    }
+    assert!(
+        worst.1 < 6000,
+        "widget edge '{}' rendered as a filled box: {} green px",
+        worst.0,
+        worst.1,
+    );
+}
