@@ -1155,6 +1155,115 @@ impl TestRenderer {
         px
     }
 
+    /// Like [`render_primitives_bounded`] but DRAWS each primitive in its OWN
+    /// render pass with a SCISSOR set to its clip rect - replicating how iced_wgpu
+    /// renders layered custom primitives (each `with_layer` is a clipped pass).
+    fn render_primitives_scissored(
+        &self,
+        prims: &[(&crate::primitive::SdfPrimitive, iced::Rectangle)],
+        width: u32,
+        height: u32,
+    ) -> Vec<[u8; 4]> {
+        use iced_wgpu::graphics::Viewport;
+        use iced_wgpu::primitive::{Pipeline, Primitive};
+
+        let mut pipeline = crate::primitive::SdfPipeline::new(
+            &self.device,
+            &self.queue,
+            TextureFormat::Rgba8Unorm,
+        );
+        let viewport = Viewport::with_physical_size(iced::Size::new(width, height), 1.0);
+        let target = self.device.create_texture(&TextureDescriptor {
+            label: None,
+            size: Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba8Unorm,
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = target.create_view(&TextureViewDescriptor::default());
+        let readback = self.device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: (width * height * 4) as u64,
+            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        Pipeline::trim(&mut pipeline);
+        for (p, bounds) in prims {
+            p.prepare(&mut pipeline, &self.device, &self.queue, bounds, &viewport);
+        }
+        let mut enc = self
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+        for (i, (p, bounds)) in prims.iter().enumerate() {
+            let mut pass = enc.begin_render_pass(&RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: if i == 0 {
+                            LoadOp::Clear(Color::TRANSPARENT)
+                        } else {
+                            LoadOp::Load
+                        },
+                        store: StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            let sx = bounds.x.max(0.0) as u32;
+            let sy = bounds.y.max(0.0) as u32;
+            let sw = (bounds.width as u32).min(width - sx);
+            let sh = (bounds.height as u32).min(height - sy);
+            pass.set_scissor_rect(sx, sy, sw, sh);
+            p.draw(&pipeline, &mut pass);
+        }
+        enc.copy_texture_to_buffer(
+            target.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(width * 4),
+                    rows_per_image: None,
+                },
+            },
+            Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        let idx = self.queue.submit(Some(enc.finish()));
+        let slice = readback.slice(..);
+        slice.map_async(MapMode::Read, |_| {});
+        self.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(idx),
+                timeout: Some(std::time::Duration::from_secs(5)),
+            })
+            .unwrap();
+        let data = slice.get_mapped_range();
+        let px: Vec<[u8; 4]> = data
+            .chunks_exact(4)
+            .map(|c| [c[0], c[1], c[2], c[3]])
+            .collect();
+        drop(data);
+        readback.unmap();
+        px
+    }
+
     /// Render SEVERAL `SdfPrimitive`s through ONE `SdfPipeline` in order (prepare
     /// all, then draw all) - the real multi-primitive frame. Each prepare allocates
     /// its own tile region (`tile_base` accumulates), so enough primitives grow the
@@ -4009,6 +4118,406 @@ fn cull_cap_sweep_localizes_edge_drops() {
         0,
         "even a {}-slot cap still drops edges - the budget is not the (whole) cause",
         caps.last().unwrap(),
+    );
+}
+
+/// HYPOTHESIS TEST: `SdfPrimitive::draw` reads its `DrawData` by a global counter
+/// that assumes draw order == prepare order. iced renders with LAYERS, which can
+/// draw in a different order than primitives were prepared. Here three primitives
+/// are PREPARED as [left, edges, right] but DRAWN as [left, right, edges] - so the
+/// edge's draw index points at the WRONG `DrawData`. If the edge then blobs, the
+/// draw-order assumption is the root cause of the widget boxes.
+#[test]
+fn draw_order_mismatch_corrupts_edge() {
+    use crate::primitive::SdfPrimitive;
+    use crate::shape::Shape;
+    use iced_wgpu::graphics::Viewport;
+    use iced_wgpu::primitive::{Pipeline, Primitive};
+
+    let r = shared_renderer();
+    let (w, h) = (640u32, 448u32);
+    let viewport = Viewport::with_physical_size(iced::Size::new(w, h), 1.0);
+    let full = iced::Rectangle::new(iced::Point::ORIGIN, iced::Size::new(w as f32, h as f32));
+    let gray = Style::solid(rgba(0.3, 0.3, 0.3, 1.0));
+    let green = Style::stroke(rgba(0.0, 1.0, 0.0, 1.0), Pattern::solid(2.0));
+
+    let mut left = SdfPrimitive::new();
+    left.push(&Shape::circle(20.0), &gray, [80.0, 80.0]);
+    let left = left.camera(0.0, 0.0, 1.0);
+    let mut edges = SdfPrimitive::new();
+    edges.push(
+        &Shape::bezier(
+            [150.0, 315.0],
+            [230.0, 315.0],
+            [340.0, 105.0],
+            [420.0, 105.0],
+        ),
+        &green,
+        [0.0, 0.0],
+    );
+    let edges = edges.camera(0.0, 0.0, 1.0);
+    let mut right = SdfPrimitive::new();
+    right.push(&Shape::circle(20.0), &gray, [560.0, 80.0]);
+    let right = right.camera(0.0, 0.0, 1.0);
+
+    let mut pipeline =
+        crate::primitive::SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
+    let target = r.device.create_texture(&TextureDescriptor {
+        label: None,
+        size: Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: TextureDimension::D2,
+        format: TextureFormat::Rgba8Unorm,
+        usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let vw = target.create_view(&TextureViewDescriptor::default());
+    let readback = r.device.create_buffer(&BufferDescriptor {
+        label: None,
+        size: (w * h * 4) as u64,
+        usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+
+    Pipeline::trim(&mut pipeline);
+    // PREPARE order: left, edges, right.
+    left.prepare(&mut pipeline, &r.device, &r.queue, &full, &viewport);
+    edges.prepare(&mut pipeline, &r.device, &r.queue, &full, &viewport);
+    right.prepare(&mut pipeline, &r.device, &r.queue, &full, &viewport);
+    let mut enc = r
+        .device
+        .create_command_encoder(&CommandEncoderDescriptor::default());
+    {
+        let mut pass = enc.begin_render_pass(&RenderPassDescriptor {
+            label: None,
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view: &vw,
+                resolve_target: None,
+                ops: Operations {
+                    load: LoadOp::Clear(Color::TRANSPARENT),
+                    store: StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        // DRAW order: left, right, edges (edges LAST - different from prepare).
+        left.draw(&pipeline, &mut pass);
+        right.draw(&pipeline, &mut pass);
+        edges.draw(&pipeline, &mut pass);
+    }
+    enc.copy_texture_to_buffer(
+        target.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &readback,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(w * 4),
+                rows_per_image: None,
+            },
+        },
+        Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+    );
+    let idx = r.queue.submit(Some(enc.finish()));
+    let slice = readback.slice(..);
+    slice.map_async(MapMode::Read, |_| {});
+    r.device
+        .poll(wgpu::PollType::Wait {
+            submission_index: Some(idx),
+            timeout: Some(std::time::Duration::from_secs(5)),
+        })
+        .unwrap();
+    let data = slice.get_mapped_range();
+    let px: Vec<[u8; 4]> = data
+        .chunks_exact(4)
+        .map(|c| [c[0], c[1], c[2], c[3]])
+        .collect();
+    drop(data);
+    readback.unmap();
+
+    let g = px
+        .iter()
+        .filter(|p| {
+            (p[1] as i32) > (p[0] as i32) + 40 && (p[1] as i32) > (p[2] as i32) + 40 && p[1] > 80
+        })
+        .count();
+    eprintln!("edge green with draw order != prepare order: {g} px");
+    assert!(
+        g < 6000,
+        "draw-order mismatch made the edge render as a box: {g} green px",
+    );
+}
+
+/// Replicate the EXACT widget frame sequence (from the logged `prepare` calls):
+/// bg + shadows + the EDGE batch all at full (600x400) bounds, THEN eight small
+/// per-node primitives (fills + pins) with their own offset clips - which grow the
+/// tile buffer AFTER the edge batch's tiles are written. If the n2->n1 edge blobs
+/// HERE, the tile-buffer growth-with-copy corrupts the already-written edge tiles.
+#[test]
+fn widget_frame_sequence_keeps_edges_as_strokes() {
+    use crate::primitive::SdfPrimitive;
+    use crate::shape::Shape;
+    use crate::tiling::Tiling;
+    use iced::Rectangle;
+
+    let r = shared_renderer();
+    let (w, h) = (640u32, 448u32);
+    let full = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(600.0, 400.0));
+
+    let gray = Style::solid(rgba(0.30, 0.32, 0.40, 1.0));
+    let dark = Style::solid(rgba(0.12, 0.13, 0.16, 1.0));
+    let green = Style::stroke(rgba(0.0, 1.0, 0.0, 1.0), Pattern::solid(2.0));
+    let positions = [
+        [40.0f32, 40.0],
+        [420.0, 60.0],
+        [80.0, 300.0],
+        [440.0, 320.0],
+    ];
+
+    let mut bg = SdfPrimitive::new();
+    bg.push(
+        &Shape::tiling(Tiling::grid(40.0, 40.0, 1.0)),
+        &dark,
+        [0.0, 0.0],
+    );
+    let bg = bg.camera(0.0, 0.0, 1.0).background();
+
+    let mut shadows = SdfPrimitive::new();
+    for p in positions {
+        shadows.push(
+            &Shape::rounded_box([70.0, 60.0], [6.0; 4]),
+            &gray,
+            [p[0] + 39.0, p[1] + 34.0],
+        );
+    }
+    let shadows = shadows.camera(0.0, 0.0, 1.0);
+
+    let mut edges = SdfPrimitive::new();
+    for (p0, c0, c1, p1) in [
+        ([110.0, 55.0], [190.0, 55.0], [340.0, 105.0], [420.0, 105.0]),
+        ([110.0, 55.0], [190.0, 55.0], [360.0, 365.0], [440.0, 365.0]),
+        (
+            [150.0, 315.0],
+            [230.0, 315.0],
+            [340.0, 105.0],
+            [420.0, 105.0],
+        ),
+    ] {
+        edges.push(&Shape::bezier(p0, c0, c1, p1), &green, [0.0, 0.0]);
+    }
+    let edges = edges.camera(0.0, 0.0, 1.0);
+
+    // Per-node fill + pins primitives with their own offset clips (logged bounds),
+    // each carrying a small shape so it allocates tiles and grows the buffer.
+    let per_node: Vec<(SdfPrimitive, Rectangle)> = positions
+        .iter()
+        .flat_map(|p| {
+            let center = [p[0] + 35.0, p[1] + 30.0];
+            let mut fill = SdfPrimitive::new();
+            fill.push(&Shape::rounded_box([70.0, 60.0], [6.0; 4]), &gray, center);
+            let fill = fill.camera(-p[0] + 2.0, -p[1] + 2.0, 1.0);
+            let fill_bounds = Rectangle::new(
+                iced::Point::new(p[0] - 2.0, p[1] - 2.0),
+                iced::Size::new(74.0, 64.0),
+            );
+
+            let mut pins = SdfPrimitive::new();
+            pins.push(&Shape::circle(4.0), &gray, [p[0], center[1]]);
+            pins.push(&Shape::circle(4.0), &gray, [p[0] + 70.0, center[1]]);
+            let pins = pins.camera(-p[0] + 5.36, -p[1] + 3.0, 1.0);
+            let pins_bounds = Rectangle::new(
+                iced::Point::new(p[0] - 5.36, p[1] - 3.0),
+                iced::Size::new(79.76, 66.0),
+            );
+            [(fill, fill_bounds), (pins, pins_bounds)]
+        })
+        .collect();
+
+    let mut seq: Vec<(&SdfPrimitive, Rectangle)> =
+        vec![(&bg, full), (&shadows, full), (&edges, full)];
+    for (p, b) in &per_node {
+        seq.push((p, *b));
+    }
+
+    let px = r.render_primitives_scissored(&seq, w, h);
+    write_png(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../seq_render.png"),
+        &px,
+        w,
+        h,
+    );
+    let g = px
+        .iter()
+        .filter(|p| {
+            (p[1] as i32) > (p[0] as i32) + 40 && (p[1] as i32) > (p[2] as i32) + 40 && p[1] > 80
+        })
+        .count();
+    eprintln!("edge green in the full widget frame sequence: {g} px");
+    assert!(
+        g < 6000,
+        "edges in the widget frame sequence rendered as boxes: {g} green px",
+    );
+}
+
+/// Reproduce the minimal widget scene as the SAME primitive SEQUENCE the widget
+/// submits (background tiling, then node fills, then the edge batch), rendered
+/// through one pipeline like iced does. If the n2->n1 blob appears HERE, it is the
+/// multi-primitive interaction (tile-base growth / bg cache), not the edge alone.
+#[test]
+fn minimal_scene_as_primitive_sequence_renders_edges_as_strokes() {
+    use crate::primitive::SdfPrimitive;
+    use crate::shape::Shape;
+    use crate::tiling::Tiling;
+
+    let r = shared_renderer();
+    let (w, h) = (640u32, 448u32);
+
+    // Background tiling (marked as the cacheable background, like the widget).
+    let mut bg = SdfPrimitive::new();
+    bg.push(
+        &Shape::tiling(Tiling::grid(40.0, 40.0, 1.0)),
+        &Style::solid(rgba(0.12, 0.13, 0.16, 1.0)),
+        [0.0, 0.0],
+    );
+    let bg = bg.camera(0.0, 0.0, 1.0).background();
+
+    // Node fills (gray rounded boxes at the 4 node positions).
+    let node_style = Style::solid(rgba(0.30, 0.32, 0.40, 1.0));
+    let positions = [[40.0, 40.0], [420.0, 60.0], [80.0, 300.0], [440.0, 320.0]];
+    let mut nodes = SdfPrimitive::new();
+    for p in positions {
+        nodes.push(
+            &Shape::rounded_box([70.0, 60.0], [6.0; 4]),
+            &node_style,
+            [p[0] + 35.0, p[1] + 30.0],
+        );
+    }
+    let nodes = nodes.camera(0.0, 0.0, 1.0);
+
+    // Edge batch (the 3 edges, the blob is n2->n1).
+    let green = Style::stroke(rgba(0.0, 1.0, 0.0, 1.0), Pattern::solid(2.0));
+    let mut edges = SdfPrimitive::new();
+    for (p0, c0, c1, p1) in [
+        ([110.0, 55.0], [190.0, 55.0], [340.0, 105.0], [420.0, 105.0]),
+        ([110.0, 55.0], [190.0, 55.0], [360.0, 365.0], [440.0, 365.0]),
+        (
+            [150.0, 315.0],
+            [230.0, 315.0],
+            [340.0, 105.0],
+            [420.0, 105.0],
+        ),
+    ] {
+        edges.push(&Shape::bezier(p0, c0, c1, p1), &green, [0.0, 0.0]);
+    }
+    let edges = edges.camera(0.0, 0.0, 1.0);
+
+    let px = r.render_primitives(&[&bg, &nodes, &edges], w, h);
+    write_png(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../seq_render.png"),
+        &px,
+        w,
+        h,
+    );
+    let g = px
+        .iter()
+        .filter(|p| {
+            (p[1] as i32) > (p[0] as i32) + 40 && (p[1] as i32) > (p[2] as i32) + 40 && p[1] > 80
+        })
+        .count();
+    eprintln!("edge green in primitive sequence: {g} px");
+    assert!(
+        g < 6000,
+        "edges in the widget primitive sequence rendered as boxes: {g} green px",
+    );
+}
+
+/// The three EXACT widget edges from the minimal-scene PNG (pin coords computed by
+/// hand). In the widget, node2->node1 renders as a filled blob while the other two
+/// are clean curves. Rendered here at the same camera (0,0, zoom 1) the widget
+/// uses, so a fill HERE means the geometry is the trigger, not the widget path.
+#[test]
+fn exact_widget_edges_render_as_strokes() {
+    use crate::primitive::SdfPrimitive;
+    use crate::shape::Shape;
+
+    let r = shared_renderer();
+    let (w, h) = (640u32, 448u32);
+    let green = Style::stroke(rgba(0.0, 1.0, 0.0, 1.0), Pattern::solid(2.0));
+
+    type Cfg = (&'static str, [f32; 2], [f32; 2], [f32; 2], [f32; 2]);
+    let edges: [Cfg; 3] = [
+        (
+            "n0->n1",
+            [110.0, 55.0],
+            [190.0, 55.0],
+            [340.0, 105.0],
+            [420.0, 105.0],
+        ),
+        (
+            "n0->n3",
+            [110.0, 55.0],
+            [190.0, 55.0],
+            [360.0, 365.0],
+            [440.0, 365.0],
+        ),
+        (
+            "n2->n1 (blob)",
+            [150.0, 315.0],
+            [230.0, 315.0],
+            [340.0, 105.0],
+            [420.0, 105.0],
+        ),
+    ];
+
+    // All three in ONE primitive (the widget batches all edges together).
+    use iced_wgpu::graphics::Viewport;
+    use iced_wgpu::primitive::{Pipeline, Primitive};
+    let mut prim = SdfPrimitive::new();
+    for (_, p0, c0, c1, p1) in edges {
+        prim.push(&Shape::bezier(p0, c0, c1, p1), &green, [0.0, 0.0]);
+    }
+    let prim = prim.camera(0.0, 0.0, 1.0);
+
+    // Dump the per-entry segment indices through the real prepare.
+    let mut pipeline =
+        crate::primitive::SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
+    let viewport = Viewport::with_physical_size(iced::Size::new(w, h), 1.0);
+    let bounds = iced::Rectangle::new(iced::Point::ORIGIN, iced::Size::new(w as f32, h as f32));
+    Pipeline::trim(&mut pipeline);
+    prim.prepare(&mut pipeline, &r.device, &r.queue, &bounds, &viewport);
+    let segs = pipeline.segments_mirror().len();
+    for (i, e) in pipeline.entries_mirror().iter().enumerate() {
+        eprintln!(
+            "entry {i} ({}): seg[{}..{}] / {segs} total, count {}",
+            edges[i].0,
+            e.segment_start,
+            e.segment_start + e.segment_count,
+            e.segment_count,
+        );
+    }
+
+    let px = r.render_primitive(&prim, w, h);
+    let g = px
+        .iter()
+        .filter(|p| {
+            (p[1] as i32) > (p[0] as i32) + 40 && (p[1] as i32) > (p[2] as i32) + 40 && p[1] > 80
+        })
+        .count();
+    eprintln!("all 3 edges together: {g} green px");
+    assert!(
+        g < 6000,
+        "edges in one batch rendered as filled boxes: {g} green px",
     );
 }
 

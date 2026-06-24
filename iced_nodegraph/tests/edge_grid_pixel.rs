@@ -219,3 +219,297 @@ fn dump_edge_grid_png() {
     let flat: Vec<u8> = px.iter().flat_map(|p| p.iter().copied()).collect();
     writer.write_image_data(&flat).unwrap();
 }
+
+/// Render a MINIMAL widget scene (a few nodes, a few edges) to a PNG, so a single
+/// edge's shape is clearly visible - to tell whether one isolated edge boxes in
+/// the widget path or only the dense overlap does.
+fn render_minimal_edges() -> Option<Vec<[u8; 4]>> {
+    use iced::widget::{Column, container, text};
+    use iced_nodegraph::{
+        ColorQuad, EdgeStyle, PinDirection, PinRef, PinSide, default_edge_style, edge, node,
+        node_pin,
+    };
+
+    let mut guard = shared()?;
+    let renderer = &mut *guard;
+
+    // Four nodes well spread; world fits the viewport at zoom 1.
+    let positions = [
+        Point::new(40.0, 40.0),
+        Point::new(420.0, 60.0),
+        Point::new(80.0, 300.0),
+        Point::new(440.0, 320.0),
+    ];
+
+    let mut graph: iced_nodegraph::NodeGraph<'static, usize, usize, (), (), Theme, Renderer> =
+        iced_nodegraph::NodeGraph::default()
+            .width(Length::Fixed(GW as f32))
+            .height(Length::Fixed(GH as f32))
+            .view(Point::new(0.0, 0.0), 1.0);
+
+    for (i, p) in positions.iter().enumerate() {
+        // NO text content - to test whether interleaved text rendering triggers the
+        // edge blob (the SDF crate and iced_wgpu both render these edges cleanly).
+        let pins = Column::with_children(vec![
+            Element::from(
+                node_pin(PinSide::Right, 0usize, text("o")).direction(PinDirection::Output),
+            ),
+            Element::from(
+                node_pin(PinSide::Left, 1usize, text("i")).direction(PinDirection::Input),
+            ),
+        ]);
+        let content: Element<'static, (), Theme, Renderer> = container(pins)
+            .width(Length::Fixed(70.0))
+            .height(Length::Fixed(60.0))
+            .into();
+        graph.push_node(node(i, *p, content));
+    }
+    // node0 -> node1 (horizontal), node0 -> node3 (diagonal long), node2 -> node1 (diagonal).
+    for &(f, t) in &[(0usize, 1usize), (0, 3), (2, 1)] {
+        graph.push_edge(edge!(PinRef::new(f, 0usize), PinRef::new(t, 1usize)).style(
+            |theme, status, _from, _to| EdgeStyle {
+                stroke_color: ColorQuad::solid(Color::from_rgb(0.0, 1.0, 0.0)),
+                ..default_edge_style(theme, status)
+            },
+        ));
+    }
+
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Renderer>);
+    let layout_node = graph.layout(
+        &mut tree,
+        &*renderer,
+        &layout::Limits::new(Size::ZERO, Size::new(GW as f32, GH as f32)),
+    );
+    let layout = Layout::new(&layout_node);
+    let viewport_rect = Rectangle::new(Point::ORIGIN, Size::new(GW as f32, GH as f32));
+
+    let mut msgs: Vec<()> = Vec::new();
+    let mut shell = iced_widget::core::Shell::new(&mut msgs);
+    let mut clipboard = clipboard::Null;
+    graph.update(
+        &mut tree,
+        &iced::Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(-1.0, -1.0),
+        }),
+        layout,
+        mouse::Cursor::Unavailable,
+        &*renderer,
+        &mut clipboard,
+        &mut shell,
+        &viewport_rect,
+    );
+    graph.draw(
+        &tree,
+        renderer,
+        &Theme::Dark,
+        &renderer::Style {
+            text_color: Color::WHITE,
+        },
+        layout,
+        mouse::Cursor::Unavailable,
+        &viewport_rect,
+    );
+    let bytes = renderer.screenshot(
+        &Viewport::with_physical_size(Size::new(GW, GH), 1.0),
+        Color::TRANSPARENT,
+    );
+    Some(
+        bytes
+            .chunks_exact(4)
+            .map(|c| [c[0], c[1], c[2], c[3]])
+            .collect(),
+    )
+}
+
+/// Isolation: render the 3 minimal edges DIRECTLY through iced_wgpu's
+/// `draw_primitive` + `screenshot`, bypassing the NodeGraph widget entirely. The
+/// SDF crate renders these exact edges as clean strokes; the widget renders one as
+/// a filled blob. If the blob appears HERE, the iced_wgpu render path (not the
+/// NodeGraph draw logic) is the cause. Writes a PNG and asserts stroke coverage.
+/// Ignored: passes in isolation, but the shared renderer is polluted by sibling
+/// tests' heavy scenes (the same cross-frame GPU-state issue under investigation).
+#[test]
+#[ignore = "passes in isolation; shared-renderer cross-test pollution in suite"]
+fn iced_direct_edges_render_as_strokes() {
+    use iced_nodegraph_sdf::{Pattern, SdfPrimitive, Shape, Style};
+    use iced_wgpu::primitive::Renderer as _;
+
+    let Some(mut guard) = shared() else {
+        eprintln!("no GPU adapter - skipping iced_direct_edges_render_as_strokes");
+        return;
+    };
+    let renderer = &mut *guard;
+    let green = Style::stroke(Color::from_rgb(0.0, 1.0, 0.0), Pattern::solid(2.0));
+    let clip = Rectangle::new(Point::ORIGIN, Size::new(600.0, 400.0));
+    for (p0, c0, c1, p1) in [
+        (
+            [110.0f32, 55.0],
+            [190.0, 55.0],
+            [340.0, 105.0],
+            [420.0, 105.0],
+        ),
+        ([110.0, 55.0], [190.0, 55.0], [360.0, 365.0], [440.0, 365.0]),
+        (
+            [150.0, 315.0],
+            [230.0, 315.0],
+            [340.0, 105.0],
+            [420.0, 105.0],
+        ),
+    ] {
+        let mut prim = SdfPrimitive::new();
+        prim.push(&Shape::bezier(p0, c0, c1, p1), &green, [0.0, 0.0]);
+        let prim = prim.camera(0.0, 0.0, 1.0);
+        renderer.draw_primitive(clip, prim);
+    }
+    let bytes = renderer.screenshot(
+        &Viewport::with_physical_size(Size::new(600, 400), 1.0),
+        Color::TRANSPARENT,
+    );
+    let px: Vec<[u8; 4]> = bytes
+        .chunks_exact(4)
+        .map(|c| [c[0], c[1], c[2], c[3]])
+        .collect();
+
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../iced_direct_edges.png");
+    let file = std::fs::File::create(path).unwrap();
+    let mut enc = png::Encoder::new(std::io::BufWriter::new(file), 600, 400);
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut writer = enc.write_header().unwrap();
+    let flat: Vec<u8> = px.iter().flat_map(|p| p.iter().copied()).collect();
+    writer.write_image_data(&flat).unwrap();
+
+    let g = green_count(&px);
+    eprintln!("iced-direct edges green: {g} px (3 strokes ~3000, blob ~30000)");
+    assert!(
+        g < 8000,
+        "iced draw_primitive rendered edges as boxes: {g} green px"
+    );
+}
+
+/// Isolation step 2: the FULL widget SDF primitive set (background, node shadows,
+/// the edge batch, then per-node fills + pins) drawn directly through iced_wgpu's
+/// `draw_primitive` in the widget's order, but WITHOUT text. If the edge blobs
+/// here, the trigger is iced_wgpu's multi-`SdfPrimitive` frame management; if it
+/// stays clean, the trigger is the text primitives interleaved by the widget.
+/// (It stays clean - proving TEXT is the trigger; see the module-level findings.)
+/// Ignored: passes in isolation; shared-renderer cross-test pollution in suite.
+#[test]
+#[ignore = "passes in isolation; shared-renderer cross-test pollution in suite"]
+fn iced_direct_full_sdf_frame_edges_render_as_strokes() {
+    use iced::Rectangle as R;
+    use iced_nodegraph_sdf::{Pattern, SdfPrimitive, Shape, Style, Tiling};
+    use iced_wgpu::primitive::Renderer as _;
+
+    let Some(mut guard) = shared() else {
+        return;
+    };
+    let renderer = &mut *guard;
+    let full = R::new(Point::ORIGIN, Size::new(600.0, 400.0));
+    let gray = Style::solid(Color::from_rgb(0.30, 0.32, 0.40));
+    let dark = Style::solid(Color::from_rgb(0.12, 0.13, 0.16));
+    let green = Style::stroke(Color::from_rgb(0.0, 1.0, 0.0), Pattern::solid(2.0));
+    let positions = [
+        [40.0f32, 40.0],
+        [420.0, 60.0],
+        [80.0, 300.0],
+        [440.0, 320.0],
+    ];
+
+    // bg (cacheable background tiling)
+    let mut bg = SdfPrimitive::new();
+    bg.push(
+        &Shape::tiling(Tiling::grid(40.0, 40.0, 1.0)),
+        &dark,
+        [0.0, 0.0],
+    );
+    renderer.draw_primitive(full, bg.camera(0.0, 0.0, 1.0).background());
+
+    // node shadows (one batch)
+    let mut shadows = SdfPrimitive::new();
+    for p in positions {
+        shadows.push(
+            &Shape::rounded_box([70.0, 60.0], [6.0; 4]),
+            &gray,
+            [p[0] + 39.0, p[1] + 34.0],
+        );
+    }
+    renderer.draw_primitive(full, shadows.camera(0.0, 0.0, 1.0));
+
+    // edge batch
+    let mut edges = SdfPrimitive::new();
+    for (p0, c0, c1, p1) in [
+        (
+            [110.0f32, 55.0],
+            [190.0, 55.0],
+            [340.0, 105.0],
+            [420.0, 105.0],
+        ),
+        ([110.0, 55.0], [190.0, 55.0], [360.0, 365.0], [440.0, 365.0]),
+        (
+            [150.0, 315.0],
+            [230.0, 315.0],
+            [340.0, 105.0],
+            [420.0, 105.0],
+        ),
+    ] {
+        edges.push(&Shape::bezier(p0, c0, c1, p1), &green, [0.0, 0.0]);
+    }
+    renderer.draw_primitive(full, edges.camera(0.0, 0.0, 1.0));
+
+    // per-node fills + pins, each with its own clip (like the widget)
+    for p in positions {
+        let center = [p[0] + 35.0, p[1] + 30.0];
+        let fill_clip = R::new(Point::new(p[0] - 2.0, p[1] - 2.0), Size::new(74.0, 64.0));
+        let mut fill = SdfPrimitive::new();
+        fill.push(&Shape::rounded_box([70.0, 60.0], [6.0; 4]), &gray, center);
+        renderer.draw_primitive(fill_clip, fill.camera(-p[0] + 2.0, -p[1] + 2.0, 1.0));
+
+        let pins_clip = R::new(Point::new(p[0] - 5.0, p[1] - 3.0), Size::new(80.0, 66.0));
+        let mut pins = SdfPrimitive::new();
+        pins.push(&Shape::circle(4.0), &gray, [p[0], center[1]]);
+        pins.push(&Shape::circle(4.0), &gray, [p[0] + 70.0, center[1]]);
+        renderer.draw_primitive(pins_clip, pins.camera(-p[0] + 5.0, -p[1] + 3.0, 1.0));
+    }
+
+    let bytes = renderer.screenshot(
+        &Viewport::with_physical_size(Size::new(600, 400), 1.0),
+        Color::TRANSPARENT,
+    );
+    let px: Vec<[u8; 4]> = bytes
+        .chunks_exact(4)
+        .map(|c| [c[0], c[1], c[2], c[3]])
+        .collect();
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../iced_direct_full.png");
+    let file = std::fs::File::create(path).unwrap();
+    let mut e = png::Encoder::new(std::io::BufWriter::new(file), 600, 400);
+    e.set_color(png::ColorType::Rgba);
+    e.set_depth(png::BitDepth::Eight);
+    let mut writer = e.write_header().unwrap();
+    let flat: Vec<u8> = px.iter().flat_map(|p| p.iter().copied()).collect();
+    writer.write_image_data(&flat).unwrap();
+
+    let g = green_count(&px);
+    eprintln!("iced-direct FULL frame edges green: {g} px");
+    assert!(
+        g < 8000,
+        "iced_wgpu full SDF frame rendered edges as boxes: {g} green px",
+    );
+}
+
+#[test]
+#[ignore = "visual probe: writes widget_minimal_edges.png"]
+fn dump_minimal_edges_png() {
+    let Some(px) = render_minimal_edges() else {
+        eprintln!("no GPU adapter - skipping dump_minimal_edges_png");
+        return;
+    };
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../widget_minimal_edges.png");
+    let file = std::fs::File::create(path).unwrap();
+    let mut enc = png::Encoder::new(std::io::BufWriter::new(file), GW, GH);
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut writer = enc.write_header().unwrap();
+    let flat: Vec<u8> = px.iter().flat_map(|p| p.iter().copied()).collect();
+    writer.write_image_data(&flat).unwrap();
+}
