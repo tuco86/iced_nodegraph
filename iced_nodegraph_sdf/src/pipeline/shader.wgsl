@@ -5,9 +5,9 @@
 // --- Constants ---
 
 const TILE_SIZE: f32 = 16.0;
-const MAX_SLOTS_PER_TILE: u32 = 32u;
+const MAX_SLOTS_PER_TILE: u32 = 128u;
 // Each slot = 2 u32s (segment_idx, style_idx), so buffer stride = MAX_SLOTS * 2
-const SLOT_STRIDE: u32 = 64u; // MAX_SLOTS_PER_TILE * 2
+const SLOT_STRIDE: u32 = 256u; // MAX_SLOTS_PER_TILE * 2
 
 const SEG_LINE: u32 = 0u;
 const SEG_ARC: u32 = 1u;

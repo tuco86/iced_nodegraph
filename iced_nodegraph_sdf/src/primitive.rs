@@ -44,7 +44,7 @@ pub fn sdf_stats() -> types::SdfStats {
 
 // Must match WGSL constants
 const TILE_SIZE: f32 = 16.0;
-const MAX_SLOTS_PER_TILE: u32 = 32;
+const MAX_SLOTS_PER_TILE: u32 = 128;
 // Each slot = 2 u32s (segment_idx, style_idx)
 const SLOT_STRIDE: u32 = MAX_SLOTS_PER_TILE * 2;
 

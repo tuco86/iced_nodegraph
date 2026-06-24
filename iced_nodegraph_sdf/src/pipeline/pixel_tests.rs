@@ -19,7 +19,7 @@ use crate::style::Style;
 
 // Must match WGSL constants
 const TILE_SIZE: f32 = 16.0;
-const MAX_SLOTS_PER_TILE: u32 = 32;
+const MAX_SLOTS_PER_TILE: u32 = 128;
 const SLOT_STRIDE: u32 = MAX_SLOTS_PER_TILE * 2;
 
 /// One significant tiled-vs-untiled pixel mismatch: `(x, y, tiled, untiled, delta)`.
@@ -631,15 +631,8 @@ impl TestRenderer {
     /// so a test can sweep the per-tile slot budget. Only the two `const` lines are
     /// rewritten; the slot arrays size off `MAX_SLOTS_PER_TILE`, so they follow.
     fn compute_pipeline_capped(&self, cap: u32) -> ComputePipeline {
-        let src = include_str!("shader.wgsl")
-            .replace(
-                "const MAX_SLOTS_PER_TILE: u32 = 32u;",
-                &format!("const MAX_SLOTS_PER_TILE: u32 = {cap}u;"),
-            )
-            .replace(
-                "const SLOT_STRIDE: u32 = 64u;",
-                &format!("const SLOT_STRIDE: u32 = {}u;", cap * 2),
-            );
+        let src = with_u32_const(include_str!("shader.wgsl"), "MAX_SLOTS_PER_TILE", cap);
+        let src = with_u32_const(&src, "SLOT_STRIDE", cap * 2);
         let module = self.device.create_shader_module(ShaderModuleDescriptor {
             label: Some("sdf_cull_capped"),
             source: ShaderSource::Wgsl(std::borrow::Cow::Owned(src)),
@@ -3582,6 +3575,17 @@ fn sign_aware_dotted_border_no_inward_bulge() {
         outer_opaque >= 6,
         "dots missing on the outer half: {outer_opaque}/72"
     );
+}
+
+/// Rewrite `const {name}: u32 = <n>u;` in `src` to `= {value}u;`, whatever the
+/// current literal - so the cap sweep stays independent of the production cap (it
+/// would otherwise break the moment `MAX_SLOTS_PER_TILE` is bumped).
+fn with_u32_const(src: &str, name: &str, value: u32) -> String {
+    let needle = format!("const {name}: u32 = ");
+    let i = src.find(&needle).expect("const decl present");
+    let after = i + needle.len();
+    let semi = src[after..].find(';').expect("decl ends in ;") + after;
+    format!("{}{}u{}", &src[..after], value, &src[semi..])
 }
 
 /// The compute cull's two output buffers, read straight back for inspection: the
