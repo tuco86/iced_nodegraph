@@ -60,6 +60,12 @@ impl<T: ShaderSize> Buffer<T> {
         self.buffer_vec.len()
     }
 
+    /// The CPU-side mirror of the buffer's current contents (exactly what was
+    /// uploaded). Lets a test inspect the data without a GPU readback.
+    pub fn cpu_mirror(&self) -> &[T] {
+        &self.buffer_vec
+    }
+
     pub fn is_empty(&self) -> bool {
         self.buffer_vec.is_empty()
     }

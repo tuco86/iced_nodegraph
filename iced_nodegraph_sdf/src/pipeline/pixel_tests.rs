@@ -454,6 +454,26 @@ impl TestRenderer {
     /// drawables are world-baked (translate `(0,0)`), so the slot's second u32 is
     /// the draw-entry index = the index into `drawables` - which is what lets a
     /// test ask "did edge N reach any tile?".
+    /// Run the PRODUCTION compute cull and read its spatial index straight back.
+    fn cull_readback(
+        &self,
+        drawables: &[(&crate::drawable::Drawable, &Style)],
+        width: u32,
+        height: u32,
+        zoom: f32,
+        camera_position: [f32; 2],
+    ) -> CullReadback {
+        self.cull_readback_with(
+            &self.compute_pipeline,
+            MAX_SLOTS_PER_TILE,
+            drawables,
+            width,
+            height,
+            zoom,
+            camera_position,
+        )
+    }
+
     /// Run ONLY the compute cull with an explicit `compute_pipeline` and per-tile
     /// `slots_per_tile`, reading its two output buffers straight back. The pipeline
     /// is a parameter so a test can sweep `MAX_SLOTS_PER_TILE` (recompiled into a
@@ -3628,6 +3648,14 @@ impl CullReadback {
         self.counts.iter().copied().max().unwrap_or(0)
     }
 
+    /// Whether tile `(col, row)` references draw-entry `entry_idx` in any slot.
+    fn tile_references(&self, col: u32, row: u32, entry_idx: u32) -> bool {
+        let t = (row * self.grid_cols + col) as usize;
+        let n = self.counts[t] as usize;
+        let base = t * self.slots_per_tile as usize;
+        (0..n).any(|k| self.slots[base + k][1] == entry_idx)
+    }
+
     /// Tile columns whose every tile is empty (a fully-empty column reads as a
     /// gray vertical bar when a background fills the rest).
     fn empty_columns(&self) -> usize {
@@ -3768,5 +3796,180 @@ fn cull_cap_sweep_localizes_edge_drops() {
         0,
         "even a {}-slot cap still drops edges - the budget is not the (whole) cause",
         caps.last().unwrap(),
+    );
+}
+
+/// Distance from point `p` to the line segment `a`-`b` (clamped to the segment).
+fn point_seg_dist(p: [f32; 2], a: [f32; 2], b: [f32; 2]) -> f32 {
+    let ab = [b[0] - a[0], b[1] - a[1]];
+    let ap = [p[0] - a[0], p[1] - a[1]];
+    let len2 = ab[0] * ab[0] + ab[1] * ab[1];
+    let t = if len2 > 0.0 {
+        ((ap[0] * ab[0] + ap[1] * ab[1]) / len2).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let c = [a[0] + t * ab[0], a[1] + t * ab[1]];
+    ((p[0] - c[0]).powi(2) + (p[1] - c[1]).powi(2)).sqrt()
+}
+
+/// Ground-truth oracle for the two-level cull: a stroked line is rotated through a
+/// small tile grid (it "dances" around the centre), and for EVERY orientation we
+/// compute, per tile, whether the cull MUST reference the line's segment (the tile
+/// centre is well inside the line) or MUST NOT (it is well outside). The readback
+/// must agree. This pins the cull's spatial correctness AND that the segment data
+/// reaches the right tiles - a dropped reference is the missing-edges failure, a
+/// spurious far reference is the gray-bar failure. Distractor entries on either
+/// side of the line make the line a non-zero entry index, exercising the index
+/// plumbing. The middle band (corner-clip tiles) is left unasserted because the
+/// cull is deliberately conservative (over-inclusion is allowed, drops are not).
+#[test]
+fn cull_references_line_in_expected_tiles() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (128u32, 128u32, 1.0f32);
+    // Camera so world origin sits at the viewport centre: world = screen/zoom - cam.
+    let cam = [w as f32 * 0.5 / zoom, h as f32 * 0.5 / zoom];
+    let grid_cols = (w as f32 / TILE_SIZE).ceil() as u32;
+    let grid_rows = (h as f32 / TILE_SIZE).ceil() as u32;
+    let thd = TILE_SIZE * 0.707_106_77 / zoom; // tile half-diagonal in world
+    let half = TILE_SIZE * 0.5 / zoom; // tile half-width in world
+
+    let stroke = Style::stroke(rgba(1.0, 1.0, 1.0, 1.0), Pattern::solid(2.0));
+    let dot = Style::solid(rgba(1.0, 0.0, 0.0, 1.0));
+
+    for k in 0..24u32 {
+        let ang = k as f32 / 24.0 * std::f32::consts::TAU;
+        let (dx, dy) = (ang.cos(), ang.sin());
+        let len = 44.0;
+        let a = [-dx * len, -dy * len];
+        let b = [dx * len, dy * len];
+
+        // Distractors far off-grid so the LINE is entry index 1 (index plumbing).
+        let c0 = Curve::circle([1000.0, 1000.0], 5.0);
+        let line = Curve::line(a, b);
+        let c2 = Curve::circle([-1000.0, -1000.0], 5.0);
+        let d: [(&crate::drawable::Drawable, &Style); 3] =
+            [(&c0, &dot), (&line, &stroke), (&c2, &dot)];
+        let cull = r.cull_readback(&d, w, h, zoom, cam);
+        let line_idx = 1u32;
+
+        for row in 0..grid_rows {
+            for col in 0..grid_cols {
+                let center = [
+                    (col as f32 + 0.5) * TILE_SIZE / zoom - cam[0],
+                    (row as f32 + 0.5) * TILE_SIZE / zoom - cam[1],
+                ];
+                let dist = point_seg_dist(center, a, b);
+                let refed = cull.tile_references(col, row, line_idx);
+
+                // MUST reference: tile centre is within the line's own footprint.
+                if dist <= half {
+                    assert!(
+                        refed,
+                        "angle {k} ({:.0} deg): tile ({col},{row}) d={dist:.1} on the \
+                         line but the cull dropped it",
+                        ang.to_degrees(),
+                    );
+                }
+                // MUST NOT reference: tile centre is well beyond any stroke reach.
+                if dist > thd + 12.0 / zoom {
+                    assert!(
+                        !refed,
+                        "angle {k} ({:.0} deg): tile ({col},{row}) d={dist:.1} far from \
+                         the line but the cull referenced it (spurious)",
+                        ang.to_degrees(),
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Dedup/index validation through the REAL `SdfPipeline.prepare()` (the path the
+/// widget runs, with `frame_shape_slots` sharing segment ranges between identical
+/// shapes). The risk this pins: a DISTINCT edge wrongly sharing another's segment
+/// range (false dedup) would make it render as a copy of the wrong geometry - a
+/// "broken data fed to the cull" failure. Asserts: every entry's segment range is
+/// in-buffer and matches its own shape's arc count, distinct edges get DISTINCT
+/// ranges, a duplicate SHARES its original's range, and all bounds are finite.
+#[test]
+fn prepare_gives_distinct_edges_distinct_ranges() {
+    use crate::primitive::{SdfPipeline, SdfPrimitive};
+    use crate::shape::Shape;
+    use iced_wgpu::graphics::Viewport;
+    use iced_wgpu::primitive::{Pipeline, Primitive};
+
+    let r = shared_renderer();
+    let mut pipeline = SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
+    let (w, h) = (256u32, 256u32);
+    let viewport = Viewport::with_physical_size(iced::Size::new(w, h), 1.0);
+    let bounds = iced::Rectangle::new(iced::Point::ORIGIN, iced::Size::new(w as f32, h as f32));
+
+    let style = Style::stroke(rgba(1.0, 1.0, 1.0, 1.0), Pattern::solid(2.0));
+    let edges: Vec<Shape> = (0..6u32)
+        .map(|i| {
+            let f = i as f32;
+            Shape::bezier(
+                [f * 7.0, 0.0],
+                [20.0 + f, 10.0],
+                [40.0 - f, -10.0 + f],
+                [60.0, f * 5.0],
+            )
+        })
+        .collect();
+
+    let mut prim = SdfPrimitive::new();
+    for e in &edges {
+        prim.push(e, &style, [0.0, 0.0]);
+    }
+    // A duplicate of edge 0 (same control points) must SHARE its segment range.
+    prim.push(&edges[0], &style, [0.0, 0.0]);
+
+    Pipeline::trim(&mut pipeline);
+    prim.prepare(&mut pipeline, &r.device, &r.queue, &bounds, &viewport);
+
+    let entries = pipeline.entries_mirror().to_vec();
+    let seg_len = pipeline.segments_mirror().len();
+    assert_eq!(
+        entries.len(),
+        7,
+        "6 distinct edges + 1 duplicate = 7 entries"
+    );
+
+    for (i, e) in entries.iter().enumerate() {
+        let shape = if i < 6 { &edges[i] } else { &edges[0] };
+        let want = shape.evaluate().segment_count();
+        assert_eq!(
+            e.segment_count as usize, want,
+            "entry {i}: segment_count {} != shape's arc count {want}",
+            e.segment_count,
+        );
+        assert!(
+            (e.segment_start + e.segment_count) as usize <= seg_len,
+            "entry {i}: range [{}, {}) out of the {seg_len}-segment buffer",
+            e.segment_start,
+            e.segment_start + e.segment_count,
+        );
+        assert!(
+            e.bounds.0.iter().all(|v| v.is_finite()),
+            "entry {i}: non-finite bounds {:?}",
+            e.bounds.0,
+        );
+    }
+
+    // The duplicate (entry 6) shares edge 0's (entry 0) range.
+    assert_eq!(
+        entries[6].segment_start, entries[0].segment_start,
+        "duplicate edge must share the original's segment range",
+    );
+    // The 6 distinct edges must NOT share ranges (false dedup = wrong geometry).
+    let mut starts: Vec<u32> = (0..6).map(|i| entries[i].segment_start).collect();
+    starts.sort_unstable();
+    starts.dedup();
+    assert_eq!(
+        starts.len(),
+        6,
+        "distinct edges collapsed onto shared ranges (false dedup): {:?}",
+        (0..6).map(|i| entries[i].segment_start).collect::<Vec<_>>(),
     );
 }

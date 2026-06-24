@@ -374,6 +374,20 @@ impl SdfPipeline {
         self.shape_cache.misses()
     }
 
+    /// CPU mirror of the draw-entry buffer as built by the last `prepare` (before
+    /// `trim`). Test-only hook to validate the dedup/index plumbing directly.
+    #[cfg(test)]
+    pub(crate) fn entries_mirror(&self) -> &[types::GpuDrawEntry] {
+        self.entries_buffer.cpu_mirror()
+    }
+
+    /// CPU mirror of the segment buffer as built by the last `prepare` (before
+    /// `trim`). Test-only hook to validate that shapes compile to the right arcs.
+    #[cfg(test)]
+    pub(crate) fn segments_mirror(&self) -> &[types::GpuSegment] {
+        self.segments_buffer.cpu_mirror()
+    }
+
     /// Whether the most recently prepared frame served its background from the
     /// texture cache (blit) instead of rendering it directly. Diagnostic hook for
     /// the static-background cache gate.
@@ -691,12 +705,18 @@ impl Primitive for SdfPrimitive {
                     )
                 } else {
                     pipeline.frame_shape_slots.insert(hash, segment_offset);
+                    // Pass `seg_base` (the buffer base), NOT `segment_offset`:
+                    // `compile_local_at` adds the batch position (`seg_batch.len()`)
+                    // itself, so it lands at `seg_base + seg_batch.len()` =
+                    // `segment_offset`. Passing the already-offset value would
+                    // double-count the batch length, indexing every entry after the
+                    // first past its real segments.
                     compile_local_at(
                         &local,
                         &entry.style,
                         i as u32,
                         entry.placement,
-                        segment_offset,
+                        seg_base,
                         &mut seg_batch,
                     )
                 };
