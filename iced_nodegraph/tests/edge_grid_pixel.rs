@@ -195,3 +195,27 @@ fn edge_grid_stable_across_frames() {
         );
     }
 }
+
+/// Visual probe: render the REAL widget edge grid to a PNG so the reported boxes
+/// can be SEEN headless (the SDF crate renders the same edge geometry as clean
+/// strokes, so any boxes here localize the bug to the widget's draw path). Writes
+/// to the repo root; not an assertion.
+#[test]
+#[ignore = "visual probe: writes widget_edge_grid_render.png"]
+fn dump_edge_grid_png() {
+    let Some(px) = render_edge_grid() else {
+        eprintln!("no GPU adapter - skipping dump_edge_grid_png");
+        return;
+    };
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../widget_edge_grid_render.png"
+    );
+    let file = std::fs::File::create(path).unwrap();
+    let mut enc = png::Encoder::new(std::io::BufWriter::new(file), GW, GH);
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut writer = enc.write_header().unwrap();
+    let flat: Vec<u8> = px.iter().flat_map(|p| p.iter().copied()).collect();
+    writer.write_image_data(&flat).unwrap();
+}

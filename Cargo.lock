@@ -1690,6 +1690,7 @@ dependencies = [
  "iced_test",
  "iced_wgpu",
  "iced_widget",
+ "png",
  "pollster",
  "proptest",
  "rustc-hash 2.1.2",

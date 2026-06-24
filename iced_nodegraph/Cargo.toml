@@ -30,6 +30,7 @@ iced_test = { workspace = true }
 proptest = "1"
 criterion = "0.5"
 pollster.workspace = true
+png = "0.18"
 
 [[bench]]
 name = "frame_prep"

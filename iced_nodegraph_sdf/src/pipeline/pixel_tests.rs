@@ -4012,6 +4012,79 @@ fn cull_cap_sweep_localizes_edge_drops() {
     );
 }
 
+/// Write RGBA pixels to a PNG (debug aid: render a scene, then look at it).
+fn write_png(path: &str, px: &[[u8; 4]], w: u32, h: u32) {
+    let file = std::fs::File::create(path).unwrap();
+    let bw = std::io::BufWriter::new(file);
+    let mut enc = png::Encoder::new(bw, w, h);
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut writer = enc.write_header().unwrap();
+    let flat: Vec<u8> = px.iter().flat_map(|p| p.iter().copied()).collect();
+    writer.write_image_data(&flat).unwrap();
+}
+
+/// Render the demo's fan-out edge scene to a PNG so the boxes can be SEEN headless.
+/// Edges only (green on transparent), the exact 25x20 / 640-edge / 16-source layout
+/// the demo runs. Not an assertion - a visual probe. Writes to the repo root.
+#[test]
+#[ignore = "visual probe: writes edge_scene_render.png for manual inspection"]
+fn dump_edge_scene_png() {
+    use crate::primitive::SdfPrimitive;
+    use crate::shape::Shape;
+
+    let r = shared_renderer();
+    let (cols, rows) = (25usize, 20usize);
+    let (sx, sy) = (90.0f32, 80.0f32);
+    let n = cols * rows;
+    let half = [35.0f32, 30.0];
+    let (w, h) = (640u32, 448u32);
+    let zoom = (w as f32 / (cols as f32 * sx)).min(h as f32 / (rows as f32 * sy)) * 0.92;
+    let cam = [
+        w as f32 * 0.5 / zoom - cols as f32 * sx * 0.5,
+        h as f32 * 0.5 / zoom - rows as f32 * sy * 0.5,
+    ];
+
+    let green = Style::stroke(rgba(0.0, 1.0, 0.0, 1.0), Pattern::solid(2.0));
+    let mut prim = SdfPrimitive::new();
+    let sources = 16usize;
+    for e in 0..640usize {
+        let from = e % sources;
+        let to = sources + (e * 7 + 3) % (n - sources);
+        if to == from {
+            continue;
+        }
+        let (fc, fr) = ((from % cols) as f32, (from / cols) as f32);
+        let (tc, tr) = ((to % cols) as f32, (to / cols) as f32);
+        let a = [fc * sx + half[0], fr * sy];
+        let b = [tc * sx - half[0], tr * sy];
+        let dx = (b[0] - a[0]).abs().max(sx);
+        prim.push(
+            &Shape::bezier(a, [a[0] + dx * 0.5, a[1]], [b[0] - dx * 0.5, b[1]], b),
+            &green,
+            [0.0, 0.0],
+        );
+    }
+    let prim = prim.camera(cam[0], cam[1], zoom);
+    let px = r.render_primitive(&prim, w, h);
+    write_png(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../edge_scene_render.png"),
+        &px,
+        w,
+        h,
+    );
+}
+
+/// Point on the cubic bezier at parameter `t`.
+fn cubic_point(p0: [f32; 2], p1: [f32; 2], p2: [f32; 2], p3: [f32; 2], t: f32) -> [f32; 2] {
+    let u = 1.0 - t;
+    let (a, b, c, d) = (u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t);
+    [
+        a * p0[0] + b * p1[0] + c * p2[0] + d * p3[0],
+        a * p0[1] + b * p1[1] + c * p2[1] + d * p3[1],
+    ]
+}
+
 /// Distance from point `p` to the line segment `a`-`b` (clamped to the segment).
 fn point_seg_dist(p: [f32; 2], a: [f32; 2], b: [f32; 2]) -> f32 {
     let ab = [b[0] - a[0], b[1] - a[1]];
@@ -4497,5 +4570,65 @@ fn widget_edge_shape_renders_as_stroke() {
         "widget edge '{}' rendered as a filled box: {} green px",
         worst.0,
         worst.1,
+    );
+}
+
+/// Does the CULL reference a bezier edge's segments only along its CURVE, or does
+/// it over-include them across the whole AABB? The biarc fits near-straight
+/// sections with huge-radius arcs (radius ~1000 for a small edge); if the arc is
+/// culled by distance to the FULL circle (ignoring its angular range), tiles far
+/// from the actual curve but near the huge circle get the segment - the AABB-shaped
+/// occupancy seen in the edge tile-debug heatmap. Reads the cull back for one
+/// diagonal bezier and reports how many referenced tiles are FAR from the curve.
+#[test]
+fn cull_bezier_follows_curve_not_aabb() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (256u32, 256u32, 1.0f32);
+    let cam = [w as f32 * 0.5 / zoom, h as f32 * 0.5 / zoom];
+    let grid_cols = (w as f32 / TILE_SIZE).ceil() as u32;
+    let grid_rows = (h as f32 / TILE_SIZE).ceil() as u32;
+    let thd = TILE_SIZE * 0.707_106_77 / zoom;
+
+    let stroke = Style::stroke(rgba(1.0, 1.0, 1.0, 1.0), Pattern::solid(3.0));
+    let (p0, c0, c1, p1) = ([-90.0, -90.0], [-30.0, -90.0], [30.0, 90.0], [90.0, 90.0]);
+    let bez = Curve::bezier(p0, c0, c1, p1);
+    let cull = r.cull_readback(&[(&bez, &stroke)], w, h, zoom, cam);
+
+    // Dense samples of the true curve.
+    let samples: Vec<[f32; 2]> = (0..=200)
+        .map(|i| cubic_point(p0, c0, c1, p1, i as f32 / 200.0))
+        .collect();
+
+    let mut referenced = 0u32;
+    let mut far = 0u32;
+    let mut farthest = 0.0f32;
+    for row in 0..grid_rows {
+        for col in 0..grid_cols {
+            if !cull.tile_references(col, row, 0) {
+                continue;
+            }
+            referenced += 1;
+            let center = [
+                (col as f32 + 0.5) * TILE_SIZE / zoom - cam[0],
+                (row as f32 + 0.5) * TILE_SIZE / zoom - cam[1],
+            ];
+            let d = samples
+                .iter()
+                .map(|s| ((center[0] - s[0]).powi(2) + (center[1] - s[1]).powi(2)).sqrt())
+                .fold(f32::INFINITY, f32::min);
+            farthest = farthest.max(d);
+            // A tile whose centre is > tile-diagonal + a generous stroke reach from
+            // the true curve has no business holding the segment.
+            if d > thd + 12.0 / zoom {
+                far += 1;
+            }
+        }
+    }
+    eprintln!(
+        "bezier cull: {referenced} tiles reference the edge, {far} are FAR from the curve (farthest {farthest:.0}px)",
+    );
+    assert_eq!(
+        far, 0,
+        "cull over-includes the bezier into {far} tiles far from its curve (AABB fill)",
     );
 }
