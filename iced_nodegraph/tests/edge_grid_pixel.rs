@@ -170,6 +170,39 @@ fn edge_grid_edges_are_visible() {
     );
 }
 
+/// Probe: print the real per-frame GPU buffer sizes (and what the tile-slot buffer
+/// would be at cap 32 vs 128), so the cap's memory cost is concrete.
+#[test]
+#[ignore = "diagnostic: prints GPU buffer sizes"]
+fn report_buffer_sizes() {
+    if render_edge_grid().is_none() {
+        return;
+    }
+    let s = iced_nodegraph_sdf::sdf_stats();
+    let tiles = s.tile_count as u64;
+    let kib = |b: u64| b / 1024;
+    eprintln!(
+        "tiles={tiles} entries={} unique_shapes={} segments={}",
+        s.entry_count, s.unique_shapes, s.segment_count
+    );
+    eprintln!("  tile_counts:  {} KiB ({tiles} x 4)", kib(tiles * 4));
+    eprintln!(
+        "  tile_slots @cap32:  {} KiB ({tiles} x 64 x 4)",
+        kib(tiles * 64 * 4)
+    );
+    eprintln!(
+        "  tile_slots @cap128: {} KiB ({tiles} x 256 x 4)  <- current",
+        kib(tiles * 256 * 4)
+    );
+    eprintln!(
+        "  segments: {} KiB ({} x 64) | entries: {} KiB ({} x 80)",
+        kib(s.segment_count as u64 * 64),
+        s.segment_count,
+        kib(s.entry_count as u64 * 80),
+        s.entry_count,
+    );
+}
+
 /// The live demo renders MANY frames against a persistent `SdfPipeline` whose
 /// frame-surviving state (the shape cache, the static-background texture cache) is
 /// exactly what a single-frame test cannot exercise. This renders the same scene
@@ -387,6 +420,95 @@ fn iced_direct_edges_render_as_strokes() {
     );
 }
 
+/// Isolation step 1b: the SAME three known-clean edges from
+/// `iced_direct_edges_render_as_strokes`, but with `fill_text` calls interleaved
+/// into the frame - all through iced_wgpu's renderer, with NO NodeGraph widget.
+/// The handoff established TEXT as the blob trigger only via the full widget path;
+/// this strips the widget away to ask whether a bare `draw_primitive` + `fill_text`
+/// frame is enough to corrupt an edge into a filled box. Result: it stays a clean
+/// stroke (~2830 green), so text merely sharing the SDF frame is NOT sufficient -
+/// the trigger needs more of the widget's frame (see the faithful-replica probe).
+/// Diagnostic: asserts nothing fatal, just reports the count. Ignored: run alone.
+#[test]
+#[ignore = "diagnostic probe: writes iced_direct_text.png; run alone"]
+fn iced_direct_edges_with_text_stays_clean() {
+    use iced::Pixels;
+    use iced::advanced::text::{self, LineHeight, Renderer as _, Shaping, Text, Wrapping};
+    use iced::alignment;
+    use iced_nodegraph_sdf::{Pattern, SdfPrimitive, Shape, Style};
+    use iced_wgpu::primitive::Renderer as _;
+
+    let Some(mut guard) = shared() else {
+        eprintln!("no GPU adapter - skipping iced_direct_edges_with_text_blob");
+        return;
+    };
+    let renderer = &mut *guard;
+    let green = Style::stroke(Color::from_rgb(0.0, 1.0, 0.0), Pattern::solid(2.0));
+    let clip = Rectangle::new(Point::ORIGIN, Size::new(600.0, 400.0));
+
+    // Mimic the widget's pin labels: a short string drawn at each edge endpoint,
+    // interleaved with the edge primitives in the same frame/layer.
+    let label = |renderer: &mut Renderer, x: f32, y: f32| {
+        let t = Text {
+            content: "o".to_string(),
+            bounds: Size::new(40.0, 20.0),
+            size: Pixels(16.0),
+            line_height: LineHeight::default(),
+            font: iced::Font::default(),
+            align_x: text::Alignment::Left,
+            align_y: alignment::Vertical::Top,
+            shaping: Shaping::Basic,
+            wrapping: Wrapping::default(),
+        };
+        renderer.fill_text(t, Point::new(x, y), Color::WHITE, clip);
+    };
+
+    for (p0, c0, c1, p1) in [
+        (
+            [110.0f32, 55.0],
+            [190.0, 55.0],
+            [340.0, 105.0],
+            [420.0, 105.0],
+        ),
+        ([110.0, 55.0], [190.0, 55.0], [360.0, 365.0], [440.0, 365.0]),
+        (
+            [150.0, 315.0],
+            [230.0, 315.0],
+            [340.0, 105.0],
+            [420.0, 105.0],
+        ),
+    ] {
+        let mut prim = SdfPrimitive::new();
+        prim.push(&Shape::bezier(p0, c0, c1, p1), &green, [0.0, 0.0]);
+        let prim = prim.camera(0.0, 0.0, 1.0);
+        renderer.draw_primitive(clip, prim);
+        // Pin labels at both endpoints, interleaved like the widget does.
+        label(renderer, p0[0], p0[1]);
+        label(renderer, p1[0], p1[1]);
+    }
+
+    let bytes = renderer.screenshot(
+        &Viewport::with_physical_size(Size::new(600, 400), 1.0),
+        Color::TRANSPARENT,
+    );
+    let px: Vec<[u8; 4]> = bytes
+        .chunks_exact(4)
+        .map(|c| [c[0], c[1], c[2], c[3]])
+        .collect();
+
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../iced_direct_text.png");
+    let file = std::fs::File::create(path).unwrap();
+    let mut enc = png::Encoder::new(std::io::BufWriter::new(file), 600, 400);
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut writer = enc.write_header().unwrap();
+    let flat: Vec<u8> = px.iter().flat_map(|p| p.iter().copied()).collect();
+    writer.write_image_data(&flat).unwrap();
+
+    let g = green_count(&px);
+    eprintln!("iced-direct edges+TEXT green: {g} px (3 strokes ~3000, blob ~30000)");
+}
+
 /// Isolation step 2: the FULL widget SDF primitive set (background, node shadows,
 /// the edge batch, then per-node fills + pins) drawn directly through iced_wgpu's
 /// `draw_primitive` in the widget's order, but WITHOUT text. If the edge blobs
@@ -495,6 +617,162 @@ fn iced_direct_full_sdf_frame_edges_render_as_strokes() {
         g < 8000,
         "iced_wgpu full SDF frame rendered edges as boxes: {g} green px",
     );
+}
+
+/// Isolation step 3: the closest widget-free replica of the blobbing frame -
+/// background, shadows, the edge batch, then per-node fill / foreground (border
+/// stroke + two pins) across nested iced layers, with the pin labels drawn via
+/// `fill_paragraph` (the real `text()` widget's cached, advance-shaped path, not
+/// raw `fill_text`). This replica matches the widget's per-primitive TILE layout
+/// exactly (verified by diffing prepare params: tile_base, total_tiles, cols/rows,
+/// bounds, camera, zoom all identical) yet renders CLEAN (~2830 green). It still
+/// diverges from the widget in the SEGMENT-buffer layout - the widget's edges land
+/// at a higher `segbase` because its shadow/foreground shapes compile to more
+/// (non-deduped) segments. Conclusion: text sharing the frame is necessary but NOT
+/// sufficient; the blob also needs the widget's exact segment-buffer layout, which
+/// points the trigger at segment-range indexing under that layout, not at text
+/// alone. Ignored: run alone (shared-renderer pollution).
+#[test]
+#[ignore = "diagnostic probe: writes iced_direct_paragraph.png; run alone"]
+fn iced_direct_faithful_replica_stays_clean() {
+    use iced::Rectangle as R;
+    use iced::advanced::Renderer as _;
+    use iced::advanced::text::{
+        self, LineHeight, Paragraph as _, Renderer as TextRenderer, Shaping, Text, Wrapping,
+    };
+    use iced::{Pixels, Vector, alignment};
+    use iced_nodegraph_sdf::{Pattern, SdfPrimitive, Shape, Style, Tiling};
+    use iced_wgpu::primitive::Renderer as _;
+
+    type Para = <Renderer as TextRenderer>::Paragraph;
+
+    let Some(mut guard) = shared() else {
+        return;
+    };
+    let renderer = &mut *guard;
+    let full = R::new(Point::ORIGIN, Size::new(600.0, 400.0));
+    let gray = Style::solid(Color::from_rgb(0.30, 0.32, 0.40));
+    let dark = Style::solid(Color::from_rgb(0.12, 0.13, 0.16));
+    let green = Style::stroke(Color::from_rgb(0.0, 1.0, 0.0), Pattern::solid(2.0));
+    let positions = [
+        [40.0f32, 40.0],
+        [420.0, 60.0],
+        [80.0, 300.0],
+        [440.0, 320.0],
+    ];
+
+    let label = |renderer: &mut Renderer, s: &str, x: f32, y: f32, clip: R| {
+        let para = Para::with_text(Text {
+            content: s,
+            bounds: Size::new(40.0, 20.0),
+            size: Pixels(16.0),
+            line_height: LineHeight::default(),
+            font: iced::Font::default(),
+            align_x: text::Alignment::Left,
+            align_y: alignment::Vertical::Top,
+            shaping: Shaping::Advanced,
+            wrapping: Wrapping::default(),
+        });
+        renderer.fill_paragraph(&para, Point::new(x, y), Color::WHITE, clip);
+    };
+
+    renderer.with_layer(full, |renderer| {
+        let mut bg = SdfPrimitive::new();
+        bg.push(
+            &Shape::tiling(Tiling::grid(40.0, 40.0, 1.0)),
+            &dark,
+            [0.0, 0.0],
+        );
+        renderer.draw_primitive(full, bg.camera(0.0, 0.0, 1.0).background());
+    });
+
+    renderer.with_layer(full, |renderer| {
+        let mut shadows = SdfPrimitive::new();
+        for p in positions {
+            shadows.push(
+                &Shape::rounded_box([70.0, 60.0], [6.0; 4]),
+                &gray,
+                [p[0] + 39.0, p[1] + 34.0],
+            );
+        }
+        renderer.draw_primitive(full, shadows.camera(0.0, 0.0, 1.0));
+    });
+
+    renderer.with_layer(full, |renderer| {
+        let mut edges = SdfPrimitive::new();
+        for (p0, c0, c1, p1) in [
+            (
+                [110.0f32, 55.0],
+                [190.0, 55.0],
+                [340.0, 105.0],
+                [420.0, 105.0],
+            ),
+            ([110.0, 55.0], [190.0, 55.0], [360.0, 365.0], [440.0, 365.0]),
+            (
+                [150.0, 315.0],
+                [230.0, 315.0],
+                [340.0, 105.0],
+                [420.0, 105.0],
+            ),
+        ] {
+            edges.push(&Shape::bezier(p0, c0, c1, p1), &green, [0.0, 0.0]);
+        }
+        renderer.draw_primitive(full, edges.camera(0.0, 0.0, 1.0));
+    });
+
+    for p in positions {
+        let center = [p[0] + 35.0, p[1] + 30.0];
+        let fill_clip = R::new(Point::new(p[0] - 2.0, p[1] - 2.0), Size::new(74.0, 64.0));
+        renderer.with_layer(full, |renderer| {
+            let mut fill = SdfPrimitive::new();
+            fill.push(&Shape::rounded_box([70.0, 60.0], [6.0; 4]), &gray, center);
+            renderer.draw_primitive(fill_clip, fill.camera(-p[0] + 2.0, -p[1] + 2.0, 1.0));
+        });
+
+        let node_clip = R::new(Point::new(p[0] - 2.0, p[1] - 2.0), Size::new(74.0, 64.0));
+        renderer.with_layer(full, |renderer| {
+            renderer.with_layer(node_clip, |renderer| {
+                renderer.with_translation(Vector::new(0.0, 0.0), |renderer| {
+                    label(renderer, "i", p[0] - 2.0, center[1] - 8.0, node_clip);
+                    label(renderer, "o", p[0] + 66.0, center[1] - 8.0, node_clip);
+                });
+            });
+        });
+
+        // Foreground = BORDER stroke + 2 pins (3 entries), matching the widget's
+        // fg_batch. The border is a stroke like the edges and shares the segments
+        // buffer with them - the segbase/entry-count diff vs the widget traces to
+        // this missing border entry.
+        let border = Style::stroke(Color::from_rgb(0.5, 0.5, 0.6), Pattern::solid(1.5));
+        let pins_clip = R::new(Point::new(p[0] - 5.0, p[1] - 3.0), Size::new(80.0, 66.0));
+        renderer.with_layer(full, |renderer| {
+            let mut fg = SdfPrimitive::new();
+            fg.push(&Shape::rounded_box([70.0, 60.0], [6.0; 4]), &border, center);
+            fg.push(&Shape::circle(4.0), &gray, [p[0], center[1]]);
+            fg.push(&Shape::circle(4.0), &gray, [p[0] + 70.0, center[1]]);
+            renderer.draw_primitive(pins_clip, fg.camera(-p[0] + 5.0, -p[1] + 3.0, 1.0));
+        });
+    }
+
+    let bytes = renderer.screenshot(
+        &Viewport::with_physical_size(Size::new(600, 400), 1.0),
+        Color::TRANSPARENT,
+    );
+    let px: Vec<[u8; 4]> = bytes
+        .chunks_exact(4)
+        .map(|c| [c[0], c[1], c[2], c[3]])
+        .collect();
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../iced_direct_paragraph.png");
+    let file = std::fs::File::create(path).unwrap();
+    let mut e = png::Encoder::new(std::io::BufWriter::new(file), 600, 400);
+    e.set_color(png::ColorType::Rgba);
+    e.set_depth(png::BitDepth::Eight);
+    let mut writer = e.write_header().unwrap();
+    let flat: Vec<u8> = px.iter().flat_map(|p| p.iter().copied()).collect();
+    writer.write_image_data(&flat).unwrap();
+
+    let g = green_count(&px);
+    eprintln!("iced-direct PARAGRAPH + frame green: {g} px (clean ~3000, blob ~30000)");
 }
 
 #[test]
