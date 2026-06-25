@@ -5141,3 +5141,59 @@ fn cull_bezier_follows_curve_not_aabb() {
         "cull over-includes the bezier into {far} tiles far from its curve (AABB fill)",
     );
 }
+
+/// A strongly C-shaped (concave) edge fits WIDE arcs (the biarc fitter allows up
+/// to ~171 deg per arc). Bounding such an arc by its chord plus a single sagitta
+/// inflates it by ~0.9*R on BOTH sides, so the cull lights up a large region on
+/// the arc's CONCAVE (inner) side where the curve never goes - the big false
+/// "edges in range" blob seen panning the edge tile-debug. The arc must be
+/// bounded by sub-chords so the concave interior stays empty. Reads the cull back
+/// for a rightward-bulging edge and asserts no referenced tile is far from the
+/// true curve (which here means: not in the hollow on the left).
+#[test]
+fn cull_wide_arc_has_no_concave_overinclusion() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (256u32, 256u32, 1.0f32);
+    let cam = [w as f32 * 0.5 / zoom, h as f32 * 0.5 / zoom];
+    let grid_cols = (w as f32 / TILE_SIZE).ceil() as u32;
+    let grid_rows = (h as f32 / TILE_SIZE).ceil() as u32;
+    let thd = TILE_SIZE * 0.707_106_77 / zoom;
+
+    let stroke = Style::stroke(rgba(1.0, 1.0, 1.0, 1.0), Pattern::solid(3.0));
+    // Rightward bulge: endpoints stacked on the left, controls pushed far right,
+    // so the curve is a wide arc whose concave hollow faces LEFT (toward x<0).
+    let (p0, c0, c1, p1) = ([0.0, -90.0], [150.0, -55.0], [150.0, 55.0], [0.0, 90.0]);
+    let bez = Curve::bezier(p0, c0, c1, p1);
+    let cull = r.cull_readback(&[(&bez, &stroke)], w, h, zoom, cam);
+
+    let samples: Vec<[f32; 2]> = (0..=200)
+        .map(|i| cubic_point(p0, c0, c1, p1, i as f32 / 200.0))
+        .collect();
+
+    let mut far = 0u32;
+    let mut farthest = 0.0f32;
+    for row in 0..grid_rows {
+        for col in 0..grid_cols {
+            if !cull.tile_references(col, row, 0) {
+                continue;
+            }
+            let center = [
+                (col as f32 + 0.5) * TILE_SIZE / zoom - cam[0],
+                (row as f32 + 0.5) * TILE_SIZE / zoom - cam[1],
+            ];
+            let d = samples
+                .iter()
+                .map(|s| ((center[0] - s[0]).powi(2) + (center[1] - s[1]).powi(2)).sqrt())
+                .fold(f32::INFINITY, f32::min);
+            farthest = farthest.max(d);
+            if d > thd + 12.0 / zoom {
+                far += 1;
+            }
+        }
+    }
+    eprintln!("wide-arc cull: {far} tiles FAR from the curve (farthest {farthest:.0}px)");
+    assert_eq!(
+        far, 0,
+        "wide arc over-includes {far} tiles on its concave side (chord+sagitta inflation)",
+    );
+}

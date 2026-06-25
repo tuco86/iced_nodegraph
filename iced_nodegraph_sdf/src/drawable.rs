@@ -5,34 +5,74 @@
 
 use glam::Vec2;
 
-/// Segment type discriminant (matches GPU constants).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u32)]
-pub enum SegmentType {
-    Line = 0,
-    Arc = 1,
-    CubicBezier = 2,
-    /// Junction point between segments. Defines sign at corners.
-    /// geom0 = (px, py, heading, 0)
-    Point = 3,
-}
-
-/// A single geometric segment with arc-length parameterization.
+/// A single arc segment - the ONE geometric primitive ("Arc is all you need").
+///
+/// Encoded by its endpoints plus a signed curvature (see [`crate::segment`]):
+/// `curvature == 0` is a straight line, `start == end` is a point (junction
+/// marker, sign from `heading`), otherwise it is the minor arc of radius
+/// `1/|curvature|` bulging to the side `curvature`'s sign selects. There is no
+/// separate Line / Cubic / Point type: those are degenerate arcs.
 #[derive(Debug, Clone, Copy)]
 pub struct Segment {
-    pub segment_type: SegmentType,
     /// Part of a closed contour: SDF returns signed distance (negative = interior).
     pub signed: bool,
-    /// Geometry: interpretation depends on segment_type.
-    /// Line: geom0 = (ax, ay, bx, by), geom1 unused
-    /// CubicBezier: geom0 = (p0x, p0y, p1x, p1y), geom1 = (p2x, p2y, p3x, p3y)
-    /// Arc: geom0 = (cx, cy, radius, start_angle), geom1 = (sweep_angle, 0, 0, 0)
-    pub geom0: [f32; 4],
-    pub geom1: [f32; 4],
+    pub start: Vec2,
+    pub end: Vec2,
+    /// Signed curvature (`1/radius`); `0` = line. Sign selects the bulge side.
+    pub curvature: f32,
+    /// Interior-bisector heading; only meaningful for a point (`start == end`).
+    pub heading: f32,
     /// Cumulative arc length at segment start.
     pub arc_start: f32,
     /// Cumulative arc length at segment end.
     pub arc_end: f32,
+}
+
+impl Segment {
+    /// Straight line `start -> end`.
+    pub(crate) fn line(start: Vec2, end: Vec2, signed: bool, arc_start: f32, arc_end: f32) -> Self {
+        Self { signed, start, end, curvature: 0.0, heading: 0.0, arc_start, arc_end }
+    }
+
+    /// Zero-length junction point at `pos`; `heading` is the interior bisector.
+    pub(crate) fn point(pos: Vec2, heading: f32, signed: bool, arc_at: f32) -> Self {
+        Self { signed, start: pos, end: pos, curvature: 0.0, heading, arc_start: arc_at, arc_end: arc_at }
+    }
+
+    /// One MINOR arc; the caller guarantees `|sweep| < PI` (use [`Self::push_arc`]
+    /// for arbitrary sweeps, which splits wider arcs).
+    pub(crate) fn arc(
+        center: Vec2, radius: f32, start_angle: f32, sweep: f32,
+        signed: bool, arc_start: f32, arc_end: f32,
+    ) -> Self {
+        let (start, end, curvature) = crate::segment::from_center_arc(center, radius, start_angle, sweep);
+        Self { signed, start, end, curvature, heading: 0.0, arc_start, arc_end }
+    }
+
+    /// Append `(center, radius, start_angle, sweep)` as one or more MINOR sub-arcs
+    /// (each `|sweep| < PI`; a full-circle pin becomes 4 quarters), advancing the
+    /// cumulative arc length `acc`. The single place arcs are split for the
+    /// arc-only model, so the endpoint+curvature reconstruction stays unambiguous.
+    pub(crate) fn push_arc(
+        out: &mut Vec<Segment>, center: Vec2, radius: f32, start_angle: f32, sweep: f32,
+        signed: bool, acc: &mut f32,
+    ) {
+        let n = ((sweep.abs() / (std::f32::consts::PI * 0.5)).ceil() as u32).max(1);
+        let sub = sweep / n as f32;
+        let seg_len = radius * sub.abs();
+        for i in 0..n {
+            let a0 = start_angle + sub * i as f32;
+            out.push(Segment::arc(center, radius, a0, sub, signed, *acc, *acc + seg_len));
+            *acc += seg_len;
+        }
+    }
+
+    /// Grow an AABB `(min, max)` by this segment's exact extent.
+    pub(crate) fn grow_aabb(&self, min: &mut Vec2, max: &mut Vec2) {
+        let (lo, hi) = crate::segment::seg_aabb(self.start, self.end, self.curvature);
+        *min = min.min(lo);
+        *max = max.max(hi);
+    }
 }
 
 /// Draw entry type discriminant (matches GPU constants).
@@ -100,32 +140,11 @@ impl Drawable {
     /// origin is not adjusted.
     pub fn translated(&self, dx: f32, dy: f32) -> Self {
         let mut out = self.clone();
+        let off = Vec2::new(dx, dy);
         for seg in &mut out.segments {
-            match seg.segment_type {
-                // geom0 = (ax, ay, bx, by)
-                SegmentType::Line => {
-                    seg.geom0[0] += dx;
-                    seg.geom0[1] += dy;
-                    seg.geom0[2] += dx;
-                    seg.geom0[3] += dy;
-                }
-                // geom0 = (p0, p1), geom1 = (p2, p3)
-                SegmentType::CubicBezier => {
-                    seg.geom0[0] += dx;
-                    seg.geom0[1] += dy;
-                    seg.geom0[2] += dx;
-                    seg.geom0[3] += dy;
-                    seg.geom1[0] += dx;
-                    seg.geom1[1] += dy;
-                    seg.geom1[2] += dx;
-                    seg.geom1[3] += dy;
-                }
-                // geom0 = (cx, cy, ...) / (px, py, ...): only the position moves.
-                SegmentType::Arc | SegmentType::Point => {
-                    seg.geom0[0] += dx;
-                    seg.geom0[1] += dy;
-                }
-            }
+            // Endpoints are positions; curvature/heading are translation-invariant.
+            seg.start += off;
+            seg.end += off;
         }
         out.bounds[0] += dx;
         out.bounds[1] += dy;
@@ -143,14 +162,7 @@ impl Drawable {
         let max_y = a.y.max(b.y);
         Self {
             drawable_type: DrawableType::CurveSegment,
-            segments: vec![Segment {
-                segment_type: SegmentType::Line,
-                signed: false,
-                geom0: [a.x, a.y, b.x, b.y],
-                geom1: [0.0; 4],
-                arc_start: 0.0,
-                arc_end: length,
-            }],
+            segments: vec![Segment::line(a, b, false, 0.0, length)],
             total_arc_length: length,
             bounds: [min_x, min_y, max_x, max_y],
             is_closed: false,
@@ -163,14 +175,7 @@ impl Drawable {
     pub(crate) fn single_point(pos: Vec2, heading: f32) -> Self {
         Self {
             drawable_type: DrawableType::CurveSegment,
-            segments: vec![Segment {
-                segment_type: SegmentType::Point,
-                signed: false,
-                geom0: [pos.x, pos.y, heading, 0.0],
-                geom1: [0.0; 4],
-                arc_start: 0.0,
-                arc_end: 0.0,
-            }],
+            segments: vec![Segment::point(pos, heading, false, 0.0)],
             total_arc_length: 0.0,
             bounds: [pos.x, pos.y, pos.x, pos.y],
             is_closed: false,
@@ -179,55 +184,21 @@ impl Drawable {
         }
     }
 
-    /// Create a single arc segment drawable.
+    /// Create a single arc segment drawable (`sweep` of any magnitude, split into
+    /// minor sub-arcs).
     pub(crate) fn single_arc(center: Vec2, radius: f32, start_angle: f32, sweep: f32) -> Self {
-        let arc_length = sweep.abs() * radius;
-        Self {
-            drawable_type: DrawableType::CurveSegment,
-            segments: vec![Segment {
-                segment_type: SegmentType::Arc,
-                signed: false,
-                geom0: [center.x, center.y, radius, start_angle],
-                geom1: [sweep, 0.0, 0.0, 0.0],
-                arc_start: 0.0,
-                arc_end: arc_length,
-            }],
-            total_arc_length: arc_length,
-            bounds: [
-                center.x - radius,
-                center.y - radius,
-                center.x + radius,
-                center.y + radius,
-            ],
-            is_closed: false,
-            tiling_type: None,
-            tiling_params: [0.0; 4],
+        let mut segments = Vec::new();
+        let mut acc = 0.0;
+        Segment::push_arc(&mut segments, center, radius, start_angle, sweep, false, &mut acc);
+        let (mut lo, mut hi) = (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY));
+        for s in &segments {
+            s.grow_aabb(&mut lo, &mut hi);
         }
-    }
-
-    /// Create a single raw cubic-bezier-segment drawable. Retained as a test
-    /// reference for the shader's `sd_bezier` path (still used by the connected
-    /// `ShapeBuilder::bezier_to`); the EDGE build path now fits an arc-spline via
-    /// [`Drawable::bezier_arcs`] (A4), so this no longer feeds production geometry.
-    #[allow(dead_code)]
-    pub(crate) fn single_bezier(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2) -> Self {
-        let length = bezier_arc_length(p0, p1, p2, p3);
-        let min_x = p0.x.min(p1.x).min(p2.x).min(p3.x);
-        let min_y = p0.y.min(p1.y).min(p2.y).min(p3.y);
-        let max_x = p0.x.max(p1.x).max(p2.x).max(p3.x);
-        let max_y = p0.y.max(p1.y).max(p2.y).max(p3.y);
         Self {
             drawable_type: DrawableType::CurveSegment,
-            segments: vec![Segment {
-                segment_type: SegmentType::CubicBezier,
-                signed: false,
-                geom0: [p0.x, p0.y, p1.x, p1.y],
-                geom1: [p2.x, p2.y, p3.x, p3.y],
-                arc_start: 0.0,
-                arc_end: length,
-            }],
-            total_arc_length: length,
-            bounds: [min_x, min_y, max_x, max_y],
+            segments,
+            total_arc_length: acc,
+            bounds: [lo.x, lo.y, hi.x, hi.y],
             is_closed: false,
             tiling_type: None,
             tiling_params: [0.0; 4],
@@ -247,69 +218,32 @@ impl Drawable {
         let pieces = cubic_to_arcs(p0, p1, p2, p3, tol);
         let mut segments = Vec::with_capacity(pieces.len());
         let mut cum = 0.0_f32;
-        let (mut minx, mut miny) = (f32::INFINITY, f32::INFINITY);
-        let (mut maxx, mut maxy) = (f32::NEG_INFINITY, f32::NEG_INFINITY);
-        let mut acc = |p: Vec2| {
-            minx = minx.min(p.x);
-            miny = miny.min(p.y);
-            maxx = maxx.max(p.x);
-            maxy = maxy.max(p.y);
-        };
 
         for piece in &pieces {
             let len = piece.length();
-            let (segment_type, geom0, geom1) = match *piece {
-                ArcPiece::Arc {
-                    center,
-                    radius,
-                    start_angle,
-                    sweep,
-                    start,
-                    end,
-                    ..
-                } => {
-                    acc(start);
-                    acc(end);
-                    // Exact arc bbox: endpoints plus any cardinal extreme the
-                    // sweep actually crosses (a tight bound for culling).
-                    for k in 0..4 {
-                        let theta = k as f32 * std::f32::consts::FRAC_PI_2;
-                        if angle_in_arc(start_angle, sweep, theta) {
-                            acc(center + Vec2::new(theta.cos(), theta.sin()) * radius);
-                        }
-                    }
-                    (
-                        SegmentType::Arc,
-                        [center.x, center.y, radius, start_angle],
-                        [sweep, 0.0, 0.0, 0.0],
-                    )
+            match *piece {
+                // Biarc pieces are already minor arcs (|sweep| < 0.95*PI), so each
+                // becomes one Segment; push_arc would split only a wider sweep.
+                ArcPiece::Arc { center, radius, start_angle, sweep, .. } => {
+                    Segment::push_arc(&mut segments, center, radius, start_angle, sweep, false, &mut cum);
                 }
                 ArcPiece::Line { start, end, .. } => {
-                    acc(start);
-                    acc(end);
-                    (
-                        SegmentType::Line,
-                        [start.x, start.y, end.x, end.y],
-                        [0.0; 4],
-                    )
+                    segments.push(Segment::line(start, end, false, cum, cum + len));
+                    cum += len;
                 }
-            };
-            segments.push(Segment {
-                segment_type,
-                signed: false,
-                geom0,
-                geom1,
-                arc_start: cum,
-                arc_end: cum + len,
-            });
-            cum += len;
+            }
+        }
+
+        let (mut lo, mut hi) = (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY));
+        for s in &segments {
+            s.grow_aabb(&mut lo, &mut hi);
         }
 
         Self {
             drawable_type: DrawableType::CurveSegment,
             segments,
             total_arc_length: cum,
-            bounds: [minx, miny, maxx, maxy],
+            bounds: [lo.x, lo.y, hi.x, hi.y],
             is_closed: false,
             tiling_type: None,
             tiling_params: [0.0; 4],

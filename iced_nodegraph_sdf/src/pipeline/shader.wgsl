@@ -957,6 +957,131 @@ fn cs_push_slot(
     }
 }
 
+// ============================================================================
+// Exact segment <-> tile-box distance intervals (cull geometry)
+//
+// The cull asks one question per (segment, tile): does any STYLE BAND of this
+// segment touch this tile square? The old cull answered it by sampling the SDF
+// at the tile CENTRE and padding with the tile half-diagonal - a point sample of
+// a function that varies across the tile, so diagonal curves and reflex corners
+// slipped through the margin and dropped tiles (holes) or kept the wrong sign
+// (filled boxes). Instead compute the EXACT range [m, M] the segment's distance
+// takes over the whole box: the band [lo, hi] touches the tile iff the intervals
+// overlap. The cull must be a conservative OVER-approximation - over-inclusion
+// is free (a far segment renders alpha 0 per pixel), under-inclusion is a hole -
+// so for the one non-convex primitive (arc) m is a lower bound and M an upper
+// bound; line and point are exact (distance to a convex set is convex, so its
+// max over the box is attained at a corner).
+// ============================================================================
+
+// Closest / farthest distance from a POINT to the axis-aligned box [bmin,bmax].
+fn pt_box_min(c: vec2<f32>, bmin: vec2<f32>, bmax: vec2<f32>) -> f32 {
+    return length(max(max(bmin - c, c - bmax), vec2(0.0, 0.0)));
+}
+fn pt_box_max(c: vec2<f32>, bmin: vec2<f32>, bmax: vec2<f32>) -> f32 {
+    return length(max(abs(c - bmin), abs(c - bmax)));
+}
+
+// Unsigned distance from point p to segment a->b (no sign, cull only needs |d|).
+fn pt_seg_dist(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
+    let ba = b - a;
+    let pa = p - a;
+    let l2 = dot(ba, ba);
+    var t = 0.0;
+    if l2 > 0.0 { t = clamp(dot(pa, ba) / l2, 0.0, 1.0); }
+    return length(pa - ba * t);
+}
+
+// [min, max] distance from segment a->b to the box. Exact: max at a box corner
+// (convex), min is 0 when the segment overlaps the box (4-axis SAT: the box's x
+// and y axes plus the segment's tangent and normal) else the nearest
+// vertex/corner pair.
+fn line_box_interval(a: vec2<f32>, b: vec2<f32>, bmin: vec2<f32>, bmax: vec2<f32>) -> vec2<f32> {
+    let c00 = bmin;
+    let c10 = vec2(bmax.x, bmin.y);
+    let c01 = vec2(bmin.x, bmax.y);
+    let c11 = bmax;
+
+    let big = max(max(pt_seg_dist(c00, a, b), pt_seg_dist(c10, a, b)),
+                  max(pt_seg_dist(c01, a, b), pt_seg_dist(c11, a, b)));
+
+    let sep_x = max(a.x, b.x) < bmin.x || min(a.x, b.x) > bmax.x;
+    let sep_y = max(a.y, b.y) < bmin.y || min(a.y, b.y) > bmax.y;
+    // Segment normal axis: the segment projects to the single value 0.
+    let n = vec2(-(b.y - a.y), b.x - a.x);
+    let n0 = dot(c00 - a, n); let n1 = dot(c10 - a, n);
+    let n2 = dot(c01 - a, n); let n3 = dot(c11 - a, n);
+    let sep_n = (n0 > 0.0 && n1 > 0.0 && n2 > 0.0 && n3 > 0.0)
+             || (n0 < 0.0 && n1 < 0.0 && n2 < 0.0 && n3 < 0.0);
+    // Segment tangent axis: the segment projects to [0, |ba|^2].
+    let ba = b - a;
+    let l2 = dot(ba, ba);
+    let t0 = dot(c00 - a, ba); let t1 = dot(c10 - a, ba);
+    let t2 = dot(c01 - a, ba); let t3 = dot(c11 - a, ba);
+    let sep_t = max(max(t0, t1), max(t2, t3)) < 0.0 || min(min(t0, t1), min(t2, t3)) > l2;
+
+    var small = 0.0;
+    if sep_x || sep_y || sep_n || sep_t {
+        small = min(min(pt_box_min(a, bmin, bmax), pt_box_min(b, bmin, bmax)),
+                    min(min(pt_seg_dist(c00, a, b), pt_seg_dist(c10, a, b)),
+                        min(pt_seg_dist(c01, a, b), pt_seg_dist(c11, a, b))));
+    }
+    return vec2(small, big);
+}
+
+// [min, max] distance from a circular ARC to the box. A single chord+sagitta
+// bound inflates a WIDE arc (the biarc fitter allows up to ~171 deg) by sag =
+// R*(1 - cos(sweep/2)) ~ 0.9R on BOTH sides, swallowing the whole concave side -
+// a large false region in the cull. Instead split the arc into sub-chords each
+// spanning <= ~30 deg, so the per-piece sagitta is < ~3.5% of R: the bound then
+// hugs the arc and the concave side stays empty. Endpoints of every sub-chord
+// lie ON the arc and the arc never leaves its sub-chord by more than that tiny
+// sag, so m = min(piece) - sag is a safe lower bound and M = max(piece) + sag a
+// safe upper bound. Shallow arcs (node corners) collapse to k = 1, unchanged.
+fn arc_box_interval(
+    center: vec2<f32>, radius: f32, start: f32, sweep: f32,
+    bmin: vec2<f32>, bmax: vec2<f32>,
+) -> vec2<f32> {
+    let aswp = abs(sweep);
+    var k = u32(ceil(aswp / 0.5235988)); // PI/6 = 30 deg per sub-chord
+    k = clamp(k, 1u, 8u);
+    let step = sweep / f32(k);
+    let sag = radius * (1.0 - cos(0.5 * abs(step)));
+    var a = start;
+    var pa = center + radius * vec2(cos(a), sin(a));
+    var m = 1e30;
+    var big = 0.0;
+    for (var j = 0u; j < k; j = j + 1u) {
+        let b = a + step;
+        let pb = center + radius * vec2(cos(b), sin(b));
+        let iv = line_box_interval(pa, pb, bmin, bmax);
+        m = min(m, iv.x - sag);
+        big = max(big, iv.y + sag);
+        a = b;
+        pa = pb;
+    }
+    return vec2(max(m, 0.0), big);
+}
+
+// Dispatch the interval by segment type. Cubic (only if arc-spline conversion is
+// disabled) has no closed form: centre sample padded by the box half-diagonal.
+fn seg_box_interval(seg: GpuSegment, bmin: vec2<f32>, bmax: vec2<f32>) -> vec2<f32> {
+    switch seg.segment_type {
+        case SEG_LINE: { return line_box_interval(seg.geom0.xy, seg.geom0.zw, bmin, bmax); }
+        case SEG_ARC: { return arc_box_interval(seg.geom0.xy, seg.geom0.z, seg.geom0.w, seg.geom1.x, bmin, bmax); }
+        case SEG_POINT: {
+            return vec2(pt_box_min(seg.geom0.xy, bmin, bmax), pt_box_max(seg.geom0.xy, bmin, bmax));
+        }
+        case SEG_CUBIC: {
+            let c = (bmin + bmax) * 0.5;
+            let pad = length((bmax - bmin) * 0.5);
+            let r = sd_bezier(c, seg.geom0.xy, seg.geom0.zw, seg.geom1.xy, seg.geom1.zw);
+            return vec2(max(abs(r.dist) - pad, 0.0), abs(r.dist) + pad);
+        }
+        default: { return vec2(1e30, 1e30); }
+    }
+}
+
 // Two-level (regional) cull: candidates of one 16x16-tile workgroup, gathered
 // in workgroup memory so each fine tile scans the region's candidates instead of
 // every entry. 256 = the workgroup's thread count and a generous regional cap.
@@ -1038,9 +1163,8 @@ fn cs_build_index(
         if overflow { i = draw.entry_start + ci; } else { i = wg_candidates[ci]; }
         let entry = cs_entries[i];
         let style = cs_styles[entry.style_idx];
-        // Segments are local; evaluate at the tile center shifted by the
-        // instance translate. The slot key is the entry (command) index.
-        let lp = world_pos - entry.translate;
+        // Segments are local; the cull evaluates them at the tile box shifted by
+        // the instance translate. The slot key is the entry (command) index.
 
         // Tilings: cull by EVALUATION like any SDF (D7), not "always include".
         // Sample `sd_tiling` at the tile center plus its four corners (corners
@@ -1063,78 +1187,65 @@ fn cs_build_index(
             continue;
         }
 
-        // Spatial pre-cull (shapes): skip entries whose world AABB - expanded by
-        // the tile half-diagonal and the style/pattern outward reach - does not
-        // contain this tile center. A cheap bounds test that avoids per-segment
-        // evaluation for the many far entries, so the cull is NOT O(tiles x all
-        // entries). Over-inclusion only (the margin is conservative).
-        let er = thd + style_max_dist(style) + pattern_perp_reach(style) + 0.5;
-        let eb = entry.bounds;
-        if world_pos.x < eb.x - er || world_pos.x > eb.z + er
-            || world_pos.y < eb.y - er || world_pos.y > eb.w + er {
-            continue;
+        let has_pattern = (style.flags & STYLE_FLAG_HAS_PATTERN) != 0u;
+        let is_closed = (entry.flags & FLAG_CLOSED) != 0u;
+        let is_df = (style.flags & STYLE_FLAG_DISTANCE_FIELD) != 0u;
+
+        // The tile square in this entry's LOCAL frame (segments are local; the
+        // instance translate moves the box, not the geometry).
+        let hw = TILE_SIZE * 0.5 * inv_cs;
+        let bmin = world_pos - vec2(hw, hw) - entry.translate;
+        let bmax = world_pos + vec2(hw, hw) - entry.translate;
+
+        // Outer reach of the style across the contour (time-independent, C1): the
+        // farthest a band/pattern feature can sit perpendicular to the curve.
+        var reach = style_max_dist(style) + pattern_perp_reach(style) + 0.5;
+        if style.pattern_type == PATTERN_DASHED || style.pattern_type == PATTERN_ARROWED {
+            // A sheared dash/arrow leans along the contour by up to thd*|tan|.
+            reach = reach + thd * abs(tan(style.pattern_param2));
         }
 
-        let has_pattern = (style.flags & STYLE_FLAG_HAS_PATTERN) != 0u;
-
-        // Pass 1: find nearest segment (by absolute distance) at tile center
-        var min_abs_dist = 1e10;
-        var best_signed_dist = 0.0;
+        // Pass 1: exact distance interval per segment over the box. mu = closest
+        // the contour gets to the box; kbound = min over segments of the FARTHEST
+        // box distance - an upper bound on the nearest distance anywhere in the
+        // box, so a segment can only be the per-pixel nearest somewhere inside if
+        // its closest approach m_s <= kbound (proof: if s is nearest at p, then
+        // m_s <= d(p,s) <= d(p,t) <= M_t for every t, hence m_s <= min_t M_t).
+        // center_signed keeps the nearest-segment SIGN at the box centre, used
+        // only for the far-interior inside test below.
+        var mu = 1e30;
+        var kbound = 1e30;
+        var center_signed = 1e30;
+        var center_abs = 1e30;
+        let lp_center = world_pos - entry.translate;
         for (var s: u32 = 0u; s < entry.segment_count; s++) {
             let seg = cs_segments[entry.segment_start + s];
-            let r = eval_segment(lp, seg);
-            let ad = abs(r.dist);
-            if ad < min_abs_dist {
-                min_abs_dist = ad;
-                best_signed_dist = r.dist;
-            }
+            let iv = seg_box_interval(seg, bmin, bmax);
+            mu = min(mu, iv.x);
+            kbound = min(kbound, iv.y);
+            let rc = eval_segment(lp_center, seg);
+            if abs(rc.dist) < center_abs { center_abs = abs(rc.dist); center_signed = rc.dist; }
         }
 
-        let proximity = min_abs_dist + thd * 2.0;
-
-        // Determine if this (entry, style) is visible at all in this tile
-        var entry_visible = false;
-        if (style.flags & STYLE_FLAG_DISTANCE_FIELD) != 0u {
-            entry_visible = true;
-        } else if has_pattern {
-            entry_visible = true; // conservative, per-segment check below
-        } else if (entry.flags & FLAG_CLOSED) != 0u {
-            // Closed fill: signed dist from nearest segment
-            entry_visible = (best_signed_dist - thd) < style_max_dist(style) + 0.5;
-        } else {
-            // Open curve: unsigned distance
-            entry_visible = (min_abs_dist - thd) < style_max_dist(style) + 0.5;
-        }
-
+        // Visibility. A band reaches the box (mu <= reach), it is a full-screen
+        // distance-field probe, or it is a closed fill whose interior covers the
+        // box. The inside test reads the nearest-segment sign at the centre, which
+        // is only trusted FAR from the contour (mu > reach) - exactly where it is
+        // unambiguous; near a reflex corner (pin notch) mu <= reach already
+        // includes the tile, so the ambiguous sign never decides visibility.
+        var entry_visible = is_df || (mu <= reach);
+        if !entry_visible && is_closed && center_signed < 0.0 { entry_visible = true; }
         if !entry_visible { continue; }
 
-        // Pass 2: push nearby segments for per-pixel accuracy
+        // Pass 2: push every segment that can be the per-pixel nearest somewhere
+        // in the box (m_s <= kbound). The fragment folds these to the nearest, so
+        // inside and outside are the SAME path - just the signed SDF, no interior
+        // marker. The nearest segment always satisfies mu <= kbound, so an
+        // interior tile always keeps its bounding contour and never holes.
         for (var s: u32 = 0u; s < entry.segment_count; s++) {
             let seg_idx = entry.segment_start + s;
-            let seg = cs_segments[seg_idx];
-            let r = eval_segment(lp, seg);
-
-            if has_pattern {
-                // C1: cull against the pattern's PERPENDICULAR envelope (as if
-                // SOLID), ignoring the along-u dash/dot/flow structure - so the
-                // cull is TIME-INDEPENDENT. Conservative over-inclusion: a gap
-                // tile may get the command and render transparent. A sheared
-                // dash/arrow leans by up to thd*|tan| at the open-contour end.
-                var reach = pattern_perp_reach(style) + style_max_dist(style);
-                if style.pattern_type == PATTERN_DASHED
-                    || style.pattern_type == PATTERN_ARROWED
-                {
-                    reach = reach + thd * abs(tan(style.pattern_param2));
-                }
-                if abs(r.dist) - thd <= reach {
-                    cs_push_slot(slot_base, &count, &slot_dist, seg_idx, i, abs(r.dist));
-                }
-            } else {
-                // Fill/DF: push segments that could be nearest at any pixel
-                if abs(r.dist) <= proximity {
-                    cs_push_slot(slot_base, &count, &slot_dist, seg_idx, i, abs(r.dist));
-                }
-            }
+            let iv = seg_box_interval(cs_segments[seg_idx], bmin, bmax);
+            if iv.x <= kbound { cs_push_slot(slot_base, &count, &slot_dist, seg_idx, i, iv.x); }
         }
     }
 
