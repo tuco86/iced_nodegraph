@@ -265,7 +265,9 @@ fn create_compute_group1_layout(device: &Device) -> BindGroupLayout {
                 visibility: ShaderStages::COMPUTE,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
+                    // One ComputeUniforms slot per draw; the batched cull dispatches
+                    // each pick their draw_index via a dynamic offset.
+                    has_dynamic_offset: true,
                     min_binding_size: Some(<types::ComputeUniforms as ShaderSize>::SHADER_SIZE),
                 },
                 count: None,

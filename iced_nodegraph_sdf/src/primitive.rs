@@ -317,6 +317,23 @@ pub struct SdfPipeline {
     bind_group_gens: (u64, u64, u64, u64, u64), // draws, entries, segments, styles, spatial
     // Frame state
     total_tiles: u32,
+    // Deferred cull-compute: each prepare only RECORDS its dispatch params here;
+    // the FIRST draw runs ALL culls in one encoder + one `queue.submit` (was one
+    // submit per primitive - ~70us each, the dominant prepare cost). Because the
+    // dispatch is recorded after every prepare, the tile buffer can grow freely
+    // during prepares with NO copy (nothing is computed until the end). Mutex/
+    // AtomicBool (not RefCell/Cell) because the Pipeline must be Sync per iced's
+    // `Primitive` bound. `frame_device`/`frame_queue` are cloned in prepare so the
+    // immutable `draw` can build + submit the batched compute.
+    pending_dispatches: Mutex<Vec<(u32, u32, u32)>>, // (draw_index, grid_cols, grid_rows)
+    pending_bg_populate: Mutex<Option<u32>>,         // draw_index of a bg to cache
+    compute_submitted: std::sync::atomic::AtomicBool,
+    frame_device: Option<Device>,
+    frame_queue: Option<Queue>,
+    // 256-aligned ComputeUniforms slot per draw, so batched dispatches each read
+    // their own draw_index via a dynamic uniform offset.
+    compute_uniform_stride: u32,
+    compute_uniform_capacity: u32,
     segment_scratch: Vec<types::GpuSegment>,
     frame_stats: types::SdfStats,
     /// Frame-surviving cache of evaluated shape recipes (v3 dedup). Lives on the
@@ -549,7 +566,13 @@ fn create_compute_group1(
         entries: &[
             BindGroupEntry {
                 binding: 0,
-                resource: uniforms.as_entire_binding(),
+                // Sized window (one ComputeUniforms); the dynamic offset at bind
+                // time selects which draw's slot.
+                resource: iced::wgpu::BindingResource::Buffer(iced::wgpu::BufferBinding {
+                    buffer: uniforms,
+                    offset: 0,
+                    size: Some(<types::ComputeUniforms as ShaderSize>::SHADER_SIZE),
+                }),
             },
             BindGroupEntry {
                 binding: 1,
@@ -575,9 +598,17 @@ impl Pipeline for SdfPipeline {
 
         let (tile_counts_buffer, tile_entries_buffer) = create_tile_buffers(device, 256);
 
+        // One 256(-aligned) ComputeUniforms slot per draw so batched cull
+        // dispatches each select their draw_index via a dynamic uniform offset.
+        let align = device.limits().min_uniform_buffer_offset_alignment.max(1);
+        let unit = <types::ComputeUniforms as ShaderSize>::SHADER_SIZE.get() as u32;
+        let compute_uniform_stride = unit.div_ceil(align) * align;
+        // Generous fixed slot count (one per draw); far beyond any real per-frame
+        // primitive count, so the uniform buffer never grows mid-frame.
+        let compute_uniform_capacity = 16384u32;
         let compute_uniform_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("sdf_compute_uniforms"),
-            size: <types::ComputeUniforms as ShaderSize>::SHADER_SIZE.get(),
+            size: (compute_uniform_stride * compute_uniform_capacity) as u64,
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -625,6 +656,13 @@ impl Pipeline for SdfPipeline {
             compute_group1,
             bind_group_gens: (0, 0, 0, 0, 0),
             total_tiles: 0,
+            pending_dispatches: Mutex::new(Vec::new()),
+            pending_bg_populate: Mutex::new(None),
+            compute_submitted: std::sync::atomic::AtomicBool::new(false),
+            frame_device: None,
+            frame_queue: None,
+            compute_uniform_stride,
+            compute_uniform_capacity,
             segment_scratch: Vec::new(),
             frame_stats: types::SdfStats::default(),
             shape_cache: ShapeCache::new(4096),
@@ -661,6 +699,91 @@ impl Pipeline for SdfPipeline {
         self.frame_shape_slots.clear();
         self.total_tiles = 0;
         self.bg_blit_index = None;
+        self.pending_dispatches.get_mut().unwrap().clear();
+        *self.pending_bg_populate.get_mut().unwrap() = None;
+        self.compute_submitted
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl SdfPipeline {
+    /// Runs every cull dispatch recorded this frame in ONE encoder + ONE submit,
+    /// then any deferred background-cache populate. Called once, from the first
+    /// `draw` (all prepares are complete, so the buffers are final). Replaces the
+    /// former one-submit-per-primitive path, whose `queue.submit` overhead was the
+    /// dominant `prepare` cost.
+    fn run_deferred_compute(&self) {
+        let (Some(device), Some(queue)) = (self.frame_device.as_ref(), self.frame_queue.as_ref())
+        else {
+            return;
+        };
+        let dispatches = self.pending_dispatches.lock().unwrap();
+        if !dispatches.is_empty() {
+            let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
+                label: Some("sdf_compute_batch"),
+            });
+            let ts_writes =
+                self.compute_timer
+                    .as_ref()
+                    .map(|t| iced::wgpu::ComputePassTimestampWrites {
+                        query_set: &t.query_set,
+                        beginning_of_pass_write_index: Some(0),
+                        end_of_pass_write_index: Some(1),
+                    });
+            {
+                let mut pass = encoder.begin_compute_pass(&iced::wgpu::ComputePassDescriptor {
+                    label: Some("sdf_spatial_index"),
+                    timestamp_writes: ts_writes,
+                });
+                pass.set_pipeline(&self.shared.compute_pipeline);
+                pass.set_bind_group(0, &self.compute_group0, &[]);
+                for &(draw_index, grid_cols, grid_rows) in dispatches.iter() {
+                    // Each draw selects its own ComputeUniforms slot via a dynamic
+                    // offset, so the batched dispatches don't clobber each other.
+                    pass.set_bind_group(
+                        1,
+                        &self.compute_group1,
+                        &[draw_index * self.compute_uniform_stride],
+                    );
+                    pass.dispatch_workgroups(grid_cols.div_ceil(16), grid_rows.div_ceil(16), 1);
+                }
+            }
+            if let Some(t) = &self.compute_timer {
+                encoder.resolve_query_set(&t.query_set, 0..2, &t.resolve, 0);
+                encoder.copy_buffer_to_buffer(&t.resolve, 0, &t.readback, 0, 16);
+            }
+            queue.submit(std::iter::once(encoder.finish()));
+        }
+        drop(dispatches);
+
+        // Deferred background-cache populate: render the bg into the cache texture
+        // now that its tiles are computed (the cull above ran first in the queue).
+        if let Some(draw_index) = *self.pending_bg_populate.lock().unwrap() {
+            let mut enc = device.create_command_encoder(&CommandEncoderDescriptor {
+                label: Some("sdf_bg_populate"),
+            });
+            {
+                let mut pass = enc.begin_render_pass(&iced::wgpu::RenderPassDescriptor {
+                    label: Some("sdf_bg_populate_pass"),
+                    color_attachments: &[Some(iced::wgpu::RenderPassColorAttachment {
+                        view: self.bg_cache.target_view(),
+                        resolve_target: None,
+                        ops: iced::wgpu::Operations {
+                            load: iced::wgpu::LoadOp::Clear(iced::wgpu::Color::TRANSPARENT),
+                            store: iced::wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(&self.shared.render_pipeline);
+                pass.set_bind_group(0, &self.render_group0, &[]);
+                pass.draw(0..3, draw_index..draw_index + 1);
+            }
+            queue.submit(std::iter::once(enc.finish()));
+        }
     }
 }
 
@@ -767,45 +890,27 @@ impl Primitive for SdfPrimitive {
         let tile_base = pipeline.total_tiles;
         pipeline.total_tiles += grid_cols * grid_rows;
 
-        // Grow spatial index buffers if needed. Earlier primitives in this
-        // frame have already written their tile data to the current buffers
-        // and submitted compute dispatches against them; subsequent renders
-        // read tile data from the *current* buffer state. We must therefore
-        // copy the populated range into the new buffer before swapping —
-        // otherwise prior primitives render as empty tiles.
+        // Grow spatial index buffers if needed. The cull dispatch is DEFERRED to
+        // the first draw, so no prior primitive has computed tiles yet - there is
+        // nothing to preserve, and the grown (fresh) buffer is filled by the single
+        // batched dispatch against the FINAL buffer. Hence a plain resize, no copy.
         if pipeline.total_tiles > pipeline.tile_capacity {
             let new_cap = (pipeline.total_tiles as f32 * 1.5) as u32;
             let (tc, te) = create_tile_buffers(device, new_cap);
-            let preserved_tiles = tile_base as u64;
-            if preserved_tiles > 0 {
-                let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
-                    label: Some("sdf_tile_grow_copy"),
-                });
-                encoder.copy_buffer_to_buffer(
-                    &pipeline.tile_counts_buffer,
-                    0,
-                    &tc,
-                    0,
-                    preserved_tiles * 4,
-                );
-                encoder.copy_buffer_to_buffer(
-                    &pipeline.tile_entries_buffer,
-                    0,
-                    &te,
-                    0,
-                    preserved_tiles * SLOT_STRIDE as u64 * 4,
-                );
-                queue.submit(std::iter::once(encoder.finish()));
-            }
             pipeline.tile_counts_buffer = tc;
             pipeline.tile_entries_buffer = te;
             pipeline.tile_capacity = new_cap;
             pipeline.spatial_index_gen += 1;
         }
 
-        // Write compute uniform: just the index into DrawData
-        let draw_index = pipeline.draw_data_buffer.len() as u32; // will be this index after push
+        // Write this draw's ComputeUniforms into its OWN slot, selected at dispatch
+        // via a dynamic offset, so the batched culls do not overwrite each other.
+        let draw_index = pipeline.draw_data_buffer.len() as u32; // index after push
         self.draw_slot.store(draw_index, Ordering::Relaxed);
+        debug_assert!(
+            draw_index < pipeline.compute_uniform_capacity,
+            "more primitives than compute-uniform slots"
+        );
         let cu = types::ComputeUniforms {
             draw_index,
             _pad0: 0,
@@ -815,9 +920,10 @@ impl Primitive for SdfPrimitive {
         pipeline.compute_uniform_scratch.clear();
         let mut w = encase::UniformBuffer::new(&mut pipeline.compute_uniform_scratch);
         w.write(&cu).expect("Failed to write compute uniforms");
+        let uoff = (draw_index * pipeline.compute_uniform_stride) as u64;
         queue.write_buffer(
             &pipeline.compute_uniform_buffer,
-            0,
+            uoff,
             &pipeline.compute_uniform_scratch,
         );
 
@@ -885,35 +991,18 @@ impl Primitive for SdfPrimitive {
             pipeline.bind_group_gens = gens;
         }
 
-        // Dispatch compute shader to build spatial index
-        let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
-            label: Some("sdf_compute"),
-        });
-        let ts_writes =
-            pipeline
-                .compute_timer
-                .as_ref()
-                .map(|t| iced::wgpu::ComputePassTimestampWrites {
-                    query_set: &t.query_set,
-                    beginning_of_pass_write_index: Some(0),
-                    end_of_pass_write_index: Some(1),
-                });
-        {
-            let mut pass = encoder.begin_compute_pass(&iced::wgpu::ComputePassDescriptor {
-                label: Some("sdf_spatial_index"),
-                timestamp_writes: ts_writes,
-            });
-            pass.set_pipeline(&pipeline.shared.compute_pipeline);
-            pass.set_bind_group(0, &pipeline.compute_group0, &[]);
-            pass.set_bind_group(1, &pipeline.compute_group1, &[]);
-            pass.dispatch_workgroups(grid_cols.div_ceil(16), grid_rows.div_ceil(16), 1);
+        // Record this cull dispatch; the FIRST draw runs them all in one encoder +
+        // one submit (against the now-final buffers). Stash device/queue so the
+        // immutable `draw` can build and submit that batch.
+        pipeline
+            .pending_dispatches
+            .lock()
+            .unwrap()
+            .push((draw_index, grid_cols, grid_rows));
+        if pipeline.frame_queue.is_none() {
+            pipeline.frame_device = Some(device.clone());
+            pipeline.frame_queue = Some(queue.clone());
         }
-        // Resolve the timestamp pair so `last_compute_ms` can read the cull time.
-        if let Some(t) = &pipeline.compute_timer {
-            encoder.resolve_query_set(&t.query_set, 0..2, &t.resolve, 0);
-            encoder.copy_buffer_to_buffer(&t.resolve, 0, &t.readback, 0, 16);
-        }
-        queue.submit(std::iter::once(encoder.finish()));
 
         // Static-background texture cache (Phase C, v3): decide whether to render
         // the background direct (v2 path), populate the cache texture this frame,
@@ -934,30 +1023,10 @@ impl Primitive for SdfPrimitive {
                 BgMode::Direct => pipeline.bg_blit_index = None,
                 BgMode::Blit => pipeline.bg_blit_index = Some(draw_index),
                 BgMode::Populate => {
-                    let mut enc = device.create_command_encoder(&CommandEncoderDescriptor {
-                        label: Some("sdf_bg_populate"),
-                    });
-                    {
-                        let mut pass = enc.begin_render_pass(&iced::wgpu::RenderPassDescriptor {
-                            label: Some("sdf_bg_populate_pass"),
-                            color_attachments: &[Some(iced::wgpu::RenderPassColorAttachment {
-                                view: pipeline.bg_cache.target_view(),
-                                resolve_target: None,
-                                ops: iced::wgpu::Operations {
-                                    load: iced::wgpu::LoadOp::Clear(iced::wgpu::Color::TRANSPARENT),
-                                    store: iced::wgpu::StoreOp::Store,
-                                },
-                                depth_slice: None,
-                            })],
-                            depth_stencil_attachment: None,
-                            timestamp_writes: None,
-                            occlusion_query_set: None,
-                        });
-                        pass.set_pipeline(&pipeline.shared.render_pipeline);
-                        pass.set_bind_group(0, &pipeline.render_group0, &[]);
-                        pass.draw(0..3, draw_index..draw_index + 1);
-                    }
-                    queue.submit(std::iter::once(enc.finish()));
+                    // The cull is deferred, so the texture can only be populated
+                    // AFTER the batched compute. Record it; the first draw renders
+                    // it once the tiles exist.
+                    *pipeline.pending_bg_populate.lock().unwrap() = Some(draw_index);
                     pipeline.bg_blit_index = Some(draw_index);
                 }
             }
@@ -972,6 +1041,12 @@ impl Primitive for SdfPrimitive {
         pipeline: &Self::Pipeline,
         render_pass: &mut iced::wgpu::RenderPass<'_>,
     ) -> bool {
+        // All prepares are done before any draw: the FIRST draw runs every cull
+        // dispatch in ONE encoder + ONE submit (vs one submit per primitive) and
+        // any deferred background-cache populate, before any primitive is drawn.
+        if !pipeline.compute_submitted.swap(true, Ordering::Relaxed) {
+            pipeline.run_deferred_compute();
+        }
         // The `DrawData` slot assigned to THIS primitive in `prepare` (not a
         // draw-order counter): iced skips drawing off-viewport instances it still
         // prepared, so a counter would desync every later primitive's slot.
