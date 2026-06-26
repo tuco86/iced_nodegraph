@@ -134,6 +134,13 @@ enum ApplicationMessage {
     ToggleDebugDistanceField,
     ToggleDebugHoveredTile,
     Info(GraphInfo),
+    /// Camera reported by the widget on pan/zoom release (uncontrolled camera).
+    /// Used only to read off exact coordinates when reproducing the pan/zoom
+    /// float-collapse display bug.
+    CameraReport {
+        pos: Point,
+        zoom: f32,
+    },
 }
 
 struct Application {
@@ -142,6 +149,9 @@ struct Application {
     current_theme: Theme,
     selected_nodes: HashSet<usize>,
     sdf_debug: SdfDebug,
+    /// Last camera (world position, zoom) reported by the widget on pan/zoom
+    /// release. Shown in the stats panel to capture float-collapse repro coords.
+    camera: (Point, f32),
     /// Most recent per-frame diagnostics from the graph widget.
     latest_info: Option<GraphInfo>,
     /// Per-op CPU time (microseconds) for the last `HIST_CAP` frames, oldest
@@ -158,6 +168,7 @@ impl Default for Application {
             current_theme: Theme::CatppuccinMocha,
             selected_nodes: HashSet::new(),
             sdf_debug: SdfDebug::default(),
+            camera: (Point::ORIGIN, 1.0),
             latest_info: None,
             history: VecDeque::with_capacity(HIST_CAP),
         }
@@ -205,6 +216,9 @@ impl Application {
             ApplicationMessage::ToggleDebugHoveredTile => {
                 self.sdf_debug.hovered_tile = !self.sdf_debug.hovered_tile
             }
+            ApplicationMessage::CameraReport { pos, zoom } => {
+                self.camera = (pos, zoom);
+            }
             ApplicationMessage::Info(info) => {
                 let frame: Vec<f32> = info
                     .timings
@@ -233,6 +247,7 @@ impl Application {
                 .on_select(ApplicationMessage::SelectionChanged)
                 .selection(&self.selected_nodes)
                 .sdf_debug(self.sdf_debug)
+                .on_pan(|pos, zoom| ApplicationMessage::CameraReport { pos, zoom })
                 .on_info(ApplicationMessage::Info);
 
         // Add all nodes
@@ -362,6 +377,11 @@ impl Application {
             counts_line("Pins", pins_c),
             counts_line("Edges", edges_c),
             text(format!("SDF: {entries} entries · {tiles} tiles")).size(12),
+            text(format!(
+                "cam: ({:.1}, {:.1})  zoom: {:.5}",
+                self.camera.0.x, self.camera.0.y, self.camera.1
+            ))
+            .size(12),
             text("Scroll: Zoom   ·   Right-drag: Pan").size(11),
             debug,
         ]
