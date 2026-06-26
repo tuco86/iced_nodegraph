@@ -260,8 +260,8 @@ pub struct OpTiming {
 /// Per-frame diagnostics for the graph, delivered to [`NodeGraph::on_info`].
 ///
 /// `nodes`/`pins`/`edges` are [`Counts`]; `timings` is the CPU cost of each draw
-/// operation in stack order (geometry, shadows, edges, foreground, sdf prepare)
-/// and sums to roughly the per-frame CPU time. `sdf_entries`/`sdf_tiles` are the
+/// operation in stack order (geometry, background, foreground, sdf prepare) and
+/// sums to roughly the per-frame CPU time. `sdf_entries`/`sdf_tiles` are the
 /// SDF pipeline counters. All timings are CPU-side; no GPU profiling is done.
 ///
 /// Reported one frame behind: the values are measured during `draw` and

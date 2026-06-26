@@ -7,13 +7,14 @@
 //!
 //! ## Rendering Layers
 //!
-//! The widget renders in multiple layers for correct z-ordering:
-//! 1. Background (solid color)
-//! 2. Edges (behind nodes)
-//! 3. Node fills and shadows
-//! 4. Node content (Iced widgets)
-//! 5. Node borders and pins
-//! 6. Selection box / cutting tool overlays
+//! The widget renders in three tiers for correct z-ordering:
+//! 1. Solid background color.
+//! 2. Graph background: ONE batched SDF draw under all nodes, internally
+//!    ordered grid (z0), node + edge shadows (z1), edge strokes (z2).
+//! 3. Per node, composited by Iced in z-order: node background (fill) -> node
+//!    content (Iced widgets) -> node foreground (border + pins). Embedding Iced
+//!    widgets between the two SDF node layers lets nodes overlap correctly.
+//! 4. Graph foreground: interaction tools (selection box, edge-cutting overlay).
 
 use iced::{Element, Event, Length, Point, Rectangle, Size, Theme, Vector, keyboard};
 use iced_widget::core::{
@@ -586,46 +587,9 @@ where
             );
         });
 
-        // Tiling background (grid/dots/...) over the solid fill, behind nodes.
-        // Drawn with the camera so it pans/zooms; sd_tiling repeats it infinitely.
-        if let Some(tiling) = resolved_graph.tiling {
-            let tiling_shape = Shape::tiling(match tiling.kind {
-                TilingKind::Grid => Tiling::grid(tiling.spacing, tiling.spacing, tiling.thickness),
-                TilingKind::Dots => Tiling::dots(tiling.spacing, tiling.spacing, tiling.thickness),
-                TilingKind::Triangles => Tiling::triangles(tiling.spacing, tiling.thickness),
-                TilingKind::Hex => Tiling::hex(tiling.spacing, tiling.thickness),
-            });
-            // Grid/triangle/hex give the unsigned distance to the line, so their
-            // thickness comes from the style; dots bake the radius into the field.
-            let style = match tiling.kind {
-                TilingKind::Dots => Style::solid(tiling.color),
-                _ => Style::solid(tiling.color).expand(tiling.thickness * 0.5),
-            };
-            let mut bg_batch = SdfPrimitive::new();
-            bg_batch.push(&tiling_shape, &style, [0.0, 0.0]);
-            let wo = layout.bounds().position();
-            let (cx, cy) = layer_camera(
-                render_context.camera_position,
-                render_context.camera_zoom,
-                wo,
-                layout.bounds(),
-            );
-            renderer.with_layer(layout.bounds(), |renderer| {
-                draw_sdf(
-                    renderer,
-                    &state.sdf_animated,
-                    layout.bounds(),
-                    bg_batch
-                        .camera(cx, cy, render_context.camera_zoom)
-                        .time(render_context.time)
-                        // Mark the full-coverage tiling background as cacheable.
-                        // Inert under v2; under sdf-v3 the pipeline blits a cached
-                        // texture on camera-static frames instead of re-running the
-                        // one fullscreen fragment pass the cull cannot prune.
-                        .background(),
-                );
-            });
-        }
+        // The tiling grid is folded into the single graph-background draw below
+        // (z0, under the node + edge shadows and the edge strokes) so the whole
+        // below-nodes layer is one fullscreen SDF pass.
 
         // ========================================
         // Collect edge data with resolved positions
@@ -757,63 +721,31 @@ where
         let t_after_geom = Instant::now();
 
         // ========================================
-        // Node shadows (batched). Drawn BEFORE the edges so a node's filled
-        // shadow sits behind the connections and never covers them; the node
-        // body (Layer 4) still paints over both.
+        // Graph background: ONE batched SDF draw under all nodes. Within a single
+        // SDF primitive the FIRST-pushed entry composites in FRONT (the cull
+        // sorts slots ascending by push index and the fragment blends them
+        // front-to-back), so entries are pushed FRONT-TO-BACK here: edge strokes
+        // (z2, top), then all shadows (z1, edge + node), then the grid (z0,
+        // bottom). Folding the grid, every node shadow and every edge into one
+        // primitive collapses the whole below-nodes layer into a single
+        // fullscreen fragment pass. Pushing ALL strokes before ANY shadow keeps
+        // every edge line above every shadow. The node bodies (Layer 4) paint
+        // over all of it. The grid is no longer marked cacheable: the dynamic
+        // shadows/edges sharing this draw would never let the static-background
+        // texture cache hit.
         // ========================================
-        {
-            let mut shadow_batch = SdfPrimitive::new();
-            let cam_zoom = render_context.camera_zoom;
+        let bg_layer = {
+            let mut bg = SdfPrimitive::with_capacity(self.nodes.len() + self.edges.len() * 4 + 1);
 
-            for &node_index in &z_indices {
-                let Some(geom) = node_geoms[node_index].as_ref() else {
-                    continue;
-                };
-                if !geom.resolved.has_shadow() {
-                    continue;
-                }
-                // Reuse the node silhouette, shifted by the shadow offset, then
-                // build the soft shadow chain over it.
-                let (ox, oy) = geom.resolved.shadow_offset;
-                for band in geom.resolved.shadow_sdf_layers(geom.resolved.opacity) {
-                    geom.push_body(&mut shadow_batch, &band, (ox, oy));
-                }
-            }
-
-            if !shadow_batch.is_empty() {
-                let wo = layout.bounds().position();
-                let (cx, cy) = layer_camera(
-                    render_context.camera_position,
-                    cam_zoom,
-                    wo,
-                    layout.bounds(),
-                );
-                renderer.with_layer(layout.bounds(), |renderer| {
-                    draw_sdf(
-                        renderer,
-                        &state.sdf_animated,
-                        layout.bounds(),
-                        shadow_batch
-                            .camera(cx, cy, cam_zoom)
-                            .time(render_context.time)
-                            .debug(self.sdf_debug.layer_flags(self.sdf_debug.shadows))
-                            .mouse(mouse_x, mouse_y),
-                    );
-                });
-            }
-        }
-        let t_after_shadow = Instant::now();
-
-        // ========================================
-        // Edges (batched into single draw call), drawn over the node shadows.
-        // ========================================
-        let edge_batch = {
+            // Edge layers split by geometry: strokes (z2) collected to push first
+            // (front), shadows (z1) collected to push behind them. Each edge's own
+            // layer order is preserved within each group.
             let pending_cuts = match &state.dragging {
                 Dragging::EdgeCutting { pending_cuts, .. } => Some(pending_cuts),
                 _ => None,
             };
-
-            let mut batch = SdfPrimitive::with_capacity(self.edges.len() * 4);
+            let mut edge_strokes: Vec<(Shape, Style)> = Vec::with_capacity(self.edges.len() * 2);
+            let mut edge_shadows: Vec<(Shape, Style)> = Vec::with_capacity(self.edges.len());
 
             for (edge_idx, (_edge_id, from, to, edge_style_fn)) in self.edges.iter().enumerate() {
                 let Some(from_node_idx) = self.node_index(&from.node_id) else {
@@ -888,95 +820,156 @@ where
                 let (shape, shadow_shape) =
                     edge_shapes(&start_pos, &end_pos, start_side, end_side, &edge_style);
 
-                push_edge_layers(&mut batch, &shape, &shadow_shape, &edge_style);
+                // Collect this edge's layers by geometry; both groups are pushed
+                // in z order after the loop.
+                for layer in edge_style.sdf_layers() {
+                    match layer.geometry {
+                        EdgeGeometry::Stroke => {
+                            edge_strokes.push((shape.clone(), layer.style));
+                        }
+                        EdgeGeometry::Shadow => {
+                            edge_shadows.push((shadow_shape.clone(), layer.style));
+                        }
+                    }
+                }
             }
 
-            batch
+            // z2: edge strokes (frontmost in the background layer).
+            for (shape, style) in &edge_strokes {
+                bg.push(shape, style, [0.0, 0.0]);
+            }
+
+            // z1: shadows behind the strokes - edge shadows, then node shadows
+            // (same plane; both above the grid and below every edge line).
+            for (shape, style) in &edge_shadows {
+                bg.push(shape, style, [0.0, 0.0]);
+            }
+            for &node_index in &z_indices {
+                let Some(geom) = node_geoms[node_index].as_ref() else {
+                    continue;
+                };
+                if !geom.resolved.has_shadow() {
+                    continue;
+                }
+                let (ox, oy) = geom.resolved.shadow_offset;
+                for band in geom.resolved.shadow_sdf_layers(geom.resolved.opacity) {
+                    geom.push_body(&mut bg, &band, (ox, oy));
+                }
+            }
+
+            // z0: tiling grid/dots/triangles/hex (backmost).
+            if let Some(tiling) = resolved_graph.tiling {
+                let tiling_shape = Shape::tiling(match tiling.kind {
+                    TilingKind::Grid => {
+                        Tiling::grid(tiling.spacing, tiling.spacing, tiling.thickness)
+                    }
+                    TilingKind::Dots => {
+                        Tiling::dots(tiling.spacing, tiling.spacing, tiling.thickness)
+                    }
+                    TilingKind::Triangles => Tiling::triangles(tiling.spacing, tiling.thickness),
+                    TilingKind::Hex => Tiling::hex(tiling.spacing, tiling.thickness),
+                });
+                // Grid/triangle/hex give the unsigned distance to the line, so
+                // their thickness comes from the style; dots bake the radius in.
+                let style = match tiling.kind {
+                    TilingKind::Dots => Style::solid(tiling.color),
+                    _ => Style::solid(tiling.color).expand(tiling.thickness * 0.5),
+                };
+                bg.push(&tiling_shape, &style, [0.0, 0.0]);
+            }
+
+            bg
         };
 
-        renderer.with_layer(layout.bounds(), |renderer| {
-            // Batched static edges (single draw call)
-            // Batches clipped to the full graph bounds use the bounds origin as
-            // the shader's `bounds_origin`, so the camera offset compensates with
-            // `camera_position - widget_origin` (the general formula reduced for a
-            // full-bounds clip). No-op when the graph is at the window origin.
+        // Batches clipped to the full graph bounds use the bounds origin as the
+        // shader's `bounds_origin`, so the camera offset compensates with
+        // `camera_position - widget_origin` (the general formula reduced for a
+        // full-bounds clip). No-op when the graph is at the window origin.
+        if !bg_layer.is_empty() {
             let wo = layout.bounds().position();
-            if !edge_batch.is_empty() {
+            let (cx, cy) = layer_camera(
+                render_context.camera_position,
+                render_context.camera_zoom,
+                wo,
+                layout.bounds(),
+            );
+            renderer.with_layer(layout.bounds(), |renderer| {
+                draw_sdf(
+                    renderer,
+                    &state.sdf_animated,
+                    layout.bounds(),
+                    bg_layer
+                        .camera(cx, cy, render_context.camera_zoom)
+                        .time(render_context.time)
+                        .debug(
+                            self.sdf_debug
+                                .layer_flags(self.sdf_debug.shadows || self.sdf_debug.edges),
+                        )
+                        .mouse(mouse_x, mouse_y),
+                );
+            });
+        }
+
+        // Dragging edge (single primitive, only during interaction). Kept as its
+        // own draw above the background but below the nodes, matching its prior
+        // z-position; it is never folded into the background batch.
+        if let Dragging::Edge(from_node_idx, from_pin_idx, _) = &state.dragging
+            && let Some(cursor_pos) = cursor.position()
+            && let (Some(from_tree), Some(from_layout)) = (
+                tree.children.get(*from_node_idx),
+                layout.children().nth(*from_node_idx),
+            )
+        {
+            let from_pins = find_pins::<P, UI>(from_tree, from_layout);
+            if let Some((_, from_pin_state, (from_pin_pos, _))) = from_pins.get(*from_pin_idx) {
+                let from_offset = compute_node_offset(*from_node_idx);
+                let start_pos = (from_pin_pos.into_euclid().to_vector() + from_offset).to_point();
+                // Loose end follows the cursor in the same layout-absolute space
+                // as the pin geometry so the dragged edge stays aligned when the
+                // graph is off the window origin.
+                let end_pos: WorldPoint = cursor_layout(cursor_pos);
+
+                let drag_edge_style = match (
+                    self.dragging_edge_style_fn.as_ref(),
+                    pin_info::<P, UI>(from_pin_state),
+                ) {
+                    (Some(f), Some(info)) => f(theme, info),
+                    _ => crate::style::default_edge_style(theme, EdgeStatus::Idle),
+                };
+
+                let from_side: u32 = from_pin_state.side.into();
+                let cursor_side: u32 = match from_pin_state.side {
+                    PinSide::Left => 1,
+                    PinSide::Right => 0,
+                    PinSide::Top => 3,
+                    PinSide::Bottom => 2,
+                    PinSide::Row => 1,
+                };
+
+                // Output = start, input = end. Dragging FROM an input pin puts
+                // the held pin at the END and the cursor at the START (flip);
+                // from an output it stays start -> cursor end.
+                let (start_pos, end_pos, start_side, end_side) =
+                    if matches!(from_pin_state.direction, PinDirection::Input) {
+                        (end_pos, start_pos, cursor_side, from_side)
+                    } else {
+                        (start_pos, end_pos, from_side, cursor_side)
+                    };
+
+                let (shape, shadow_shape) =
+                    edge_shapes(&start_pos, &end_pos, start_side, end_side, &drag_edge_style);
+
+                let mut drag_batch = SdfPrimitive::new();
+                push_edge_layers(&mut drag_batch, &shape, &shadow_shape, &drag_edge_style);
+
+                let wo = layout.bounds().position();
                 let (cx, cy) = layer_camera(
                     render_context.camera_position,
                     render_context.camera_zoom,
                     wo,
                     layout.bounds(),
                 );
-                draw_sdf(
-                    renderer,
-                    &state.sdf_animated,
-                    layout.bounds(),
-                    edge_batch
-                        .camera(cx, cy, render_context.camera_zoom)
-                        .time(render_context.time)
-                        .debug(self.sdf_debug.layer_flags(self.sdf_debug.edges))
-                        .mouse(mouse_x, mouse_y),
-                );
-            }
-
-            // Dragging edge (single primitive, only during interaction)
-            if let Dragging::Edge(from_node_idx, from_pin_idx, _) = &state.dragging
-                && let Some(cursor_pos) = cursor.position()
-                && let (Some(from_tree), Some(from_layout)) = (
-                    tree.children.get(*from_node_idx),
-                    layout.children().nth(*from_node_idx),
-                )
-            {
-                let from_pins = find_pins::<P, UI>(from_tree, from_layout);
-                if let Some((_, from_pin_state, (from_pin_pos, _))) = from_pins.get(*from_pin_idx) {
-                    let from_offset = compute_node_offset(*from_node_idx);
-                    let start_pos =
-                        (from_pin_pos.into_euclid().to_vector() + from_offset).to_point();
-                    // Loose end follows the cursor in the same layout-absolute
-                    // space as the pin geometry so the dragged edge stays aligned
-                    // when the graph is off the window origin.
-                    let end_pos: WorldPoint = cursor_layout(cursor_pos);
-
-                    let drag_edge_style = match (
-                        self.dragging_edge_style_fn.as_ref(),
-                        pin_info::<P, UI>(from_pin_state),
-                    ) {
-                        (Some(f), Some(info)) => f(theme, info),
-                        _ => crate::style::default_edge_style(theme, EdgeStatus::Idle),
-                    };
-
-                    let from_side: u32 = from_pin_state.side.into();
-                    let cursor_side: u32 = match from_pin_state.side {
-                        PinSide::Left => 1,
-                        PinSide::Right => 0,
-                        PinSide::Top => 3,
-                        PinSide::Bottom => 2,
-                        PinSide::Row => 1,
-                    };
-
-                    // Output = start, input = end. Dragging FROM an input pin puts
-                    // the held pin at the END and the cursor at the START (flip);
-                    // from an output it stays start -> cursor end.
-                    let (start_pos, end_pos, start_side, end_side) =
-                        if matches!(from_pin_state.direction, PinDirection::Input) {
-                            (end_pos, start_pos, cursor_side, from_side)
-                        } else {
-                            (start_pos, end_pos, from_side, cursor_side)
-                        };
-
-                    let (shape, shadow_shape) =
-                        edge_shapes(&start_pos, &end_pos, start_side, end_side, &drag_edge_style);
-
-                    let mut drag_batch = SdfPrimitive::new();
-                    push_edge_layers(&mut drag_batch, &shape, &shadow_shape, &drag_edge_style);
-
-                    let (cx, cy) = layer_camera(
-                        render_context.camera_position,
-                        render_context.camera_zoom,
-                        wo,
-                        layout.bounds(),
-                    );
+                renderer.with_layer(layout.bounds(), |renderer| {
                     draw_sdf(
                         renderer,
                         &state.sdf_animated,
@@ -985,10 +978,10 @@ where
                             .camera(cx, cy, render_context.camera_zoom)
                             .time(render_context.time),
                     );
-                }
+                });
             }
-        });
-        let t_after_edges = Instant::now();
+        }
+        let t_after_background = Instant::now();
 
         // ========================================
         // Layers 4..N: Nodes (each node gets 3 sub-layers)
@@ -1435,16 +1428,12 @@ where
                         duration: t_after_geom - t_geom_start,
                     },
                     OpTiming {
-                        label: "shadows",
-                        duration: t_after_shadow - t_after_geom,
-                    },
-                    OpTiming {
-                        label: "edges",
-                        duration: t_after_edges - t_after_shadow,
+                        label: "background",
+                        duration: t_after_background - t_after_geom,
                     },
                     OpTiming {
                         label: "foreground",
-                        duration: t_after_fg - t_after_edges,
+                        duration: t_after_fg - t_after_background,
                     },
                     OpTiming {
                         label: "sdf_prepare",
