@@ -4,83 +4,114 @@ Paste this into a fresh session to pick up where we left off.
 
 ---
 
-We are on branch `sdf-v3`. Last pushed commit: `aa4ba53`
-("feat(sdf): arc-only segments + biarc collapse fix"). The branch will be
-**squash-merged** later, so messy intermediate commits are fine.
+We are on branch `sdf-v3`. Last pushed commit: `04f5b4c`. The branch will be
+**squash-merged** later, so messy intermediate commits are fine. Commit directly
+on `sdf-v3`, fmt-clean, NO co-author trailer. Do NOT launch the GUI — the user
+runs it and reports pixels (the agent cannot see pixels).
 
-Read these memories first for full context:
-`.claude/projects/.../memory/project_sdf_v3_step0.md`,
-`project_zoomout_pan_greyout.md`, `feedback_no_slot_overflow_theory.md`.
-(They live under the user's `~/.claude/projects/C--workspace-iced-nodegraph/memory/`.)
+Read these memories first:
+`sdf_intra_primitive_zorder` (NEW, critical for the render path),
+`sdf_cull_exact_seg_box`, `arc_is_all_you_need`, `feedback_tests_first`,
+`ci_fmt_gate`, `no_coauthor_trailer`.
 
-## What is DONE and pushed (all gates green: sdf 142 tests + 2 doctests, widget
-suites, clippy -D warnings, wasm32 check, cargo build, fmt all clean)
+## What is DONE and pushed (all gates green: widget 133 tests, sdf 142 +2
+doctests modulo one PRE-EXISTING flaky test, clippy -D warnings, wasm32 check,
+build, fmt)
 
-- **Arc-only segment migration complete (CPU + GPU).** Every segment is now ONE
-  arc primitive: `start/end + signed curvature (+heading)`; `curvature==0` = line,
-  `start==end` = point. No more `segment_type/geom0/geom1`, no GPU cubic. Cubics
-  are arc-splined on the CPU via `biarc::cubic_to_arcs` (wired into `curve.rs`
-  `build_drawable` and `boolean.rs`). GPU `GpuSegment`/`eval_segment`/
-  `seg_box_interval` reconstruct the arc from endpoints+curvature
-  (`arc_from_endpoints`, mirrors `segment::arc_params`). `sd_bezier` + all bezier
-  helpers deleted from `shader.wgsl`. CPU reference field is `segment::seg_sdf`.
-- **Gray-block / edge-box blob bug FIXED** (the cull over-inclusion): the arc cull
-  splits wide arcs into sub-chords so the concave interior stays empty. User
-  confirmed visually: gray blocks gone, most edges crisp.
-- **"Edge suddenly becomes a straight line on move/drag" FIXED**: root cause was
-  `biarc::circle_through` returning a ~1e9-radius circle for a near-collinear
-  S-curve; the deviation gate accepted it (f32 cancellation at huge radius) and
-  `from_center_arc` collapsed it to a zero-length point. Fix: reject giant
-  (>1e5) / non-finite radii in `circle_through` so the fitter splits. Gate:
-  `drawable::curved_edge_never_collapses_to_a_line`.
-- Per-tile slot cap is at **128** (SLOT_STRIDE 256). Do NOT raise it / do NOT blame
-  slot overflow for glitches — see `feedback_no_slot_overflow_theory.md`.
+- **Below-nodes layers consolidated into ONE batched SDF draw** (commit
+  `8e63d4c`). Previously the grid (cached via bg_cache), node shadows, and edges
+  were THREE separate draws. Now they are one `bg_layer` `SdfPrimitive` in
+  `widget.rs` (the graph-background), drawn over full `layout.bounds()`. Node
+  fill / foreground / iced-content layers are UNCHANGED; only the node shadow
+  moved from its own batch into the graph-background. The grid is no longer
+  `.background()`-cached (bg_cache is now inert; folding the grid in was the
+  user's explicit call). `GraphInfo.timings` collapsed `shadows`+`edges` into one
+  `background` op (Vec content change, not an API break).
+- **CRITICAL gotcha learned + memory `sdf_intra_primitive_zorder`**: within ONE
+  `SdfPrimitive`, the FIRST-pushed entry composites in FRONT (the cull sorts a
+  tile's slots ascending by push index, the fragment blends front-to-back so
+  slot 0 = front). Only ACROSS separate draw calls is it painter's order. So the
+  bg_layer pushes FRONT-TO-BACK: edge strokes (z2) -> edge+node shadows (z1) ->
+  grid (z0, last). Getting this inverted made the grid draw OVER the edges (the
+  user caught it); now fixed. The existing foreground batch already follows this
+  convention (border before pins; `border_sdf_layers` is "front-to-back").
+- **Demo instrumented** (commit `04f5b4c`): `demos/500_nodes` now shows
+  `cam: (x, y)  zoom: z` in the stats panel via `.on_pan(...)` (uncontrolled
+  camera, report-only, no behavior change). Use it to read off repro coords.
 
-NOT YET committed elsewhere: nothing pending. The migration has NOT been
-visually signed off beyond the two items above; the 0.2.0 cutover is still the
-user's call.
+## REVERTED / dead ends
 
-## OPEN BUG (next investigation): zoom-out pan greyout
+- Tried making `Shape::Bezier` cacheable (so pan/zoom would stop re-arc-splining
+  edges). It had ZERO effect on `sdf_prepare` time, so reverted. Lesson: the
+  ~43ms `sdf_prepare` at 500 nodes is NOT dominated by bezier eval — it is the
+  per-frame SEGMENT COMPILATION / buffer build of ~2500 entries (every edge is
+  compiled to GpuSegments each frame regardless of eval caching). This is a
+  SEPARATE perf item, not the flicker, and not yet addressed.
 
-In 500_nodes, panning while zoomed far out greys the nodes behind a
-semi-transparent veil; pan/pixel-dependent, "grows toward the right". Findings so
-far (see `project_zoomout_pan_greyout.md`):
-- The stats PANEL does NOT dim -> it is node-graph content, not a window-level veil.
-- User observation: **"nodes go grey, the background grid stays sharp."**
-- Ruled out (headless): node fills + cull are robust to world X = 1e7 (tiled,
-  multi-node); edges robust to 40k; bg-cache not stale during pan.
-- Found a REAL but separate latent bug: the tiling background (`p % spacing`,
-  raw world_p) washes out past world X ~1.7e7 (2^24 f32 limit). But 500_nodes
-  coords are only ~100..3000, so this is NOT the seen symptom. Worth fixing
-  anyway (fold camera mod spacing in f64).
-- LEADING suspect for the actual veil: the **hosted node-content zoom/pan
-  transform**. iced has no per-widget zoom; node children are drawn via
-  `renderer.with_transformation(camera.layer_transformation())` (widget.rs).
-  "Nodes grey, grid sharp" points here. Not yet isolated.
+## OPEN BUG (the user's actual target): pan/zoom node "float collapse"
 
-## NEXT TASK the user asked for (do this first at work)
+In 500_nodes, panning/zooming makes the NODES (fill/border) render wrong; the
+grid and edges stay sharp. Deterministic per camera position: stop at the spot
+and the display error PERSISTS (it "flickers" because you pass through many such
+spots while moving). Confirmed facts from the user:
 
-Instead of one-off layer toggles, build a **per-layer debug MATRIX** in the
-500_nodes demo's debug panel. Rows = SDF layers (background/tiling, shadows,
-node fill, foreground, edges, pins). Columns (per layer, independently
-toggleable):
-1. **visible** (show/hide the layer)
-2. **small-tile color** — fine-tile heatmap, green->red by slot usage
-   (`DEBUG_TILE_HEATMAP`)
-3. **big-tile color** — regional/workgroup-tile visualization
-4. **iq-field** — distance-field view (`DEBUG_DISTANCE_FIELD`)
-5. **hover-debug** — hovered-tile slot inspector (`DEBUG_HOVERED_TILE`)
+- **Only nodes collapse** (the per-node CLIPPED SDF path: each node's fill and
+  foreground are drawn in their own `clipped_shape_bounds` rect with a
+  clip-specific `layer_camera` offset). Grid/edges use the precise full-bounds
+  path and are fine.
+- **Trigger = zooming OUT; zooming IN fixes it.** Repro captured at
+  **cam (-327.7, -132.0), zoom 0.24131** in 500_nodes (read off the new cam line).
+- **The user says: "the CLIPS are the wrong SIZE — even the debug heatmap grid
+  renders wrong there."** So the per-node clip rect (or the tile grid derived
+  from it in `prepare`) is wrong when zoomed out.
+- Coords are MODEST (zoom 0.24, cam ~-300), so this is NOT large-magnitude f32
+  cancellation. It is a degeneracy/logic bug at normal coordinates.
+- IQ Field debug "doesn't help at that zoom level."
 
-The current demo has a flat "Tile Debug" checkbox group
-(Edges/Shadows/Node Fill/Foreground/IQ Field/Hovered Tile) in `stats_panel`
-(`demos/500_nodes/src/lib.rs`). `DebugFlags` live on `SdfPrimitive` in
-`iced_nodegraph_sdf/src/primitive.rs`; the shader honours
-`DEBUG_TILE_HEATMAP / DEBUG_DISTANCE_FIELD / DEBUG_HOVERED_TILE`. A per-layer
-matrix needs per-layer debug-flag plumbing (each layer's primitive carries its
-own flags) plus a "visible" gate. This matrix is also the tool to finally
-localize the greyout.
+### Analysis already done (so don't redo it)
 
-## Working agreement reminders
-- SDF is the highest-risk subsystem: minimal changes, validate, no over-
-  engineering. Commit fmt-clean. Commit directly on `sdf-v3`. Do not launch the
-  GUI (the user runs it). The user can see pixels; the agent cannot.
+- `world_bbox_to_screen_bounds` (widget.rs ~125) and `camera.layer_transformation`
+  (camera.rs ~298) are PROVABLY consistent: both reduce to
+  `screen = (world + position)*zoom + viewport_origin*(1 - zoom)`. Clip width =
+  `world_width*zoom + const_padding`. The clip FORMULA is therefore correct in
+  exact arithmetic — the bug is almost certainly NOT in those two functions.
+- `layer_camera` (widget.rs ~92): `cx = camera_position.x + (widget_origin.x*(1
+  - zoom) - clip.x)/zoom`. The `clip.x` cancels analytically against the shader's
+  `bounds_origin` term; at these modest coords the residual is sub-pixel. Not it.
+
+### Strongest leads for next session (do these)
+
+1. **Empirically dump the actual clip dims.** Add temporary `eprintln!` (or a
+   debug overlay) in `widget.rs` printing, per visible node at the repro camera,
+   the `fill_clip`/`fg_clip` `Rectangle` (x,y,w,h) and the `grid_cols`/`grid_rows`
+   the SDF `prepare` derives (`bounds.width*scale/TILE_SIZE`). Compare against the
+   expected node screen size. The user already SEES wrong-size clips, so the
+   numbers will show which clip is wrong and by how much — that pins the formula.
+2. **Sub-tile-clip rounding.** At zoom 0.24 a node is ~12px; `grid_cols =
+   ceil(w*scale/16).max(1)` rounds a sub-2-tile clip up, so the tile grid is
+   larger than the clip and the heatmap overshoots. Check whether this rounding
+   (or a clip narrower than one physical tile) degenerates the cull/heatmap.
+3. **Shared tile-buffer region indexing.** At zoom-out there are ~600 per-node
+   primitives (fill+foreground for ~300 in-view nodes) all writing one shared
+   `tile_counts`/`tile_entries` buffer via per-primitive `tile_base`. Re-check the
+   `tile_base` accumulation and the mid-frame buffer-growth copy in
+   `primitive.rs` `prepare` (~747-784) for an off-by/region-overlap that only
+   manifests with many primitives (i.e. zoomed out).
+4. Reproduce headless (user's tests-first rule): the `pixel_tests.rs` harness +
+   `SdfPipeline` path (e.g. `render_prims` at ~1267) can render several clipped
+   primitives through ONE pipeline; build a scene of small per-node clips at
+   zoom 0.24 and assert the fill fills the node rect, not more/less.
+
+## Pre-push checklist (all must pass)
+`cargo test -p iced_nodegraph`; `cargo test -p iced_nodegraph_sdf` (the
+`overflowing_tile_keeps_nearest_not_first` pixel test is PRE-EXISTING flaky ~15%
+in the parallel run — passes in isolation, unrelated to changes);
+`cargo check -p iced_nodegraph` (native + `--target wasm32-unknown-unknown`);
+`cargo clippy -p iced_nodegraph -p iced_nodegraph_sdf -- -D warnings`;
+`cargo build`; `cargo fmt --all`. The `block v0.1.6` future-incompat note is a
+pre-existing transitive-dep warning, ignore it.
+
+## Working agreement
+SDF is the highest-risk subsystem: minimal changes, validate, no over-
+engineering. Reproduce bugs as automated tests first. Commit fmt-clean on
+`sdf-v3`, no co-author trailer. The user runs the GUI and reports pixels.
