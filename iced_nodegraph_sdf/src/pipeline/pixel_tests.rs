@@ -3201,10 +3201,11 @@ fn arc_spline_edge_matches_bezier() {
         glam::Vec2::new(40.0, 40.0),
         glam::Vec2::new(120.0, 40.0),
     );
-    // The oracle is the TRUE cubic (SEG_CUBIC / sd_bezier), not another
-    // arc-spline: `Curve::bezier` now itself fits arcs, so comparing against it
-    // would be arc-spline-vs-arc-spline and could not catch an arc-spline error.
-    let bez = crate::drawable::Drawable::single_bezier(cps.0, cps.1, cps.2, cps.3);
+    // The oracle is a dense POLYLINE of the true cubic (v3 deleted the GPU
+    // cubic SDF). It is independent of the biarc fitter - not another arc-spline
+    // - so it still catches a structural arc-spline error. `Curve::bezier` itself
+    // now fits arcs, so it could not serve as the reference.
+    let bez = crate::drawable::Drawable::bezier_polyline(cps.0, cps.1, cps.2, cps.3, 256);
     // Zoom-aware fine tolerance (sub-pixel at this zoom).
     let tol = 0.1 / zoom;
     let arcs = crate::drawable::Drawable::bezier_arcs(cps.0, cps.1, cps.2, cps.3, tol);
@@ -3266,8 +3267,9 @@ fn arc_spline_edge_matches_bezier() {
 /// to the LEFT) has bezier control points that point away from each other, so
 /// the cubic self-loops. The arc-spline of such a curve must still match the
 /// true cubic - a full-circle or giant-arc artifact here (the reported bug)
-/// blows up the diff. Rendered against the SEG_CUBIC oracle, not another
-/// arc-spline. Also sweeps a non-origin offset (world-space fit precision).
+/// blows up the diff. Rendered against a dense-polyline oracle of the cubic (v3
+/// has no GPU cubic), not another arc-spline. Also sweeps a non-origin offset
+/// (world-space fit precision).
 #[test]
 fn backward_edge_arc_spline_matches_cubic() {
     let r = shared_renderer();
@@ -3291,7 +3293,7 @@ fn backward_edge_arc_spline_matches_cubic() {
     let color = rgba(0.2, 0.85, 1.0, 1.0);
     let style = Style::stroke(color, Pattern::solid(6.0));
     for (i, (a, b, c, d)) in bases.into_iter().enumerate() {
-        let bez = crate::drawable::Drawable::single_bezier(a, b, c, d);
+        let bez = crate::drawable::Drawable::bezier_polyline(a, b, c, d, 256);
         let arcs = crate::drawable::Drawable::bezier_arcs(a, b, c, d, 0.1 / zoom);
 
         let v2 = r.render_opts(&[(&bez, &style)], w, h, zoom, true);
@@ -3324,6 +3326,123 @@ fn backward_edge_arc_spline_matches_cubic() {
             frac < 0.05,
             "backward edge {i}: {:.1}% pixels differ - structural arc-spline error",
             frac * 100.0,
+        );
+    }
+}
+
+/// Sweep the WIDGET's real edge geometry (every pin-side tangent pair x endpoint
+/// delta, mirroring `pin_side_direction` + `adaptive_bezier_length`, incl. the
+/// short tight-loop configs) and assert the tiled spatial-index render equals the
+/// brute-force untiled render. This is the reference-free correctness oracle: it
+/// proves the arc cull (the endpoint+curvature `seg_box_interval`) never drops or
+/// mis-places an arc segment, which is what a "becomes a straight line" glitch
+/// would look like. (A dense-polyline comparison is deliberately NOT used: a
+/// polyline corner-cuts tight bends, under-covering where the arc-spline is
+/// actually MORE faithful - a false positive.)
+#[test]
+fn widget_edge_configs_tiled_matches_untiled() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (320u32, 320u32, 1.0f32);
+    let dirs: [[f32; 2]; 4] = [[-1.0, 0.0], [1.0, 0.0], [0.0, -1.0], [0.0, 1.0]];
+    let deltas: [[f32; 2]; 8] = [
+        [120.0, 0.0],
+        [-120.0, 0.0],
+        [0.0, 90.0],
+        [0.0, -90.0],
+        [-100.0, 40.0],
+        [110.0, -70.0],
+        [16.0, 6.0],    // short tight loop
+        [-14.0, -36.0], // short backward
+    ];
+    let style = Style::stroke(rgba(0.2, 0.85, 1.0, 1.0), Pattern::solid(6.0));
+
+    let mut worst_overall = 0i32;
+    let mut worst_cfg = String::new();
+    for delta in deltas {
+        let p0 = [-delta[0] * 0.5, -delta[1] * 0.5];
+        let p3 = [delta[0] * 0.5, delta[1] * 0.5];
+        // adaptive_bezier_length: min(80, half dist, >=1).
+        let d = (delta[0] * delta[0] + delta[1] * delta[1]).sqrt();
+        let l = 80.0_f32.min(d * 0.5).max(1.0);
+        for df in dirs {
+            for dt in dirs {
+                let cp0 = [p0[0] + df[0] * l, p0[1] + df[1] * l];
+                let cp1 = [p3[0] + dt[0] * l, p3[1] + dt[1] * l];
+                let arcs = crate::drawable::Drawable::bezier_arcs(
+                    glam::Vec2::from(p0),
+                    glam::Vec2::from(cp0),
+                    glam::Vec2::from(cp1),
+                    glam::Vec2::from(p3),
+                    0.05,
+                );
+                let tiled = r.render_opts(&[(&arcs, &style)], w, h, zoom, true);
+                let untiled = r.render_opts(&[(&arcs, &style)], w, h, zoom, false);
+                let mut worst = 0i32;
+                for (a, b) in tiled.iter().zip(untiled.iter()) {
+                    if a[3] < CORPUS_ALPHA_FLOOR && b[3] < CORPUS_ALPHA_FLOOR {
+                        continue;
+                    }
+                    let dd = (0..4)
+                        .map(|c| (a[c] as i32 - b[c] as i32).abs())
+                        .max()
+                        .unwrap();
+                    worst = worst.max(dd);
+                }
+                if worst > worst_overall {
+                    worst_overall = worst;
+                    worst_cfg = format!("delta={delta:?} df={df:?} dt={dt:?} worst={worst}");
+                }
+            }
+        }
+    }
+    eprintln!("widget-edge tiled-vs-untiled worst: {worst_cfg}");
+    assert!(
+        worst_overall < 32,
+        "arc cull drops/mis-places a segment: {worst_cfg}"
+    );
+}
+
+/// An arc-spline edge renders identically whether its geometry sits at the origin
+/// or 40k px away (camera panned to compensate). The GPU `arc_from_endpoints`
+/// reconstructs the arc center from ABSOLUTE coordinates, so this guards against
+/// far-from-origin precision loss displacing an edge on a panned graph.
+#[test]
+fn far_origin_edge_matches_origin() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (256u32, 256u32, 1.0f32);
+    let style = Style::stroke(rgba(0.2, 0.85, 1.0, 1.0), Pattern::solid(6.0));
+    let base = [
+        glam::Vec2::new(-120.0, -40.0),
+        glam::Vec2::new(-40.0, -40.0),
+        glam::Vec2::new(40.0, 40.0),
+        glam::Vec2::new(120.0, 40.0),
+    ];
+    let render_at = |off: glam::Vec2| {
+        let cps: Vec<glam::Vec2> = base.iter().map(|p| *p + off).collect();
+        let arcs = crate::drawable::Drawable::bezier_arcs(cps[0], cps[1], cps[2], cps[3], 0.05);
+        let cam = [w as f32 * 0.5 - off.x, h as f32 * 0.5 - off.y];
+        r.render_with_origin(&[(&arcs, &style)], w, h, zoom, [0.0, 0.0], w, w, cam)
+    };
+    let at_origin = render_at(glam::Vec2::ZERO);
+    for off in [
+        glam::Vec2::new(2000.0, -1500.0),
+        glam::Vec2::new(40000.0, 25000.0),
+    ] {
+        let far = render_at(off);
+        let mut worst = 0i32;
+        for (a, b) in at_origin.iter().zip(far.iter()) {
+            if a[3] < CORPUS_ALPHA_FLOOR && b[3] < CORPUS_ALPHA_FLOOR {
+                continue;
+            }
+            let dd = (0..4)
+                .map(|c| (a[c] as i32 - b[c] as i32).abs())
+                .max()
+                .unwrap();
+            worst = worst.max(dd);
+        }
+        assert!(
+            worst < 24,
+            "edge at {off:?} differs from origin by {worst} (precision loss)"
         );
     }
 }

@@ -67,20 +67,22 @@ encase::impl_vector!(4, GpuVec4, f32; using AsRef AsMut From);
 
 // --- GPU Structs ---
 
-/// A single geometric segment (line, arc, or cubic bezier).
-/// 64 bytes (4 x vec4).
+/// A single arc segment - the ONE geometric primitive ("Arc is all you need").
+/// `curvature == 0` is a line, `start == end` is a point (sign from `heading`),
+/// else the minor arc of radius `1/|curvature|`. 64 bytes (4 x vec4).
 #[derive(Clone, Debug, ShaderType)]
 pub(crate) struct GpuSegment {
-    /// Segment type: 0=line, 1=arc, 2=cubic_bezier, 3=point.
-    pub segment_type: u32,
     /// Segment flags. Bit 0: signed (part of closed contour).
     pub flags: u32,
+    pub _pad0: u32,
     pub _pad1: u32,
     pub _pad2: u32,
-    /// Primary geometry, in the entry's LOCAL frame. Line: (ax,ay,bx,by). Bezier: (p0x,p0y,p1x,p1y). Arc: (cx,cy,r,start_angle).
-    pub geom0: GpuVec4,
-    /// Secondary geometry. Bezier: (p2x,p2y,p3x,p3y). Arc: (sweep_angle,0,0,0).
-    pub geom1: GpuVec4,
+    /// Endpoints in the entry's LOCAL frame: (start.x, start.y, end.x, end.y).
+    pub endpoints: GpuVec4,
+    /// Arc encoding: (curvature, heading, 0, 0). Signed curvature `1/radius`
+    /// (`0` = line, sign selects the bulge side); `heading` is the interior
+    /// bisector, meaningful only for a point (`start == end`).
+    pub params: GpuVec4,
     /// Arc-length range: (arc_start, arc_end, total_arc_length, 0).
     pub arc_range: GpuVec4,
 }
@@ -194,12 +196,12 @@ pub(crate) struct ComputeUniforms {
 impl Default for GpuSegment {
     fn default() -> Self {
         Self {
-            segment_type: 0,
             flags: 0,
+            _pad0: 0,
             _pad1: 0,
             _pad2: 0,
-            geom0: GpuVec4::ZERO,
-            geom1: GpuVec4::ZERO,
+            endpoints: GpuVec4::ZERO,
+            params: GpuVec4::ZERO,
             arc_range: GpuVec4::ZERO,
         }
     }

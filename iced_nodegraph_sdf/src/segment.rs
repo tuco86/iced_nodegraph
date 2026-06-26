@@ -64,7 +64,10 @@ pub(crate) fn from_center_arc(
 ///
 /// Reproduces the legacy `sd_line` / `sd_arc_segment` / `sd_point` fields exactly
 /// for the round-tripped encoding - this equivalence is the regression oracle in
-/// the tests, and the contract the GPU port must keep.
+/// the tests, and the contract the GPU `eval_segment` port must keep. Kept as the
+/// canonical reference field even though production reads it only through the GPU
+/// shader twin; the tests below are its consumers.
+#[allow(dead_code)]
 pub(crate) fn seg_sdf(p: Vec2, start: Vec2, end: Vec2, curvature: f32, heading: f32) -> f32 {
     let d = end - start;
     let l = d.length();
@@ -73,7 +76,11 @@ pub(crate) fn seg_sdf(p: Vec2, start: Vec2, end: Vec2, curvature: f32, heading: 
     if l < POINT_EPS {
         let dist = ((p - start).length() - 0.01).max(0.0);
         let right = Vec2::new(heading.cos(), heading.sin());
-        return if (p - start).dot(right) > 0.0 { -dist } else { dist };
+        return if (p - start).dot(right) > 0.0 {
+            -dist
+        } else {
+            dist
+        };
     }
 
     // Line: signed distance to the segment, sign from the perpendicular side.
@@ -133,6 +140,19 @@ pub(crate) fn arc_center(start: Vec2, end: Vec2, curvature: f32) -> Option<Vec2>
     let n = Vec2::new(-u.y, u.x);
     let h = (r * r - (l * 0.5) * (l * 0.5)).max(0.0).sqrt();
     Some((start + end) * 0.5 + n * (curvature.signum() * h))
+}
+
+/// Full center/radius/start-angle/sweep of the minor arc, reconstructed from the
+/// endpoint + signed-curvature encoding - the CPU twin of the shader's
+/// `arc_from_endpoints`. `None` for a line (`curvature ~ 0`) or point
+/// (`start == end`). Used by consumers that still want a center-form arc (boolean
+/// loop decomposition, the CPU shader mirror in tests).
+pub(crate) fn arc_params(start: Vec2, end: Vec2, curvature: f32) -> Option<(Vec2, f32, f32, f32)> {
+    let center = arc_center(start, end, curvature)?;
+    let radius = 1.0 / curvature.abs();
+    let a_start = (start - center).y.atan2((start - center).x);
+    let sweep = arc_minor_sweep(start, end, center);
+    Some((center, radius, a_start, sweep))
 }
 
 /// Signed minor sweep (|sweep| < PI) from `start` to `end` about `center`.
@@ -196,7 +216,11 @@ mod tests {
         };
         let dist = (p - (a + ba * t)).length();
         let n = Vec2::new(-ba.y, ba.x);
-        if len_sq > 0.0 && pa.dot(n) > 0.0 { -dist } else { dist }
+        if len_sq > 0.0 && pa.dot(n) > 0.0 {
+            -dist
+        } else {
+            dist
+        }
     }
 
     fn ref_arc(p: Vec2, center: Vec2, radius: f32, start: f32, sweep: f32) -> f32 {
@@ -211,7 +235,11 @@ mod tests {
         let on_arc = (sweep > 0.0 && rel <= sweep) || (sweep < 0.0 && rel >= sweep);
         if on_arc {
             let dist = (dtc - radius).abs();
-            let v = if sweep > 0.0 { radius - dtc } else { -(radius - dtc) };
+            let v = if sweep > 0.0 {
+                radius - dtc
+            } else {
+                -(radius - dtc)
+            };
             if v > 0.0 { -dist } else { dist }
         } else {
             let end_angle = start + sweep;
@@ -232,7 +260,11 @@ mod tests {
     fn ref_point(p: Vec2, pos: Vec2, heading: f32) -> f32 {
         let dist = ((p - pos).length() - 0.01).max(0.0);
         let right = Vec2::new(heading.cos(), heading.sin());
-        if (p - pos).dot(right) > 0.0 { -dist } else { dist }
+        if (p - pos).dot(right) > 0.0 {
+            -dist
+        } else {
+            dist
+        }
     }
 
     /// The endpoint+curvature arc field equals the legacy center/radius/sweep
@@ -245,10 +277,9 @@ mod tests {
         for &radius in &[5.0_f32, 20.0, 100.0] {
             for si in 0..8 {
                 let start_angle = si as f32 * (TAU / 8.0) + 0.3;
-                for &sweep in &[
-                    -2.8_f32, -1.7, -PI / 2.0, -0.4, 0.4, PI / 2.0, 1.7, 2.8,
-                ] {
-                    let (s, e, k) = from_center_arc(Vec2::new(13.0, -7.0), radius, start_angle, sweep);
+                for &sweep in &[-2.8_f32, -1.7, -PI / 2.0, -0.4, 0.4, PI / 2.0, 1.7, 2.8] {
+                    let (s, e, k) =
+                        from_center_arc(Vec2::new(13.0, -7.0), radius, start_angle, sweep);
                     let mut x = -130.0;
                     while x <= 130.0 {
                         let mut y = -130.0;
@@ -264,7 +295,10 @@ mod tests {
                 }
             }
         }
-        assert!(worst < 1e-2, "endpoint arc field deviates from legacy by {worst}");
+        assert!(
+            worst < 1e-2,
+            "endpoint arc field deviates from legacy by {worst}"
+        );
     }
 
     #[test]

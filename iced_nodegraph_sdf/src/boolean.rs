@@ -2,8 +2,8 @@
 //!
 //! The renderer evaluates a closed shape with a *nearest-segment* SDF: for each
 //! pixel it finds the closest segment and takes that segment's sign (right side
-//! = interior = negative for a CW contour). [`Point`](SegmentType::Point)
-//! junctions own the corners and resolve the sign in concave wedges.
+//! = interior = negative for a CW contour). Point junctions (zero-length
+//! segments) own the corners and resolve the sign in concave wedges.
 //!
 //! To combine shapes we therefore cannot just `min`/`max` distance fields - we
 //! must produce a new *clean* boundary chain (lines + arcs) with correct
@@ -17,7 +17,7 @@ use std::f32::consts::TAU;
 
 use glam::Vec2;
 
-use crate::drawable::{Drawable, Segment, SegmentType};
+use crate::drawable::{Drawable, Segment};
 
 /// Geometric tolerance in world units. Endpoints closer than this are merged.
 const EPS: f32 = 1e-3;
@@ -335,21 +335,23 @@ fn from_drawable(d: &Drawable) -> Vec<Loop> {
     );
     let mut edges = Vec::new();
     for seg in &d.segments {
-        match seg.segment_type {
-            SegmentType::Line => edges.push(Edge::Line {
-                a: Vec2::new(seg.geom0[0], seg.geom0[1]),
-                b: Vec2::new(seg.geom0[2], seg.geom0[3]),
-            }),
-            SegmentType::Arc => edges.push(Edge::Arc {
-                center: Vec2::new(seg.geom0[0], seg.geom0[1]),
-                radius: seg.geom0[2],
-                start_angle: seg.geom0[3],
-                sweep: seg.geom1[0],
-            }),
-            SegmentType::Point => {} // junction marker, no geometry
-            SegmentType::CubicBezier => {
-                debug_assert!(false, "boolean ops do not support bezier segments");
-            }
+        if seg.start == seg.end {
+            // junction marker, no geometry
+        } else if seg.curvature == 0.0 {
+            edges.push(Edge::Line {
+                a: seg.start,
+                b: seg.end,
+            });
+        } else {
+            let (center, radius, start_angle, sweep) =
+                crate::segment::arc_params(seg.start, seg.end, seg.curvature)
+                    .expect("a non-degenerate curved segment has arc params");
+            edges.push(Edge::Arc {
+                center,
+                radius,
+                start_angle,
+                sweep,
+            });
         }
     }
     let mut loops = edges_to_loops(edges);
@@ -692,32 +694,17 @@ fn build_drawable(loops: &[Loop]) -> Drawable {
                     let pos = e.start();
                     let heading = interior.y.atan2(interior.x);
                     grow(pos);
-                    segs.push(Segment {
-                        segment_type: SegmentType::Point,
-                        signed: true,
-                        geom0: [pos.x, pos.y, heading, 0.0],
-                        geom1: [0.0; 4],
-                        arc_start: acc,
-                        arc_end: acc,
-                    });
+                    segs.push(Segment::point(pos, heading, true, acc));
                 }
             }
 
-            let len = e.length();
-            let arc_start = acc;
-            acc += len;
             match *e {
                 Edge::Line { a, b } => {
                     grow(a);
                     grow(b);
-                    segs.push(Segment {
-                        segment_type: SegmentType::Line,
-                        signed: true,
-                        geom0: [a.x, a.y, b.x, b.y],
-                        geom1: [0.0; 4],
-                        arc_start,
-                        arc_end: acc,
-                    });
+                    let len = e.length();
+                    segs.push(Segment::line(a, b, true, acc, acc + len));
+                    acc += len;
                 }
                 Edge::Arc {
                     center,
@@ -727,14 +714,17 @@ fn build_drawable(loops: &[Loop]) -> Drawable {
                 } => {
                     grow(center - Vec2::splat(radius));
                     grow(center + Vec2::splat(radius));
-                    segs.push(Segment {
-                        segment_type: SegmentType::Arc,
-                        signed: true,
-                        geom0: [center.x, center.y, radius, start_angle],
-                        geom1: [sweep, 0.0, 0.0, 0.0],
-                        arc_start,
-                        arc_end: acc,
-                    });
+                    // Split into minor sub-arcs (the arc-only invariant) while
+                    // advancing the cumulative arc length.
+                    Segment::push_arc(
+                        &mut segs,
+                        center,
+                        radius,
+                        start_angle,
+                        sweep,
+                        true,
+                        &mut acc,
+                    );
                 }
             }
         }
@@ -1176,23 +1166,14 @@ mod tests {
     fn cpu_eval(p: Vec2, d: &Drawable) -> f32 {
         let mut best = f32::MAX;
         for seg in &d.segments {
-            let sd = match seg.segment_type {
-                SegmentType::Line => cpu_sd_line(
-                    p,
-                    Vec2::new(seg.geom0[0], seg.geom0[1]),
-                    Vec2::new(seg.geom0[2], seg.geom0[3]),
-                ),
-                SegmentType::Arc => cpu_sd_arc(
-                    p,
-                    Vec2::new(seg.geom0[0], seg.geom0[1]),
-                    seg.geom0[2],
-                    seg.geom0[3],
-                    seg.geom1[0],
-                ),
-                SegmentType::Point => {
-                    cpu_sd_point(p, Vec2::new(seg.geom0[0], seg.geom0[1]), seg.geom0[2])
-                }
-                SegmentType::CubicBezier => continue,
+            let sd = if seg.start == seg.end {
+                cpu_sd_point(p, seg.start, seg.heading)
+            } else if seg.curvature == 0.0 {
+                cpu_sd_line(p, seg.start, seg.end)
+            } else {
+                let (center, radius, start_angle, sweep) =
+                    crate::segment::arc_params(seg.start, seg.end, seg.curvature).unwrap();
+                cpu_sd_arc(p, center, radius, start_angle, sweep)
             };
             if sd.abs() < best.abs() {
                 best = sd;
@@ -1328,7 +1309,8 @@ mod tests {
         assert!(result.is_closed());
         // No zero-length or NaN segments crept in.
         for seg in &result.segments {
-            assert!(seg.geom0.iter().all(|v| v.is_finite()));
+            assert!(seg.start.is_finite() && seg.end.is_finite());
+            assert!(seg.curvature.is_finite() && seg.heading.is_finite());
         }
         assert_matches(
             &result,

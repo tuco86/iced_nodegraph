@@ -31,22 +31,52 @@ pub struct Segment {
 impl Segment {
     /// Straight line `start -> end`.
     pub(crate) fn line(start: Vec2, end: Vec2, signed: bool, arc_start: f32, arc_end: f32) -> Self {
-        Self { signed, start, end, curvature: 0.0, heading: 0.0, arc_start, arc_end }
+        Self {
+            signed,
+            start,
+            end,
+            curvature: 0.0,
+            heading: 0.0,
+            arc_start,
+            arc_end,
+        }
     }
 
     /// Zero-length junction point at `pos`; `heading` is the interior bisector.
     pub(crate) fn point(pos: Vec2, heading: f32, signed: bool, arc_at: f32) -> Self {
-        Self { signed, start: pos, end: pos, curvature: 0.0, heading, arc_start: arc_at, arc_end: arc_at }
+        Self {
+            signed,
+            start: pos,
+            end: pos,
+            curvature: 0.0,
+            heading,
+            arc_start: arc_at,
+            arc_end: arc_at,
+        }
     }
 
     /// One MINOR arc; the caller guarantees `|sweep| < PI` (use [`Self::push_arc`]
     /// for arbitrary sweeps, which splits wider arcs).
     pub(crate) fn arc(
-        center: Vec2, radius: f32, start_angle: f32, sweep: f32,
-        signed: bool, arc_start: f32, arc_end: f32,
+        center: Vec2,
+        radius: f32,
+        start_angle: f32,
+        sweep: f32,
+        signed: bool,
+        arc_start: f32,
+        arc_end: f32,
     ) -> Self {
-        let (start, end, curvature) = crate::segment::from_center_arc(center, radius, start_angle, sweep);
-        Self { signed, start, end, curvature, heading: 0.0, arc_start, arc_end }
+        let (start, end, curvature) =
+            crate::segment::from_center_arc(center, radius, start_angle, sweep);
+        Self {
+            signed,
+            start,
+            end,
+            curvature,
+            heading: 0.0,
+            arc_start,
+            arc_end,
+        }
     }
 
     /// Append `(center, radius, start_angle, sweep)` as one or more MINOR sub-arcs
@@ -54,15 +84,32 @@ impl Segment {
     /// cumulative arc length `acc`. The single place arcs are split for the
     /// arc-only model, so the endpoint+curvature reconstruction stays unambiguous.
     pub(crate) fn push_arc(
-        out: &mut Vec<Segment>, center: Vec2, radius: f32, start_angle: f32, sweep: f32,
-        signed: bool, acc: &mut f32,
+        out: &mut Vec<Segment>,
+        center: Vec2,
+        radius: f32,
+        start_angle: f32,
+        sweep: f32,
+        signed: bool,
+        acc: &mut f32,
     ) {
-        let n = ((sweep.abs() / (std::f32::consts::PI * 0.5)).ceil() as u32).max(1);
+        // Split at PI/2 granularity, but with a tiny epsilon so a sweep landing
+        // exactly on a multiple (a quarter/half-circle corner) does not flip
+        // between 1 and 2 sub-arcs on float noise - two construction paths for the
+        // same geometry must yield the same segment count.
+        let n = ((sweep.abs() / (std::f32::consts::PI * 0.5) - 1e-4).ceil() as u32).max(1);
         let sub = sweep / n as f32;
         let seg_len = radius * sub.abs();
         for i in 0..n {
             let a0 = start_angle + sub * i as f32;
-            out.push(Segment::arc(center, radius, a0, sub, signed, *acc, *acc + seg_len));
+            out.push(Segment::arc(
+                center,
+                radius,
+                a0,
+                sub,
+                signed,
+                *acc,
+                *acc + seg_len,
+            ));
             *acc += seg_len;
         }
     }
@@ -189,7 +236,15 @@ impl Drawable {
     pub(crate) fn single_arc(center: Vec2, radius: f32, start_angle: f32, sweep: f32) -> Self {
         let mut segments = Vec::new();
         let mut acc = 0.0;
-        Segment::push_arc(&mut segments, center, radius, start_angle, sweep, false, &mut acc);
+        Segment::push_arc(
+            &mut segments,
+            center,
+            radius,
+            start_angle,
+            sweep,
+            false,
+            &mut acc,
+        );
         let (mut lo, mut hi) = (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY));
         for s in &segments {
             s.grow_aabb(&mut lo, &mut hi);
@@ -224,8 +279,22 @@ impl Drawable {
             match *piece {
                 // Biarc pieces are already minor arcs (|sweep| < 0.95*PI), so each
                 // becomes one Segment; push_arc would split only a wider sweep.
-                ArcPiece::Arc { center, radius, start_angle, sweep, .. } => {
-                    Segment::push_arc(&mut segments, center, radius, start_angle, sweep, false, &mut cum);
+                ArcPiece::Arc {
+                    center,
+                    radius,
+                    start_angle,
+                    sweep,
+                    ..
+                } => {
+                    Segment::push_arc(
+                        &mut segments,
+                        center,
+                        radius,
+                        start_angle,
+                        sweep,
+                        false,
+                        &mut cum,
+                    );
                 }
                 ArcPiece::Line { start, end, .. } => {
                     segments.push(Segment::line(start, end, false, cum, cum + len));
@@ -239,6 +308,44 @@ impl Drawable {
             s.grow_aabb(&mut lo, &mut hi);
         }
 
+        Self {
+            drawable_type: DrawableType::CurveSegment,
+            segments,
+            total_arc_length: cum,
+            bounds: [lo.x, lo.y, hi.x, hi.y],
+            is_closed: false,
+            tiling_type: None,
+            tiling_params: [0.0; 4],
+        }
+    }
+
+    /// Dense-polyline reference of a cubic - the arc-spline test oracle.
+    ///
+    /// v3 deleted the true-cubic GPU SDF, so the golden gates can no longer
+    /// render an analytic cubic to compare against. Sampling the cubic into `n`
+    /// exact line segments gives an INDEPENDENT faithful reference (it does not
+    /// touch the biarc fitter), so a structural arc-spline error - a giant arc
+    /// or full circle - still diverges from it and fails the gate.
+    #[cfg(test)]
+    pub(crate) fn bezier_polyline(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, n: u32) -> Self {
+        let pt = |t: f32| -> Vec2 {
+            let u = 1.0 - t;
+            p0 * (u * u * u) + p1 * (3.0 * u * u * t) + p2 * (3.0 * u * t * t) + p3 * (t * t * t)
+        };
+        let mut segments = Vec::with_capacity(n as usize);
+        let mut cum = 0.0_f32;
+        let mut prev = pt(0.0);
+        for i in 1..=n {
+            let cur = pt(i as f32 / n as f32);
+            let len = prev.distance(cur);
+            segments.push(Segment::line(prev, cur, false, cum, cum + len));
+            cum += len;
+            prev = cur;
+        }
+        let (mut lo, mut hi) = (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY));
+        for s in &segments {
+            s.grow_aabb(&mut lo, &mut hi);
+        }
         Self {
             drawable_type: DrawableType::CurveSegment,
             segments,
@@ -296,31 +403,6 @@ fn angle_in_arc(start_angle: f32, sweep: f32, theta: f32) -> bool {
     d <= span + 1e-4
 }
 
-/// Compute cubic bezier arc length using 5-point Gauss-Legendre quadrature.
-pub(crate) fn bezier_arc_length(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2) -> f32 {
-    // Gauss-Legendre 5-point weights and abscissae on [0, 1]
-    const POINTS: [(f32, f32); 5] = [
-        (0.5 * 0.2369269, 0.5 * (1.0 - 0.9061798)),
-        (0.5 * 0.4786287, 0.5 * (1.0 - 0.5384693)),
-        (0.5 * 0.5688889, 0.5),
-        (0.5 * 0.4786287, 0.5 * (1.0 + 0.5384693)),
-        (0.5 * 0.2369269, 0.5 * (1.0 + 0.9061798)),
-    ];
-
-    let mut length = 0.0;
-    for &(w, t) in &POINTS {
-        let dt = bezier_derivative(p0, p1, p2, p3, t);
-        length += w * dt.length();
-    }
-    length
-}
-
-/// Cubic bezier derivative at parameter t.
-fn bezier_derivative(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t: f32) -> Vec2 {
-    let u = 1.0 - t;
-    3.0 * u * u * (p1 - p0) + 6.0 * u * t * (p2 - p1) + 3.0 * t * t * (p3 - p2)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,28 +417,140 @@ mod tests {
 
     #[test]
     fn test_single_bezier() {
-        let d = Drawable::single_bezier(
+        // A collinear cubic arc-splines to a single line of length ~30.
+        let d = Drawable::bezier_arcs(
             Vec2::new(0.0, 0.0),
             Vec2::new(10.0, 0.0),
             Vec2::new(20.0, 0.0),
             Vec2::new(30.0, 0.0),
+            0.1,
         );
         assert_eq!(d.segment_count(), 1);
-        // Straight-line bezier should have arc length ~30
         assert!((d.total_arc_length() - 30.0).abs() < 0.1);
     }
 
     #[test]
-    fn test_bezier_arc_length_curved() {
-        let len = bezier_arc_length(
-            Vec2::new(0.0, 0.0),
-            Vec2::new(0.0, 10.0),
-            Vec2::new(10.0, 10.0),
-            Vec2::new(10.0, 0.0),
+    fn curved_edge_never_collapses_to_a_line() {
+        // Regression for the "edge suddenly becomes a straight line on move/drag"
+        // flicker. Mirror the widget (pin-side tangents + adaptive control length)
+        // and sweep the target endpoint over a grid. A near-collinear S-curve (its
+        // t=0.5 point on the chord) made `circle_through` return a ~1e9-radius arc
+        // that the deviation gate accepted (f32 cancellation), then `from_center_arc`
+        // collapsed it to a zero-length point -> the edge vanished / snapped straight.
+        // No position where the true cubic is clearly curved (chord deviation > 5px)
+        // may yield a single line segment.
+        let dirs = [
+            Vec2::new(-1.0, 0.0),
+            Vec2::new(1.0, 0.0),
+            Vec2::new(0.0, -1.0),
+            Vec2::new(0.0, 1.0),
+        ];
+        let cubic = |p0: Vec2, c0: Vec2, c1: Vec2, p3: Vec2, t: f32| {
+            let u = 1.0 - t;
+            p0 * (u * u * u) + c0 * (3.0 * u * u * t) + c1 * (3.0 * u * t * t) + p3 * (t * t * t)
+        };
+        let mut collapses = Vec::new();
+        let p0 = Vec2::new(0.0, 0.0);
+        for df in dirs {
+            for dt in dirs {
+                let mut ty = -200.0;
+                while ty <= 200.0 {
+                    let mut tx = -200.0;
+                    while tx <= 200.0 {
+                        let p3 = Vec2::new(tx, ty);
+                        let l = 80.0_f32.min(p0.distance(p3) * 0.5).max(1.0);
+                        let c0 = p0 + df * l;
+                        let c1 = p3 + dt * l;
+                        let chord = p3 - p0;
+                        let cl = chord.length();
+                        let mut dev = 0.0_f32;
+                        for k in 1..16 {
+                            let q = cubic(p0, c0, c1, p3, k as f32 / 16.0);
+                            let d = if cl < 1e-6 {
+                                q.distance(p0)
+                            } else {
+                                let n = Vec2::new(-chord.y, chord.x) / cl;
+                                (q - p0).dot(n).abs()
+                            };
+                            dev = dev.max(d);
+                        }
+                        let arcs = Drawable::bezier_arcs(p0, c0, c1, p3, 0.05);
+                        let is_line =
+                            arcs.segments.len() == 1 && arcs.segments[0].curvature.abs() < 1e-6;
+                        if dev > 5.0 && is_line {
+                            collapses.push((df, dt, p3, dev));
+                        }
+                        tx += 10.0;
+                    }
+                    ty += 10.0;
+                }
+            }
+        }
+        assert!(
+            collapses.is_empty(),
+            "{} curved edges collapsed to a line, e.g. {:?}",
+            collapses.len(),
+            collapses.first(),
         );
-        // Quarter-circle-ish curve, should be > straight distance (14.14) and < perimeter
-        assert!(len > 14.0);
-        assert!(len < 30.0);
+    }
+
+    #[test]
+    fn arc_spline_field_tracks_the_cubic() {
+        // The arc-spline's nearest-segment field must hug the source cubic
+        // everywhere (geometry/encoding correctness), even for a SHORT tight-loop
+        // edge - the config class that looked glitchy on screen. Sampling the true
+        // cubic and taking the min |seg_sdf| over the spline is the on-curve
+        // residual; the chain must also stay C0-contiguous with exact end pins.
+        for (p0, cp0, cp1, p3) in [
+            // Short tight loop (delta ~[16,6], opposing tangents).
+            (
+                Vec2::new(-8.0, -3.0),
+                Vec2::new(0.5, -3.0),
+                Vec2::new(8.0, 5.5),
+                Vec2::new(8.0, 3.0),
+            ),
+            // Gentle S edge.
+            (
+                Vec2::new(-120.0, -40.0),
+                Vec2::new(-40.0, -40.0),
+                Vec2::new(40.0, 40.0),
+                Vec2::new(120.0, 40.0),
+            ),
+        ] {
+            let arcs = Drawable::bezier_arcs(p0, cp0, cp1, p3, 0.05);
+            // Endpoints are re-derived from center+angle, so allow sub-pixel drift.
+            assert!(
+                arcs.segments.first().unwrap().start.distance(p0) < 1e-3,
+                "first ~ p0"
+            );
+            assert!(
+                arcs.segments.last().unwrap().end.distance(p3) < 1e-3,
+                "last ~ p3"
+            );
+            for w in arcs.segments.windows(2) {
+                assert!(w[0].end.distance(w[1].start) < 1e-3, "arc-spline has a gap");
+            }
+            let pt = |t: f32| {
+                let u = 1.0 - t;
+                p0 * (u * u * u)
+                    + cp0 * (3.0 * u * u * t)
+                    + cp1 * (3.0 * u * t * t)
+                    + p3 * (t * t * t)
+            };
+            let mut worst = 0.0_f32;
+            for i in 0..=200 {
+                let q = pt(i as f32 / 200.0);
+                let field = arcs
+                    .segments
+                    .iter()
+                    .map(|s| {
+                        crate::segment::seg_sdf(q, s.start, s.end, s.curvature, s.heading).abs()
+                    })
+                    .fold(f32::INFINITY, f32::min);
+                worst = worst.max(field);
+            }
+            assert!(worst < 0.2, "arc-spline field is {worst}px off the cubic");
+        }
     }
 
     #[test]
@@ -364,12 +558,14 @@ mod tests {
         let d = Drawable::single_line(Vec2::new(1.0, 2.0), Vec2::new(4.0, 6.0));
         let t = d.translated(10.0, -3.0);
 
-        // Endpoints (geom0 = ax, ay, bx, by) move by the offset.
-        assert_eq!(t.segments[0].geom0, [11.0, -1.0, 14.0, 3.0]);
+        // Endpoints move by the offset.
+        assert_eq!(t.segments[0].start, Vec2::new(11.0, -1.0));
+        assert_eq!(t.segments[0].end, Vec2::new(14.0, 3.0));
         // Bounds shift with the geometry.
         assert_eq!(t.bounds(), [11.0, -1.0, 14.0, 3.0]);
         // Translation-invariant data is preserved; the original is untouched.
         assert!((t.total_arc_length() - d.total_arc_length()).abs() < 1e-6);
-        assert_eq!(d.segments[0].geom0, [1.0, 2.0, 4.0, 6.0]);
+        assert_eq!(d.segments[0].start, Vec2::new(1.0, 2.0));
+        assert_eq!(d.segments[0].end, Vec2::new(4.0, 6.0));
     }
 }

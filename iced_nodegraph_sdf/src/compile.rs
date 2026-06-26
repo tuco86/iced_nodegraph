@@ -65,12 +65,12 @@ pub(crate) fn compile_drawable_at(
 
     for seg in &local.segments {
         out_segments.push(GpuSegment {
-            segment_type: seg.segment_type as u32,
             flags: if seg.signed { SEG_FLAG_SIGNED } else { 0 },
+            _pad0: 0,
             _pad1: 0,
             _pad2: 0,
-            geom0: GpuVec4(seg.geom0),
-            geom1: GpuVec4(seg.geom1),
+            endpoints: GpuVec4([seg.start.x, seg.start.y, seg.end.x, seg.end.y]),
+            params: GpuVec4([seg.curvature, seg.heading, 0.0, 0.0]),
             arc_range: GpuVec4([seg.arc_start, seg.arc_end, drawable.total_arc_length, 0.0]),
         });
     }
@@ -123,12 +123,12 @@ pub(crate) fn compile_local_at(
 
     for seg in &local.segments {
         out_segments.push(GpuSegment {
-            segment_type: seg.segment_type as u32,
             flags: if seg.signed { SEG_FLAG_SIGNED } else { 0 },
+            _pad0: 0,
             _pad1: 0,
             _pad2: 0,
-            geom0: GpuVec4(seg.geom0),
-            geom1: GpuVec4(seg.geom1),
+            endpoints: GpuVec4([seg.start.x, seg.start.y, seg.end.x, seg.end.y]),
+            params: GpuVec4([seg.curvature, seg.heading, 0.0, 0.0]),
             arc_range: GpuVec4([seg.arc_start, seg.arc_end, local.total_arc_length, 0.0]),
         });
     }
@@ -257,10 +257,9 @@ mod tests {
 
         assert_eq!(segs_local.len(), segs_world.len());
         for (a, b) in segs_local.iter().zip(segs_world.iter()) {
-            assert_eq!(a.segment_type, b.segment_type);
             for i in 0..4 {
-                assert!((a.geom0.0[i] - b.geom0.0[i]).abs() < 1e-3);
-                assert!((a.geom1.0[i] - b.geom1.0[i]).abs() < 1e-3);
+                assert!((a.endpoints.0[i] - b.endpoints.0[i]).abs() < 1e-3);
+                assert!((a.params.0[i] - b.params.0[i]).abs() < 1e-3);
             }
         }
         // The per-instance translate now lives on the entry, equal for both.

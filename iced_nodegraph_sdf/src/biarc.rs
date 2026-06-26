@@ -92,7 +92,20 @@ fn circle_through(a: Vec2, b: Vec2, c: Vec2) -> Option<(Vec2, f32)> {
     let ux = (cl.y * b2 - bl.y * c2) / d;
     let uy = (bl.x * c2 - cl.x * b2) / d;
     let local_center = Vec2::new(ux, uy);
-    Some((a + local_center, local_center.length()))
+    let radius = local_center.length();
+    // A giant radius means the three points are NEAR-collinear (the exact-collinear
+    // `d ~ 0` case rounds to a huge but finite circle, not None). Such a fit is
+    // numerically meaningless: at radius ~1e9 the deviation gate's
+    // `|dist - radius|` rounds to 0 in f32 (ulp >> tol), so a wildly-off "arc" is
+    // accepted, and `from_center_arc` then cancels it (1e9 - 1e9) into a
+    // zero-length point at the origin - an edge vanishing / snapping to a line.
+    // Treat it as collinear: return None so the caller splits (or takes the chord).
+    // 1e5 is far above any real edge arc (those have sub-pixel sagitta past it, so
+    // chord-first already lines them) and well below the f32-cancellation zone.
+    if !radius.is_finite() || radius > 1.0e5 {
+        return None;
+    }
+    Some((a + local_center, radius))
 }
 
 /// Signed sweep from `start` to `end` about `center`, taking the direction that

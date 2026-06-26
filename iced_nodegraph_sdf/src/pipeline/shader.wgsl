@@ -9,11 +9,6 @@ const MAX_SLOTS_PER_TILE: u32 = 128u;
 // Each slot = 2 u32s (segment_idx, style_idx), so buffer stride = MAX_SLOTS * 2
 const SLOT_STRIDE: u32 = 256u; // MAX_SLOTS_PER_TILE * 2
 
-const SEG_LINE: u32 = 0u;
-const SEG_ARC: u32 = 1u;
-const SEG_CUBIC: u32 = 2u;
-const SEG_POINT: u32 = 3u;
-
 const ENTRY_CURVE: u32 = 0u;
 const ENTRY_SHAPE: u32 = 1u;
 const ENTRY_TILING: u32 = 2u;
@@ -33,8 +28,14 @@ const DEBUG_TILE_HEATMAP: u32 = 1u;
 const DEBUG_DISTANCE_FIELD: u32 = 2u;
 const DEBUG_HOVERED_TILE: u32 = 4u;
 
-// segment.flags (in _pad0 slot)
+// segment.flags
 const SEG_FLAG_SIGNED: u32 = 1u;
+
+// Arc-only segment thresholds (mirror crate::segment LINE_EPS / POINT_EPS).
+const LINE_EPS: f32 = 1e-6;
+const POINT_EPS: f32 = 1e-5;
+const SEG_PI: f32 = 3.14159265;
+const SEG_TAU: f32 = 6.2831853;
 
 const PATTERN_SOLID: u32 = 0u;
 const PATTERN_DASHED: u32 = 1u;
@@ -62,12 +63,15 @@ struct DrawData {
 }
 
 struct GpuSegment {
-    segment_type: u32,
     flags: u32,
+    _pad0: u32,
     _pad1: u32,
     _pad2: u32,
-    geom0: vec4<f32>,
-    geom1: vec4<f32>,
+    // Endpoints: (start.x, start.y, end.x, end.y).
+    endpoints: vec4<f32>,
+    // Arc encoding: (curvature, heading, 0, 0). curvature=0 -> line;
+    // start==end -> point (sign from heading); else minor arc r = 1/|curvature|.
+    params: vec4<f32>,
     arc_range: vec4<f32>,
 }
 
@@ -200,127 +204,39 @@ fn sd_line(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> SdfResult {
     return SdfResult(dist * sign, t);
 }
 
-// Newton refinement of a single Bezier parameter. Returns the converged t.
-fn bezier_newton(
-    p: vec2<f32>, p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>, t_init: f32,
-) -> f32 {
-    var t = t_init;
-    for (var iter = 0u; iter < 4u; iter++) {
-        let bp = bezier_point(p0, p1, p2, p3, t);
-        let bd = bezier_deriv(p0, p1, p2, p3, t);
-        let bdd = bezier_deriv2(p0, p1, p2, p3, t);
-        let diff = bp - p;
-        let num = dot(diff, bd);
-        let den = dot(bd, bd) + dot(diff, bdd);
-        if abs(den) > 1e-8 { t = clamp(t - num / den, 0.0, 1.0); }
-    }
-    return t;
+// v3 is arc-only: the per-pixel cubic-bezier SDF (Newton refinement +
+// Gauss-Legendre arc-length quadrature) is GONE. Cubics are approximated by an
+// arc-spline on the CPU (crate::biarc) before reaching the GPU, so a line or
+// minor arc is the only thing the shader ever evaluates.
+
+// Reconstruct (center, radius, start_angle, sweep) of the minor arc from its
+// endpoints and signed curvature - the GPU twin of crate::segment::arc_center +
+// arc_minor_sweep. Caller guarantees a true arc (|curvature| >= LINE_EPS and
+// start != end).
+struct ArcParams {
+    center: vec2<f32>,
+    radius: f32,
+    start_angle: f32,
+    sweep: f32,
 }
 
-fn sd_bezier(p: vec2<f32>, p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>) -> SdfResult {
-    // Tight or self-overshooting beziers (e.g. an edge being dragged near its
-    // origin) have multiple local distance minima. A single 16-sample seed +
-    // Newton run frequently snaps to the wrong one, leaving "armpit" tiles
-    // with a far-away point as their "nearest" — the culling then drops the
-    // tile and the fragment renders garbage. Densely sample and refine the
-    // best AND second-best local minimum, then keep the global winner.
-    const SAMPLES: u32 = 32u;
-    var best1_t = 0.0; var best1_d = 1e20;
-    var best2_t = 0.0; var best2_d = 1e20;
-    var prev_d = 1e20;
-    var prev_t = 0.0;
-    var prev_decreasing = true;
-    for (var i = 0u; i <= SAMPLES; i++) {
-        let t = f32(i) / f32(SAMPLES);
-        let bp = bezier_point(p0, p1, p2, p3, t);
-        let d = length(p - bp);
-        // Track every basin (local min). A basin ends when distance starts
-        // increasing again; record that prior sample as a candidate.
-        if i > 0u && prev_decreasing && d > prev_d {
-            if prev_d < best1_d {
-                best2_d = best1_d; best2_t = best1_t;
-                best1_d = prev_d;  best1_t = prev_t;
-            } else if prev_d < best2_d {
-                best2_d = prev_d; best2_t = prev_t;
-            }
-        }
-        prev_decreasing = d < prev_d;
-        prev_d = d; prev_t = t;
-    }
-    // Always also consider the final sample (descending into endpoint).
-    if prev_d < best1_d {
-        best2_d = best1_d; best2_t = best1_t;
-        best1_d = prev_d;  best1_t = prev_t;
-    } else if prev_d < best2_d {
-        best2_d = prev_d; best2_t = prev_t;
-    }
-
-    let t_a = bezier_newton(p, p0, p1, p2, p3, best1_t);
-    let bp_a = bezier_point(p0, p1, p2, p3, t_a);
-    let d_a = length(p - bp_a);
-
-    var best_t = t_a;
-    var closest = bp_a;
-    var dist = d_a;
-    if best2_d < 1e19 {
-        let t_b = bezier_newton(p, p0, p1, p2, p3, best2_t);
-        let bp_b = bezier_point(p0, p1, p2, p3, t_b);
-        let d_b = length(p - bp_b);
-        if d_b < dist {
-            best_t = t_b; closest = bp_b; dist = d_b;
-        }
-    }
-
-    let tangent = bezier_deriv(p0, p1, p2, p3, best_t);
-    let normal = vec2<f32>(-tangent.y, tangent.x);
-    let diff = p - closest;
-    var sign = 1.0;
-    let n_len = length(normal);
-    if n_len > 1e-8 && dot(diff, normal) > 0.0 { sign = -1.0; }
-    let arc_to_t = bezier_arc_length_to(p0, p1, p2, p3, best_t);
-    let total_arc = bezier_total_arc_length(p0, p1, p2, p3);
-    var u_frac = 0.0;
-    if total_arc > 1e-6 { u_frac = arc_to_t / total_arc; }
-    return SdfResult(dist * sign, u_frac);
-}
-
-fn bezier_point(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>, t: f32) -> vec2<f32> {
-    let u = 1.0 - t;
-    return u * u * u * p0 + 3.0 * u * u * t * p1 + 3.0 * u * t * t * p2 + t * t * t * p3;
-}
-
-fn bezier_deriv(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>, t: f32) -> vec2<f32> {
-    let u = 1.0 - t;
-    return 3.0 * u * u * (p1 - p0) + 6.0 * u * t * (p2 - p1) + 3.0 * t * t * (p3 - p2);
-}
-
-fn bezier_deriv2(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>, t: f32) -> vec2<f32> {
-    let u = 1.0 - t;
-    return 6.0 * u * (p2 - 2.0 * p1 + p0) + 6.0 * t * (p3 - 2.0 * p2 + p1);
-}
-
-fn bezier_arc_length_to(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>, t_end: f32) -> f32 {
-    let w0 = 0.2369268850;
-    let w1 = 0.4786286705;
-    let w2 = 0.5688888889;
-    let a0 = 0.9061798459;
-    let a1 = 0.5384693101;
-    let half_t = t_end * 0.5;
-    var len = 0.0;
-    len += w0 * length(bezier_deriv(p0, p1, p2, p3, half_t * (1.0 - a0)));
-    len += w1 * length(bezier_deriv(p0, p1, p2, p3, half_t * (1.0 - a1)));
-    len += w2 * length(bezier_deriv(p0, p1, p2, p3, half_t));
-    len += w1 * length(bezier_deriv(p0, p1, p2, p3, half_t * (1.0 + a1)));
-    len += w0 * length(bezier_deriv(p0, p1, p2, p3, half_t * (1.0 + a0)));
-    return len * half_t;
-}
-
-fn bezier_total_arc_length(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>) -> f32 {
-    return bezier_arc_length_to(p0, p1, p2, p3, 1.0);
+fn arc_from_endpoints(start: vec2<f32>, end: vec2<f32>, curvature: f32) -> ArcParams {
+    let d = end - start;
+    let l = length(d);
+    let r = 1.0 / abs(curvature);
+    let u = d / l;
+    let n = vec2<f32>(-u.y, u.x);
+    let h = sqrt(max(r * r - (l * 0.5) * (l * 0.5), 0.0));
+    let center = (start + end) * 0.5 + n * (sign(curvature) * h);
+    let a_start = atan2(start.y - center.y, start.x - center.x);
+    let a_end = atan2(end.y - center.y, end.x - center.x);
+    var sweep = a_end - a_start;
+    if sweep <= -SEG_PI { sweep = sweep + SEG_TAU; }
+    else if sweep > SEG_PI { sweep = sweep - SEG_TAU; }
+    return ArcParams(center, r, a_start, sweep);
 }
 
 // Exact signed distance to a circular arc segment.
-// geom0 = (cx, cy, radius, start_angle), geom1 = (sweep_angle, 0, 0, 0)
 fn sd_arc_segment(p: vec2<f32>, center: vec2<f32>, radius: f32, start: f32, sweep: f32) -> SdfResult {
     let offset = p - center;
     let dist_to_center = length(offset);
@@ -465,13 +381,15 @@ fn sd_tiling(p: vec2<f32>, tiling_type: u32, params: vec4<f32>) -> SdfResult {
 fn eval_segment(p: vec2<f32>, seg: GpuSegment) -> SdfResult {
     // Segments are stored in the entry's local frame; the caller passes
     // `world_p - entry.translate`. Distance is translation-invariant.
-    switch seg.segment_type {
-        case SEG_LINE: { return sd_line(p, seg.geom0.xy, seg.geom0.zw); }
-        case SEG_ARC: { return sd_arc_segment(p, seg.geom0.xy, seg.geom0.z, seg.geom0.w, seg.geom1.x); }
-        case SEG_CUBIC: { return sd_bezier(p, seg.geom0.xy, seg.geom0.zw, seg.geom1.xy, seg.geom1.zw); }
-        case SEG_POINT: { return sd_point(p, seg.geom0.xy, seg.geom0.z); }
-        default: { return SdfResult(1e10, 0.0); }
-    }
+    // One arc primitive: the geometry (not a type tag) selects the branch.
+    let start = seg.endpoints.xy;
+    let end = seg.endpoints.zw;
+    let curvature = seg.params.x;
+    let heading = seg.params.y;
+    if length(end - start) < POINT_EPS { return sd_point(p, start, heading); }
+    if abs(curvature) < LINE_EPS { return sd_line(p, start, end); }
+    let ap = arc_from_endpoints(start, end, curvature);
+    return sd_arc_segment(p, ap.center, ap.radius, ap.start_angle, ap.sweep);
 }
 
 // Evaluate a single segment. Maps parametric u to world-space arc-length.
@@ -1063,23 +981,21 @@ fn arc_box_interval(
     return vec2(max(m, 0.0), big);
 }
 
-// Dispatch the interval by segment type. Cubic (only if arc-spline conversion is
-// disabled) has no closed form: centre sample padded by the box half-diagonal.
+// [min, max] distance from the arc primitive to the box. The geometry selects
+// the branch (point / line / arc); the arc case reconstructs center+sweep so the
+// sub-chord bound above keeps the concave interior empty.
 fn seg_box_interval(seg: GpuSegment, bmin: vec2<f32>, bmax: vec2<f32>) -> vec2<f32> {
-    switch seg.segment_type {
-        case SEG_LINE: { return line_box_interval(seg.geom0.xy, seg.geom0.zw, bmin, bmax); }
-        case SEG_ARC: { return arc_box_interval(seg.geom0.xy, seg.geom0.z, seg.geom0.w, seg.geom1.x, bmin, bmax); }
-        case SEG_POINT: {
-            return vec2(pt_box_min(seg.geom0.xy, bmin, bmax), pt_box_max(seg.geom0.xy, bmin, bmax));
-        }
-        case SEG_CUBIC: {
-            let c = (bmin + bmax) * 0.5;
-            let pad = length((bmax - bmin) * 0.5);
-            let r = sd_bezier(c, seg.geom0.xy, seg.geom0.zw, seg.geom1.xy, seg.geom1.zw);
-            return vec2(max(abs(r.dist) - pad, 0.0), abs(r.dist) + pad);
-        }
-        default: { return vec2(1e30, 1e30); }
+    let start = seg.endpoints.xy;
+    let end = seg.endpoints.zw;
+    let curvature = seg.params.x;
+    if length(end - start) < POINT_EPS {
+        return vec2(pt_box_min(start, bmin, bmax), pt_box_max(start, bmin, bmax));
     }
+    if abs(curvature) < LINE_EPS {
+        return line_box_interval(start, end, bmin, bmax);
+    }
+    let ap = arc_from_endpoints(start, end, curvature);
+    return arc_box_interval(ap.center, ap.radius, ap.start_angle, ap.sweep, bmin, bmax);
 }
 
 // Two-level (regional) cull: candidates of one 16x16-tile workgroup, gathered

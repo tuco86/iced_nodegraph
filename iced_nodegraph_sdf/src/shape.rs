@@ -567,14 +567,19 @@ mod tests {
         let world = Curve::rounded_rect([cx, cy], [70.0, 44.0], 10.0);
         assert_eq!(placed.segment_count(), world.segment_count());
         for (ps, ws) in placed.segments.iter().zip(world.segments.iter()) {
-            for i in 0..4 {
-                assert!(
-                    (ps.geom0[i] - ws.geom0[i]).abs() < 1e-3,
-                    "geom0 differs: {:?} vs {:?}",
-                    ps.geom0,
-                    ws.geom0,
-                );
-            }
+            assert!(
+                (ps.start - ws.start).length() < 1e-3 && (ps.end - ws.end).length() < 1e-3,
+                "endpoints differ: ({:?},{:?}) vs ({:?},{:?})",
+                ps.start,
+                ps.end,
+                ws.start,
+                ws.end,
+            );
+            assert!(
+                (ps.curvature - ws.curvature).abs() < 1e-3,
+                "curvature differs"
+            );
+            assert!((ps.heading - ws.heading).abs() < 1e-3, "heading differs");
         }
     }
 }
