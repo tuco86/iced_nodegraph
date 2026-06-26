@@ -264,9 +264,6 @@ impl Drawable {
     /// edge): the cubic is fit by circular arcs and lines within `tol` world
     /// units, deleting the per-pixel bezier SDF. Segments carry cumulative
     /// arc length so dash spacing and flow speed match the bezier's `u`.
-    // Wired into the widget edge build path under `sdf-v3` in a later step; for
-    // now exercised by the arc-spline golden gate.
-    #[allow(dead_code)]
     pub(crate) fn bezier_arcs(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, tol: f32) -> Self {
         use crate::biarc::{ArcPiece, cubic_to_arcs};
 

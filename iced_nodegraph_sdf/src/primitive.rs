@@ -64,7 +64,7 @@ bitflags! {
         const DISTANCE_FIELD = 1 << 1;
         /// Show the IQ distance field built from only the segments held by the
         /// tile under the cursor, plus an occupancy readout bar. Visualizes what
-        /// a single tile's 32-slot buffer actually contains (and whether it
+        /// a single tile's slot buffer actually contains (and whether it
         /// overflowed). Requires a mouse position (see [`SdfPrimitive::mouse`]).
         const HOVERED_TILE = 1 << 2;
     }
@@ -411,20 +411,6 @@ impl SdfPipeline {
     /// Shape-cache misses (boolean->arcs evaluations) over the lifetime.
     pub fn cache_misses(&self) -> u64 {
         self.shape_cache.misses()
-    }
-
-    /// CPU mirror of the draw-entry buffer as built by the last `prepare` (before
-    /// `trim`). Test-only hook to validate the dedup/index plumbing directly.
-    #[cfg(test)]
-    pub(crate) fn entries_mirror(&self) -> &[types::GpuDrawEntry] {
-        self.entries_buffer.cpu_mirror()
-    }
-
-    /// CPU mirror of the segment buffer as built by the last `prepare` (before
-    /// `trim`). Test-only hook to validate that shapes compile to the right arcs.
-    #[cfg(test)]
-    pub(crate) fn segments_mirror(&self) -> &[types::GpuSegment] {
-        self.segments_buffer.cpu_mirror()
     }
 
     /// Whether the most recently prepared frame served its background from the

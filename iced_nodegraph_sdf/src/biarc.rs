@@ -20,11 +20,6 @@
 //! zoom-aware (`world_tol ~= 0.25px / zoom`) so a curve does not facet when
 //! zoomed in.
 
-// The fitter is validated by its unit tests; it is wired into the v3 edge build
-// path (replacing the cubic-bezier segment) in the next A4 step, at which point
-// these become reachable from non-test code.
-#![allow(dead_code)]
-
 use glam::Vec2;
 
 /// One piece of an arc-spline: a circular arc, or a straight line where the
