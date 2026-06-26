@@ -81,7 +81,7 @@ struct DrawEntry {
 }
 
 /// SDF rendering primitive holding drawables with styles.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SdfPrimitive {
     entries: Vec<DrawEntry>,
     pub camera_position: (f32, f32),
@@ -98,6 +98,28 @@ pub struct SdfPrimitive {
     /// cutting the one fullscreen fragment pass the tile cull cannot prune. Inert
     /// under v2 and for any non-background primitive.
     pub cache_background: bool,
+    /// The `DrawData` slot this primitive was assigned in `prepare`, stored on the
+    /// primitive itself rather than derived from draw order. iced PREPARES every
+    /// queued instance but SKIPS drawing those whose bounds snap empty or fall off
+    /// the viewport; a draw-order counter would then hand every later primitive the
+    /// wrong slot (wrong camera/tiles -> misrendered fill, missing border/pins).
+    /// Interior-mutable because `Primitive::prepare` takes `&self`.
+    draw_slot: AtomicU32,
+}
+
+impl Clone for SdfPrimitive {
+    fn clone(&self) -> Self {
+        Self {
+            entries: self.entries.clone(),
+            camera_position: self.camera_position,
+            camera_zoom: self.camera_zoom,
+            time: self.time,
+            debug: self.debug,
+            mouse: self.mouse,
+            cache_background: self.cache_background,
+            draw_slot: AtomicU32::new(self.draw_slot.load(Ordering::Relaxed)),
+        }
+    }
 }
 
 impl SdfPrimitive {
@@ -110,6 +132,7 @@ impl SdfPrimitive {
             debug: DebugFlags::empty(),
             mouse: (f32::MIN, f32::MIN),
             cache_background: false,
+            draw_slot: AtomicU32::new(0),
         }
     }
 
@@ -294,7 +317,6 @@ pub struct SdfPipeline {
     bind_group_gens: (u64, u64, u64, u64, u64), // draws, entries, segments, styles, spatial
     // Frame state
     total_tiles: u32,
-    draw_index: AtomicU32,
     segment_scratch: Vec<types::GpuSegment>,
     frame_stats: types::SdfStats,
     /// Frame-surviving cache of evaluated shape recipes (v3 dedup). Lives on the
@@ -603,7 +625,6 @@ impl Pipeline for SdfPipeline {
             compute_group1,
             bind_group_gens: (0, 0, 0, 0, 0),
             total_tiles: 0,
-            draw_index: AtomicU32::new(0),
             segment_scratch: Vec::new(),
             frame_stats: types::SdfStats::default(),
             shape_cache: ShapeCache::new(4096),
@@ -639,10 +660,7 @@ impl Pipeline for SdfPipeline {
         self.styles_buffer.clear();
         self.frame_shape_slots.clear();
         self.total_tiles = 0;
-        self.draw_index.store(0, Ordering::Relaxed);
-        {
-            self.bg_blit_index = None;
-        }
+        self.bg_blit_index = None;
     }
 }
 
@@ -658,6 +676,8 @@ impl Primitive for SdfPrimitive {
         viewport: &Viewport,
     ) {
         if self.entries.is_empty() {
+            self.draw_slot
+                .store(pipeline.draw_data_buffer.len() as u32, Ordering::Relaxed);
             let _ = pipeline
                 .draw_data_buffer
                 .push(device, queue, types::DrawData::default());
@@ -785,6 +805,7 @@ impl Primitive for SdfPrimitive {
 
         // Write compute uniform: just the index into DrawData
         let draw_index = pipeline.draw_data_buffer.len() as u32; // will be this index after push
+        self.draw_slot.store(draw_index, Ordering::Relaxed);
         let cu = types::ComputeUniforms {
             draw_index,
             _pad0: 0,
@@ -951,7 +972,10 @@ impl Primitive for SdfPrimitive {
         pipeline: &Self::Pipeline,
         render_pass: &mut iced::wgpu::RenderPass<'_>,
     ) -> bool {
-        let draw_idx = pipeline.draw_index.fetch_add(1, Ordering::Relaxed);
+        // The `DrawData` slot assigned to THIS primitive in `prepare` (not a
+        // draw-order counter): iced skips drawing off-viewport instances it still
+        // prepared, so a counter would desync every later primitive's slot.
+        let draw_idx = self.draw_slot.load(Ordering::Relaxed);
         // Static-background cache hit/populate: blit the cached texture instead
         // of running the fullscreen SDF fragment pass (the fill-rate win).
         if pipeline.bg_blit_index == Some(draw_idx) {

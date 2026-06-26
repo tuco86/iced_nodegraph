@@ -1264,6 +1264,129 @@ impl TestRenderer {
         px
     }
 
+    /// Render a SEQUENCE of frames through ONE persistent `SdfPipeline`, calling
+    /// `Pipeline::trim` before each frame exactly as iced does per present. This
+    /// reuses the compiled pipeline (cheap enough to sweep hundreds of camera
+    /// positions) while resetting the per-frame tile buffers, so tiles do NOT
+    /// accumulate across frames - the asymmetry that makes a naive multi-render
+    /// loop blow the tile-buffer binding size. Each frame is drawn scissored to a
+    /// fresh clear; returns one pixel buffer per frame. `width` multiple of 64.
+    fn render_frames_scissored(
+        &self,
+        frames: &[Vec<(&crate::primitive::SdfPrimitive, iced::Rectangle)>],
+        width: u32,
+        height: u32,
+        scale: f32,
+    ) -> Vec<Vec<[u8; 4]>> {
+        use iced_wgpu::graphics::Viewport;
+        use iced_wgpu::primitive::{Pipeline, Primitive};
+
+        let mut pipeline = crate::primitive::SdfPipeline::new(
+            &self.device,
+            &self.queue,
+            TextureFormat::Rgba8Unorm,
+        );
+        // `width`/`height` are PHYSICAL; bounds/clips are LOGICAL, so the scissor
+        // and the viewport scale must convert between them like iced does.
+        let viewport = Viewport::with_physical_size(iced::Size::new(width, height), scale);
+        let target = self.device.create_texture(&TextureDescriptor {
+            label: None,
+            size: Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba8Unorm,
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = target.create_view(&TextureViewDescriptor::default());
+        let readback = self.device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: (width * height * 4) as u64,
+            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        let mut out = Vec::with_capacity(frames.len());
+        for prims in frames {
+            Pipeline::trim(&mut pipeline);
+            for (p, bounds) in prims {
+                p.prepare(&mut pipeline, &self.device, &self.queue, bounds, &viewport);
+            }
+            let mut enc = self
+                .device
+                .create_command_encoder(&CommandEncoderDescriptor::default());
+            for (i, (p, bounds)) in prims.iter().enumerate() {
+                let mut pass = enc.begin_render_pass(&RenderPassDescriptor {
+                    label: None,
+                    color_attachments: &[Some(RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: Operations {
+                            load: if i == 0 {
+                                LoadOp::Clear(Color::TRANSPARENT)
+                            } else {
+                                LoadOp::Load
+                            },
+                            store: StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                let sx = (bounds.x * scale).max(0.0) as u32;
+                let sy = (bounds.y * scale).max(0.0) as u32;
+                let sw = ((bounds.width * scale) as u32).min(width.saturating_sub(sx));
+                let sh = ((bounds.height * scale) as u32).min(height.saturating_sub(sy));
+                if sw == 0 || sh == 0 {
+                    continue;
+                }
+                pass.set_scissor_rect(sx, sy, sw, sh);
+                p.draw(&pipeline, &mut pass);
+            }
+            enc.copy_texture_to_buffer(
+                target.as_image_copy(),
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &readback,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(width * 4),
+                        rows_per_image: None,
+                    },
+                },
+                Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+            );
+            let idx = self.queue.submit(Some(enc.finish()));
+            let slice = readback.slice(..);
+            slice.map_async(MapMode::Read, |_| {});
+            self.device
+                .poll(wgpu::PollType::Wait {
+                    submission_index: Some(idx),
+                    timeout: Some(std::time::Duration::from_secs(5)),
+                })
+                .unwrap();
+            let data = slice.get_mapped_range();
+            out.push(
+                data.chunks_exact(4)
+                    .map(|c| [c[0], c[1], c[2], c[3]])
+                    .collect(),
+            );
+            drop(data);
+            readback.unmap();
+        }
+        out
+    }
+
     /// Render SEVERAL `SdfPrimitive`s through ONE `SdfPipeline` in order (prepare
     /// all, then draw all) - the real multi-primitive frame. Each prepare allocates
     /// its own tile region (`tile_base` accumulates), so enough primitives grow the
@@ -4486,6 +4609,400 @@ fn widget_frame_sequence_keeps_edges_as_strokes() {
     assert!(
         g < 6000,
         "edges in the widget frame sequence rendered as boxes: {g} green px",
+    );
+}
+
+/// The real artifact: a LARGE node body (rounded box MINUS pin-cutout circles, a
+/// boolean shape) renders with a hollow / washed interior at some sub-tile pan
+/// alignments. Deep-interior tiles (farther than the cull reach from the contour)
+/// are kept only when the closed-fill inside test `center_signed < 0` holds - but
+/// that reads ONE nearest segment's sign, which is unreliable for a boolean body
+/// near a cutout. A small node never reaches that path (its whole interior is
+/// within reach); a big one does. The interior away from the cutouts must be FULLY
+/// opaque at every sub-tile camera offset.
+#[test]
+fn large_boolean_fill_interior_never_hollows() {
+    use crate::primitive::SdfPrimitive;
+    use crate::shape::Shape;
+    use iced::Rectangle;
+
+    let r = shared_renderer();
+    let (w, h) = (384u32, 320u32);
+    let zoom = 1.0_f32;
+    // Body big enough that the interior runs well past the cull reach (~one tile
+    // diagonal): a 220x150 box has interior tiles up to ~75px from any edge.
+    let nw = 220.0_f32;
+    let nh = 150.0_f32;
+    let fill_style = Style::solid(rgba(0.30, 0.32, 0.40, 1.0));
+    let full = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(w as f32, h as f32));
+
+    // Body = rounded box minus pin cutouts on the left/right edges (as the widget
+    // builds `geom.shape`).
+    let body = Shape::rounded_box([nw, nh], [8.0; 4])
+        - Shape::circle(9.0).translate([-nw * 0.5, -30.0])
+        - Shape::circle(9.0).translate([-nw * 0.5, 30.0])
+        - Shape::circle(9.0).translate([nw * 0.5, 0.0]);
+
+    // Centre the body and sweep sub-tile camera offsets so tile centres land at
+    // many phases relative to the geometry and the cutouts.
+    let owned: Vec<(f32, Vec<(SdfPrimitive, Rectangle)>)> = (0..40)
+        .map(|k| {
+            let off = k as f32 * 0.4; // 0..16px, more than one tile
+            let camx = (w as f32 * 0.5) / zoom - off;
+            let camy = (h as f32 * 0.5) / zoom - off;
+            let mut fill = SdfPrimitive::new();
+            fill.push(&body, &fill_style, [0.0, 0.0]);
+            (off, vec![(fill.camera(camx, camy, zoom), full)])
+        })
+        .collect();
+    let frames: Vec<Vec<(&SdfPrimitive, Rectangle)>> = owned
+        .iter()
+        .map(|(_, f)| f.iter().map(|(p, b)| (p, *b)).collect())
+        .collect();
+    let pixels = r.render_frames_scissored(&frames, w, h, 1.0);
+
+    let is_fill = |p: &[u8; 4]| p[0] > 55 && p[0] < 100 && p[2] > 88 && p[2] < 120;
+    let mut worst: Option<(f32, usize, usize)> = None;
+    for (fi, px) in pixels.iter().enumerate() {
+        let off = owned[fi].0;
+        // The body centre lands at screen centre for every offset (camera tracks it).
+        let scx = (w as f32 * 0.5) as i32;
+        let scy = (h as f32 * 0.5) as i32;
+        // Probe a dense interior region, avoiding the cutouts (left/right edges).
+        let mut holes = 0usize;
+        for dy in -55..=55i32 {
+            for dx in -80..=80i32 {
+                let x = scx + dx;
+                let y = scy + dy;
+                if x < 0 || y < 0 || x >= w as i32 || y >= h as i32 {
+                    continue;
+                }
+                if !is_fill(&px[(y as u32 * w + x as u32) as usize]) {
+                    holes += 1;
+                }
+            }
+        }
+        if holes > worst.map(|t| t.1).unwrap_or(0) {
+            worst = Some((off, holes, fi));
+        }
+    }
+    if let Some((off, holes, fi)) = worst {
+        if holes > 50 {
+            write_png(
+                concat!(env!("CARGO_MANIFEST_DIR"), "/../fill_hollow.png"),
+                &pixels[fi],
+                w,
+                h,
+            );
+        }
+        assert!(
+            holes <= 50,
+            "large boolean fill hollowed its interior at sub-tile offset {off:.2}px: \
+             {holes} non-fill pixels inside the body (washed-node repro)",
+        );
+    }
+}
+
+/// The user's real repro (not zoom, not buffer growth): at a moderate zoom-out,
+/// PAN RIGHT (growing world X) and node artifacts appear at SPECIFIC camera
+/// positions you can pan back to. The recurrence with pan rules out one-shot tile
+/// growth (the buffer never shrinks, so growth cannot re-fire each frame). This
+/// sweeps cam.x in fine sub-pixel steps across a band at large world X and renders
+/// the widget's per-node CLIPPED path (background + one clipped fill per node, each
+/// with its own `layer_camera`) through ONE trim-correct pipeline. Every node fill
+/// must render at its true size at EVERY camera; the failure reports the first
+/// offending cam.x so the degenerate position can be inspected.
+#[test]
+fn pan_sweep_keeps_node_fills_intact() {
+    use crate::primitive::SdfPrimitive;
+    use crate::shape::Shape;
+    use crate::tiling::Tiling;
+    use iced::Rectangle;
+
+    let r = shared_renderer();
+    // Logical viewport; physical = logical * scale (DPI), like the user's machine.
+    let scale = 1.5_f32;
+    let (lw, lh) = (640u32, 448u32);
+    let (w, h) = ((lw as f32 * scale) as u32, (lh as f32 * scale) as u32);
+    let zoom = 0.6_f32;
+    let cy = -132.0_f32;
+    let nw = 60.0_f32;
+    let nh = 40.0_f32;
+
+    let dark = Style::solid(rgba(0.12, 0.13, 0.16, 1.0));
+    let fill_style = Style::solid(rgba(0.30, 0.32, 0.40, 1.0));
+    let full = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(lw as f32, lh as f32));
+
+    // Fixed screen lattice of node top-left positions (LOGICAL px).
+    let lattice: Vec<(f32, f32)> = {
+        let mut v = Vec::new();
+        let mut ty = 24.0;
+        while ty < lh as f32 - 40.0 {
+            let mut tx = 24.0;
+            while tx < lw as f32 - 60.0 {
+                v.push((tx, ty));
+                tx += 70.0;
+            }
+            ty += 56.0;
+        }
+        v
+    };
+
+    // Build one frame (background + per-node clipped fills) for a camera x.
+    let build = |camx: f32| -> Vec<(SdfPrimitive, Rectangle)> {
+        let cam = [camx, cy];
+        let mut bg = SdfPrimitive::new();
+        bg.push(
+            &Shape::tiling(Tiling::grid(40.0, 40.0, 1.0)),
+            &dark,
+            [0.0, 0.0],
+        );
+        let mut frame: Vec<(SdfPrimitive, Rectangle)> =
+            vec![(bg.camera(cam[0], cam[1], zoom).background(), full)];
+        for &(tlx, tly) in &lattice {
+            // world top-left -> body centre; screen rect = widget's fill clip.
+            let wcx = tlx / zoom - cam[0] + nw * 0.5;
+            let wcy = tly / zoom - cam[1] + nh * 0.5;
+            let cw = nw * zoom + 4.0;
+            let ch = nh * zoom + 4.0;
+            let clip = Rectangle::new(
+                iced::Point::new(tlx - 2.0, tly - 2.0),
+                iced::Size::new(cw, ch),
+            );
+            let cx = cam[0] - clip.x / zoom;
+            let cy2 = cam[1] - clip.y / zoom;
+            let body = Shape::rounded_box([nw, nh], [6.0; 4])
+                - Shape::circle(5.0).translate([-nw * 0.5, 0.0])
+                - Shape::circle(5.0).translate([nw * 0.5, 0.0]);
+            let mut fill = SdfPrimitive::new();
+            fill.push(&body, &fill_style, [wcx, wcy]);
+            frame.push((fill.camera(cx, cy2, zoom), clip));
+        }
+        frame
+    };
+
+    // Sweep a fine band of pan offsets at large world X. The screen lattice is
+    // camera-relative, so world X = lattice/zoom - cam grows with -cam.
+    let bases = [-2300.0_f32, -4600.0, -9000.0];
+    let step = 0.17_f32;
+    let span = 40.0_f32;
+    let mut owned: Vec<(f32, Vec<(SdfPrimitive, Rectangle)>)> = Vec::new();
+    for &base in &bases {
+        let mut x = base;
+        while x > base - span {
+            owned.push((x, build(x)));
+            x -= step;
+        }
+    }
+    let frames: Vec<Vec<(&SdfPrimitive, Rectangle)>> = owned
+        .iter()
+        .map(|(_, f)| f.iter().map(|(p, b)| (p, *b)).collect())
+        .collect();
+
+    let pixels = r.render_frames_scissored(&frames, w, h, scale);
+
+    let is_fill = |p: &[u8; 4]| p[0] > 55 && p[0] < 100 && p[2] > 88 && p[2] < 120;
+    // Expected body size in PHYSICAL px.
+    let exp_w = nw * zoom * scale;
+    let exp_h = nh * zoom * scale;
+    let mut worst: Option<(f32, usize, usize)> = None; // (camx, bad, frame_idx)
+    for (fi, px) in pixels.iter().enumerate() {
+        let camx = owned[fi].0;
+        let mut bad = 0usize;
+        for &(tlx, tly) in &lattice {
+            // Node body screen centre, LOGICAL then PHYSICAL.
+            let lcx = tlx + nw * zoom * 0.5;
+            let lcy = tly + nh * zoom * 0.5;
+            if lcx < 16.0 || lcy < 16.0 || lcx > lw as f32 - 16.0 || lcy > lh as f32 - 16.0 {
+                continue;
+            }
+            let cx = (lcx * scale) as i32;
+            let cy3 = (lcy * scale) as i32;
+            let (mut rminx, mut rminy, mut rmaxx, mut rmaxy) =
+                (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+            let mut fill_px = 0;
+            for dy in -26..=26i32 {
+                for dx in -30..=30i32 {
+                    let x = cx + dx;
+                    let y = cy3 + dy;
+                    if x < 0 || y < 0 || x >= w as i32 || y >= h as i32 {
+                        continue;
+                    }
+                    if is_fill(&px[(y as u32 * w + x as u32) as usize]) {
+                        fill_px += 1;
+                        rminx = rminx.min(x);
+                        rminy = rminy.min(y);
+                        rmaxx = rmaxx.max(x);
+                        rmaxy = rmaxy.max(y);
+                    }
+                }
+            }
+            let collapsed = if fill_px < 20 {
+                true
+            } else {
+                let bw = (rmaxx - rminx + 1) as f32;
+                let bh = (rmaxy - rminy + 1) as f32;
+                bw < exp_w * 0.5
+                    || bh < exp_h * 0.5
+                    || bw > exp_w * 1.8 + 6.0
+                    || bh > exp_h * 1.8 + 6.0
+            };
+            if collapsed {
+                bad += 1;
+            }
+        }
+        if bad > worst.map(|w| w.1).unwrap_or(0) {
+            worst = Some((camx, bad, fi));
+        }
+    }
+
+    if let Some((camx, bad, fi)) = worst {
+        if bad > 0 {
+            write_png(
+                concat!(env!("CARGO_MANIFEST_DIR"), "/../pan_collapse.png"),
+                &pixels[fi],
+                w,
+                h,
+            );
+        }
+        assert_eq!(
+            bad,
+            0,
+            "pan-position node collapse at cam.x={camx} (zoom {zoom}): {bad} nodes \
+             collapsed/mis-sized (worst of {} swept positions)",
+            owned.len(),
+        );
+    }
+}
+
+/// Repro for the zoom-out node "float collapse": far zoomed out, each per-node
+/// CLIPPED fill primitive is tiny (1-2 tiles) but there are many, so the shared
+/// tile buffer GROWS several times mid-frame - after the full-viewport background
+/// has already written its large tile region. Every node fill must render
+/// inside its own clip; an empty clip means the grow-with-copy or the tile-base
+/// indexing dropped a later primitive. Mirrors widget.rs: each fill carries its
+/// own clip plus a `layer_camera` offset (widget_origin = 0, scale = 1):
+///   placement = screen_center/zoom - cam   (world center of the body)
+///   clip      = screen rect around the center (body*zoom + 4px padding)
+///   layer cam = cam - clip_origin/zoom
+#[test]
+fn zoomed_out_per_node_fills_all_render() {
+    use crate::primitive::SdfPrimitive;
+    use crate::shape::Shape;
+    use crate::tiling::Tiling;
+    use iced::Rectangle;
+
+    let r = shared_renderer();
+    let (w, h) = (640u32, 448u32);
+    let zoom = 0.24131_f32;
+    let cam = [-327.7_f32, -132.0];
+    let full = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(w as f32, h as f32));
+
+    let dark = Style::solid(rgba(0.12, 0.13, 0.16, 1.0));
+    let fill_style = Style::solid(rgba(0.30, 0.32, 0.40, 1.0));
+
+    // Full-viewport background grid, drawn first like the widget's bg layer. Its
+    // large tile region (~w*h/256 tiles) pushes the shared tile buffer past its
+    // initial capacity so the per-node primitives exercise the grow-with-copy path.
+    let mut bg = SdfPrimitive::new();
+    bg.push(
+        &Shape::tiling(Tiling::grid(40.0, 40.0, 1.0)),
+        &dark,
+        [0.0, 0.0],
+    );
+    let bg = bg.camera(cam[0], cam[1], zoom).background();
+
+    // Node body in world units; screen size at this zoom is ~17x14 px.
+    let node_w = 70.0_f32;
+    let node_h = 60.0_f32;
+
+    // Dense grid of node screen centers across the viewport (15x10 = 150 nodes ->
+    // ~600 node tiles on top of the background -> several buffer growths).
+    let mut centers: Vec<[f32; 2]> = Vec::new();
+    for col in 0..15 {
+        for row in 0..10 {
+            centers.push([30.0 + col as f32 * 40.0, 30.0 + row as f32 * 40.0]);
+        }
+    }
+
+    let pad = 2.0_f32; // logical px each side (widget uses fill_pad = 2/zoom world)
+    let cw = node_w * zoom + 2.0 * pad;
+    let ch = node_h * zoom + 2.0 * pad;
+    let per_node: Vec<(SdfPrimitive, Rectangle)> = centers
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            // Vary each node's body size so every node is a DISTINCT geometry (its
+            // own segment range), not a dedup of one cached shape. This exercises
+            // the per-entry `segment_start` indexing across many distinct ranges -
+            // the failure class behind the historical missing-edge bug - rather
+            // than the easy identical-shape path.
+            let nw = node_w + (i % 7) as f32 * 6.0;
+            let nh = node_h + (i % 5) as f32 * 5.0;
+            let cw = nw * zoom + 2.0 * pad;
+            let ch = nh * zoom + 2.0 * pad;
+            let placement = [c[0] / zoom - cam[0], c[1] / zoom - cam[1]];
+            let clip = Rectangle::new(
+                iced::Point::new(c[0] - cw * 0.5, c[1] - ch * 0.5),
+                iced::Size::new(cw, ch),
+            );
+            let cx = cam[0] - clip.x / zoom;
+            let cy = cam[1] - clip.y / zoom;
+            // Body = rounded box minus two pin cutouts, exactly like the widget's
+            // `geom.shape` (box - circle - circle). The cutouts sit at the body's
+            // left/right mid-height as LOCAL offsets from the centre.
+            let body = Shape::rounded_box([nw, nh], [6.0; 4])
+                - Shape::circle(5.0).translate([-nw * 0.5, 0.0])
+                - Shape::circle(5.0).translate([nw * 0.5, 0.0]);
+            let mut fill = SdfPrimitive::new();
+            fill.push(&body, &fill_style, placement);
+            (fill.camera(cx, cy, zoom), clip)
+        })
+        .collect();
+
+    let mut seq: Vec<(&SdfPrimitive, Rectangle)> = vec![(&bg, full)];
+    for (p, b) in &per_node {
+        seq.push((p, *b));
+    }
+
+    let px = r.render_primitives_scissored(&seq, w, h);
+
+    // A fill pixel matches the opaque gray body, not the dark grid / transparent gap.
+    let is_fill = |p: &[u8; 4]| p[0] > 55 && p[0] < 100 && p[2] > 88 && p[2] < 120;
+
+    let mut empty: Vec<usize> = Vec::new();
+    for (i, c) in centers.iter().enumerate() {
+        let sx = (c[0] - cw * 0.5).max(0.0) as u32;
+        let sy = (c[1] - ch * 0.5).max(0.0) as u32;
+        let ex = ((c[0] + cw * 0.5) as u32).min(w);
+        let ey = ((c[1] + ch * 0.5) as u32).min(h);
+        let mut fill_px = 0;
+        for y in sy..ey {
+            for x in sx..ex {
+                if is_fill(&px[(y * w + x) as usize]) {
+                    fill_px += 1;
+                }
+            }
+        }
+        if fill_px < 30 {
+            empty.push(i);
+        }
+    }
+
+    if !empty.is_empty() {
+        write_png(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../zoomout_collapse.png"),
+            &px,
+            w,
+            h,
+        );
+    }
+    assert!(
+        empty.is_empty(),
+        "{}/{} zoomed-out node fills did not render inside their clip (indices {:?})",
+        empty.len(),
+        centers.len(),
+        empty,
     );
 }
 
