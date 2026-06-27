@@ -414,90 +414,6 @@ pub struct SdfPipeline {
     /// primitives compare against to skip re-evaluating unchanged geometry. A slot
     /// holds `None` until first written; structural changes overwrite it.
     slots: Vec<Option<SlotState>>,
-    /// GPU timestamp pair around the cull compute pass (R3), when supported.
-    compute_timer: Option<ComputeTimer>,
-}
-
-/// GPU timestamp pair around the cull compute pass (R3). Present only when the
-/// device has `TIMESTAMP_QUERY`; lets a measurement isolate cull GPU time from
-/// the CPU/submit/fence overhead that dominates a synchronous wall-clock frame.
-struct ComputeTimer {
-    query_set: iced::wgpu::QuerySet,
-    resolve: iced::wgpu::Buffer,
-    readback: iced::wgpu::Buffer,
-    period_ns: f32,
-}
-
-impl ComputeTimer {
-    fn new(device: &Device, queue: &Queue) -> Self {
-        let query_set = device.create_query_set(&iced::wgpu::QuerySetDescriptor {
-            label: Some("sdf_compute_ts"),
-            ty: iced::wgpu::QueryType::Timestamp,
-            count: 2,
-        });
-        let resolve = device.create_buffer(&BufferDescriptor {
-            label: None,
-            size: 16,
-            usage: BufferUsages::QUERY_RESOLVE | BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-        let readback = device.create_buffer(&BufferDescriptor {
-            label: None,
-            size: 16,
-            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        Self {
-            query_set,
-            resolve,
-            readback,
-            period_ns: queue.get_timestamp_period(),
-        }
-    }
-}
-
-impl SdfPipeline {
-    /// Number of `GpuSegment`s currently uploaded (this frame). With GPU
-    /// instancing, identical shapes contribute their segments ONCE, so this
-    /// tracks unique-shape geometry, not draw count.
-    pub fn segment_count(&self) -> usize {
-        self.segments_buffer.len()
-    }
-
-    /// Shape-cache hit rate over the pipeline's lifetime (Improvement A). ~1.0 on
-    /// a static graph is the R4 contract.
-    pub fn cache_hit_rate(&self) -> f32 {
-        self.shape_cache.hit_rate()
-    }
-
-    /// Shape-cache misses (boolean->arcs evaluations) over the lifetime.
-    pub fn cache_misses(&self) -> u64 {
-        self.shape_cache.misses()
-    }
-
-    /// Cull-compute GPU time of the last `prepare`, in milliseconds, when the
-    /// device supports timestamps (R3). Blocks to map the readback, so use it in
-    /// measurements, not the render loop. `None` without `TIMESTAMP_QUERY`.
-    pub fn last_compute_ms(&self, device: &Device) -> Option<f64> {
-        let t = self.compute_timer.as_ref()?;
-        let slice = t.readback.slice(..);
-        slice.map_async(iced::wgpu::MapMode::Read, |_| {});
-        device
-            .poll(iced::wgpu::PollType::Wait {
-                submission_index: None,
-                timeout: Some(std::time::Duration::from_secs(5)),
-            })
-            .ok()?;
-        let data = slice.get_mapped_range();
-        let ts: [u64; 2] = [
-            u64::from_le_bytes(data[0..8].try_into().unwrap()),
-            u64::from_le_bytes(data[8..16].try_into().unwrap()),
-        ];
-        let ms = ts[1].wrapping_sub(ts[0]) as f64 * t.period_ns as f64 / 1.0e6;
-        drop(data);
-        t.readback.unmap();
-        Some(ms)
-    }
 }
 
 fn create_tile_buffers(device: &Device, cap: u32) -> (iced::wgpu::Buffer, iced::wgpu::Buffer) {
@@ -617,7 +533,7 @@ fn create_compute_group1(
 }
 
 impl Pipeline for SdfPipeline {
-    fn new(device: &Device, queue: &Queue, format: TextureFormat) -> Self {
+    fn new(device: &Device, _queue: &Queue, format: TextureFormat) -> Self {
         let shared = SharedSdfResources::get_or_init(device, format);
 
         let usage = BufferUsages::STORAGE | BufferUsages::COPY_DST;
@@ -674,14 +590,6 @@ impl Pipeline for SdfPipeline {
             frame_shape_slots: HashMap::new(),
             frame_style_slots: HashMap::new(),
             slots: Vec::new(),
-            compute_timer: if device
-                .features()
-                .contains(iced::wgpu::Features::TIMESTAMP_QUERY)
-            {
-                Some(ComputeTimer::new(device, queue))
-            } else {
-                None
-            },
         }
     }
 
@@ -734,18 +642,10 @@ impl SdfPipeline {
             let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
                 label: Some("sdf_compute_batch"),
             });
-            let ts_writes =
-                self.compute_timer
-                    .as_ref()
-                    .map(|t| iced::wgpu::ComputePassTimestampWrites {
-                        query_set: &t.query_set,
-                        beginning_of_pass_write_index: Some(0),
-                        end_of_pass_write_index: Some(1),
-                    });
             {
                 let mut pass = encoder.begin_compute_pass(&iced::wgpu::ComputePassDescriptor {
                     label: Some("sdf_spatial_index"),
-                    timestamp_writes: ts_writes,
+                    timestamp_writes: None,
                 });
                 pass.set_pipeline(&self.shared.compute_pipeline);
                 pass.set_bind_group(0, &self.compute_group0, &[]);
@@ -761,10 +661,6 @@ impl SdfPipeline {
                 let max_rows = dispatches.iter().map(|&(_, r)| r).max().unwrap_or(0);
                 let draw_count = self.draw_data_buffer.len() as u32;
                 pass.dispatch_workgroups(max_cols.div_ceil(16), max_rows.div_ceil(16), draw_count);
-            }
-            if let Some(t) = &self.compute_timer {
-                encoder.resolve_query_set(&t.query_set, 0..2, &t.resolve, 0);
-                encoder.copy_buffer_to_buffer(&t.resolve, 0, &t.readback, 0, 16);
             }
             queue.submit(std::iter::once(encoder.finish()));
         }

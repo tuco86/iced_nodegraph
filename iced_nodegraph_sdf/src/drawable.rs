@@ -390,16 +390,6 @@ impl Drawable {
     }
 }
 
-/// Whether the cardinal angle `theta` lies within the arc that starts at
-/// `start_angle` and turns by signed `sweep` (radians). Used for tight arc bbox.
-#[allow(dead_code)]
-fn angle_in_arc(start_angle: f32, sweep: f32, theta: f32) -> bool {
-    let lo = start_angle.min(start_angle + sweep);
-    let span = sweep.abs();
-    let d = (theta - lo).rem_euclid(std::f32::consts::TAU);
-    d <= span + 1e-4
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
