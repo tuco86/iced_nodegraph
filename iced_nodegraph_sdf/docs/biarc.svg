@@ -1,7 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 420" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, sans-serif">
   <rect x="0" y="0" width="960" height="420" rx="12" fill="#fbfcfe" stroke="#d9dee5"/>
   <text x="32" y="40" font-size="20" font-weight="700" fill="#1b2026">Beziers become arc-splines</text>
-  <text x="32" y="62" font-size="13" fill="#5b6672">A cubic has no closed-form distance field. Rather than solve it per pixel, fit it with circular arcs on the CPU: one arc per piece, split until the worst gap to the true curve is sub-pixel.</text>
+  <text x="32" y="60" font-size="13" fill="#5b6672">A cubic has no closed-form distance field. Rather than solve it per pixel, fit it with circular arcs on the CPU:</text>
+  <text x="32" y="77" font-size="13" fill="#5b6672">one arc per piece, split until the worst gap to the true curve is sub-pixel.</text>
 
   <defs>
     <marker id="devA" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">

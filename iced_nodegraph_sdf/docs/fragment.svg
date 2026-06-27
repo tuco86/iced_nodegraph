@@ -1,7 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 430" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, sans-serif">
-  <rect x="0" y="0" width="960" height="430" rx="12" fill="#fbfcfe" stroke="#d9dee5"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 460" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, sans-serif">
+  <rect x="0" y="0" width="960" height="460" rx="12" fill="#fbfcfe" stroke="#d9dee5"/>
   <text x="32" y="40" font-size="20" font-weight="700" fill="#1b2026">Per-pixel: nearest segment, then sign</text>
-  <text x="32" y="62" font-size="13" fill="#5b6672">For each shape in its tile, a pixel takes the smallest |distance| over that shape's segments. The winning segment's perpendicular side gives the sign: inside is negative, outside positive.</text>
+  <text x="32" y="60" font-size="13" fill="#5b6672">For each shape in its tile, a pixel takes the smallest |distance| over that shape's segments. The winning segment's</text>
+  <text x="32" y="77" font-size="13" fill="#5b6672">perpendicular side gives the sign: inside is negative, outside positive.</text>
 
   <!-- left: contour with a pixel -->
   <g transform="translate(70,110)">

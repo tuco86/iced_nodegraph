@@ -1,7 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 440" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, sans-serif">
   <rect x="0" y="0" width="960" height="440" rx="12" fill="#fbfcfe" stroke="#d9dee5"/>
   <text x="32" y="40" font-size="20" font-weight="700" fill="#1b2026">Colour is a distance-stop chain</text>
-  <text x="32" y="62" font-size="13" fill="#5b6672">A style maps signed distance to colour. Stops are placed along the distance axis; the shader holds, then smoothsteps between consecutive stops in one pass. Fill, stroke, and glow are all the same mechanism.</text>
+  <text x="32" y="60" font-size="13" fill="#5b6672">A style maps signed distance to colour. Stops are placed along the distance axis; the shader holds, then smoothsteps</text>
+  <text x="32" y="77" font-size="13" fill="#5b6672">between consecutive stops in one pass. Fill, stroke, and glow are all the same mechanism.</text>
 
   <!-- axis -->
   <g transform="translate(60,150)">
@@ -38,5 +39,6 @@
     <line x1="0" y1="17" x2="840" y2="17" stroke="#dfe5ec" stroke-width="0"/>
   </g>
 
-  <text x="60" y="416" font-size="12" fill="#3a424c">Because the whole profile is one entry, abutting bands never composite against each other &#8212; no seams. A pattern (dash, dot, arrow) instead reshapes the distance along the contour before this lookup.</text>
+  <text x="60" y="410" font-size="12" fill="#3a424c">Because the whole profile is one entry, abutting bands never composite against each other &#8212; no seams. A pattern</text>
+  <text x="60" y="428" font-size="12" fill="#3a424c">(dash, dot, arrow) instead reshapes the distance along the contour before this lookup.</text>
 </svg>
