@@ -684,10 +684,16 @@ impl Pipeline for SdfPipeline {
 impl SdfPipeline {
     /// Records the fullscreen-triangle SDF instance draw for `draw_index` (set
     /// render pipeline + group0 + draw `0..3`).
+    ///
+    /// Wrapped in a `sdf_shade` debug group so GPU captures (Nsight Graphics,
+    /// RenderDoc, PIX) attribute the fragment work to a named block. Debug markers
+    /// need no device feature and are no-ops without a capture tool attached.
     fn record_sdf_instance(&self, pass: &mut iced::wgpu::RenderPass<'_>, draw_index: u32) {
+        pass.push_debug_group("sdf_shade");
         pass.set_pipeline(&self.shared.render_pipeline);
         pass.set_bind_group(0, &self.render_group0, &[]);
         pass.draw(0..3, draw_index..draw_index + 1);
+        pass.pop_debug_group();
     }
 
     /// Runs every cull dispatch recorded this frame in ONE encoder + ONE submit.

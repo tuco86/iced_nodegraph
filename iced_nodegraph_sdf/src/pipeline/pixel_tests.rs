@@ -461,6 +461,276 @@ impl TestRenderer {
         pixels
     }
 
+    /// GPU time of the compute (two-level index) and render (shade) passes, in
+    /// microseconds, via timestamp queries bracketing each pass. Mirrors
+    /// `render_full_t`'s production-faithful compile + dispatch, but times the two
+    /// passes instead of reading pixels. `None` if the adapter lacks
+    /// `TIMESTAMP_QUERY`. The whole scene is one draw (one DrawData), so the cull
+    /// runs over all entries at once - a slight over-estimate of the per-primitive
+    /// production split, but representative of the per-pixel and per-tile shader cost.
+    fn gpu_pass_times(
+        &self,
+        drawables: &[(&crate::drawable::Drawable, &Style)],
+        width: u32,
+        height: u32,
+        zoom: f32,
+        cam: [f32; 2],
+    ) -> Option<(f64, f64)> {
+        if !self.device.features().contains(Features::TIMESTAMP_QUERY) {
+            return None;
+        }
+        let scale = 1.0_f32;
+
+        let mut gpu_segments = Vec::new();
+        let mut gpu_entries = Vec::new();
+        let mut gpu_styles = Vec::new();
+        for (i, (drawable, style)) in drawables.iter().enumerate() {
+            let seg_offset = gpu_segments.len() as u32;
+            let origin = if drawable.segment_count() > 0 {
+                let b = drawable.bounds();
+                [(b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5]
+            } else {
+                [0.0, 0.0]
+            };
+            let local_storage;
+            let local: &crate::drawable::Drawable = if origin == [0.0, 0.0] {
+                drawable
+            } else {
+                local_storage = drawable.translated(-origin[0], -origin[1]);
+                &local_storage
+            };
+            let (mut entry, gpu_style) =
+                compile_local_at(local, style, i as u32, origin, 0, &mut gpu_segments);
+            entry.style_idx = gpu_styles.len() as u32;
+            entry.segment_start = seg_offset;
+            gpu_entries.push(entry);
+            gpu_styles.push(gpu_style);
+        }
+
+        let grid_cols = (width as f32 / TILE_SIZE).ceil() as u32;
+        let grid_rows = (height as f32 / TILE_SIZE).ceil() as u32;
+        let total_tiles = (grid_cols * grid_rows).max(1);
+        let coarse_cols = grid_cols.div_ceil(COARSE_FACTOR);
+        let coarse_rows = grid_rows.div_ceil(COARSE_FACTOR);
+        let total_coarse = (coarse_cols * coarse_rows).max(1);
+
+        let draw_data = DrawData {
+            bounds_origin: GpuVec2::ZERO,
+            camera_position: GpuVec2::new(cam[0], cam[1]),
+            camera_zoom: zoom,
+            scale_factor: scale,
+            time: 0.0,
+            debug_flags: 0,
+            entry_count: gpu_entries.len() as u32,
+            entry_start: 0,
+            grid_cols,
+            grid_rows,
+            tile_base: 0,
+            coarse_cols,
+            coarse_rows,
+            coarse_base: 0,
+            mouse_px: GpuVec2::ZERO,
+            _pad0: 0,
+            _pad1: 0,
+        };
+
+        let draws_buf = self.create_storage(&[draw_data]);
+        let entries_buf = self.create_storage(&gpu_entries);
+        let segments_buf = self.create_storage(&gpu_segments);
+        let styles_buf = self.create_storage(&gpu_styles);
+        let storage = |size: u64| {
+            self.device.create_buffer(&BufferDescriptor {
+                label: None,
+                size,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        };
+        let coarse_counts_buf = storage(total_coarse as u64 * 4);
+        let coarse_slots_buf = storage(total_coarse as u64 * COARSE_STRIDE as u64 * 4);
+        let fine_counts_buf = storage(total_tiles as u64 * 4);
+        let fine_slots_buf = storage(total_tiles as u64 * FINE_STRIDE as u64 * 4);
+
+        let render_bg = self.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &self.render_group0_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: draws_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: entries_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: segments_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: styles_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: fine_counts_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: fine_slots_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 6,
+                    resource: coarse_slots_buf.as_entire_binding(),
+                },
+            ],
+        });
+        let compute_bg0 = self.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &self.compute_group0_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: draws_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: entries_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: segments_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: styles_buf.as_entire_binding(),
+                },
+            ],
+        });
+        let compute_bg1 = self.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &self.compute_group1_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: coarse_counts_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: coarse_slots_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: fine_counts_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: fine_slots_buf.as_entire_binding(),
+                },
+            ],
+        });
+
+        let texture = self.device.create_texture(&TextureDescriptor {
+            label: None,
+            size: Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba8Unorm,
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&TextureViewDescriptor::default());
+
+        let qs = self.device.create_query_set(&QuerySetDescriptor {
+            label: Some("sdf_timestamps"),
+            ty: QueryType::Timestamp,
+            count: 4,
+        });
+        let resolve = self.device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: 32,
+            usage: BufferUsages::QUERY_RESOLVE | BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let readback = self.device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: 32,
+            usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut enc = self
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+        {
+            let mut pass = enc.begin_compute_pass(&ComputePassDescriptor {
+                label: Some("sdf_index"),
+                timestamp_writes: Some(ComputePassTimestampWrites {
+                    query_set: &qs,
+                    beginning_of_pass_write_index: Some(0),
+                    end_of_pass_write_index: Some(1),
+                }),
+            });
+            pass.set_pipeline(&self.compute_pipeline);
+            pass.set_bind_group(0, &compute_bg0, &[]);
+            pass.set_bind_group(1, &compute_bg1, &[]);
+            pass.dispatch_workgroups(coarse_cols, coarse_rows, 1);
+        }
+        {
+            let mut pass = enc.begin_render_pass(&RenderPassDescriptor {
+                label: Some("sdf_shade"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(Color::TRANSPARENT),
+                        store: StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: Some(RenderPassTimestampWrites {
+                    query_set: &qs,
+                    beginning_of_pass_write_index: Some(2),
+                    end_of_pass_write_index: Some(3),
+                }),
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.render_pipeline);
+            pass.set_bind_group(0, &render_bg, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        enc.resolve_query_set(&qs, 0..4, &resolve, 0);
+        enc.copy_buffer_to_buffer(&resolve, 0, &readback, 0, 32);
+        let idx = self.queue.submit(Some(enc.finish()));
+
+        let slice = readback.slice(..);
+        slice.map_async(MapMode::Read, |_| {});
+        self.device
+            .poll(PollType::Wait {
+                submission_index: Some(idx),
+                timeout: Some(std::time::Duration::from_secs(5)),
+            })
+            .unwrap();
+        let data = slice.get_mapped_range();
+        let mut t = [0u64; 4];
+        for (k, slot) in t.iter_mut().enumerate() {
+            *slot = u64::from_le_bytes(data[k * 8..k * 8 + 8].try_into().unwrap());
+        }
+        drop(data);
+        readback.unmap();
+
+        let period = self.queue.get_timestamp_period() as f64; // ns per tick
+        let compute_us = t[1].saturating_sub(t[0]) as f64 * period / 1000.0;
+        let fragment_us = t[3].saturating_sub(t[2]) as f64 * period / 1000.0;
+        Some((compute_us, fragment_us))
+    }
+
     fn render_full(
         &self,
         drawables: &[(&crate::drawable::Drawable, &Style)],
@@ -3792,6 +4062,99 @@ fn measure_idle_prepare_cost() {
         println!("frame {i}: prepare {:.3} ms{tag}", *us as f64 / 1000.0);
     }
     println!("----------------------------------------------------------------\n");
+}
+
+/// GPU shader cost probe (ignored): times the compute (two-level index) pass and
+/// the render (shade) pass via timestamp queries, on the same representative scene
+/// as `measure_idle_prepare_cost` (bg tiling + 500 node fills + 640 edges). This is
+/// the GPU-side counterpart to that CPU probe - it answers "is the time in the index
+/// build or the per-pixel shading?" without any GUI profiler. Run with:
+///   cargo test -p iced_nodegraph_sdf measure_gpu_shader_cost -- --ignored --nocapture
+#[test]
+#[ignore]
+fn measure_gpu_shader_cost() {
+    use crate::shape::Shape;
+    use crate::tiling::Tiling;
+
+    let r = shared_renderer();
+    if !r.device.features().contains(Features::TIMESTAMP_QUERY) {
+        println!("\nTIMESTAMP_QUERY unsupported on this adapter - cannot measure GPU time.\n");
+        return;
+    }
+
+    let (w, h, zoom) = (1280u32, 768u32, 0.24131_f32);
+    let cam = [-327.7_f32, -132.0];
+
+    let dark = Style::solid(rgba(0.12, 0.13, 0.16, 1.0));
+    let fill_style = Style::solid(rgba(0.30, 0.32, 0.40, 1.0));
+    let edge_style = Style::stroke(rgba(0.55, 0.6, 0.7, 1.0), Pattern::solid(2.0));
+
+    // Background tiling (covers every pixel - the fragment baseline).
+    let bg = Shape::tiling(Tiling::grid(40.0, 40.0, 1.0)).evaluate();
+
+    // 500 node bodies (rounded box minus two pin circles) placed across the view.
+    let mut nodes = Vec::new();
+    for col in 0..25 {
+        for row in 0..20 {
+            let i = col * 20 + row;
+            let nw = 70.0 + (i % 7) as f32 * 6.0;
+            let nh = 60.0 + (i % 5) as f32 * 5.0;
+            let wx = (24.0 + col as f32 * 24.0) / zoom - cam[0];
+            let wy = (20.0 + row as f32 * 24.0) / zoom - cam[1];
+            let body = Shape::rounded_box([nw, nh], [6.0; 4])
+                - Shape::circle(5.0).translate([-nw * 0.5, 0.0])
+                - Shape::circle(5.0).translate([nw * 0.5, 0.0]);
+            nodes.push(body.evaluate().translated(wx, wy));
+        }
+    }
+
+    // 640 arc-spline bezier edges.
+    let mut edges = Vec::new();
+    for i in 0..640u32 {
+        let a = (i % 25) as f32 * 24.0 + 24.0;
+        let b = (i % 20) as f32 * 24.0 + 20.0;
+        let p0 = [a / zoom - cam[0], b / zoom - cam[1]];
+        let p3 = [(a + 60.0) / zoom - cam[0], (b + 40.0) / zoom - cam[1]];
+        let p1 = [p0[0] + 80.0, p0[1]];
+        let p2 = [p3[0] - 80.0, p3[1]];
+        edges.push(Shape::bezier(p0, p1, p2, p3).evaluate());
+    }
+
+    let mut d: Vec<(&crate::drawable::Drawable, &Style)> =
+        Vec::with_capacity(1 + nodes.len() + edges.len());
+    d.push((&bg, &dark));
+    for n in &nodes {
+        d.push((n, &fill_style));
+    }
+    for e in &edges {
+        d.push((e, &edge_style));
+    }
+
+    // Warm up, then take the minimum of several runs (least scheduler noise).
+    let _ = r.gpu_pass_times(&d, w, h, zoom, cam);
+    let mut runs = Vec::new();
+    for _ in 0..12 {
+        if let Some(t) = r.gpu_pass_times(&d, w, h, zoom, cam) {
+            runs.push(t);
+        }
+    }
+    let cmin = runs.iter().map(|t| t.0).fold(f64::INFINITY, f64::min);
+    let fmin = runs.iter().map(|t| t.1).fold(f64::INFINITY, f64::min);
+    let segs: usize = nodes
+        .iter()
+        .chain(edges.iter())
+        .map(|x| x.segment_count())
+        .sum();
+
+    println!("\n--- GPU shader cost: bg + 500 node fills + 640 edges @ {w}x{h}, zoom {zoom} ---");
+    println!("entries: {}   segments: {segs}", d.len());
+    println!("compute (two-level index, one dispatch): {cmin:.1} us");
+    println!("fragment (shade):                        {fmin:.1} us");
+    println!(
+        "total GPU:                               {:.1} us",
+        cmin + fmin
+    );
+    println!("----------------------------------------------------------------------\n");
 }
 
 /// Tile-budget overflow must DEGRADE, not panic. A draw whose tile grid would push
