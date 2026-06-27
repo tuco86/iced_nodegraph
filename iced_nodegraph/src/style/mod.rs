@@ -177,10 +177,6 @@ pub struct GraphStyle {
     pub background_color: Color,
     /// Optional tiling drawn over `background_color` (grid, dots, ...).
     pub tiling: Option<TilingBackground>,
-    /// Drag edge color when connection is invalid.
-    pub drag_edge_color: Color,
-    /// Drag edge color when connection is valid.
-    pub drag_edge_valid_color: Color,
     /// Selection style for node highlighting and box selection.
     pub selection_style: SelectionStyle,
 }
@@ -189,8 +185,6 @@ impl Default for GraphStyle {
     fn default() -> Self {
         Self {
             background_color: Color::from_rgb(0.08, 0.08, 0.09),
-            drag_edge_color: Color::from_rgb(0.9, 0.6, 0.3),
-            drag_edge_valid_color: Color::from_rgb(0.3, 0.8, 0.5),
             tiling: None,
             selection_style: SelectionStyle::default(),
         }
@@ -204,16 +198,6 @@ impl GraphStyle {
 
     pub fn background_color(mut self, color: Color) -> Self {
         self.background_color = color;
-        self
-    }
-
-    pub fn drag_edge_color(mut self, color: Color) -> Self {
-        self.drag_edge_color = color;
-        self
-    }
-
-    pub fn drag_edge_valid_color(mut self, color: Color) -> Self {
-        self.drag_edge_valid_color = color;
         self
     }
 
@@ -237,8 +221,6 @@ impl GraphStyle {
     pub fn light() -> Self {
         Self {
             background_color: Color::from_rgb(0.95, 0.95, 0.96),
-            drag_edge_color: Color::from_rgb(0.8, 0.5, 0.2),
-            drag_edge_valid_color: Color::from_rgb(0.2, 0.7, 0.4),
             tiling: None,
             selection_style: SelectionStyle::default(),
         }
@@ -262,10 +244,6 @@ impl GraphStyle {
 
         Self {
             background_color: palette.background.base.color,
-            // Drag feedback by semantic role: amber while pending (no valid
-            // target yet), green once the target is valid.
-            drag_edge_color: palette.warning.base.color,
-            drag_edge_valid_color: palette.success.base.color,
             tiling: Some(grid),
             selection_style: SelectionStyle::from_theme(theme),
         }
@@ -289,10 +267,6 @@ pub struct SelectionStyle {
     pub box_select_border: Color,
     /// Color for the edge cutting line
     pub edge_cutting_color: Color,
-    /// Color for hover glow effect on nodes
-    pub hover_glow_color: Color,
-    /// Radius for hover glow effect in world units
-    pub hover_glow_radius: f32,
 }
 
 impl Default for SelectionStyle {
@@ -303,8 +277,6 @@ impl Default for SelectionStyle {
             box_select_fill: Color::from_rgba(0.3, 0.6, 1.0, 0.15),
             box_select_border: Color::from_rgba(0.3, 0.6, 1.0, 0.6),
             edge_cutting_color: Color::from_rgb(1.0, 0.3, 0.3),
-            hover_glow_color: Color::from_rgb(0.5, 0.7, 1.0),
-            hover_glow_radius: 6.0,
         }
     }
 }
@@ -334,16 +306,6 @@ impl SelectionStyle {
         self
     }
 
-    pub fn hover_glow_color(mut self, color: Color) -> Self {
-        self.hover_glow_color = color;
-        self
-    }
-
-    pub fn hover_glow_radius(mut self, radius: f32) -> Self {
-        self.hover_glow_radius = radius;
-        self
-    }
-
     /// Creates a selection style derived from an iced Theme.
     pub fn from_theme(theme: &Theme) -> Self {
         let palette = theme.extended_palette();
@@ -357,9 +319,6 @@ impl SelectionStyle {
             box_select_border: Color { a: 0.6, ..primary },
             // A cut is destructive: danger, theme-driven instead of hardcoded red.
             edge_cutting_color: palette.danger.base.color,
-            // A soft primary wash for the hover glow (cf. radio hover background).
-            hover_glow_color: palette.primary.weak.color,
-            hover_glow_radius: 6.0,
         }
     }
 }

@@ -132,21 +132,6 @@ impl EdgeStyle {
         s.curve = EdgeCurve::Line;
         s
     }
-
-    /// Stroke width from the pattern.
-    pub fn get_width(&self) -> f32 {
-        self.pattern.thickness
-    }
-
-    /// Whether the stroke pattern is animated.
-    pub fn has_motion(&self) -> bool {
-        self.pattern.flow_speed.abs() > 0.001
-    }
-
-    /// Animation speed (0.0 if static).
-    pub fn motion_speed(&self) -> f32 {
-        self.pattern.flow_speed
-    }
 }
 
 #[cfg(test)]
