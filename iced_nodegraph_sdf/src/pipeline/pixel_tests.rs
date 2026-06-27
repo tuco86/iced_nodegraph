@@ -11,7 +11,7 @@ use encase::{ShaderSize, ShaderType, StorageBuffer, UniformBuffer, internal::Wri
 use wgpu::util::DeviceExt;
 use wgpu::*;
 
-use crate::compile::compile_drawable;
+use crate::compile::compile_local_at;
 use crate::curve::Curve;
 use crate::pattern::Pattern;
 use crate::pipeline::types::*;
@@ -194,7 +194,7 @@ impl TestRenderer {
         for (i, (drawable, style)) in drawables.iter().enumerate() {
             let seg_offset = gpu_segments.len() as u32;
             let (mut entry, gpu_style) =
-                compile_drawable(drawable, style, i as u32, 0, &mut gpu_segments);
+                compile_local_at(drawable, style, i as u32, [0.0, 0.0], 0, &mut gpu_segments);
             entry.style_idx = gpu_styles.len() as u32;
             entry.segment_start = seg_offset;
             gpu_entries.push(entry);
@@ -456,9 +456,7 @@ impl TestRenderer {
         scale: f32,
         use_tiles: bool,
     ) -> Vec<[u8; 4]> {
-        self.render_full_t(
-            drawables, width, height, zoom, scale, use_tiles, 0.0, None, false,
-        )
+        self.render_full_t(drawables, width, height, zoom, scale, use_tiles, 0.0, None)
     }
 
     /// Like [`render_full`] but with an explicit animation `time` (so animated
@@ -477,7 +475,6 @@ impl TestRenderer {
         use_tiles: bool,
         time: f32,
         camera: Option<[f32; 2]>,
-        localize: bool,
     ) -> Vec<[u8; 4]> {
         // Compile Rust -> GPU data
         let mut gpu_segments = Vec::new();
@@ -486,23 +483,24 @@ impl TestRenderer {
 
         for (i, (drawable, style)) in drawables.iter().enumerate() {
             let seg_offset = gpu_segments.len() as u32;
-            // When localizing (the v3 keystone), store geometry in a frame
-            // around the drawable's bounds-center and carry that origin as the
-            // per-segment translate. Tilings have no segments, so leave them.
-            let origin = if localize && drawable.segment_count() > 0 {
+            // Production-faithful: store geometry in a frame around the drawable's
+            // bounds-center and carry that origin as the per-segment translate (the
+            // dedup keystone). Tilings have no segments to localize.
+            let origin = if drawable.segment_count() > 0 {
                 let b = drawable.bounds();
                 [(b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5]
             } else {
                 [0.0, 0.0]
             };
-            let (mut entry, gpu_style) = crate::compile::compile_drawable_at(
-                drawable,
-                style,
-                i as u32,
-                origin,
-                0,
-                &mut gpu_segments,
-            );
+            let local_storage;
+            let local: &crate::drawable::Drawable = if origin == [0.0, 0.0] {
+                drawable
+            } else {
+                local_storage = drawable.translated(-origin[0], -origin[1]);
+                &local_storage
+            };
+            let (mut entry, gpu_style) =
+                compile_local_at(local, style, i as u32, origin, 0, &mut gpu_segments);
             entry.style_idx = gpu_styles.len() as u32;
             // Fix segment_start: compile uses segment_base=0, offset is already correct
             entry.segment_start = seg_offset;
@@ -786,7 +784,7 @@ impl TestRenderer {
         for (i, (drawable, style)) in drawables.iter().enumerate() {
             let seg_offset = gpu_segments.len() as u32;
             let (mut entry, gpu_style) =
-                compile_drawable(drawable, style, i as u32, 0, &mut gpu_segments);
+                compile_local_at(drawable, style, i as u32, [0.0, 0.0], 0, &mut gpu_segments);
             entry.style_idx = gpu_styles.len() as u32;
             entry.segment_start = seg_offset;
             gpu_entries.push(entry);
@@ -2308,16 +2306,15 @@ fn abutting_chain_bands_stay_opaque_across_boundary() {
 }
 
 // ===========================================================================
-// Golden corpus (STEP 0): the v2-vs-(v2/v3) oracle.
+// Golden corpus: the render self-consistency oracle.
 //
 // Each scene is a self-contained (Drawable, Style) set rendered at a fixed
 // resolution / zoom / time. The corpus spans every pattern, every tiling, a
 // segment-dense pin node, deep z-overlap, far-from-origin coordinates, and a
-// pinned-time animated edge. The STEP 0 gate is v2-vs-v2 self-consistency:
+// pinned-time animated edge. The gate is self-consistency:
 // (a) byte-identical across repeated renders (determinism), and (b) the tiled
 // spatial-index path matches the brute-force untiled path within AA tolerance
-// (the existing dual-path oracle, generalized over the whole corpus). When v3
-// lands behind `sdf-v3`, the same corpus diffs v3 against this v2 oracle.
+// (the dual-path cull oracle, generalized over the whole corpus).
 // ===========================================================================
 
 use crate::drawable::Drawable;
@@ -2347,8 +2344,7 @@ struct Scene {
     /// is therefore only correct when every entry is a SINGLE segment (strokes,
     /// beziers, tilings); a multi-segment fill (rounded rect, pin node) renders
     /// wrong under it. Multi-segment scenes are still covered by the
-    /// determinism gate and the future v3-vs-v2-tiled diff; they just cannot
-    /// use the tiled-vs-untiled oracle.
+    /// determinism gate; they just cannot use the tiled-vs-untiled oracle.
     untiled_safe: bool,
     items: Vec<(Drawable, Style)>,
 }
@@ -2554,9 +2550,10 @@ fn corpus() -> Vec<Scene> {
     scenes
 }
 
-/// Render a corpus scene through the v2 SDF path with the tile spatial index
-/// on or off.
-fn render_scene_v2(r: &TestRenderer, scene: &Scene, use_tiles: bool) -> Vec<[u8; 4]> {
+/// Render a corpus scene through the SDF path with the tile spatial index on or
+/// off. Geometry is localized to each drawable's bounds-center with placement
+/// carried in the per-segment translate (the production dedup keystone).
+fn render_scene(r: &TestRenderer, scene: &Scene, use_tiles: bool) -> Vec<[u8; 4]> {
     r.render_full_t(
         &scene.pairs(),
         scene.width,
@@ -2566,24 +2563,6 @@ fn render_scene_v2(r: &TestRenderer, scene: &Scene, use_tiles: bool) -> Vec<[u8;
         use_tiles,
         scene.time,
         scene.camera,
-        false,
-    )
-}
-
-/// Render a corpus scene through the v3 keystone path: geometry localized to
-/// each drawable's bounds-center, placement carried in the per-segment
-/// translate. By translate invariance this must be pixel-identical to v2.
-fn render_scene_v3(r: &TestRenderer, scene: &Scene, use_tiles: bool) -> Vec<[u8; 4]> {
-    r.render_full_t(
-        &scene.pairs(),
-        scene.width,
-        scene.height,
-        scene.zoom,
-        1.0,
-        use_tiles,
-        scene.time,
-        scene.camera,
-        true,
     )
 }
 
@@ -2616,15 +2595,15 @@ fn corpus_diff(a: &[[u8; 4]], b: &[[u8; 4]]) -> CorpusDiff {
     (worst, over, sample)
 }
 
-/// STEP 0 gate, part (a): the v2 oracle is deterministic. Rendering a scene
-/// twice yields a byte-identical framebuffer, so any future v3 diff reflects a
-/// real change, not renderer nondeterminism.
+/// The SDF render is deterministic: rendering a scene twice yields a
+/// byte-identical framebuffer, so any diff reflects a real change, not renderer
+/// nondeterminism.
 #[test]
-fn corpus_v2_is_deterministic() {
+fn corpus_render_is_deterministic() {
     let r = shared_renderer();
     for scene in corpus() {
-        let a = render_scene_v2(&r, &scene, true);
-        let b = render_scene_v2(&r, &scene, true);
+        let a = render_scene(&r, &scene, true);
+        let b = render_scene(&r, &scene, true);
         assert!(
             a == b,
             "scene `{}` is not deterministic across repeated renders",
@@ -2643,7 +2622,7 @@ fn corpus_v2_is_deterministic() {
 fn corpus_scenes_render_plausible_coverage() {
     let r = shared_renderer();
     for scene in corpus() {
-        let px = render_scene_v2(&r, &scene, true);
+        let px = render_scene(&r, &scene, true);
         let total = px.len() as f32;
         let visible = px.iter().filter(|p| p[3] >= CORPUS_ALPHA_FLOOR).count() as f32;
         let frac = visible / total;
@@ -2657,29 +2636,8 @@ fn corpus_scenes_render_plausible_coverage() {
     }
 }
 
-/// Phase A1 keystone gate: the v3 local-geometry + per-instance translate path
-/// is pixel-equivalent to the v2 world-baked path on every corpus scene. This
-/// is the translate-invariance proof (`|grad| = 1`, so distances - and thus AA
-/// and band thresholds - are unchanged) that the whole dedup/arena architecture
-/// rests on. Phase A gates on pixel-equality only.
-#[test]
-fn corpus_v3_localized_matches_v2() {
-    let r = shared_renderer();
-    for scene in corpus() {
-        let v2 = render_scene_v2(&r, &scene, true);
-        let v3 = render_scene_v3(&r, &scene, true);
-        let (worst, over, sample) = corpus_diff(&v2, &v3);
-        assert!(
-            over == 0,
-            "scene `{}`: v3 localized vs v2 differs on {over} visible pixels \
-             (worst per-channel {worst}). First: {sample:?}",
-            scene.name,
-        );
-    }
-}
-
-/// Phase A4 gate: an edge rendered as a v3 arc-spline (bezier approximated by
-/// arcs/lines) is pixel-equal to the v2 cubic-bezier edge WITHIN AA TOLERANCE.
+/// Phase A4 gate: an edge rendered as an arc-spline (bezier approximated by
+/// arcs/lines) is pixel-equal to the cubic-bezier reference edge WITHIN AA TOLERANCE.
 /// The arc-spline is within `tol` world units of the curve, so the SDF differs
 /// by <= `tol`: a thin sub-pixel delta confined to the antialiased edge band,
 /// never a structural divergence (this is the plan's accepted delta, not the
@@ -2695,8 +2653,8 @@ fn arc_spline_edge_matches_bezier() {
         glam::Vec2::new(40.0, 40.0),
         glam::Vec2::new(120.0, 40.0),
     );
-    // The oracle is a dense POLYLINE of the true cubic (v3 deleted the GPU
-    // cubic SDF). It is independent of the biarc fitter - not another arc-spline
+    // The oracle is a dense POLYLINE of the true cubic (the GPU cubic SDF was
+    // removed). It is independent of the biarc fitter - not another arc-spline
     // - so it still catches a structural arc-spline error. `Curve::bezier` itself
     // now fits arcs, so it could not serve as the reference.
     let bez = crate::drawable::Drawable::bezier_polyline(cps.0, cps.1, cps.2, cps.3, 256);
@@ -2704,7 +2662,7 @@ fn arc_spline_edge_matches_bezier() {
     let tol = 0.1 / zoom;
     let arcs = crate::drawable::Drawable::bezier_arcs(cps.0, cps.1, cps.2, cps.3, tol);
 
-    // Arc-length must match so dash spacing / flow stay aligned with v2.
+    // Arc-length must match so dash spacing / flow stay aligned with the cubic.
     let rel_len = (arcs.total_arc_length() - bez.total_arc_length()).abs() / bez.total_arc_length();
     assert!(
         rel_len < 0.01,
@@ -2719,14 +2677,14 @@ fn arc_spline_edge_matches_bezier() {
             Style::stroke(color, Pattern::dashed(6.0, 14.0, 8.0)),
         ),
     ] {
-        let v2 = r.render_opts(&[(&bez, &style)], w, h, zoom, true);
-        let v3 = r.render_opts(&[(&arcs, &style)], w, h, zoom, true);
+        let bez_px = r.render_opts(&[(&bez, &style)], w, h, zoom, true);
+        let arc_px = r.render_opts(&[(&arcs, &style)], w, h, zoom, true);
 
-        let total = v2.len();
+        let total = bez_px.len();
         let mut visible = 0usize;
         let mut differ = 0usize; // per-channel diff over a clear threshold
         let mut worst = 0i32;
-        for (a, b) in v2.iter().zip(v3.iter()) {
+        for (a, b) in bez_px.iter().zip(arc_px.iter()) {
             if a[3] < CORPUS_ALPHA_FLOOR && b[3] < CORPUS_ALPHA_FLOOR {
                 continue;
             }
@@ -2761,8 +2719,8 @@ fn arc_spline_edge_matches_bezier() {
 /// to the LEFT) has bezier control points that point away from each other, so
 /// the cubic self-loops. The arc-spline of such a curve must still match the
 /// true cubic - a full-circle or giant-arc artifact here (the reported bug)
-/// blows up the diff. Rendered against a dense-polyline oracle of the cubic (v3
-/// has no GPU cubic), not another arc-spline. Also sweeps a non-origin offset
+/// blows up the diff. Rendered against a dense-polyline oracle of the cubic (the
+/// GPU cubic SDF was removed), not another arc-spline. Also sweeps a non-origin offset
 /// (world-space fit precision).
 #[test]
 fn backward_edge_arc_spline_matches_cubic() {
@@ -2790,13 +2748,13 @@ fn backward_edge_arc_spline_matches_cubic() {
         let bez = crate::drawable::Drawable::bezier_polyline(a, b, c, d, 256);
         let arcs = crate::drawable::Drawable::bezier_arcs(a, b, c, d, 0.1 / zoom);
 
-        let v2 = r.render_opts(&[(&bez, &style)], w, h, zoom, true);
-        let v3 = r.render_opts(&[(&arcs, &style)], w, h, zoom, true);
+        let bez_px = r.render_opts(&[(&bez, &style)], w, h, zoom, true);
+        let arc_px = r.render_opts(&[(&arcs, &style)], w, h, zoom, true);
 
         let mut visible = 0usize;
         let mut differ = 0usize;
         let mut worst = 0i32;
-        for (x, y) in v2.iter().zip(v3.iter()) {
+        for (x, y) in bez_px.iter().zip(arc_px.iter()) {
             if x[3] < CORPUS_ALPHA_FLOOR && y[3] < CORPUS_ALPHA_FLOOR {
                 continue;
             }
@@ -2941,18 +2899,18 @@ fn far_origin_edge_matches_origin() {
     }
 }
 
-/// STEP 0 gate, part (b): the tiled spatial-index path matches the brute-force
-/// untiled path within AA tolerance on every corpus scene. This is the v2
-/// self-diff-zero oracle that v3 must later reproduce.
+/// The tiled spatial-index path matches the brute-force untiled path within AA
+/// tolerance on every corpus scene - the cull/spatial-index correctness oracle
+/// (a dropped tile would show up as missing pixels under the tiled path).
 #[test]
-fn corpus_v2_tiled_matches_untiled() {
+fn corpus_tiled_matches_untiled() {
     let r = shared_renderer();
     for scene in corpus() {
         if !scene.untiled_safe {
             continue;
         }
-        let tiled = render_scene_v2(&r, &scene, true);
-        let untiled = render_scene_v2(&r, &scene, false);
+        let tiled = render_scene(&r, &scene, true);
+        let untiled = render_scene(&r, &scene, false);
         let (worst, over, sample) = corpus_diff(&tiled, &untiled);
         assert!(
             over == 0,
@@ -3043,10 +3001,10 @@ fn c2_overflow_is_deterministic_no_flicker() {
     }
 }
 
-/// Static-background texture cache (Phase C, v3): a cache hit/populate blit must
+/// Static-background texture cache (Phase C): a cache hit/populate blit must
 /// be pixel-identical to a direct render, and a camera change must invalidate the
 /// cache (render direct again, different pixels). The no-regression rule: the
-/// FIRST sight of a key renders direct (v2 path); only a repeated key populates
+/// FIRST sight of a key renders direct; only a repeated key populates
 /// the texture and then blits it - so a continuously panning scene never blits.
 #[test]
 fn bg_cache_blit_matches_direct_and_invalidates() {
@@ -3250,8 +3208,8 @@ fn a2_time_and_camera_are_per_frame_uniforms() {
 
     // Same geometry, two times: the flow phase animates (time is a per-frame
     // uniform driving the pattern, not baked into the segment buffer).
-    let t0 = r.render_full_t(&d, w, h, zoom, 1.0, true, 0.0, None, false);
-    let t1 = r.render_full_t(&d, w, h, zoom, 1.0, true, 0.25, None, false);
+    let t0 = r.render_full_t(&d, w, h, zoom, 1.0, true, 0.0, None);
+    let t1 = r.render_full_t(&d, w, h, zoom, 1.0, true, 0.25, None);
     assert!(
         corpus_diff(&t0, &t1).1 > 0,
         "advancing time must animate the flow"
@@ -3263,8 +3221,8 @@ fn a2_time_and_camera_are_per_frame_uniforms() {
     let s = [(&edge, &solid)];
     let cam_a = [(w as f32) * 0.5 / zoom, (h as f32) * 0.5 / zoom];
     let cam_b = [cam_a[0] - 30.0, cam_a[1]];
-    let pa = r.render_full_t(&s, w, h, zoom, 1.0, true, 0.0, Some(cam_a), false);
-    let pb = r.render_full_t(&s, w, h, zoom, 1.0, true, 0.0, Some(cam_b), false);
+    let pa = r.render_full_t(&s, w, h, zoom, 1.0, true, 0.0, Some(cam_a));
+    let pb = r.render_full_t(&s, w, h, zoom, 1.0, true, 0.0, Some(cam_b));
     assert!(
         corpus_diff(&pa, &pb).1 > 0,
         "panning a static graph must shift the view"
@@ -3371,46 +3329,10 @@ fn overflowing_tile_keeps_nearest_not_first() {
     );
 }
 
-/// At-scale integration gate: many realistic multi-segment nodes (rounded-rect
-/// minus pin cutouts, as the widget builds) rendered through the REAL tiled cull,
-/// v3 keystone (localized geometry + translate) vs v2 (world-baked). Exercises the
-/// cull + keystone together at node-grid scale - the path the 500-node demo runs,
-/// where the sign-off found bugs the small corpus scenes missed.
-#[test]
-fn many_multiseg_nodes_localized_matches_world_tiled() {
-    let r = shared_renderer();
-    let (w, h, zoom) = (512u32, 384u32, 1.0f32);
-    let half = [40.0f32, 22.0f32];
-    let radius = 6.0f32;
-    let cut_offsets = [[-40.0f32, -8.0], [-40.0, 8.0], [40.0, 0.0]];
-    let (n, cols) = (24usize, 6usize);
-    let mut nodes: Vec<crate::drawable::Drawable> = Vec::new();
-    for i in 0..n {
-        let p = [(i % cols) as f32 * 80.0, (i / cols) as f32 * 60.0];
-        let body = Curve::rounded_rect(p, half, radius);
-        let cuts: Vec<_> = cut_offsets
-            .iter()
-            .map(|c| Curve::circle([p[0] + c[0], p[1] + c[1]], 3.0))
-            .collect();
-        nodes.push(crate::boolean::difference_many(&body, &cuts));
-    }
-    let style = Style::solid(rgba(0.8, 0.85, 0.9, 1.0));
-    let d: Vec<(&crate::drawable::Drawable, &Style)> =
-        nodes.iter().map(|nd| (nd, &style)).collect();
-
-    let v3 = r.render_full_t(&d, w, h, zoom, 1.0, true, 0.0, None, true);
-    let v2 = r.render_full_t(&d, w, h, zoom, 1.0, true, 0.0, None, false);
-    let (worst, over, sample) = corpus_diff(&v3, &v2);
-    assert!(
-        over < 200,
-        "v3 localized != v2 at node-grid scale: worst {worst}, over {over}, {sample:?}",
-    );
-}
-
 /// A3 transfer (variant B) new-capability golden: a Gamma transfer warps the
 /// stop-blend parameter `t`, biasing a RED->BLUE falloff toward the near (red)
 /// stop versus the Linear identity. Gated as a NEW capability (it deliberately
-/// differs from the untransformed render), not a v2 match.
+/// differs from the untransformed render), a deliberate visual change.
 #[test]
 fn transfer_gamma_warps_blend_toward_near_stop() {
     let r = shared_renderer();
@@ -3449,7 +3371,7 @@ fn transfer_gamma_warps_blend_toward_near_stop() {
 /// contour keeps its dots on the OUTER half plus a thin inner line, so the
 /// interior stays clean (no inward dot bulge). At dist -4 inside the contour the
 /// old symmetric dot was opaque; sign-aware leaves it transparent. The dots still
-/// appear on the outer half. Gated as a NEW capability, not a v2 match.
+/// appear on the outer half. Gated as a NEW capability, a deliberate visual change.
 #[test]
 fn sign_aware_dotted_border_no_inward_bulge() {
     let r = shared_renderer();

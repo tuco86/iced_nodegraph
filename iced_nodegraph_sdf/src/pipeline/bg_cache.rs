@@ -1,4 +1,4 @@
-//! Static-background texture cache (Phase C, `sdf-v3` only).
+//! Static-background texture cache (Phase C).
 //!
 //! The one full-coverage fragment cost the tile cull cannot prune is the bottom
 //! background tiling: it reaches every tile by construction (grid/dots/hex over
@@ -10,8 +10,8 @@
 //! This caches the rendered background to an owned texture and blits it on frames
 //! whose background key is unchanged. Correctness rests on a no-regression rule:
 //! on a CHANGED key (pan/zoom/style/resize, or a flowing animated background) the
-//! background renders DIRECTLY to the frame exactly as v2 does - so a continuously
-//! dynamic scene never pays an extra pass. Only once a key repeats (static
+//! background renders DIRECTLY to the frame with no extra pass - so a continuously
+//! dynamic scene never pays a cost. Only once a key repeats (static
 //! detected) does it populate the texture once and blit thereafter.
 //!
 //! The blit is a passthrough of premultiplied-alpha texels under the same
@@ -178,8 +178,8 @@ impl BgCache {
             self.key = Some(key);
             BgMode::Populate
         } else {
-            // Changed key (pan/zoom/style/resize): render direct, like v2. No
-            // extra pass, so a continuously dynamic scene never regresses.
+            // Changed key (pan/zoom/style/resize): render direct, no extra pass,
+            // so a continuously dynamic scene never regresses.
             self.key = None;
             BgMode::Direct
         }
@@ -244,7 +244,7 @@ impl BgCache {
 /// How to handle the background primitive this frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BgMode {
-    /// Render the SDF background straight to the frame (v2 path, no extra cost).
+    /// Render the SDF background straight to the frame (no cache, no extra cost).
     Direct,
     /// Render it to the cache texture this frame (transition), then blit it.
     Populate,

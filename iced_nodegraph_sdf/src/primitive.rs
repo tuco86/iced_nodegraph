@@ -93,10 +93,10 @@ pub struct SdfPrimitive {
     /// physical pixels for [`DebugFlags::HOVERED_TILE`]. Off-widget by default.
     pub mouse: (f32, f32),
     /// Hint that this primitive is the static, full-coverage background (the
-    /// bottom tiling). Under `sdf-v3` the pipeline may cache its rendered output
-    /// to a texture and blit it on frames whose camera and content are unchanged,
+    /// bottom tiling). When set, the pipeline may cache its rendered output to a
+    /// texture and blit it on frames whose camera and content are unchanged,
     /// cutting the one fullscreen fragment pass the tile cull cannot prune. Inert
-    /// under v2 and for any non-background primitive.
+    /// for any non-background primitive.
     pub cache_background: bool,
     /// The `DrawData` slot this primitive was assigned in `prepare`, stored on the
     /// primitive itself rather than derived from draw order. iced PREPARES every
@@ -347,12 +347,12 @@ pub struct SdfPipeline {
     frame_shape_slots: HashMap<u64, u32>,
     /// GPU timestamp pair around the cull compute pass (R3), when supported.
     compute_timer: Option<ComputeTimer>,
-    /// Static-background texture cache (Phase C). Survives frames; only the v3
-    /// backend ever populates it (the widget marks the background primitive).
+    /// Static-background texture cache (Phase C). Survives frames; populated only
+    /// for the background primitive (the widget marks it).
     bg_cache: crate::pipeline::bg_cache::BgCache,
     /// Draw-call index of the background this frame when it should be blitted
     /// from the cache instead of rendered (cache populate/hit); `None` = render
-    /// the background normally (direct, v2 path).
+    /// the background normally (direct).
     bg_blit_index: Option<u32>,
 }
 
@@ -990,9 +990,9 @@ impl Primitive for SdfPrimitive {
             pipeline.frame_queue = Some(queue.clone());
         }
 
-        // Static-background texture cache (Phase C, v3): decide whether to render
-        // the background direct (v2 path), populate the cache texture this frame,
-        // or blit a cached frame. The compute pass above built this primitive's
+        // Static-background texture cache: decide whether to render the
+        // background direct, populate the cache texture this frame, or blit a
+        // cached frame. The compute pass above built this primitive's
         // tile index and `render_group0` references its buffers, so the cache can
         // render the background here using the same pipeline + instance index.
         if self.cache_background {

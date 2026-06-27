@@ -112,7 +112,7 @@ pub(crate) struct GpuDrawEntry {
     pub tiling_params: GpuVec4,
     /// Per-INSTANCE placement (D1). The entry's segments are stored in a local
     /// frame; the shader evaluates them against `world_p - translate`. `(0,0)`
-    /// (the v2 default) leaves geometry world-baked. Holding the translate on
+    /// leaves geometry at the origin. Holding the translate on
     /// the command (not the segment) lets identical shapes at different
     /// positions share ONE segment range - the GPU-instancing prerequisite.
     pub translate: GpuVec2,

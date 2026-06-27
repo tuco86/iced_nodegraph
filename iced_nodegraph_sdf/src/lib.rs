@@ -53,8 +53,6 @@ pub(crate) mod pipeline;
 pub mod primitive;
 pub(crate) mod shared;
 
-pub mod v3;
-
 // Public API re-exports
 pub use color::ColorQuad;
 pub use curve::{Curve, ShapeBuilder};

@@ -300,10 +300,9 @@ fn resolve_pin_style<P: PinId + 'static, UI>(
 /// shadow offset) so the shadow's holes line up exactly with the body's. The
 /// cutout radius tracks the drawn pin indicator. `is_valid_target(pin_idx)`
 /// selects the valid-target pin style; the cutout radius is static (no pulse).
-/// World-space `(center, radius)` of each pin cutout - the shared source for
-/// both the v2 difference cuts (`Curve::circle` + `difference_many`) and the v3
-/// recipe cuts (`ShapeExpr::Circle` at local offsets). One source guarantees the
-/// two backends punch identical holes.
+/// World-space `(center, radius)` of each pin cutout - the single source for the
+/// recipe cuts (`ShapeExpr::Circle` at local offsets) that punch the pin holes,
+/// so the body and its shadow punch identical holes.
 fn pin_cutout_params<P: PinId + 'static, UI>(
     pins: &[(usize, &NodePinState<P, UI>, (Point, Point))],
     pin_style_fn: Option<&PinStyleFn<'_, P, UI, Theme>>,
@@ -1003,8 +1002,8 @@ where
             let node_position = geom.position;
             let node_size = geom.size;
             // The silhouette (body minus pin cutouts) was prepared once in the
-            // per-node pre-pass; `geom.push_body` reuses it for fill and border
-            // (v2: the evaluated outline; v3: the cached recipe).
+            // per-node pre-pass as a cached recipe; `geom.push_body` reuses it
+            // for fill and border.
 
             let opacity = resolved.opacity;
             let cam_zoom = render_context.camera_zoom;

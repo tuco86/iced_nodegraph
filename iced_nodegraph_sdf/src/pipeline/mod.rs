@@ -3,8 +3,8 @@
 pub(crate) mod buffer;
 pub(crate) mod types;
 
-/// Static-background texture cache (Phase C). Only the v3 backend populates it;
-/// gated so the v2 shipping path is byte-identical.
+/// Static-background texture cache: blits a repeated static background instead of
+/// re-rendering it, while a changing background still renders direct.
 pub(crate) mod bg_cache;
 
 #[cfg(test)]
