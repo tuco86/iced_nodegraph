@@ -131,23 +131,41 @@ grid dims) is separate and per-draw.
 Cacheable booleans are evaluated through a frame-surviving `ShapeCache` (LRU,
 content-hash keyed), so a unique node body's boolean runs once across frames.
 
-### Stage 2: Compute shader (GPU) — tile spatial index
+### Stage 2: Compute shader (GPU) — two-level tile spatial index
 
-`cs_build_index` (workgroup `16x16`) builds, per 16x16-pixel tile, the list of
-segments that can colour any of its pixels. Slots are `(segment_idx, entry_idx)`
-pairs (`MAX_SLOTS_PER_TILE = 128`), sorted by entry so the fragment shader walks
-one shape at a time in z-order.
+`cs_build_index` builds a two-level index, both levels persisted to storage
+buffers:
 
-**Two-level cull.** Each workgroup first cooperatively bins entries whose world
-AABB reaches its 256x256-pixel region into workgroup memory
-(`MAX_WG_CANDIDATES = 256`); each fine tile then scans only those candidates. If a
-region overflows the candidate bin, that region falls back to scanning every entry
-(correctness over the fast path).
+- **Coarse** 64x64-pixel tiles (`COARSE_FACTOR = 4` fine tiles per axis). Each
+  holds up to `MAX_COARSE_SLOTS = 256` `(segment_idx, entry_idx)` results (two u32
+  each), sorted by entry so the fragment shader walks one shape at a time in
+  z-order. Tilings are marked by `TILING_BIT` on the segment field, as before.
+- **Fine** 16x16-pixel tiles. Each holds up to `MAX_FINE_SLOTS = 128` **8-bit**
+  indices into its parent coarse tile's result, packed 4 per u32
+  (`FINE_STRIDE = 32`). The fragment dereferences a fine index through the coarse
+  tile to recover the `(segment, entry)`.
 
-**Cull contract (the load-bearing invariant).** For each (segment, tile) the cull
-computes the exact distance **interval** `[m, M]` the segment takes over the whole
-tile box (`seg_box_interval`), and keeps the segment iff that interval overlaps the
-style's reach band. The cull must be a conservative **over**-approximation:
+The split trades one indirection for memory: the fat coarse slots exist once per
+(few) coarse tiles; the 16x-more-numerous fine tiles cost one byte per slot, not
+eight.
+
+**One dispatch, one workgroup per coarse tile** (`workgroup_size(4, 4)` = 16
+threads, one per fine tile):
+1. All 16 threads cooperatively bin entries whose world AABB reaches the 64px tile
+   into workgroup memory (`MAX_WG_CANDIDATES = 256`; on overflow, scan all entries).
+2. Thread 0 runs the coarse cull over the candidates and writes the coarse result
+   (with keep-nearest eviction at the 256 cap), then sorts it by entry.
+3. After a `workgroupBarrier`, each thread re-culls one fine tile over the coarse
+   result and writes its 8-bit references (keep-nearest at the 128 cap).
+
+The draw index is the dispatch z-axis (`workgroup_id.z`), so each draw reads its
+own `DrawData` with no per-draw uniform, and the frame issues one `queue.submit`.
+
+**Cull contract (the load-bearing invariant), applied at BOTH levels.** For each
+(segment, tile box) the cull computes the exact distance **interval** `[m, M]` the
+segment takes over the whole box (`seg_box_interval`), and keeps the segment iff
+that interval overlaps the style's reach band. The cull must be a conservative
+**over**-approximation:
 
 - `m` is a guaranteed lower bound, `M` a guaranteed upper bound on the distance.
 - For line and point the interval is exact (distance to a convex set is convex, so
@@ -157,18 +175,18 @@ style's reach band. The cull must be a conservative **over**-approximation:
   is a hole. Never under-include.
 - A closed fill whose interior covers the tile but whose contour is far is kept via
   the nearest-segment sign at the tile centre, trusted only far from the contour.
-
-The whole frame's culls run as **one** dispatch: the draw index is the dispatch
-z-axis (`workgroup_id.z`), so each draw reads its own `DrawData` with no per-draw
-uniform, and the frame issues one `queue.submit`.
+- Keep-nearest eviction (when a tile exceeds its cap) ranks by `|distance|` at the
+  tile centre, so the segments that dominate the tile's pixels survive a tie among
+  segments that all overlap the box.
 
 ### Stage 3: Fragment shader (GPU) — per-pixel rendering
 
 `fs_main` runs per pixel:
 
 1. Transform the pixel to world coordinates.
-2. Look up its tile in the spatial index.
-3. For each entry (shape) in the tile's slot list, front to back:
+2. Look up its fine tile, and dereference each 8-bit slot through the parent coarse
+   tile to recover its `(segment, entry)`.
+3. For each entry (shape) in the resolved slot list, front to back:
    a. fold to the **nearest segment** (minimum `abs(dist)`) over that entry's slots,
       evaluated at `world_p - entry.translate`;
    b. call `render_style` with the nearest segment's signed distance.

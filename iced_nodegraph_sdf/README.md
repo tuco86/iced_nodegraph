@@ -250,21 +250,30 @@ they can change every frame without touching the geometry buffers at all.
 
 Naively, every pixel would test every segment. With hundreds of nodes and edges
 that is millions of wasted distance evaluations. So a compute shader first builds
-a **spatial index**: it dices the widget into 16&times;16-pixel tiles and records,
-per tile, only the segments that could possibly colour one of its pixels.
+a **spatial index** that records, per screen tile, only the segments that could
+colour one of its pixels. This index has **two levels** (see `cs_build_index` in
+[`src/pipeline/shader.wgsl`](src/pipeline/shader.wgsl)):
 
-<img src="docs/tiles.svg" alt="The widget diced into tiles; each tile holds a short list of nearby segments tagged by entry." width="100%">
+<img src="docs/tiles.svg" alt="A two-level tile index: 64px coarse tiles hold (segment, entry) results; 16px fine tiles hold 8-bit indices into them." width="100%">
 
-A tile's list is a sequence of `(segment, entry)` slots, sorted by entry so the
-fragment shader can walk one shape at a time, front to back (see `cs_build_index`
-in [`src/pipeline/shader.wgsl`](src/pipeline/shader.wgsl)).
+- A **coarse** grid of 64&times;64-pixel tiles holds the actual cull result: up to
+  256 `(segment, entry)` slots per tile, each a pair of 32-bit indices, sorted by
+  entry so the fragment shader walks one shape at a time, front to back.
+- A **fine** grid of 16&times;16-pixel tiles (16&times; as many) holds, per tile, up
+  to 128 **8-bit indices** into its parent coarse tile's result.
 
-**Culling is exact, not a point sample.** The hard question is: *can this segment
-touch this tile?* The cheap-but-wrong answer samples the distance at the tile
-centre and pads by the tile's half-diagonal — a point sample of a function that
-varies across the tile, so diagonal curves and reflex corners slip through and
-leave holes. Instead the cull computes the full **interval** `[m, M]` of the
-segment's distance over the whole tile box, and keeps the segment iff that
+The split is a memory trade. The fat `(segment, entry)` slots live once per coarse
+tile, of which there are few; the numerous fine tiles store a single byte per slot
+instead of eight, paying only one indirection at shade time (fine byte &rarr;
+coarse slot &rarr; `(segment, entry)`). It is the spatial-index analogue of the
+instancing in Part 4: materialise the expensive thing once, reference it cheaply.
+
+**Culling is exact, not a point sample.** The hard question at both levels is:
+*can this segment touch this tile?* The cheap-but-wrong answer samples the distance
+at the tile centre and pads by the tile's half-diagonal — a point sample of a
+function that varies across the tile, so diagonal curves and reflex corners slip
+through and leave holes. Instead the cull computes the full **interval** `[m, M]`
+of the segment's distance over the whole tile box, and keeps the segment iff that
 interval overlaps the style's reach band:
 
 <img src="docs/cull-interval.svg" alt="A segment's distance over a tile box is an interval [m, M]; keep it iff it overlaps the style band." width="100%">
@@ -276,22 +285,20 @@ one that matters (which would be a visible hole). For a line and a point the
 interval is exact; for an arc (the one non-convex case) it is bounded by splitting
 the arc into shallow sub-chords.
 
-**A two-level cull keeps it fast.** Each workgroup first cooperatively bins the
-entries that reach its 256&times;256-pixel region into shared memory, so each fine
-tile then scans only the region's candidates instead of every entry in the scene.
-If a region is so crowded that the candidate bin overflows, that region safely
-falls back to scanning all entries — correctness over the fast path.
-
-The whole frame's culls run as **one** compute dispatch: the draw index rides the
-dispatch's z-axis, so each draw selects its own `DrawData` with no per-draw
-uniform, and there is one `queue.submit` for the frame instead of one per
-primitive.
+**Both levels build in one dispatch**, with one workgroup per coarse tile (16
+threads, one per fine tile). The workgroup cooperatively bins the entry candidates
+that reach the 64px tile; one thread runs the coarse cull into the 256-slot result;
+then its 16 threads each re-cull one fine tile at 16px, writing the compact 8-bit
+references. The draw index rides the dispatch's z-axis, so each draw selects its
+own `DrawData` with no per-draw uniform, and the whole frame is **one**
+`queue.submit`.
 
 ---
 
 ## Part 6 &middot; Shade: the fragment shader
 
-Each pixel reads its tile's short list and, for each shape in it, takes the
+Each pixel reads its fine tile's 8-bit indices, dereferences each through the
+parent coarse tile to recover its `(segment, entry)`, and for each shape takes the
 **nearest segment** — the smallest `|distance|` over that shape's segments. The
 winning segment's signed perpendicular gives inside vs. outside:
 

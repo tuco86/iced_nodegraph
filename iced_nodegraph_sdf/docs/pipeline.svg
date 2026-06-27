@@ -44,11 +44,11 @@
   <!-- Stage 4 -->
   <rect x="40" y="368" width="430" height="148" rx="9" fill="#ffffff" stroke="#f0d3b8"/>
   <text x="56" y="394" font-size="14" font-weight="700" fill="#1b2026">4 &#183; Index (compute shader)</text>
-  <text x="56" y="418" font-size="12" fill="#3a424c">Screen is diced into 16&#215;16 px tiles.</text>
-  <text x="56" y="438" font-size="12" fill="#3a424c">Each tile keeps only the segments that</text>
-  <text x="56" y="456" font-size="12" fill="#3a424c">can touch it, found with an exact</text>
-  <text x="56" y="474" font-size="12" fill="#3a424c">segment&#8211;to&#8211;box distance interval.</text>
-  <text x="56" y="500" font-size="12" fill="#5b6672" font-style="italic">tile &#8594; list of (segment, entry)</text>
+  <text x="56" y="418" font-size="12" fill="#3a424c">Two grids: 64px coarse tiles hold the</text>
+  <text x="56" y="436" font-size="12" fill="#3a424c">(segment, entry) cull results; 16px fine</text>
+  <text x="56" y="454" font-size="12" fill="#3a424c">tiles hold 8-bit indices into them. Culling</text>
+  <text x="56" y="472" font-size="12" fill="#3a424c">uses an exact segment&#8211;to&#8211;box interval.</text>
+  <text x="56" y="500" font-size="12" fill="#5b6672" font-style="italic">fine tile &#8594; coarse result &#8594; (segment, entry)</text>
 
   <!-- Stage 5 -->
   <rect x="490" y="368" width="430" height="148" rx="9" fill="#ffffff" stroke="#f0d3b8"/>
