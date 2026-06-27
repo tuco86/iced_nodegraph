@@ -68,13 +68,13 @@ Patterns transform the raw SDF distance into a stroke-space distance:
 
 ### Stage 1: Compile (CPU)
 
-`compile_drawable()` transforms Rust data to GPU structs:
+`compile_local_at()` transforms Rust data to GPU structs:
 
 ```
-Drawable + Style --> GpuDrawEntry + GpuStyle + [GpuSegment]
+Drawable (local) + Style + translate --> GpuDrawEntry + GpuStyle + [GpuSegment]
 ```
 
-No logic, pure data mapping. Each drawable becomes one entry pointing to a contiguous range of segments in the segment buffer.
+No logic, pure data mapping. Geometry is stored in a local frame and the world placement is carried per-instance in the entry's `translate`, so identical shapes at different positions share one cached segment range. Each drawable becomes one entry pointing to a contiguous range of segments in the segment buffer.
 
 **Flags set at compile time:**
 - `FLAG_CLOSED` (entry): drawable is a closed contour

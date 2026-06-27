@@ -693,6 +693,15 @@ impl Pipeline for SdfPipeline {
 }
 
 impl SdfPipeline {
+    /// Records the fullscreen-triangle SDF instance draw for `draw_index` (set
+    /// render pipeline + group0 + draw `0..3`). Shared by the live `draw` and the
+    /// deferred background-cache populate so the two cannot drift.
+    fn record_sdf_instance(&self, pass: &mut iced::wgpu::RenderPass<'_>, draw_index: u32) {
+        pass.set_pipeline(&self.shared.render_pipeline);
+        pass.set_bind_group(0, &self.render_group0, &[]);
+        pass.draw(0..3, draw_index..draw_index + 1);
+    }
+
     /// Runs every cull dispatch recorded this frame in ONE encoder + ONE submit,
     /// then any deferred background-cache populate. Called once, from the first
     /// `draw` (all prepares are complete, so the buffers are final). Replaces the
@@ -764,9 +773,7 @@ impl SdfPipeline {
                     timestamp_writes: None,
                     occlusion_query_set: None,
                 });
-                pass.set_pipeline(&self.shared.render_pipeline);
-                pass.set_bind_group(0, &self.render_group0, &[]);
-                pass.draw(0..3, draw_index..draw_index + 1);
+                self.record_sdf_instance(&mut pass, draw_index);
             }
             queue.submit(std::iter::once(enc.finish()));
         }
@@ -982,7 +989,7 @@ impl Primitive for SdfPrimitive {
         // immutable `draw` can build and submit that batch.
         pipeline
             .pending_dispatches
-            .lock()
+            .get_mut()
             .unwrap()
             .push((draw_index, grid_cols, grid_rows));
         if pipeline.frame_queue.is_none() {
@@ -1012,7 +1019,7 @@ impl Primitive for SdfPrimitive {
                     // The cull is deferred, so the texture can only be populated
                     // AFTER the batched compute. Record it; the first draw renders
                     // it once the tiles exist.
-                    *pipeline.pending_bg_populate.lock().unwrap() = Some(draw_index);
+                    *pipeline.pending_bg_populate.get_mut().unwrap() = Some(draw_index);
                     pipeline.bg_blit_index = Some(draw_index);
                 }
             }
@@ -1043,9 +1050,7 @@ impl Primitive for SdfPrimitive {
             pipeline.bg_cache.blit(render_pass);
             return true;
         }
-        render_pass.set_pipeline(&pipeline.shared.render_pipeline);
-        render_pass.set_bind_group(0, &pipeline.render_group0, &[]);
-        render_pass.draw(0..3, draw_idx..draw_idx + 1);
+        pipeline.record_sdf_instance(render_pass, draw_idx);
         true
     }
 }
