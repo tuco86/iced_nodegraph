@@ -545,7 +545,7 @@ fn iced_direct_full_sdf_frame_edges_render_as_strokes() {
         &dark,
         [0.0, 0.0],
     );
-    renderer.draw_primitive(full, bg.camera(0.0, 0.0, 1.0).background());
+    renderer.draw_primitive(full, bg.camera(0.0, 0.0, 1.0));
 
     // node shadows (one batch)
     let mut shadows = SdfPrimitive::new();
@@ -683,7 +683,7 @@ fn iced_direct_faithful_replica_stays_clean() {
             &dark,
             [0.0, 0.0],
         );
-        renderer.draw_primitive(full, bg.camera(0.0, 0.0, 1.0).background());
+        renderer.draw_primitive(full, bg.camera(0.0, 0.0, 1.0));
     });
 
     renderer.with_layer(full, |renderer| {
