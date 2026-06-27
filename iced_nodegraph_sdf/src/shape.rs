@@ -28,9 +28,10 @@ use crate::drawable::Drawable;
 use crate::tiling::Tiling;
 
 /// A position-free geometry definition: the single input to the renderer. A
-/// `Shape` is an expression tree of primitives (`RoundedBox`, `Circle`, open
-/// `Line`/`Bezier`) and operations (`Translate`, and the booleans `Difference`,
-/// `Union`, `Intersection`), built in a LOCAL frame. World placement is a
+/// `Shape` is an expression tree of primitives (`RoundedBox`, `Circle`, the open
+/// strokes `Line`/`Bezier`/`Arc`, the degenerate `Point`, and `Tiling`) and
+/// operations (`Translate`, and the booleans `Difference`, `Union`,
+/// `Intersection`), built in a LOCAL frame. World placement is a
 /// SEPARATE per-instance translate passed to `push` - so two identical shapes at
 /// different positions share one cache slot (they hash equal).
 ///
@@ -63,6 +64,18 @@ pub enum Shape {
         p2: [f32; 2],
         p3: [f32; 2],
     },
+    /// Open circular arc stroke: `sweep` radians of a circle of `radius` about
+    /// `center`, starting at angle `start`. Unlike the centred primitives this
+    /// carries its `center` directly (like [`Shape::Line`]).
+    Arc {
+        center: [f32; 2],
+        radius: f32,
+        start: f32,
+        sweep: f32,
+    },
+    /// A single oriented point (a degenerate zero-length segment) at the local
+    /// origin; `heading` orients its distance field. Place it with `translate`.
+    Point { heading: f32 },
     /// An infinite analytic background field (grid/dots/triangles/hex). A leaf
     /// primitive: pushed standalone, not a boolean operand (it has no arcs).
     Tiling(Tiling),
@@ -111,6 +124,21 @@ impl Shape {
             p3: p3.into(),
         }
     }
+    /// Open circular arc stroke: `sweep` radians of a circle of `radius` about
+    /// `center`, starting at angle `start`.
+    pub fn arc(center: impl Into<[f32; 2]>, radius: f32, start: f32, sweep: f32) -> Self {
+        Shape::Arc {
+            center: center.into(),
+            radius,
+            start,
+            sweep,
+        }
+    }
+    /// A single oriented point at the local origin (place it with `translate`);
+    /// `heading` orients its distance field.
+    pub fn point(heading: f32) -> Self {
+        Shape::Point { heading }
+    }
     /// An infinite analytic background tiling (grid/dots/triangles/hex).
     pub fn tiling(tiling: Tiling) -> Self {
         Shape::Tiling(tiling)
@@ -154,6 +182,8 @@ const OP_DIFFERENCE: u32 = 6;
 const OP_UNION: u32 = 7;
 const OP_INTERSECTION: u32 = 8;
 const OP_TILING: u32 = 9;
+const OP_ARC: u32 = 10;
+const OP_POINT: u32 = 11;
 
 /// Canonical bit pattern of an `f32`: `-0.0` collapses to `+0.0` and every NaN
 /// to one quiet NaN, so semantically-equal operands hash equal across platforms.
@@ -226,6 +256,23 @@ impl Shape {
                     h.write_f32(p[1]);
                 }
             }
+            Shape::Arc {
+                center,
+                radius,
+                start,
+                sweep,
+            } => {
+                h.write_u32(OP_ARC);
+                h.write_f32(center[0]);
+                h.write_f32(center[1]);
+                h.write_f32(*radius);
+                h.write_f32(*start);
+                h.write_f32(*sweep);
+            }
+            Shape::Point { heading } => {
+                h.write_u32(OP_POINT);
+                h.write_f32(*heading);
+            }
             Shape::Tiling(t) => {
                 h.write_u32(OP_TILING);
                 let (tt, params) = t.to_gpu();
@@ -289,6 +336,13 @@ impl Shape {
             Shape::Circle { radius } => Curve::circle([0.0, 0.0], *radius),
             Shape::Line { a, b } => Curve::line(*a, *b),
             Shape::Bezier { p0, p1, p2, p3 } => Curve::bezier(*p0, *p1, *p2, *p3),
+            Shape::Arc {
+                center,
+                radius,
+                start,
+                sweep,
+            } => Curve::arc_segment(*center, *radius, *start, *sweep),
+            Shape::Point { heading } => Curve::point([0.0, 0.0], *heading),
             Shape::Tiling(t) => {
                 let (tt, params) = t.to_gpu();
                 Drawable::new_tiling(tt, params)
@@ -513,6 +567,35 @@ mod tests {
                 "bounds differ at {i}: {a:?} vs {b:?}"
             );
         }
+    }
+
+    #[test]
+    fn arc_and_point_evaluate_to_their_curve_primitives() {
+        let arc = Shape::arc([10.0, -5.0], 40.0, -FRAC_PI_2, FRAC_PI_2).evaluate();
+        let arc_direct = Curve::arc_segment([10.0, -5.0], 40.0, -FRAC_PI_2, FRAC_PI_2);
+        assert_eq!(arc.segment_count(), arc_direct.segment_count());
+
+        let point = Shape::point(FRAC_PI_2).evaluate();
+        let point_direct = Curve::point([0.0, 0.0], FRAC_PI_2);
+        assert_eq!(point.segment_count(), point_direct.segment_count());
+    }
+
+    #[test]
+    fn arc_and_point_hash_distinctly() {
+        // Different ops with overlapping operands must not collide, and the new
+        // leaves must be placement-stable (hash equal for an independent rebuild).
+        let arc = Shape::arc([0.0, 0.0], 5.0, 0.0, FRAC_PI_2);
+        let point = Shape::point(0.0);
+        assert_eq!(
+            arc.hash(),
+            Shape::arc([0.0, 0.0], 5.0, 0.0, FRAC_PI_2).hash()
+        );
+        assert_ne!(arc.hash(), point.hash());
+        assert_ne!(arc.hash(), Shape::circle(5.0).hash());
+        assert_ne!(
+            arc.hash(),
+            Shape::arc([0.0, 0.0], 5.0, 0.0, FRAC_PI_2 + 0.1).hash()
+        );
     }
 
     #[test]
