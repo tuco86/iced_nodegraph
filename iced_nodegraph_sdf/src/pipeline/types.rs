@@ -170,15 +170,22 @@ pub(crate) struct DrawData {
     pub entry_count: u32,
     /// Offset into draw_entries buffer.
     pub entry_start: u32,
-    /// Tile grid columns (0 = no spatial index, iterate all).
+    /// Fine (16px) tile grid columns (0 = no spatial index, iterate all).
     pub grid_cols: u32,
-    /// Tile grid rows.
+    /// Fine tile grid rows.
     pub grid_rows: u32,
-    /// Tile base offset into tile buffers.
+    /// Fine tile base offset into the fine buffers.
     pub tile_base: u32,
-    pub _pad0: u32,
+    /// Coarse (64px) tile grid columns (`ceil(grid_cols / 4)`).
+    pub coarse_cols: u32,
+    /// Coarse tile grid rows (`ceil(grid_rows / 4)`).
+    pub coarse_rows: u32,
+    /// Coarse tile base offset into the coarse buffers.
+    pub coarse_base: u32,
     /// Cursor in tile-local physical pixels, for the hovered-tile debug mode.
     pub mouse_px: GpuVec2,
+    pub _pad0: u32,
+    pub _pad1: u32,
 }
 
 // --- Defaults ---
@@ -252,8 +259,12 @@ impl Default for DrawData {
             grid_cols: 0,
             grid_rows: 0,
             tile_base: 0,
-            _pad0: 0,
+            coarse_cols: 0,
+            coarse_rows: 0,
+            coarse_base: 0,
             mouse_px: GpuVec2::ZERO,
+            _pad0: 0,
+            _pad1: 0,
         }
     }
 }

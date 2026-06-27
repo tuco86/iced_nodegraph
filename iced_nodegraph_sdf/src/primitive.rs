@@ -45,9 +45,15 @@ pub fn sdf_stats() -> types::SdfStats {
 
 // Must match WGSL constants
 const TILE_SIZE: f32 = 16.0;
-const MAX_SLOTS_PER_TILE: u32 = 128;
-// Each slot = 2 u32s (segment_idx, style_idx)
-const SLOT_STRIDE: u32 = MAX_SLOTS_PER_TILE * 2;
+// Two-level index: 64px coarse tiles (4x4 fine tiles) hold the (segment, entry)
+// results; 16px fine tiles hold 8-bit indices into them.
+const COARSE_FACTOR: u32 = 4;
+// Coarse: 256 (segment_idx, entry_idx) pairs per tile.
+const MAX_COARSE_SLOTS: u32 = 256;
+const COARSE_STRIDE: u32 = MAX_COARSE_SLOTS * 2;
+// Fine: 128 8-bit indices per tile, packed 4 per u32.
+const MAX_FINE_SLOTS: u32 = 128;
+const FINE_STRIDE: u32 = MAX_FINE_SLOTS / 4;
 
 bitflags! {
     /// Per-draw SDF debug visualization modes. The bit values are mirrored by
@@ -368,16 +374,21 @@ pub struct SdfPipeline {
     entries_buffer: buffer::Buffer<types::GpuDrawEntry>,
     segments_buffer: buffer::Buffer<types::GpuSegment>,
     styles_buffer: buffer::Buffer<types::GpuStyle>,
-    // Spatial index
-    tile_counts_buffer: iced::wgpu::Buffer,
-    tile_entries_buffer: iced::wgpu::Buffer,
-    tile_capacity: u32,
-    /// Hard ceiling on `total_tiles` so the `tile_entries` storage binding never
-    /// exceeds the device's `max_storage_buffer_binding_size`. A frame that would
-    /// allocate more (many large overlapping primitives, e.g. nodes stacked into
-    /// one spot) falls the excess draws back to grid 0 = iterate-all instead of
-    /// growing the buffer past the limit and panicking.
-    max_tiles: u32,
+    // Two-level spatial index. Coarse (64px) tiles hold the (segment, entry)
+    // results; fine (16px) tiles hold 8-bit indices into the parent coarse tile.
+    coarse_counts_buffer: iced::wgpu::Buffer,
+    coarse_slots_buffer: iced::wgpu::Buffer,
+    fine_counts_buffer: iced::wgpu::Buffer,
+    fine_slots_buffer: iced::wgpu::Buffer,
+    fine_capacity: u32,
+    coarse_capacity: u32,
+    /// Hard ceilings so neither slot binding exceeds the device's
+    /// `max_storage_buffer_binding_size`. A frame that would allocate more (many
+    /// large overlapping primitives, e.g. nodes stacked into one spot) falls the
+    /// excess draws back to grid 0 = iterate-all instead of growing past the limit
+    /// and panicking.
+    max_fine_tiles: u32,
+    max_coarse_tiles: u32,
     spatial_index_gen: u64,
     // Bind groups
     render_group0: BindGroup,
@@ -385,7 +396,8 @@ pub struct SdfPipeline {
     compute_group1: BindGroup,
     bind_group_gens: (u64, u64, u64, u64, u64), // draws, entries, segments, styles, spatial
     // Frame state
-    total_tiles: u32,
+    total_fine_tiles: u32,
+    total_coarse_tiles: u32,
     // Deferred cull-compute: each prepare only RECORDS its dispatch params here;
     // the FIRST draw runs ALL culls in one encoder + one `queue.submit` (was one
     // submit per primitive - ~70us each, the dominant prepare cost). Because the
@@ -422,22 +434,34 @@ pub struct SdfPipeline {
     slots: Vec<Option<SlotState>>,
 }
 
-fn create_tile_buffers(device: &Device, cap: u32) -> (iced::wgpu::Buffer, iced::wgpu::Buffer) {
-    let cap = cap.max(1) as u64;
+/// The two-level index buffers, in bind order for compute group 1:
+/// (coarse_counts, coarse_slots, fine_counts, fine_slots).
+fn create_index_buffers(
+    device: &Device,
+    fine_cap: u32,
+    coarse_cap: u32,
+) -> (
+    iced::wgpu::Buffer,
+    iced::wgpu::Buffer,
+    iced::wgpu::Buffer,
+    iced::wgpu::Buffer,
+) {
+    let fine_cap = fine_cap.max(1) as u64;
+    let coarse_cap = coarse_cap.max(1) as u64;
     let usage = BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC;
+    let buf = |label, size| {
+        device.create_buffer(&BufferDescriptor {
+            label: Some(label),
+            size,
+            usage,
+            mapped_at_creation: false,
+        })
+    };
     (
-        device.create_buffer(&BufferDescriptor {
-            label: Some("sdf_tile_counts"),
-            size: cap * 4,
-            usage,
-            mapped_at_creation: false,
-        }),
-        device.create_buffer(&BufferDescriptor {
-            label: Some("sdf_tile_slots"),
-            size: cap * SLOT_STRIDE as u64 * 4,
-            usage,
-            mapped_at_creation: false,
-        }),
+        buf("sdf_coarse_counts", coarse_cap * 4),
+        buf("sdf_coarse_slots", coarse_cap * COARSE_STRIDE as u64 * 4),
+        buf("sdf_fine_counts", fine_cap * 4),
+        buf("sdf_fine_slots", fine_cap * FINE_STRIDE as u64 * 4),
     )
 }
 
@@ -449,8 +473,9 @@ fn create_render_group0(
     entries: &buffer::Buffer<types::GpuDrawEntry>,
     segments: &buffer::Buffer<types::GpuSegment>,
     styles: &buffer::Buffer<types::GpuStyle>,
-    tile_counts: &iced::wgpu::Buffer,
-    tile_entries: &iced::wgpu::Buffer,
+    fine_counts: &iced::wgpu::Buffer,
+    fine_slots: &iced::wgpu::Buffer,
+    coarse_slots: &iced::wgpu::Buffer,
 ) -> BindGroup {
     device.create_bind_group(&BindGroupDescriptor {
         label: Some("sdf_render_g0"),
@@ -474,11 +499,15 @@ fn create_render_group0(
             },
             BindGroupEntry {
                 binding: 4,
-                resource: tile_counts.as_entire_binding(),
+                resource: fine_counts.as_entire_binding(),
             },
             BindGroupEntry {
                 binding: 5,
-                resource: tile_entries.as_entire_binding(),
+                resource: fine_slots.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 6,
+                resource: coarse_slots.as_entire_binding(),
             },
         ],
     })
@@ -519,8 +548,10 @@ fn create_compute_group0(
 fn create_compute_group1(
     device: &Device,
     shared: &SharedSdfResources,
-    tile_counts: &iced::wgpu::Buffer,
-    tile_entries: &iced::wgpu::Buffer,
+    coarse_counts: &iced::wgpu::Buffer,
+    coarse_slots: &iced::wgpu::Buffer,
+    fine_counts: &iced::wgpu::Buffer,
+    fine_slots: &iced::wgpu::Buffer,
 ) -> BindGroup {
     device.create_bind_group(&BindGroupDescriptor {
         label: Some("sdf_compute_g1"),
@@ -528,11 +559,19 @@ fn create_compute_group1(
         entries: &[
             BindGroupEntry {
                 binding: 0,
-                resource: tile_counts.as_entire_binding(),
+                resource: coarse_counts.as_entire_binding(),
             },
             BindGroupEntry {
                 binding: 1,
-                resource: tile_entries.as_entire_binding(),
+                resource: coarse_slots.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: fine_counts.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 3,
+                resource: fine_slots.as_entire_binding(),
             },
         ],
     })
@@ -548,7 +587,8 @@ impl Pipeline for SdfPipeline {
         let segments_buffer = buffer::Buffer::new(device, Some("sdf_segments"), usage);
         let styles_buffer = buffer::Buffer::new(device, Some("sdf_styles"), usage);
 
-        let (tile_counts_buffer, tile_entries_buffer) = create_tile_buffers(device, 256);
+        let (coarse_counts_buffer, coarse_slots_buffer, fine_counts_buffer, fine_slots_buffer) =
+            create_index_buffers(device, 256, 64);
 
         let render_group0 = create_render_group0(
             device,
@@ -557,8 +597,9 @@ impl Pipeline for SdfPipeline {
             &entries_buffer,
             &segments_buffer,
             &styles_buffer,
-            &tile_counts_buffer,
-            &tile_entries_buffer,
+            &fine_counts_buffer,
+            &fine_slots_buffer,
+            &coarse_slots_buffer,
         );
         let compute_group0 = create_compute_group0(
             device,
@@ -568,29 +609,38 @@ impl Pipeline for SdfPipeline {
             &segments_buffer,
             &styles_buffer,
         );
-        let compute_group1 =
-            create_compute_group1(device, &shared, &tile_counts_buffer, &tile_entries_buffer);
+        let compute_group1 = create_compute_group1(
+            device,
+            &shared,
+            &coarse_counts_buffer,
+            &coarse_slots_buffer,
+            &fine_counts_buffer,
+            &fine_slots_buffer,
+        );
 
+        let limit = device.limits().max_storage_buffer_binding_size as u64;
         Self {
             shared,
             draw_data_buffer,
             entries_buffer,
             segments_buffer,
             styles_buffer,
-            tile_counts_buffer,
-            tile_entries_buffer,
-            tile_capacity: 256,
-            // tile_entries binds `total_tiles * SLOT_STRIDE` u32s; keep that under
-            // the device's storage-binding limit.
-            max_tiles: (device.limits().max_storage_buffer_binding_size as u64
-                / (SLOT_STRIDE as u64 * 4))
-                .max(256) as u32,
+            coarse_counts_buffer,
+            coarse_slots_buffer,
+            fine_counts_buffer,
+            fine_slots_buffer,
+            fine_capacity: 256,
+            coarse_capacity: 64,
+            // Each slot binding must stay under the device's storage-binding limit.
+            max_fine_tiles: (limit / (FINE_STRIDE as u64 * 4)).max(256) as u32,
+            max_coarse_tiles: (limit / (COARSE_STRIDE as u64 * 4)).max(64) as u32,
             spatial_index_gen: 0,
             render_group0,
             compute_group0,
             compute_group1,
             bind_group_gens: (0, 0, 0, 0, 0),
-            total_tiles: 0,
+            total_fine_tiles: 0,
+            total_coarse_tiles: 0,
             pending_dispatches: Mutex::new(Vec::new()),
             compute_submitted: std::sync::atomic::AtomicBool::new(false),
             frame_device: None,
@@ -606,7 +656,7 @@ impl Pipeline for SdfPipeline {
 
     fn trim(&mut self) {
         // Capture frame metrics from the buffers/cache BEFORE clearing them.
-        self.frame_stats.tile_count = self.total_tiles;
+        self.frame_stats.tile_count = self.total_fine_tiles;
         self.frame_stats.segment_count = self.segments_buffer.len() as u32;
         self.frame_stats.unique_shapes = self.frame_shape_slots.len() as u32;
         self.frame_stats.unique_styles = self.frame_style_slots.len() as u32;
@@ -623,7 +673,8 @@ impl Pipeline for SdfPipeline {
         self.styles_buffer.clear();
         self.frame_shape_slots.clear();
         self.frame_style_slots.clear();
-        self.total_tiles = 0;
+        self.total_fine_tiles = 0;
+        self.total_coarse_tiles = 0;
         self.pending_dispatches.get_mut().unwrap().clear();
         self.compute_submitted
             .store(false, std::sync::atomic::Ordering::Relaxed);
@@ -671,7 +722,15 @@ impl SdfPipeline {
                 let max_cols = dispatches.iter().map(|&(c, _)| c).max().unwrap_or(0);
                 let max_rows = dispatches.iter().map(|&(_, r)| r).max().unwrap_or(0);
                 let draw_count = self.draw_data_buffer.len() as u32;
-                pass.dispatch_workgroups(max_cols.div_ceil(16), max_rows.div_ceil(16), draw_count);
+                // One workgroup per 64px coarse tile (workgroup_size 4x4 = one
+                // thread per fine tile). ceil(max fine grid / 4) covers the
+                // largest draw's coarse grid; smaller draws' surplus workgroups
+                // self-abort at `wid >= coarse_cols/rows`.
+                pass.dispatch_workgroups(
+                    max_cols.div_ceil(COARSE_FACTOR),
+                    max_rows.div_ceil(COARSE_FACTOR),
+                    draw_count,
+                );
             }
             queue.submit(std::iter::once(encoder.finish()));
         }
@@ -831,34 +890,60 @@ impl Primitive for SdfPrimitive {
         let mut grid_cols = ((bounds.width * scale / TILE_SIZE).ceil() as u32).max(1);
         let mut grid_rows = ((bounds.height * scale / TILE_SIZE).ceil() as u32).max(1);
 
-        // Allocate this primitive's tile region. If it would push `total_tiles`
-        // past `max_tiles` (the tile_entries binding would exceed the device's
-        // storage-binding limit - e.g. many large overlapping primitives, like a
-        // pile of nodes stacked into one spot), this draw falls back to grid 0 =
-        // "no spatial index, iterate all entries" instead. Slower for that draw,
-        // but it renders correctly and the buffer never panics.
-        let want = grid_cols as u64 * grid_rows as u64;
+        // Coarse grid: one 64px tile per 4x4 block of fine tiles.
+        let mut coarse_cols = grid_cols.div_ceil(COARSE_FACTOR);
+        let mut coarse_rows = grid_rows.div_ceil(COARSE_FACTOR);
+
+        // Allocate this primitive's tile regions. If EITHER level would push its
+        // total past the device's storage-binding limit (e.g. many large
+        // overlapping primitives, like a pile of nodes stacked into one spot),
+        // this draw falls back to grid 0 = "no spatial index, iterate all entries"
+        // instead. Slower for that draw, but it renders correctly and never panics.
+        let want_fine = grid_cols as u64 * grid_rows as u64;
+        let want_coarse = coarse_cols as u64 * coarse_rows as u64;
         let tile_base;
-        if pipeline.total_tiles as u64 + want > pipeline.max_tiles as u64 {
+        let coarse_base;
+        if pipeline.total_fine_tiles as u64 + want_fine > pipeline.max_fine_tiles as u64
+            || pipeline.total_coarse_tiles as u64 + want_coarse > pipeline.max_coarse_tiles as u64
+        {
             grid_cols = 0;
             grid_rows = 0;
+            coarse_cols = 0;
+            coarse_rows = 0;
             tile_base = 0;
+            coarse_base = 0;
         } else {
-            tile_base = pipeline.total_tiles;
-            pipeline.total_tiles += grid_cols * grid_rows;
+            tile_base = pipeline.total_fine_tiles;
+            coarse_base = pipeline.total_coarse_tiles;
+            pipeline.total_fine_tiles += grid_cols * grid_rows;
+            pipeline.total_coarse_tiles += coarse_cols * coarse_rows;
         }
 
-        // Grow spatial index buffers if needed. The cull dispatch is DEFERRED to
-        // the first draw, so no prior primitive has computed tiles yet - there is
-        // nothing to preserve, and the grown (fresh) buffer is filled by the single
-        // batched dispatch against the FINAL buffer. Hence a plain resize, no copy.
-        // Capped at `max_tiles` so the binding never exceeds the device limit.
-        if pipeline.total_tiles > pipeline.tile_capacity {
-            let new_cap = ((pipeline.total_tiles as f32 * 1.5) as u32).min(pipeline.max_tiles);
-            let (tc, te) = create_tile_buffers(device, new_cap);
-            pipeline.tile_counts_buffer = tc;
-            pipeline.tile_entries_buffer = te;
-            pipeline.tile_capacity = new_cap;
+        // Grow index buffers if needed. The cull dispatch is DEFERRED to the first
+        // draw, so no prior primitive has computed tiles yet - there is nothing to
+        // preserve, and the grown (fresh) buffers are filled by the single batched
+        // dispatch against the FINAL buffers. Hence a plain resize, no copy. Capped
+        // per level so neither binding exceeds the device limit.
+        if pipeline.total_fine_tiles > pipeline.fine_capacity
+            || pipeline.total_coarse_tiles > pipeline.coarse_capacity
+        {
+            let new_fine = if pipeline.total_fine_tiles > pipeline.fine_capacity {
+                ((pipeline.total_fine_tiles as f32 * 1.5) as u32).min(pipeline.max_fine_tiles)
+            } else {
+                pipeline.fine_capacity
+            };
+            let new_coarse = if pipeline.total_coarse_tiles > pipeline.coarse_capacity {
+                ((pipeline.total_coarse_tiles as f32 * 1.5) as u32).min(pipeline.max_coarse_tiles)
+            } else {
+                pipeline.coarse_capacity
+            };
+            let (cc, cs, fc, fs) = create_index_buffers(device, new_fine, new_coarse);
+            pipeline.coarse_counts_buffer = cc;
+            pipeline.coarse_slots_buffer = cs;
+            pipeline.fine_counts_buffer = fc;
+            pipeline.fine_slots_buffer = fs;
+            pipeline.fine_capacity = new_fine;
+            pipeline.coarse_capacity = new_coarse;
             pipeline.spatial_index_gen += 1;
         }
 
@@ -890,8 +975,12 @@ impl Primitive for SdfPrimitive {
                 grid_cols,
                 grid_rows,
                 tile_base,
-                _pad0: 0,
+                coarse_cols,
+                coarse_rows,
+                coarse_base,
                 mouse_px,
+                _pad0: 0,
+                _pad1: 0,
             },
         );
 
@@ -911,8 +1000,9 @@ impl Primitive for SdfPrimitive {
                 &pipeline.entries_buffer,
                 &pipeline.segments_buffer,
                 &pipeline.styles_buffer,
-                &pipeline.tile_counts_buffer,
-                &pipeline.tile_entries_buffer,
+                &pipeline.fine_counts_buffer,
+                &pipeline.fine_slots_buffer,
+                &pipeline.coarse_slots_buffer,
             );
             pipeline.compute_group0 = create_compute_group0(
                 device,
@@ -925,8 +1015,10 @@ impl Primitive for SdfPrimitive {
             pipeline.compute_group1 = create_compute_group1(
                 device,
                 &pipeline.shared,
-                &pipeline.tile_counts_buffer,
-                &pipeline.tile_entries_buffer,
+                &pipeline.coarse_counts_buffer,
+                &pipeline.coarse_slots_buffer,
+                &pipeline.fine_counts_buffer,
+                &pipeline.fine_slots_buffer,
             );
             pipeline.bind_group_gens = gens;
         }

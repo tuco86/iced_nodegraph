@@ -19,8 +19,11 @@ use crate::style::Style;
 
 // Must match WGSL constants
 const TILE_SIZE: f32 = 16.0;
-const MAX_SLOTS_PER_TILE: u32 = 128;
-const SLOT_STRIDE: u32 = MAX_SLOTS_PER_TILE * 2;
+const COARSE_FACTOR: u32 = 4;
+const MAX_COARSE_SLOTS: u32 = 256;
+const COARSE_STRIDE: u32 = MAX_COARSE_SLOTS * 2;
+const MAX_FINE_SLOTS: u32 = 128;
+const FINE_STRIDE: u32 = MAX_FINE_SLOTS / 4;
 
 /// One significant tiled-vs-untiled pixel mismatch: `(x, y, tiled, untiled, delta)`.
 type PixelDiff = (u32, u32, [u8; 4], [u8; 4], i32);
@@ -221,8 +224,12 @@ impl TestRenderer {
             grid_cols,
             grid_rows,
             tile_base: 0,
-            _pad0: 0,
+            coarse_cols: grid_cols.div_ceil(COARSE_FACTOR),
+            coarse_rows: grid_rows.div_ceil(COARSE_FACTOR),
+            coarse_base: 0,
             mouse_px: GpuVec2::ZERO,
+            _pad0: 0,
+            _pad1: 0,
         };
 
         self.execute_render(
@@ -256,18 +263,21 @@ impl TestRenderer {
         let segments_buf = self.create_storage(gpu_segments);
         let styles_buf = self.create_storage(gpu_styles);
 
-        let tile_counts_buf = self.device.create_buffer(&BufferDescriptor {
-            label: None,
-            size: (total_tiles.max(1) as u64) * 4,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let tile_slots_buf = self.device.create_buffer(&BufferDescriptor {
-            label: None,
-            size: (total_tiles.max(1) as u64) * (SLOT_STRIDE as u64) * 4,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let coarse_cols = grid_cols.div_ceil(COARSE_FACTOR);
+        let coarse_rows = grid_rows.div_ceil(COARSE_FACTOR);
+        let total_coarse = (coarse_cols * coarse_rows).max(1);
+        let storage = |size: u64| {
+            self.device.create_buffer(&BufferDescriptor {
+                label: None,
+                size,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        };
+        let coarse_counts_buf = storage(total_coarse as u64 * 4);
+        let coarse_slots_buf = storage(total_coarse as u64 * COARSE_STRIDE as u64 * 4);
+        let fine_counts_buf = storage(total_tiles.max(1) as u64 * 4);
+        let fine_slots_buf = storage(total_tiles.max(1) as u64 * FINE_STRIDE as u64 * 4);
 
         let render_bg = self.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -291,11 +301,15 @@ impl TestRenderer {
                 },
                 BindGroupEntry {
                     binding: 4,
-                    resource: tile_counts_buf.as_entire_binding(),
+                    resource: fine_counts_buf.as_entire_binding(),
                 },
                 BindGroupEntry {
                     binding: 5,
-                    resource: tile_slots_buf.as_entire_binding(),
+                    resource: fine_slots_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 6,
+                    resource: coarse_slots_buf.as_entire_binding(),
                 },
             ],
         });
@@ -327,11 +341,19 @@ impl TestRenderer {
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: tile_counts_buf.as_entire_binding(),
+                    resource: coarse_counts_buf.as_entire_binding(),
                 },
                 BindGroupEntry {
                     binding: 1,
-                    resource: tile_slots_buf.as_entire_binding(),
+                    resource: coarse_slots_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: fine_counts_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: fine_slots_buf.as_entire_binding(),
                 },
             ],
         });
@@ -369,7 +391,11 @@ impl TestRenderer {
             pass.set_pipeline(&self.compute_pipeline);
             pass.set_bind_group(0, &compute_bg0, &[]);
             pass.set_bind_group(1, &compute_bg1, &[]);
-            pass.dispatch_workgroups(grid_cols.div_ceil(16), grid_rows.div_ceil(16), 1);
+            pass.dispatch_workgroups(
+                grid_cols.div_ceil(COARSE_FACTOR),
+                grid_rows.div_ceil(COARSE_FACTOR),
+                1,
+            );
         }
         {
             let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
@@ -520,8 +546,12 @@ impl TestRenderer {
             grid_cols,
             grid_rows,
             tile_base: 0,
-            _pad0: 0,
+            coarse_cols: grid_cols.div_ceil(COARSE_FACTOR),
+            coarse_rows: grid_rows.div_ceil(COARSE_FACTOR),
+            coarse_base: 0,
             mouse_px: GpuVec2::ZERO,
+            _pad0: 0,
+            _pad1: 0,
         };
 
         // Encode to GPU format via encase
@@ -530,18 +560,21 @@ impl TestRenderer {
         let segments_buf = self.create_storage(&gpu_segments);
         let styles_buf = self.create_storage(&gpu_styles);
 
-        let tile_counts_buf = self.device.create_buffer(&BufferDescriptor {
-            label: None,
-            size: (total_tiles as u64) * 4,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let tile_slots_buf = self.device.create_buffer(&BufferDescriptor {
-            label: None,
-            size: (total_tiles as u64) * (SLOT_STRIDE as u64) * 4,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let coarse_cols = grid_cols.div_ceil(COARSE_FACTOR);
+        let coarse_rows = grid_rows.div_ceil(COARSE_FACTOR);
+        let total_coarse = (coarse_cols * coarse_rows).max(1);
+        let storage = |size: u64| {
+            self.device.create_buffer(&BufferDescriptor {
+                label: None,
+                size,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        };
+        let coarse_counts_buf = storage(total_coarse as u64 * 4);
+        let coarse_slots_buf = storage(total_coarse as u64 * COARSE_STRIDE as u64 * 4);
+        let fine_counts_buf = storage(total_tiles.max(1) as u64 * 4);
+        let fine_slots_buf = storage(total_tiles.max(1) as u64 * FINE_STRIDE as u64 * 4);
 
         // Bind groups
         let render_bg = self.device.create_bind_group(&BindGroupDescriptor {
@@ -566,11 +599,15 @@ impl TestRenderer {
                 },
                 BindGroupEntry {
                     binding: 4,
-                    resource: tile_counts_buf.as_entire_binding(),
+                    resource: fine_counts_buf.as_entire_binding(),
                 },
                 BindGroupEntry {
                     binding: 5,
-                    resource: tile_slots_buf.as_entire_binding(),
+                    resource: fine_slots_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 6,
+                    resource: coarse_slots_buf.as_entire_binding(),
                 },
             ],
         });
@@ -602,11 +639,19 @@ impl TestRenderer {
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: tile_counts_buf.as_entire_binding(),
+                    resource: coarse_counts_buf.as_entire_binding(),
                 },
                 BindGroupEntry {
                     binding: 1,
-                    resource: tile_slots_buf.as_entire_binding(),
+                    resource: coarse_slots_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: fine_counts_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: fine_slots_buf.as_entire_binding(),
                 },
             ],
         });
@@ -649,7 +694,11 @@ impl TestRenderer {
             pass.set_pipeline(&self.compute_pipeline);
             pass.set_bind_group(0, &compute_bg0, &[]);
             pass.set_bind_group(1, &compute_bg1, &[]);
-            pass.dispatch_workgroups(grid_cols.div_ceil(16), grid_rows.div_ceil(16), 1);
+            pass.dispatch_workgroups(
+                grid_cols.div_ceil(COARSE_FACTOR),
+                grid_rows.div_ceil(COARSE_FACTOR),
+                1,
+            );
         }
 
         // Render pass
@@ -781,8 +830,12 @@ impl TestRenderer {
             grid_cols,
             grid_rows,
             tile_base: 0,
-            _pad0: 0,
+            coarse_cols: grid_cols.div_ceil(COARSE_FACTOR),
+            coarse_rows: grid_rows.div_ceil(COARSE_FACTOR),
+            coarse_base: 0,
             mouse_px: GpuVec2::ZERO,
+            _pad0: 0,
+            _pad1: 0,
         };
         self.execute_render(
             &gpu_entries,
@@ -1159,6 +1212,7 @@ impl TestRenderer {
                 bgl_storage(3, ShaderStages::FRAGMENT, GpuStyle::SHADER_SIZE.get()),
                 bgl_storage(4, ShaderStages::FRAGMENT, 4),
                 bgl_storage(5, ShaderStages::FRAGMENT, 4),
+                bgl_storage(6, ShaderStages::FRAGMENT, 4),
             ],
         })
     }
@@ -1178,7 +1232,12 @@ impl TestRenderer {
     fn create_compute_layout1(device: &Device) -> BindGroupLayout {
         device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: None,
-            entries: &[bgl_storage_rw(0, 4), bgl_storage_rw(1, 4)],
+            entries: &[
+                bgl_storage_rw(0, 4),
+                bgl_storage_rw(1, 4),
+                bgl_storage_rw(2, 4),
+                bgl_storage_rw(3, 4),
+            ],
         })
     }
 }
