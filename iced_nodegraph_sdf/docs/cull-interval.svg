@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 420" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, sans-serif">
+  <rect x="0" y="0" width="960" height="420" rx="12" fill="#fbfcfe" stroke="#d9dee5"/>
+  <text x="32" y="40" font-size="20" font-weight="700" fill="#1b2026">Exact distance intervals cull tiles</text>
+  <text x="32" y="62" font-size="13" fill="#5b6672">The cull asks: can this segment touch this tile? It computes the full range [m, M] of distance over the whole tile box, not a point sample at the centre, so curves and corners never slip through a margin.</text>
+
+  <!-- left: geometry -->
+  <g transform="translate(60,110)">
+    <!-- tile box -->
+    <rect x="40" y="60" width="150" height="150" fill="#eef2f8" stroke="#2f6df6" stroke-width="2"/>
+    <text x="115" y="232" font-size="12" fill="#2f6df6" text-anchor="middle">tile box</text>
+
+    <!-- an arc segment passing near -->
+    <path d="M -10 270 A 320 320 0 0 1 300 30" fill="none" stroke="#e8590c" stroke-width="3.5"/>
+    <text x="250" y="60" font-size="12" fill="#e8590c">segment (arc)</text>
+
+    <!-- m: nearest distance -->
+    <line x1="120" y1="135" x2="86" y2="172" stroke="#2f9e44" stroke-width="2" stroke-dasharray="4 3"/>
+    <text x="118" y="158" font-size="12" font-weight="700" fill="#2f9e44">m</text>
+    <!-- M: farthest corner -->
+    <line x1="40" y1="60" x2="120" y2="158" stroke="#7048e8" stroke-width="2" stroke-dasharray="4 3"/>
+    <text x="58" y="98" font-size="12" font-weight="700" fill="#7048e8">M</text>
+  </g>
+
+  <!-- right: number line + rule -->
+  <g transform="translate(470,150)">
+    <text x="0" y="-30" font-size="13" font-weight="700" fill="#1b2026">The interval test</text>
+    <!-- axis -->
+    <line x1="0" y1="40" x2="420" y2="40" stroke="#8a95a3" stroke-width="2"/>
+    <text x="0" y="68" font-size="11" fill="#5b6672">distance &#8594;</text>
+
+    <!-- segment interval [m,M] -->
+    <line x1="70" y1="40" x2="230" y2="40" stroke="#e8590c" stroke-width="7" stroke-linecap="round"/>
+    <text x="62" y="22" font-size="12" font-weight="700" fill="#2f9e44">m</text>
+    <text x="222" y="22" font-size="12" font-weight="700" fill="#7048e8">M</text>
+    <text x="150" y="92" font-size="11" fill="#e8590c" text-anchor="middle">segment over the box</text>
+
+    <!-- style band [lo,hi] -->
+    <line x1="150" y1="40" x2="330" y2="40" stroke="#2f6df6" stroke-width="7" stroke-linecap="round" opacity="0.55"/>
+    <text x="240" y="124" font-size="11" fill="#2f6df6" text-anchor="middle">style band (stroke / fill reach)</text>
+    <line x1="150" y1="40" x2="150" y2="108" stroke="#2f6df6" stroke-width="1" stroke-dasharray="3 3"/>
+    <line x1="330" y1="40" x2="330" y2="108" stroke="#2f6df6" stroke-width="1" stroke-dasharray="3 3"/>
+
+    <text x="0" y="172" font-size="12.5" fill="#3a424c">Keep the segment iff the intervals overlap.</text>
+    <text x="0" y="192" font-size="12.5" fill="#5b6672">m is a lower bound, M an upper bound: the cull</text>
+    <text x="0" y="210" font-size="12.5" fill="#5b6672">over-includes (cheap) but never drops (a hole).</text>
+  </g>
+</svg>

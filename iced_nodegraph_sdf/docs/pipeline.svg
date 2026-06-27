@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 560" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, sans-serif">
+  <rect x="0" y="0" width="960" height="560" rx="12" fill="#fbfcfe" stroke="#d9dee5"/>
+  <text x="32" y="40" font-size="20" font-weight="700" fill="#1b2026">From recipe to pixel</text>
+  <text x="32" y="62" font-size="13" fill="#5b6672">One geometric primitive flows through five stages. The first three run on the CPU once per frame; the last two run on the GPU per tile and per pixel.</text>
+
+  <!-- CPU band -->
+  <rect x="24" y="84" width="912" height="232" rx="10" fill="#eef2f8" stroke="#cfd8e3"/>
+  <text x="40" y="106" font-size="12" font-weight="700" fill="#2f6df6" letter-spacing="1">CPU &#183; once per frame</text>
+
+  <!-- Stage 1 -->
+  <rect x="40" y="120" width="280" height="180" rx="9" fill="#ffffff" stroke="#cfd8e3"/>
+  <text x="56" y="146" font-size="14" font-weight="700" fill="#1b2026">1 &#183; Author</text>
+  <text x="56" y="170" font-size="12" fill="#3a424c">Shape: an expression tree</text>
+  <text x="56" y="188" font-size="12" fill="#3a424c">(box, circle, arc, bezier;</text>
+  <text x="56" y="206" font-size="12" fill="#3a424c">union / difference / translate)</text>
+  <text x="56" y="232" font-size="12" fill="#3a424c">Style: a distance-stop chain</text>
+  <text x="56" y="250" font-size="12" fill="#3a424c">+ optional Pattern</text>
+  <text x="56" y="278" font-size="12" fill="#5b6672" font-style="italic">push(shape, style, position)</text>
+
+  <!-- Stage 2 -->
+  <rect x="340" y="120" width="280" height="180" rx="9" fill="#ffffff" stroke="#cfd8e3"/>
+  <text x="356" y="146" font-size="14" font-weight="700" fill="#1b2026">2 &#183; Evaluate</text>
+  <text x="356" y="170" font-size="12" fill="#3a424c">Recipe &#8594; arcs (local frame)</text>
+  <text x="356" y="194" font-size="12" fill="#3a424c">&#8226; booleans clip + re-stitch</text>
+  <text x="356" y="212" font-size="12" fill="#3a424c">&#8226; beziers &#8594; arc-spline</text>
+  <text x="356" y="230" font-size="12" fill="#3a424c">&#8226; arcs split to minor (&lt;&#960;)</text>
+  <text x="356" y="258" font-size="12" fill="#5b6672">Content hash &#8594; cache hit</text>
+  <text x="356" y="276" font-size="12" fill="#5b6672">reuses identical shapes</text>
+
+  <!-- Stage 3 -->
+  <rect x="640" y="120" width="280" height="180" rx="9" fill="#ffffff" stroke="#cfd8e3"/>
+  <text x="656" y="146" font-size="14" font-weight="700" fill="#1b2026">3 &#183; Compile</text>
+  <text x="656" y="170" font-size="12" fill="#3a424c">Pack three flat buffers:</text>
+  <text x="656" y="194" font-size="12" fill="#3a424c">&#8226; segments (the arcs)</text>
+  <text x="656" y="212" font-size="12" fill="#3a424c">&#8226; entries (one per draw)</text>
+  <text x="656" y="230" font-size="12" fill="#3a424c">&#8226; styles (deduplicated)</text>
+  <text x="656" y="258" font-size="12" fill="#5b6672">Identical shapes share one</text>
+  <text x="656" y="276" font-size="12" fill="#5b6672">segment range (instancing)</text>
+
+  <!-- GPU band -->
+  <rect x="24" y="332" width="912" height="200" rx="10" fill="#fdf1e7" stroke="#f0d3b8"/>
+  <text x="40" y="354" font-size="12" font-weight="700" fill="#e8590c" letter-spacing="1">GPU &#183; one compute + one draw</text>
+
+  <!-- Stage 4 -->
+  <rect x="40" y="368" width="430" height="148" rx="9" fill="#ffffff" stroke="#f0d3b8"/>
+  <text x="56" y="394" font-size="14" font-weight="700" fill="#1b2026">4 &#183; Index (compute shader)</text>
+  <text x="56" y="418" font-size="12" fill="#3a424c">Screen is diced into 16&#215;16 px tiles.</text>
+  <text x="56" y="438" font-size="12" fill="#3a424c">Each tile keeps only the segments that</text>
+  <text x="56" y="456" font-size="12" fill="#3a424c">can touch it, found with an exact</text>
+  <text x="56" y="474" font-size="12" fill="#3a424c">segment&#8211;to&#8211;box distance interval.</text>
+  <text x="56" y="500" font-size="12" fill="#5b6672" font-style="italic">tile &#8594; list of (segment, entry)</text>
+
+  <!-- Stage 5 -->
+  <rect x="490" y="368" width="430" height="148" rx="9" fill="#ffffff" stroke="#f0d3b8"/>
+  <text x="506" y="394" font-size="14" font-weight="700" fill="#1b2026">5 &#183; Shade (fragment shader)</text>
+  <text x="506" y="418" font-size="12" fill="#3a424c">Each pixel reads its tile's short list,</text>
+  <text x="506" y="438" font-size="12" fill="#3a424c">folds to the nearest segment per shape,</text>
+  <text x="506" y="456" font-size="12" fill="#3a424c">colours it with the stop chain, and</text>
+  <text x="506" y="474" font-size="12" fill="#3a424c">composites front-to-back (premultiplied).</text>
+  <text x="506" y="500" font-size="12" fill="#5b6672" font-style="italic">signed distance &#8594; colour</text>
+
+  <!-- arrows -->
+  <defs>
+    <marker id="ar" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#8a95a3"/>
+    </marker>
+  </defs>
+  <line x1="320" y1="210" x2="340" y2="210" stroke="#8a95a3" stroke-width="2" marker-end="url(#ar)"/>
+  <line x1="620" y1="210" x2="640" y2="210" stroke="#8a95a3" stroke-width="2" marker-end="url(#ar)"/>
+  <line x1="780" y1="300" x2="780" y2="332" stroke="#8a95a3" stroke-width="2" marker-end="url(#ar)"/>
+  <line x1="470" y1="442" x2="490" y2="442" stroke="#8a95a3" stroke-width="2" marker-end="url(#ar)"/>
+</svg>

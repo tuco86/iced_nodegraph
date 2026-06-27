@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 430" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, sans-serif">
+  <rect x="0" y="0" width="960" height="430" rx="12" fill="#fbfcfe" stroke="#d9dee5"/>
+  <text x="32" y="40" font-size="20" font-weight="700" fill="#1b2026">Per-pixel: nearest segment, then sign</text>
+  <text x="32" y="62" font-size="13" fill="#5b6672">For each shape in its tile, a pixel takes the smallest |distance| over that shape's segments. The winning segment's perpendicular side gives the sign: inside is negative, outside positive.</text>
+
+  <!-- left: contour with a pixel -->
+  <g transform="translate(70,110)">
+    <!-- a closed contour (rounded shape) -->
+    <path d="M 60 30 Q 220 0 270 100 Q 300 200 170 240 Q 40 250 20 140 Q 10 70 60 30 Z"
+          fill="#dbeafe" stroke="#2f6df6" stroke-width="3"/>
+    <!-- decompose markers: a few segment endpoints -->
+    <circle cx="60" cy="30" r="3.5" fill="#2f6df6"/>
+    <circle cx="270" cy="100" r="3.5" fill="#2f6df6"/>
+    <circle cx="170" cy="240" r="3.5" fill="#2f6df6"/>
+    <circle cx="20" cy="140" r="3.5" fill="#2f6df6"/>
+
+    <!-- pixel inside -->
+    <rect x="150" y="120" width="12" height="12" fill="#e8590c"/>
+    <!-- nearest distance to bottom-left segment -->
+    <line x1="156" y1="126" x2="92" y2="206" stroke="#2f9e44" stroke-width="2" stroke-dasharray="4 3"/>
+    <text x="96" y="176" font-size="12" font-weight="700" fill="#2f9e44">min|d|</text>
+    <text x="150" y="150" font-size="11" fill="#1b2026">pixel</text>
+    <text x="120" y="100" font-size="12" fill="#2f6df6">d &lt; 0 inside</text>
+  </g>
+
+  <!-- right: the fold + sign rule -->
+  <g transform="translate(440,110)">
+    <text x="0" y="0" font-size="13" font-weight="700" fill="#1b2026">What the fragment shader does</text>
+    <rect x="0" y="16" width="470" height="232" rx="9" fill="#ffffff" stroke="#cfd8e3"/>
+    <text x="18" y="46" font-size="12.5" fill="#3a424c">for each <tspan font-family="ui-monospace, monospace" fill="#7048e8">entry</tspan> in this tile (front to back):</text>
+    <text x="34" y="70" font-size="12.5" fill="#3a424c">best = &#8734;</text>
+    <text x="34" y="92" font-size="12.5" fill="#3a424c">for each <tspan font-family="ui-monospace, monospace" fill="#2f6df6">segment</tspan> of the entry:</text>
+    <text x="50" y="114" font-size="12.5" fill="#3a424c">d = signed_distance(pixel, segment)</text>
+    <text x="50" y="136" font-size="12.5" fill="#3a424c">if |d| &lt; |best|: best = d</text>
+    <text x="34" y="160" font-size="12.5" fill="#3a424c">colour = stop_chain(best)</text>
+    <text x="34" y="182" font-size="12.5" fill="#3a424c">acc = acc + colour &#183; (1 &#8722; acc.a)</text>
+    <text x="18" y="216" font-size="12" fill="#5b6672">Inside / outside is just the sign of best &#8212;</text>
+    <text x="18" y="234" font-size="12" fill="#5b6672">no separate fill pass, no winding count.</text>
+
+    <text x="0" y="284" font-size="12" fill="#3a424c">Antialiasing is analytic: the field has unit</text>
+    <text x="0" y="302" font-size="12" fill="#3a424c">gradient, so one pixel is 1/(zoom&#183;scale) world</text>
+    <text x="0" y="320" font-size="12" fill="#3a424c">units &#8212; a smoothstep over that band, no fwidth.</text>
+  </g>
+</svg>

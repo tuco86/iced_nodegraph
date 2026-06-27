@@ -1,8 +1,14 @@
 //! Segment-based SDF renderer for Iced.
 //!
-//! Provides exact distance fields by decomposing shapes into individual
-//! segments (lines, arcs, bezier curves). Front-to-back rendering with
-//! alpha early-out.
+//! Provides exact, resolution-independent distance fields from a single
+//! geometric primitive: the circular arc, stored as endpoints plus a signed
+//! curvature. A straight line is an arc of zero curvature, a point an arc of
+//! zero length, and a cubic bezier a CPU-fitted spline of arcs - so the GPU
+//! evaluates one distance function for every shape. Closed contours combine via
+//! [`boolean`] set operations, a tile spatial index culls per pixel, and
+//! front-to-back premultiplied compositing has an opaque early-out.
+//!
+//! See `README.md` and `ARCHITECTURE.md` for the full design and its invariants.
 //!
 //! This crate is the rendering engine behind `iced_nodegraph`. Most users do not
 //! depend on it directly: `iced_nodegraph` drives it internally and re-exports the

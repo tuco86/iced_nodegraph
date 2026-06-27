@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 420" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, sans-serif">
+  <rect x="0" y="0" width="960" height="420" rx="12" fill="#fbfcfe" stroke="#d9dee5"/>
+  <text x="32" y="40" font-size="20" font-weight="700" fill="#1b2026">Beziers become arc-splines</text>
+  <text x="32" y="62" font-size="13" fill="#5b6672">A cubic has no closed-form distance field. Rather than solve it per pixel, fit it with arcs on the CPU: one arc per piece, split until the deviation is sub-pixel.</text>
+
+  <!-- Panel A: the cubic + one arc fit, high deviation -->
+  <rect x="32" y="84" width="288" height="300" rx="10" fill="#ffffff" stroke="#cfd8e3"/>
+  <text x="48" y="110" font-size="13" font-weight="700" fill="#1b2026">a. fit one arc through 3 points</text>
+  <g transform="translate(48,150)">
+    <!-- cubic (S curve) -->
+    <path d="M 0 150 C 70 150 60 10 130 10 C 200 10 190 150 250 150" fill="none" stroke="#1b2026" stroke-width="3"/>
+    <!-- candidate arc through endpoints+mid -->
+    <path d="M 0 150 A 150 150 0 0 1 250 150" fill="none" stroke="#e8590c" stroke-width="2" stroke-dasharray="6 4"/>
+    <circle cx="0" cy="150" r="4" fill="#2f6df6"/>
+    <circle cx="125" cy="10" r="4" fill="#2f6df6"/>
+    <circle cx="250" cy="150" r="4" fill="#2f6df6"/>
+    <text x="92" y="120" font-size="11" fill="#e8590c">deviation too high</text>
+  </g>
+  <text x="48" y="362" font-size="11.5" fill="#5b6672">Sample the cubic; measure the worst gap to the arc.</text>
+
+  <!-- Panel B: subdivide -->
+  <rect x="336" y="84" width="288" height="300" rx="10" fill="#ffffff" stroke="#cfd8e3"/>
+  <text x="352" y="110" font-size="13" font-weight="700" fill="#1b2026">b. split at the midpoint</text>
+  <g transform="translate(352,150)">
+    <path d="M 0 150 C 70 150 60 10 130 10 C 200 10 190 150 250 150" fill="none" stroke="#1b2026" stroke-width="3"/>
+    <!-- two arcs each half -->
+    <path d="M 0 150 A 95 95 0 0 1 125 10" fill="none" stroke="#7048e8" stroke-width="2.4"/>
+    <path d="M 125 10 A 95 95 0 0 1 250 150" fill="none" stroke="#2f9e44" stroke-width="2.4"/>
+    <circle cx="0" cy="150" r="4" fill="#2f6df6"/>
+    <circle cx="125" cy="10" r="4" fill="#2f6df6"/>
+    <circle cx="250" cy="150" r="4" fill="#2f6df6"/>
+  </g>
+  <text x="352" y="362" font-size="11.5" fill="#5b6672">De Casteljau halves; re-fit each half (recurse).</text>
+
+  <!-- Panel C: converged spline -->
+  <rect x="640" y="84" width="288" height="300" rx="10" fill="#ffffff" stroke="#cfd8e3"/>
+  <text x="656" y="110" font-size="13" font-weight="700" fill="#1b2026">c. converged arc-spline</text>
+  <g transform="translate(656,150)">
+    <path d="M 0 150 A 60 60 0 0 1 50 56" fill="none" stroke="#7048e8" stroke-width="3"/>
+    <path d="M 50 56 A 80 80 0 0 1 125 10" fill="none" stroke="#2f9e44" stroke-width="3"/>
+    <path d="M 125 10 A 80 80 0 0 1 200 56" fill="none" stroke="#7048e8" stroke-width="3"/>
+    <path d="M 200 56 A 60 60 0 0 1 250 150" fill="none" stroke="#2f9e44" stroke-width="3"/>
+    <circle cx="0" cy="150" r="3.5" fill="#2f6df6"/>
+    <circle cx="50" cy="56" r="3.5" fill="#2f6df6"/>
+    <circle cx="125" cy="10" r="3.5" fill="#2f6df6"/>
+    <circle cx="200" cy="56" r="3.5" fill="#2f6df6"/>
+    <circle cx="250" cy="150" r="3.5" fill="#2f6df6"/>
+  </g>
+  <text x="656" y="356" font-size="11.5" fill="#5b6672">Each arc carries exact arc length</text>
+  <text x="656" y="373" font-size="11.5" fill="#5b6672">(r&#183;|sweep|), so dashes stay even.</text>
+</svg>

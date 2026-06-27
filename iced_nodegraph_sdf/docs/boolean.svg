@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 400" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, sans-serif">
+  <rect x="0" y="0" width="960" height="400" rx="12" fill="#fbfcfe" stroke="#d9dee5"/>
+  <text x="32" y="40" font-size="20" font-weight="700" fill="#1b2026">Shapes as set algebra</text>
+  <text x="32" y="62" font-size="13" fill="#5b6672">A node body is a rounded box minus its pin circles. Booleans clip the contours against each other and re-stitch a single clean arc loop with junction points.</text>
+
+  <defs>
+    <marker id="arB" markerWidth="10" markerHeight="10" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#8a95a3"/>
+    </marker>
+  </defs>
+
+  <!-- box -->
+  <g transform="translate(70,150)">
+    <rect x="0" y="0" width="170" height="120" rx="14" fill="#dbeafe" stroke="#2f6df6" stroke-width="2.5"/>
+    <text x="85" y="66" font-size="13" font-weight="600" fill="#1b2026" text-anchor="middle">rounded_box</text>
+  </g>
+  <text x="160" y="300" font-size="13" fill="#5b6672" text-anchor="middle" font-family="ui-monospace, monospace">box</text>
+
+  <text x="270" y="218" font-size="30" fill="#5b6672" text-anchor="middle">&#8722;</text>
+
+  <!-- circles -->
+  <g transform="translate(310,150)">
+    <circle cx="20" cy="20" r="18" fill="#fde2cf" stroke="#e8590c" stroke-width="2.5"/>
+    <circle cx="20" cy="100" r="18" fill="#fde2cf" stroke="#e8590c" stroke-width="2.5"/>
+    <circle cx="150" cy="60" r="18" fill="#fde2cf" stroke="#e8590c" stroke-width="2.5"/>
+  </g>
+  <text x="400" y="300" font-size="13" fill="#5b6672" text-anchor="middle" font-family="ui-monospace, monospace">pin circles</text>
+
+  <text x="510" y="218" font-size="30" fill="#5b6672" text-anchor="middle">=</text>
+
+  <!-- result: box with notches -->
+  <g transform="translate(560,150)">
+    <path d="M 14 0
+             L 156 0 Q 170 0 170 14
+             L 170 42 A 18 18 0 0 1 170 78
+             L 170 106 Q 170 120 156 120
+             L 14 120 Q 0 120 0 106
+             L 0 100 A 18 18 0 0 0 0 40
+             L 0 14 Q 0 0 14 0 Z"
+          fill="#e7f5ec" stroke="#2f9e44" stroke-width="2.5"/>
+    <!-- right notch -->
+    <path d="M 170 42 A 18 18 0 0 1 170 78" fill="none" stroke="#2f9e44" stroke-width="2.5"/>
+    <!-- junction dots -->
+    <circle cx="0" cy="40" r="3.2" fill="#7048e8"/>
+    <circle cx="0" cy="100" r="3.2" fill="#7048e8"/>
+    <circle cx="170" cy="42" r="3.2" fill="#7048e8"/>
+    <circle cx="170" cy="78" r="3.2" fill="#7048e8"/>
+  </g>
+  <text x="645" y="300" font-size="13" fill="#5b6672" text-anchor="middle" font-family="ui-monospace, monospace">one closed contour</text>
+
+  <text x="560" y="340" font-size="12" fill="#3a424c"><tspan font-weight="600" fill="#7048e8">&#9679;</tspan> junction points own concave corners and resolve the interior sign.</text>
+
+  <line x1="240" y1="210" x2="296" y2="210" stroke="#8a95a3" stroke-width="2" marker-end="url(#arB)"/>
+  <line x1="470" y1="210" x2="500" y2="210" stroke="#8a95a3" stroke-width="2" marker-end="url(#arB)"/>
+</svg>

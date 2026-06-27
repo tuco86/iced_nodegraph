@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 470" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, sans-serif">
+  <rect x="0" y="0" width="960" height="470" rx="12" fill="#fbfcfe" stroke="#d9dee5"/>
+  <text x="32" y="40" font-size="20" font-weight="700" fill="#1b2026">The tile spatial index</text>
+  <text x="32" y="62" font-size="13" fill="#5b6672">A compute shader dices the widget into 16&#215;16 px tiles. Each tile stores only the segments near enough to colour one of its pixels, so the fragment shader iterates a short list, not the scene.</text>
+
+  <!-- grid with two shapes -->
+  <g transform="translate(32,92)">
+    <rect x="0" y="0" width="480" height="336" fill="#ffffff" stroke="#cfd8e3"/>
+    <!-- 16x16-equivalent grid: 10 cols x 7 rows of 48px -->
+    <g stroke="#e6ebf1" stroke-width="1">
+      <line x1="48" y1="0" x2="48" y2="336"/><line x1="96" y1="0" x2="96" y2="336"/>
+      <line x1="144" y1="0" x2="144" y2="336"/><line x1="192" y1="0" x2="192" y2="336"/>
+      <line x1="240" y1="0" x2="240" y2="336"/><line x1="288" y1="0" x2="288" y2="336"/>
+      <line x1="336" y1="0" x2="336" y2="336"/><line x1="384" y1="0" x2="384" y2="336"/>
+      <line x1="432" y1="0" x2="432" y2="336"/>
+      <line x1="0" y1="48" x2="480" y2="48"/><line x1="0" y1="96" x2="480" y2="96"/>
+      <line x1="0" y1="144" x2="480" y2="144"/><line x1="0" y1="192" x2="480" y2="192"/>
+      <line x1="0" y1="240" x2="480" y2="240"/><line x1="0" y1="288" x2="480" y2="288"/>
+    </g>
+    <!-- a curved edge -->
+    <path d="M 30 300 C 150 300 180 60 320 60 C 400 60 420 150 450 150" fill="none" stroke="#2f6df6" stroke-width="4"/>
+    <!-- a node box -->
+    <rect x="60" y="120" width="130" height="90" rx="10" fill="none" stroke="#e8590c" stroke-width="3"/>
+
+    <!-- highlight occupied tiles (subset) along curve -->
+    <g fill="#2f6df6" opacity="0.10">
+      <rect x="0" y="288" width="48" height="48"/>
+      <rect x="48" y="288" width="48" height="48"/>
+      <rect x="96" y="240" width="48" height="48"/>
+      <rect x="96" y="192" width="48" height="48"/>
+      <rect x="144" y="144" width="48" height="48"/>
+      <rect x="192" y="96" width="48" height="48"/>
+      <rect x="240" y="48" width="48" height="48"/>
+      <rect x="288" y="48" width="48" height="48"/>
+      <rect x="336" y="96" width="48" height="48"/>
+      <rect x="384" y="144" width="48" height="48"/>
+      <rect x="432" y="144" width="48" height="48"/>
+    </g>
+    <!-- highlight one tile for callout -->
+    <rect x="144" y="144" width="48" height="48" fill="#2f6df6" opacity="0.28" stroke="#2f6df6" stroke-width="2"/>
+  </g>
+
+  <!-- callout: one tile's slot list -->
+  <g transform="translate(560,110)">
+    <text x="0" y="0" font-size="13" font-weight="700" fill="#1b2026">One tile's slot list</text>
+    <rect x="0" y="16" width="350" height="44" rx="7" fill="#ffffff" stroke="#cfd8e3"/>
+    <text x="14" y="38" font-size="12" font-family="ui-monospace, monospace" fill="#2f6df6">edge.arc[7]</text>
+    <text x="14" y="54" font-size="11" fill="#5b6672">&#8594; entry 4 (the curved edge)</text>
+
+    <rect x="0" y="68" width="350" height="44" rx="7" fill="#ffffff" stroke="#cfd8e3"/>
+    <text x="14" y="90" font-size="12" font-family="ui-monospace, monospace" fill="#e8590c">box.arc[2]</text>
+    <text x="14" y="106" font-size="11" fill="#5b6672">&#8594; entry 1 (the node body)</text>
+
+    <text x="0" y="146" font-size="12" fill="#3a424c">Slots are sorted by entry so the</text>
+    <text x="0" y="164" font-size="12" fill="#3a424c">fragment shader walks one shape</text>
+    <text x="0" y="182" font-size="12" fill="#3a424c">at a time, front to back.</text>
+
+    <text x="0" y="220" font-size="12" fill="#5b6672">A two-level cull first bins candidates</text>
+    <text x="0" y="238" font-size="12" fill="#5b6672">per 256&#215;256 px region, then refines</text>
+    <text x="0" y="256" font-size="12" fill="#5b6672">per tile &#8212; so most segments are</text>
+    <text x="0" y="274" font-size="12" fill="#5b6672">rejected once per region, not per tile.</text>
+  </g>
+</svg>
