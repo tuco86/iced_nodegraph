@@ -93,12 +93,6 @@ pub struct SdfPrimitive {
     /// widget bounds passed to `prepare`). `prepare` maps it to tile-local
     /// physical pixels for [`DebugFlags::HOVERED_TILE`]. Off-widget by default.
     pub mouse: (f32, f32),
-    /// Hint that this primitive is the static, full-coverage background (the
-    /// bottom tiling). When set, the pipeline may cache its rendered output to a
-    /// texture and blit it on frames whose camera and content are unchanged,
-    /// cutting the one fullscreen fragment pass the tile cull cannot prune. Inert
-    /// for any non-background primitive.
-    pub cache_background: bool,
     /// The `DrawData` slot this primitive was assigned in `prepare`, stored on the
     /// primitive itself rather than derived from draw order. iced PREPARES every
     /// queued instance but SKIPS drawing those whose bounds snap empty or fall off
@@ -117,7 +111,6 @@ impl Clone for SdfPrimitive {
             time: self.time,
             debug: self.debug,
             mouse: self.mouse,
-            cache_background: self.cache_background,
             draw_slot: AtomicU32::new(self.draw_slot.load(Ordering::Relaxed)),
         }
     }
@@ -132,7 +125,6 @@ impl SdfPrimitive {
             time: 0.0,
             debug: DebugFlags::empty(),
             mouse: (f32::MIN, f32::MIN),
-            cache_background: false,
             draw_slot: AtomicU32::new(0),
         }
     }
@@ -179,12 +171,6 @@ impl SdfPrimitive {
     /// [`DebugFlags::HOVERED_TILE`]. No effect unless that flag is set.
     pub fn mouse(mut self, x: f32, y: f32) -> Self {
         self.mouse = (x, y);
-        self
-    }
-    /// Marks this primitive as the cacheable static background (see
-    /// [`SdfPrimitive::cache_background`]).
-    pub fn background(mut self) -> Self {
-        self.cache_background = true;
         self
     }
     pub fn is_empty(&self) -> bool {
@@ -352,65 +338,6 @@ fn hash_gpu_style(s: &types::GpuStyle) -> u64 {
     h.0
 }
 
-impl SdfPrimitive {
-    /// Content key for the static-background cache, or `None` when this primitive
-    /// is not a cacheable background. Only PURE, non-animated, un-patterned
-    /// tilings cache; anything else returns `None` so it renders direct and is
-    /// never served stale. Captures everything that changes the rendered pixels -
-    /// camera, grid placement, scale, tiling type/params, and stop colours - but
-    /// NOT `time` (a cacheable background does not read it).
-    fn background_key(
-        &self,
-        grid_origin: (f32, f32),
-        grid_cols: u32,
-        grid_rows: u32,
-        scale: f32,
-    ) -> Option<u64> {
-        if self.entries.is_empty() {
-            return None;
-        }
-        let mut h = KeyHasher::new();
-        h.f32(self.camera_position.0);
-        h.f32(self.camera_position.1);
-        h.f32(self.camera_zoom);
-        h.f32(scale);
-        h.f32(grid_origin.0);
-        h.f32(grid_origin.1);
-        h.u32(grid_cols);
-        h.u32(grid_rows);
-        for e in &self.entries {
-            let Shape::Tiling(t) = &e.shape else {
-                return None;
-            };
-            if e.style.is_animated() || e.style.pattern.is_some() {
-                return None;
-            }
-            let (tt, params) = t.to_gpu();
-            h.u32(tt as u32);
-            for p in params {
-                h.f32(p);
-            }
-            h.u32(e.style.stops.len() as u32);
-            for s in &e.style.stops {
-                h.f32(s.dist);
-                h.color(s.start);
-                h.color(s.end);
-            }
-            h.u32(e.style.distance_field as u32);
-            // Transfer affects the blend; mix its discriminant + param.
-            match e.style.transfer {
-                crate::style::Transfer::Linear => h.u32(0),
-                crate::style::Transfer::Smoothstep => h.u32(1),
-                crate::style::Transfer::Gamma(g) => {
-                    h.u32(2);
-                    h.f32(g);
-                }
-            }
-        }
-        Some(h.0)
-    }
-}
-
 impl Default for SdfPrimitive {
     fn default() -> Self {
         Self::new()
@@ -462,7 +389,6 @@ pub struct SdfPipeline {
     // `Primitive` bound. `frame_device`/`frame_queue` are cloned in prepare so the
     // immutable `draw` can build + submit the batched compute.
     pending_dispatches: Mutex<Vec<(u32, u32)>>, // (grid_cols, grid_rows) per culled draw
-    pending_bg_populate: Mutex<Option<u32>>,    // draw_index of a bg to cache
     compute_submitted: std::sync::atomic::AtomicBool,
     frame_device: Option<Device>,
     frame_queue: Option<Queue>,
@@ -490,13 +416,6 @@ pub struct SdfPipeline {
     slots: Vec<Option<SlotState>>,
     /// GPU timestamp pair around the cull compute pass (R3), when supported.
     compute_timer: Option<ComputeTimer>,
-    /// Static-background texture cache (Phase C). Survives frames; populated only
-    /// for the background primitive (the widget marks it).
-    bg_cache: crate::pipeline::bg_cache::BgCache,
-    /// Draw-call index of the background this frame when it should be blitted
-    /// from the cache instead of rendered (cache populate/hit); `None` = render
-    /// the background normally (direct).
-    bg_blit_index: Option<u32>,
 }
 
 /// GPU timestamp pair around the cull compute pass (R3). Present only when the
@@ -554,13 +473,6 @@ impl SdfPipeline {
     /// Shape-cache misses (boolean->arcs evaluations) over the lifetime.
     pub fn cache_misses(&self) -> u64 {
         self.shape_cache.misses()
-    }
-
-    /// Whether the most recently prepared frame served its background from the
-    /// texture cache (blit) instead of rendering it directly. Diagnostic hook for
-    /// the static-background cache gate.
-    pub fn bg_cache_blitted(&self) -> bool {
-        self.bg_blit_index.is_some()
     }
 
     /// Cull-compute GPU time of the last `prepare`, in milliseconds, when the
@@ -753,7 +665,6 @@ impl Pipeline for SdfPipeline {
             bind_group_gens: (0, 0, 0, 0, 0),
             total_tiles: 0,
             pending_dispatches: Mutex::new(Vec::new()),
-            pending_bg_populate: Mutex::new(None),
             compute_submitted: std::sync::atomic::AtomicBool::new(false),
             frame_device: None,
             frame_queue: None,
@@ -771,8 +682,6 @@ impl Pipeline for SdfPipeline {
             } else {
                 None
             },
-            bg_cache: crate::pipeline::bg_cache::BgCache::new(device, format),
-            bg_blit_index: None,
         }
     }
 
@@ -796,9 +705,7 @@ impl Pipeline for SdfPipeline {
         self.frame_shape_slots.clear();
         self.frame_style_slots.clear();
         self.total_tiles = 0;
-        self.bg_blit_index = None;
         self.pending_dispatches.get_mut().unwrap().clear();
-        *self.pending_bg_populate.get_mut().unwrap() = None;
         self.compute_submitted
             .store(false, std::sync::atomic::Ordering::Relaxed);
     }
@@ -806,19 +713,17 @@ impl Pipeline for SdfPipeline {
 
 impl SdfPipeline {
     /// Records the fullscreen-triangle SDF instance draw for `draw_index` (set
-    /// render pipeline + group0 + draw `0..3`). Shared by the live `draw` and the
-    /// deferred background-cache populate so the two cannot drift.
+    /// render pipeline + group0 + draw `0..3`).
     fn record_sdf_instance(&self, pass: &mut iced::wgpu::RenderPass<'_>, draw_index: u32) {
         pass.set_pipeline(&self.shared.render_pipeline);
         pass.set_bind_group(0, &self.render_group0, &[]);
         pass.draw(0..3, draw_index..draw_index + 1);
     }
 
-    /// Runs every cull dispatch recorded this frame in ONE encoder + ONE submit,
-    /// then any deferred background-cache populate. Called once, from the first
-    /// `draw` (all prepares are complete, so the buffers are final). Replaces the
-    /// former one-submit-per-primitive path, whose `queue.submit` overhead was the
-    /// dominant `prepare` cost.
+    /// Runs every cull dispatch recorded this frame in ONE encoder + ONE submit.
+    /// Called once, from the first `draw` (all prepares are complete, so the buffers
+    /// are final). Replaces the former one-submit-per-primitive path, whose
+    /// `queue.submit` overhead was the dominant `prepare` cost.
     fn run_deferred_compute(&self) {
         let (Some(device), Some(queue)) = (self.frame_device.as_ref(), self.frame_queue.as_ref())
         else {
@@ -862,34 +767,6 @@ impl SdfPipeline {
                 encoder.copy_buffer_to_buffer(&t.resolve, 0, &t.readback, 0, 16);
             }
             queue.submit(std::iter::once(encoder.finish()));
-        }
-        drop(dispatches);
-
-        // Deferred background-cache populate: render the bg into the cache texture
-        // now that its tiles are computed (the cull above ran first in the queue).
-        if let Some(draw_index) = *self.pending_bg_populate.lock().unwrap() {
-            let mut enc = device.create_command_encoder(&CommandEncoderDescriptor {
-                label: Some("sdf_bg_populate"),
-            });
-            {
-                let mut pass = enc.begin_render_pass(&iced::wgpu::RenderPassDescriptor {
-                    label: Some("sdf_bg_populate_pass"),
-                    color_attachments: &[Some(iced::wgpu::RenderPassColorAttachment {
-                        view: self.bg_cache.target_view(),
-                        resolve_target: None,
-                        ops: iced::wgpu::Operations {
-                            load: iced::wgpu::LoadOp::Clear(iced::wgpu::Color::TRANSPARENT),
-                            store: iced::wgpu::StoreOp::Store,
-                        },
-                        depth_slice: None,
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-                self.record_sdf_instance(&mut pass, draw_index);
-            }
-            queue.submit(std::iter::once(enc.finish()));
         }
     }
 }
@@ -1146,34 +1023,6 @@ impl Primitive for SdfPrimitive {
             pipeline.frame_queue = Some(queue.clone());
         }
 
-        // Static-background texture cache: decide whether to render the
-        // background direct, populate the cache texture this frame, or blit a
-        // cached frame. The compute pass above built this primitive's
-        // tile index and `render_group0` references its buffers, so the cache can
-        // render the background here using the same pipeline + instance index.
-        if self.cache_background {
-            use crate::pipeline::bg_cache::BgMode;
-            let key = self.background_key(
-                (bounds.x * scale, bounds.y * scale),
-                grid_cols,
-                grid_rows,
-                scale,
-            );
-            let tw = viewport.physical_width();
-            let th = viewport.physical_height();
-            match pipeline.bg_cache.decide(device, key, tw, th) {
-                BgMode::Direct => pipeline.bg_blit_index = None,
-                BgMode::Blit => pipeline.bg_blit_index = Some(draw_index),
-                BgMode::Populate => {
-                    // The cull is deferred, so the texture can only be populated
-                    // AFTER the batched compute. Record it; the first draw renders
-                    // it once the tiles exist.
-                    *pipeline.pending_bg_populate.get_mut().unwrap() = Some(draw_index);
-                    pipeline.bg_blit_index = Some(draw_index);
-                }
-            }
-        }
-
         pipeline.frame_stats.entry_count += entry_count;
         pipeline.frame_stats.prepare_cpu_us += prepare_start.elapsed().as_micros() as u64;
     }
@@ -1193,12 +1042,6 @@ impl Primitive for SdfPrimitive {
         // draw-order counter): iced skips drawing off-viewport instances it still
         // prepared, so a counter would desync every later primitive's slot.
         let draw_idx = self.draw_slot.load(Ordering::Relaxed);
-        // Static-background cache hit/populate: blit the cached texture instead
-        // of running the fullscreen SDF fragment pass (the fill-rate win).
-        if pipeline.bg_blit_index == Some(draw_idx) {
-            pipeline.bg_cache.blit(render_pass);
-            return true;
-        }
         pipeline.record_sdf_instance(render_pass, draw_idx);
         true
     }
