@@ -372,6 +372,12 @@ pub struct SdfPipeline {
     tile_counts_buffer: iced::wgpu::Buffer,
     tile_entries_buffer: iced::wgpu::Buffer,
     tile_capacity: u32,
+    /// Hard ceiling on `total_tiles` so the `tile_entries` storage binding never
+    /// exceeds the device's `max_storage_buffer_binding_size`. A frame that would
+    /// allocate more (many large overlapping primitives, e.g. nodes stacked into
+    /// one spot) falls the excess draws back to grid 0 = iterate-all instead of
+    /// growing the buffer past the limit and panicking.
+    max_tiles: u32,
     spatial_index_gen: u64,
     // Bind groups
     render_group0: BindGroup,
@@ -574,6 +580,11 @@ impl Pipeline for SdfPipeline {
             tile_counts_buffer,
             tile_entries_buffer,
             tile_capacity: 256,
+            // tile_entries binds `total_tiles * SLOT_STRIDE` u32s; keep that under
+            // the device's storage-binding limit.
+            max_tiles: (device.limits().max_storage_buffer_binding_size as u64
+                / (SLOT_STRIDE as u64 * 4))
+                .max(256) as u32,
             spatial_index_gen: 0,
             render_group0,
             compute_group0,
@@ -817,19 +828,33 @@ impl Primitive for SdfPrimitive {
         let entry_count = self.entries.len() as u32;
         let camera_pos = types::GpuVec2::new(self.camera_position.0, self.camera_position.1);
         let grid_origin = types::GpuVec2::new(bounds.x * scale, bounds.y * scale);
-        let grid_cols = ((bounds.width * scale / TILE_SIZE).ceil() as u32).max(1);
-        let grid_rows = ((bounds.height * scale / TILE_SIZE).ceil() as u32).max(1);
+        let mut grid_cols = ((bounds.width * scale / TILE_SIZE).ceil() as u32).max(1);
+        let mut grid_rows = ((bounds.height * scale / TILE_SIZE).ceil() as u32).max(1);
 
-        // Allocate tile region
-        let tile_base = pipeline.total_tiles;
-        pipeline.total_tiles += grid_cols * grid_rows;
+        // Allocate this primitive's tile region. If it would push `total_tiles`
+        // past `max_tiles` (the tile_entries binding would exceed the device's
+        // storage-binding limit - e.g. many large overlapping primitives, like a
+        // pile of nodes stacked into one spot), this draw falls back to grid 0 =
+        // "no spatial index, iterate all entries" instead. Slower for that draw,
+        // but it renders correctly and the buffer never panics.
+        let want = grid_cols as u64 * grid_rows as u64;
+        let tile_base;
+        if pipeline.total_tiles as u64 + want > pipeline.max_tiles as u64 {
+            grid_cols = 0;
+            grid_rows = 0;
+            tile_base = 0;
+        } else {
+            tile_base = pipeline.total_tiles;
+            pipeline.total_tiles += grid_cols * grid_rows;
+        }
 
         // Grow spatial index buffers if needed. The cull dispatch is DEFERRED to
         // the first draw, so no prior primitive has computed tiles yet - there is
         // nothing to preserve, and the grown (fresh) buffer is filled by the single
         // batched dispatch against the FINAL buffer. Hence a plain resize, no copy.
+        // Capped at `max_tiles` so the binding never exceeds the device limit.
         if pipeline.total_tiles > pipeline.tile_capacity {
-            let new_cap = (pipeline.total_tiles as f32 * 1.5) as u32;
+            let new_cap = ((pipeline.total_tiles as f32 * 1.5) as u32).min(pipeline.max_tiles);
             let (tc, te) = create_tile_buffers(device, new_cap);
             pipeline.tile_counts_buffer = tc;
             pipeline.tile_entries_buffer = te;

@@ -3735,6 +3735,40 @@ fn measure_idle_prepare_cost() {
     println!("----------------------------------------------------------------\n");
 }
 
+/// Tile-budget overflow must DEGRADE, not panic. A draw whose tile grid would push
+/// the spatial index past the device's storage-binding limit (the "many nodes
+/// stacked into one spot" pile, simulated here with one absurdly large clip) falls
+/// back to grid 0 = iterate-all. The frame must still render its fill, and creating
+/// the render bind group must not exceed `max_storage_buffer_binding_size`.
+#[test]
+fn oversized_tile_budget_falls_back_no_panic() {
+    use crate::primitive::SdfPrimitive;
+    use crate::shape::Shape;
+    use iced::Rectangle;
+
+    let r = shared_renderer();
+    let (w, h) = (192u32, 192u32);
+
+    let style = Style::solid(rgba(0.30, 0.60, 0.90, 1.0));
+    let mut p = SdfPrimitive::new();
+    p.push(
+        &Shape::rounded_box([80.0, 60.0], [6.0; 4]),
+        &style,
+        [96.0, 96.0],
+    );
+    let p = p.camera(0.0, 0.0, 1.0);
+    // A clip so large its grid (~3000x3000 tiles) dwarfs any device's tile budget.
+    let huge = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(50_000.0, 50_000.0));
+
+    // Would panic in `create_bind_group` (binding exceeds limit) before the cap.
+    let px = r.render_primitives_scissored(&[(&p, huge)], w, h);
+
+    assert!(
+        px.iter().any(|c| c[2] > 100),
+        "iterate-all fallback must still render the fill"
+    );
+}
+
 /// Geometry-skip correctness: a frame whose primitives are byte-identical to the
 /// previous one reuses the resident segment/entry/style buffers (no re-eval, no
 /// re-upload). The reused frame MUST render pixel-identically to the rebuilt one.
