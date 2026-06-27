@@ -3763,6 +3763,62 @@ fn zoomed_out_per_node_fills_all_render() {
     );
 }
 
+/// Style deduplication: many entries that share a compiled look upload ONE
+/// `GpuStyle`, mirroring shape/segment instancing. 200 distinct node bodies drawn
+/// from only TWO styles must report `unique_styles == 2` while geometry stays
+/// distinct (`unique_shapes > 2`), proving the style dedup is independent of the
+/// shape dedup. Drives the real pipeline through `prepare` + `trim` (no draw
+/// needed: dedup happens in `prepare`, metrics are captured in `trim`).
+#[test]
+fn styles_dedup_across_identical_entries() {
+    use crate::primitive::{SdfPipeline, SdfPrimitive};
+    use crate::shape::Shape;
+    use iced::Rectangle;
+    use iced_wgpu::graphics::Viewport;
+    use iced_wgpu::primitive::{Pipeline, Primitive};
+
+    let r = shared_renderer();
+    let (w, h) = (256u32, 256u32);
+    let viewport = Viewport::with_physical_size(iced::Size::new(w, h), 1.0);
+    let mut pipeline = SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
+
+    let style_a = Style::solid(rgba(0.3, 0.4, 0.5, 1.0));
+    let style_b = Style::solid(rgba(0.7, 0.2, 0.1, 1.0));
+
+    // Each node is its OWN primitive (as the widget emits per-node fills), with a
+    // width that varies across 11 buckets so the geometry does NOT collapse to one
+    // shape - isolating the style dedup from the shape dedup.
+    let scene: Vec<(SdfPrimitive, Rectangle)> = (0..200)
+        .map(|i| {
+            let nw = 40.0 + (i % 11) as f32 * 3.0;
+            let body = Shape::rounded_box([nw, 30.0], [4.0; 4]);
+            let style = if i % 2 == 0 { &style_a } else { &style_b };
+            let mut p = SdfPrimitive::new();
+            p.push(&body, style, [60.0, 60.0]);
+            let clip = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(64.0, 64.0));
+            (p.camera(0.0, 0.0, 1.0), clip)
+        })
+        .collect();
+
+    Pipeline::trim(&mut pipeline);
+    for (p, b) in &scene {
+        p.prepare(&mut pipeline, &r.device, &r.queue, b, &viewport);
+    }
+    Pipeline::trim(&mut pipeline); // captures this frame's dedup metrics
+    let stats = crate::primitive::sdf_stats();
+
+    assert_eq!(
+        stats.unique_styles, 2,
+        "200 entries from 2 styles must upload 2 GpuStyles, got {}",
+        stats.unique_styles
+    );
+    assert!(
+        stats.unique_shapes > 2,
+        "varying node widths must stay distinct shapes, got {}",
+        stats.unique_shapes
+    );
+}
+
 /// A stroked edge must render as a thin STROKE, not a solid fill of its bounding
 /// box (the reported regression: some edges paint as a filled AABB in edge colour,
 /// diagonals collapsing to smaller per-segment boxes). Sweeps a range of edge

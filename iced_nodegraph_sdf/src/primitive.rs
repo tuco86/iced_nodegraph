@@ -31,6 +31,7 @@ static LAST_STATS: Mutex<types::SdfStats> = Mutex::new(types::SdfStats {
     prepare_cpu_us: 0,
     unique_shapes: 0,
     segment_count: 0,
+    unique_styles: 0,
     cache_hits: 0,
     cache_misses: 0,
     cache_hit_rate: 0.0,
@@ -227,6 +228,35 @@ impl KeyHasher {
     }
 }
 
+/// Hash a compiled [`types::GpuStyle`] for per-frame style deduplication. Folds
+/// every field that reaches the GPU (stop colours/distances + pattern + transfer)
+/// so byte-identical styles collide and share one slot. Padding is excluded; it
+/// is always zero and carries no rendered state.
+fn hash_gpu_style(s: &types::GpuStyle) -> u64 {
+    let mut h = KeyHasher::new();
+    for v in s
+        .stop_start
+        .iter()
+        .chain(s.stop_end.iter())
+        .chain(s.stop_dist.iter())
+    {
+        for &c in v.as_ref() {
+            h.f32(c);
+        }
+    }
+    h.u32(s.stop_count);
+    h.u32(s.flags);
+    h.u32(s.pattern_type);
+    h.f32(s.pattern_thickness);
+    h.f32(s.pattern_param0);
+    h.f32(s.pattern_param1);
+    h.f32(s.pattern_param2);
+    h.f32(s.flow_speed);
+    h.u32(s.transfer_type);
+    h.f32(s.transfer_param);
+    h.0
+}
+
 impl SdfPrimitive {
     /// Content key for the static-background cache, or `None` when this primitive
     /// is not a cacheable background. Only PURE, non-animated, un-patterned
@@ -337,6 +367,12 @@ pub struct SdfPipeline {
     /// instance is a command referencing that range (GPU instancing). Cleared by
     /// `trim` because the segment buffer is rebuilt each frame.
     frame_shape_slots: HashMap<u64, u32>,
+    /// Per-FRAME map compiled-style-hash -> `style_idx` in this frame's style
+    /// buffer. Mirrors `frame_shape_slots` for styles: the first entry with a
+    /// given look uploads one `GpuStyle`; identical entries (e.g. every node with
+    /// the same fill) reuse that slot instead of duplicating ~336 bytes each.
+    /// Cleared by `trim` because the style buffer is rebuilt each frame.
+    frame_style_slots: HashMap<u64, u32>,
     /// GPU timestamp pair around the cull compute pass (R3), when supported.
     compute_timer: Option<ComputeTimer>,
     /// Static-background texture cache (Phase C). Survives frames; populated only
@@ -610,6 +646,7 @@ impl Pipeline for SdfPipeline {
             frame_stats: types::SdfStats::default(),
             shape_cache: ShapeCache::new(4096),
             frame_shape_slots: HashMap::new(),
+            frame_style_slots: HashMap::new(),
             compute_timer: if device
                 .features()
                 .contains(iced::wgpu::Features::TIMESTAMP_QUERY)
@@ -628,6 +665,7 @@ impl Pipeline for SdfPipeline {
         self.frame_stats.tile_count = self.total_tiles;
         self.frame_stats.segment_count = self.segments_buffer.len() as u32;
         self.frame_stats.unique_shapes = self.frame_shape_slots.len() as u32;
+        self.frame_stats.unique_styles = self.frame_style_slots.len() as u32;
         self.frame_stats.cache_hits = self.shape_cache.hits();
         self.frame_stats.cache_misses = self.shape_cache.misses();
         self.frame_stats.cache_hit_rate = self.shape_cache.hit_rate();
@@ -640,6 +678,7 @@ impl Pipeline for SdfPipeline {
         self.segments_buffer.clear();
         self.styles_buffer.clear();
         self.frame_shape_slots.clear();
+        self.frame_style_slots.clear();
         self.total_tiles = 0;
         self.bg_blit_index = None;
         self.pending_dispatches.get_mut().unwrap().clear();
@@ -815,8 +854,20 @@ impl Primitive for SdfPrimitive {
                         &mut seg_batch,
                     )
                 };
-            gpu_entry.style_idx = style_base + style_batch.len() as u32;
-            style_batch.push(gpu_style);
+            // Deduplicate styles within the frame exactly as segments are: every
+            // entry with a byte-identical compiled style shares ONE slot, so N
+            // nodes that look alike upload one GpuStyle, not N. Transparent to the
+            // shader, which still reads per-entry `style_idx`.
+            let style_hash = hash_gpu_style(&gpu_style);
+            gpu_entry.style_idx =
+                *pipeline
+                    .frame_style_slots
+                    .entry(style_hash)
+                    .or_insert_with(|| {
+                        let idx = style_base + style_batch.len() as u32;
+                        style_batch.push(gpu_style);
+                        idx
+                    });
             entry_batch.push(gpu_entry);
         }
 

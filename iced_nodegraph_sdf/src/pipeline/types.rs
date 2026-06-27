@@ -281,6 +281,10 @@ pub struct SdfStats {
     /// `GpuSegment`s uploaded this frame. With instancing this tracks
     /// unique-shape geometry, not draw count.
     pub segment_count: u32,
+    /// Distinct compiled styles uploaded this frame (after dedup). The style-side
+    /// analogue of `unique_shapes`: entries that look identical share one
+    /// `GpuStyle`, so this is << `entry_count` when many nodes share a look.
+    pub unique_styles: u32,
     /// Shape-cache hits over the pipeline's lifetime (Improvement A).
     pub cache_hits: u64,
     /// Shape-cache misses (each a boolean->arcs evaluation) over the lifetime.
