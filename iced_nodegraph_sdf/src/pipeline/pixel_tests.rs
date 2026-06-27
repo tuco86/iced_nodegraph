@@ -3763,6 +3763,178 @@ fn zoomed_out_per_node_fills_all_render() {
     );
 }
 
+/// TEMP measure-first probe (ignored): steady-state `prepare` CPU cost of an IDLE
+/// 500-node frame (same scene re-prepared each frame, no camera change). Sizes the
+/// prize for the persistent-buffer / dirty-skip work: how much CPU an unchanged
+/// frame currently burns re-evaluating, recompiling and re-uploading identical
+/// data. Frame 0 is cold (eval + buffer growth); frames 1+ are steady (shape-cache
+/// hits, no growth). Run with:
+///   cargo test -p iced_nodegraph_sdf idle_prepare_cost -- --ignored --nocapture
+#[test]
+#[ignore]
+fn measure_idle_prepare_cost() {
+    use crate::primitive::{SdfPipeline, SdfPrimitive};
+    use crate::shape::Shape;
+    use crate::tiling::Tiling;
+    use iced::Rectangle;
+    use iced_wgpu::graphics::Viewport;
+    use iced_wgpu::primitive::{Pipeline, Primitive};
+
+    let r = shared_renderer();
+    let (w, h) = (1280u32, 768u32);
+    let zoom = 0.24131_f32;
+    let cam = [-327.7_f32, -132.0];
+    let full = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(w as f32, h as f32));
+    let viewport = Viewport::with_physical_size(iced::Size::new(w, h), 1.0);
+
+    let dark = Style::solid(rgba(0.12, 0.13, 0.16, 1.0));
+    let fill_style = Style::solid(rgba(0.30, 0.32, 0.40, 1.0));
+
+    // bg + 500 distinct node fills (25x20), mirroring the widget's per-node fill
+    // primitive. Widths vary across buckets so geometry is genuinely distinct.
+    let mut bg = SdfPrimitive::new();
+    bg.push(
+        &Shape::tiling(Tiling::grid(40.0, 40.0, 1.0)),
+        &dark,
+        [0.0, 0.0],
+    );
+    let bg = bg.camera(cam[0], cam[1], zoom).background();
+
+    let mut nodes: Vec<(SdfPrimitive, Rectangle)> = Vec::new();
+    for col in 0..25 {
+        for row in 0..20 {
+            let i = col * 20 + row;
+            let c = [24.0 + col as f32 * 24.0, 20.0 + row as f32 * 24.0];
+            let nw = 70.0 + (i % 7) as f32 * 6.0;
+            let nh = 60.0 + (i % 5) as f32 * 5.0;
+            let cw = nw * zoom + 4.0;
+            let ch = nh * zoom + 4.0;
+            let placement = [c[0] / zoom - cam[0], c[1] / zoom - cam[1]];
+            let clip = Rectangle::new(
+                iced::Point::new(c[0] - cw * 0.5, c[1] - ch * 0.5),
+                iced::Size::new(cw, ch),
+            );
+            let cx = cam[0] - clip.x / zoom;
+            let cy = cam[1] - clip.y / zoom;
+            let body = Shape::rounded_box([nw, nh], [6.0; 4])
+                - Shape::circle(5.0).translate([-nw * 0.5, 0.0])
+                - Shape::circle(5.0).translate([nw * 0.5, 0.0]);
+            let mut fill = SdfPrimitive::new();
+            fill.push(&body, &fill_style, placement);
+            nodes.push((fill.camera(cx, cy, zoom), clip));
+        }
+    }
+
+    // 640 bezier edges in one batch, like the widget's below-nodes layer. Beziers
+    // are NOT cacheable (only booleans are), so every edge re-evaluates each frame -
+    // the prime suspect for idle CPU cost. Distinct control points per edge.
+    let edge_style = Style::stroke(
+        rgba(0.55, 0.6, 0.7, 1.0),
+        crate::pattern::Pattern::solid(2.0),
+    );
+    let mut edges = SdfPrimitive::with_capacity(640);
+    for i in 0..640u32 {
+        let a = (i % 25) as f32 * 24.0 + 24.0;
+        let b = (i % 20) as f32 * 24.0 + 20.0;
+        let p0 = [a / zoom - cam[0], b / zoom - cam[1]];
+        let p3 = [(a + 60.0) / zoom - cam[0], (b + 40.0) / zoom - cam[1]];
+        let p1 = [p0[0] + 80.0, p0[1]];
+        let p2 = [p3[0] - 80.0, p3[1]];
+        edges.push(&Shape::bezier(p0, p1, p2, p3), &edge_style, [0.0, 0.0]);
+    }
+    let edges = edges.camera(cam[0], cam[1], zoom);
+
+    // One measured frame: trim (reset), prepare the whole scene, then a SECOND trim
+    // to flush THIS frame's accumulated `prepare_cpu_us` into LAST_STATS so the read
+    // is for the frame just built, not the previous one. GPU allocations and the
+    // shape cache survive trim, so frames 1+ are genuine steady state.
+    let measure_frame = |pipeline: &mut SdfPipeline| -> u64 {
+        Pipeline::trim(pipeline);
+        bg.prepare(pipeline, &r.device, &r.queue, &full, &viewport);
+        edges.prepare(pipeline, &r.device, &r.queue, &full, &viewport);
+        for (p, b) in &nodes {
+            p.prepare(pipeline, &r.device, &r.queue, b, &viewport);
+        }
+        Pipeline::trim(pipeline);
+        crate::primitive::sdf_stats().prepare_cpu_us
+    };
+
+    let mut pipeline = SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
+    let mut per_frame_us: Vec<u64> = Vec::new();
+    for _ in 0..7 {
+        per_frame_us.push(measure_frame(&mut pipeline));
+    }
+
+    // Re-prepare once more to repopulate the stats fields the second trim cleared.
+    Pipeline::trim(&mut pipeline);
+    bg.prepare(&mut pipeline, &r.device, &r.queue, &full, &viewport);
+    edges.prepare(&mut pipeline, &r.device, &r.queue, &full, &viewport);
+    for (p, b) in &nodes {
+        p.prepare(&mut pipeline, &r.device, &r.queue, b, &viewport);
+    }
+    Pipeline::trim(&mut pipeline);
+    let stats = crate::primitive::sdf_stats();
+    println!("\n--- idle prepare CPU cost: bg + 500 node fills + 640 edges ---");
+    println!("entries this frame: {}", stats.entry_count);
+    println!(
+        "unique_shapes {} / unique_styles {} / segments {}",
+        stats.unique_shapes, stats.unique_styles, stats.segment_count
+    );
+    for (i, us) in per_frame_us.iter().enumerate() {
+        let tag = if i == 0 { " (cold)" } else { " (steady)" };
+        println!("frame {i}: prepare {:.3} ms{tag}", *us as f64 / 1000.0);
+    }
+    println!("----------------------------------------------------------------\n");
+}
+
+/// Geometry-skip correctness: a frame whose primitives are byte-identical to the
+/// previous one reuses the resident segment/entry/style buffers (no re-eval, no
+/// re-upload). The reused frame MUST render pixel-identically to the rebuilt one.
+/// Two identical frames go through ONE persistent pipeline; frame 1 takes the reuse
+/// path. Mixes a cached boolean fill and a non-cacheable bezier edge so both the
+/// reuse and rebuild branches are exercised.
+#[test]
+fn idle_frame_reuse_renders_identically() {
+    use crate::primitive::SdfPrimitive;
+    use crate::shape::Shape;
+    use iced::Rectangle;
+
+    let r = shared_renderer();
+    let (w, h) = (192u32, 192u32);
+    let full = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(w as f32, h as f32));
+
+    let fill = Style::solid(rgba(0.30, 0.50, 0.70, 1.0));
+    let edge = Style::stroke(
+        rgba(0.85, 0.80, 0.20, 1.0),
+        crate::pattern::Pattern::solid(3.0),
+    );
+    let mut p = SdfPrimitive::with_capacity(2);
+    p.push(
+        &(Shape::rounded_box([60.0, 40.0], [6.0; 4]) - Shape::circle(6.0)),
+        &fill,
+        [96.0, 96.0],
+    );
+    p.push(
+        &Shape::bezier([40.0, 40.0], [70.0, 40.0], [120.0, 150.0], [150.0, 150.0]),
+        &edge,
+        [0.0, 0.0],
+    );
+    let p = p.camera(0.0, 0.0, 1.0);
+
+    // Frame 0 rebuilds and records the slots; frame 1 takes the geometry-reuse path.
+    let frames = vec![vec![(&p, full)], vec![(&p, full)]];
+    let out = r.render_frames_scissored(&frames, w, h, 1.0);
+
+    assert!(
+        out[0].iter().any(|px| px[3] > 0),
+        "scene rendered nothing - test would be vacuous"
+    );
+    assert_eq!(
+        out[0], out[1],
+        "reused idle frame must render identically to the rebuilt frame"
+    );
+}
+
 /// Style deduplication: many entries that share a compiled look upload ONE
 /// `GpuStyle`, mirroring shape/segment instancing. 200 distinct node bodies drawn
 /// from only TWO styles must report `unique_styles == 2` while geometry stays

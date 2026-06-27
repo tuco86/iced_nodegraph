@@ -20,10 +20,11 @@ use iced_wgpu::primitive::{Pipeline, Primitive};
 use std::collections::HashMap;
 
 use crate::compile::{compile_local_at, entry_referencing};
+use crate::pattern::PatternType;
 use crate::pipeline::{buffer, types};
 use crate::shape::{Shape, ShapeCache};
 use crate::shared::SharedSdfResources;
-use crate::style::Style;
+use crate::style::{Style, Transfer};
 
 static LAST_STATS: Mutex<types::SdfStats> = Mutex::new(types::SdfStats {
     entry_count: 0,
@@ -196,6 +197,23 @@ impl SdfPrimitive {
     pub fn has_animations(&self) -> bool {
         self.entries.iter().any(|e| e.style.is_animated())
     }
+
+    /// Hashes everything that determines this primitive's COMPILED geometry buffers
+    /// (each entry's shape, world placement and style) - but NOT the camera, time or
+    /// debug flags, which live in `DrawData` and never touch the segment/entry/style
+    /// buffers. Two frames with an equal hash produce byte-identical geometry, so
+    /// `prepare` can skip the re-evaluation and re-upload (see the slot reuse path).
+    fn geometry_hash(&self) -> u64 {
+        let mut h = KeyHasher::new();
+        h.u32(self.entries.len() as u32);
+        for e in &self.entries {
+            h.u64(e.shape.hash());
+            h.f32(e.placement[0]);
+            h.f32(e.placement[1]);
+            hash_style_into(&mut h, &e.style);
+        }
+        h.0
+    }
 }
 
 /// FNV-1a hasher for the background cache key (deterministic, native==wasm).
@@ -225,6 +243,83 @@ impl KeyHasher {
         self.f32(c.g);
         self.f32(c.b);
         self.f32(c.a);
+    }
+    fn u64(&mut self, x: u64) {
+        self.u32(x as u32);
+        self.u32((x >> 32) as u32);
+    }
+}
+
+/// Folds a [`Style`]'s geometry-relevant recipe (stops, pattern, transfer, df) into
+/// `h`. Used by [`SdfPrimitive::geometry_hash`] to detect whether a primitive's
+/// compiled output would differ from last frame - so the camera/time are NOT here.
+fn hash_style_into(h: &mut KeyHasher, s: &Style) {
+    h.u32(s.stops.len() as u32);
+    for st in &s.stops {
+        h.f32(st.dist);
+        h.color(st.start);
+        h.color(st.end);
+    }
+    h.u32(s.distance_field as u32);
+    match s.transfer {
+        Transfer::Linear => h.u32(0),
+        Transfer::Smoothstep => h.u32(1),
+        Transfer::Gamma(g) => {
+            h.u32(2);
+            h.f32(g);
+        }
+    }
+    match &s.pattern {
+        None => h.u32(0),
+        Some(p) => {
+            h.u32(1);
+            h.f32(p.thickness);
+            h.f32(p.flow_speed);
+            match p.pattern_type {
+                PatternType::Solid => h.u32(0),
+                PatternType::Dashed { dash, gap, angle } => {
+                    h.u32(1);
+                    h.f32(dash);
+                    h.f32(gap);
+                    h.f32(angle);
+                }
+                PatternType::Arrowed {
+                    segment,
+                    gap,
+                    angle,
+                } => {
+                    h.u32(2);
+                    h.f32(segment);
+                    h.f32(gap);
+                    h.f32(angle);
+                }
+                PatternType::Dotted { spacing, radius } => {
+                    h.u32(3);
+                    h.f32(spacing);
+                    h.f32(radius);
+                }
+                PatternType::DashDotted {
+                    dash,
+                    gap,
+                    dot_radius,
+                } => {
+                    h.u32(4);
+                    h.f32(dash);
+                    h.f32(gap);
+                    h.f32(dot_radius);
+                }
+                PatternType::ArrowDotted {
+                    segment,
+                    gap,
+                    dot_radius,
+                } => {
+                    h.u32(5);
+                    h.f32(segment);
+                    h.f32(gap);
+                    h.f32(dot_radius);
+                }
+            }
+        }
     }
 }
 
@@ -324,6 +419,21 @@ impl Default for SdfPrimitive {
 
 // --- Pipeline ---
 
+/// Per draw-slot record of what a primitive wrote into the persistent buffers last
+/// frame: its geometry hash plus the exact ranges it occupies. A primitive at the
+/// same slot whose hash matches AND whose buffer cursors line up with these starts
+/// reuses the resident data (no eval/upload) by skipping over the ranges.
+#[derive(Clone, Copy)]
+struct SlotState {
+    geom_hash: u64,
+    seg_start: u32,
+    seg_count: u32,
+    entry_start: u32,
+    entry_count: u32,
+    style_start: u32,
+    style_count: u32,
+}
+
 pub struct SdfPipeline {
     shared: Arc<SharedSdfResources>,
     // Data buffers
@@ -373,6 +483,11 @@ pub struct SdfPipeline {
     /// the same fill) reuse that slot instead of duplicating ~336 bytes each.
     /// Cleared by `trim` because the style buffer is rebuilt each frame.
     frame_style_slots: HashMap<u64, u32>,
+    /// Per draw-slot geometry record from the LAST frame, indexed by draw slot.
+    /// Survives `trim` (unlike the per-frame maps): it is what this frame's
+    /// primitives compare against to skip re-evaluating unchanged geometry. A slot
+    /// holds `None` until first written; structural changes overwrite it.
+    slots: Vec<Option<SlotState>>,
     /// GPU timestamp pair around the cull compute pass (R3), when supported.
     compute_timer: Option<ComputeTimer>,
     /// Static-background texture cache (Phase C). Survives frames; populated only
@@ -647,6 +762,7 @@ impl Pipeline for SdfPipeline {
             shape_cache: ShapeCache::new(4096),
             frame_shape_slots: HashMap::new(),
             frame_style_slots: HashMap::new(),
+            slots: Vec::new(),
             compute_timer: if device
                 .features()
                 .contains(iced::wgpu::Features::TIMESTAMP_QUERY)
@@ -801,87 +917,129 @@ impl Primitive for SdfPrimitive {
         let prepare_start = Instant::now();
         let scale = viewport.scale_factor();
         let entry_start = pipeline.entries_buffer.len() as u32;
+        let seg_start = pipeline.segments_buffer.len() as u32;
+        let style_start = pipeline.styles_buffer.len() as u32;
+        let draw_slot = pipeline.draw_data_buffer.len();
 
-        // Accumulate this primitive's GPU data, then upload each buffer in ONE
-        // bulk write. The old per-entry pushes issued ~3 `queue.write_buffer`
-        // calls per entry (1500+ per frame for 500 nodes) - that submission
-        // overhead, not the boolean, was what remained of v3's per-frame cost.
-        let seg_base = pipeline.segments_buffer.len() as u32;
-        let style_base = pipeline.styles_buffer.len() as u32;
-        let mut seg_batch = std::mem::take(&mut pipeline.segment_scratch);
-        seg_batch.clear();
-        let mut style_batch: Vec<types::GpuStyle> = Vec::with_capacity(self.entries.len());
-        let mut entry_batch: Vec<types::GpuDrawEntry> = Vec::with_capacity(self.entries.len());
+        // Skip the whole geometry rebuild when this slot's primitive is byte-for-
+        // byte identical to last frame AND the buffer cursors line up with where it
+        // wrote then (so no earlier primitive shifted the packed offsets). The
+        // resident segments/entries/styles are then reused in place - no eval, no
+        // upload - by advancing the cursors over them.
+        let geom_hash = self.geometry_hash();
+        let reuse = pipeline
+            .slots
+            .get(draw_slot)
+            .copied()
+            .flatten()
+            .filter(|s| {
+                s.geom_hash == geom_hash
+                    && s.seg_start == seg_start
+                    && s.entry_start == entry_start
+                    && s.style_start == style_start
+            });
 
-        for (i, entry) in self.entries.iter().enumerate() {
-            let segment_offset = seg_base + seg_batch.len() as u32;
-            // Evaluate the shape to LOCAL geometry: cacheable booleans come from
-            // the frame-surviving cache (one boolean for all identical shapes);
-            // cheap primitives and ephemeral strokes (edges) evaluate fresh. The
-            // clone breaks the cache borrow before the batch is touched; it
-            // copies arcs, not the boolean.
-            let local = if entry.shape.is_cacheable() {
-                pipeline.shape_cache.get_or_eval(&entry.shape).clone()
-            } else {
-                entry.shape.evaluate()
-            };
-            let hash = entry.shape.hash();
-            let (mut gpu_entry, gpu_style) =
-                if let Some(&shared_start) = pipeline.frame_shape_slots.get(&hash) {
-                    // Segments already in the batch this frame: one tiny command
-                    // referencing the shared range, NO new segments uploaded.
-                    entry_referencing(
-                        &local,
-                        &entry.style,
-                        i as u32,
-                        entry.placement,
-                        shared_start,
-                    )
+        if let Some(s) = reuse {
+            pipeline.segments_buffer.skip(s.seg_count as usize);
+            pipeline.entries_buffer.skip(s.entry_count as usize);
+            pipeline.styles_buffer.skip(s.style_count as usize);
+        } else {
+            // Accumulate this primitive's GPU data, then upload each buffer in ONE
+            // bulk write. The old per-entry pushes issued ~3 `queue.write_buffer`
+            // calls per entry (1500+ per frame for 500 nodes) - that submission
+            // overhead, not the boolean, was what remained of v3's per-frame cost.
+            let seg_base = seg_start;
+            let style_base = style_start;
+            let mut seg_batch = std::mem::take(&mut pipeline.segment_scratch);
+            seg_batch.clear();
+            let mut style_batch: Vec<types::GpuStyle> = Vec::with_capacity(self.entries.len());
+            let mut entry_batch: Vec<types::GpuDrawEntry> = Vec::with_capacity(self.entries.len());
+
+            for (i, entry) in self.entries.iter().enumerate() {
+                let segment_offset = seg_base + seg_batch.len() as u32;
+                // Evaluate the shape to LOCAL geometry: cacheable booleans come from
+                // the frame-surviving cache (one boolean for all identical shapes);
+                // cheap primitives and ephemeral strokes (edges) evaluate fresh. The
+                // clone breaks the cache borrow before the batch is touched; it
+                // copies arcs, not the boolean.
+                let local = if entry.shape.is_cacheable() {
+                    pipeline.shape_cache.get_or_eval(&entry.shape).clone()
                 } else {
-                    pipeline.frame_shape_slots.insert(hash, segment_offset);
-                    // Pass `seg_base` (the buffer base), NOT `segment_offset`:
-                    // `compile_local_at` adds the batch position (`seg_batch.len()`)
-                    // itself, so it lands at `seg_base + seg_batch.len()` =
-                    // `segment_offset`. Passing the already-offset value would
-                    // double-count the batch length, indexing every entry after the
-                    // first past its real segments.
-                    compile_local_at(
-                        &local,
-                        &entry.style,
-                        i as u32,
-                        entry.placement,
-                        seg_base,
-                        &mut seg_batch,
-                    )
+                    entry.shape.evaluate()
                 };
-            // Deduplicate styles within the frame exactly as segments are: every
-            // entry with a byte-identical compiled style shares ONE slot, so N
-            // nodes that look alike upload one GpuStyle, not N. Transparent to the
-            // shader, which still reads per-entry `style_idx`.
-            let style_hash = hash_gpu_style(&gpu_style);
-            gpu_entry.style_idx =
-                *pipeline
-                    .frame_style_slots
-                    .entry(style_hash)
-                    .or_insert_with(|| {
-                        let idx = style_base + style_batch.len() as u32;
-                        style_batch.push(gpu_style);
-                        idx
-                    });
-            entry_batch.push(gpu_entry);
-        }
+                let hash = entry.shape.hash();
+                let (mut gpu_entry, gpu_style) =
+                    if let Some(&shared_start) = pipeline.frame_shape_slots.get(&hash) {
+                        // Segments already in the batch this frame: one tiny command
+                        // referencing the shared range, NO new segments uploaded.
+                        entry_referencing(
+                            &local,
+                            &entry.style,
+                            i as u32,
+                            entry.placement,
+                            shared_start,
+                        )
+                    } else {
+                        pipeline.frame_shape_slots.insert(hash, segment_offset);
+                        // Pass `seg_base` (the buffer base), NOT `segment_offset`:
+                        // `compile_local_at` adds the batch position (`seg_batch.len()`)
+                        // itself, so it lands at `seg_base + seg_batch.len()` =
+                        // `segment_offset`. Passing the already-offset value would
+                        // double-count the batch length, indexing every entry after the
+                        // first past its real segments.
+                        compile_local_at(
+                            &local,
+                            &entry.style,
+                            i as u32,
+                            entry.placement,
+                            seg_base,
+                            &mut seg_batch,
+                        )
+                    };
+                // Deduplicate styles within the frame exactly as segments are: every
+                // entry with a byte-identical compiled style shares ONE slot, so N
+                // nodes that look alike upload one GpuStyle, not N. Transparent to the
+                // shader, which still reads per-entry `style_idx`.
+                let style_hash = hash_gpu_style(&gpu_style);
+                gpu_entry.style_idx =
+                    *pipeline
+                        .frame_style_slots
+                        .entry(style_hash)
+                        .or_insert_with(|| {
+                            let idx = style_base + style_batch.len() as u32;
+                            style_batch.push(gpu_style);
+                            idx
+                        });
+                entry_batch.push(gpu_entry);
+            }
 
-        let _ = pipeline
-            .segments_buffer
-            .push_bulk(device, queue, &seg_batch);
-        let _ = pipeline
-            .styles_buffer
-            .push_bulk(device, queue, &style_batch);
-        let _ = pipeline
-            .entries_buffer
-            .push_bulk(device, queue, &entry_batch);
-        seg_batch.clear();
-        pipeline.segment_scratch = seg_batch; // restore the reused allocation
+            let _ = pipeline
+                .segments_buffer
+                .push_bulk(device, queue, &seg_batch);
+            let _ = pipeline
+                .styles_buffer
+                .push_bulk(device, queue, &style_batch);
+            let _ = pipeline
+                .entries_buffer
+                .push_bulk(device, queue, &entry_batch);
+            seg_batch.clear();
+            pipeline.segment_scratch = seg_batch; // restore the reused allocation
+
+            // Record what this slot now occupies so a later frame can reuse it.
+            let state = SlotState {
+                geom_hash,
+                seg_start,
+                seg_count: pipeline.segments_buffer.len() as u32 - seg_start,
+                entry_start,
+                entry_count: pipeline.entries_buffer.len() as u32 - entry_start,
+                style_start,
+                style_count: pipeline.styles_buffer.len() as u32 - style_start,
+            };
+            if draw_slot >= pipeline.slots.len() {
+                pipeline.slots.resize(draw_slot + 1, None);
+            }
+            pipeline.slots[draw_slot] = Some(state);
+        }
 
         let entry_count = self.entries.len() as u32;
         let camera_pos = types::GpuVec2::new(self.camera_position.0, self.camera_position.1);

@@ -222,6 +222,22 @@ impl<T: ShaderSize> Buffer<T> {
     pub fn clear(&mut self) {
         self.live_len = 0;
     }
+
+    /// Reclaims `n` already-resident slots as live WITHOUT rewriting them: the
+    /// previous frame left valid data at `[live_len .. live_len + n)`, so a caller
+    /// that has verified the content is unchanged just advances the cursor over it.
+    /// This is the per-primitive skip path - the data is reused in place, no CPU
+    /// eval and no GPU upload. Panics if those slots were never written (the caller
+    /// must only skip a range it wrote in a prior frame).
+    pub fn skip(&mut self, n: usize) {
+        assert!(
+            self.live_len + n <= self.buffer_vec.len(),
+            "skip {n} past resident data (live {} + {n} > {})",
+            self.live_len,
+            self.buffer_vec.len(),
+        );
+        self.live_len += n;
+    }
 }
 
 fn create_wgpu_buffer(
