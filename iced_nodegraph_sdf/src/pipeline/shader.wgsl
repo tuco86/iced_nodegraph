@@ -151,13 +151,6 @@ fn pattern_perp_reach(style: GpuStyle) -> f32 {
     }
 }
 
-struct ComputeUniforms {
-    draw_index: u32,
-    _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
-}
-
 struct SdfResult {
     dist: f32,  // signed distance (positive = right side of curve)
     u: f32,     // parametric position along curve [0..1]
@@ -179,9 +172,9 @@ struct SdfResult {
 @group(0) @binding(2) var<storage, read> cs_segments: array<GpuSegment>;
 @group(0) @binding(3) var<storage, read> cs_styles: array<GpuStyle>;
 
-@group(1) @binding(0) var<uniform> cs_uniforms: ComputeUniforms;
-@group(1) @binding(1) var<storage, read_write> cs_tile_counts: array<u32>;
-@group(1) @binding(2) var<storage, read_write> cs_tile_slots: array<u32>;
+// draw_index is carried by the dispatch z-axis (workgroup_id.z), not a uniform.
+@group(1) @binding(0) var<storage, read_write> cs_tile_counts: array<u32>;
+@group(1) @binding(1) var<storage, read_write> cs_tile_slots: array<u32>;
 
 // ============================================================================
 // SDF Distance Functions
@@ -1011,7 +1004,7 @@ fn cs_build_index(
     @builtin(workgroup_id) wid: vec3<u32>,
     @builtin(local_invocation_index) lid: u32,
 ) {
-    let draw = cs_draws[cs_uniforms.draw_index];
+    let draw = cs_draws[wid.z];
     let inv_cs = 1.0 / (draw.camera_zoom * draw.scale_factor);
     let thd = TILE_SIZE * 0.70710678 * inv_cs; // tile half diagonal in world
 

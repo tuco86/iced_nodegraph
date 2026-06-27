@@ -181,16 +181,6 @@ pub(crate) struct DrawData {
     pub mouse_px: GpuVec2,
 }
 
-/// Minimal compute uniform: just the index into DrawData storage buffer.
-/// Everything else is read from DrawData (shared with fragment shader).
-#[derive(Clone, Debug, ShaderType)]
-pub(crate) struct ComputeUniforms {
-    pub draw_index: u32,
-    pub _pad0: u32,
-    pub _pad1: u32,
-    pub _pad2: u32,
-}
-
 // --- Defaults ---
 
 impl Default for GpuSegment {

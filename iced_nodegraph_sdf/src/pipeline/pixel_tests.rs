@@ -7,7 +7,7 @@
 
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
-use encase::{ShaderSize, ShaderType, StorageBuffer, UniformBuffer, internal::WriteInto};
+use encase::{ShaderSize, ShaderType, StorageBuffer, internal::WriteInto};
 use wgpu::util::DeviceExt;
 use wgpu::*;
 
@@ -269,14 +269,6 @@ impl TestRenderer {
             mapped_at_creation: false,
         });
 
-        let compute_uniforms = ComputeUniforms {
-            draw_index: 0,
-            _pad0: 0,
-            _pad1: 0,
-            _pad2: 0,
-        };
-        let cu_buf = self.create_uniform(&compute_uniforms);
-
         let render_bg = self.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &self.render_group0_layout,
@@ -335,14 +327,10 @@ impl TestRenderer {
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: cu_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
                     resource: tile_counts_buf.as_entire_binding(),
                 },
                 BindGroupEntry {
-                    binding: 2,
+                    binding: 1,
                     resource: tile_slots_buf.as_entire_binding(),
                 },
             ],
@@ -555,14 +543,6 @@ impl TestRenderer {
             mapped_at_creation: false,
         });
 
-        let compute_uniforms = ComputeUniforms {
-            draw_index: 0,
-            _pad0: 0,
-            _pad1: 0,
-            _pad2: 0,
-        };
-        let cu_buf = self.create_uniform(&compute_uniforms);
-
         // Bind groups
         let render_bg = self.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -622,14 +602,10 @@ impl TestRenderer {
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: cu_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
                     resource: tile_counts_buf.as_entire_binding(),
                 },
                 BindGroupEntry {
-                    binding: 2,
+                    binding: 1,
                     resource: tile_slots_buf.as_entire_binding(),
                 },
             ],
@@ -1169,18 +1145,6 @@ impl TestRenderer {
             })
     }
 
-    fn create_uniform<T: ShaderType + ShaderSize + WriteInto>(&self, item: &T) -> Buffer {
-        let mut scratch = Vec::new();
-        let mut writer = UniformBuffer::new(&mut scratch);
-        writer.write(item).expect("Failed to write uniform buffer");
-        self.device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: None,
-                contents: &scratch,
-                usage: BufferUsages::UNIFORM,
-            })
-    }
-
     fn create_render_layout(device: &Device) -> BindGroupLayout {
         device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: None,
@@ -1214,20 +1178,7 @@ impl TestRenderer {
     fn create_compute_layout1(device: &Device) -> BindGroupLayout {
         device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: None,
-            entries: &[
-                BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: Some(ComputeUniforms::SHADER_SIZE),
-                    },
-                    count: None,
-                },
-                bgl_storage_rw(1, 4),
-                bgl_storage_rw(2, 4),
-            ],
+            entries: &[bgl_storage_rw(0, 4), bgl_storage_rw(1, 4)],
         })
     }
 }

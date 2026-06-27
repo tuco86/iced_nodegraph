@@ -254,7 +254,8 @@ fn create_compute_group0_layout(device: &Device) -> BindGroupLayout {
     })
 }
 
-/// Compute group 1: uniforms + tile_counts(rw) + tile_entries(rw)
+/// Compute group 1: tile_counts(rw) + tile_entries(rw). The draw index is read
+/// from the dispatch z-axis (`workgroup_id.z`), so no per-draw uniform is bound.
 fn create_compute_group1_layout(device: &Device) -> BindGroupLayout {
     use std::num::NonZeroU64;
     device.create_bind_group_layout(&BindGroupLayoutDescriptor {
@@ -264,18 +265,6 @@ fn create_compute_group1_layout(device: &Device) -> BindGroupLayout {
                 binding: 0,
                 visibility: ShaderStages::COMPUTE,
                 ty: BindingType::Buffer {
-                    ty: BufferBindingType::Uniform,
-                    // One ComputeUniforms slot per draw; the batched cull dispatches
-                    // each pick their draw_index via a dynamic offset.
-                    has_dynamic_offset: true,
-                    min_binding_size: Some(<types::ComputeUniforms as ShaderSize>::SHADER_SIZE),
-                },
-                count: None,
-            },
-            BindGroupLayoutEntry {
-                binding: 1,
-                visibility: ShaderStages::COMPUTE,
-                ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
                     min_binding_size: Some(NonZeroU64::new(4).unwrap()),
@@ -283,7 +272,7 @@ fn create_compute_group1_layout(device: &Device) -> BindGroupLayout {
                 count: None,
             },
             BindGroupLayoutEntry {
-                binding: 2,
+                binding: 1,
                 visibility: ShaderStages::COMPUTE,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: false },

@@ -9,7 +9,6 @@ use std::sync::{Arc, Mutex};
 use web_time::Instant;
 
 use bitflags::bitflags;
-use encase::ShaderSize;
 use iced::Rectangle;
 use iced::wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BufferDescriptor, BufferUsages,
@@ -307,9 +306,6 @@ pub struct SdfPipeline {
     tile_entries_buffer: iced::wgpu::Buffer,
     tile_capacity: u32,
     spatial_index_gen: u64,
-    // Compute
-    compute_uniform_buffer: iced::wgpu::Buffer,
-    compute_uniform_scratch: Vec<u8>,
     // Bind groups
     render_group0: BindGroup,
     compute_group0: BindGroup,
@@ -325,15 +321,11 @@ pub struct SdfPipeline {
     // AtomicBool (not RefCell/Cell) because the Pipeline must be Sync per iced's
     // `Primitive` bound. `frame_device`/`frame_queue` are cloned in prepare so the
     // immutable `draw` can build + submit the batched compute.
-    pending_dispatches: Mutex<Vec<(u32, u32, u32)>>, // (draw_index, grid_cols, grid_rows)
-    pending_bg_populate: Mutex<Option<u32>>,         // draw_index of a bg to cache
+    pending_dispatches: Mutex<Vec<(u32, u32)>>, // (grid_cols, grid_rows) per culled draw
+    pending_bg_populate: Mutex<Option<u32>>,    // draw_index of a bg to cache
     compute_submitted: std::sync::atomic::AtomicBool,
     frame_device: Option<Device>,
     frame_queue: Option<Queue>,
-    // 256-aligned ComputeUniforms slot per draw, so batched dispatches each read
-    // their own draw_index via a dynamic uniform offset.
-    compute_uniform_stride: u32,
-    compute_uniform_capacity: u32,
     segment_scratch: Vec<types::GpuSegment>,
     frame_stats: types::SdfStats,
     /// Frame-surviving cache of evaluated shape recipes (v3 dedup). Lives on the
@@ -542,7 +534,6 @@ fn create_compute_group0(
 fn create_compute_group1(
     device: &Device,
     shared: &SharedSdfResources,
-    uniforms: &iced::wgpu::Buffer,
     tile_counts: &iced::wgpu::Buffer,
     tile_entries: &iced::wgpu::Buffer,
 ) -> BindGroup {
@@ -552,20 +543,10 @@ fn create_compute_group1(
         entries: &[
             BindGroupEntry {
                 binding: 0,
-                // Sized window (one ComputeUniforms); the dynamic offset at bind
-                // time selects which draw's slot.
-                resource: iced::wgpu::BindingResource::Buffer(iced::wgpu::BufferBinding {
-                    buffer: uniforms,
-                    offset: 0,
-                    size: Some(<types::ComputeUniforms as ShaderSize>::SHADER_SIZE),
-                }),
-            },
-            BindGroupEntry {
-                binding: 1,
                 resource: tile_counts.as_entire_binding(),
             },
             BindGroupEntry {
-                binding: 2,
+                binding: 1,
                 resource: tile_entries.as_entire_binding(),
             },
         ],
@@ -583,21 +564,6 @@ impl Pipeline for SdfPipeline {
         let styles_buffer = buffer::Buffer::new(device, Some("sdf_styles"), usage);
 
         let (tile_counts_buffer, tile_entries_buffer) = create_tile_buffers(device, 256);
-
-        // One 256(-aligned) ComputeUniforms slot per draw so batched cull
-        // dispatches each select their draw_index via a dynamic uniform offset.
-        let align = device.limits().min_uniform_buffer_offset_alignment.max(1);
-        let unit = <types::ComputeUniforms as ShaderSize>::SHADER_SIZE.get() as u32;
-        let compute_uniform_stride = unit.div_ceil(align) * align;
-        // Generous fixed slot count (one per draw); far beyond any real per-frame
-        // primitive count, so the uniform buffer never grows mid-frame.
-        let compute_uniform_capacity = 16384u32;
-        let compute_uniform_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("sdf_compute_uniforms"),
-            size: (compute_uniform_stride * compute_uniform_capacity) as u64,
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
 
         let render_group0 = create_render_group0(
             device,
@@ -617,13 +583,8 @@ impl Pipeline for SdfPipeline {
             &segments_buffer,
             &styles_buffer,
         );
-        let compute_group1 = create_compute_group1(
-            device,
-            &shared,
-            &compute_uniform_buffer,
-            &tile_counts_buffer,
-            &tile_entries_buffer,
-        );
+        let compute_group1 =
+            create_compute_group1(device, &shared, &tile_counts_buffer, &tile_entries_buffer);
 
         Self {
             shared,
@@ -635,8 +596,6 @@ impl Pipeline for SdfPipeline {
             tile_entries_buffer,
             tile_capacity: 256,
             spatial_index_gen: 0,
-            compute_uniform_buffer,
-            compute_uniform_scratch: Vec::new(),
             render_group0,
             compute_group0,
             compute_group1,
@@ -647,8 +606,6 @@ impl Pipeline for SdfPipeline {
             compute_submitted: std::sync::atomic::AtomicBool::new(false),
             frame_device: None,
             frame_queue: None,
-            compute_uniform_stride,
-            compute_uniform_capacity,
             segment_scratch: Vec::new(),
             frame_stats: types::SdfStats::default(),
             shape_cache: ShapeCache::new(4096),
@@ -732,16 +689,18 @@ impl SdfPipeline {
                 });
                 pass.set_pipeline(&self.shared.compute_pipeline);
                 pass.set_bind_group(0, &self.compute_group0, &[]);
-                for &(draw_index, grid_cols, grid_rows) in dispatches.iter() {
-                    // Each draw selects its own ComputeUniforms slot via a dynamic
-                    // offset, so the batched dispatches don't clobber each other.
-                    pass.set_bind_group(
-                        1,
-                        &self.compute_group1,
-                        &[draw_index * self.compute_uniform_stride],
-                    );
-                    pass.dispatch_workgroups(grid_cols.div_ceil(16), grid_rows.div_ceil(16), 1);
-                }
+                pass.set_bind_group(1, &self.compute_group1, &[]);
+                // One dispatch for the whole frame: the z-axis is the draw index
+                // (read as workgroup_id.z), so each draw selects its own DrawData
+                // without a per-draw uniform. x/y are sized to the LARGEST draw
+                // grid; smaller draws' surplus workgroups self-abort at the grid
+                // bound (`col/row >= grid_cols/rows`). z spans every draw, so the
+                // few non-culled slots (empty/blit) get a layer that returns at
+                // once. z is bounded by maxComputeWorkgroupsPerDimension (65535).
+                let max_cols = dispatches.iter().map(|&(c, _)| c).max().unwrap_or(0);
+                let max_rows = dispatches.iter().map(|&(_, r)| r).max().unwrap_or(0);
+                let draw_count = self.draw_data_buffer.len() as u32;
+                pass.dispatch_workgroups(max_cols.div_ceil(16), max_rows.div_ceil(16), draw_count);
             }
             if let Some(t) = &self.compute_timer {
                 encoder.resolve_query_set(&t.query_set, 0..2, &t.resolve, 0);
@@ -896,29 +855,11 @@ impl Primitive for SdfPrimitive {
             pipeline.spatial_index_gen += 1;
         }
 
-        // Write this draw's ComputeUniforms into its OWN slot, selected at dispatch
-        // via a dynamic offset, so the batched culls do not overwrite each other.
+        // This draw's index into the DrawData buffer. The batched cull reads it
+        // from the dispatch z-axis (workgroup_id.z); `draw_slot` carries it to the
+        // matching render instance in `draw`.
         let draw_index = pipeline.draw_data_buffer.len() as u32; // index after push
         self.draw_slot.store(draw_index, Ordering::Relaxed);
-        debug_assert!(
-            draw_index < pipeline.compute_uniform_capacity,
-            "more primitives than compute-uniform slots"
-        );
-        let cu = types::ComputeUniforms {
-            draw_index,
-            _pad0: 0,
-            _pad1: 0,
-            _pad2: 0,
-        };
-        pipeline.compute_uniform_scratch.clear();
-        let mut w = encase::UniformBuffer::new(&mut pipeline.compute_uniform_scratch);
-        w.write(&cu).expect("Failed to write compute uniforms");
-        let uoff = (draw_index * pipeline.compute_uniform_stride) as u64;
-        queue.write_buffer(
-            &pipeline.compute_uniform_buffer,
-            uoff,
-            &pipeline.compute_uniform_scratch,
-        );
 
         // Cursor in tile-local physical pixels (matches the shader's `local_px`).
         let mouse_px = types::GpuVec2::new(
@@ -977,7 +918,6 @@ impl Primitive for SdfPrimitive {
             pipeline.compute_group1 = create_compute_group1(
                 device,
                 &pipeline.shared,
-                &pipeline.compute_uniform_buffer,
                 &pipeline.tile_counts_buffer,
                 &pipeline.tile_entries_buffer,
             );
@@ -991,7 +931,7 @@ impl Primitive for SdfPrimitive {
             .pending_dispatches
             .get_mut()
             .unwrap()
-            .push((draw_index, grid_cols, grid_rows));
+            .push((grid_cols, grid_rows));
         if pipeline.frame_queue.is_none() {
             pipeline.frame_device = Some(device.clone());
             pipeline.frame_queue = Some(queue.clone());
