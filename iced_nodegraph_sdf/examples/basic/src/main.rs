@@ -3,7 +3,7 @@ use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use iced::widget::{button, checkbox, column, container, pick_list, row, scrollable, slider, text};
 use iced::{Color, Element, Fill, Length, Rectangle, Size, Subscription, Theme};
-use iced_nodegraph_sdf::{Curve, DebugFlags, Drawable, Pattern, SdfPrimitive, Style, Tiling};
+use iced_nodegraph_sdf::{DebugFlags, Pattern, SdfPrimitive, Shape, Style, Tiling, Transfer};
 
 fn main() -> iced::Result {
     iced::application(App::default, App::update, App::view)
@@ -79,31 +79,33 @@ enum DfEditor {
 }
 
 impl DfEditor {
-    fn build_drawable(&self) -> Drawable {
+    fn build_shape(&self) -> Shape {
         match self {
-            Self::Line { ax, ay, bx, by } => Curve::line([*ax, *ay], [*bx, *by]),
-            Self::Point { x, y, heading } => Curve::point([*x, *y], *heading),
+            Self::Line { ax, ay, bx, by } => Shape::line([*ax, *ay], [*bx, *by]),
+            Self::Point { x, y, heading } => Shape::point(*heading).translate([*x, *y]),
             Self::Arc {
                 cx,
                 cy,
                 radius,
                 start,
                 sweep,
-            } => Curve::arc_segment([*cx, *cy], *radius, *start, *sweep),
-            Self::Bezier { p0, p1, p2, p3 } => Curve::bezier(*p0, *p1, *p2, *p3),
+            } => Shape::arc([*cx, *cy], *radius, *start, *sweep),
+            Self::Bezier { p0, p1, p2, p3 } => Shape::bezier(*p0, *p1, *p2, *p3),
             Self::Node { corner_radius } => build_node_shape(*corner_radius),
             Self::Grid {
                 spacing_x,
                 spacing_y,
                 thickness,
-            } => Tiling::grid(*spacing_x, *spacing_y, *thickness),
+            } => Shape::tiling(Tiling::grid(*spacing_x, *spacing_y, *thickness)),
             Self::Dots {
                 spacing_x,
                 spacing_y,
                 radius,
-            } => Tiling::dots(*spacing_x, *spacing_y, *radius),
-            Self::Triangles { spacing, thickness } => Tiling::triangles(*spacing, *thickness),
-            Self::Hex { spacing, thickness } => Tiling::hex(*spacing, *thickness),
+            } => Shape::tiling(Tiling::dots(*spacing_x, *spacing_y, *radius)),
+            Self::Triangles { spacing, thickness } => {
+                Shape::tiling(Tiling::triangles(*spacing, *thickness))
+            }
+            Self::Hex { spacing, thickness } => Shape::tiling(Tiling::hex(*spacing, *thickness)),
         }
     }
 
@@ -393,54 +395,28 @@ fn df_slider<'a>(
     .into()
 }
 
-fn build_node_shape(cr: f32) -> Drawable {
+/// A node body (rounded box) with semicircular pin notches cut into its left and
+/// right edges - the same `body - pin circles` boolean the node graph builds.
+fn build_node_shape(cr: f32) -> Shape {
     let w: f32 = 120.0;
     let h: f32 = 80.0;
     let pr: f32 = 5.0;
-    let left_pins: &[f32] = &[-25.0, 0.0, 25.0];
-    let right_pins: &[f32] = &[-15.0, 15.0];
-    let mut s = Curve::shape([-w / 2.0 + cr, -h / 2.0], FRAC_PI_2);
-    s = s.line(w - 2.0 * cr).arc(cr, FRAC_PI_2);
-    s = edge_with_pins(s, h - 2.0 * cr, right_pins, pr);
-    s = s.arc(cr, FRAC_PI_2).line(w - 2.0 * cr).arc(cr, FRAC_PI_2);
-    let left_rev: Vec<f32> = left_pins.iter().rev().map(|&y| -y).collect();
-    s = edge_with_pins(s, h - 2.0 * cr, &left_rev, pr);
-    s = s.arc(cr, FRAC_PI_2);
-    s.close()
+    let left_pins = [-25.0, 0.0, 25.0];
+    let right_pins = [-15.0, 15.0];
+    let mut node = Shape::rounded_box([w, h], [cr; 4]);
+    for y in left_pins {
+        node = node - Shape::circle(pr).translate([-w / 2.0, y]);
+    }
+    for y in right_pins {
+        node = node - Shape::circle(pr).translate([w / 2.0, y]);
+    }
+    node
 }
 
-fn edge_with_pins(
-    mut s: iced_nodegraph_sdf::ShapeBuilder,
-    length: f32,
-    pins: &[f32],
-    pr: f32,
-) -> iced_nodegraph_sdf::ShapeBuilder {
-    let half = length / 2.0;
-    let mut sorted: Vec<f32> = pins.iter().map(|&y| y + half).collect();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let mut pos = 0.0;
-    for &pin_pos in &sorted {
-        let gap = pin_pos - pr - pos;
-        if gap > 0.01 {
-            s = s.line(gap);
-        }
-        s = s
-            .angle(FRAC_PI_2)
-            .arc(pr, -std::f32::consts::PI)
-            .angle(FRAC_PI_2);
-        pos = pin_pos + pr;
-    }
-    let rem = length - pos;
-    if rem > 0.01 {
-        s = s.line(rem);
-    }
-    s
-}
-
-fn build_edge_drawables() -> Vec<Drawable> {
+fn build_edge_shapes() -> Vec<Shape> {
     // Two fixed crossing S-curves
-    let fwd = Curve::bezier([-120.0, -40.0], [-40.0, -40.0], [40.0, 40.0], [120.0, 40.0]);
-    let mir = Curve::bezier([120.0, -40.0], [40.0, -40.0], [-40.0, 40.0], [-120.0, 40.0]);
+    let fwd = Shape::bezier([-120.0, -40.0], [-40.0, -40.0], [40.0, 40.0], [120.0, 40.0]);
+    let mir = Shape::bezier([120.0, -40.0], [40.0, -40.0], [-40.0, 40.0], [-120.0, 40.0]);
     let mut edges = vec![fwd, mir];
     // Random edges (deterministic pseudo-random)
     for i in 0..498 {
@@ -450,7 +426,7 @@ fn build_edge_drawables() -> Vec<Drawable> {
         let x1 = ((seed * 173.1) % 400.0) - 200.0;
         let y1 = ((seed * 59.9) % 300.0) - 150.0;
         let offset = 40.0 + (seed * 23.7) % 60.0;
-        edges.push(Curve::bezier(
+        edges.push(Shape::bezier(
             [x0, y0],
             [x0 + offset, y0],
             [x1 - offset, y1],
@@ -538,7 +514,7 @@ struct EdgeEditor {
 
     // Edges
     edge_count: u32,
-    edges: Vec<Drawable>,
+    edges: Vec<Shape>,
 
     // Pattern
     pattern: PatternKind,
@@ -592,7 +568,7 @@ impl Default for EdgeEditor {
         Self {
             open_pickers: HashSet::new(),
             edge_count: 2,
-            edges: build_edge_drawables(),
+            edges: build_edge_shapes(),
             pattern: PatternKind::Solid,
             thickness: 6.0,
             dash: 14.0,
@@ -712,6 +688,7 @@ impl EdgeEditor {
                 ],
                 pattern: None,
                 distance_field: false,
+                transfer: Transfer::Linear,
             });
         }
         styles
@@ -998,7 +975,7 @@ impl App {
             NODE_ED => self.view_node_editor(),
             i => {
                 if let Some(v) = self.df_views.get(i) {
-                    let drawable = v.editor.build_drawable();
+                    let shape = v.editor.build_shape();
                     let style = v.build_style();
                     let settings = scrollable(
                         column![text(v.name).size(14),]
@@ -1008,7 +985,7 @@ impl App {
                             .width(200),
                     );
                     let canvas = SdfCanvasOwned {
-                        drawables: vec![drawable],
+                        shapes: vec![shape],
                         styles: vec![style],
                         extent: v.extent,
                         debug_tiles: self.debug_tiles,
@@ -1284,7 +1261,7 @@ impl App {
         let shape = build_node_shape(ed.corner_radius);
         let styles = ed.build_styles();
         let canvas = SdfCanvasOwned {
-            drawables: vec![shape],
+            shapes: vec![shape],
             styles,
             extent: 140.0,
             debug_tiles: self.debug_tiles,
@@ -1376,7 +1353,7 @@ fn color_swatch<'a>(
 // --- SdfCanvas (borrows) ---
 
 struct SdfCanvas<'a> {
-    drawables: &'a [Drawable],
+    shapes: &'a [Shape],
     styles: &'a [Style],
     extent: f32,
     debug_tiles: bool,
@@ -1416,7 +1393,11 @@ where
         let z = b.width.min(b.height) * 0.333 / self.extent;
         let mut prim = SdfPrimitive::new();
         for (i, style) in self.styles.iter().enumerate() {
-            prim.push(&self.drawables[i.min(self.drawables.len() - 1)], style);
+            prim.push(
+                &self.shapes[i.min(self.shapes.len() - 1)],
+                style,
+                [0.0, 0.0],
+            );
         }
         renderer.draw_primitive(
             b,
@@ -1442,7 +1423,7 @@ impl<'a, M: 'a, R: iced::advanced::Renderer + iced_wgpu::primitive::Renderer + '
 // --- SdfCanvasOwned (for editors) ---
 
 struct SdfCanvasOwned {
-    drawables: Vec<Drawable>,
+    shapes: Vec<Shape>,
     styles: Vec<Style>,
     extent: f32,
     debug_tiles: bool,
@@ -1482,7 +1463,11 @@ where
         let z = b.width.min(b.height) * 0.333 / self.extent;
         let mut prim = SdfPrimitive::new();
         for (i, style) in self.styles.iter().enumerate() {
-            prim.push(&self.drawables[i.min(self.drawables.len() - 1)], style);
+            prim.push(
+                &self.shapes[i.min(self.shapes.len() - 1)],
+                style,
+                [0.0, 0.0],
+            );
         }
         renderer.draw_primitive(
             b,
@@ -1508,7 +1493,7 @@ impl<'a, M: 'a, R: iced::advanced::Renderer + iced_wgpu::primitive::Renderer + '
 // --- SdfEdgeCanvas (multi-edge: each style applied to all edges) ---
 
 struct SdfEdgeCanvas<'a> {
-    edges: &'a [Drawable],
+    edges: &'a [Shape],
     edge_count: usize,
     styles: Vec<Style>,
     extent: f32,
@@ -1550,7 +1535,7 @@ where
         let mut prim = SdfPrimitive::new();
         for style in &self.styles {
             for edge in &self.edges[..self.edge_count] {
-                prim.push(edge, style);
+                prim.push(edge, style, [0.0, 0.0]);
             }
         }
         renderer.draw_primitive(
