@@ -25,6 +25,16 @@ const COARSE_STRIDE: u32 = MAX_COARSE_SLOTS * 2;
 const MAX_FINE_SLOTS: u32 = 128;
 const FINE_STRIDE: u32 = MAX_FINE_SLOTS / 4;
 
+/// One draw for the batched `gpu_frame_times` bench:
+/// `(drawables, bounds_origin_px, grid_w_px, grid_h_px, camera)`.
+type FrameDraw<'a> = (
+    &'a [(&'a crate::drawable::Drawable, &'a Style)],
+    [f32; 2],
+    u32,
+    u32,
+    [f32; 2],
+);
+
 /// One significant tiled-vs-untiled pixel mismatch: `(x, y, tiled, untiled, delta)`.
 type PixelDiff = (u32, u32, [u8; 4], [u8; 4], i32);
 
@@ -726,6 +736,293 @@ impl TestRenderer {
         readback.unmap();
 
         let period = self.queue.get_timestamp_period() as f64; // ns per tick
+        let compute_us = t[1].saturating_sub(t[0]) as f64 * period / 1000.0;
+        let fragment_us = t[3].saturating_sub(t[2]) as f64 * period / 1000.0;
+        Some((compute_us, fragment_us))
+    }
+
+    /// GPU time (compute + render, microseconds) of a full BATCHED frame: each draw
+    /// is its own DrawData (its own grid/clip/camera + entry range), and the index
+    /// builds as ONE dispatch over the z-axis - exactly the production layout, where
+    /// the GPU overlaps all draws. This is the only faithful measure of a multi-draw
+    /// scene; per-draw isolation (`gpu_pass_times`) cannot capture that concurrency.
+    /// Each draw: `(drawables, bounds_origin_px, grid_w_px, grid_h_px, camera)`.
+    /// `None` if the adapter lacks `TIMESTAMP_QUERY`.
+    fn gpu_frame_times(
+        &self,
+        draws: &[FrameDraw],
+        canvas_w: u32,
+        canvas_h: u32,
+        zoom: f32,
+    ) -> Option<(f64, f64)> {
+        if !self.device.features().contains(Features::TIMESTAMP_QUERY) {
+            return None;
+        }
+        let scale = 1.0_f32;
+
+        let mut gpu_segments: Vec<GpuSegment> = Vec::new();
+        let mut gpu_entries: Vec<GpuDrawEntry> = Vec::new();
+        let mut gpu_styles: Vec<GpuStyle> = Vec::new();
+        let mut draw_datas: Vec<DrawData> = Vec::new();
+        let mut tile_base = 0u32;
+        let mut coarse_base = 0u32;
+        let mut max_cols = 0u32;
+        let mut max_rows = 0u32;
+
+        for (drawables, origin_px, gw, gh, cam) in draws {
+            let entry_start = gpu_entries.len() as u32;
+            for (i, (drawable, style)) in drawables.iter().enumerate() {
+                let seg_offset = gpu_segments.len() as u32;
+                let origin = if drawable.segment_count() > 0 {
+                    let b = drawable.bounds();
+                    [(b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5]
+                } else {
+                    [0.0, 0.0]
+                };
+                let local_storage;
+                let local: &crate::drawable::Drawable = if origin == [0.0, 0.0] {
+                    drawable
+                } else {
+                    local_storage = drawable.translated(-origin[0], -origin[1]);
+                    &local_storage
+                };
+                let (mut entry, gpu_style) =
+                    compile_local_at(local, style, i as u32, origin, 0, &mut gpu_segments);
+                entry.style_idx = gpu_styles.len() as u32;
+                entry.segment_start = seg_offset;
+                gpu_entries.push(entry);
+                gpu_styles.push(gpu_style);
+            }
+            let grid_cols = (*gw as f32 / TILE_SIZE).ceil() as u32;
+            let grid_rows = (*gh as f32 / TILE_SIZE).ceil() as u32;
+            let coarse_cols = grid_cols.div_ceil(COARSE_FACTOR);
+            let coarse_rows = grid_rows.div_ceil(COARSE_FACTOR);
+            max_cols = max_cols.max(grid_cols);
+            max_rows = max_rows.max(grid_rows);
+            draw_datas.push(DrawData {
+                bounds_origin: GpuVec2::new(origin_px[0] * scale, origin_px[1] * scale),
+                camera_position: GpuVec2::new(cam[0], cam[1]),
+                camera_zoom: zoom,
+                scale_factor: scale,
+                time: 0.0,
+                debug_flags: 0,
+                entry_count: gpu_entries.len() as u32 - entry_start,
+                entry_start,
+                grid_cols,
+                grid_rows,
+                tile_base,
+                coarse_cols,
+                coarse_rows,
+                coarse_base,
+                mouse_px: GpuVec2::ZERO,
+                _pad0: 0,
+                _pad1: 0,
+            });
+            tile_base += grid_cols * grid_rows;
+            coarse_base += coarse_cols * coarse_rows;
+        }
+
+        let total_tiles = tile_base.max(1);
+        let total_coarse = coarse_base.max(1);
+        let num_draws = draw_datas.len() as u32;
+
+        let draws_buf = self.create_storage(&draw_datas);
+        let entries_buf = self.create_storage(&gpu_entries);
+        let segments_buf = self.create_storage(&gpu_segments);
+        let styles_buf = self.create_storage(&gpu_styles);
+        let storage = |size: u64| {
+            self.device.create_buffer(&BufferDescriptor {
+                label: None,
+                size: size.max(4),
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        };
+        let coarse_counts_buf = storage(total_coarse as u64 * 4);
+        let coarse_slots_buf = storage(total_coarse as u64 * COARSE_STRIDE as u64 * 4);
+        let fine_counts_buf = storage(total_tiles as u64 * 4);
+        let fine_slots_buf = storage(total_tiles as u64 * FINE_STRIDE as u64 * 4);
+
+        let render_bg = self.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &self.render_group0_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: draws_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: entries_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: segments_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: styles_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: fine_counts_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: fine_slots_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 6,
+                    resource: coarse_slots_buf.as_entire_binding(),
+                },
+            ],
+        });
+        let compute_bg0 = self.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &self.compute_group0_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: draws_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: entries_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: segments_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: styles_buf.as_entire_binding(),
+                },
+            ],
+        });
+        let compute_bg1 = self.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &self.compute_group1_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: coarse_counts_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: coarse_slots_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: fine_counts_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: fine_slots_buf.as_entire_binding(),
+                },
+            ],
+        });
+
+        let texture = self.device.create_texture(&TextureDescriptor {
+            label: None,
+            size: Extent3d {
+                width: canvas_w,
+                height: canvas_h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba8Unorm,
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&TextureViewDescriptor::default());
+
+        let qs = self.device.create_query_set(&QuerySetDescriptor {
+            label: Some("sdf_frame_ts"),
+            ty: QueryType::Timestamp,
+            count: 4,
+        });
+        let resolve = self.device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: 32,
+            usage: BufferUsages::QUERY_RESOLVE | BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let readback = self.device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: 32,
+            usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut enc = self
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+        {
+            let mut pass = enc.begin_compute_pass(&ComputePassDescriptor {
+                label: Some("sdf_index"),
+                timestamp_writes: Some(ComputePassTimestampWrites {
+                    query_set: &qs,
+                    beginning_of_pass_write_index: Some(0),
+                    end_of_pass_write_index: Some(1),
+                }),
+            });
+            pass.set_pipeline(&self.compute_pipeline);
+            pass.set_bind_group(0, &compute_bg0, &[]);
+            pass.set_bind_group(1, &compute_bg1, &[]);
+            // One dispatch, z = draw count: each layer culls its own draw's grid.
+            pass.dispatch_workgroups(
+                max_cols.div_ceil(COARSE_FACTOR),
+                max_rows.div_ceil(COARSE_FACTOR),
+                num_draws,
+            );
+        }
+        {
+            let mut pass = enc.begin_render_pass(&RenderPassDescriptor {
+                label: Some("sdf_shade"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(Color::TRANSPARENT),
+                        store: StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: Some(RenderPassTimestampWrites {
+                    query_set: &qs,
+                    beginning_of_pass_write_index: Some(2),
+                    end_of_pass_write_index: Some(3),
+                }),
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.render_pipeline);
+            pass.set_bind_group(0, &render_bg, &[]);
+            pass.draw(0..3, 0..num_draws);
+        }
+        enc.resolve_query_set(&qs, 0..4, &resolve, 0);
+        enc.copy_buffer_to_buffer(&resolve, 0, &readback, 0, 32);
+        let idx = self.queue.submit(Some(enc.finish()));
+
+        let slice = readback.slice(..);
+        slice.map_async(MapMode::Read, |_| {});
+        self.device
+            .poll(PollType::Wait {
+                submission_index: Some(idx),
+                timeout: Some(std::time::Duration::from_secs(10)),
+            })
+            .unwrap();
+        let data = slice.get_mapped_range();
+        let mut t = [0u64; 4];
+        for (k, slot) in t.iter_mut().enumerate() {
+            *slot = u64::from_le_bytes(data[k * 8..k * 8 + 8].try_into().unwrap());
+        }
+        drop(data);
+        readback.unmap();
+
+        let period = self.queue.get_timestamp_period() as f64;
         let compute_us = t[1].saturating_sub(t[0]) as f64 * period / 1000.0;
         let fragment_us = t[3].saturating_sub(t[2]) as f64 * period / 1000.0;
         Some((compute_us, fragment_us))
@@ -4120,39 +4417,81 @@ fn measure_gpu_shader_cost() {
         edges.push(Shape::bezier(p0, p1, p2, p3).evaluate());
     }
 
-    let mut d: Vec<(&crate::drawable::Drawable, &Style)> =
+    // Reference: the LUMPED single draw (all 1141 entries in one DrawData) - every
+    // coarse tile scans all 1141, an artifact of lumping.
+    let mut lumped: Vec<(&crate::drawable::Drawable, &Style)> =
         Vec::with_capacity(1 + nodes.len() + edges.len());
-    d.push((&bg, &dark));
+    lumped.push((&bg, &dark));
     for n in &nodes {
-        d.push((n, &fill_style));
+        lumped.push((n, &fill_style));
     }
     for e in &edges {
-        d.push((e, &edge_style));
+        lumped.push((e, &edge_style));
     }
 
-    // Warm up, then take the minimum of several runs (least scheduler noise).
-    let _ = r.gpu_pass_times(&d, w, h, zoom, cam);
-    let mut runs = Vec::new();
-    for _ in 0..12 {
-        if let Some(t) = r.gpu_pass_times(&d, w, h, zoom, cam) {
-            runs.push(t);
+    // FAITHFUL: the production layout - each primitive is its OWN draw, one BATCHED
+    // dispatch over the z-axis so the GPU overlaps them. bg + edges cover the screen;
+    // each node fill is clipped to ~its bounds with its own centring camera.
+    let bg_slice: Vec<(&crate::drawable::Drawable, &Style)> = vec![(&bg, &dark)];
+    let edges_slice: Vec<(&crate::drawable::Drawable, &Style)> =
+        edges.iter().map(|e| (e, &edge_style)).collect();
+    let node_slices: Vec<Vec<(&crate::drawable::Drawable, &Style)>> =
+        nodes.iter().map(|n| vec![(n, &fill_style)]).collect();
+
+    let mut frame: Vec<FrameDraw> = Vec::with_capacity(2 + node_slices.len());
+    frame.push((&bg_slice[..], [0.0, 0.0], w, h, cam));
+    frame.push((&edges_slice[..], [0.0, 0.0], w, h, cam));
+    for (i, ns) in node_slices.iter().enumerate() {
+        let nb = nodes[i].bounds();
+        let (cx, cy) = ((nb[0] + nb[2]) * 0.5, (nb[1] + nb[3]) * 0.5);
+        // 32px clip (~2 fine tiles) centred on the node, like the widget's per-node clip.
+        let ncam = [16.0 / zoom - cx, 16.0 / zoom - cy];
+        frame.push((&ns[..], [0.0, 0.0], 32, 32, ncam));
+    }
+
+    let lumped_t = {
+        let _ = r.gpu_pass_times(&lumped, w, h, zoom, cam);
+        let mut c = f64::INFINITY;
+        let mut f = f64::INFINITY;
+        for _ in 0..10 {
+            if let Some(t) = r.gpu_pass_times(&lumped, w, h, zoom, cam) {
+                c = c.min(t.0);
+                f = f.min(t.1);
+            }
         }
-    }
-    let cmin = runs.iter().map(|t| t.0).fold(f64::INFINITY, f64::min);
-    let fmin = runs.iter().map(|t| t.1).fold(f64::INFINITY, f64::min);
-    let segs: usize = nodes
-        .iter()
-        .chain(edges.iter())
-        .map(|x| x.segment_count())
-        .sum();
+        (c, f)
+    };
+    let frame_t = {
+        let _ = r.gpu_frame_times(&frame, w, h, zoom);
+        let mut c = f64::INFINITY;
+        let mut f = f64::INFINITY;
+        for _ in 0..10 {
+            if let Some(t) = r.gpu_frame_times(&frame, w, h, zoom) {
+                c = c.min(t.0);
+                f = f.min(t.1);
+            }
+        }
+        (c, f)
+    };
 
-    println!("\n--- GPU shader cost: bg + 500 node fills + 640 edges @ {w}x{h}, zoom {zoom} ---");
-    println!("entries: {}   segments: {segs}", d.len());
-    println!("compute (two-level index, one dispatch): {cmin:.1} us");
-    println!("fragment (shade):                        {fmin:.1} us");
+    println!("\n--- GPU shader cost @ {w}x{h}, zoom {zoom} ---");
     println!(
-        "total GPU:                               {:.1} us",
-        cmin + fmin
+        "LUMPED (1 draw, {} entries):     compute {:.1} us   fragment {:.1} us   <- artifact (every tile scans all)",
+        lumped.len(),
+        lumped_t.0,
+        lumped_t.1
+    );
+    println!(
+        "FAITHFUL ({} batched draws):     compute {:.1} us   fragment {:.1} us   <- production layout",
+        frame.len(),
+        frame_t.0,
+        frame_t.1
+    );
+    println!(
+        "  (faithful = bg + edges full-screen + 500 clipped node draws, ONE z-batched dispatch)"
+    );
+    println!(
+        "  (fragment is slightly inflated: clipped nodes overdraw the canvas corner in this bench)"
     );
     println!("----------------------------------------------------------------------\n");
 }
