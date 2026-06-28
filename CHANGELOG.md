@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-06-29
+
+### Added
+
+- Composable `can_connect` helpers and a richer default connection rule.
+- Debug-assert that node ids are unique on push.
+- `GraphInfo` + `info()` callback exposing per-frame counts and CPU op timings.
+- Theme-driven tiling background on `GraphStyle` (`TilingBackground`/`TilingKind`:
+  grid, dots, triangle, hex).
+
+### Changed
+
+- Rewritten arc-only SDF v3 renderer with substantial performance gains.
+- Interactions are gated on whether their handler is set.
+- Style system maps theme colors through the palette instead of hand-mixing.
+- Demos self-drive redraws; the external frame clock was dropped.
+
+### Removed
+
+- Legacy SDF v2 renderer.
+
+### Fixed
+
+- All animated primitives are reported for redraw, fixing idle-animation updates.
+
+[0.2.0]: https://github.com/tuco86/iced_nodegraph/releases/tag/v0.2.0
+
 ## [0.1.0] - 2026-06-16
 
 Initial release.
