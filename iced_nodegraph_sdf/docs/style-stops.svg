@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 440" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, sans-serif">
+  <rect x="0" y="0" width="960" height="440" rx="12" fill="#fbfcfe" stroke="#d9dee5"/>
+  <text x="32" y="40" font-size="20" font-weight="700" fill="#1b2026">Colour is a distance-stop chain</text>
+  <text x="32" y="60" font-size="13" fill="#5b6672">A style maps signed distance to colour. Stops are placed along the distance axis; the shader holds, then smoothsteps</text>
+  <text x="32" y="77" font-size="13" fill="#5b6672">between consecutive stops in one pass. Fill, stroke, and glow are all the same mechanism.</text>
+
+  <!-- axis -->
+  <g transform="translate(60,150)">
+    <line x1="0" y1="120" x2="840" y2="120" stroke="#8a95a3" stroke-width="2"/>
+    <text x="420" y="158" font-size="12" fill="#5b6672" text-anchor="middle">signed distance d &#8212;&#8212;&#8212;&#8594;  (negative = inside, 0 = boundary, positive = outside)</text>
+    <line x1="420" y1="106" x2="420" y2="134" stroke="#1b2026" stroke-width="1.5"/>
+    <text x="420" y="100" font-size="11" fill="#1b2026" text-anchor="middle">d = 0</text>
+
+    <!-- solid fill profile -->
+    <text x="0" y="-6" font-size="13" font-weight="700" fill="#1b2026">solid fill</text>
+    <rect x="0" y="0" width="420" height="34" fill="#2f6df6"/>
+    <rect x="420" y="0" width="420" height="34" fill="#2f6df6" opacity="0"/>
+    <text x="200" y="22" font-size="11" fill="#ffffff" text-anchor="middle">opaque inside</text>
+    <text x="640" y="22" font-size="11" fill="#5b6672" text-anchor="middle">transparent outside</text>
+    <circle cx="420" cy="34" r="4" fill="#1b2026"/>
+    <text x="430" y="52" font-size="10.5" fill="#5b6672">stop at d=0</text>
+  </g>
+
+  <!-- stroke -->
+  <g transform="translate(60,330)">
+    <text x="0" y="-6" font-size="13" font-weight="700" fill="#1b2026">glow / shadow</text>
+    <!-- band from boundary fading out -->
+    <defs>
+      <linearGradient id="glow" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0%" stop-color="#7048e8" stop-opacity="0.9"/>
+        <stop offset="100%" stop-color="#7048e8" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+    <rect x="420" y="0" width="260" height="34" fill="url(#glow)"/>
+    <circle cx="420" cy="34" r="4" fill="#1b2026"/>
+    <text x="430" y="52" font-size="10.5" fill="#5b6672">full colour at boundary</text>
+    <circle cx="680" cy="34" r="4" fill="#1b2026"/>
+    <text x="650" y="52" font-size="10.5" fill="#5b6672">transparent at radius</text>
+    <line x1="0" y1="17" x2="840" y2="17" stroke="#dfe5ec" stroke-width="0"/>
+  </g>
+
+  <text x="60" y="410" font-size="12" fill="#3a424c">Because the whole profile is one entry, abutting bands never composite against each other &#8212; no seams. A pattern</text>
+  <text x="60" y="428" font-size="12" fill="#3a424c">(dash, dot, arrow) instead reshapes the distance along the contour before this lookup.</text>
+</svg>

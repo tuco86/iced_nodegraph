@@ -20,7 +20,13 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 
 use glam::Vec2;
 
-use crate::drawable::{Drawable, DrawableType, Segment, SegmentType, bezier_arc_length};
+use crate::biarc::{ArcPiece, cubic_to_arcs};
+use crate::drawable::{Drawable, DrawableType, Segment};
+
+/// Arc-spline tolerance (world units) for approximating cubic beziers as arcs in
+/// the arc-only model. Matches the widget's edge tolerance; world-space, so a
+/// curve built once does not visibly facet at typical zoom.
+const CUBIC_ARC_TOL: f32 = 0.05;
 
 /// Geometry construction namespace.
 pub struct Curve;
@@ -53,11 +59,16 @@ impl Curve {
         p2: impl Into<[f32; 2]>,
         p3: impl Into<[f32; 2]>,
     ) -> Drawable {
-        Drawable::single_bezier(
+        // A4 arcs-only: fit the cubic with a biarc spline on the CPU so the
+        // shader needs no cubic solver. `tol` is sub-pixel at zoom 1, keeping the
+        // approximation within the AA bar; the spline preserves arc-length so
+        // dash/flow parametrization matches the cubic.
+        Drawable::bezier_arcs(
             Vec2::from(p0.into()),
             Vec2::from(p1.into()),
             Vec2::from(p2.into()),
             Vec2::from(p3.into()),
+            0.05,
         )
     }
 
@@ -314,45 +325,17 @@ impl ShapeBuilder {
     }
 
     fn build_drawable(self, closed: bool) -> Drawable {
-        let mut gpu_segments = Vec::with_capacity(self.segments.len());
-        let mut cumulative_length = 0.0f32;
-        let mut min_x = f32::INFINITY;
-        let mut min_y = f32::INFINITY;
-        let mut max_x = f32::NEG_INFINITY;
-        let mut max_y = f32::NEG_INFINITY;
+        // One arc primitive: lines and points pass through; arcs are split into
+        // minor sub-arcs; cubics are arc-splined on the CPU (no GPU bezier).
+        let mut gpu_segments: Vec<Segment> = Vec::with_capacity(self.segments.len());
+        let mut acc = 0.0f32;
 
-        let mut lengths = Vec::with_capacity(self.segments.len());
         for seg in &self.segments {
-            lengths.push(match seg {
-                ShapeSegment::Line { a, b } => a.distance(*b),
-                ShapeSegment::Arc { radius, sweep, .. } => sweep.abs() * radius,
-                ShapeSegment::CubicBezier { p0, p1, p2, p3 } => {
-                    bezier_arc_length(*p0, *p1, *p2, *p3)
-                }
-                ShapeSegment::Point { .. } => 0.0,
-            });
-        }
-        let total_length: f32 = lengths.iter().sum();
-
-        for (seg, &len) in self.segments.iter().zip(&lengths) {
-            let arc_start = cumulative_length;
-            cumulative_length += len;
-            let arc_end = cumulative_length;
-
             match seg {
                 ShapeSegment::Line { a, b } => {
-                    min_x = min_x.min(a.x).min(b.x);
-                    min_y = min_y.min(a.y).min(b.y);
-                    max_x = max_x.max(a.x).max(b.x);
-                    max_y = max_y.max(a.y).max(b.y);
-                    gpu_segments.push(Segment {
-                        segment_type: SegmentType::Line,
-                        signed: closed,
-                        geom0: [a.x, a.y, b.x, b.y],
-                        geom1: [0.0; 4],
-                        arc_start,
-                        arc_end,
-                    });
+                    let len = a.distance(*b);
+                    gpu_segments.push(Segment::line(*a, *b, closed, acc, acc + len));
+                    acc += len;
                 }
                 ShapeSegment::Arc {
                     center,
@@ -360,51 +343,66 @@ impl ShapeBuilder {
                     start_angle,
                     sweep,
                 } => {
-                    // Conservative AABB: center ± radius covers all possible arc points
-                    min_x = min_x.min(center.x - radius);
-                    min_y = min_y.min(center.y - radius);
-                    max_x = max_x.max(center.x + radius);
-                    max_y = max_y.max(center.y + radius);
-                    gpu_segments.push(Segment {
-                        segment_type: SegmentType::Arc,
-                        signed: closed,
-                        geom0: [center.x, center.y, *radius, *start_angle],
-                        geom1: [*sweep, 0.0, 0.0, 0.0],
-                        arc_start,
-                        arc_end,
-                    });
+                    Segment::push_arc(
+                        &mut gpu_segments,
+                        *center,
+                        *radius,
+                        *start_angle,
+                        *sweep,
+                        closed,
+                        &mut acc,
+                    );
                 }
                 ShapeSegment::CubicBezier { p0, p1, p2, p3 } => {
-                    for p in [p0, p1, p2, p3] {
-                        min_x = min_x.min(p.x);
-                        min_y = min_y.min(p.y);
-                        max_x = max_x.max(p.x);
-                        max_y = max_y.max(p.y);
+                    for piece in cubic_to_arcs(*p0, *p1, *p2, *p3, CUBIC_ARC_TOL) {
+                        match piece {
+                            ArcPiece::Line { start, end, length } => {
+                                gpu_segments.push(Segment::line(
+                                    start,
+                                    end,
+                                    closed,
+                                    acc,
+                                    acc + length,
+                                ));
+                                acc += length;
+                            }
+                            ArcPiece::Arc {
+                                center,
+                                radius,
+                                start_angle,
+                                sweep,
+                                ..
+                            } => {
+                                Segment::push_arc(
+                                    &mut gpu_segments,
+                                    center,
+                                    radius,
+                                    start_angle,
+                                    sweep,
+                                    closed,
+                                    &mut acc,
+                                );
+                            }
+                        }
                     }
-                    gpu_segments.push(Segment {
-                        segment_type: SegmentType::CubicBezier,
-                        signed: closed,
-                        geom0: [p0.x, p0.y, p1.x, p1.y],
-                        geom1: [p2.x, p2.y, p3.x, p3.y],
-                        arc_start,
-                        arc_end,
-                    });
                 }
                 ShapeSegment::Point { pos, heading } => {
-                    min_x = min_x.min(pos.x);
-                    min_y = min_y.min(pos.y);
-                    max_x = max_x.max(pos.x);
-                    max_y = max_y.max(pos.y);
-                    gpu_segments.push(Segment {
-                        segment_type: SegmentType::Point,
-                        signed: closed,
-                        geom0: [pos.x, pos.y, *heading, 0.0],
-                        geom1: [0.0; 4],
-                        arc_start,
-                        arc_end: arc_start, // zero length
-                    });
+                    gpu_segments.push(Segment::point(*pos, *heading, closed, acc));
                 }
             }
+        }
+
+        let total_length = acc;
+
+        // Exact AABB from each segment's true extent (tight for arcs).
+        let mut min = Vec2::splat(f32::INFINITY);
+        let mut max = Vec2::splat(f32::NEG_INFINITY);
+        for seg in &gpu_segments {
+            seg.grow_aabb(&mut min, &mut max);
+        }
+        if gpu_segments.is_empty() {
+            min = Vec2::ZERO;
+            max = Vec2::ZERO;
         }
 
         Drawable {
@@ -415,7 +413,7 @@ impl ShapeBuilder {
             },
             segments: gpu_segments,
             total_arc_length: total_length,
-            bounds: [min_x, min_y, max_x, max_y],
+            bounds: [min.x, min.y, max.x, max.y],
             is_closed: closed,
             tiling_type: None,
             tiling_params: [0.0; 4],
@@ -475,24 +473,24 @@ mod tests {
         let s = Curve::shape([0.0, 0.0], 0.0).line(10.0).end();
         let seg = &s.segments[0];
         // Should go from (0,0) to (0, -10)
-        assert_near(seg.geom0[2], 0.0, 0.01, "end x");
-        assert_near(seg.geom0[3], -10.0, 0.01, "end y");
+        assert_near(seg.end.x, 0.0, 0.01, "end x");
+        assert_near(seg.end.y, -10.0, 0.01, "end y");
     }
 
     #[test]
     fn heading_pi2_is_right() {
         let s = Curve::shape([0.0, 0.0], FRAC_PI_2).line(10.0).end();
         let seg = &s.segments[0];
-        assert_near(seg.geom0[2], 10.0, 0.01, "end x");
-        assert_near(seg.geom0[3], 0.0, 0.01, "end y");
+        assert_near(seg.end.x, 10.0, 0.01, "end x");
+        assert_near(seg.end.y, 0.0, 0.01, "end y");
     }
 
     #[test]
     fn heading_pi_is_down() {
         let s = Curve::shape([0.0, 0.0], PI).line(10.0).end();
         let seg = &s.segments[0];
-        assert_near(seg.geom0[2], 0.0, 0.01, "end x");
-        assert_near(seg.geom0[3], 10.0, 0.01, "end y");
+        assert_near(seg.end.x, 0.0, 0.01, "end x");
+        assert_near(seg.end.y, 10.0, 0.01, "end y");
     }
 
     #[test]
@@ -505,8 +503,8 @@ mod tests {
             .line(5.0)
             .end();
         let seg2 = &s.segments[2]; // second line (index 2, after junction point)
-        assert_near(seg2.geom0[2], 5.0, 0.01, "end x");
-        assert_near(seg2.geom0[3], -5.0, 0.01, "end y");
+        assert_near(seg2.end.x, 5.0, 0.01, "end x");
+        assert_near(seg2.end.y, -5.0, 0.01, "end y");
     }
 
     // --- Connectivity ---
@@ -526,11 +524,11 @@ mod tests {
         let lines: Vec<_> = d
             .segments
             .iter()
-            .filter(|s| s.segment_type == SegmentType::Line)
+            .filter(|s| s.curvature == 0.0 && s.start != s.end)
             .collect();
         for i in 0..lines.len() - 1 {
-            let end = Vec2::new(lines[i].geom0[2], lines[i].geom0[3]);
-            let start = Vec2::new(lines[i + 1].geom0[0], lines[i + 1].geom0[1]);
+            let end = lines[i].end;
+            let start = lines[i + 1].start;
             assert_vec_near(end, start, 0.01, &format!("line {i}->{}", i + 1));
         }
     }
@@ -547,8 +545,8 @@ mod tests {
             .line(10.0)
             .close();
         let last = d.segments.last().unwrap();
-        let end = Vec2::new(last.geom0[2], last.geom0[3]);
-        let start = Vec2::new(d.segments[0].geom0[0], d.segments[0].geom0[1]);
+        let end = last.end;
+        let start = d.segments[0].start;
         assert_vec_near(end, start, 0.1, "close returns to start");
     }
 
@@ -657,17 +655,12 @@ mod tests {
         let mut min_dist = f32::MAX;
         let mut best_v = 0.0f32;
         for seg in &drawable.segments {
-            let (dist, v) = match seg.segment_type {
-                SegmentType::Line => {
-                    let a = Vec2::new(seg.geom0[0], seg.geom0[1]);
-                    let b = Vec2::new(seg.geom0[2], seg.geom0[3]);
-                    cpu_sd_line(p, a, b)
-                }
-                SegmentType::Point => {
-                    let pos = Vec2::new(seg.geom0[0], seg.geom0[1]);
-                    cpu_sd_point(p, pos, seg.geom0[2])
-                }
-                _ => continue, // Arc/Bezier not needed for basic tests
+            let (dist, v) = if seg.start == seg.end {
+                cpu_sd_point(p, seg.start, seg.heading)
+            } else if seg.curvature == 0.0 {
+                cpu_sd_line(p, seg.start, seg.end)
+            } else {
+                continue; // Arc not needed for basic tests
             };
             if dist < min_dist {
                 min_dist = dist;
@@ -722,8 +715,8 @@ mod tests {
         // Right side in screen Y-down = below = positive Y
         let d = Curve::line([0.0, 0.0], [10.0, 0.0]);
         let seg = &d.segments[0];
-        let a = Vec2::new(seg.geom0[0], seg.geom0[1]);
-        let b = Vec2::new(seg.geom0[2], seg.geom0[3]);
+        let a = seg.start;
+        let b = seg.end;
 
         let below = Vec2::new(5.0, 5.0); // right side
         let (_, v) = cpu_sd_line(below, a, b);

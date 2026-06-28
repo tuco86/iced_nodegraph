@@ -108,7 +108,7 @@ impl NodeStyle {
         vec![Style {
             stops,
             pattern: None,
-            distance_field: false,
+            transfer: Default::default(),
         }]
     }
 
@@ -142,39 +142,8 @@ impl NodeStyle {
         vec![Style {
             stops: vec![Stop::new(-d, full), Stop::new(d, none)],
             pattern: None,
-            distance_field: false,
+            transfer: Default::default(),
         }]
-    }
-}
-
-#[cfg(test)]
-mod shadow_tests {
-    use super::NodeStyle;
-
-    /// The shadow is one chain (no separate composited bands to seam): a solid
-    /// core held below `-shadow_distance`, gradient to transparent at
-    /// `+shadow_distance`, centred on the silhouette.
-    #[test]
-    fn shadow_fills_interior_and_fades_out() {
-        let style = NodeStyle::input();
-        let layers = style.shadow_sdf_layers(1.0);
-
-        assert_eq!(layers.len(), 1, "shadow must be a single entry");
-        let stops = &layers[0].stops;
-        assert_eq!(stops.len(), 2, "solid core -> transparent outside");
-        assert_eq!(
-            stops[0].dist, -style.shadow_distance,
-            "gradient starts at -shadow_distance (solid core held below it)",
-        );
-        assert_eq!(
-            stops[0].start.a, style.shadow_color.a,
-            "full at the inner edge of the gradient",
-        );
-        assert_eq!(
-            stops[1].dist, style.shadow_distance,
-            "fades out at +shadow_distance"
-        );
-        assert_eq!(stops[1].start.a, 0.0, "transparent at the outer edge");
     }
 }
 
@@ -276,5 +245,36 @@ impl PinStyle {
             layers.push(Style::quad_band(&self.border_color, -1e6, 0.0).expand(self.border_width));
         }
         layers
+    }
+}
+
+#[cfg(test)]
+mod shadow_tests {
+    use super::NodeStyle;
+
+    /// The shadow is one chain (no separate composited bands to seam): a solid
+    /// core held below `-shadow_distance`, gradient to transparent at
+    /// `+shadow_distance`, centred on the silhouette.
+    #[test]
+    fn shadow_fills_interior_and_fades_out() {
+        let style = NodeStyle::input();
+        let layers = style.shadow_sdf_layers(1.0);
+
+        assert_eq!(layers.len(), 1, "shadow must be a single entry");
+        let stops = &layers[0].stops;
+        assert_eq!(stops.len(), 2, "solid core -> transparent outside");
+        assert_eq!(
+            stops[0].dist, -style.shadow_distance,
+            "gradient starts at -shadow_distance (solid core held below it)",
+        );
+        assert_eq!(
+            stops[0].start.a, style.shadow_color.a,
+            "full at the inner edge of the gradient",
+        );
+        assert_eq!(
+            stops[1].dist, style.shadow_distance,
+            "fades out at +shadow_distance"
+        );
+        assert_eq!(stops[1].start.a, 0.0, "transparent at the outer edge");
     }
 }

@@ -2,7 +2,6 @@
 members = [
     "iced_nodegraph",
     "iced_nodegraph_sdf",
-    "iced_nodegraph_sdf/examples/basic",
     "demos/hello_world",
     "demos/styling",
     "demos/interaction",

@@ -24,7 +24,6 @@ pub struct EdgeSections {
     pub pattern: bool,
     pub border: bool,
     pub shadow: bool,
-    pub debug: bool,
 }
 
 impl EdgeSections {
@@ -34,7 +33,6 @@ impl EdgeSections {
             pattern: true,
             border: true,
             shadow: true,
-            debug: false,
         }
     }
 }
@@ -46,7 +44,6 @@ pub enum EdgeSection {
     Pattern,
     Border,
     Shadow,
-    Debug,
 }
 
 /// Pattern type for simple selection (maps to iced_nodegraph_sdf::Pattern)
@@ -96,9 +93,6 @@ pub struct EdgeConfigInputs {
     pub shadow_blur: Option<f32>,
     pub shadow_color: Option<ColorQuad>,
     pub shadow_offset: Option<(f32, f32)>,
-
-    // --- Debug ---
-    pub tile_debug: bool,
 }
 
 impl EdgeConfigInputs {
@@ -559,23 +553,6 @@ where
                 ),
                 value_display(offset_display),
             )
-            .into(),
-        ],
-    );
-
-    // --- Debug section ---
-    push_section(
-        &mut items,
-        "Debug",
-        sections.debug,
-        on_toggle(EdgeSection::Debug),
-        None,
-        vec![
-            row![
-                text("tile debug").size(10).width(Length::Fill),
-                text(if inputs.tile_debug { "ON" } else { "off" }).size(10),
-            ]
-            .align_y(iced::Alignment::Center)
             .into(),
         ],
     );

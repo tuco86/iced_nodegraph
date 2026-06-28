@@ -45,11 +45,10 @@ pub fn wasm_init() {
 use graph::generate_procedural_graph;
 use iced::{
     Color, Element, Length, Point, Rectangle, Subscription, Theme, Vector, mouse,
-    widget::{canvas, checkbox, column, container, opaque, row, stack, text},
+    widget::{canvas, column, container, opaque, row, stack, text},
 };
 use iced_nodegraph::{
-    Counts, GraphInfo, PinInfo, PinRef, PinStatus, PinStyle, SdfDebug, default_pin_style, edge,
-    node,
+    Counts, GraphInfo, PinInfo, PinRef, PinStatus, PinStyle, default_pin_style, edge, node,
 };
 use nodes::NodeType;
 
@@ -127,13 +126,14 @@ enum ApplicationMessage {
         delta: Vector,
         indices: Vec<usize>,
     },
-    ToggleDebugEdges,
-    ToggleDebugShadows,
-    ToggleDebugFill,
-    ToggleDebugForeground,
-    ToggleDebugDistanceField,
-    ToggleDebugHoveredTile,
     Info(GraphInfo),
+    /// Camera reported by the widget on pan/zoom release (uncontrolled camera).
+    /// Used only to read off exact coordinates when reproducing the pan/zoom
+    /// float-collapse display bug.
+    CameraReport {
+        pos: Point,
+        zoom: f32,
+    },
 }
 
 struct Application {
@@ -141,7 +141,9 @@ struct Application {
     nodes: Vec<(Point, NodeType)>,
     current_theme: Theme,
     selected_nodes: HashSet<usize>,
-    sdf_debug: SdfDebug,
+    /// Last camera (world position, zoom) reported by the widget on pan/zoom
+    /// release. Shown in the stats panel to capture float-collapse repro coords.
+    camera: (Point, f32),
     /// Most recent per-frame diagnostics from the graph widget.
     latest_info: Option<GraphInfo>,
     /// Per-op CPU time (microseconds) for the last `HIST_CAP` frames, oldest
@@ -157,7 +159,7 @@ impl Default for Application {
             nodes,
             current_theme: Theme::CatppuccinMocha,
             selected_nodes: HashSet::new(),
-            sdf_debug: SdfDebug::default(),
+            camera: (Point::ORIGIN, 1.0),
             latest_info: None,
             history: VecDeque::with_capacity(HIST_CAP),
         }
@@ -189,21 +191,8 @@ impl Application {
                     }
                 }
             }
-            ApplicationMessage::ToggleDebugEdges => self.sdf_debug.edges = !self.sdf_debug.edges,
-            ApplicationMessage::ToggleDebugShadows => {
-                self.sdf_debug.shadows = !self.sdf_debug.shadows
-            }
-            ApplicationMessage::ToggleDebugFill => {
-                self.sdf_debug.node_fill = !self.sdf_debug.node_fill
-            }
-            ApplicationMessage::ToggleDebugForeground => {
-                self.sdf_debug.node_foreground = !self.sdf_debug.node_foreground
-            }
-            ApplicationMessage::ToggleDebugDistanceField => {
-                self.sdf_debug.distance_field = !self.sdf_debug.distance_field
-            }
-            ApplicationMessage::ToggleDebugHoveredTile => {
-                self.sdf_debug.hovered_tile = !self.sdf_debug.hovered_tile
+            ApplicationMessage::CameraReport { pos, zoom } => {
+                self.camera = (pos, zoom);
             }
             ApplicationMessage::Info(info) => {
                 let frame: Vec<f32> = info
@@ -232,7 +221,7 @@ impl Application {
                 .on_move(|delta, indices| ApplicationMessage::NodesMoved { delta, indices })
                 .on_select(ApplicationMessage::SelectionChanged)
                 .selection(&self.selected_nodes)
-                .sdf_debug(self.sdf_debug)
+                .on_pan(|pos, zoom| ApplicationMessage::CameraReport { pos, zoom })
                 .on_info(ApplicationMessage::Info);
 
         // Add all nodes
@@ -319,41 +308,6 @@ impl Application {
         .width(Length::Fill)
         .height(Length::Fixed(110.0));
 
-        let debug = column![
-            text("Tile Debug").size(12),
-            checkbox(self.sdf_debug.edges)
-                .label("Edges")
-                .on_toggle(|_| ApplicationMessage::ToggleDebugEdges)
-                .size(14)
-                .text_size(12),
-            checkbox(self.sdf_debug.shadows)
-                .label("Shadows")
-                .on_toggle(|_| ApplicationMessage::ToggleDebugShadows)
-                .size(14)
-                .text_size(12),
-            checkbox(self.sdf_debug.node_fill)
-                .label("Node Fill")
-                .on_toggle(|_| ApplicationMessage::ToggleDebugFill)
-                .size(14)
-                .text_size(12),
-            checkbox(self.sdf_debug.node_foreground)
-                .label("Foreground")
-                .on_toggle(|_| ApplicationMessage::ToggleDebugForeground)
-                .size(14)
-                .text_size(12),
-            checkbox(self.sdf_debug.distance_field)
-                .label("IQ Field")
-                .on_toggle(|_| ApplicationMessage::ToggleDebugDistanceField)
-                .size(14)
-                .text_size(12),
-            checkbox(self.sdf_debug.hovered_tile)
-                .label("Hovered Tile")
-                .on_toggle(|_| ApplicationMessage::ToggleDebugHoveredTile)
-                .size(14)
-                .text_size(12),
-        ]
-        .spacing(4);
-
         let body = column![
             text("Frame CPU — stacked by operation").size(13),
             chart,
@@ -362,8 +316,12 @@ impl Application {
             counts_line("Pins", pins_c),
             counts_line("Edges", edges_c),
             text(format!("SDF: {entries} entries · {tiles} tiles")).size(12),
+            text(format!(
+                "cam: ({:.1}, {:.1})  zoom: {:.5}",
+                self.camera.0.x, self.camera.0.y, self.camera.1
+            ))
+            .size(12),
             text("Scroll: Zoom   ·   Right-drag: Pan").size(11),
-            debug,
         ]
         .spacing(8)
         .padding(12)

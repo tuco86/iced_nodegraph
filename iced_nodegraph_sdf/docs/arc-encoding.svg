@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 460" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, sans-serif">
+  <rect x="0" y="0" width="960" height="460" rx="12" fill="#fbfcfe" stroke="#d9dee5"/>
+  <text x="32" y="40" font-size="20" font-weight="700" fill="#1b2026">One primitive: the arc</text>
+  <text x="32" y="62" font-size="13" fill="#5b6672">Every segment is a circular arc stored as two endpoints plus a signed curvature k = 1/r. Lines and points are degenerate arcs, not separate types.</text>
+
+  <!-- Panel: the arc -->
+  <rect x="32" y="86" width="288" height="340" rx="10" fill="#ffffff" stroke="#cfd8e3"/>
+  <text x="48" y="112" font-size="14" font-weight="700" fill="#2f6df6">Arc &#183; k &#8800; 0</text>
+
+  <!-- arc geometry -->
+  <g transform="translate(176,250)">
+    <!-- center -->
+    <circle cx="0" cy="0" r="3" fill="#5b6672"/>
+    <text x="6" y="4" font-size="11" fill="#5b6672">center</text>
+    <!-- radius lines -->
+    <line x1="0" y1="0" x2="-104" y2="0" stroke="#c2ccd8" stroke-width="1.2" stroke-dasharray="4 3"/>
+    <line x1="0" y1="0" x2="73.5" y2="-73.5" stroke="#c2ccd8" stroke-width="1.2" stroke-dasharray="4 3"/>
+    <text x="-72" y="-8" font-size="11" fill="#5b6672">r = 1/|k|</text>
+    <!-- arc start at angle 180, sweep to -45 (minor) -->
+    <path d="M -104 0 A 104 104 0 0 1 73.5 -73.5" fill="none" stroke="#2f6df6" stroke-width="3.5"/>
+    <!-- endpoints -->
+    <circle cx="-104" cy="0" r="4.5" fill="#2f6df6"/>
+    <text x="-128" y="22" font-size="12" font-weight="600" fill="#1b2026">start</text>
+    <circle cx="73.5" cy="-73.5" r="4.5" fill="#2f6df6"/>
+    <text x="60" y="-82" font-size="12" font-weight="600" fill="#1b2026">end</text>
+  </g>
+  <text x="48" y="372" font-size="11.5" fill="#3a424c">Sign of k picks which side of the</text>
+  <text x="48" y="390" font-size="11.5" fill="#3a424c">chord the centre sits on. Stored:</text>
+  <text x="48" y="410" font-size="11.5" font-family="ui-monospace, monospace" fill="#7048e8">start, end, k</text>
+
+  <!-- Panel: the line -->
+  <rect x="336" y="86" width="288" height="340" rx="10" fill="#ffffff" stroke="#cfd8e3"/>
+  <text x="352" y="112" font-size="14" font-weight="700" fill="#2f9e44">Line &#183; k = 0</text>
+  <g transform="translate(480,250)">
+    <line x1="-110" y1="40" x2="110" y2="-40" stroke="#2f9e44" stroke-width="3.5"/>
+    <circle cx="-110" cy="40" r="4.5" fill="#2f9e44"/>
+    <text x="-128" y="60" font-size="12" font-weight="600" fill="#1b2026">start</text>
+    <circle cx="110" cy="-40" r="4.5" fill="#2f9e44"/>
+    <text x="96" y="-48" font-size="12" font-weight="600" fill="#1b2026">end</text>
+  </g>
+  <text x="352" y="372" font-size="11.5" fill="#3a424c">Curvature zero: the radius is</text>
+  <text x="352" y="390" font-size="11.5" fill="#3a424c">infinite, the arc flattens to its</text>
+  <text x="352" y="410" font-size="11.5" fill="#3a424c">chord. No special case in the field.</text>
+
+  <!-- Panel: the point -->
+  <rect x="640" y="86" width="288" height="340" rx="10" fill="#ffffff" stroke="#cfd8e3"/>
+  <text x="656" y="112" font-size="14" font-weight="700" fill="#e8590c">Point &#183; start = end</text>
+  <g transform="translate(784,236)">
+    <circle cx="0" cy="0" r="6" fill="#e8590c"/>
+    <!-- heading arrow -->
+    <line x1="0" y1="0" x2="0" y2="-58" stroke="#e8590c" stroke-width="2.5" marker-end="url(#arO)"/>
+    <text x="8" y="-40" font-size="12" fill="#1b2026">heading</text>
+    <text x="-30" y="26" font-size="12" font-weight="600" fill="#1b2026">start = end</text>
+  </g>
+  <defs>
+    <marker id="arO" markerWidth="9" markerHeight="9" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#e8590c"/>
+    </marker>
+  </defs>
+  <text x="656" y="372" font-size="11.5" fill="#3a424c">Zero-length: a junction marker.</text>
+  <text x="656" y="390" font-size="11.5" fill="#3a424c">heading orients its half-plane so</text>
+  <text x="656" y="410" font-size="11.5" fill="#3a424c">concave corners get the right sign.</text>
+</svg>

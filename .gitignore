@@ -24,3 +24,6 @@
 # Claude Code temp files
 tmpclaude-*
 nul
+
+# Local render debug artifacts
+*.png

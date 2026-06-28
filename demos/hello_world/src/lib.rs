@@ -1669,25 +1669,15 @@ impl Application {
                 Task::none()
             }
             ApplicationMessage::ToggleEdgeSection { node_id, section } => {
-                if section == EdgeSection::Debug {
-                    // Toggle tile_debug on all EdgeConfig input states
-                    for (_, (_, node_type)) in self.nodes.iter_mut() {
-                        if let NodeType::Config(ConfigNodeType::EdgeConfig(inputs)) = node_type {
-                            inputs.tile_debug = !inputs.tile_debug;
-                        }
-                    }
-                } else {
-                    let sections = self
-                        .edge_config_sections
-                        .entry(node_id)
-                        .or_insert_with(EdgeSections::new_all_expanded);
-                    match section {
-                        EdgeSection::Stroke => sections.stroke = !sections.stroke,
-                        EdgeSection::Pattern => sections.pattern = !sections.pattern,
-                        EdgeSection::Border => sections.border = !sections.border,
-                        EdgeSection::Shadow => sections.shadow = !sections.shadow,
-                        EdgeSection::Debug => unreachable!(),
-                    }
+                let sections = self
+                    .edge_config_sections
+                    .entry(node_id)
+                    .or_insert_with(EdgeSections::new_all_expanded);
+                match section {
+                    EdgeSection::Stroke => sections.stroke = !sections.stroke,
+                    EdgeSection::Pattern => sections.pattern = !sections.pattern,
+                    EdgeSection::Border => sections.border = !sections.border,
+                    EdgeSection::Shadow => sections.shadow = !sections.shadow,
                 }
                 Task::none()
             }
@@ -2087,17 +2077,6 @@ impl Application {
                     },
                 ));
             }
-        }
-
-        // Enable tile debug if any EdgeConfig node has it toggled on
-        let tile_debug = self.nodes.values().any(|(_, nt)| {
-            matches!(nt, NodeType::Config(ConfigNodeType::EdgeConfig(inputs)) if inputs.tile_debug)
-        });
-        if tile_debug {
-            ng = ng.sdf_debug(iced_nodegraph::SdfDebug {
-                edges: true,
-                ..Default::default()
-            });
         }
 
         let graph_view: iced::Element<'_, ApplicationMessage> = ng.into();

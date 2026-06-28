@@ -58,6 +58,23 @@ impl Stop {
     }
 }
 
+/// A unary warp on the post-smoothstep blend parameter `t` in the distance-stop
+/// fold (A3 transfer, variant B). It is COLOR-domain - it reshapes how one stop
+/// eases into the next without moving any stop or touching `dist`. [`Transfer::Linear`]
+/// is the identity and the default, so adding a transfer never changes an existing
+/// style's output.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum Transfer {
+    /// Identity: `t' = t` (no change).
+    #[default]
+    Linear,
+    /// Smoothstep easing `3t^2 - 2t^3`, softening both ends of each blend.
+    Smoothstep,
+    /// `t' = t^exponent`. Exponent > 1 biases the blend toward the near stop,
+    /// < 1 toward the far stop. Used for perceptual/radial falloff shaping.
+    Gamma(f32),
+}
+
 /// Rendering style: a distance-stop chain + optional pattern.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Style {
@@ -65,8 +82,9 @@ pub struct Style {
     pub stops: Vec<Stop>,
     /// Optional pattern (stroke layout along the contour).
     pub pattern: Option<Pattern>,
-    /// Special: IQ distance field visualization.
-    pub distance_field: bool,
+    /// Color-domain warp on the stop-blend parameter. Defaults to
+    /// [`Transfer::Linear`] (identity).
+    pub transfer: Transfer,
 }
 
 impl Style {
@@ -84,7 +102,7 @@ impl Style {
         Self {
             stops: vec![Stop::new(0.0, color)],
             pattern: Some(pattern),
-            distance_field: false,
+            transfer: Transfer::Linear,
         }
     }
 
@@ -101,7 +119,7 @@ impl Style {
         Self {
             stops: vec![Stop::grad(0.0, start, end)],
             pattern: Some(pattern),
-            distance_field: false,
+            transfer: Transfer::Linear,
         }
     }
 
@@ -130,7 +148,7 @@ impl Style {
         Self {
             stops: vec![Stop::grad(0.0, start, end)],
             pattern: Some(pattern),
-            distance_field: false,
+            transfer: Transfer::Linear,
         }
     }
 
@@ -154,22 +172,15 @@ impl Style {
         ])
     }
 
-    /// IQ distance field visualization (`start` = outside, `end` = inside).
-    pub fn distance_field() -> Self {
-        Self {
-            stops: vec![Stop::grad(
-                0.0,
-                Color::from_rgb(0.9, 0.6, 0.3),   // outside: orange
-                Color::from_rgb(0.65, 0.85, 1.0), // inside: blue
-            )],
-            pattern: None,
-            distance_field: true,
-        }
-    }
-
     /// Set pattern (turns the style into a stroke laid out along the contour).
     pub fn with_pattern(mut self, pattern: Pattern) -> Self {
         self.pattern = Some(pattern);
+        self
+    }
+
+    /// Set the color-domain [`Transfer`] warp on the stop-blend parameter.
+    pub fn transfer(mut self, transfer: Transfer) -> Self {
+        self.transfer = transfer;
         self
     }
 
@@ -194,12 +205,12 @@ impl Style {
         self
     }
 
-    /// Style with no pattern and no distance field.
+    /// Style with no pattern.
     fn bare(stops: Vec<Stop>) -> Self {
         Self {
             stops,
             pattern: None,
-            distance_field: false,
+            transfer: Transfer::Linear,
         }
     }
 
@@ -223,11 +234,8 @@ impl Style {
     /// (filled) shape only the outward stops count; the interior is fill, not
     /// overdraw. For an open stroke both sides of the curve lie outside the
     /// shape, so the larger magnitude bound applies. A pattern adds its half
-    /// thickness. `distance_field` styles are unbounded.
+    /// thickness.
     pub fn extent(&self, closed: bool) -> f32 {
-        if self.distance_field {
-            return f32::INFINITY;
-        }
         let pat = self.pattern.as_ref().map_or(0.0, |p| p.thickness * 0.5);
         let max_d = self.stops.iter().map(|s| s.dist).fold(0.0_f32, f32::max);
         let min_d = self.stops.iter().map(|s| s.dist).fold(0.0_f32, f32::min);

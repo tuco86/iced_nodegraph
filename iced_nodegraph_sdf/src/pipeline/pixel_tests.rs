@@ -7,11 +7,11 @@
 
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
-use encase::{ShaderSize, ShaderType, StorageBuffer, UniformBuffer, internal::WriteInto};
+use encase::{ShaderSize, ShaderType, StorageBuffer, internal::WriteInto};
 use wgpu::util::DeviceExt;
 use wgpu::*;
 
-use crate::compile::compile_drawable;
+use crate::compile::compile_local_at;
 use crate::curve::Curve;
 use crate::pattern::Pattern;
 use crate::pipeline::types::*;
@@ -19,8 +19,21 @@ use crate::style::Style;
 
 // Must match WGSL constants
 const TILE_SIZE: f32 = 16.0;
-const MAX_SLOTS_PER_TILE: u32 = 32;
-const SLOT_STRIDE: u32 = MAX_SLOTS_PER_TILE * 2;
+const COARSE_FACTOR: u32 = 4;
+const MAX_COARSE_SLOTS: u32 = 256;
+const COARSE_STRIDE: u32 = MAX_COARSE_SLOTS * 2;
+const MAX_FINE_SLOTS: u32 = 128;
+const FINE_STRIDE: u32 = MAX_FINE_SLOTS / 4;
+
+/// One draw for the batched `gpu_frame_times` bench:
+/// `(drawables, bounds_origin_px, grid_w_px, grid_h_px, camera)`.
+type FrameDraw<'a> = (
+    &'a [(&'a crate::drawable::Drawable, &'a Style)],
+    [f32; 2],
+    u32,
+    u32,
+    [f32; 2],
+);
 
 /// One significant tiled-vs-untiled pixel mismatch: `(x, y, tiled, untiled, delta)`.
 type PixelDiff = (u32, u32, [u8; 4], [u8; 4], i32);
@@ -67,9 +80,19 @@ impl TestRenderer {
         }))
         .expect("No GPU adapter found");
 
+        // Request TIMESTAMP_QUERY when the adapter supports it (R3): lets the
+        // GPU-work measurement isolate compute+render time from CPU/submit
+        // overhead. Absent (e.g. on WASM/WebGPU) the tests fall back to
+        // wall-clock, per the plan's R3 note.
+        let timestamps = adapter.features().contains(Features::TIMESTAMP_QUERY);
+        let required_features = if timestamps {
+            Features::TIMESTAMP_QUERY
+        } else {
+            Features::empty()
+        };
         let (device, queue) = pollster::block_on(adapter.request_device(&DeviceDescriptor {
             label: Some("sdf_test_device"),
-            required_features: Features::empty(),
+            required_features,
             required_limits: Limits::default(),
             ..Default::default()
         }))
@@ -184,7 +207,7 @@ impl TestRenderer {
         for (i, (drawable, style)) in drawables.iter().enumerate() {
             let seg_offset = gpu_segments.len() as u32;
             let (mut entry, gpu_style) =
-                compile_drawable(drawable, style, i as u32, 0, &mut gpu_segments);
+                compile_local_at(drawable, style, i as u32, [0.0, 0.0], 0, &mut gpu_segments);
             entry.style_idx = gpu_styles.len() as u32;
             entry.segment_start = seg_offset;
             gpu_entries.push(entry);
@@ -205,14 +228,15 @@ impl TestRenderer {
             camera_zoom: zoom,
             scale_factor: scale,
             time: 0.0,
-            debug_flags: 0,
             entry_count: gpu_entries.len() as u32,
             entry_start: 0,
             grid_cols,
             grid_rows,
             tile_base: 0,
+            coarse_cols: grid_cols.div_ceil(COARSE_FACTOR),
+            coarse_rows: grid_rows.div_ceil(COARSE_FACTOR),
+            coarse_base: 0,
             _pad0: 0,
-            mouse_px: GpuVec2::ZERO,
         };
 
         self.execute_render(
@@ -246,26 +270,21 @@ impl TestRenderer {
         let segments_buf = self.create_storage(gpu_segments);
         let styles_buf = self.create_storage(gpu_styles);
 
-        let tile_counts_buf = self.device.create_buffer(&BufferDescriptor {
-            label: None,
-            size: (total_tiles.max(1) as u64) * 4,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let tile_slots_buf = self.device.create_buffer(&BufferDescriptor {
-            label: None,
-            size: (total_tiles.max(1) as u64) * (SLOT_STRIDE as u64) * 4,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let compute_uniforms = ComputeUniforms {
-            draw_index: 0,
-            _pad0: 0,
-            _pad1: 0,
-            _pad2: 0,
+        let coarse_cols = grid_cols.div_ceil(COARSE_FACTOR);
+        let coarse_rows = grid_rows.div_ceil(COARSE_FACTOR);
+        let total_coarse = (coarse_cols * coarse_rows).max(1);
+        let storage = |size: u64| {
+            self.device.create_buffer(&BufferDescriptor {
+                label: None,
+                size,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
         };
-        let cu_buf = self.create_uniform(&compute_uniforms);
+        let coarse_counts_buf = storage(total_coarse as u64 * 4);
+        let coarse_slots_buf = storage(total_coarse as u64 * COARSE_STRIDE as u64 * 4);
+        let fine_counts_buf = storage(total_tiles.max(1) as u64 * 4);
+        let fine_slots_buf = storage(total_tiles.max(1) as u64 * FINE_STRIDE as u64 * 4);
 
         let render_bg = self.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -289,11 +308,15 @@ impl TestRenderer {
                 },
                 BindGroupEntry {
                     binding: 4,
-                    resource: tile_counts_buf.as_entire_binding(),
+                    resource: fine_counts_buf.as_entire_binding(),
                 },
                 BindGroupEntry {
                     binding: 5,
-                    resource: tile_slots_buf.as_entire_binding(),
+                    resource: fine_slots_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 6,
+                    resource: coarse_slots_buf.as_entire_binding(),
                 },
             ],
         });
@@ -325,15 +348,19 @@ impl TestRenderer {
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: cu_buf.as_entire_binding(),
+                    resource: coarse_counts_buf.as_entire_binding(),
                 },
                 BindGroupEntry {
                     binding: 1,
-                    resource: tile_counts_buf.as_entire_binding(),
+                    resource: coarse_slots_buf.as_entire_binding(),
                 },
                 BindGroupEntry {
                     binding: 2,
-                    resource: tile_slots_buf.as_entire_binding(),
+                    resource: fine_counts_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: fine_slots_buf.as_entire_binding(),
                 },
             ],
         });
@@ -371,7 +398,11 @@ impl TestRenderer {
             pass.set_pipeline(&self.compute_pipeline);
             pass.set_bind_group(0, &compute_bg0, &[]);
             pass.set_bind_group(1, &compute_bg1, &[]);
-            pass.dispatch_workgroups(grid_cols.div_ceil(16), grid_rows.div_ceil(16), 1);
+            pass.dispatch_workgroups(
+                grid_cols.div_ceil(COARSE_FACTOR),
+                grid_rows.div_ceil(COARSE_FACTOR),
+                1,
+            );
         }
         {
             let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
@@ -437,87 +468,93 @@ impl TestRenderer {
         pixels
     }
 
-    fn render_full(
+    /// GPU time of the compute (two-level index) and render (shade) passes, in
+    /// microseconds, via timestamp queries bracketing each pass. Mirrors
+    /// `render_full_t`'s production-faithful compile + dispatch, but times the two
+    /// passes instead of reading pixels. `None` if the adapter lacks
+    /// `TIMESTAMP_QUERY`. The whole scene is one draw (one DrawData), so the cull
+    /// runs over all entries at once - a slight over-estimate of the per-primitive
+    /// production split, but representative of the per-pixel and per-tile shader cost.
+    fn gpu_pass_times(
         &self,
         drawables: &[(&crate::drawable::Drawable, &Style)],
         width: u32,
         height: u32,
         zoom: f32,
-        scale: f32,
-        use_tiles: bool,
-    ) -> Vec<[u8; 4]> {
-        // Compile Rust -> GPU data
+        cam: [f32; 2],
+    ) -> Option<(f64, f64)> {
+        if !self.device.features().contains(Features::TIMESTAMP_QUERY) {
+            return None;
+        }
+        let scale = 1.0_f32;
+
         let mut gpu_segments = Vec::new();
         let mut gpu_entries = Vec::new();
         let mut gpu_styles = Vec::new();
-
         for (i, (drawable, style)) in drawables.iter().enumerate() {
             let seg_offset = gpu_segments.len() as u32;
+            let origin = if drawable.segment_count() > 0 {
+                let b = drawable.bounds();
+                [(b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5]
+            } else {
+                [0.0, 0.0]
+            };
+            let local_storage;
+            let local: &crate::drawable::Drawable = if origin == [0.0, 0.0] {
+                drawable
+            } else {
+                local_storage = drawable.translated(-origin[0], -origin[1]);
+                &local_storage
+            };
             let (mut entry, gpu_style) =
-                compile_drawable(drawable, style, i as u32, 0, &mut gpu_segments);
+                compile_local_at(local, style, i as u32, origin, 0, &mut gpu_segments);
             entry.style_idx = gpu_styles.len() as u32;
-            // Fix segment_start: compile_drawable uses segment_base=0, offset is already correct
             entry.segment_start = seg_offset;
             gpu_entries.push(entry);
             gpu_styles.push(gpu_style);
         }
 
-        let (grid_cols, grid_rows, total_tiles) = if use_tiles {
-            let c = (width as f32 / TILE_SIZE).ceil() as u32;
-            let r = (height as f32 / TILE_SIZE).ceil() as u32;
-            (c, r, c * r)
-        } else {
-            (0, 0, 1) // Fallback path: no spatial index
-        };
-
-        let cs = zoom * scale;
-        let cam_x = (width as f32) * 0.5 / cs;
-        let cam_y = (height as f32) * 0.5 / cs;
+        let grid_cols = (width as f32 / TILE_SIZE).ceil() as u32;
+        let grid_rows = (height as f32 / TILE_SIZE).ceil() as u32;
+        let total_tiles = (grid_cols * grid_rows).max(1);
+        let coarse_cols = grid_cols.div_ceil(COARSE_FACTOR);
+        let coarse_rows = grid_rows.div_ceil(COARSE_FACTOR);
+        let total_coarse = (coarse_cols * coarse_rows).max(1);
 
         let draw_data = DrawData {
-            bounds_origin: GpuVec2::new(0.0, 0.0),
-            camera_position: GpuVec2::new(cam_x, cam_y),
+            bounds_origin: GpuVec2::ZERO,
+            camera_position: GpuVec2::new(cam[0], cam[1]),
             camera_zoom: zoom,
             scale_factor: scale,
             time: 0.0,
-            debug_flags: 0,
             entry_count: gpu_entries.len() as u32,
             entry_start: 0,
             grid_cols,
             grid_rows,
             tile_base: 0,
+            coarse_cols,
+            coarse_rows,
+            coarse_base: 0,
             _pad0: 0,
-            mouse_px: GpuVec2::ZERO,
         };
 
-        // Encode to GPU format via encase
         let draws_buf = self.create_storage(&[draw_data]);
         let entries_buf = self.create_storage(&gpu_entries);
         let segments_buf = self.create_storage(&gpu_segments);
         let styles_buf = self.create_storage(&gpu_styles);
-
-        let tile_counts_buf = self.device.create_buffer(&BufferDescriptor {
-            label: None,
-            size: (total_tiles as u64) * 4,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let tile_slots_buf = self.device.create_buffer(&BufferDescriptor {
-            label: None,
-            size: (total_tiles as u64) * (SLOT_STRIDE as u64) * 4,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let compute_uniforms = ComputeUniforms {
-            draw_index: 0,
-            _pad0: 0,
-            _pad1: 0,
-            _pad2: 0,
+        let storage = |size: u64| {
+            self.device.create_buffer(&BufferDescriptor {
+                label: None,
+                size,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
         };
-        let cu_buf = self.create_uniform(&compute_uniforms);
+        let coarse_counts_buf = storage(total_coarse as u64 * 4);
+        let coarse_slots_buf = storage(total_coarse as u64 * COARSE_STRIDE as u64 * 4);
+        let fine_counts_buf = storage(total_tiles as u64 * 4);
+        let fine_slots_buf = storage(total_tiles as u64 * FINE_STRIDE as u64 * 4);
 
-        // Bind groups
         let render_bg = self.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &self.render_group0_layout,
@@ -540,11 +577,15 @@ impl TestRenderer {
                 },
                 BindGroupEntry {
                     binding: 4,
-                    resource: tile_counts_buf.as_entire_binding(),
+                    resource: fine_counts_buf.as_entire_binding(),
                 },
                 BindGroupEntry {
                     binding: 5,
-                    resource: tile_slots_buf.as_entire_binding(),
+                    resource: fine_slots_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 6,
+                    resource: coarse_slots_buf.as_entire_binding(),
                 },
             ],
         });
@@ -576,15 +617,596 @@ impl TestRenderer {
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: cu_buf.as_entire_binding(),
+                    resource: coarse_counts_buf.as_entire_binding(),
                 },
                 BindGroupEntry {
                     binding: 1,
-                    resource: tile_counts_buf.as_entire_binding(),
+                    resource: coarse_slots_buf.as_entire_binding(),
                 },
                 BindGroupEntry {
                     binding: 2,
-                    resource: tile_slots_buf.as_entire_binding(),
+                    resource: fine_counts_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: fine_slots_buf.as_entire_binding(),
+                },
+            ],
+        });
+
+        let texture = self.device.create_texture(&TextureDescriptor {
+            label: None,
+            size: Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba8Unorm,
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&TextureViewDescriptor::default());
+
+        let qs = self.device.create_query_set(&QuerySetDescriptor {
+            label: Some("sdf_timestamps"),
+            ty: QueryType::Timestamp,
+            count: 4,
+        });
+        let resolve = self.device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: 32,
+            usage: BufferUsages::QUERY_RESOLVE | BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let readback = self.device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: 32,
+            usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut enc = self
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+        {
+            let mut pass = enc.begin_compute_pass(&ComputePassDescriptor {
+                label: Some("sdf_index"),
+                timestamp_writes: Some(ComputePassTimestampWrites {
+                    query_set: &qs,
+                    beginning_of_pass_write_index: Some(0),
+                    end_of_pass_write_index: Some(1),
+                }),
+            });
+            pass.set_pipeline(&self.compute_pipeline);
+            pass.set_bind_group(0, &compute_bg0, &[]);
+            pass.set_bind_group(1, &compute_bg1, &[]);
+            pass.dispatch_workgroups(coarse_cols, coarse_rows, 1);
+        }
+        {
+            let mut pass = enc.begin_render_pass(&RenderPassDescriptor {
+                label: Some("sdf_shade"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(Color::TRANSPARENT),
+                        store: StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: Some(RenderPassTimestampWrites {
+                    query_set: &qs,
+                    beginning_of_pass_write_index: Some(2),
+                    end_of_pass_write_index: Some(3),
+                }),
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.render_pipeline);
+            pass.set_bind_group(0, &render_bg, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        enc.resolve_query_set(&qs, 0..4, &resolve, 0);
+        enc.copy_buffer_to_buffer(&resolve, 0, &readback, 0, 32);
+        let idx = self.queue.submit(Some(enc.finish()));
+
+        let slice = readback.slice(..);
+        slice.map_async(MapMode::Read, |_| {});
+        self.device
+            .poll(PollType::Wait {
+                submission_index: Some(idx),
+                timeout: Some(std::time::Duration::from_secs(5)),
+            })
+            .unwrap();
+        let data = slice.get_mapped_range();
+        let mut t = [0u64; 4];
+        for (k, slot) in t.iter_mut().enumerate() {
+            *slot = u64::from_le_bytes(data[k * 8..k * 8 + 8].try_into().unwrap());
+        }
+        drop(data);
+        readback.unmap();
+
+        let period = self.queue.get_timestamp_period() as f64; // ns per tick
+        let compute_us = t[1].saturating_sub(t[0]) as f64 * period / 1000.0;
+        let fragment_us = t[3].saturating_sub(t[2]) as f64 * period / 1000.0;
+        Some((compute_us, fragment_us))
+    }
+
+    /// GPU time (compute + render, microseconds) of a full BATCHED frame: each draw
+    /// is its own DrawData (its own grid/clip/camera + entry range), and the index
+    /// builds as ONE dispatch over the z-axis - exactly the production layout, where
+    /// the GPU overlaps all draws. This is the only faithful measure of a multi-draw
+    /// scene; per-draw isolation (`gpu_pass_times`) cannot capture that concurrency.
+    /// Each draw: `(drawables, bounds_origin_px, grid_w_px, grid_h_px, camera)`.
+    /// `None` if the adapter lacks `TIMESTAMP_QUERY`.
+    fn gpu_frame_times(
+        &self,
+        draws: &[FrameDraw],
+        canvas_w: u32,
+        canvas_h: u32,
+        zoom: f32,
+    ) -> Option<(f64, f64)> {
+        if !self.device.features().contains(Features::TIMESTAMP_QUERY) {
+            return None;
+        }
+        let scale = 1.0_f32;
+
+        let mut gpu_segments: Vec<GpuSegment> = Vec::new();
+        let mut gpu_entries: Vec<GpuDrawEntry> = Vec::new();
+        let mut gpu_styles: Vec<GpuStyle> = Vec::new();
+        let mut draw_datas: Vec<DrawData> = Vec::new();
+        let mut tile_base = 0u32;
+        let mut coarse_base = 0u32;
+        let mut max_cols = 0u32;
+        let mut max_rows = 0u32;
+
+        for (drawables, origin_px, gw, gh, cam) in draws {
+            let entry_start = gpu_entries.len() as u32;
+            for (i, (drawable, style)) in drawables.iter().enumerate() {
+                let seg_offset = gpu_segments.len() as u32;
+                let origin = if drawable.segment_count() > 0 {
+                    let b = drawable.bounds();
+                    [(b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5]
+                } else {
+                    [0.0, 0.0]
+                };
+                let local_storage;
+                let local: &crate::drawable::Drawable = if origin == [0.0, 0.0] {
+                    drawable
+                } else {
+                    local_storage = drawable.translated(-origin[0], -origin[1]);
+                    &local_storage
+                };
+                let (mut entry, gpu_style) =
+                    compile_local_at(local, style, i as u32, origin, 0, &mut gpu_segments);
+                entry.style_idx = gpu_styles.len() as u32;
+                entry.segment_start = seg_offset;
+                gpu_entries.push(entry);
+                gpu_styles.push(gpu_style);
+            }
+            let grid_cols = (*gw as f32 / TILE_SIZE).ceil() as u32;
+            let grid_rows = (*gh as f32 / TILE_SIZE).ceil() as u32;
+            let coarse_cols = grid_cols.div_ceil(COARSE_FACTOR);
+            let coarse_rows = grid_rows.div_ceil(COARSE_FACTOR);
+            max_cols = max_cols.max(grid_cols);
+            max_rows = max_rows.max(grid_rows);
+            draw_datas.push(DrawData {
+                bounds_origin: GpuVec2::new(origin_px[0] * scale, origin_px[1] * scale),
+                camera_position: GpuVec2::new(cam[0], cam[1]),
+                camera_zoom: zoom,
+                scale_factor: scale,
+                time: 0.0,
+                entry_count: gpu_entries.len() as u32 - entry_start,
+                entry_start,
+                grid_cols,
+                grid_rows,
+                tile_base,
+                coarse_cols,
+                coarse_rows,
+                coarse_base,
+                _pad0: 0,
+            });
+            tile_base += grid_cols * grid_rows;
+            coarse_base += coarse_cols * coarse_rows;
+        }
+
+        let total_tiles = tile_base.max(1);
+        let total_coarse = coarse_base.max(1);
+        let num_draws = draw_datas.len() as u32;
+
+        let draws_buf = self.create_storage(&draw_datas);
+        let entries_buf = self.create_storage(&gpu_entries);
+        let segments_buf = self.create_storage(&gpu_segments);
+        let styles_buf = self.create_storage(&gpu_styles);
+        let storage = |size: u64| {
+            self.device.create_buffer(&BufferDescriptor {
+                label: None,
+                size: size.max(4),
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        };
+        let coarse_counts_buf = storage(total_coarse as u64 * 4);
+        let coarse_slots_buf = storage(total_coarse as u64 * COARSE_STRIDE as u64 * 4);
+        let fine_counts_buf = storage(total_tiles as u64 * 4);
+        let fine_slots_buf = storage(total_tiles as u64 * FINE_STRIDE as u64 * 4);
+
+        let render_bg = self.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &self.render_group0_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: draws_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: entries_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: segments_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: styles_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: fine_counts_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: fine_slots_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 6,
+                    resource: coarse_slots_buf.as_entire_binding(),
+                },
+            ],
+        });
+        let compute_bg0 = self.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &self.compute_group0_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: draws_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: entries_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: segments_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: styles_buf.as_entire_binding(),
+                },
+            ],
+        });
+        let compute_bg1 = self.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &self.compute_group1_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: coarse_counts_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: coarse_slots_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: fine_counts_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: fine_slots_buf.as_entire_binding(),
+                },
+            ],
+        });
+
+        let texture = self.device.create_texture(&TextureDescriptor {
+            label: None,
+            size: Extent3d {
+                width: canvas_w,
+                height: canvas_h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba8Unorm,
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&TextureViewDescriptor::default());
+
+        let qs = self.device.create_query_set(&QuerySetDescriptor {
+            label: Some("sdf_frame_ts"),
+            ty: QueryType::Timestamp,
+            count: 4,
+        });
+        let resolve = self.device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: 32,
+            usage: BufferUsages::QUERY_RESOLVE | BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let readback = self.device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: 32,
+            usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut enc = self
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+        {
+            let mut pass = enc.begin_compute_pass(&ComputePassDescriptor {
+                label: Some("sdf_index"),
+                timestamp_writes: Some(ComputePassTimestampWrites {
+                    query_set: &qs,
+                    beginning_of_pass_write_index: Some(0),
+                    end_of_pass_write_index: Some(1),
+                }),
+            });
+            pass.set_pipeline(&self.compute_pipeline);
+            pass.set_bind_group(0, &compute_bg0, &[]);
+            pass.set_bind_group(1, &compute_bg1, &[]);
+            // One dispatch, z = draw count: each layer culls its own draw's grid.
+            pass.dispatch_workgroups(
+                max_cols.div_ceil(COARSE_FACTOR),
+                max_rows.div_ceil(COARSE_FACTOR),
+                num_draws,
+            );
+        }
+        {
+            let mut pass = enc.begin_render_pass(&RenderPassDescriptor {
+                label: Some("sdf_shade"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(Color::TRANSPARENT),
+                        store: StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: Some(RenderPassTimestampWrites {
+                    query_set: &qs,
+                    beginning_of_pass_write_index: Some(2),
+                    end_of_pass_write_index: Some(3),
+                }),
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.render_pipeline);
+            pass.set_bind_group(0, &render_bg, &[]);
+            pass.draw(0..3, 0..num_draws);
+        }
+        enc.resolve_query_set(&qs, 0..4, &resolve, 0);
+        enc.copy_buffer_to_buffer(&resolve, 0, &readback, 0, 32);
+        let idx = self.queue.submit(Some(enc.finish()));
+
+        let slice = readback.slice(..);
+        slice.map_async(MapMode::Read, |_| {});
+        self.device
+            .poll(PollType::Wait {
+                submission_index: Some(idx),
+                timeout: Some(std::time::Duration::from_secs(10)),
+            })
+            .unwrap();
+        let data = slice.get_mapped_range();
+        let mut t = [0u64; 4];
+        for (k, slot) in t.iter_mut().enumerate() {
+            *slot = u64::from_le_bytes(data[k * 8..k * 8 + 8].try_into().unwrap());
+        }
+        drop(data);
+        readback.unmap();
+
+        let period = self.queue.get_timestamp_period() as f64;
+        let compute_us = t[1].saturating_sub(t[0]) as f64 * period / 1000.0;
+        let fragment_us = t[3].saturating_sub(t[2]) as f64 * period / 1000.0;
+        Some((compute_us, fragment_us))
+    }
+
+    fn render_full(
+        &self,
+        drawables: &[(&crate::drawable::Drawable, &Style)],
+        width: u32,
+        height: u32,
+        zoom: f32,
+        scale: f32,
+        use_tiles: bool,
+    ) -> Vec<[u8; 4]> {
+        self.render_full_t(drawables, width, height, zoom, scale, use_tiles, 0.0, None)
+    }
+
+    /// Like [`render_full`] but with an explicit animation `time` (so animated
+    /// scenes can be pinned to a fixed value for deterministic diffing) and an
+    /// optional world-space `camera` override (so far-from-origin scenes can be
+    /// brought into view). `camera` is `camera_position`; `None` auto-centers
+    /// world origin at the viewport center.
+    #[allow(clippy::too_many_arguments)]
+    fn render_full_t(
+        &self,
+        drawables: &[(&crate::drawable::Drawable, &Style)],
+        width: u32,
+        height: u32,
+        zoom: f32,
+        scale: f32,
+        use_tiles: bool,
+        time: f32,
+        camera: Option<[f32; 2]>,
+    ) -> Vec<[u8; 4]> {
+        // Compile Rust -> GPU data
+        let mut gpu_segments = Vec::new();
+        let mut gpu_entries = Vec::new();
+        let mut gpu_styles = Vec::new();
+
+        for (i, (drawable, style)) in drawables.iter().enumerate() {
+            let seg_offset = gpu_segments.len() as u32;
+            // Production-faithful: store geometry in a frame around the drawable's
+            // bounds-center and carry that origin as the per-segment translate (the
+            // dedup keystone). Tilings have no segments to localize.
+            let origin = if drawable.segment_count() > 0 {
+                let b = drawable.bounds();
+                [(b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5]
+            } else {
+                [0.0, 0.0]
+            };
+            let local_storage;
+            let local: &crate::drawable::Drawable = if origin == [0.0, 0.0] {
+                drawable
+            } else {
+                local_storage = drawable.translated(-origin[0], -origin[1]);
+                &local_storage
+            };
+            let (mut entry, gpu_style) =
+                compile_local_at(local, style, i as u32, origin, 0, &mut gpu_segments);
+            entry.style_idx = gpu_styles.len() as u32;
+            // Fix segment_start: compile uses segment_base=0, offset is already correct
+            entry.segment_start = seg_offset;
+            gpu_entries.push(entry);
+            gpu_styles.push(gpu_style);
+        }
+
+        let (grid_cols, grid_rows, total_tiles) = if use_tiles {
+            let c = (width as f32 / TILE_SIZE).ceil() as u32;
+            let r = (height as f32 / TILE_SIZE).ceil() as u32;
+            (c, r, c * r)
+        } else {
+            (0, 0, 1) // Fallback path: no spatial index
+        };
+
+        let cs = zoom * scale;
+        let [cam_x, cam_y] =
+            camera.unwrap_or([(width as f32) * 0.5 / cs, (height as f32) * 0.5 / cs]);
+
+        let draw_data = DrawData {
+            bounds_origin: GpuVec2::new(0.0, 0.0),
+            camera_position: GpuVec2::new(cam_x, cam_y),
+            camera_zoom: zoom,
+            scale_factor: scale,
+            time,
+            entry_count: gpu_entries.len() as u32,
+            entry_start: 0,
+            grid_cols,
+            grid_rows,
+            tile_base: 0,
+            coarse_cols: grid_cols.div_ceil(COARSE_FACTOR),
+            coarse_rows: grid_rows.div_ceil(COARSE_FACTOR),
+            coarse_base: 0,
+            _pad0: 0,
+        };
+
+        // Encode to GPU format via encase
+        let draws_buf = self.create_storage(&[draw_data]);
+        let entries_buf = self.create_storage(&gpu_entries);
+        let segments_buf = self.create_storage(&gpu_segments);
+        let styles_buf = self.create_storage(&gpu_styles);
+
+        let coarse_cols = grid_cols.div_ceil(COARSE_FACTOR);
+        let coarse_rows = grid_rows.div_ceil(COARSE_FACTOR);
+        let total_coarse = (coarse_cols * coarse_rows).max(1);
+        let storage = |size: u64| {
+            self.device.create_buffer(&BufferDescriptor {
+                label: None,
+                size,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        };
+        let coarse_counts_buf = storage(total_coarse as u64 * 4);
+        let coarse_slots_buf = storage(total_coarse as u64 * COARSE_STRIDE as u64 * 4);
+        let fine_counts_buf = storage(total_tiles.max(1) as u64 * 4);
+        let fine_slots_buf = storage(total_tiles.max(1) as u64 * FINE_STRIDE as u64 * 4);
+
+        // Bind groups
+        let render_bg = self.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &self.render_group0_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: draws_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: entries_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: segments_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: styles_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: fine_counts_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: fine_slots_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 6,
+                    resource: coarse_slots_buf.as_entire_binding(),
+                },
+            ],
+        });
+        let compute_bg0 = self.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &self.compute_group0_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: draws_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: entries_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: segments_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: styles_buf.as_entire_binding(),
+                },
+            ],
+        });
+        let compute_bg1 = self.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &self.compute_group1_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: coarse_counts_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: coarse_slots_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: fine_counts_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: fine_slots_buf.as_entire_binding(),
                 },
             ],
         });
@@ -627,7 +1249,11 @@ impl TestRenderer {
             pass.set_pipeline(&self.compute_pipeline);
             pass.set_bind_group(0, &compute_bg0, &[]);
             pass.set_bind_group(1, &compute_bg1, &[]);
-            pass.dispatch_workgroups(grid_cols.div_ceil(16), grid_rows.div_ceil(16), 1);
+            pass.dispatch_workgroups(
+                grid_cols.div_ceil(COARSE_FACTOR),
+                grid_rows.div_ceil(COARSE_FACTOR),
+                1,
+            );
         }
 
         // Render pass
@@ -738,7 +1364,7 @@ impl TestRenderer {
         for (i, (drawable, style)) in drawables.iter().enumerate() {
             let seg_offset = gpu_segments.len() as u32;
             let (mut entry, gpu_style) =
-                compile_drawable(drawable, style, i as u32, 0, &mut gpu_segments);
+                compile_local_at(drawable, style, i as u32, [0.0, 0.0], 0, &mut gpu_segments);
             entry.style_idx = gpu_styles.len() as u32;
             entry.segment_start = seg_offset;
             gpu_entries.push(entry);
@@ -753,14 +1379,15 @@ impl TestRenderer {
             camera_zoom: zoom,
             scale_factor: scale,
             time: 0.0,
-            debug_flags: 0,
             entry_count: gpu_entries.len() as u32,
             entry_start: 0,
             grid_cols,
             grid_rows,
             tile_base: 0,
+            coarse_cols: grid_cols.div_ceil(COARSE_FACTOR),
+            coarse_rows: grid_rows.div_ceil(COARSE_FACTOR),
+            coarse_base: 0,
             _pad0: 0,
-            mouse_px: GpuVec2::ZERO,
         };
         self.execute_render(
             &gpu_entries,
@@ -775,6 +1402,342 @@ impl TestRenderer {
         )
     }
 
+    /// Render an `SdfPrimitive` through the REAL `SdfPipeline` (prepare + draw) to
+    /// RGBA pixels - the production path, so a test sees exactly what the widget
+    /// would draw (dedup, translate, cull, fragment), not a hand-built dispatch.
+    /// `width` must be a multiple of 64 so `bytes_per_row` needs no padding.
+    fn render_primitive(
+        &self,
+        prim: &crate::primitive::SdfPrimitive,
+        width: u32,
+        height: u32,
+    ) -> Vec<[u8; 4]> {
+        use iced_wgpu::graphics::Viewport;
+        use iced_wgpu::primitive::{Pipeline, Primitive};
+
+        let mut pipeline = crate::primitive::SdfPipeline::new(
+            &self.device,
+            &self.queue,
+            TextureFormat::Rgba8Unorm,
+        );
+        let viewport = Viewport::with_physical_size(iced::Size::new(width, height), 1.0);
+        let bounds = iced::Rectangle::new(
+            iced::Point::ORIGIN,
+            iced::Size::new(width as f32, height as f32),
+        );
+
+        let target = self.device.create_texture(&TextureDescriptor {
+            label: None,
+            size: Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba8Unorm,
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = target.create_view(&TextureViewDescriptor::default());
+        let readback = self.device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: (width * height * 4) as u64,
+            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        Pipeline::trim(&mut pipeline);
+        prim.prepare(&mut pipeline, &self.device, &self.queue, &bounds, &viewport);
+        let mut enc = self
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+        {
+            let mut pass = enc.begin_render_pass(&RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(Color::TRANSPARENT),
+                        store: StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            prim.draw(&pipeline, &mut pass);
+        }
+        enc.copy_texture_to_buffer(
+            target.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(width * 4),
+                    rows_per_image: None,
+                },
+            },
+            Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        let idx = self.queue.submit(Some(enc.finish()));
+        let slice = readback.slice(..);
+        slice.map_async(MapMode::Read, |_| {});
+        self.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(idx),
+                timeout: Some(std::time::Duration::from_secs(5)),
+            })
+            .unwrap();
+        let data = slice.get_mapped_range();
+        let px: Vec<[u8; 4]> = data
+            .chunks_exact(4)
+            .map(|c| [c[0], c[1], c[2], c[3]])
+            .collect();
+        drop(data);
+        readback.unmap();
+        px
+    }
+
+    /// Like [`render_primitives_bounded`] but DRAWS each primitive in its OWN
+    /// render pass with a SCISSOR set to its clip rect - replicating how iced_wgpu
+    /// renders layered custom primitives (each `with_layer` is a clipped pass).
+    fn render_primitives_scissored(
+        &self,
+        prims: &[(&crate::primitive::SdfPrimitive, iced::Rectangle)],
+        width: u32,
+        height: u32,
+    ) -> Vec<[u8; 4]> {
+        use iced_wgpu::graphics::Viewport;
+        use iced_wgpu::primitive::{Pipeline, Primitive};
+
+        let mut pipeline = crate::primitive::SdfPipeline::new(
+            &self.device,
+            &self.queue,
+            TextureFormat::Rgba8Unorm,
+        );
+        let viewport = Viewport::with_physical_size(iced::Size::new(width, height), 1.0);
+        let target = self.device.create_texture(&TextureDescriptor {
+            label: None,
+            size: Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba8Unorm,
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = target.create_view(&TextureViewDescriptor::default());
+        let readback = self.device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: (width * height * 4) as u64,
+            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        Pipeline::trim(&mut pipeline);
+        for (p, bounds) in prims {
+            p.prepare(&mut pipeline, &self.device, &self.queue, bounds, &viewport);
+        }
+        let mut enc = self
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+        for (i, (p, bounds)) in prims.iter().enumerate() {
+            let mut pass = enc.begin_render_pass(&RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: if i == 0 {
+                            LoadOp::Clear(Color::TRANSPARENT)
+                        } else {
+                            LoadOp::Load
+                        },
+                        store: StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            let sx = bounds.x.max(0.0) as u32;
+            let sy = bounds.y.max(0.0) as u32;
+            let sw = (bounds.width as u32).min(width - sx);
+            let sh = (bounds.height as u32).min(height - sy);
+            pass.set_scissor_rect(sx, sy, sw, sh);
+            p.draw(&pipeline, &mut pass);
+        }
+        enc.copy_texture_to_buffer(
+            target.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(width * 4),
+                    rows_per_image: None,
+                },
+            },
+            Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        let idx = self.queue.submit(Some(enc.finish()));
+        let slice = readback.slice(..);
+        slice.map_async(MapMode::Read, |_| {});
+        self.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(idx),
+                timeout: Some(std::time::Duration::from_secs(5)),
+            })
+            .unwrap();
+        let data = slice.get_mapped_range();
+        let px: Vec<[u8; 4]> = data
+            .chunks_exact(4)
+            .map(|c| [c[0], c[1], c[2], c[3]])
+            .collect();
+        drop(data);
+        readback.unmap();
+        px
+    }
+
+    /// Render a SEQUENCE of frames through ONE persistent `SdfPipeline`, calling
+    /// `Pipeline::trim` before each frame exactly as iced does per present. This
+    /// reuses the compiled pipeline (cheap enough to sweep hundreds of camera
+    /// positions) while resetting the per-frame tile buffers, so tiles do NOT
+    /// accumulate across frames - the asymmetry that makes a naive multi-render
+    /// loop blow the tile-buffer binding size. Each frame is drawn scissored to a
+    /// fresh clear; returns one pixel buffer per frame. `width` multiple of 64.
+    fn render_frames_scissored(
+        &self,
+        frames: &[Vec<(&crate::primitive::SdfPrimitive, iced::Rectangle)>],
+        width: u32,
+        height: u32,
+        scale: f32,
+    ) -> Vec<Vec<[u8; 4]>> {
+        use iced_wgpu::graphics::Viewport;
+        use iced_wgpu::primitive::{Pipeline, Primitive};
+
+        let mut pipeline = crate::primitive::SdfPipeline::new(
+            &self.device,
+            &self.queue,
+            TextureFormat::Rgba8Unorm,
+        );
+        // `width`/`height` are PHYSICAL; bounds/clips are LOGICAL, so the scissor
+        // and the viewport scale must convert between them like iced does.
+        let viewport = Viewport::with_physical_size(iced::Size::new(width, height), scale);
+        let target = self.device.create_texture(&TextureDescriptor {
+            label: None,
+            size: Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba8Unorm,
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = target.create_view(&TextureViewDescriptor::default());
+        let readback = self.device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: (width * height * 4) as u64,
+            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        let mut out = Vec::with_capacity(frames.len());
+        for prims in frames {
+            Pipeline::trim(&mut pipeline);
+            for (p, bounds) in prims {
+                p.prepare(&mut pipeline, &self.device, &self.queue, bounds, &viewport);
+            }
+            let mut enc = self
+                .device
+                .create_command_encoder(&CommandEncoderDescriptor::default());
+            for (i, (p, bounds)) in prims.iter().enumerate() {
+                let mut pass = enc.begin_render_pass(&RenderPassDescriptor {
+                    label: None,
+                    color_attachments: &[Some(RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: Operations {
+                            load: if i == 0 {
+                                LoadOp::Clear(Color::TRANSPARENT)
+                            } else {
+                                LoadOp::Load
+                            },
+                            store: StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                let sx = (bounds.x * scale).max(0.0) as u32;
+                let sy = (bounds.y * scale).max(0.0) as u32;
+                let sw = ((bounds.width * scale) as u32).min(width.saturating_sub(sx));
+                let sh = ((bounds.height * scale) as u32).min(height.saturating_sub(sy));
+                if sw == 0 || sh == 0 {
+                    continue;
+                }
+                pass.set_scissor_rect(sx, sy, sw, sh);
+                p.draw(&pipeline, &mut pass);
+            }
+            enc.copy_texture_to_buffer(
+                target.as_image_copy(),
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &readback,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(width * 4),
+                        rows_per_image: None,
+                    },
+                },
+                Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+            );
+            let idx = self.queue.submit(Some(enc.finish()));
+            let slice = readback.slice(..);
+            slice.map_async(MapMode::Read, |_| {});
+            self.device
+                .poll(wgpu::PollType::Wait {
+                    submission_index: Some(idx),
+                    timeout: Some(std::time::Duration::from_secs(5)),
+                })
+                .unwrap();
+            let data = slice.get_mapped_range();
+            out.push(
+                data.chunks_exact(4)
+                    .map(|c| [c[0], c[1], c[2], c[3]])
+                    .collect(),
+            );
+            drop(data);
+            readback.unmap();
+        }
+        out
+    }
+
     fn create_storage<T: ShaderType + ShaderSize + WriteInto>(&self, items: &[T]) -> Buffer {
         let mut scratch = Vec::new();
         let mut writer = StorageBuffer::new(&mut scratch);
@@ -784,18 +1747,6 @@ impl TestRenderer {
                 label: None,
                 contents: &scratch,
                 usage: BufferUsages::STORAGE,
-            })
-    }
-
-    fn create_uniform<T: ShaderType + ShaderSize + WriteInto>(&self, item: &T) -> Buffer {
-        let mut scratch = Vec::new();
-        let mut writer = UniformBuffer::new(&mut scratch);
-        writer.write(item).expect("Failed to write uniform buffer");
-        self.device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: None,
-                contents: &scratch,
-                usage: BufferUsages::UNIFORM,
             })
     }
 
@@ -813,6 +1764,7 @@ impl TestRenderer {
                 bgl_storage(3, ShaderStages::FRAGMENT, GpuStyle::SHADER_SIZE.get()),
                 bgl_storage(4, ShaderStages::FRAGMENT, 4),
                 bgl_storage(5, ShaderStages::FRAGMENT, 4),
+                bgl_storage(6, ShaderStages::FRAGMENT, 4),
             ],
         })
     }
@@ -833,18 +1785,10 @@ impl TestRenderer {
         device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: None,
             entries: &[
-                BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: Some(ComputeUniforms::SHADER_SIZE),
-                    },
-                    count: None,
-                },
+                bgl_storage_rw(0, 4),
                 bgl_storage_rw(1, 4),
                 bgl_storage_rw(2, 4),
+                bgl_storage_rw(3, 4),
             ],
         })
     }
@@ -1316,145 +2260,6 @@ fn bezier_stroke_edge_is_smooth() {
     );
 }
 
-/// CPU-side bezier closest-point (diagnostic, not regression).
-#[test]
-#[ignore]
-fn bezier_closest_point_smooth_cpu() {
-    let p0 = [-100.0f32, -30.0];
-    let p1 = [-30.0, -30.0];
-    let p2 = [30.0, 30.0];
-    let p3 = [100.0, 30.0];
-    let zoom = 500.0f32 * 0.333 / 160.0;
-
-    // Scan along the outer edge of a 16-wide border at zoom
-    let half_t = 8.0f32;
-    let cam_x = 800.0 * 0.5 / zoom;
-
-    let mut edge_y_positions = Vec::new();
-    for px_x in 200..600u32 {
-        let world_x = px_x as f32 / zoom - cam_x;
-        // Binary search for the world_y where dist = half_t (edge)
-        let mut y_lo = -100.0f32;
-        let mut y_hi = 100.0f32;
-        for _ in 0..40 {
-            let y_mid = (y_lo + y_hi) * 0.5;
-            let dist = cpu_bezier_dist(world_x, y_mid, &p0, &p1, &p2, &p3);
-            if dist < half_t {
-                y_lo = y_mid;
-            } else {
-                y_hi = y_mid;
-            }
-        }
-        edge_y_positions.push((px_x, (y_lo + y_hi) * 0.5));
-    }
-
-    // Check smoothness of edge y
-    let mut wobbles = Vec::new();
-    for i in 1..edge_y_positions.len() - 1 {
-        let (x, y_prev) = edge_y_positions[i - 1];
-        let (_, y_curr) = edge_y_positions[i];
-        let (_, y_next) = edge_y_positions[i + 1];
-        let accel = (y_next - 2.0 * y_curr + y_prev).abs();
-        if accel > 0.001 {
-            wobbles.push((x, y_curr, accel));
-        }
-    }
-    assert!(
-        wobbles.is_empty(),
-        "CPU bezier distance has {} wobbles. First 10: {:?}",
-        wobbles.len(),
-        &wobbles[..wobbles.len().min(10)],
-    );
-}
-
-fn cpu_newton_refine(
-    px: f32,
-    py: f32,
-    t0: f32,
-    p0: &[f32; 2],
-    p1: &[f32; 2],
-    p2: &[f32; 2],
-    p3: &[f32; 2],
-) -> (f32, f32) {
-    let mut t = t0;
-    for _ in 0..4 {
-        let bp = cpu_bez_pt(p0, p1, p2, p3, t);
-        let bd = cpu_bez_deriv(p0, p1, p2, p3, t);
-        let bdd = cpu_bez_deriv2(p0, p1, p2, p3, t);
-        let dx = bp[0] - px;
-        let dy = bp[1] - py;
-        let num = dx * bd[0] + dy * bd[1];
-        let den = bd[0] * bd[0] + bd[1] * bd[1] + dx * bdd[0] + dy * bdd[1];
-        if den.abs() > 1e-8 {
-            t = (t - num / den).clamp(0.0, 1.0);
-        }
-    }
-    let cp = cpu_bez_pt(p0, p1, p2, p3, t);
-    let d = ((px - cp[0]).powi(2) + (py - cp[1]).powi(2)).sqrt();
-    (t, d)
-}
-
-fn cpu_bezier_dist(
-    px: f32,
-    py: f32,
-    p0: &[f32; 2],
-    p1: &[f32; 2],
-    p2: &[f32; 2],
-    p3: &[f32; 2],
-) -> f32 {
-    // Coarse search: track best AND second-best
-    let mut best_t = 0.0f32;
-    let mut best_dist = 1e20f32;
-    let mut second_t = 0.0f32;
-    let mut second_dist = 1e20f32;
-    for i in 0..=16 {
-        let t = i as f32 / 16.0;
-        let bp = cpu_bez_pt(p0, p1, p2, p3, t);
-        let d = ((px - bp[0]).powi(2) + (py - bp[1]).powi(2)).sqrt();
-        if d < best_dist {
-            second_t = best_t;
-            second_dist = best_dist;
-            best_dist = d;
-            best_t = t;
-        } else if d < second_dist {
-            second_t = t;
-            second_dist = d;
-        }
-    }
-    // Refine both candidates
-    let (_, d1) = cpu_newton_refine(px, py, best_t, p0, p1, p2, p3);
-    let (_, d2) = cpu_newton_refine(px, py, second_t, p0, p1, p2, p3);
-    d1.min(d2)
-}
-
-fn cpu_bez_pt(p0: &[f32; 2], p1: &[f32; 2], p2: &[f32; 2], p3: &[f32; 2], t: f32) -> [f32; 2] {
-    let u = 1.0 - t;
-    [
-        u * u * u * p0[0] + 3.0 * u * u * t * p1[0] + 3.0 * u * t * t * p2[0] + t * t * t * p3[0],
-        u * u * u * p0[1] + 3.0 * u * u * t * p1[1] + 3.0 * u * t * t * p2[1] + t * t * t * p3[1],
-    ]
-}
-
-fn cpu_bez_deriv(p0: &[f32; 2], p1: &[f32; 2], p2: &[f32; 2], p3: &[f32; 2], t: f32) -> [f32; 2] {
-    let u = 1.0 - t;
-    [
-        3.0 * u * u * (p1[0] - p0[0])
-            + 6.0 * u * t * (p2[0] - p1[0])
-            + 3.0 * t * t * (p3[0] - p2[0]),
-        3.0 * u * u * (p1[1] - p0[1])
-            + 6.0 * u * t * (p2[1] - p1[1])
-            + 3.0 * t * t * (p3[1] - p2[1]),
-    ]
-}
-
-fn cpu_bez_deriv2(p0: &[f32; 2], p1: &[f32; 2], p2: &[f32; 2], p3: &[f32; 2], t: f32) -> [f32; 2] {
-    let u = 1.0 - t;
-    [
-        6.0 * u * (p2[0] - 2.0 * p1[0] + p0[0]) + 6.0 * t * (p3[0] - 2.0 * p2[0] + p1[0]),
-        6.0 * u * (p2[1] - 2.0 * p1[1] + p0[1]) + 6.0 * t * (p3[1] - 2.0 * p2[1] + p1[1]),
-    ]
-}
-
 /// Check for missing rows at tile boundaries inside the stroke.
 /// The stroke center should have consistent alpha - any drop at y%16==0 is a bug.
 #[test]
@@ -1529,66 +2334,6 @@ fn no_missing_rows_in_stroke() {
         missing_rows.is_empty(),
         "Missing rows at tile boundaries (y, drops, checked): {:?}",
         missing_rows,
-    );
-}
-
-/// Diagnose dump (not a regression test).
-#[test]
-#[ignore]
-fn diagnose_wobble_at_288() {
-    let renderer = shared_renderer();
-    let width = 800u32;
-    let height = 500u32;
-    let extent = 160.0_f32;
-    let zoom = height.min(width) as f32 * 0.333 / extent;
-
-    let bezier = Curve::bezier([-100.0, -30.0], [-30.0, -30.0], [30.0, 30.0], [100.0, 30.0]);
-    let border_total = 6.0 + 2.0 * 2.0 + 3.0 * 2.0;
-    let style = Style::stroke(iced::Color::WHITE, Pattern::solid(border_total));
-
-    let pixels = renderer.render_opts(&[(&bezier, &style)], width, height, zoom, false);
-
-    // Dump alpha at x=286..290 for y=210..216 to see the edge shape
-    let mut lines = Vec::new();
-    for x in 286..292 {
-        let mut row = format!("x={x}: ");
-        for y in 210..218 {
-            let a = TestRenderer::pixel_at(&pixels, width, x, y)[3];
-            row.push_str(&format!("{a:3} "));
-        }
-        lines.push(row);
-    }
-    panic!("Alpha values around wobble point:\n{}", lines.join("\n"));
-}
-
-/// Distance field visualization must show two distinct colors (signed).
-#[test]
-fn distance_field_shows_both_sides() {
-    let renderer = shared_renderer();
-    let width = 128u32;
-    let height = 128u32;
-    let zoom = 1.0;
-
-    let line = Curve::line([-50.0, 0.0], [50.0, 0.0]);
-    let style = Style::distance_field();
-
-    let pixels = renderer.render(&[(&line, &style)], width, height, zoom);
-
-    // y=54 is 10 pixels below center (world y=+10, "outside" of line)
-    // y=74 is 10 pixels above center (world y=-10, "inside")
-    let above = TestRenderer::pixel_at(&pixels, width, 64, 54);
-    let below = TestRenderer::pixel_at(&pixels, width, 64, 74);
-
-    // Both should be non-black (visible)
-    assert!(above[3] > 0, "No rendering above the line");
-    assert!(below[3] > 0, "No rendering below the line");
-
-    // They should have different colors (signed DF shows orange vs blue)
-    assert_ne!(
-        above[0..3],
-        below[0..3],
-        "Distance field should show different colors on each side of the line. \
-         Above: {above:?}, Below: {below:?}",
     );
 }
 
@@ -1841,130 +2586,6 @@ fn closed_solid_fill_no_interior_holes() {
     );
 }
 
-/// Composite premultiplied-alpha RGBA pixels over a dark background and save a
-/// PNG (for visual inspection of the edge-editor render).
-fn save_rgba_png(path: &str, width: u32, height: u32, pixels: &[[u8; 4]], bg: [u8; 3]) {
-    let mut bytes = Vec::with_capacity((width * height * 4) as usize);
-    for p in pixels {
-        let a = p[3] as f32 / 255.0;
-        // Pixels are premultiplied; composite over bg.
-        for c in 0..3 {
-            let v = p[c] as f32 + bg[c] as f32 * (1.0 - a);
-            bytes.push(v.round().clamp(0.0, 255.0) as u8);
-        }
-        bytes.push(255);
-    }
-    let file = std::fs::File::create(path).unwrap();
-    let mut enc = png::Encoder::new(std::io::BufWriter::new(file), width, height);
-    enc.set_color(png::ColorType::Rgba);
-    enc.set_depth(png::BitDepth::Eight);
-    enc.write_header()
-        .unwrap()
-        .write_image_data(&bytes)
-        .unwrap();
-}
-
-/// Renders the edge editor's exact default layer stack (stroke + outline +
-/// border + shadow) on the two crossing S-curves, but with each layer a single
-/// distinguishable flat color, and dumps a 160x80 PNG centered on the crossing.
-/// Not an assertion - a visual probe for the reported tile-boundary artifact.
-/// Run on demand: `cargo test -p iced_nodegraph_sdf dump_edge_editor_center -- --ignored --nocapture`.
-#[test]
-#[ignore]
-fn dump_edge_editor_center() {
-    let renderer = shared_renderer();
-    let width = 160u32;
-    let height = 80u32;
-    let scale = 2.0_f32;
-    // Match the real canvas: zoom ~1.85 logical * scale 2.0 => cs ~3.7 px/world.
-    let zoom = 1.85_f32;
-
-    let fwd = Curve::bezier([-120.0, -40.0], [-40.0, -40.0], [40.0, 40.0], [120.0, 40.0]);
-    let mir = Curve::bezier([120.0, -40.0], [40.0, -40.0], [-40.0, 40.0], [-120.0, 40.0]);
-
-    // Edge editor defaults: thickness 6, outline 1.2, border gap 2 + thick 3,
-    // shadow expand 10. Gradients replaced by flat, distinguishable colors.
-    let c = |r, g, b, a| iced::Color::from_rgba(r, g, b, a);
-    let stroke = Style::arc_gradient_stroke(
-        c(0.0, 0.9, 1.0, 1.0),
-        c(0.0, 0.9, 1.0, 1.0),
-        Pattern::solid(6.0),
-    );
-    let outline = Style::stroke(c(1.0, 0.1, 0.1, 1.0), Pattern::solid(6.0 + 1.2 * 2.0));
-    let border = Style::arc_gradient_stroke(
-        c(0.1, 1.0, 0.1, 1.0),
-        c(0.1, 1.0, 0.1, 1.0),
-        Pattern::solid(6.0 + 2.0 * 2.0 + 3.0 * 2.0),
-    );
-    let shadow = Style::shadow(c(0.3, 0.3, 1.0, 0.9), 10.0);
-
-    // SdfEdgeCanvas order: each style applied to both edges, front-to-back.
-    let edges = [&fwd, &mir];
-    let layers = [&stroke, &outline, &border, &shadow];
-    let mut scene: Vec<(&crate::drawable::Drawable, &Style)> = Vec::new();
-    for s in layers {
-        for e in edges {
-            scene.push((e, s));
-        }
-    }
-
-    let pixels = renderer.render_full(&scene, width, height, zoom, scale, true);
-    std::fs::create_dir_all("../out").ok();
-    save_rgba_png(
-        "../out/edge_artifact.png",
-        width,
-        height,
-        &pixels,
-        [26, 26, 31],
-    );
-
-    // 4x nearest-neighbor upscale so 1px seams are visible to the eye.
-    let f = 4u32;
-    let mut big = vec![[0u8; 4]; (width * f * height * f) as usize];
-    for y in 0..height * f {
-        for x in 0..width * f {
-            big[(y * width * f + x) as usize] = pixels[((y / f) * width + (x / f)) as usize];
-        }
-    }
-    save_rgba_png(
-        "../out/edge_artifact_4x.png",
-        width * f,
-        height * f,
-        &big,
-        [26, 26, 31],
-    );
-
-    // Programmatic seam scan: at every 16px tile boundary, compare the boundary
-    // row/col to its immediate interior neighbor; flag large jumps that the
-    // neighbor-of-neighbor does not show (i.e. a 1px anomaly, not a real edge).
-    let px = |x: u32, y: u32| pixels[(y * width + x) as usize];
-    let diff = |a: [u8; 4], b: [u8; 4]| {
-        (0..4)
-            .map(|c| (a[c] as i32 - b[c] as i32).abs())
-            .max()
-            .unwrap()
-    };
-    let mut seams = Vec::new();
-    for by in (16..height).step_by(16) {
-        for x in 0..width {
-            let across = diff(px(x, by - 1), px(x, by));
-            let below = diff(px(x, by), px(x, (by + 1).min(height - 1)));
-            let above = diff(px(x, by - 2), px(x, by - 1));
-            // A seam: the boundary step is much larger than the gradient just
-            // above/below it (a real edge would ramp smoothly across rows).
-            if across > 24 && across > above * 2 + 8 && across > below * 2 + 8 {
-                seams.push(('y', x, by, across));
-            }
-        }
-    }
-    eprintln!(
-        "wrote ../out/edge_artifact.png + _4x (cs={}); horizontal-boundary seams: {} {:?}",
-        zoom * scale,
-        seams.len(),
-        &seams[..seams.len().min(12)],
-    );
-}
-
 /// Tiled variant of `bezier_stroke_edge_is_smooth` at HiDPI scale 2.0: scan the
 /// stroke's top edge in a TILED render and assert it has no wobble correlated
 /// with tile boundaries. This is the single-edge form of the reported artifact.
@@ -2187,7 +2808,7 @@ fn abutting_chain_bands_stay_opaque_across_boundary() {
             crate::style::Stop::new(20.0, clear(green)),
         ],
         pattern: None,
-        distance_field: false,
+        transfer: Default::default(),
     };
     let shape = Curve::circle([0.0, 0.0], radius);
     let pixels = renderer.render(&[(&shape, &style)], width, height, zoom);
@@ -2211,5 +2832,1923 @@ fn abutting_chain_bands_stay_opaque_across_boundary() {
     assert!(
         outer[1] > outer[0],
         "outer band should read green: {outer:?}"
+    );
+}
+
+// ===========================================================================
+// Golden corpus: the render self-consistency oracle.
+//
+// Each scene is a self-contained (Drawable, Style) set rendered at a fixed
+// resolution / zoom / time. The corpus spans every pattern, every tiling, a
+// segment-dense pin node, deep z-overlap, far-from-origin coordinates, and a
+// pinned-time animated edge. The gate is self-consistency:
+// (a) byte-identical across repeated renders (determinism), and (b) the tiled
+// spatial-index path matches the brute-force untiled path within AA tolerance
+// (the dual-path cull oracle, generalized over the whole corpus).
+// ===========================================================================
+
+use crate::drawable::Drawable;
+
+/// Per-channel AA tolerance for the tiled-vs-untiled oracle on visible pixels.
+const CORPUS_AA_TOL: i32 = 3;
+/// Alpha below which a pixel is treated as background (ignored by the oracle).
+const CORPUS_ALPHA_FLOOR: u8 = 100;
+
+/// One golden-corpus scene: owned geometry + per-item style, plus the camera
+/// setup needed to frame it. Items are listed in z-order (first drawn first,
+/// i.e. farthest from the viewer).
+struct Scene {
+    name: &'static str,
+    width: u32,
+    height: u32,
+    zoom: f32,
+    /// Pinned animation time (seconds); fixed so animated scenes diff
+    /// deterministically.
+    time: f32,
+    /// Explicit `camera_position`, or `None` to auto-center the world origin.
+    camera: Option<[f32; 2]>,
+    /// Whether the brute-force "untiled" path is a valid cross-check. The
+    /// untiled fallback (`shader.wgsl` `grid_cols == 0`) evaluates the style
+    /// once PER SEGMENT and composites, instead of folding all of an entry's
+    /// segments into one nearest-distance SDF the way the tiled path does. It
+    /// is therefore only correct when every entry is a SINGLE segment (strokes,
+    /// beziers, tilings); a multi-segment fill (rounded rect, pin node) renders
+    /// wrong under it. Multi-segment scenes are still covered by the
+    /// determinism gate; they just cannot use the tiled-vs-untiled oracle.
+    untiled_safe: bool,
+    items: Vec<(Drawable, Style)>,
+}
+
+impl Scene {
+    fn pairs(&self) -> Vec<(&Drawable, &Style)> {
+        self.items.iter().map(|(d, s)| (d, s)).collect()
+    }
+}
+
+fn rgba(r: f32, g: f32, b: f32, a: f32) -> iced::Color {
+    iced::Color::from_rgba(r, g, b, a)
+}
+
+/// The standard crossing-S edge used by the pattern scenes (matches the edge
+/// editor default so pattern layout is exercised at a real curvature).
+fn corpus_edge() -> Drawable {
+    Curve::bezier([-120.0, -40.0], [-40.0, -40.0], [40.0, 40.0], [120.0, 40.0])
+}
+
+/// `camera_position` that centers world point `p` in a `w`x`h` viewport at
+/// `zoom` (scale 1.0). Mirrors `render_full`'s auto-center math.
+fn camera_centered_on(p: [f32; 2], w: u32, h: u32, zoom: f32) -> [f32; 2] {
+    [
+        (w as f32) * 0.5 / zoom - p[0],
+        (h as f32) * 0.5 / zoom - p[1],
+    ]
+}
+
+/// A segment-dense pin node: a rounded body punched by a ring of pin cutouts,
+/// composed into ONE shape via `difference_many` (the `boolean.rs` pin path).
+fn pin_dense_node(center: [f32; 2]) -> Drawable {
+    let body = Curve::rounded_rect(center, [70.0, 44.0], 10.0);
+    let mut cuts = Vec::new();
+    // Small cutouts centered on the left and right borders, mirroring the
+    // widget's pin punches: each is a notch in the boundary, the composed
+    // contour stays simple.
+    for i in 0..6 {
+        let t = -30.0 + i as f32 * 12.0;
+        cuts.push(Curve::circle([center[0] - 70.0, center[1] + t], 3.5));
+        cuts.push(Curve::circle([center[0] + 70.0, center[1] + t], 3.5));
+    }
+    crate::boolean::difference_many(&body, &cuts)
+}
+
+fn corpus() -> Vec<Scene> {
+    let mut scenes = Vec::new();
+
+    // --- Every pattern type, as a stroked edge ---
+    let stroke_color = rgba(0.2, 0.85, 1.0, 1.0);
+    let patterns: [(&'static str, Pattern); 6] = [
+        ("pattern_solid", Pattern::solid(6.0)),
+        ("pattern_dashed", Pattern::dashed(6.0, 14.0, 8.0)),
+        ("pattern_arrowed", Pattern::arrowed(6.0, 16.0, 9.0)),
+        ("pattern_dotted", Pattern::dotted(12.0, 4.0)),
+        (
+            "pattern_dash_dotted",
+            Pattern::dash_dotted(6.0, 14.0, 8.0, 3.0),
+        ),
+        (
+            "pattern_arrow_dotted",
+            Pattern::arrow_dotted(6.0, 12.0, 8.0, 3.0),
+        ),
+    ];
+    for (name, pat) in patterns {
+        scenes.push(Scene {
+            name,
+            width: 256,
+            height: 256,
+            zoom: 1.0,
+            time: 0.0,
+            camera: None,
+            untiled_safe: true,
+            items: vec![(corpus_edge(), Style::stroke(stroke_color, pat))],
+        });
+    }
+
+    // --- Pinned-time animated flowing dashed edge ---
+    scenes.push(Scene {
+        name: "animated_flow_dashed",
+        width: 256,
+        height: 256,
+        zoom: 1.0,
+        time: 0.37,
+        camera: None,
+        untiled_safe: true,
+        items: vec![(
+            corpus_edge(),
+            Style::stroke(stroke_color, Pattern::dashed(6.0, 14.0, 8.0).flow(40.0)),
+        )],
+    });
+
+    // --- Every tiling background ---
+    let tile_color = rgba(0.5, 0.55, 0.65, 1.0);
+    use crate::drawable::TilingType;
+    let tilings: [(&'static str, Drawable, Style); 4] = [
+        (
+            "tiling_grid",
+            Drawable::new_tiling(TilingType::Grid, [32.0, 32.0, 1.5, 0.0]),
+            Style::solid(tile_color).expand(0.75),
+        ),
+        (
+            "tiling_dots",
+            Drawable::new_tiling(TilingType::Dots, [32.0, 32.0, 3.0, 0.0]),
+            Style::solid(tile_color),
+        ),
+        (
+            "tiling_triangles",
+            Drawable::new_tiling(TilingType::Triangles, [40.0, 0.0, 1.5, 0.0]),
+            Style::solid(tile_color).expand(0.75),
+        ),
+        (
+            "tiling_hex",
+            Drawable::new_tiling(TilingType::Hex, [40.0, 0.0, 1.5, 0.0]),
+            Style::solid(tile_color).expand(0.75),
+        ),
+    ];
+    for (name, drawable, style) in tilings {
+        scenes.push(Scene {
+            name,
+            width: 256,
+            height: 256,
+            zoom: 1.0,
+            time: 0.0,
+            camera: None,
+            untiled_safe: true,
+            items: vec![(drawable, style)],
+        });
+    }
+
+    // --- Segment-dense pin node (exercises one shape with ~20 segments) ---
+    scenes.push(Scene {
+        name: "pin_dense_node",
+        width: 256,
+        height: 256,
+        zoom: 1.4,
+        time: 0.0,
+        camera: None,
+        untiled_safe: false,
+        items: vec![(
+            pin_dense_node([0.0, 0.0]),
+            Style::solid(rgba(0.3, 0.6, 0.9, 1.0)),
+        )],
+    });
+
+    // --- Deep z-overlap: a stack of staggered filled rects ---
+    {
+        // Six staggered rects (4 segments each = 24 slots) all overlapping at
+        // the center: within the single-tile slot budget so the untiled oracle
+        // applies, while still exercising the z-order composite.
+        let mut items = Vec::new();
+        for i in 0..6 {
+            let f = i as f32;
+            let c = Curve::rect([-25.0 + f * 10.0, -25.0 + f * 10.0], [34.0, 34.0]);
+            let col = rgba(0.15 + f * 0.13, 0.9 - f * 0.1, 0.4 + f * 0.08, 0.85);
+            items.push((c, Style::solid(col)));
+        }
+        scenes.push(Scene {
+            name: "z_deep_overlap",
+            width: 256,
+            height: 256,
+            zoom: 1.2,
+            time: 0.0,
+            camera: None,
+            untiled_safe: false,
+            items,
+        });
+    }
+
+    // --- Far-from-origin coordinates (precision: tiled must match untiled) ---
+    {
+        let p = [20000.0, 20000.0];
+        scenes.push(Scene {
+            name: "far_origin_node",
+            width: 256,
+            height: 256,
+            zoom: 1.2,
+            time: 0.0,
+            camera: Some(camera_centered_on(p, 256, 256, 1.2)),
+            untiled_safe: false,
+            items: vec![(
+                Curve::rounded_rect(p, [70.0, 44.0], 10.0),
+                Style::solid(rgba(0.85, 0.55, 0.3, 1.0)),
+            )],
+        });
+    }
+
+    // --- Segment-dense pin node at a far origin (overflow + precision) ---
+    {
+        let p = [-15000.0, 12000.0];
+        scenes.push(Scene {
+            name: "pin_dense_far_origin",
+            width: 256,
+            height: 256,
+            zoom: 1.4,
+            time: 0.0,
+            camera: Some(camera_centered_on(p, 256, 256, 1.4)),
+            untiled_safe: false,
+            items: vec![(pin_dense_node(p), Style::solid(rgba(0.3, 0.6, 0.9, 1.0)))],
+        });
+    }
+
+    scenes
+}
+
+/// Render a corpus scene through the SDF path with the tile spatial index on or
+/// off. Geometry is localized to each drawable's bounds-center with placement
+/// carried in the per-segment translate (the production dedup keystone).
+fn render_scene(r: &TestRenderer, scene: &Scene, use_tiles: bool) -> Vec<[u8; 4]> {
+    r.render_full_t(
+        &scene.pairs(),
+        scene.width,
+        scene.height,
+        scene.zoom,
+        1.0,
+        use_tiles,
+        scene.time,
+        scene.camera,
+    )
+}
+
+/// Result of [`corpus_diff`]: worst per-channel diff, count exceeding
+/// `CORPUS_AA_TOL`, and the first offending `(index, a, b)` sample.
+type CorpusDiff = (i32, usize, Option<(usize, [u8; 4], [u8; 4])>);
+
+/// Worst per-channel diff over visible pixels, plus the count exceeding
+/// `CORPUS_AA_TOL` and the first offending sample.
+fn corpus_diff(a: &[[u8; 4]], b: &[[u8; 4]]) -> CorpusDiff {
+    let mut worst = 0i32;
+    let mut over = 0usize;
+    let mut sample = None;
+    for (i, (pa, pb)) in a.iter().zip(b.iter()).enumerate() {
+        if pa[3] < CORPUS_ALPHA_FLOOR && pb[3] < CORPUS_ALPHA_FLOOR {
+            continue;
+        }
+        let d = (0..4)
+            .map(|c| (pa[c] as i32 - pb[c] as i32).abs())
+            .max()
+            .unwrap();
+        worst = worst.max(d);
+        if d > CORPUS_AA_TOL {
+            over += 1;
+            if sample.is_none() {
+                sample = Some((i, *pa, *pb));
+            }
+        }
+    }
+    (worst, over, sample)
+}
+
+/// The SDF render is deterministic: rendering a scene twice yields a
+/// byte-identical framebuffer, so any diff reflects a real change, not renderer
+/// nondeterminism.
+#[test]
+fn corpus_render_is_deterministic() {
+    let r = shared_renderer();
+    for scene in corpus() {
+        let a = render_scene(&r, &scene, true);
+        let b = render_scene(&r, &scene, true);
+        assert!(
+            a == b,
+            "scene `{}` is not deterministic across repeated renders",
+            scene.name,
+        );
+    }
+}
+
+/// Oracle sanity: every corpus scene renders a plausible amount of content in
+/// the shipping tiled path. Rules out the two silent-failure modes the
+/// determinism gate alone would miss: a scene that renders nothing (so
+/// determinism passes trivially) and a scene that fills the whole viewport (the
+/// segment-overflow sign inversion). Each scene must cover between 1% and 92%
+/// of the viewport with visible pixels.
+#[test]
+fn corpus_scenes_render_plausible_coverage() {
+    let r = shared_renderer();
+    for scene in corpus() {
+        let px = render_scene(&r, &scene, true);
+        let total = px.len() as f32;
+        let visible = px.iter().filter(|p| p[3] >= CORPUS_ALPHA_FLOOR).count() as f32;
+        let frac = visible / total;
+        assert!(
+            (0.01..=0.92).contains(&frac),
+            "scene `{}` covers {:.1}% of the viewport (expected 1%..92%); \
+             0% means it rendered nothing, ~100% means a fill-everywhere bug",
+            scene.name,
+            frac * 100.0,
+        );
+    }
+}
+
+/// Phase A4 gate: an edge rendered as an arc-spline (bezier approximated by
+/// arcs/lines) is pixel-equal to the cubic-bezier reference edge WITHIN AA TOLERANCE.
+/// The arc-spline is within `tol` world units of the curve, so the SDF differs
+/// by <= `tol`: a thin sub-pixel delta confined to the antialiased edge band,
+/// never a structural divergence (this is the plan's accepted delta, not the
+/// bit-identical bar). Asserts the two renders are structurally identical (no
+/// pixel grossly different) and only a thin edge band differs.
+#[test]
+fn arc_spline_edge_matches_bezier() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (256u32, 256u32, 1.0f32);
+    let cps = (
+        glam::Vec2::new(-120.0, -40.0),
+        glam::Vec2::new(-40.0, -40.0),
+        glam::Vec2::new(40.0, 40.0),
+        glam::Vec2::new(120.0, 40.0),
+    );
+    // The oracle is a dense POLYLINE of the true cubic (the GPU cubic SDF was
+    // removed). It is independent of the biarc fitter - not another arc-spline
+    // - so it still catches a structural arc-spline error. `Curve::bezier` itself
+    // now fits arcs, so it could not serve as the reference.
+    let bez = crate::drawable::Drawable::bezier_polyline(cps.0, cps.1, cps.2, cps.3, 256);
+    // Zoom-aware fine tolerance (sub-pixel at this zoom).
+    let tol = 0.1 / zoom;
+    let arcs = crate::drawable::Drawable::bezier_arcs(cps.0, cps.1, cps.2, cps.3, tol);
+
+    // Arc-length must match so dash spacing / flow stay aligned with the cubic.
+    let rel_len = (arcs.total_arc_length() - bez.total_arc_length()).abs() / bez.total_arc_length();
+    assert!(
+        rel_len < 0.01,
+        "arc-spline arc-length drifted {rel_len} from bezier"
+    );
+
+    let color = rgba(0.2, 0.85, 1.0, 1.0);
+    for (name, style) in [
+        ("solid", Style::stroke(color, Pattern::solid(6.0))),
+        (
+            "dashed",
+            Style::stroke(color, Pattern::dashed(6.0, 14.0, 8.0)),
+        ),
+    ] {
+        let bez_px = r.render_opts(&[(&bez, &style)], w, h, zoom, true);
+        let arc_px = r.render_opts(&[(&arcs, &style)], w, h, zoom, true);
+
+        let total = bez_px.len();
+        let mut visible = 0usize;
+        let mut differ = 0usize; // per-channel diff over a clear threshold
+        let mut worst = 0i32;
+        for (a, b) in bez_px.iter().zip(arc_px.iter()) {
+            if a[3] < CORPUS_ALPHA_FLOOR && b[3] < CORPUS_ALPHA_FLOOR {
+                continue;
+            }
+            visible += 1;
+            let d = (0..4)
+                .map(|c| (a[c] as i32 - b[c] as i32).abs())
+                .max()
+                .unwrap();
+            worst = worst.max(d);
+            if d > 16 {
+                differ += 1;
+            }
+        }
+        // No structural divergence (a missing/extra arc would blow this up).
+        assert!(
+            worst < 140,
+            "edge `{name}`: worst per-channel diff {worst} indicates a structural \
+             arc-spline error, not a sub-pixel edge delta",
+        );
+        // Only a thin AA edge band may differ; the bulk must match exactly.
+        let frac = differ as f32 / visible.max(1) as f32;
+        assert!(
+            frac < 0.04,
+            "edge `{name}`: {:.1}% of visible pixels differ (>{differ} px of \
+             {visible}); expected only a thin sub-pixel edge band. total={total}",
+            frac * 100.0,
+        );
+    }
+}
+
+/// Backward / looping edge: a "backward" graph edge (output-right pin to a node
+/// to the LEFT) has bezier control points that point away from each other, so
+/// the cubic self-loops. The arc-spline of such a curve must still match the
+/// true cubic - a full-circle or giant-arc artifact here (the reported bug)
+/// blows up the diff. Rendered against a dense-polyline oracle of the cubic (the
+/// GPU cubic SDF was removed), not another arc-spline. Also sweeps a non-origin offset
+/// (world-space fit precision).
+#[test]
+fn backward_edge_arc_spline_matches_cubic() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (400u32, 300u32, 1.0f32);
+    // Centered backward-loop control polygon (output heads right, target is left).
+    let bases = [
+        (
+            glam::Vec2::new(100.0, -25.0),
+            glam::Vec2::new(180.0, -25.0),
+            glam::Vec2::new(-180.0, 25.0),
+            glam::Vec2::new(-100.0, 25.0),
+        ),
+        // A vertical-ish backward edge (top/bottom pins) for a second config.
+        (
+            glam::Vec2::new(-30.0, -90.0),
+            glam::Vec2::new(-30.0, 0.0),
+            glam::Vec2::new(30.0, 0.0),
+            glam::Vec2::new(30.0, -90.0),
+        ),
+    ];
+    let color = rgba(0.2, 0.85, 1.0, 1.0);
+    let style = Style::stroke(color, Pattern::solid(6.0));
+    for (i, (a, b, c, d)) in bases.into_iter().enumerate() {
+        let bez = crate::drawable::Drawable::bezier_polyline(a, b, c, d, 256);
+        let arcs = crate::drawable::Drawable::bezier_arcs(a, b, c, d, 0.1 / zoom);
+
+        let bez_px = r.render_opts(&[(&bez, &style)], w, h, zoom, true);
+        let arc_px = r.render_opts(&[(&arcs, &style)], w, h, zoom, true);
+
+        let mut visible = 0usize;
+        let mut differ = 0usize;
+        let mut worst = 0i32;
+        for (x, y) in bez_px.iter().zip(arc_px.iter()) {
+            if x[3] < CORPUS_ALPHA_FLOOR && y[3] < CORPUS_ALPHA_FLOOR {
+                continue;
+            }
+            visible += 1;
+            let dd = (0..4)
+                .map(|cc| (x[cc] as i32 - y[cc] as i32).abs())
+                .max()
+                .unwrap();
+            worst = worst.max(dd);
+            if dd > 16 {
+                differ += 1;
+            }
+        }
+        let frac = differ as f32 / visible.max(1) as f32;
+        assert!(
+            worst < 140,
+            "backward edge {i}: worst diff {worst} - arc-spline diverged from \
+             the cubic (full-circle/giant-arc artifact)",
+        );
+        assert!(
+            frac < 0.05,
+            "backward edge {i}: {:.1}% pixels differ - structural arc-spline error",
+            frac * 100.0,
+        );
+    }
+}
+
+/// Sweep the WIDGET's real edge geometry (every pin-side tangent pair x endpoint
+/// delta, mirroring `pin_side_direction` + `adaptive_bezier_length`, incl. the
+/// short tight-loop configs) and assert the tiled spatial-index render equals the
+/// brute-force untiled render. This is the reference-free correctness oracle: it
+/// proves the arc cull (the endpoint+curvature `seg_box_interval`) never drops or
+/// mis-places an arc segment, which is what a "becomes a straight line" glitch
+/// would look like. (A dense-polyline comparison is deliberately NOT used: a
+/// polyline corner-cuts tight bends, under-covering where the arc-spline is
+/// actually MORE faithful - a false positive.)
+#[test]
+fn widget_edge_configs_tiled_matches_untiled() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (320u32, 320u32, 1.0f32);
+    let dirs: [[f32; 2]; 4] = [[-1.0, 0.0], [1.0, 0.0], [0.0, -1.0], [0.0, 1.0]];
+    let deltas: [[f32; 2]; 8] = [
+        [120.0, 0.0],
+        [-120.0, 0.0],
+        [0.0, 90.0],
+        [0.0, -90.0],
+        [-100.0, 40.0],
+        [110.0, -70.0],
+        [16.0, 6.0],    // short tight loop
+        [-14.0, -36.0], // short backward
+    ];
+    let style = Style::stroke(rgba(0.2, 0.85, 1.0, 1.0), Pattern::solid(6.0));
+
+    let mut worst_overall = 0i32;
+    let mut worst_cfg = String::new();
+    for delta in deltas {
+        let p0 = [-delta[0] * 0.5, -delta[1] * 0.5];
+        let p3 = [delta[0] * 0.5, delta[1] * 0.5];
+        // adaptive_bezier_length: min(80, half dist, >=1).
+        let d = (delta[0] * delta[0] + delta[1] * delta[1]).sqrt();
+        let l = 80.0_f32.min(d * 0.5).max(1.0);
+        for df in dirs {
+            for dt in dirs {
+                let cp0 = [p0[0] + df[0] * l, p0[1] + df[1] * l];
+                let cp1 = [p3[0] + dt[0] * l, p3[1] + dt[1] * l];
+                let arcs = crate::drawable::Drawable::bezier_arcs(
+                    glam::Vec2::from(p0),
+                    glam::Vec2::from(cp0),
+                    glam::Vec2::from(cp1),
+                    glam::Vec2::from(p3),
+                    0.05,
+                );
+                let tiled = r.render_opts(&[(&arcs, &style)], w, h, zoom, true);
+                let untiled = r.render_opts(&[(&arcs, &style)], w, h, zoom, false);
+                let mut worst = 0i32;
+                for (a, b) in tiled.iter().zip(untiled.iter()) {
+                    if a[3] < CORPUS_ALPHA_FLOOR && b[3] < CORPUS_ALPHA_FLOOR {
+                        continue;
+                    }
+                    let dd = (0..4)
+                        .map(|c| (a[c] as i32 - b[c] as i32).abs())
+                        .max()
+                        .unwrap();
+                    worst = worst.max(dd);
+                }
+                if worst > worst_overall {
+                    worst_overall = worst;
+                    worst_cfg = format!("delta={delta:?} df={df:?} dt={dt:?} worst={worst}");
+                }
+            }
+        }
+    }
+    eprintln!("widget-edge tiled-vs-untiled worst: {worst_cfg}");
+    assert!(
+        worst_overall < 32,
+        "arc cull drops/mis-places a segment: {worst_cfg}"
+    );
+}
+
+/// An arc-spline edge renders identically whether its geometry sits at the origin
+/// or 40k px away (camera panned to compensate). The GPU `arc_from_endpoints`
+/// reconstructs the arc center from ABSOLUTE coordinates, so this guards against
+/// far-from-origin precision loss displacing an edge on a panned graph.
+#[test]
+fn far_origin_edge_matches_origin() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (256u32, 256u32, 1.0f32);
+    let style = Style::stroke(rgba(0.2, 0.85, 1.0, 1.0), Pattern::solid(6.0));
+    let base = [
+        glam::Vec2::new(-120.0, -40.0),
+        glam::Vec2::new(-40.0, -40.0),
+        glam::Vec2::new(40.0, 40.0),
+        glam::Vec2::new(120.0, 40.0),
+    ];
+    let render_at = |off: glam::Vec2| {
+        let cps: Vec<glam::Vec2> = base.iter().map(|p| *p + off).collect();
+        let arcs = crate::drawable::Drawable::bezier_arcs(cps[0], cps[1], cps[2], cps[3], 0.05);
+        let cam = [w as f32 * 0.5 - off.x, h as f32 * 0.5 - off.y];
+        r.render_with_origin(&[(&arcs, &style)], w, h, zoom, [0.0, 0.0], w, w, cam)
+    };
+    let at_origin = render_at(glam::Vec2::ZERO);
+    for off in [
+        glam::Vec2::new(2000.0, -1500.0),
+        glam::Vec2::new(40000.0, 25000.0),
+    ] {
+        let far = render_at(off);
+        let mut worst = 0i32;
+        for (a, b) in at_origin.iter().zip(far.iter()) {
+            if a[3] < CORPUS_ALPHA_FLOOR && b[3] < CORPUS_ALPHA_FLOOR {
+                continue;
+            }
+            let dd = (0..4)
+                .map(|c| (a[c] as i32 - b[c] as i32).abs())
+                .max()
+                .unwrap();
+            worst = worst.max(dd);
+        }
+        assert!(
+            worst < 24,
+            "edge at {off:?} differs from origin by {worst} (precision loss)"
+        );
+    }
+}
+
+/// The tiled spatial-index path matches the brute-force untiled path within AA
+/// tolerance on every corpus scene - the cull/spatial-index correctness oracle
+/// (a dropped tile would show up as missing pixels under the tiled path).
+#[test]
+fn corpus_tiled_matches_untiled() {
+    let r = shared_renderer();
+    for scene in corpus() {
+        if !scene.untiled_safe {
+            continue;
+        }
+        let tiled = render_scene(&r, &scene, true);
+        let untiled = render_scene(&r, &scene, false);
+        let (worst, over, sample) = corpus_diff(&tiled, &untiled);
+        assert!(
+            over == 0,
+            "scene `{}`: tiled vs untiled differs on {over} visible pixels \
+             (worst per-channel {worst}). First: {sample:?}",
+            scene.name,
+        );
+    }
+}
+
+/// C1 correctness guard (Phase C): the tile cull bins against the pattern's
+/// PERPENDICULAR envelope and is conservative - every tile that renders a
+/// non-zero pixel must have been binned, for EVERY pattern at EVERY angle
+/// (under-inclusion is the bug; over-inclusion is fine). Verified through the
+/// tiled-vs-untiled oracle: the untiled path applies no cull, so if the cull
+/// dropped a tile the tiled render would be MISSING pixels the untiled render
+/// has. A single straight stroke is one segment (untiled-safe), swept across
+/// angles that straddle tile boundaries.
+#[test]
+fn c1_cull_conservative_for_all_patterns_at_swept_angles() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (256u32, 256u32, 1.0f32);
+    let color = rgba(0.9, 0.7, 0.2, 1.0);
+    let patterns = [
+        ("solid", Pattern::solid(6.0)),
+        ("dashed", Pattern::dashed(6.0, 14.0, 8.0)),
+        ("dotted", Pattern::dotted(16.0, 5.0)),
+        ("arrowed", Pattern::arrowed(7.0, 18.0, 10.0)),
+        ("arrow_dotted", Pattern::arrow_dotted(6.0, 16.0, 9.0, 4.0)),
+    ];
+    let angles_deg = [0.0f32, 17.0, 33.0, 45.0, 61.0, 79.0, 90.0, 113.0, 135.0];
+    let l = 110.0f32;
+    for (pname, pat) in patterns {
+        let style = Style::stroke(color, pat);
+        for deg in angles_deg {
+            let a = deg.to_radians();
+            let (c, s) = (a.cos(), a.sin());
+            let line = Curve::line([-l * c, -l * s], [l * c, l * s]);
+            let tiled = r.render_opts(&[(&line, &style)], w, h, zoom, true);
+            let untiled = r.render_opts(&[(&line, &style)], w, h, zoom, false);
+            let (worst, over, sample) = corpus_diff(&tiled, &untiled);
+            assert!(
+                over == 0,
+                "C1 cull dropped pixels: pattern `{pname}` at {deg} deg - \
+                 {over} px differ (worst {worst}). First: {sample:?}",
+            );
+        }
+    }
+}
+
+/// C2 correctness guard (Phase C): when a 16px tile overflows its 32-slot budget,
+/// the result degrades DETERMINISTICALLY and never flickers. The cull keeps the
+/// NEAREST segments by distance-to-tile-centre (not insertion order), so even
+/// though the regional candidate gather uses nondeterministic atomics, the kept
+/// set - and thus the rendered output - is identical every frame. Renders a
+/// segment-dense overlapping stack (far exceeding 32 slots in central tiles)
+/// many times and asserts byte-identical output across all frames.
+#[test]
+fn c2_overflow_is_deterministic_no_flicker() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (256u32, 256u32, 1.0f32);
+    // ~40 overlapping circles crowded into the centre: each is several segments,
+    // so the central 16px tiles hold far more than the 32-slot budget.
+    let mut drawables = Vec::new();
+    for i in 0..40u32 {
+        let a = i as f32 * 0.41;
+        let rad = 6.0 + (i % 5) as f32;
+        let cx = (a.cos()) * 10.0;
+        let cy = (a.sin()) * 10.0;
+        drawables.push(Curve::circle([cx, cy], rad));
+    }
+    let style = Style::solid(rgba(0.3, 0.6, 0.9, 1.0));
+    let refs: Vec<(&Drawable, &Style)> = drawables.iter().map(|d| (d, &style)).collect();
+
+    let first = r.render_opts(&refs, w, h, zoom, true);
+    for frame in 1..64u32 {
+        let again = r.render_opts(&refs, w, h, zoom, true);
+        let differ = first
+            .iter()
+            .zip(again.iter())
+            .filter(|(a, b)| a != b)
+            .count();
+        assert!(
+            differ == 0,
+            "C2 overflow flickered: frame {frame} differs from frame 0 on \
+             {differ} pixels (nondeterministic overflow drop)",
+        );
+    }
+}
+
+/// A3 band-fold premultiplied blend: a falloff from opaque GREEN to TRANSPARENT
+/// RED must stay green through the fade, not fringe toward red. Straight-alpha
+/// in-loop mixing (the old behavior) pulls RGB toward the transparent stop's red
+/// and fails this; premultiplied mixing keeps it green.
+#[test]
+fn premultiplied_band_blend_no_rgb_fringe() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (256u32, 256u32, 1.0f32);
+    let green = iced::Color::from_rgba(0.0, 1.0, 0.0, 1.0);
+    let red_clear = iced::Color::from_rgba(1.0, 0.0, 0.0, 0.0);
+    let style = Style {
+        stops: vec![
+            crate::style::Stop::new(0.0, green),
+            crate::style::Stop::new(15.0, red_clear),
+        ],
+        pattern: None,
+        transfer: Default::default(),
+    };
+    let radius = 50.0_f32;
+    let circle = Curve::circle([0.0, 0.0], radius);
+    let px = r.render_opts(&[(&circle, &style)], w, h, zoom, true);
+
+    // ~7 world px outside the edge (mid-falloff). Auto-camera centers world 0 at
+    // the viewport center, so world (radius+7, 0) -> screen (128 + 57, 128).
+    let sx = w / 2 + radius as u32 + 7;
+    let sy = h / 2;
+    let p = TestRenderer::pixel_at(&px, w, sx, sy);
+    assert!(p[3] > 40, "falloff pixel should be visible: {p:?}");
+    assert!(
+        p[1] as i32 > p[0] as i32 + 40,
+        "falloff must stay green (premultiplied), not fringe red: {p:?}",
+    );
+}
+
+/// A2 gate (time-uniform hoist): time and camera are per-frame uniform values,
+/// NOT baked into the input buffers (segments/entries/styles). Its plan gate is
+/// "pan-static-graph pixel-equal": panning a static graph re-renders correctly
+/// from the SAME geometry, and advancing time animates the pattern from that
+/// same geometry - so a frame-surviving input buffer stays valid across both.
+/// (`time` already lives in the per-frame `DrawData` uniform, never in the
+/// input buffers, so the literal "separate uniform" hoist is unnecessary here.)
+#[test]
+fn a2_time_and_camera_are_per_frame_uniforms() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (256u32, 256u32, 1.0f32);
+    let edge = Curve::bezier([-120.0, -40.0], [-40.0, -40.0], [40.0, 40.0], [120.0, 40.0]);
+    let flow = Style::stroke(
+        rgba(0.2, 0.85, 1.0, 1.0),
+        Pattern::dashed(6.0, 14.0, 8.0).flow(40.0),
+    );
+    let d = [(&edge, &flow)];
+
+    // Same geometry, two times: the flow phase animates (time is a per-frame
+    // uniform driving the pattern, not baked into the segment buffer).
+    let t0 = r.render_full_t(&d, w, h, zoom, 1.0, true, 0.0, None);
+    let t1 = r.render_full_t(&d, w, h, zoom, 1.0, true, 0.25, None);
+    assert!(
+        corpus_diff(&t0, &t1).1 > 0,
+        "advancing time must animate the flow"
+    );
+
+    // Same geometry, two cameras: panning a STATIC graph re-renders correctly
+    // (the plan's pan-static gate) - the view shifts, the geometry does not.
+    let solid = Style::stroke(rgba(0.9, 0.6, 0.2, 1.0), Pattern::solid(6.0));
+    let s = [(&edge, &solid)];
+    let cam_a = [(w as f32) * 0.5 / zoom, (h as f32) * 0.5 / zoom];
+    let cam_b = [cam_a[0] - 30.0, cam_a[1]];
+    let pa = r.render_full_t(&s, w, h, zoom, 1.0, true, 0.0, Some(cam_a));
+    let pb = r.render_full_t(&s, w, h, zoom, 1.0, true, 0.0, Some(cam_b));
+    assert!(
+        corpus_diff(&pa, &pb).1 > 0,
+        "panning a static graph must shift the view"
+    );
+    // And both pans render plausible content (the static geometry survives both).
+    let vis = |px: &[[u8; 4]]| px.iter().filter(|p| p[3] >= CORPUS_ALPHA_FLOOR).count();
+    assert!(
+        vis(&pa) > 100 && vis(&pb) > 100,
+        "both pans must render the edge"
+    );
+}
+
+/// Regression (found in the 500-node visual sign-off): the two-level cull bins a
+/// region's candidates into a 256-slot workgroup array; when MORE than 256
+/// entries crowd one 256px region (e.g. zoomed far out), candidates past 256 were
+/// silently dropped, so edges vanished. The overflow fallback (scan all entries
+/// for the tile) must render every entry. Single-segment circles make the untiled
+/// brute-force path a faithful oracle.
+#[test]
+fn crowded_region_over_256_entries_no_dropped_shapes() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (256u32, 256u32, 1.0f32);
+    let mut circles = Vec::new();
+    for gy in 0..18 {
+        for gx in 0..18 {
+            let x = -110.0 + gx as f32 * 13.0;
+            let y = -110.0 + gy as f32 * 13.0;
+            circles.push(Curve::circle([x, y], 4.0));
+        }
+    } // 324 shapes in one 256px workgroup region -> exceeds the 256 cap
+    let style = Style::solid(rgba(1.0, 1.0, 1.0, 1.0));
+    let d: Vec<_> = circles.iter().map(|c| (c, &style)).collect();
+
+    let tiled = r.render_opts(&d, w, h, zoom, true);
+    let untiled = r.render_opts(&d, w, h, zoom, false);
+    let vis = |px: &[[u8; 4]]| px.iter().filter(|p| p[3] >= CORPUS_ALPHA_FLOOR).count();
+    let (vt, vu) = (vis(&tiled), vis(&untiled));
+    assert!(vu > 1000, "oracle coverage too low: {vu}");
+    let ratio = vt as f32 / vu as f32;
+    assert!(
+        ratio > 0.97,
+        "tiled cull dropped crowded entries: {vt}/{vu} = {:.0}% (overflow fallback broken)",
+        ratio * 100.0,
+    );
+}
+
+/// Zoomed-OUT variant of the crowded-region regression: many entries spread over
+/// a wide world area, rendered zoomed out so each screen-space region covers many
+/// of them - the exact condition (per the 500-node sign-off) where the region
+/// cull used to overflow and drop edges. Per-tile density stays low, so this
+/// isolates the region-overflow fallback, not the per-tile slot cap.
+#[test]
+fn zoomed_out_many_entries_no_dropped_shapes() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (256u32, 256u32, 0.35f32);
+    let mut circles = Vec::new();
+    for gy in 0..20 {
+        for gx in 0..20 {
+            let x = -340.0 + gx as f32 * 36.0;
+            let y = -340.0 + gy as f32 * 36.0;
+            circles.push(Curve::circle([x, y], 6.0));
+        }
+    } // 400 shapes over a wide area -> one zoomed-out region holds >256
+    let style = Style::solid(rgba(1.0, 1.0, 1.0, 1.0));
+    let d: Vec<_> = circles.iter().map(|c| (c, &style)).collect();
+    let tiled = r.render_opts(&d, w, h, zoom, true);
+    let untiled = r.render_opts(&d, w, h, zoom, false);
+    let vis = |px: &[[u8; 4]]| px.iter().filter(|p| p[3] >= CORPUS_ALPHA_FLOOR).count();
+    let (vt, vu) = (vis(&tiled), vis(&untiled));
+    assert!(vu > 300, "oracle coverage too low: {vu}");
+    let ratio = vt as f32 / vu as f32;
+    assert!(
+        ratio > 0.95,
+        "zoomed-out cull dropped entries: {vt}/{vu} = {:.0}%",
+        ratio * 100.0,
+    );
+}
+
+/// A tile holding more than MAX_SLOTS_PER_TILE segments must keep the NEAREST
+/// ones, not an arbitrary first-32 by scan order. A near, tile-filling shape
+/// pushed LAST (highest scan index) would be dropped by first-32; keep-nearest
+/// retains it because its |dist| at the tile centre is smallest.
+#[test]
+fn overflowing_tile_keeps_nearest_not_first() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (16u32, 16u32, 1.0f32); // a single 16px tile
+    let white = Style::stroke(rgba(1.0, 1.0, 1.0, 1.0), Pattern::solid(1.0));
+    let mut rings: Vec<crate::drawable::Drawable> = Vec::new();
+    for k in 0..36 {
+        let a = k as f32 / 36.0 * std::f32::consts::TAU;
+        rings.push(Curve::circle([a.cos() * 7.0, a.sin() * 7.0], 0.8));
+    }
+    let near = Curve::circle([0.0, 0.0], 2.0);
+    let red = Style::stroke(rgba(1.0, 0.1, 0.1, 1.0), Pattern::solid(8.0));
+    let mut d: Vec<(&crate::drawable::Drawable, &Style)> =
+        rings.iter().map(|c| (c, &white)).collect();
+    d.push((&near, &red));
+
+    let px = r.render_opts(&d, w, h, zoom, true);
+    let p = TestRenderer::pixel_at(&px, w, 8, 8);
+    assert!(
+        p[0] as i32 > p[1] as i32 + 40 && p[0] as i32 > p[2] as i32 + 40,
+        "overflowing tile must keep the nearest (red) shape pushed last, got {p:?}",
+    );
+}
+
+/// A3 transfer (variant B) new-capability golden: a Gamma transfer warps the
+/// stop-blend parameter `t`, biasing a RED->BLUE falloff toward the near (red)
+/// stop versus the Linear identity. Gated as a NEW capability (it deliberately
+/// differs from the untransformed render), a deliberate visual change.
+#[test]
+fn transfer_gamma_warps_blend_toward_near_stop() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (256u32, 256u32, 1.0f32);
+    let red = rgba(1.0, 0.0, 0.0, 1.0);
+    let blue = rgba(0.0, 0.0, 1.0, 1.0);
+    let mk = |t: crate::style::Transfer| crate::style::Style {
+        stops: vec![
+            crate::style::Stop::new(0.0, red),
+            crate::style::Stop::new(20.0, blue),
+        ],
+        pattern: None,
+        transfer: t,
+    };
+    let circle = Curve::circle([0.0, 0.0], 30.0);
+    let lin = mk(crate::style::Transfer::Linear);
+    let gam = mk(crate::style::Transfer::Gamma(2.5));
+    let px_lin = r.render_opts(&[(&circle, &lin)], w, h, zoom, true);
+    let px_gam = r.render_opts(&[(&circle, &gam)], w, h, zoom, true);
+    // ~10px outside the edge (mid-falloff): world (40,0) -> screen (128+40, 128).
+    let (sx, sy) = (w / 2 + 40, h / 2);
+    let pl = TestRenderer::pixel_at(&px_lin, w, sx, sy);
+    let pg = TestRenderer::pixel_at(&px_gam, w, sx, sy);
+    assert!(
+        pl[3] > 200 && pg[3] > 200,
+        "falloff must be opaque: {pl:?} {pg:?}"
+    );
+    assert!(
+        pg[0] as i32 > pl[0] as i32 + 40,
+        "Gamma must bias toward the near (red) stop vs Linear: lin {pl:?} gam {pg:?}",
+    );
+}
+
+/// A3 sign-aware patterns new-capability golden: a DOTTED pattern on a CLOSED
+/// contour keeps its dots on the OUTER half plus a thin inner line, so the
+/// interior stays clean (no inward dot bulge). At dist -4 inside the contour the
+/// old symmetric dot was opaque; sign-aware leaves it transparent. The dots still
+/// appear on the outer half. Gated as a NEW capability, a deliberate visual change.
+#[test]
+fn sign_aware_dotted_border_no_inward_bulge() {
+    let r = shared_renderer();
+    let (w, h, zoom) = (256u32, 256u32, 1.0f32);
+    let circle = Curve::circle([0.0, 0.0], 30.0);
+    let style = Style::stroke(rgba(1.0, 1.0, 1.0, 1.0), Pattern::dotted(14.0, 5.0));
+    let px = r.render_opts(&[(&circle, &style)], w, h, zoom, true);
+    let at = |radius: f32, deg: f32| -> [u8; 4] {
+        let a = deg.to_radians();
+        let sx = (128.0 + radius * a.cos()) as u32;
+        let sy = (128.0 + radius * a.sin()) as u32;
+        TestRenderer::pixel_at(&px, w, sx, sy)
+    };
+    let mut inner_opaque = 0; // dist ~ -4 (inside): must be clean
+    let mut outer_opaque = 0; // dist ~ +3 (outside): dots present
+    for k in 0..72 {
+        let deg = k as f32 * 5.0;
+        if at(26.0, deg)[3] >= CORPUS_ALPHA_FLOOR {
+            inner_opaque += 1;
+        }
+        if at(33.0, deg)[3] >= CORPUS_ALPHA_FLOOR {
+            outer_opaque += 1;
+        }
+    }
+    assert!(
+        inner_opaque <= 4,
+        "dots bulged inward (not sign-aware): {inner_opaque}/72"
+    );
+    assert!(
+        outer_opaque >= 6,
+        "dots missing on the outer half: {outer_opaque}/72"
+    );
+}
+
+/// The real artifact: a LARGE node body (rounded box MINUS pin-cutout circles, a
+/// boolean shape) renders with a hollow / washed interior at some sub-tile pan
+/// Write RGBA pixels to a PNG (debug aid: render a scene, then look at it).
+fn write_png(path: &str, px: &[[u8; 4]], w: u32, h: u32) {
+    let file = std::fs::File::create(path).unwrap();
+    let bw = std::io::BufWriter::new(file);
+    let mut enc = png::Encoder::new(bw, w, h);
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut writer = enc.write_header().unwrap();
+    let flat: Vec<u8> = px.iter().flat_map(|p| p.iter().copied()).collect();
+    writer.write_image_data(&flat).unwrap();
+}
+
+/// alignments. Deep-interior tiles (farther than the cull reach from the contour)
+/// are kept only when the closed-fill inside test `center_signed < 0` holds - but
+/// that reads ONE nearest segment's sign, which is unreliable for a boolean body
+/// near a cutout. A small node never reaches that path (its whole interior is
+/// within reach); a big one does. The interior away from the cutouts must be FULLY
+/// opaque at every sub-tile camera offset.
+#[test]
+fn large_boolean_fill_interior_never_hollows() {
+    use crate::primitive::SdfPrimitive;
+    use crate::shape::Shape;
+    use iced::Rectangle;
+
+    let r = shared_renderer();
+    let (w, h) = (384u32, 320u32);
+    let zoom = 1.0_f32;
+    // Body big enough that the interior runs well past the cull reach (~one tile
+    // diagonal): a 220x150 box has interior tiles up to ~75px from any edge.
+    let nw = 220.0_f32;
+    let nh = 150.0_f32;
+    let fill_style = Style::solid(rgba(0.30, 0.32, 0.40, 1.0));
+    let full = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(w as f32, h as f32));
+
+    // Body = rounded box minus pin cutouts on the left/right edges (as the widget
+    // builds `geom.shape`).
+    let body = Shape::rounded_box([nw, nh], [8.0; 4])
+        - Shape::circle(9.0).translate([-nw * 0.5, -30.0])
+        - Shape::circle(9.0).translate([-nw * 0.5, 30.0])
+        - Shape::circle(9.0).translate([nw * 0.5, 0.0]);
+
+    // Centre the body and sweep sub-tile camera offsets so tile centres land at
+    // many phases relative to the geometry and the cutouts.
+    let owned: Vec<(f32, Vec<(SdfPrimitive, Rectangle)>)> = (0..40)
+        .map(|k| {
+            let off = k as f32 * 0.4; // 0..16px, more than one tile
+            let camx = (w as f32 * 0.5) / zoom - off;
+            let camy = (h as f32 * 0.5) / zoom - off;
+            let mut fill = SdfPrimitive::new();
+            fill.push(&body, &fill_style, [0.0, 0.0]);
+            (off, vec![(fill.camera(camx, camy, zoom), full)])
+        })
+        .collect();
+    let frames: Vec<Vec<(&SdfPrimitive, Rectangle)>> = owned
+        .iter()
+        .map(|(_, f)| f.iter().map(|(p, b)| (p, *b)).collect())
+        .collect();
+    let pixels = r.render_frames_scissored(&frames, w, h, 1.0);
+
+    let is_fill = |p: &[u8; 4]| p[0] > 55 && p[0] < 100 && p[2] > 88 && p[2] < 120;
+    let mut worst: Option<(f32, usize, usize)> = None;
+    for (fi, px) in pixels.iter().enumerate() {
+        let off = owned[fi].0;
+        // The body centre lands at screen centre for every offset (camera tracks it).
+        let scx = (w as f32 * 0.5) as i32;
+        let scy = (h as f32 * 0.5) as i32;
+        // Probe a dense interior region, avoiding the cutouts (left/right edges).
+        let mut holes = 0usize;
+        for dy in -55..=55i32 {
+            for dx in -80..=80i32 {
+                let x = scx + dx;
+                let y = scy + dy;
+                if x < 0 || y < 0 || x >= w as i32 || y >= h as i32 {
+                    continue;
+                }
+                if !is_fill(&px[(y as u32 * w + x as u32) as usize]) {
+                    holes += 1;
+                }
+            }
+        }
+        if holes > worst.map(|t| t.1).unwrap_or(0) {
+            worst = Some((off, holes, fi));
+        }
+    }
+    if let Some((off, holes, fi)) = worst {
+        if holes > 50 {
+            write_png(
+                concat!(env!("CARGO_MANIFEST_DIR"), "/../fill_hollow.png"),
+                &pixels[fi],
+                w,
+                h,
+            );
+        }
+        assert!(
+            holes <= 50,
+            "large boolean fill hollowed its interior at sub-tile offset {off:.2}px: \
+             {holes} non-fill pixels inside the body (washed-node repro)",
+        );
+    }
+}
+
+/// The user's real repro (not zoom, not buffer growth): at a moderate zoom-out,
+/// PAN RIGHT (growing world X) and node artifacts appear at SPECIFIC camera
+/// positions you can pan back to. The recurrence with pan rules out one-shot tile
+/// growth (the buffer never shrinks, so growth cannot re-fire each frame). This
+/// sweeps cam.x in fine sub-pixel steps across a band at large world X and renders
+/// the widget's per-node CLIPPED path (background + one clipped fill per node, each
+/// with its own `layer_camera`) through ONE trim-correct pipeline. Every node fill
+/// must render at its true size at EVERY camera; the failure reports the first
+/// offending cam.x so the degenerate position can be inspected.
+#[test]
+fn pan_sweep_keeps_node_fills_intact() {
+    use crate::primitive::SdfPrimitive;
+    use crate::shape::Shape;
+    use crate::tiling::Tiling;
+    use iced::Rectangle;
+
+    let r = shared_renderer();
+    // Logical viewport; physical = logical * scale (DPI), like the user's machine.
+    let scale = 1.5_f32;
+    let (lw, lh) = (640u32, 448u32);
+    let (w, h) = ((lw as f32 * scale) as u32, (lh as f32 * scale) as u32);
+    let zoom = 0.6_f32;
+    let cy = -132.0_f32;
+    let nw = 60.0_f32;
+    let nh = 40.0_f32;
+
+    let dark = Style::solid(rgba(0.12, 0.13, 0.16, 1.0));
+    let fill_style = Style::solid(rgba(0.30, 0.32, 0.40, 1.0));
+    let full = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(lw as f32, lh as f32));
+
+    // Fixed screen lattice of node top-left positions (LOGICAL px).
+    let lattice: Vec<(f32, f32)> = {
+        let mut v = Vec::new();
+        let mut ty = 24.0;
+        while ty < lh as f32 - 40.0 {
+            let mut tx = 24.0;
+            while tx < lw as f32 - 60.0 {
+                v.push((tx, ty));
+                tx += 70.0;
+            }
+            ty += 56.0;
+        }
+        v
+    };
+
+    // Build one frame (background + per-node clipped fills) for a camera x.
+    let build = |camx: f32| -> Vec<(SdfPrimitive, Rectangle)> {
+        let cam = [camx, cy];
+        let mut bg = SdfPrimitive::new();
+        bg.push(
+            &Shape::tiling(Tiling::grid(40.0, 40.0, 1.0)),
+            &dark,
+            [0.0, 0.0],
+        );
+        let mut frame: Vec<(SdfPrimitive, Rectangle)> =
+            vec![(bg.camera(cam[0], cam[1], zoom), full)];
+        for &(tlx, tly) in &lattice {
+            // world top-left -> body centre; screen rect = widget's fill clip.
+            let wcx = tlx / zoom - cam[0] + nw * 0.5;
+            let wcy = tly / zoom - cam[1] + nh * 0.5;
+            let cw = nw * zoom + 4.0;
+            let ch = nh * zoom + 4.0;
+            let clip = Rectangle::new(
+                iced::Point::new(tlx - 2.0, tly - 2.0),
+                iced::Size::new(cw, ch),
+            );
+            let cx = cam[0] - clip.x / zoom;
+            let cy2 = cam[1] - clip.y / zoom;
+            let body = Shape::rounded_box([nw, nh], [6.0; 4])
+                - Shape::circle(5.0).translate([-nw * 0.5, 0.0])
+                - Shape::circle(5.0).translate([nw * 0.5, 0.0]);
+            let mut fill = SdfPrimitive::new();
+            fill.push(&body, &fill_style, [wcx, wcy]);
+            frame.push((fill.camera(cx, cy2, zoom), clip));
+        }
+        frame
+    };
+
+    // Sweep a fine band of pan offsets at large world X. The screen lattice is
+    // camera-relative, so world X = lattice/zoom - cam grows with -cam.
+    let bases = [-2300.0_f32, -4600.0, -9000.0];
+    let step = 0.17_f32;
+    let span = 40.0_f32;
+    let mut owned: Vec<(f32, Vec<(SdfPrimitive, Rectangle)>)> = Vec::new();
+    for &base in &bases {
+        let mut x = base;
+        while x > base - span {
+            owned.push((x, build(x)));
+            x -= step;
+        }
+    }
+    let frames: Vec<Vec<(&SdfPrimitive, Rectangle)>> = owned
+        .iter()
+        .map(|(_, f)| f.iter().map(|(p, b)| (p, *b)).collect())
+        .collect();
+
+    let pixels = r.render_frames_scissored(&frames, w, h, scale);
+
+    let is_fill = |p: &[u8; 4]| p[0] > 55 && p[0] < 100 && p[2] > 88 && p[2] < 120;
+    // Expected body size in PHYSICAL px.
+    let exp_w = nw * zoom * scale;
+    let exp_h = nh * zoom * scale;
+    let mut worst: Option<(f32, usize, usize)> = None; // (camx, bad, frame_idx)
+    for (fi, px) in pixels.iter().enumerate() {
+        let camx = owned[fi].0;
+        let mut bad = 0usize;
+        for &(tlx, tly) in &lattice {
+            // Node body screen centre, LOGICAL then PHYSICAL.
+            let lcx = tlx + nw * zoom * 0.5;
+            let lcy = tly + nh * zoom * 0.5;
+            if lcx < 16.0 || lcy < 16.0 || lcx > lw as f32 - 16.0 || lcy > lh as f32 - 16.0 {
+                continue;
+            }
+            let cx = (lcx * scale) as i32;
+            let cy3 = (lcy * scale) as i32;
+            let (mut rminx, mut rminy, mut rmaxx, mut rmaxy) =
+                (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+            let mut fill_px = 0;
+            for dy in -26..=26i32 {
+                for dx in -30..=30i32 {
+                    let x = cx + dx;
+                    let y = cy3 + dy;
+                    if x < 0 || y < 0 || x >= w as i32 || y >= h as i32 {
+                        continue;
+                    }
+                    if is_fill(&px[(y as u32 * w + x as u32) as usize]) {
+                        fill_px += 1;
+                        rminx = rminx.min(x);
+                        rminy = rminy.min(y);
+                        rmaxx = rmaxx.max(x);
+                        rmaxy = rmaxy.max(y);
+                    }
+                }
+            }
+            let collapsed = if fill_px < 20 {
+                true
+            } else {
+                let bw = (rmaxx - rminx + 1) as f32;
+                let bh = (rmaxy - rminy + 1) as f32;
+                bw < exp_w * 0.5
+                    || bh < exp_h * 0.5
+                    || bw > exp_w * 1.8 + 6.0
+                    || bh > exp_h * 1.8 + 6.0
+            };
+            if collapsed {
+                bad += 1;
+            }
+        }
+        if bad > worst.map(|w| w.1).unwrap_or(0) {
+            worst = Some((camx, bad, fi));
+        }
+    }
+
+    if let Some((camx, bad, fi)) = worst {
+        if bad > 0 {
+            write_png(
+                concat!(env!("CARGO_MANIFEST_DIR"), "/../pan_collapse.png"),
+                &pixels[fi],
+                w,
+                h,
+            );
+        }
+        assert_eq!(
+            bad,
+            0,
+            "pan-position node collapse at cam.x={camx} (zoom {zoom}): {bad} nodes \
+             collapsed/mis-sized (worst of {} swept positions)",
+            owned.len(),
+        );
+    }
+}
+
+/// Repro for the zoom-out node "float collapse": far zoomed out, each per-node
+/// CLIPPED fill primitive is tiny (1-2 tiles) but there are many, so the shared
+/// tile buffer GROWS several times mid-frame - after the full-viewport background
+/// has already written its large tile region. Every node fill must render
+/// inside its own clip; an empty clip means the grow-with-copy or the tile-base
+/// indexing dropped a later primitive. Mirrors widget.rs: each fill carries its
+/// own clip plus a `layer_camera` offset (widget_origin = 0, scale = 1):
+///   placement = screen_center/zoom - cam   (world center of the body)
+///   clip      = screen rect around the center (body*zoom + 4px padding)
+///   layer cam = cam - clip_origin/zoom
+#[test]
+fn zoomed_out_per_node_fills_all_render() {
+    use crate::primitive::SdfPrimitive;
+    use crate::shape::Shape;
+    use crate::tiling::Tiling;
+    use iced::Rectangle;
+
+    let r = shared_renderer();
+    let (w, h) = (640u32, 448u32);
+    let zoom = 0.24131_f32;
+    let cam = [-327.7_f32, -132.0];
+    let full = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(w as f32, h as f32));
+
+    let dark = Style::solid(rgba(0.12, 0.13, 0.16, 1.0));
+    let fill_style = Style::solid(rgba(0.30, 0.32, 0.40, 1.0));
+
+    // Full-viewport background grid, drawn first like the widget's bg layer. Its
+    // large tile region (~w*h/256 tiles) pushes the shared tile buffer past its
+    // initial capacity so the per-node primitives exercise the grow-with-copy path.
+    let mut bg = SdfPrimitive::new();
+    bg.push(
+        &Shape::tiling(Tiling::grid(40.0, 40.0, 1.0)),
+        &dark,
+        [0.0, 0.0],
+    );
+    let bg = bg.camera(cam[0], cam[1], zoom);
+
+    // Node body in world units; screen size at this zoom is ~17x14 px.
+    let node_w = 70.0_f32;
+    let node_h = 60.0_f32;
+
+    // Dense grid of node screen centers across the viewport (15x10 = 150 nodes ->
+    // ~600 node tiles on top of the background -> several buffer growths).
+    let mut centers: Vec<[f32; 2]> = Vec::new();
+    for col in 0..15 {
+        for row in 0..10 {
+            centers.push([30.0 + col as f32 * 40.0, 30.0 + row as f32 * 40.0]);
+        }
+    }
+
+    let pad = 2.0_f32; // logical px each side (widget uses fill_pad = 2/zoom world)
+    let cw = node_w * zoom + 2.0 * pad;
+    let ch = node_h * zoom + 2.0 * pad;
+    let per_node: Vec<(SdfPrimitive, Rectangle)> = centers
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            // Vary each node's body size so every node is a DISTINCT geometry (its
+            // own segment range), not a dedup of one cached shape. This exercises
+            // the per-entry `segment_start` indexing across many distinct ranges -
+            // the failure class behind the historical missing-edge bug - rather
+            // than the easy identical-shape path.
+            let nw = node_w + (i % 7) as f32 * 6.0;
+            let nh = node_h + (i % 5) as f32 * 5.0;
+            let cw = nw * zoom + 2.0 * pad;
+            let ch = nh * zoom + 2.0 * pad;
+            let placement = [c[0] / zoom - cam[0], c[1] / zoom - cam[1]];
+            let clip = Rectangle::new(
+                iced::Point::new(c[0] - cw * 0.5, c[1] - ch * 0.5),
+                iced::Size::new(cw, ch),
+            );
+            let cx = cam[0] - clip.x / zoom;
+            let cy = cam[1] - clip.y / zoom;
+            // Body = rounded box minus two pin cutouts, exactly like the widget's
+            // `geom.shape` (box - circle - circle). The cutouts sit at the body's
+            // left/right mid-height as LOCAL offsets from the centre.
+            let body = Shape::rounded_box([nw, nh], [6.0; 4])
+                - Shape::circle(5.0).translate([-nw * 0.5, 0.0])
+                - Shape::circle(5.0).translate([nw * 0.5, 0.0]);
+            let mut fill = SdfPrimitive::new();
+            fill.push(&body, &fill_style, placement);
+            (fill.camera(cx, cy, zoom), clip)
+        })
+        .collect();
+
+    let mut seq: Vec<(&SdfPrimitive, Rectangle)> = vec![(&bg, full)];
+    for (p, b) in &per_node {
+        seq.push((p, *b));
+    }
+
+    let px = r.render_primitives_scissored(&seq, w, h);
+
+    // A fill pixel matches the opaque gray body, not the dark grid / transparent gap.
+    let is_fill = |p: &[u8; 4]| p[0] > 55 && p[0] < 100 && p[2] > 88 && p[2] < 120;
+
+    let mut empty: Vec<usize> = Vec::new();
+    for (i, c) in centers.iter().enumerate() {
+        let sx = (c[0] - cw * 0.5).max(0.0) as u32;
+        let sy = (c[1] - ch * 0.5).max(0.0) as u32;
+        let ex = ((c[0] + cw * 0.5) as u32).min(w);
+        let ey = ((c[1] + ch * 0.5) as u32).min(h);
+        let mut fill_px = 0;
+        for y in sy..ey {
+            for x in sx..ex {
+                if is_fill(&px[(y * w + x) as usize]) {
+                    fill_px += 1;
+                }
+            }
+        }
+        if fill_px < 30 {
+            empty.push(i);
+        }
+    }
+
+    if !empty.is_empty() {
+        write_png(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../zoomout_collapse.png"),
+            &px,
+            w,
+            h,
+        );
+    }
+    assert!(
+        empty.is_empty(),
+        "{}/{} zoomed-out node fills did not render inside their clip (indices {:?})",
+        empty.len(),
+        centers.len(),
+        empty,
+    );
+}
+
+/// TEMP measure-first probe (ignored): steady-state `prepare` CPU cost of an IDLE
+/// 500-node frame (same scene re-prepared each frame, no camera change). Sizes the
+/// prize for the persistent-buffer / dirty-skip work: how much CPU an unchanged
+/// frame currently burns re-evaluating, recompiling and re-uploading identical
+/// data. Frame 0 is cold (eval + buffer growth); frames 1+ are steady (shape-cache
+/// hits, no growth). Run with:
+///   cargo test -p iced_nodegraph_sdf idle_prepare_cost -- --ignored --nocapture
+#[test]
+#[ignore]
+fn measure_idle_prepare_cost() {
+    use crate::primitive::{SdfPipeline, SdfPrimitive};
+    use crate::shape::Shape;
+    use crate::tiling::Tiling;
+    use iced::Rectangle;
+    use iced_wgpu::graphics::Viewport;
+    use iced_wgpu::primitive::{Pipeline, Primitive};
+
+    let r = shared_renderer();
+    let (w, h) = (1280u32, 768u32);
+    let zoom = 0.24131_f32;
+    let cam = [-327.7_f32, -132.0];
+    let full = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(w as f32, h as f32));
+    let viewport = Viewport::with_physical_size(iced::Size::new(w, h), 1.0);
+
+    let dark = Style::solid(rgba(0.12, 0.13, 0.16, 1.0));
+    let fill_style = Style::solid(rgba(0.30, 0.32, 0.40, 1.0));
+
+    // bg + 500 distinct node fills (25x20), mirroring the widget's per-node fill
+    // primitive. Widths vary across buckets so geometry is genuinely distinct.
+    let mut bg = SdfPrimitive::new();
+    bg.push(
+        &Shape::tiling(Tiling::grid(40.0, 40.0, 1.0)),
+        &dark,
+        [0.0, 0.0],
+    );
+    let bg = bg.camera(cam[0], cam[1], zoom);
+
+    let mut nodes: Vec<(SdfPrimitive, Rectangle)> = Vec::new();
+    for col in 0..25 {
+        for row in 0..20 {
+            let i = col * 20 + row;
+            let c = [24.0 + col as f32 * 24.0, 20.0 + row as f32 * 24.0];
+            let nw = 70.0 + (i % 7) as f32 * 6.0;
+            let nh = 60.0 + (i % 5) as f32 * 5.0;
+            let cw = nw * zoom + 4.0;
+            let ch = nh * zoom + 4.0;
+            let placement = [c[0] / zoom - cam[0], c[1] / zoom - cam[1]];
+            let clip = Rectangle::new(
+                iced::Point::new(c[0] - cw * 0.5, c[1] - ch * 0.5),
+                iced::Size::new(cw, ch),
+            );
+            let cx = cam[0] - clip.x / zoom;
+            let cy = cam[1] - clip.y / zoom;
+            let body = Shape::rounded_box([nw, nh], [6.0; 4])
+                - Shape::circle(5.0).translate([-nw * 0.5, 0.0])
+                - Shape::circle(5.0).translate([nw * 0.5, 0.0]);
+            let mut fill = SdfPrimitive::new();
+            fill.push(&body, &fill_style, placement);
+            nodes.push((fill.camera(cx, cy, zoom), clip));
+        }
+    }
+
+    // 640 bezier edges in one batch, like the widget's below-nodes layer. Beziers
+    // are NOT cacheable (only booleans are), so every edge re-evaluates each frame -
+    // the prime suspect for idle CPU cost. Distinct control points per edge.
+    let edge_style = Style::stroke(
+        rgba(0.55, 0.6, 0.7, 1.0),
+        crate::pattern::Pattern::solid(2.0),
+    );
+    let mut edges = SdfPrimitive::with_capacity(640);
+    for i in 0..640u32 {
+        let a = (i % 25) as f32 * 24.0 + 24.0;
+        let b = (i % 20) as f32 * 24.0 + 20.0;
+        let p0 = [a / zoom - cam[0], b / zoom - cam[1]];
+        let p3 = [(a + 60.0) / zoom - cam[0], (b + 40.0) / zoom - cam[1]];
+        let p1 = [p0[0] + 80.0, p0[1]];
+        let p2 = [p3[0] - 80.0, p3[1]];
+        edges.push(&Shape::bezier(p0, p1, p2, p3), &edge_style, [0.0, 0.0]);
+    }
+    let edges = edges.camera(cam[0], cam[1], zoom);
+
+    // One measured frame: trim (reset), prepare the whole scene, then a SECOND trim
+    // to flush THIS frame's accumulated `prepare_cpu_us` into LAST_STATS so the read
+    // is for the frame just built, not the previous one. GPU allocations and the
+    // shape cache survive trim, so frames 1+ are genuine steady state.
+    let measure_frame = |pipeline: &mut SdfPipeline| -> u64 {
+        Pipeline::trim(pipeline);
+        bg.prepare(pipeline, &r.device, &r.queue, &full, &viewport);
+        edges.prepare(pipeline, &r.device, &r.queue, &full, &viewport);
+        for (p, b) in &nodes {
+            p.prepare(pipeline, &r.device, &r.queue, b, &viewport);
+        }
+        Pipeline::trim(pipeline);
+        crate::primitive::sdf_stats().prepare_cpu_us
+    };
+
+    let mut pipeline = SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
+    let mut per_frame_us: Vec<u64> = Vec::new();
+    for _ in 0..7 {
+        per_frame_us.push(measure_frame(&mut pipeline));
+    }
+
+    // Re-prepare once more to repopulate the stats fields the second trim cleared.
+    Pipeline::trim(&mut pipeline);
+    bg.prepare(&mut pipeline, &r.device, &r.queue, &full, &viewport);
+    edges.prepare(&mut pipeline, &r.device, &r.queue, &full, &viewport);
+    for (p, b) in &nodes {
+        p.prepare(&mut pipeline, &r.device, &r.queue, b, &viewport);
+    }
+    Pipeline::trim(&mut pipeline);
+    let stats = crate::primitive::sdf_stats();
+    println!("\n--- idle prepare CPU cost: bg + 500 node fills + 640 edges ---");
+    println!("entries this frame: {}", stats.entry_count);
+    println!(
+        "unique_shapes {} / unique_styles {} / segments {}",
+        stats.unique_shapes, stats.unique_styles, stats.segment_count
+    );
+    for (i, us) in per_frame_us.iter().enumerate() {
+        let tag = if i == 0 { " (cold)" } else { " (steady)" };
+        println!("frame {i}: prepare {:.3} ms{tag}", *us as f64 / 1000.0);
+    }
+    println!("----------------------------------------------------------------\n");
+}
+
+/// GPU shader cost probe (ignored): times the compute (two-level index) pass and
+/// the render (shade) pass via timestamp queries, on the same representative scene
+/// as `measure_idle_prepare_cost` (bg tiling + 500 node fills + 640 edges). This is
+/// the GPU-side counterpart to that CPU probe - it answers "is the time in the index
+/// build or the per-pixel shading?" without any GUI profiler. Run with:
+///   cargo test -p iced_nodegraph_sdf measure_gpu_shader_cost -- --ignored --nocapture
+#[test]
+#[ignore]
+fn measure_gpu_shader_cost() {
+    use crate::shape::Shape;
+    use crate::tiling::Tiling;
+
+    let r = shared_renderer();
+    if !r.device.features().contains(Features::TIMESTAMP_QUERY) {
+        println!("\nTIMESTAMP_QUERY unsupported on this adapter - cannot measure GPU time.\n");
+        return;
+    }
+
+    let (w, h, zoom) = (1280u32, 768u32, 0.24131_f32);
+    let cam = [-327.7_f32, -132.0];
+
+    let dark = Style::solid(rgba(0.12, 0.13, 0.16, 1.0));
+    let fill_style = Style::solid(rgba(0.30, 0.32, 0.40, 1.0));
+    let edge_style = Style::stroke(rgba(0.55, 0.6, 0.7, 1.0), Pattern::solid(2.0));
+
+    // Background tiling (covers every pixel - the fragment baseline).
+    let bg = Shape::tiling(Tiling::grid(40.0, 40.0, 1.0)).evaluate();
+
+    // 500 node bodies (rounded box minus two pin circles) placed across the view.
+    let mut nodes = Vec::new();
+    for col in 0..25 {
+        for row in 0..20 {
+            let i = col * 20 + row;
+            let nw = 70.0 + (i % 7) as f32 * 6.0;
+            let nh = 60.0 + (i % 5) as f32 * 5.0;
+            let wx = (24.0 + col as f32 * 24.0) / zoom - cam[0];
+            let wy = (20.0 + row as f32 * 24.0) / zoom - cam[1];
+            let body = Shape::rounded_box([nw, nh], [6.0; 4])
+                - Shape::circle(5.0).translate([-nw * 0.5, 0.0])
+                - Shape::circle(5.0).translate([nw * 0.5, 0.0]);
+            nodes.push(body.evaluate().translated(wx, wy));
+        }
+    }
+
+    // 640 arc-spline bezier edges.
+    let mut edges = Vec::new();
+    for i in 0..640u32 {
+        let a = (i % 25) as f32 * 24.0 + 24.0;
+        let b = (i % 20) as f32 * 24.0 + 20.0;
+        let p0 = [a / zoom - cam[0], b / zoom - cam[1]];
+        let p3 = [(a + 60.0) / zoom - cam[0], (b + 40.0) / zoom - cam[1]];
+        let p1 = [p0[0] + 80.0, p0[1]];
+        let p2 = [p3[0] - 80.0, p3[1]];
+        edges.push(Shape::bezier(p0, p1, p2, p3).evaluate());
+    }
+
+    // Reference: the LUMPED single draw (all 1141 entries in one DrawData) - every
+    // coarse tile scans all 1141, an artifact of lumping.
+    let mut lumped: Vec<(&crate::drawable::Drawable, &Style)> =
+        Vec::with_capacity(1 + nodes.len() + edges.len());
+    lumped.push((&bg, &dark));
+    for n in &nodes {
+        lumped.push((n, &fill_style));
+    }
+    for e in &edges {
+        lumped.push((e, &edge_style));
+    }
+
+    // FAITHFUL: the production layout - each primitive is its OWN draw, one BATCHED
+    // dispatch over the z-axis so the GPU overlaps them. bg + edges cover the screen;
+    // each node fill is clipped to ~its bounds with its own centring camera.
+    let bg_slice: Vec<(&crate::drawable::Drawable, &Style)> = vec![(&bg, &dark)];
+    let edges_slice: Vec<(&crate::drawable::Drawable, &Style)> =
+        edges.iter().map(|e| (e, &edge_style)).collect();
+    let node_slices: Vec<Vec<(&crate::drawable::Drawable, &Style)>> =
+        nodes.iter().map(|n| vec![(n, &fill_style)]).collect();
+
+    let mut frame: Vec<FrameDraw> = Vec::with_capacity(2 + node_slices.len());
+    frame.push((&bg_slice[..], [0.0, 0.0], w, h, cam));
+    frame.push((&edges_slice[..], [0.0, 0.0], w, h, cam));
+    for (i, ns) in node_slices.iter().enumerate() {
+        let nb = nodes[i].bounds();
+        let (cx, cy) = ((nb[0] + nb[2]) * 0.5, (nb[1] + nb[3]) * 0.5);
+        // 32px clip (~2 fine tiles) centred on the node, like the widget's per-node clip.
+        let ncam = [16.0 / zoom - cx, 16.0 / zoom - cy];
+        frame.push((&ns[..], [0.0, 0.0], 32, 32, ncam));
+    }
+
+    let lumped_t = {
+        let _ = r.gpu_pass_times(&lumped, w, h, zoom, cam);
+        let mut c = f64::INFINITY;
+        let mut f = f64::INFINITY;
+        for _ in 0..10 {
+            if let Some(t) = r.gpu_pass_times(&lumped, w, h, zoom, cam) {
+                c = c.min(t.0);
+                f = f.min(t.1);
+            }
+        }
+        (c, f)
+    };
+    let frame_t = {
+        let _ = r.gpu_frame_times(&frame, w, h, zoom);
+        let mut c = f64::INFINITY;
+        let mut f = f64::INFINITY;
+        for _ in 0..10 {
+            if let Some(t) = r.gpu_frame_times(&frame, w, h, zoom) {
+                c = c.min(t.0);
+                f = f.min(t.1);
+            }
+        }
+        (c, f)
+    };
+
+    println!("\n--- GPU shader cost @ {w}x{h}, zoom {zoom} ---");
+    println!(
+        "LUMPED (1 draw, {} entries):     compute {:.1} us   fragment {:.1} us   <- artifact (every tile scans all)",
+        lumped.len(),
+        lumped_t.0,
+        lumped_t.1
+    );
+    println!(
+        "FAITHFUL ({} batched draws):     compute {:.1} us   fragment {:.1} us   <- production layout",
+        frame.len(),
+        frame_t.0,
+        frame_t.1
+    );
+    println!(
+        "  (faithful = bg + edges full-screen + 500 clipped node draws, ONE z-batched dispatch)"
+    );
+    println!(
+        "  (fragment is slightly inflated: clipped nodes overdraw the canvas corner in this bench)"
+    );
+    println!("----------------------------------------------------------------------\n");
+}
+
+/// Tile-budget overflow must DEGRADE, not panic. A draw whose tile grid would push
+/// the spatial index past the device's storage-binding limit (the "many nodes
+/// stacked into one spot" pile, simulated here with one absurdly large clip) falls
+/// back to grid 0 = iterate-all. The frame must still render its fill, and creating
+/// the render bind group must not exceed `max_storage_buffer_binding_size`.
+#[test]
+fn oversized_tile_budget_falls_back_no_panic() {
+    use crate::primitive::SdfPrimitive;
+    use crate::shape::Shape;
+    use iced::Rectangle;
+
+    let r = shared_renderer();
+    let (w, h) = (192u32, 192u32);
+
+    let style = Style::solid(rgba(0.30, 0.60, 0.90, 1.0));
+    let mut p = SdfPrimitive::new();
+    p.push(
+        &Shape::rounded_box([80.0, 60.0], [6.0; 4]),
+        &style,
+        [96.0, 96.0],
+    );
+    let p = p.camera(0.0, 0.0, 1.0);
+    // A clip so large its grid (~3000x3000 tiles) dwarfs any device's tile budget.
+    let huge = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(50_000.0, 50_000.0));
+
+    // Would panic in `create_bind_group` (binding exceeds limit) before the cap.
+    let px = r.render_primitives_scissored(&[(&p, huge)], w, h);
+
+    assert!(
+        px.iter().any(|c| c[2] > 100),
+        "iterate-all fallback must still render the fill"
+    );
+}
+
+/// Geometry-skip correctness: a frame whose primitives are byte-identical to the
+/// previous one reuses the resident segment/entry/style buffers (no re-eval, no
+/// re-upload). The reused frame MUST render pixel-identically to the rebuilt one.
+/// Two identical frames go through ONE persistent pipeline; frame 1 takes the reuse
+/// path. Mixes a cached boolean fill and a non-cacheable bezier edge so both the
+/// reuse and rebuild branches are exercised.
+#[test]
+fn idle_frame_reuse_renders_identically() {
+    use crate::primitive::SdfPrimitive;
+    use crate::shape::Shape;
+    use iced::Rectangle;
+
+    let r = shared_renderer();
+    let (w, h) = (192u32, 192u32);
+    let full = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(w as f32, h as f32));
+
+    let fill = Style::solid(rgba(0.30, 0.50, 0.70, 1.0));
+    let edge = Style::stroke(
+        rgba(0.85, 0.80, 0.20, 1.0),
+        crate::pattern::Pattern::solid(3.0),
+    );
+    let mut p = SdfPrimitive::with_capacity(2);
+    p.push(
+        &(Shape::rounded_box([60.0, 40.0], [6.0; 4]) - Shape::circle(6.0)),
+        &fill,
+        [96.0, 96.0],
+    );
+    p.push(
+        &Shape::bezier([40.0, 40.0], [70.0, 40.0], [120.0, 150.0], [150.0, 150.0]),
+        &edge,
+        [0.0, 0.0],
+    );
+    let p = p.camera(0.0, 0.0, 1.0);
+
+    // Frame 0 rebuilds and records the slots; frame 1 takes the geometry-reuse path.
+    let frames = vec![vec![(&p, full)], vec![(&p, full)]];
+    let out = r.render_frames_scissored(&frames, w, h, 1.0);
+
+    assert!(
+        out[0].iter().any(|px| px[3] > 0),
+        "scene rendered nothing - test would be vacuous"
+    );
+    assert_eq!(
+        out[0], out[1],
+        "reused idle frame must render identically to the rebuilt frame"
+    );
+}
+
+/// Style deduplication: many entries that share a compiled look upload ONE
+/// `GpuStyle`, mirroring shape/segment instancing. 200 distinct node bodies drawn
+/// from only TWO styles must report `unique_styles == 2` while geometry stays
+/// distinct (`unique_shapes > 2`), proving the style dedup is independent of the
+/// shape dedup. Drives the real pipeline through `prepare` + `trim` (no draw
+/// needed: dedup happens in `prepare`, metrics are captured in `trim`).
+#[test]
+fn styles_dedup_across_identical_entries() {
+    use crate::primitive::{SdfPipeline, SdfPrimitive};
+    use crate::shape::Shape;
+    use iced::Rectangle;
+    use iced_wgpu::graphics::Viewport;
+    use iced_wgpu::primitive::{Pipeline, Primitive};
+
+    let r = shared_renderer();
+    let (w, h) = (256u32, 256u32);
+    let viewport = Viewport::with_physical_size(iced::Size::new(w, h), 1.0);
+    let mut pipeline = SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
+
+    let style_a = Style::solid(rgba(0.3, 0.4, 0.5, 1.0));
+    let style_b = Style::solid(rgba(0.7, 0.2, 0.1, 1.0));
+
+    // Each node is its OWN primitive (as the widget emits per-node fills), with a
+    // width that varies across 11 buckets so the geometry does NOT collapse to one
+    // shape - isolating the style dedup from the shape dedup.
+    let scene: Vec<(SdfPrimitive, Rectangle)> = (0..200)
+        .map(|i| {
+            let nw = 40.0 + (i % 11) as f32 * 3.0;
+            let body = Shape::rounded_box([nw, 30.0], [4.0; 4]);
+            let style = if i % 2 == 0 { &style_a } else { &style_b };
+            let mut p = SdfPrimitive::new();
+            p.push(&body, style, [60.0, 60.0]);
+            let clip = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(64.0, 64.0));
+            (p.camera(0.0, 0.0, 1.0), clip)
+        })
+        .collect();
+
+    Pipeline::trim(&mut pipeline);
+    for (p, b) in &scene {
+        p.prepare(&mut pipeline, &r.device, &r.queue, b, &viewport);
+    }
+    Pipeline::trim(&mut pipeline); // captures this frame's dedup metrics
+    let stats = crate::primitive::sdf_stats();
+
+    assert_eq!(
+        stats.unique_styles, 2,
+        "200 entries from 2 styles must upload 2 GpuStyles, got {}",
+        stats.unique_styles
+    );
+    assert!(
+        stats.unique_shapes > 2,
+        "varying node widths must stay distinct shapes, got {}",
+        stats.unique_shapes
+    );
+}
+
+/// A stroked edge must render as a thin STROKE, not a solid fill of its bounding
+/// box (the reported regression: some edges paint as a filled AABB in edge colour,
+/// diagonals collapsing to smaller per-segment boxes). Sweeps a range of edge
+/// orientations and aggressive tangents through the REAL pipeline and asserts the
+/// green coverage stays stroke-sized, not box-sized.
+#[test]
+fn diagonal_edge_renders_as_stroke_not_box() {
+    use crate::primitive::SdfPrimitive;
+    use crate::shape::Shape;
+
+    let r = shared_renderer();
+    let (w, h) = (256u32, 256u32);
+    let green = Style::stroke(rgba(0.0, 1.0, 0.0, 1.0), Pattern::solid(3.0));
+
+    // (label, p0, cp0, cp1, p1) - all in world coords centred near the origin,
+    // mixing orientations and aggressive tangents (the widget builds edges with
+    // pin-direction tangents that overshoot, so vertical/diagonal edges swing far).
+    type Cfg = (&'static str, [f32; 2], [f32; 2], [f32; 2], [f32; 2]);
+    let configs: [Cfg; 7] = [
+        (
+            "horizontal",
+            [-80.0, 0.0],
+            [-20.0, 0.0],
+            [20.0, 0.0],
+            [80.0, 0.0],
+        ),
+        (
+            "diagonal",
+            [-70.0, -70.0],
+            [-10.0, -70.0],
+            [10.0, 70.0],
+            [70.0, 70.0],
+        ),
+        (
+            "vertical-htan",
+            [0.0, -60.0],
+            [90.0, -60.0],
+            [-90.0, 60.0],
+            [0.0, 60.0],
+        ),
+        (
+            "crossed-cusp",
+            [-40.0, 0.0],
+            [60.0, 0.0],
+            [-60.0, 0.0],
+            [40.0, 0.0],
+        ),
+        (
+            "huge-tangent",
+            [0.0, -50.0],
+            [400.0, -50.0],
+            [-400.0, 50.0],
+            [0.0, 50.0],
+        ),
+        (
+            "short-bigtan",
+            [-8.0, -8.0],
+            [120.0, -8.0],
+            [-120.0, 8.0],
+            [8.0, 8.0],
+        ),
+        (
+            "backwards",
+            [60.0, -50.0],
+            [120.0, -50.0],
+            [-120.0, 50.0],
+            [-60.0, 50.0],
+        ),
+    ];
+
+    let mut worst = (0usize, "", 0u32);
+    for (i, (label, p0, c0, c1, p1)) in configs.iter().enumerate() {
+        let mut prim = SdfPrimitive::new();
+        // A leading entry so the edge under test is never entry 0 (real batches).
+        prim.push(
+            &Shape::line([-100.0, 95.0], [100.0, 95.0]),
+            &green,
+            [0.0, 0.0],
+        );
+        prim.push(&Shape::bezier(*p0, *c0, *c1, *p1), &green, [0.0, 0.0]);
+        let prim = prim.camera(128.0, 128.0, 1.0); // world origin at viewport centre
+        let px = r.render_primitive(&prim, w, h);
+        let g = px
+            .iter()
+            .filter(|p| {
+                (p[1] as i32) > (p[0] as i32) + 40
+                    && (p[1] as i32) > (p[2] as i32) + 40
+                    && p[1] > 80
+            })
+            .count() as u32;
+        eprintln!("config {i} {label}: {g} green px");
+        if g > worst.2 {
+            worst = (i, label, g);
+        }
+    }
+
+    // A leading 200px line (~600px) plus one bezier stroke (~few hundred px) is a
+    // few thousand px; a filled bounding box would be 5-6 figures.
+    assert!(
+        worst.2 < 8000,
+        "edge '{}' (config {}) rendered as a filled box: {} green px",
+        worst.1,
+        worst.0,
+        worst.2,
+    );
+}
+
+/// The widget builds edges with HORIZONTAL pin tangents and `adaptive_bezier_length`
+/// (`L = min(80, dist/2)`). When the output pin is to the RIGHT of the input
+/// (a "backwards" edge), the control points overshoot PAST each other and the
+/// bezier curls into a loop - the widget's own comment warns "the SDF cannot
+/// resolve cleanly and the cull drops along the inner side". This replicates that
+/// exact shape across forward/backward/short configs and asserts each renders as a
+/// thin stroke, not a filled AABB (the reported boxes).
+#[test]
+fn widget_edge_shape_renders_as_stroke() {
+    use crate::primitive::SdfPrimitive;
+    use crate::shape::Shape;
+
+    // The widget's edge: Right (output) pin tangent +x, Left (input) pin tangent -x.
+    fn widget_edge(p0: [f32; 2], p1: [f32; 2]) -> Shape {
+        let d = ((p1[0] - p0[0]).powi(2) + (p1[1] - p0[1]).powi(2)).sqrt();
+        let l = 80.0f32.min(d * 0.5).max(1.0);
+        Shape::bezier(p0, [p0[0] + l, p0[1]], [p1[0] - l, p1[1]], p1)
+    }
+
+    let r = shared_renderer();
+    let (w, h) = (256u32, 256u32);
+    let green = Style::stroke(rgba(0.0, 1.0, 0.0, 1.0), Pattern::solid(2.0));
+
+    let configs: [(&str, [f32; 2], [f32; 2]); 8] = [
+        ("forward", [-60.0, 0.0], [60.0, 0.0]),
+        ("backward-flat", [60.0, 0.0], [-60.0, 0.0]),
+        ("backward-tilt", [60.0, -10.0], [-60.0, 10.0]),
+        ("backward-short", [30.0, -5.0], [-30.0, 5.0]),
+        ("backward-tiny", [12.0, -2.0], [-12.0, 2.0]),
+        ("backward-steep", [10.0, 60.0], [-10.0, -60.0]),
+        ("backward-diag", [50.0, -50.0], [-50.0, 50.0]),
+        ("near-coincident", [6.0, 1.0], [-6.0, -1.0]),
+    ];
+
+    let mut worst = ("", 0u32);
+    for (label, p0, p1) in configs {
+        let mut prim = SdfPrimitive::new();
+        prim.push(&widget_edge(p0, p1), &green, [0.0, 0.0]);
+        let prim = prim.camera(128.0, 128.0, 1.0);
+        let px = r.render_primitive(&prim, w, h);
+        let g = px
+            .iter()
+            .filter(|p| {
+                (p[1] as i32) > (p[0] as i32) + 40
+                    && (p[1] as i32) > (p[2] as i32) + 40
+                    && p[1] > 80
+            })
+            .count() as u32;
+        eprintln!("{label:>16}: {g} green px");
+        if g > worst.1 {
+            worst = (label, g);
+        }
+    }
+    assert!(
+        worst.1 < 6000,
+        "widget edge '{}' rendered as a filled box: {} green px",
+        worst.0,
+        worst.1,
     );
 }

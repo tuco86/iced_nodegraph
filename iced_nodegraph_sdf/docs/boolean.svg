@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 400" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, sans-serif">
+  <rect x="0" y="0" width="960" height="400" rx="12" fill="#fbfcfe" stroke="#d9dee5"/>
+  <text x="32" y="40" font-size="20" font-weight="700" fill="#1b2026">Shapes as set algebra</text>
+  <text x="32" y="60" font-size="13" fill="#5b6672">A node body is a rounded box minus its pin circles. Booleans clip the contours against each other and re-stitch</text>
+  <text x="32" y="77" font-size="13" fill="#5b6672">a single clean arc loop, with junction points at the new concave corners.</text>
+
+  <!-- box (input). Left edge x=70, right edge x=220; pin rows at y=185, 225 (left) and 205 (right). -->
+  <rect x="70" y="150" width="150" height="110" rx="14" fill="#dbeafe" stroke="#2f6df6" stroke-width="2.5"/>
+  <text x="145" y="212" font-size="13" font-weight="600" fill="#1b2026" text-anchor="middle">rounded_box</text>
+  <text x="145" y="300" font-size="13" fill="#5b6672" text-anchor="middle" font-family="ui-monospace, monospace">box</text>
+
+  <!-- minus -->
+  <text x="258" y="216" font-size="30" fill="#5b6672" text-anchor="middle">&#8722;</text>
+
+  <!-- pin circles (input), same 2-left / 1-right arrangement as the box edges -->
+  <g fill="#fde2cf" stroke="#e8590c" stroke-width="2.5">
+    <circle cx="300" cy="185" r="11"/>
+    <circle cx="300" cy="225" r="11"/>
+    <circle cx="380" cy="205" r="11"/>
+  </g>
+  <text x="340" y="300" font-size="13" fill="#5b6672" text-anchor="middle" font-family="ui-monospace, monospace">pin circles</text>
+
+  <!-- equals -->
+  <text x="455" y="212" font-size="28" fill="#5b6672" text-anchor="middle">=</text>
+
+  <!-- result: the SAME box with a semicircular notch cut where each pin sat
+       (2 on the left edge, 1 on the right), re-stitched into one closed contour. -->
+  <path d="M 554 150
+           L 676 150
+           A 14 14 0 0 1 690 164
+           L 690 194
+           A 11 11 0 0 0 690 216
+           L 690 246
+           A 14 14 0 0 1 676 260
+           L 554 260
+           A 14 14 0 0 1 540 246
+           L 540 236
+           A 11 11 0 0 0 540 214
+           L 540 196
+           A 11 11 0 0 0 540 174
+           L 540 164
+           A 14 14 0 0 1 554 150 Z"
+        fill="#e7f5ec" stroke="#2f9e44" stroke-width="2.5"/>
+  <!-- junction points at the notch entries (tangent discontinuities) -->
+  <g fill="#7048e8">
+    <circle cx="690" cy="194" r="3"/><circle cx="690" cy="216" r="3"/>
+    <circle cx="540" cy="174" r="3"/><circle cx="540" cy="196" r="3"/>
+    <circle cx="540" cy="214" r="3"/><circle cx="540" cy="236" r="3"/>
+  </g>
+  <text x="615" y="300" font-size="13" fill="#5b6672" text-anchor="middle" font-family="ui-monospace, monospace">one closed contour</text>
+
+  <text x="70" y="344" font-size="12" fill="#3a424c"><tspan font-weight="700" fill="#7048e8">&#9679;</tspan> junction points own the concave corners and resolve the interior sign; the rounded corners stay smooth.</text>
+</svg>

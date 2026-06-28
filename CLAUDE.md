@@ -332,8 +332,7 @@ Styles are concrete, flat structs (no `Option`/`merge` config layer):
 | `node_pin/mod.rs` | Connection points | `NodePin`, `PinEnd`, `PinInfo`, `PinSide` |
 | `style/{node,edge,pin}.rs` | Theming | `NodeStyle`, `EdgeStyle`, `PinStyle`, `GraphStyle` |
 | `style/defaults.rs` | Theme defaults | `default_node_style()`, `default_edge_style()`, `default_pin_style()` |
-| `content.rs` | Layout helpers | `node_header()`, `node_footer()`, `simple_node()` |
-| `helpers.rs` | Utilities | `clone_nodes()`, `delete_nodes()`, `SelectionHelper` |
+| `content.rs` | Layout helpers | `node_header()`, `node_footer()` |
 
 ### Demo Applications (demos/)
 
@@ -353,8 +352,7 @@ lib.rs (public API)
   │     └── camera.rs (transforms)
   ├── node_pin/ (pin widget)
   ├── style/ (theming)
-  ├── content.rs (layout helpers)
-  └── helpers.rs (utilities)
+  └── content.rs (layout helpers)
 ```
 
 ## Public API Reference

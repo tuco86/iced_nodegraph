@@ -1,23 +1,32 @@
-//! CPU-side per-frame work benchmark.
+//! CPU-side shape-evaluation benchmark.
 //!
-//! Measures the SDF geometry preparation that dominates `NodeGraph`'s
-//! per-frame CPU cost: building each node silhouette (a rounded-rect body with
-//! the pin cutouts subtracted via the boolean `difference_many`, the operation
-//! the widget's own comments flag as the expensive one), layering its
-//! shadow/fill/border, and stroking the edge beziers - all batched into one
-//! `SdfPrimitive`, exactly as `NodeGraph::draw` assembles a frame.
+//! Measures the CPU geometry work that survives in the single-renderer SDF
+//! pipeline: materialising a `Shape` recipe into arcs (`Shape::evaluate` - the
+//! rounded-box body with its pin cutouts subtracted via `difference_many`, the
+//! boolean the widget's comments flag as the expensive one), and stroking the
+//! edge beziers (the biarc spline build). It contrasts evaluating every node
+//! COLD against fetching it through the frame-surviving `ShapeCache`, so the
+//! delta is exactly the dedup win: N identical node bodies pay for ONE boolean.
 //!
-//! This is the same work the `info()` callback times at runtime, isolated from
-//! the GPU/present path so it runs headlessly and reproducibly. It does NOT
-//! include iced's `layout()` pass (cheap relative to the geometry) or the
-//! per-pixel tile culling, which happens on the GPU (a compute shader), not the
-//! CPU.
+//! Scope. In the current architecture `SdfPrimitive::push` only stores the
+//! position-free `Shape`; the boolean/biarc evaluation runs inside the GPU
+//! pipeline's `prepare`, deduped per frame by recipe hash. This bench isolates
+//! that CPU evaluation headlessly (no device) by calling `evaluate` /
+//! `ShapeCache::get_or_eval` directly. It does NOT cover iced's `layout` pass,
+//! the GPU tile cull (a compute shader), or upload/present - the full-frame
+//! wall-clock story lives in the `iced_nodegraph_sdf` pipeline tests.
 //!
-//! Run with: `cargo bench -p iced_nodegraph`
+//! Recorded context (this machine, 500 nodes / 640 edges). The node-body dedup
+//! collapses the per-frame boolean from one-per-node to one total (~20x on the
+//! node bodies in isolation). Post-A4 the biarc edge build (~6 us/edge) became
+//! the dominant CPU term for an edged scene, so a realistic graph sees ~3x on
+//! CPU evaluation, not 10x - the dedup win is real but bounded by the edge
+//! floor. Caching static-edge arc-splines by endpoint is the open follow-up.
+//!
+//! Run with: `cargo bench -p iced_nodegraph --bench frame_prep`.
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use iced::Color;
-use iced_nodegraph_sdf::{Curve, Pattern, SdfPrimitive, Style, boolean};
+use iced_nodegraph_sdf::{Shape, ShapeCache};
 use std::hint::black_box;
 
 /// Edges per node, matching the README's "500 nodes, 640 edges" demo (~1.28).
@@ -63,62 +72,73 @@ fn build_scene(n: usize) -> Scene {
     Scene { nodes, edges }
 }
 
-/// The per-frame CPU work: rebuild every node silhouette and edge curve and
-/// batch them into one primitive, as `draw` does each frame.
-fn prep_frame(scene: &Scene) -> SdfPrimitive {
-    let fill = Style::solid(Color::from_rgb(0.2, 0.2, 0.25));
-    let border = Style::stroke(Color::from_rgb(0.6, 0.6, 0.7), Pattern::solid(2.0));
-    let shadow = Style::shadow(Color::from_rgba(0.0, 0.0, 0.0, 0.5), 12.0);
-    let edge_style = Style::stroke(Color::from_rgb(0.5, 0.7, 0.9), Pattern::solid(2.0));
+/// The position-free node-body recipe (the dedup keystone): identical for every
+/// node, so the boolean evaluates ONCE and every other node is a cache hit. The
+/// box is centred and the pin cuts sit at LOCAL offsets from the centre.
+fn node_body() -> Shape {
+    Shape::rounded_box([NODE_W, NODE_H], [CORNER_RADIUS; 4])
+        - Shape::circle(PIN_RADIUS).translate([-NODE_W * 0.5, -25.0])
+        - Shape::circle(PIN_RADIUS).translate([-NODE_W * 0.5, 0.0])
+        - Shape::circle(PIN_RADIUS).translate([-NODE_W * 0.5, 25.0])
+        - Shape::circle(PIN_RADIUS).translate([NODE_W * 0.5, -15.0])
+        - Shape::circle(PIN_RADIUS).translate([NODE_W * 0.5, 15.0])
+}
 
-    let mut prim = SdfPrimitive::with_capacity(scene.nodes.len() * 3 + scene.edges.len());
+/// Horizontal-tangent bezier between two nodes - the edge shape the widget
+/// renders, rebuilt every frame because its endpoints move (ephemeral).
+fn edge_shape(scene: &Scene, from: usize, to: usize) -> Shape {
+    let a = &scene.nodes[from];
+    let b = &scene.nodes[to];
+    let dx = (b.cx - a.cx).abs().max(NODE_W);
+    Shape::bezier(
+        [a.cx + NODE_W * 0.5, a.cy],
+        [a.cx + NODE_W * 0.5 + dx * 0.5, a.cy],
+        [b.cx - NODE_W * 0.5 - dx * 0.5, b.cy],
+        [b.cx - NODE_W * 0.5, b.cy],
+    )
+}
 
-    for node in &scene.nodes {
-        let body = Curve::rounded_rect(
-            [node.cx, node.cy],
-            [NODE_W * 0.5, NODE_H * 0.5],
-            CORNER_RADIUS,
-        );
-        // Pin cutouts: three on the left edge, two on the right.
-        let cuts = [
-            Curve::circle([node.cx - NODE_W * 0.5, node.cy - 25.0], PIN_RADIUS),
-            Curve::circle([node.cx - NODE_W * 0.5, node.cy], PIN_RADIUS),
-            Curve::circle([node.cx - NODE_W * 0.5, node.cy + 25.0], PIN_RADIUS),
-            Curve::circle([node.cx + NODE_W * 0.5, node.cy - 15.0], PIN_RADIUS),
-            Curve::circle([node.cx + NODE_W * 0.5, node.cy + 15.0], PIN_RADIUS),
-        ];
-        let outline = boolean::difference_many(&body, &cuts);
-
-        // Shadow reuses the silhouette shifted by the shadow offset (as the
-        // widget does), then fill and border paint over it.
-        prim.push(&outline.translated(4.0, 4.0), &shadow);
-        prim.push(&outline, &fill);
-        prim.push(&outline, &border);
+/// Cold per-frame CPU work: re-run the silhouette boolean for EVERY node (no
+/// dedup), then build each edge spline. The returned segment tally is a sink so
+/// the optimiser cannot elide the evaluations.
+fn prep_frame(scene: &Scene) -> usize {
+    let body = node_body();
+    let mut segs = 0usize;
+    for _ in &scene.nodes {
+        segs += body.evaluate().segment_count();
     }
-
     for &(from, to) in &scene.edges {
-        let a = &scene.nodes[from];
-        let b = &scene.nodes[to];
-        // Horizontal-tangent bezier, the edge shape the widget renders.
-        let dx = (b.cx - a.cx).abs().max(NODE_W);
-        let curve = Curve::bezier(
-            [a.cx + NODE_W * 0.5, a.cy],
-            [a.cx + NODE_W * 0.5 + dx * 0.5, a.cy],
-            [b.cx - NODE_W * 0.5 - dx * 0.5, b.cy],
-            [b.cx - NODE_W * 0.5, b.cy],
-        );
-        prim.push(&curve, &edge_style);
+        segs += edge_shape(scene, from, to).evaluate().segment_count();
     }
+    segs
+}
 
-    prim
+/// Deduped per-frame CPU work: the node silhouette comes from the shape cache
+/// (one boolean for all identical bodies); edges remain per-frame (ephemeral).
+fn prep_frame_cached(scene: &Scene, cache: &mut ShapeCache) -> usize {
+    let body = node_body();
+    let mut segs = 0usize;
+    for _ in &scene.nodes {
+        segs += cache.get_or_eval(&body).segment_count();
+    }
+    for &(from, to) in &scene.edges {
+        segs += edge_shape(scene, from, to).evaluate().segment_count();
+    }
+    segs
 }
 
 fn bench_frame_prep(c: &mut Criterion) {
     let mut group = c.benchmark_group("frame_prep");
     for &n in &[100usize, 500, 2000] {
         let scene = build_scene(n);
-        group.bench_with_input(BenchmarkId::from_parameter(n), &scene, |b, scene| {
+        // Cold: the silhouette boolean runs per node every frame.
+        group.bench_with_input(BenchmarkId::new("cold", n), &scene, |b, scene| {
             b.iter(|| black_box(prep_frame(black_box(scene))));
+        });
+        // Cached: node bodies deduped through the shape cache (one boolean total).
+        group.bench_with_input(BenchmarkId::new("cached", n), &scene, |b, scene| {
+            let mut cache = ShapeCache::new(64);
+            b.iter(|| black_box(prep_frame_cached(black_box(scene), &mut cache)));
         });
     }
     group.finish();

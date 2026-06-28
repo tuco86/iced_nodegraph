@@ -39,6 +39,20 @@ struct Recorded {
     quads: Vec<Rectangle>,
     /// Bounds handed to `draw_primitive` (SDF layers), in order.
     primitives: Vec<Rectangle>,
+    /// Unified draw-call stream in call order, across both `fill_quad`
+    /// (hosted content) and `draw_primitive` (SDF layers). Lets a test assert
+    /// the per-node SDF/content/SDF sandwich order the host integration relies
+    /// on, which the two separate vecs above lose.
+    events: Vec<DrawEvent>,
+}
+
+/// One ordered draw call captured by [`Rec`], tagged by source.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum DrawEvent {
+    /// A hosted-content quad (`fill_quad`) at this absolute rect.
+    Content(Rectangle),
+    /// An SDF layer (`draw_primitive`) at this absolute clip rect.
+    Sdf(Rectangle),
 }
 
 struct Rec {
@@ -74,7 +88,9 @@ impl renderer::Renderer for Rec {
     fn reset(&mut self, _new_bounds: Rectangle) {}
     fn fill_quad(&mut self, quad: renderer::Quad, _background: impl Into<Background>) {
         let abs = quad.bounds * self.cur();
-        self.out.borrow_mut().quads.push(abs);
+        let mut out = self.out.borrow_mut();
+        out.quads.push(abs);
+        out.events.push(DrawEvent::Content(abs));
     }
     fn allocate_image(
         &mut self,
@@ -112,7 +128,9 @@ impl text::Renderer for Rec {
 impl iced_wgpu::primitive::Renderer for Rec {
     fn draw_primitive(&mut self, bounds: Rectangle, _primitive: impl iced_wgpu::Primitive) {
         let abs = bounds * self.cur();
-        self.out.borrow_mut().primitives.push(abs);
+        let mut out = self.out.borrow_mut();
+        out.primitives.push(abs);
+        out.events.push(DrawEvent::Sdf(abs));
     }
 }
 
@@ -655,5 +673,226 @@ fn culling_holds_under_zoom() {
         find_node_fill(&off).is_none(),
         "the same node must cull once zoom pushes it off-screen: {:?}",
         off.primitives,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Recipe-hash stability (R4 / keystone). THE highest-risk unvalidated
+// assumption behind the SDF v3 rewrite: that an unchanged node emits a
+// byte-identical geometry recipe across frames. Node geometry is built from
+// `node_layout.bounds()`; if iced layout jittered sub-ULP, or if any node
+// geometry still depended on `time` (the pin-cutout pulse, now removed), the
+// recipe would differ frame-to-frame and dedup / arena / instancing would all
+// collapse. Driving the real widget's draw path through iced layout for 120
+// frames while wall-clock `time` advances, the per-node geometry fingerprint
+// (the SDF clip bounds, which are a pure function of the recipe operands) must
+// stay identical. This is the gate that must hold before any arena work.
+// ---------------------------------------------------------------------------
+
+/// Bit-exact fingerprint of a recorded frame's geometry: every SDF primitive
+/// clip rect and content quad, serialized as raw `f32` bits (so -0.0 != 0.0 and
+/// NaN payloads are caught, per the native-vs-wasm hash contract).
+fn geometry_fingerprint(rec: &Recorded) -> Vec<u32> {
+    let mut bits = Vec::new();
+    let mut push = |r: &Rectangle| {
+        bits.extend_from_slice(&[
+            r.x.to_bits(),
+            r.y.to_bits(),
+            r.width.to_bits(),
+            r.height.to_bits(),
+        ]);
+    };
+    for r in &rec.primitives {
+        push(r);
+    }
+    for r in &rec.quads {
+        push(r);
+    }
+    bits
+}
+
+#[test]
+fn recipe_hash_is_stable_across_120_frames() {
+    // A static three-node graph (no edges, so only node geometry is under test).
+    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Rec> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .view(Point::ORIGIN, 1.0);
+    for (i, p) in [(30.0, 40.0), (140.0, 90.0), (60.0, 220.0)]
+        .into_iter()
+        .enumerate()
+    {
+        graph.push_node(node(i, Point::new(p.0, p.1), Element::from(ContentProbe)));
+    }
+
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Rec>);
+    let layout_node = graph.layout(
+        &mut tree,
+        &Rec::new(Rc::new(RefCell::new(Recorded::default()))),
+        &layout::Limits::new(Size::ZERO, Size::new(1024.0, 768.0)),
+    );
+    let layout = Layout::with_offset(Vector::ZERO, &layout_node);
+    let viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
+
+    let mut reference: Option<Vec<u32>> = None;
+    for frame in 0..120 {
+        let out = Rc::new(RefCell::new(Recorded::default()));
+        let mut renderer = Rec::new(out.clone());
+
+        // A no-op cursor move per frame both syncs `view()` and lets the widget
+        // advance its wall-clock animation time, so `time` genuinely varies
+        // across the 120 frames while the geometry must not.
+        let mut msgs: Vec<()> = Vec::new();
+        let mut shell = iced_widget::core::Shell::new(&mut msgs);
+        let mut clipboard = clipboard::Null;
+        graph.update(
+            &mut tree,
+            &iced::Event::Mouse(mouse::Event::CursorMoved {
+                position: Point::new(-1.0, -1.0),
+            }),
+            layout,
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+
+        graph.draw(
+            &tree,
+            &mut renderer,
+            &Theme::Dark,
+            &renderer::Style {
+                text_color: Color::WHITE,
+            },
+            layout,
+            mouse::Cursor::Unavailable,
+            &viewport,
+        );
+
+        let fp = geometry_fingerprint(&out.borrow());
+        assert!(
+            !fp.is_empty(),
+            "frame {frame} recorded no geometry; the harness drew nothing",
+        );
+        match &reference {
+            None => reference = Some(fp),
+            Some(r) => assert!(
+                *r == fp,
+                "node geometry recipe changed on frame {frame}: the recipe is \
+                 not hash-stable, so dedup/arena/instancing cannot be trusted",
+            ),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Host-integration sandwich order. Hosted iced content interleaves BETWEEN a
+// node's SDF layers: per node, in z-order, the stack is [SDF fill,
+// element.draw() content, SDF border+pins], and a later node sits entirely
+// above an earlier one. This is why the SDF substrate canNOT be flattened into
+// one foreground pass under v3 (the per-node `with_layer` fences must stay).
+// Driving the full widget draw path, the unified draw-call stream must show,
+// for every node's content quad, an SDF layer immediately before AND after it.
+// ---------------------------------------------------------------------------
+
+/// Node-content events are the small probe quads (40x20 scaled), distinct from
+/// the full-area background quad. Returns their indices in the event stream.
+fn content_event_indices(events: &[DrawEvent]) -> Vec<usize> {
+    events
+        .iter()
+        .enumerate()
+        .filter_map(|(i, e)| match e {
+            DrawEvent::Content(r) if r.width <= 200.0 && r.height <= 200.0 => Some(i),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn hosted_content_sandwiched_between_sdf_layers() {
+    // Two nodes, both well on-screen so neither fill nor foreground is culled.
+    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Rec> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .view(Point::ORIGIN, 1.0);
+    graph.push_node(node(
+        0_usize,
+        Point::new(40.0, 40.0),
+        Element::from(ContentProbe),
+    ));
+    graph.push_node(node(
+        1_usize,
+        Point::new(180.0, 180.0),
+        Element::from(ContentProbe),
+    ));
+
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Rec>);
+    let out = Rc::new(RefCell::new(Recorded::default()));
+    let mut renderer = Rec::new(out.clone());
+    let layout_node = graph.layout(
+        &mut tree,
+        &renderer,
+        &layout::Limits::new(Size::ZERO, Size::new(1024.0, 768.0)),
+    );
+    let layout = Layout::with_offset(Vector::ZERO, &layout_node);
+    let viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
+
+    let mut msgs: Vec<()> = Vec::new();
+    let mut shell = iced_widget::core::Shell::new(&mut msgs);
+    let mut clipboard = clipboard::Null;
+    graph.update(
+        &mut tree,
+        &iced::Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(-1.0, -1.0),
+        }),
+        layout,
+        mouse::Cursor::Unavailable,
+        &renderer,
+        &mut clipboard,
+        &mut shell,
+        &viewport,
+    );
+    graph.draw(
+        &tree,
+        &mut renderer,
+        &Theme::Dark,
+        &renderer::Style {
+            text_color: Color::WHITE,
+        },
+        layout,
+        mouse::Cursor::Unavailable,
+        &viewport,
+    );
+
+    let rec = out.borrow();
+    let content = content_event_indices(&rec.events);
+    assert_eq!(
+        content.len(),
+        2,
+        "expected one content quad per node, got {}: {:?}",
+        content.len(),
+        rec.events,
+    );
+
+    for &i in &content {
+        assert!(
+            i > 0 && matches!(rec.events[i - 1], DrawEvent::Sdf(_)),
+            "node content at event {i} is not preceded by its SDF fill: {:?}",
+            rec.events,
+        );
+        assert!(
+            i + 1 < rec.events.len() && matches!(rec.events[i + 1], DrawEvent::Sdf(_)),
+            "node content at event {i} is not followed by its SDF foreground: {:?}",
+            rec.events,
+        );
+    }
+
+    // The two nodes' stacks do not collapse into each other: node 0's
+    // foreground SDF paints before node 1's content (z-order interleave).
+    assert!(
+        content[0] + 1 < content[1],
+        "an SDF layer must separate node 0's content from node 1's: {:?}",
+        rec.events,
     );
 }

@@ -27,11 +27,12 @@ thread_local! {
 
 pub(crate) struct SharedSdfResources {
     _shader_module: ShaderModule,
-    /// Render group 0: draws, draw_entries, segments, styles, tile_counts, tile_entries
+    /// Render group 0: draws, draw_entries, segments, styles, fine_counts,
+    /// fine_slots, coarse_slots
     pub render_group0_layout: BindGroupLayout,
-    /// Compute group 0: draw_entries(read), segments(read), styles(read)
+    /// Compute group 0: draws(read), draw_entries(read), segments(read), styles(read)
     pub compute_group0_layout: BindGroupLayout,
-    /// Compute group 1: uniforms, tile_counts(rw), tile_entries(rw)
+    /// Compute group 1: coarse_counts(rw), coarse_slots(rw), fine_counts(rw), fine_slots(rw)
     pub compute_group1_layout: BindGroupLayout,
     _render_pipeline_layout: PipelineLayout,
     _compute_pipeline_layout: PipelineLayout,
@@ -176,9 +177,20 @@ fn create_render_group0_layout(device: &Device) -> BindGroupLayout {
                 },
                 count: None,
             },
-            // binding 5: tile_entries (read)
+            // binding 5: fine_slots (read)
             BindGroupLayoutEntry {
                 binding: 5,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(NonZeroU64::new(4).unwrap()),
+                },
+                count: None,
+            },
+            // binding 6: coarse_slots (read) - the fine 8-bit indices dereference here
+            BindGroupLayoutEntry {
+                binding: 6,
                 visibility: ShaderStages::FRAGMENT,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
@@ -254,43 +266,24 @@ fn create_compute_group0_layout(device: &Device) -> BindGroupLayout {
     })
 }
 
-/// Compute group 1: uniforms + tile_counts(rw) + tile_entries(rw)
+/// Compute group 1: the two-level index outputs, all read_write -
+/// coarse_counts, coarse_slots, fine_counts, fine_slots. The draw index is read
+/// from the dispatch z-axis (`workgroup_id.z`), so no per-draw uniform is bound.
 fn create_compute_group1_layout(device: &Device) -> BindGroupLayout {
     use std::num::NonZeroU64;
+    let rw = |binding: u32| BindGroupLayoutEntry {
+        binding,
+        visibility: ShaderStages::COMPUTE,
+        ty: BindingType::Buffer {
+            ty: BufferBindingType::Storage { read_only: false },
+            has_dynamic_offset: false,
+            min_binding_size: Some(NonZeroU64::new(4).unwrap()),
+        },
+        count: None,
+    };
     device.create_bind_group_layout(&BindGroupLayoutDescriptor {
         label: Some("SDF Compute Group 1"),
-        entries: &[
-            BindGroupLayoutEntry {
-                binding: 0,
-                visibility: ShaderStages::COMPUTE,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: Some(<types::ComputeUniforms as ShaderSize>::SHADER_SIZE),
-                },
-                count: None,
-            },
-            BindGroupLayoutEntry {
-                binding: 1,
-                visibility: ShaderStages::COMPUTE,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: Some(NonZeroU64::new(4).unwrap()),
-                },
-                count: None,
-            },
-            BindGroupLayoutEntry {
-                binding: 2,
-                visibility: ShaderStages::COMPUTE,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: Some(NonZeroU64::new(4).unwrap()),
-                },
-                count: None,
-            },
-        ],
+        entries: &[rw(0), rw(1), rw(2), rw(3)],
     })
 }
 

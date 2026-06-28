@@ -67,26 +67,28 @@ encase::impl_vector!(4, GpuVec4, f32; using AsRef AsMut From);
 
 // --- GPU Structs ---
 
-/// A single geometric segment (line, arc, or cubic bezier).
-/// 64 bytes (4 x vec4).
+/// A single arc segment - the ONE geometric primitive ("Arc is all you need").
+/// `curvature == 0` is a line, `start == end` is a point (sign from `heading`),
+/// else the minor arc of radius `1/|curvature|`. 64 bytes (4 x vec4).
 #[derive(Clone, Debug, ShaderType)]
 pub(crate) struct GpuSegment {
-    /// Segment type: 0=line, 1=arc, 2=cubic_bezier, 3=point.
-    pub segment_type: u32,
     /// Segment flags. Bit 0: signed (part of closed contour).
     pub flags: u32,
+    pub _pad0: u32,
     pub _pad1: u32,
     pub _pad2: u32,
-    /// Primary geometry. Line: (ax,ay,bx,by). Bezier: (p0x,p0y,p1x,p1y). Arc: (cx,cy,r,start_angle).
-    pub geom0: GpuVec4,
-    /// Secondary geometry. Bezier: (p2x,p2y,p3x,p3y). Arc: (sweep_angle,0,0,0).
-    pub geom1: GpuVec4,
+    /// Endpoints in the entry's LOCAL frame: (start.x, start.y, end.x, end.y).
+    pub endpoints: GpuVec4,
+    /// Arc encoding: (curvature, heading, 0, 0). Signed curvature `1/radius`
+    /// (`0` = line, sign selects the bulge side); `heading` is the interior
+    /// bisector, meaningful only for a point (`start == end`).
+    pub params: GpuVec4,
     /// Arc-length range: (arc_start, arc_end, total_arc_length, 0).
     pub arc_range: GpuVec4,
 }
 
-/// A draw entry: a unit in the spatial index.
-/// 64 bytes (4 x vec4).
+/// A draw entry / command: a unit in the spatial index.
+/// 80 bytes (5 x vec4).
 #[derive(Clone, Debug, ShaderType)]
 pub(crate) struct GpuDrawEntry {
     /// Entry type: 0=curve_segment, 1=shape, 2=tiling.
@@ -108,6 +110,13 @@ pub(crate) struct GpuDrawEntry {
     pub _pad: u32,
     /// Tiling params: (spacing_x, spacing_y, thickness/radius, 0).
     pub tiling_params: GpuVec4,
+    /// Per-INSTANCE placement (D1). The entry's segments are stored in a local
+    /// frame; the shader evaluates them against `world_p - translate`. `(0,0)`
+    /// leaves geometry at the origin. Holding the translate on
+    /// the command (not the segment) lets identical shapes at different
+    /// positions share ONE segment range - the GPU-instancing prerequisite.
+    pub translate: GpuVec2,
+    pub _translate_pad: GpuVec2,
 }
 
 /// Rendering style: a distance-stop chain + pattern. `MAX_STOPS` stops, each a
@@ -134,6 +143,12 @@ pub(crate) struct GpuStyle {
     pub pattern_param1: f32,
     pub pattern_param2: f32,
     pub flow_speed: f32,
+    /// Transfer warp (A3): 0=linear, 1=smoothstep, 2=gamma.
+    pub transfer_type: u32,
+    /// Transfer parameter (gamma exponent when `transfer_type == 2`).
+    pub transfer_param: f32,
+    pub _transfer_pad0: u32,
+    pub _transfer_pad1: u32,
 }
 
 /// Per-draw-call parameters.
@@ -149,31 +164,23 @@ pub(crate) struct DrawData {
     pub scale_factor: f32,
     /// Animation time in seconds.
     pub time: f32,
-    /// Debug flags.
-    pub debug_flags: u32,
     /// Total draw entries for this call.
     pub entry_count: u32,
     /// Offset into draw_entries buffer.
     pub entry_start: u32,
-    /// Tile grid columns (0 = no spatial index, iterate all).
+    /// Fine (16px) tile grid columns (0 = no spatial index, iterate all).
     pub grid_cols: u32,
-    /// Tile grid rows.
+    /// Fine tile grid rows.
     pub grid_rows: u32,
-    /// Tile base offset into tile buffers.
+    /// Fine tile base offset into the fine buffers.
     pub tile_base: u32,
+    /// Coarse (64px) tile grid columns (`ceil(grid_cols / 4)`).
+    pub coarse_cols: u32,
+    /// Coarse tile grid rows (`ceil(grid_rows / 4)`).
+    pub coarse_rows: u32,
+    /// Coarse tile base offset into the coarse buffers.
+    pub coarse_base: u32,
     pub _pad0: u32,
-    /// Cursor in tile-local physical pixels, for the hovered-tile debug mode.
-    pub mouse_px: GpuVec2,
-}
-
-/// Minimal compute uniform: just the index into DrawData storage buffer.
-/// Everything else is read from DrawData (shared with fragment shader).
-#[derive(Clone, Debug, ShaderType)]
-pub(crate) struct ComputeUniforms {
-    pub draw_index: u32,
-    pub _pad0: u32,
-    pub _pad1: u32,
-    pub _pad2: u32,
 }
 
 // --- Defaults ---
@@ -181,12 +188,12 @@ pub(crate) struct ComputeUniforms {
 impl Default for GpuSegment {
     fn default() -> Self {
         Self {
-            segment_type: 0,
             flags: 0,
+            _pad0: 0,
             _pad1: 0,
             _pad2: 0,
-            geom0: GpuVec4::ZERO,
-            geom1: GpuVec4::ZERO,
+            endpoints: GpuVec4::ZERO,
+            params: GpuVec4::ZERO,
             arc_range: GpuVec4::ZERO,
         }
     }
@@ -205,6 +212,8 @@ impl Default for GpuDrawEntry {
             tiling_type: 0,
             _pad: 0,
             tiling_params: GpuVec4::ZERO,
+            translate: GpuVec2::ZERO,
+            _translate_pad: GpuVec2::ZERO,
         }
     }
 }
@@ -223,6 +232,10 @@ impl Default for GpuStyle {
             pattern_param1: 0.0,
             pattern_param2: 0.0,
             flow_speed: 0.0,
+            transfer_type: 0,
+            transfer_param: 0.0,
+            _transfer_pad0: 0,
+            _transfer_pad1: 0,
         }
     }
 }
@@ -235,24 +248,53 @@ impl Default for DrawData {
             camera_zoom: 1.0,
             scale_factor: 1.0,
             time: 0.0,
-            debug_flags: 0,
             entry_count: 0,
             entry_start: 0,
             grid_cols: 0,
             grid_rows: 0,
             tile_base: 0,
+            coarse_cols: 0,
+            coarse_rows: 0,
+            coarse_base: 0,
             _pad0: 0,
-            mouse_px: GpuVec2::ZERO,
         }
     }
 }
 
-/// Performance statistics.
+/// Performance statistics from the last completed frame.
+///
+/// `#[non_exhaustive]` so new metrics stay a semver-additive patch: the v3 gates
+/// read these counters, and "v3 is faster" is an opinion without them. The dedup
+/// metrics (`cache_*`, `unique_shapes`, `segment_count`) quantify Improvement A:
+/// on a static graph `cache_hit_rate` -> ~1.0 (the R4 contract) and
+/// `unique_shapes` << `entry_count` when many nodes share a shape.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct SdfStats {
+    /// Draw commands submitted this frame (one per fill/border/shadow/edge).
     pub entry_count: u32,
+    /// Spatial-index tiles allocated this frame.
     pub tile_count: u32,
+    /// CPU time spent in `prepare` this frame.
     pub prepare_cpu_us: u64,
+    /// Distinct shapes whose geometry was uploaded this frame (after dedup). The
+    /// per-frame GPU-instancing analogue of the shape cache: identical shapes
+    /// upload their segments ONCE, so this is << `entry_count` on repeated nodes.
+    pub unique_shapes: u32,
+    /// `GpuSegment`s uploaded this frame. With instancing this tracks
+    /// unique-shape geometry, not draw count.
+    pub segment_count: u32,
+    /// Distinct compiled styles uploaded this frame (after dedup). The style-side
+    /// analogue of `unique_shapes`: entries that look identical share one
+    /// `GpuStyle`, so this is << `entry_count` when many nodes share a look.
+    pub unique_styles: u32,
+    /// Shape-cache hits over the pipeline's lifetime (Improvement A).
+    pub cache_hits: u64,
+    /// Shape-cache misses (each a boolean->arcs evaluation) over the lifetime.
+    pub cache_misses: u64,
+    /// `cache_hits / (cache_hits + cache_misses)`; ~1.0 on a static graph is the
+    /// R4 cache-hit-rate contract.
+    pub cache_hit_rate: f32,
 }
 
 #[cfg(test)]
@@ -269,7 +311,7 @@ mod tests {
     #[test]
     fn test_gpu_draw_entry_size() {
         let size = GpuDrawEntry::SHADER_SIZE.get();
-        assert_eq!(size, 64, "GpuDrawEntry should be 64 bytes");
+        assert_eq!(size, 80, "GpuDrawEntry should be 80 bytes");
     }
 
     #[test]

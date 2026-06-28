@@ -12,11 +12,22 @@ const BUFFER_MIN_ITEMS: usize = 16;
 ///
 /// Manages a GPU storage buffer alongside a CPU-side Vec mirror. The GPU buffer
 /// grows like a Vec (factor 1.5x) and is never shrunk, so steady-state frames
-/// after the first few cause zero GPU allocations. `clear()` resets the logical
-/// length without touching the GPU buffer.
+/// after the first few cause zero GPU allocations.
+///
+/// PERSISTENT write model (idle-skip groundwork): `clear()` only rewinds the live
+/// length to 0; it does NOT drop the CPU mirror or the GPU data. Each frame's
+/// writes OVERWRITE from slot 0 via `push`/`push_bulk`, so the previous frame's
+/// contents survive in `buffer_vec` for change detection and a skipped write
+/// leaves valid data in place. `live_len` is the count written this frame; slots
+/// past it are stale but never read (consumers bound their reads by `len()`),
+/// which also makes a shrinking frame truncate for free.
 pub(crate) struct Buffer<T> {
     buffer_wgpu: wgpu::Buffer,
+    /// CPU mirror. May hold MORE than `live_len` items (the high-water mark of any
+    /// frame); only `[..live_len]` is live this frame.
     buffer_vec: Vec<T>,
+    /// Items written this frame (the logical length). `len()` returns this.
+    live_len: usize,
     scratch: Vec<u8>,
     label: Option<&'static str>,
     usage: wgpu::BufferUsages,
@@ -36,6 +47,7 @@ impl<T: ShaderSize> Buffer<T> {
         Self {
             buffer_wgpu,
             buffer_vec,
+            live_len: 0,
             scratch: Vec::new(),
             label,
             usage,
@@ -52,11 +64,11 @@ impl<T: ShaderSize> Buffer<T> {
     }
 
     pub fn len(&self) -> usize {
-        self.buffer_vec.len()
+        self.live_len
     }
 
     pub fn is_empty(&self) -> bool {
-        self.buffer_vec.is_empty()
+        self.live_len == 0
     }
 
     #[must_use]
@@ -64,12 +76,17 @@ impl<T: ShaderSize> Buffer<T> {
     where
         T: ShaderType + ShaderSize + WriteInto,
     {
-        let slot = self.buffer_vec.len();
-        self.buffer_vec.push(item);
+        let slot = self.live_len;
+        if slot < self.buffer_vec.len() {
+            self.buffer_vec[slot] = item;
+        } else {
+            self.buffer_vec.push(item);
+        }
+        self.live_len += 1;
 
         let item_size = T::SHADER_SIZE.get() as usize;
         let offset = slot * item_size;
-        let required_size = (slot + 1) * item_size;
+        let required_size = self.live_len * item_size;
 
         if self.buffer_wgpu.size() < required_size as u64 {
             let new_size = ((required_size as f32 * BUFFER_GROWTH_FACTOR) as u64)
@@ -93,16 +110,16 @@ impl<T: ShaderSize> Buffer<T> {
     where
         T: ShaderType + ShaderSize + WriteInto,
     {
-        if self.buffer_vec.is_empty() {
+        if self.live_len == 0 {
             return;
         }
 
         let item_size = T::SHADER_SIZE.get() as usize;
-        let total_size = self.buffer_vec.len() * item_size;
+        let total_size = self.live_len * item_size;
         self.scratch.clear();
         self.scratch.resize(total_size, 0);
 
-        for (i, item) in self.buffer_vec.iter().enumerate() {
+        for (i, item) in self.buffer_vec[..self.live_len].iter().enumerate() {
             let offset = i * item_size;
             let slice = &mut self.scratch[offset..offset + item_size];
             let mut writer = encase::StorageBuffer::new(slice);
@@ -119,14 +136,23 @@ impl<T: ShaderSize> Buffer<T> {
         T: ShaderType + ShaderSize + WriteInto + Clone,
     {
         if items.is_empty() {
-            return self.buffer_vec.len();
+            return self.live_len;
         }
 
-        let start_slot = self.buffer_vec.len();
-        self.buffer_vec.extend_from_slice(items);
+        let start_slot = self.live_len;
+        // Overwrite the live slots in place; extend the mirror only past its
+        // high-water mark so prior-frame allocation is reused, not regrown.
+        let overwrite = items
+            .len()
+            .min(self.buffer_vec.len().saturating_sub(start_slot));
+        self.buffer_vec[start_slot..start_slot + overwrite].clone_from_slice(&items[..overwrite]);
+        if overwrite < items.len() {
+            self.buffer_vec.extend_from_slice(&items[overwrite..]);
+        }
+        self.live_len = start_slot + items.len();
 
         let item_size = T::SHADER_SIZE.get() as usize;
-        let required_size = self.buffer_vec.len() * item_size;
+        let required_size = self.live_len * item_size;
 
         if self.buffer_wgpu.size() < required_size as u64 {
             let new_size = ((required_size as f32 * BUFFER_GROWTH_FACTOR) as u64)
@@ -153,8 +179,27 @@ impl<T: ShaderSize> Buffer<T> {
         start_slot
     }
 
+    /// Rewinds the live length to 0 WITHOUT dropping the CPU mirror or GPU data,
+    /// so next frame's writes overwrite in place and unwritten slots keep their
+    /// previous contents (the basis for skipping unchanged writes).
     pub fn clear(&mut self) {
-        self.buffer_vec.clear();
+        self.live_len = 0;
+    }
+
+    /// Reclaims `n` already-resident slots as live WITHOUT rewriting them: the
+    /// previous frame left valid data at `[live_len .. live_len + n)`, so a caller
+    /// that has verified the content is unchanged just advances the cursor over it.
+    /// This is the per-primitive skip path - the data is reused in place, no CPU
+    /// eval and no GPU upload. Panics if those slots were never written (the caller
+    /// must only skip a range it wrote in a prior frame).
+    pub fn skip(&mut self, n: usize) {
+        assert!(
+            self.live_len + n <= self.buffer_vec.len(),
+            "skip {n} past resident data (live {} + {n} > {})",
+            self.live_len,
+            self.buffer_vec.len(),
+        );
+        self.live_len += n;
     }
 }
 
