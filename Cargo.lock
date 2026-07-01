@@ -827,7 +827,6 @@ dependencies = [
  "console_error_panic_hook",
  "iced",
  "iced_nodegraph",
- "iced_nodegraph_sdf",
  "wasm-bindgen",
  "web-sys",
 ]
@@ -1617,7 +1616,6 @@ dependencies = [
  "iced_core",
  "log",
  "rustc-hash 2.1.2",
- "tokio",
  "wasm-bindgen-futures",
  "wasmtimer",
 ]
@@ -1646,7 +1644,6 @@ dependencies = [
 name = "iced_nodegraph"
 version = "0.3.0-dev"
 dependencies = [
- "bitflags 2.13.0",
  "criterion",
  "euclid",
  "iced",
@@ -1657,8 +1654,6 @@ dependencies = [
  "png",
  "pollster",
  "proptest",
- "rustc-hash 2.1.2",
- "thiserror 2.0.18",
  "web-time",
 ]
 
@@ -1666,7 +1661,6 @@ dependencies = [
 name = "iced_nodegraph_sdf"
 version = "0.3.0-dev"
 dependencies = [
- "bytemuck",
  "encase",
  "glam",
  "iced",
@@ -3742,15 +3736,6 @@ name = "tinyvec_macros"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
-
-[[package]]
-name = "tokio"
-version = "1.52.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fc7f01b389ac15039e4dc9531aa973a135d7a4135281b12d7c1bc79fd57fffe"
-dependencies = [
- "pin-project-lite",
-]
 
 [[package]]
 name = "toml_datetime"

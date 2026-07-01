@@ -43,11 +43,8 @@ encase = "0.12"
 wgpu = "27.0"
 
 # Utilities
-bitflags = "2.11"
-thiserror = "2.0"
 iced_aw = { version = "0.14.1", default-features = false }
 pollster = "0.4"
-rustc-hash = "2.1"
 web-time = "1.1"
 
 # WASM support

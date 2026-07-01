@@ -10,11 +10,10 @@ keywords = ["iced", "sdf", "distance-field", "gpu", "segment"]
 categories = ["gui", "graphics", "rendering"]
 
 [dependencies]
-bytemuck.workspace = true
 glam.workspace = true
 encase.workspace = true
 iced_wgpu.workspace = true
-iced = { workspace = true, features = ["advanced", "wgpu"] }
+iced = { workspace = true, features = ["wgpu"] }
 web-time.workspace = true
 
 [dev-dependencies]

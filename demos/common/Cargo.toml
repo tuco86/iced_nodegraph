@@ -7,6 +7,6 @@ license.workspace = true
 publish = false
 
 [dependencies]
-iced = { workspace = true, features = ["advanced", "wgpu", "tokio"] }
+iced = { workspace = true, features = ["wgpu"] }
 iced_nodegraph.workspace = true
 png = "0.18"
