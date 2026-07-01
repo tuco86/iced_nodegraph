@@ -1,8 +1,13 @@
 <p align="center">
-  <img src="assets/logo/logo.svg" alt="iced_nodegraph logo" width="120" height="120">
+  <img src="https://raw.githubusercontent.com/tuco86/iced_nodegraph/main/assets/logo/logo.svg" alt="iced_nodegraph logo" width="120" height="120">
 </p>
 
 <h1 align="center">iced_nodegraph</h1>
+
+<p align="center">
+  <a href="https://crates.io/crates/iced_nodegraph"><img src="https://img.shields.io/crates/v/iced_nodegraph.svg" alt="crates.io"></a>
+  <a href="https://docs.rs/iced_nodegraph"><img src="https://img.shields.io/docsrs/iced_nodegraph" alt="docs.rs"></a>
+</p>
 
 A high-performance node graph editor widget for the [Iced](https://github.com/iced-rs/iced) GUI framework, featuring SDF-based GPU rendering via a custom WGPU pipeline and type-safe coordinate transformations.
 
@@ -15,15 +20,18 @@ This is a **Cargo workspace** containing:
 - **`iced_nodegraph/`** - Core node graph widget library
 - **`iced_nodegraph_sdf/`** - SDF rendering engine (signed distance fields on GPU)
 - **`demos/`** - Demonstration applications
-  - [`hello_world`](demos/hello_world/) - Basic usage and command palette
-  - [`styling`](demos/styling/) - Theming and visual customization
-  - [`interaction`](demos/interaction/) - Pin rules and connection validation
-  - [`500_nodes`](demos/500_nodes/) - Performance benchmark (500 nodes, 640 edges)
-  - [`shader_editor`](demos/shader_editor/) - Visual WGSL shader editor
+  - [`hello_world`](https://github.com/tuco86/iced_nodegraph/tree/main/demos/hello_world) - Basic usage and command palette
+  - [`styling`](https://github.com/tuco86/iced_nodegraph/tree/main/demos/styling) - Theming and visual customization
+  - [`interaction`](https://github.com/tuco86/iced_nodegraph/tree/main/demos/interaction) - Pin rules and connection validation
+  - [`500_nodes`](https://github.com/tuco86/iced_nodegraph/tree/main/demos/500_nodes) - Performance benchmark (500 nodes, 640 edges)
+  - [`shader_editor`](https://github.com/tuco86/iced_nodegraph/tree/main/demos/shader_editor) - Visual WGSL shader editor
 
 ## Development Status
 
-**0.1.0** - Initial release. Pre-1.0, so the API may still change between minor versions.
+Pre-1.0: the public API may still change between minor versions. See the
+[crates.io page](https://crates.io/crates/iced_nodegraph) for the current
+release and [CHANGELOG.md](https://github.com/tuco86/iced_nodegraph/blob/main/CHANGELOG.md)
+for what changed.
 
 **Target**: Iced 0.14 | **Platforms**: Windows, macOS, Linux, WebAssembly (Chrome)
 
@@ -42,12 +50,9 @@ This is a **Cargo workspace** containing:
 
 ## Quick Start
 
-Add to your `Cargo.toml`:
-
-```toml
-[dependencies]
-iced_nodegraph = { git = "https://github.com/tuco86/iced_nodegraph" }
-iced = { version = "0.14", features = ["advanced", "wgpu"] }
+```bash
+cargo add iced_nodegraph
+cargo add iced --features wgpu
 ```
 
 Basic example:
@@ -87,7 +92,7 @@ with `.flow(speed)` to animate). A full cookbook - presets, the struct-update
 override idiom, and per-node status styling - is in the
 [crate docs](https://tuco86.github.io/iced_nodegraph/iced_nodegraph/).
 
-See [`demos/hello_world/`](demos/hello_world/) for a complete working example.
+See [`demos/hello_world/`](https://github.com/tuco86/iced_nodegraph/tree/main/demos/hello_world) for a complete working example.
 
 ### Running Demos
 
@@ -100,7 +105,7 @@ cargo run -p demo_styling
 cargo run -p demo_interaction
 cargo run --release -p demo_500_nodes
 cargo run -p demo_shader_editor
-cargo run -p sdf_basic                 # iced_nodegraph_sdf example
+cargo run -p iced_nodegraph --example basic   # live logic-gate playground
 ```
 
 ## Building
@@ -116,14 +121,13 @@ cargo clippy --workspace -- -D warnings
 ### WASM Build
 
 ```bash
-# Windows
-.\build_demo_wasm.ps1
-
-# Linux/macOS
-./build_demo_wasm.sh
+./build_docs.sh
 ```
 
-Requires `wasm-pack` and a WebGPU-capable browser (Chrome/Chromium recommended).
+Builds rustdoc plus every demo as WASM (into `target/doc/`) - the same script
+CI runs to deploy the live demo and docs. Requires `wasm-pack` and the
+`wasm32-unknown-unknown` target. A WebGPU-capable browser (Chrome/Chromium
+recommended) is needed to run the result.
 
 ## Benchmarks
 
@@ -184,7 +188,7 @@ Type-safe coordinate spaces using the `euclid` crate:
 - **Screen Space** (`ScreenPoint`) - Physical pixel coordinates
 - **World Space** (`WorldPoint`) - Virtual canvas coordinates
 
-Transformations are compile-time checked. See [`camera.rs`](iced_nodegraph/src/node_graph/camera.rs) for formulas and tests.
+Transformations are compile-time checked. See [`camera.rs`](https://github.com/tuco86/iced_nodegraph/blob/main/iced_nodegraph/src/node_graph/camera.rs) for formulas and tests.
 
 ## Interaction
 
@@ -208,8 +212,7 @@ Transformations are compile-time checked. See [`camera.rs`](iced_nodegraph/src/n
 - **euclid** - Type-safe coordinate math
 - **glam** - Vector math for SDF evaluation
 - **encase** - WGSL buffer layout
-- **bytemuck** - Safe transmutation for GPU buffers
 
 ## License
 
-See [LICENSE](LICENSE) file for details.
+See [LICENSE](https://github.com/tuco86/iced_nodegraph/blob/main/LICENSE) file for details.
