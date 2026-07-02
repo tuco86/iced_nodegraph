@@ -12,6 +12,11 @@ ignore = [
     # transitively by the wgpu/iced stack and cannot be removed from here.
     # Tracked so the ignore stays auditable; revisit when upstream drops it.
     "RUSTSEC-2024-0436",
+    # ttf-parser is unmaintained (no security vulnerability, no safe upgrade
+    # available). Pulled in transitively via cosmic-text -> fontdb and
+    # ab_glyph -> owned_ttf_parser, both deep in the iced/winit stack.
+    # Tracked so the ignore stays auditable; revisit when upstream drops it.
+    "RUSTSEC-2026-0192",
 ]
 
 [licenses]
