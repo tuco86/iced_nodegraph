@@ -22,9 +22,9 @@ use iced::{
     Background, Color, Element, Length, Pixels, Point, Rectangle, Size, Theme, Transformation,
     Vector,
 };
-use iced_widget::core::clipboard;
-use iced_widget::core::image;
-use iced_widget::core::text;
+use iced_wgpu::core::clipboard;
+use iced_wgpu::core::image;
+use iced_wgpu::core::text;
 
 use crate::{NodeGraph, node};
 
@@ -148,7 +148,7 @@ impl overlay::Overlay<(), Theme, Rec> for ProbeOverlay {
         cursor: mouse::Cursor,
         _renderer: &Rec,
         _clipboard: &mut dyn clipboard::Clipboard,
-        _shell: &mut iced_widget::core::Shell<'_, ()>,
+        _shell: &mut iced_wgpu::core::Shell<'_, ()>,
     ) {
         self.cursor_seen.set(cursor.position());
     }
@@ -266,7 +266,7 @@ fn graph_with_node(
     let layout = Layout::with_offset(origin, &layout_node);
     let viewport = Rectangle::new(Point::ORIGIN, VIEWPORT);
     let mut msgs: Vec<()> = Vec::new();
-    let mut shell = iced_widget::core::Shell::new(&mut msgs);
+    let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
     let mut clip = clipboard::Null;
     graph.update(
         &mut tree,
@@ -428,7 +428,7 @@ fn overlay_maps_cursor_into_layout_space() {
         origin.y + (world.y + cam_pos.y) * zoom,
     );
     let mut msgs: Vec<()> = Vec::new();
-    let mut shell = iced_widget::core::Shell::new(&mut msgs);
+    let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
     let mut clip = clipboard::Null;
     ov.as_overlay_mut().update(
         &iced::Event::Mouse(mouse::Event::CursorMoved { position: screen }),

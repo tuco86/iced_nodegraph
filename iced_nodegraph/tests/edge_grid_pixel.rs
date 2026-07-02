@@ -13,7 +13,7 @@ mod common;
 use iced::advanced::widget::{Tree, Widget};
 use iced::advanced::{Layout, layout, mouse, renderer};
 use iced::{Color, Element, Length, Point, Rectangle, Size, Theme};
-use iced_widget::core::clipboard;
+use iced_wgpu::core::clipboard;
 
 use common::shared;
 use iced_wgpu::Renderer;
@@ -106,7 +106,7 @@ fn render_edge_grid() -> Option<Vec<[u8; 4]>> {
     let viewport_rect = Rectangle::new(Point::ORIGIN, Size::new(GW as f32, GH as f32));
 
     let mut msgs: Vec<()> = Vec::new();
-    let mut shell = iced_widget::core::Shell::new(&mut msgs);
+    let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
     let mut clipboard = clipboard::Null;
     graph.update(
         &mut tree,
@@ -317,7 +317,7 @@ fn render_minimal_edges() -> Option<Vec<[u8; 4]>> {
     let viewport_rect = Rectangle::new(Point::ORIGIN, Size::new(GW as f32, GH as f32));
 
     let mut msgs: Vec<()> = Vec::new();
-    let mut shell = iced_widget::core::Shell::new(&mut msgs);
+    let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
     let mut clipboard = clipboard::Null;
     graph.update(
         &mut tree,

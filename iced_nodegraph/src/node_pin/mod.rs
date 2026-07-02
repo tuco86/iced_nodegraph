@@ -33,7 +33,7 @@
 
 use crate::ids::PinId;
 use iced::{Element, Event, Length, Point, Rectangle, Size};
-use iced_widget::core::{
+use iced_wgpu::core::{
     Clipboard, Layout, Shell, Widget, layout, mouse, renderer,
     widget::{Tree, tree},
 };
@@ -450,7 +450,7 @@ pub fn node_pin<'a, P, Message, Theme, Renderer>(
 ) -> NodePin<'a, P, (), Message, Theme, Renderer>
 where
     P: PinId,
-    Renderer: iced_widget::core::renderer::Renderer,
+    Renderer: iced_wgpu::core::renderer::Renderer,
 {
     NodePin::new(side, pin_id, content)
 }

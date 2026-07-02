@@ -8,6 +8,9 @@
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use encase::{ShaderSize, ShaderType, StorageBuffer, internal::WriteInto};
+// iced_wgpu re-exports the exact wgpu crate it renders with, so tests use that
+// instead of a separately-versioned direct `wgpu` dependency.
+use iced_wgpu::wgpu;
 use wgpu::util::DeviceExt;
 use wgpu::*;
 

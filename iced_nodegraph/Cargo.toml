@@ -13,16 +13,17 @@ categories = ["gui", "graphics", "visualization"]
 [dependencies]
 euclid.workspace = true
 iced_nodegraph_sdf.workspace = true
+# Also supplies `iced_wgpu::core` (= iced_core, re-exported the same way
+# iced_widget::core is), so production code needs no separate iced_widget dep.
 iced_wgpu.workspace = true
-iced_widget.workspace = true
 # WebGPU only - there is no WebGL fallback (see crate docs).
 iced = { workspace = true, features = ["wgpu"] }
 web-time.workspace = true
 
 [dev-dependencies]
 # "advanced" is only used by the widget-trait test harnesses (coordinate_tests,
-# clipping_tests, overlay_tests); production code goes through iced_widget
-# directly, so this stays out of the published crate's [dependencies].
+# clipping_tests, overlay_tests) to reach Tree/Widget/Layout directly via
+# iced::advanced; this stays out of the published crate's [dependencies].
 iced = { workspace = true, features = ["advanced"] }
 iced_test = { workspace = true }
 proptest = "1"

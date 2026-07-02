@@ -18,9 +18,9 @@ use iced::{
     Background, Color, Element, Length, Pixels, Point, Rectangle, Size, Theme, Transformation,
     Vector,
 };
-use iced_widget::core::clipboard;
-use iced_widget::core::image;
-use iced_widget::core::text;
+use iced_wgpu::core::clipboard;
+use iced_wgpu::core::image;
+use iced_wgpu::core::text;
 
 use crate::{NodeGraph, node};
 
@@ -153,7 +153,7 @@ impl<Message> Widget<Message, Theme, Stub> for ViewportRecorder {
         _cursor: mouse::Cursor,
         _renderer: &Stub,
         _clipboard: &mut dyn clipboard::Clipboard,
-        _shell: &mut iced_widget::core::Shell<'_, Message>,
+        _shell: &mut iced_wgpu::core::Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
         self.on_update.0.set(Some(*viewport));
@@ -321,7 +321,7 @@ fn run_update_with_cursor(graph_w: f32, graph_h: f32, cursor: mouse::Cursor) -> 
     let layout = Layout::new(&layout_node);
 
     let mut messages: Vec<()> = Vec::new();
-    let mut shell = iced_widget::core::Shell::new(&mut messages);
+    let mut shell = iced_wgpu::core::Shell::new(&mut messages);
     let mut clipboard = clipboard::Null;
     let viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
 
@@ -426,7 +426,7 @@ fn update_clips_child_viewport_to_graph_bounds() {
 
     let outer_viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
     let mut shell_messages: Vec<()> = Vec::new();
-    let mut shell = iced_widget::core::Shell::new(&mut shell_messages);
+    let mut shell = iced_wgpu::core::Shell::new(&mut shell_messages);
     let mut clipboard = clipboard::Null;
     let event = iced::Event::Mouse(mouse::Event::CursorMoved {
         position: Point::new(50.0, 50.0),

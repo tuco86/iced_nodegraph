@@ -22,7 +22,7 @@ use iced::advanced::widget::{Tree, Widget};
 use iced::advanced::{Layout, layout, mouse, renderer};
 use iced::widget::text;
 use iced::{Color, Element, Length, Point, Rectangle, Size, Theme};
-use iced_widget::core::clipboard;
+use iced_wgpu::core::clipboard;
 
 use common::shared;
 use iced_nodegraph::{ColorQuad, NodeGraph, NodeStyle, default_node_style, node};
@@ -63,7 +63,7 @@ fn render_one_node() -> Option<Vec<[u8; 4]>> {
 
     // One update syncs the controlled `view()` into the widget camera.
     let mut msgs: Vec<()> = Vec::new();
-    let mut shell = iced_widget::core::Shell::new(&mut msgs);
+    let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
     let mut clipboard = clipboard::Null;
     graph.update(
         &mut tree,
@@ -230,7 +230,7 @@ fn zoomout_grid_missing_nodes_at(scale: f32, frames: u32, cam: Point, zoom: f32)
         let layout = Layout::new(&layout_node);
 
         let mut msgs: Vec<()> = Vec::new();
-        let mut shell = iced_widget::core::Shell::new(&mut msgs);
+        let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
         let mut clipboard = clipboard::Null;
         graph.update(
             &mut tree,
@@ -403,7 +403,7 @@ fn offscreen_node_does_not_desync_later_nodes() {
     let viewport_rect = Rectangle::new(Point::ORIGIN, Size::new(GW as f32, GH as f32));
 
     let mut msgs: Vec<()> = Vec::new();
-    let mut shell = iced_widget::core::Shell::new(&mut msgs);
+    let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
     let mut clipboard = clipboard::Null;
     graph.update(
         &mut tree,

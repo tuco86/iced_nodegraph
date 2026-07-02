@@ -22,9 +22,9 @@ use iced::{
     Background, Color, Element, Length, Pixels, Point, Rectangle, Size, Theme, Transformation,
     Vector,
 };
-use iced_widget::core::clipboard;
-use iced_widget::core::image;
-use iced_widget::core::text;
+use iced_wgpu::core::clipboard;
+use iced_wgpu::core::image;
+use iced_wgpu::core::text;
 
 use crate::{NodeGraph, node};
 
@@ -206,7 +206,7 @@ fn draw_at_origin(
     // One update syncs `view()` into the widget camera (the host value differs
     // from the unset last-synced value); the event itself is a no-op here.
     let mut msgs: Vec<()> = Vec::new();
-    let mut shell = iced_widget::core::Shell::new(&mut msgs);
+    let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
     let mut clipboard = clipboard::Null;
     graph.update(
         &mut tree,
@@ -300,7 +300,7 @@ fn click_select(
     let viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
 
     let mut msgs: Vec<()> = Vec::new();
-    let mut shell = iced_widget::core::Shell::new(&mut msgs);
+    let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
     let mut clipboard = clipboard::Null;
     let cursor = mouse::Cursor::Available(screen);
 
@@ -469,12 +469,12 @@ fn box_select_primitives(
     let layout = Layout::with_offset(widget_origin, &layout_node);
     let viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
     let mut msgs: Vec<()> = Vec::new();
-    let mut shell = iced_widget::core::Shell::new(&mut msgs);
+    let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
     let mut clipboard = clipboard::Null;
 
     let send = |graph: &mut NodeGraph<'static, usize, usize, (), (), Theme, Rec>,
                 tree: &mut Tree,
-                shell: &mut iced_widget::core::Shell<'_, ()>,
+                shell: &mut iced_wgpu::core::Shell<'_, ()>,
                 clipboard: &mut clipboard::Null,
                 renderer: &Rec,
                 event: iced::Event,
@@ -743,7 +743,7 @@ fn recipe_hash_is_stable_across_120_frames() {
         // advance its wall-clock animation time, so `time` genuinely varies
         // across the 120 frames while the geometry must not.
         let mut msgs: Vec<()> = Vec::new();
-        let mut shell = iced_widget::core::Shell::new(&mut msgs);
+        let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
         let mut clipboard = clipboard::Null;
         graph.update(
             &mut tree,
@@ -839,7 +839,7 @@ fn hosted_content_sandwiched_between_sdf_layers() {
     let viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
 
     let mut msgs: Vec<()> = Vec::new();
-    let mut shell = iced_widget::core::Shell::new(&mut msgs);
+    let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
     let mut clipboard = clipboard::Null;
     graph.update(
         &mut tree,

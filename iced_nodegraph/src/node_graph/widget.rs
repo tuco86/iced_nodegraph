@@ -17,7 +17,7 @@
 //! 4. Graph foreground: interaction tools (selection box, edge-cutting overlay).
 
 use iced::{Element, Event, Length, Point, Rectangle, Size, Theme, Vector, keyboard};
-use iced_widget::core::{
+use iced_wgpu::core::{
     Clipboard, Layout, Shell, layout, mouse, overlay, renderer,
     widget::{self, Tree, tree},
 };
@@ -358,7 +358,7 @@ struct CameraOverlay<'a, Message, Renderer> {
 impl<Message, Renderer> overlay::Overlay<Message, iced::Theme, Renderer>
     for CameraOverlay<'_, Message, Renderer>
 where
-    Renderer: iced_widget::core::renderer::Renderer,
+    Renderer: iced_wgpu::core::renderer::Renderer,
 {
     fn layout(&mut self, renderer: &Renderer, bounds: Size) -> layout::Node {
         self.content.as_overlay_mut().layout(renderer, bounds)
@@ -434,14 +434,14 @@ where
     }
 }
 
-impl<N, P, E, UI, Message, Renderer> iced_widget::core::Widget<Message, iced::Theme, Renderer>
+impl<N, P, E, UI, Message, Renderer> iced_wgpu::core::Widget<Message, iced::Theme, Renderer>
     for NodeGraph<'_, N, P, UI, Message, iced::Theme, Renderer, E>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
     E: EdgeId + 'static,
     UI: Clone + 'static,
-    Renderer: iced_widget::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
+    Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
     fn tag(&self) -> tree::Tag {
         tree::Tag::of::<NodeGraphState>()
@@ -571,13 +571,13 @@ where
         // ========================================
         renderer.with_layer(layout.bounds(), |renderer| {
             renderer.fill_quad(
-                iced_widget::core::renderer::Quad {
+                iced_wgpu::core::renderer::Quad {
                     bounds: layout.bounds(),
                     border: iced::Border::default(),
                     shadow: iced::Shadow::default(),
                     snap: true,
                 },
-                iced_widget::core::Background::Color(resolved_graph.background_color),
+                iced_wgpu::core::Background::Color(resolved_graph.background_color),
             );
         });
 
@@ -2716,7 +2716,7 @@ where
     P: PinId + 'static,
     E: EdgeId + 'static,
     UI: Clone + 'static,
-    Renderer: iced_widget::core::renderer::Renderer + 'a + iced_wgpu::primitive::Renderer,
+    Renderer: iced_wgpu::core::renderer::Renderer + 'a + iced_wgpu::primitive::Renderer,
     Message: 'static,
 {
     fn from(graph: NodeGraph<'a, N, P, UI, Message, iced::Theme, Renderer, E>) -> Self {
@@ -2731,7 +2731,7 @@ where
 pub fn node_graph<'a, Message, Theme, Renderer>()
 -> NodeGraph<'a, usize, usize, (), Message, Theme, Renderer>
 where
-    Renderer: iced_widget::core::renderer::Renderer,
+    Renderer: iced_wgpu::core::renderer::Renderer,
 {
     NodeGraph::default()
 }
@@ -2812,7 +2812,7 @@ where
     P: PinId + 'static,
     E: EdgeId + 'static,
     UI: Clone + 'static,
-    Renderer: iced_widget::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
+    Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
     let mut valid_targets = std::collections::HashSet::new();
 

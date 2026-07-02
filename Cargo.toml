@@ -28,19 +28,14 @@ demo_common = { path = "demos/common" }
 # Iced framework
 iced = "0.14"
 iced_wgpu = "0.14"
-iced_widget = "0.14"
 iced_test = "0.14"
 
 iced_palette = "0.1"
 
 # Coordinate transformations and math
 euclid = { version = "0.22.11", features = ["bytemuck"] }
-bytemuck = { version = "1.0", features = ["derive"] }
 glam = { version = "0.25", features = ["bytemuck"] }
 encase = "0.12"
-
-# Graphics and GPU (same version as iced 0.14)
-wgpu = "27.0"
 
 # Utilities
 iced_aw = { version = "0.14.1", default-features = false }

@@ -1636,7 +1636,6 @@ dependencies = [
  "iced_nodegraph_sdf",
  "iced_test",
  "iced_wgpu",
- "iced_widget",
  "png",
  "pollster",
  "proptest",
@@ -1654,7 +1653,6 @@ dependencies = [
  "png",
  "pollster",
  "web-time",
- "wgpu",
 ]
 
 [[package]]

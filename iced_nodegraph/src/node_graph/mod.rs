@@ -387,7 +387,7 @@ where
     N: NodeId,
     P: PinId,
     E: EdgeId,
-    Renderer: iced_widget::core::renderer::Renderer,
+    Renderer: iced_wgpu::core::renderer::Renderer,
 {
     fn default() -> Self {
         Self {
@@ -421,7 +421,7 @@ where
     N: NodeId + 'static,
     P: PinId + 'static,
     E: EdgeId + 'static,
-    Renderer: iced_widget::core::renderer::Renderer,
+    Renderer: iced_wgpu::core::renderer::Renderer,
 {
     /// Sets the host-controlled camera (world position + zoom).
     ///
