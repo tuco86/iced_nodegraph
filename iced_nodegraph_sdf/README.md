@@ -221,7 +221,7 @@ Evaluated arcs and styles are packed into three flat GPU buffers (see
 | Buffer | One element is | Size |
 |--------|----------------|------|
 | **segments** | one arc (endpoints, curvature, arc-length range) | 64 B |
-| **entries** | one draw command (which segments, which style, AABB, the per-instance translate) | 80 B |
+| **entries** | one draw command (which segments, which style, the per-instance translate) | 64 B |
 | **styles** | one compiled stop chain + pattern | ~340 B |
 
 An *entry* is a draw command: it points at a contiguous range of segments, names
@@ -251,20 +251,21 @@ they can change every frame without touching the geometry buffers at all.
 Naively, every pixel would test every segment. With hundreds of nodes and edges
 that is millions of wasted distance evaluations. So a compute shader first builds
 a **spatial index** that records, per screen tile, only the segments that could
-colour one of its pixels. This index has **two levels** (see `cs_build_index` in
+colour one of its pixels. This index has **two levels** (see the `cs_scatter_*`
+and `cs_sort_fine` kernels in
 [`src/pipeline/shader.wgsl`](src/pipeline/shader.wgsl)):
 
-<img src="docs/tiles.svg" alt="A two-level tile index: 64px coarse tiles hold (segment, entry) results; 16px fine tiles hold 8-bit indices into them." width="100%">
+<img src="docs/tiles.svg" alt="A two-level tile index: 64px coarse tiles hold (segment, entry) results; 16px fine tiles hold 16-bit indices into them." width="100%">
 
 - A **coarse** grid of 64&times;64-pixel tiles holds the actual cull result: up to
-  256 `(segment, entry)` slots per tile, each a pair of 32-bit indices, sorted by
+  512 `(segment, entry)` slots per tile, each a pair of 32-bit indices, sorted by
   entry so the fragment shader walks one shape at a time, front to back.
 - A **fine** grid of 16&times;16-pixel tiles (16&times; as many) holds, per tile, up
-  to 128 **8-bit indices** into its parent coarse tile's result.
+  to 128 **16-bit indices** into its parent coarse tile's result.
 
 The split is a memory trade. The fat `(segment, entry)` slots live once per coarse
-tile, of which there are few; the numerous fine tiles store a single byte per slot
-instead of eight, paying only one indirection at shade time (fine byte &rarr;
+tile, of which there are few; the numerous fine tiles store two bytes per slot
+instead of eight, paying only one indirection at shade time (fine index &rarr;
 coarse slot &rarr; `(segment, entry)`). It is the spatial-index analogue of the
 instancing in Part 4: materialise the expensive thing once, reference it cheaply.
 
@@ -285,19 +286,26 @@ one that matters (which would be a visible hole). For a line and a point the
 interval is exact; for an arc (the one non-convex case) it is bounded by splitting
 the arc into shallow sub-chords.
 
-**Both levels build in one dispatch**, with one workgroup per coarse tile (16
-threads, one per fine tile). The workgroup cooperatively bins the entry candidates
-that reach the 64px tile; one thread runs the coarse cull into the 256-slot result;
-then its 16 threads each re-cull one fine tile at 16px, writing the compact 8-bit
-references. The draw index rides the dispatch's z-axis, so each draw selects its
-own `DrawData` with no per-draw uniform, and the whole frame is **one**
-`queue.submit`.
+**The index is built by SCATTER, not by gather.** Iterating every entry from
+every tile costs O(tiles &times; segments) no matter what is visible — a
+zoom-independent floor. Instead each (entry, segment) pair visits only the
+coarse tiles inside its reach-inflated bbox and appends itself where the exact
+interval test passes, so the work is proportional to actual overlaps: one
+kernel scatters open strokes per segment, one handles closed contours per
+entry (their interiors need the centre-sign keep), and a third sorts every
+coarse tile's slots by (entry, segment) — a unique total order that makes the
+frame deterministic regardless of atomic append order — before its threads
+re-cull the 16px fine tiles into compact 16-bit references. The draw index
+rides the dispatch's z-axis, so each draw selects its own `DrawData` with no
+per-draw uniform, and the whole frame is **one** `queue.submit` — skipped
+entirely while nothing that affects the index changed (camera, viewport,
+geometry): an idle or animation-only frame reuses the resident index.
 
 ---
 
 ## Part 6 &middot; Shade: the fragment shader
 
-Each pixel reads its fine tile's 8-bit indices, dereferences each through the
+Each pixel reads its fine tile's 16-bit indices, dereferences each through the
 parent coarse tile to recover its `(segment, entry)`, and for each shape takes the
 **nearest segment** — the smallest `|distance|` over that shape's segments. The
 winning segment's signed perpendicular gives inside vs. outside:

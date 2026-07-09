@@ -88,7 +88,7 @@ pub(crate) struct GpuSegment {
 }
 
 /// A draw entry / command: a unit in the spatial index.
-/// 80 bytes (5 x vec4).
+/// 64 bytes (4 x vec4).
 #[derive(Clone, Debug, ShaderType)]
 pub(crate) struct GpuDrawEntry {
     /// Entry type: 0=curve_segment, 1=shape, 2=tiling.
@@ -99,8 +99,6 @@ pub(crate) struct GpuDrawEntry {
     pub z_order: u32,
     /// Flags: bit 0 = is_closed.
     pub flags: u32,
-    /// World-space AABB: (min_x, min_y, max_x, max_y).
-    pub bounds: GpuVec4,
     /// Offset into segments buffer.
     pub segment_start: u32,
     /// Number of segments.
@@ -180,7 +178,11 @@ pub(crate) struct DrawData {
     pub coarse_rows: u32,
     /// Coarse tile base offset into the coarse buffers.
     pub coarse_base: u32,
-    pub _pad0: u32,
+    /// The draw's tiling entry ids (`u32::MAX`-sentinel-padded), carried per
+    /// draw so the sort/fine kernel needs no extra storage binding (the
+    /// compute stage must stay within the WebGPU spec-default 8 storage
+    /// buffers per stage for wasm).
+    pub tilings: [u32; 4],
 }
 
 // --- Defaults ---
@@ -206,7 +208,6 @@ impl Default for GpuDrawEntry {
             style_idx: 0,
             z_order: 0,
             flags: 0,
-            bounds: GpuVec4::ZERO,
             segment_start: 0,
             segment_count: 0,
             tiling_type: 0,
@@ -256,7 +257,7 @@ impl Default for DrawData {
             coarse_cols: 0,
             coarse_rows: 0,
             coarse_base: 0,
-            _pad0: 0,
+            tilings: [u32::MAX; 4],
         }
     }
 }
@@ -295,6 +296,11 @@ pub struct SdfStats {
     /// `cache_hits / (cache_hits + cache_misses)`; ~1.0 on a static graph is the
     /// R4 cache-hit-rate contract.
     pub cache_hit_rate: f32,
+    /// True when this frame kept the previous frame's spatial index and skipped
+    /// the cull dispatch entirely: nothing that affects the index changed
+    /// (geometry, cameras, viewports, grids) - idle redraws and time-only
+    /// animation frames.
+    pub cull_skipped: bool,
 }
 
 #[cfg(test)]
@@ -311,7 +317,7 @@ mod tests {
     #[test]
     fn test_gpu_draw_entry_size() {
         let size = GpuDrawEntry::SHADER_SIZE.get();
-        assert_eq!(size, 80, "GpuDrawEntry should be 80 bytes");
+        assert_eq!(size, 64, "GpuDrawEntry should be 64 bytes");
     }
 
     #[test]

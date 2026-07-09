@@ -2,7 +2,7 @@
   <rect x="0" y="0" width="960" height="520" rx="12" fill="#fbfcfe" stroke="#d9dee5"/>
   <text x="32" y="40" font-size="20" font-weight="700" fill="#1b2026">A two-level tile index</text>
   <text x="32" y="60" font-size="13" fill="#5b6672">A compute shader builds two grids. Coarse 64px tiles hold the heavy (segment, entry) cull results; the 16x more</text>
-  <text x="32" y="77" font-size="13" fill="#5b6672">numerous 16px fine tiles hold only compact 8-bit indices into them - one indirection for a far smaller fine buffer.</text>
+  <text x="32" y="77" font-size="13" fill="#5b6672">numerous 16px fine tiles hold only compact 16-bit indices into them - one indirection for a far smaller fine buffer.</text>
 
   <!-- grid: one coarse tile = 4x4 fine tiles -->
   <g transform="translate(32,92)">
@@ -53,7 +53,7 @@
 
     <!-- fine index list -->
     <text x="0" y="150" font-size="13" font-weight="700" fill="#2f6df6">Fine tile &#183; 128 slots</text>
-    <text x="0" y="168" font-size="11" fill="#5b6672">each slot = one 8-bit index into the coarse result above</text>
+    <text x="0" y="168" font-size="11" fill="#5b6672">each slot = one 16-bit index into the coarse result above</text>
     <g font-size="12" font-family="ui-monospace, monospace">
       <rect x="0" y="180" width="44" height="30" rx="5" fill="#dbeafe" stroke="#2f6df6"/>
       <text x="22" y="200" fill="#1b2026" text-anchor="middle">2</text>
@@ -76,5 +76,5 @@
     <text x="0" y="324" font-size="12" fill="#3a424c">parent coarse result, then shades as usual.</text>
   </g>
 
-  <text x="32" y="502" font-size="12" fill="#5b6672">Built in one dispatch: one workgroup per coarse tile bins entry candidates, thread 0 culls the coarse result, then its 16 threads each re-cull one fine tile into 8-bit indices.</text>
+  <text x="32" y="502" font-size="12" fill="#5b6672">Built by scatter: each (entry, segment) visits only tiles in its reach; a per-tile sort orders the result, then 16 threads re-cull the fine tiles into 16-bit indices.</text>
 </svg>

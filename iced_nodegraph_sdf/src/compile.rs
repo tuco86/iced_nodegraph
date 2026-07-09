@@ -6,7 +6,9 @@ use crate::drawable::Drawable;
 use crate::pipeline::types::{GpuDrawEntry, GpuSegment, GpuStyle, GpuVec2, GpuVec4};
 use crate::style::{MAX_STOPS, Style, Transfer};
 
-const FLAG_CLOSED: u32 = 1; // entry.flags
+pub(crate) const FLAG_CLOSED: u32 = 1; // entry.flags
+/// `entry.entry_type` of an infinite analytic tiling (`DrawableType::Tiling`).
+pub(crate) const ENTRY_TILING: u32 = 2;
 const SEG_FLAG_SIGNED: u32 = 1; // segment.flags
 const STYLE_FLAG_HAS_PATTERN: u32 = 1;
 
@@ -62,18 +64,11 @@ pub(crate) fn entry_referencing(
         flags |= FLAG_CLOSED;
     }
 
-    let lb = local.bounds;
     let entry = GpuDrawEntry {
         entry_type: local.drawable_type as u32,
         style_idx: 0,
         z_order,
         flags,
-        bounds: GpuVec4([
-            lb[0] + translate[0],
-            lb[1] + translate[1],
-            lb[2] + translate[0],
-            lb[3] + translate[1],
-        ]),
         segment_start,
         segment_count: local.segments.len() as u32,
         tiling_type: local.tiling_type.map_or(0, |t| t as u32),
@@ -161,7 +156,6 @@ mod tests {
         assert_eq!(full.segment_start, refd.segment_start);
         assert_eq!(full.segment_count, refd.segment_count);
         assert_eq!(full.translate.0, refd.translate.0);
-        assert_eq!(full.bounds.0, refd.bounds.0);
         assert_eq!(full.flags, refd.flags);
         assert_eq!(full.entry_type, refd.entry_type);
     }

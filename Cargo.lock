@@ -1650,6 +1650,7 @@ dependencies = [
  "glam",
  "iced",
  "iced_wgpu",
+ "parking_lot",
  "png",
  "pollster",
  "web-time",

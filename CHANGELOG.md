@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Rebuilt the SDF tile cull as a scatter pipeline (per-segment/per-entry
+  scatter + deterministic per-tile sort): index-build GPU time drops ~4.4x on
+  a 500-node scene, output pixel-identical. Coarse tiles grow to 512 slots
+  (16-bit fine references), removing overflow drops in dense overviews. Each
+  compute pipeline stays within the WebGPU spec-default 8 storage buffers per
+  stage, keeping wasm/WebGPU supported.
+- The spatial index is reused across frames when camera, viewport and geometry
+  are unchanged: idle redraws and animation-only frames skip the cull dispatch
+  (`SdfStats::cull_skipped`).
+- `Shape` recipe hashes are computed once at construction (head struct) instead
+  of two tree walks per entry per frame.
+- Node shadows push in stable node order instead of selection z-order, so a
+  selection click no longer rebuilds the whole background layer (all edge
+  biarcs included). Overlapping identical shadows blend identically; differing
+  custom shadow styles may shift marginally in the overlap.
+
+### Removed
+
+- Write-only `bounds` field of the GPU draw entry (80 -> 64 bytes per entry).
+
+### Fixed
+
+- Two latent slot-reuse hazards (pre-existing, found in the release review,
+  now regression-tested): a primitive rebuilding in place with unchanged
+  buffer counts (e.g. a recolor) no longer leaks its new bytes into later
+  primitives that reference its segment/style slots; a primitive that goes
+  empty for a frame invalidates its slot record instead of stale-matching
+  overwritten buffer ranges on revival.
+- Fine-tile reference lists are re-sorted after keep-nearest eviction, so an
+  overflowing 16px tile can no longer split one entry into multiple runs
+  (double compositing).
+
 ## [0.2.0] - 2026-06-29
 
 ### Added

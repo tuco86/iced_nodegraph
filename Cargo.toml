@@ -41,6 +41,7 @@ encase = "0.12"
 iced_aw = { version = "0.14.1", default-features = false }
 pollster = "0.4"
 web-time = "1.1"
+parking_lot = "0.12"
 
 # WASM support
 wasm-bindgen = "0.2"

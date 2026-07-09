@@ -1,25 +1,26 @@
-// Segment-based SDF renderer with per-segment tile spatial index.
-// Tile slots store (segment_idx, style_idx) pairs as 2x u32.
-// Compute evaluates individual segments, fragment just iterates tile slots.
+// Segment-based SDF renderer with a scatter-built two-level tile index.
+// Coarse 64px tiles store (segment_idx_or_tiling, entry_idx) pairs as 2x u32,
+// sorted by entry; 16px fine tiles store 16-bit indices into their parent
+// coarse list. The fragment walks its fine tile's references per pixel.
 
 // --- Constants ---
 
 const TILE_SIZE: f32 = 16.0;
 // Two-level spatial index. COARSE tiles are 4x4 fine tiles (64x64 px). The coarse
 // level materializes the (segment, entry) cull result once per 64px tile (few
-// tiles, fat slots); each 16px FINE tile then stores only compact 8-bit indices
+// tiles, fat slots); each 16px FINE tile then stores only compact 16-bit indices
 // into its parent coarse tile's result, paying one indirection for a much smaller
 // fine buffer (16x more fine tiles).
 const COARSE_FACTOR: u32 = 4u;        // fine tiles per coarse tile, per axis
-// Coarse: up to 256 (segment_idx, entry_idx) results per 64px tile (8bit-addressable).
-const MAX_COARSE_SLOTS: u32 = 256u;
-const COARSE_STRIDE: u32 = 512u;      // MAX_COARSE_SLOTS * 2 u32 per coarse tile
-// Fine: up to 128 8-bit indices into the parent coarse list, packed 4 per u32.
+// Coarse: up to 512 (segment_idx, entry_idx) results per 64px tile. Scatter
+// appends first-come; K3 clamps, reserving 4 slots for tilings (see plan doc).
+const MAX_COARSE_SLOTS: u32 = 512u;
+const COARSE_STRIDE: u32 = 1024u;     // MAX_COARSE_SLOTS * 2 u32 per coarse tile
+// Fine: up to 128 16-bit indices into the parent coarse list, packed 2 per u32
+// (16 bit because the coarse list is 512 deep, past a u8).
 const MAX_FINE_SLOTS: u32 = 128u;
-const FINE_STRIDE: u32 = 32u;         // MAX_FINE_SLOTS / 4 (u8 packed 4 per u32)
+const FINE_STRIDE: u32 = 64u;         // MAX_FINE_SLOTS / 2 (u16 packed 2 per u32)
 
-const ENTRY_CURVE: u32 = 0u;
-const ENTRY_SHAPE: u32 = 1u;
 const ENTRY_TILING: u32 = 2u;
 // Marker bit: slot segment_idx with this bit set = tiling (segment_idx = entry_idx)
 const TILING_BIT: u32 = 0x80000000u;
@@ -29,9 +30,6 @@ const FLAG_CLOSED: u32 = 1u;
 
 // style.flags
 const STYLE_FLAG_HAS_PATTERN: u32 = 1u;
-
-// segment.flags
-const SEG_FLAG_SIGNED: u32 = 1u;
 
 // Arc-only segment thresholds (mirror crate::segment LINE_EPS / POINT_EPS).
 const LINE_EPS: f32 = 1e-6;
@@ -62,7 +60,14 @@ struct DrawData {
     coarse_cols: u32,
     coarse_rows: u32,
     coarse_base: u32,
-    _pad0: u32,
+    // The draw's tiling entry ids (up to TILING_RESERVE, CULL_SENTINEL-padded),
+    // carried per draw so the sort/fine kernel needs no extra storage binding
+    // (the compute stage must stay within 8 storage buffers per stage - the
+    // WebGPU spec default - for wasm).
+    tiling0: u32,
+    tiling1: u32,
+    tiling2: u32,
+    tiling3: u32,
 }
 
 struct GpuSegment {
@@ -83,7 +88,6 @@ struct GpuDrawEntry {
     style_idx: u32,
     z_order: u32,
     flags: u32,
-    bounds: vec4<f32>,
     segment_start: u32,
     segment_count: u32,
     tiling_type: u32,
@@ -165,12 +169,12 @@ struct SdfResult {
 @group(0) @binding(1) var<storage, read> draw_entries: array<GpuDrawEntry>;
 @group(0) @binding(2) var<storage, read> segments: array<GpuSegment>;
 @group(0) @binding(3) var<storage, read> styles: array<GpuStyle>;
-// Fine level: per 16px tile, a count and a run of 8-bit indices (packed 4/u32)
+// Fine level: per 16px tile, a count and a run of 16-bit indices (packed 2/u32)
 // into the parent coarse tile's result list.
 @group(0) @binding(4) var<storage, read> fine_counts: array<u32>;
 @group(0) @binding(5) var<storage, read> fine_slots: array<u32>;
 // Coarse level: per 64px tile, COARSE_STRIDE u32s = MAX_COARSE_SLOTS pairs of
-// (segment_idx_or_tiling, entry_idx). The fine 8-bit index addresses these.
+// (segment_idx_or_tiling, entry_idx). The fine 16-bit index addresses these.
 @group(0) @binding(6) var<storage, read> coarse_slots: array<u32>;
 
 // --- Compute bindings ---
@@ -181,10 +185,27 @@ struct SdfResult {
 @group(0) @binding(3) var<storage, read> cs_styles: array<GpuStyle>;
 
 // draw_index is carried by the dispatch z-axis (workgroup_id.z), not a uniform.
-@group(1) @binding(0) var<storage, read_write> cs_coarse_counts: array<u32>;
+//
+// The compute stage must stay within the WebGPU spec-default limit of 8
+// storage buffers per stage (group 0 already binds 4), so group 1 holds at
+// most 4 bindings per PIPELINE. Bindings (1,2)/(1,3) are declared twice with
+// different names; that is valid WGSL as long as no single entry point
+// references both declarations - the scatter kernels use the work list + meta,
+// the sort/fine kernel uses the fine buffers.
+@group(1) @binding(0) var<storage, read_write> cs_coarse_counts: array<atomic<u32>>;
 @group(1) @binding(1) var<storage, read_write> cs_coarse_slots: array<u32>;
+// Sort/fine kernel only: the fine-tile outputs.
 @group(1) @binding(2) var<storage, read_write> cs_fine_counts: array<u32>;
 @group(1) @binding(3) var<storage, read_write> cs_fine_slots: array<u32>;
+// Scatter kernels only: the flat work list, built on the CPU alongside the
+// entry batch and reused under the same slot-reuse discipline (ABSOLUTE
+// indices). The bind group selects the content per kernel: (draw, entry,
+// segment) triples of OPEN entries for cs_scatter_open, (draw, entry) pairs
+// of CLOSED entries for cs_scatter_closed.
+@group(1) @binding(2) var<storage, read> cs_cull_list: array<u32>;
+// Live element counts: [0] = open triples, [1] = closed pairs. Needed because
+// `arrayLength` reports buffer CAPACITY, not this frame's live length.
+@group(1) @binding(3) var<storage, read> cs_cull_meta: array<u32>;
 
 // ============================================================================
 // SDF Distance Functions
@@ -602,17 +623,17 @@ fn vs_main(@builtin(vertex_index) vid: u32, @builtin(instance_index) iid: u32) -
 // ============================================================================
 
 // Coarse-tile base (offset into coarse_slots) for the fine tile at
-// (tile_col, tile_row). The fine tile's 8-bit slots index into this run.
+// (tile_col, tile_row). The fine tile's 16-bit slots index into this run.
 fn coarse_base_for_fine(draw: DrawData, tile_col: u32, tile_row: u32) -> u32 {
     let cc = tile_col / COARSE_FACTOR;
     let cr = tile_row / COARSE_FACTOR;
     return (draw.coarse_base + cr * draw.coarse_cols + cc) * COARSE_STRIDE;
 }
 
-// Unpack the k-th 8-bit slot (coarse-list index) of a fine tile.
+// Unpack the k-th 16-bit slot (coarse-list index) of a fine tile.
 fn fine_coarse_index(fine_base: u32, k: u32) -> u32 {
-    let word = fine_slots[fine_base + (k >> 2u)];
-    return (word >> ((k & 3u) * 8u)) & 0xFFu;
+    let word = fine_slots[fine_base + (k >> 1u)];
+    return (word >> ((k & 1u) * 16u)) & 0xFFFFu;
 }
 
 @fragment
@@ -639,7 +660,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             discard;
         }
 
-        // Each fine slot is an 8-bit index into this tile's parent coarse list,
+        // Each fine slot is a 16-bit index into this tile's parent coarse list,
         // whose entries are (segment_idx_or_tiling, entry_idx). Dereference once,
         // then group by entry: for one shape, find the nearest segment per pixel.
         // The entry (command) carries the per-instance translate and the style
@@ -736,95 +757,164 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 // Compute Shader - Per-Segment Spatial Index Builder
 // ============================================================================
 
-// Evaluate a single segment using compute bindings.
-fn cs_eval_segment(p: vec2<f32>, seg_idx: u32) -> SdfResult {
-    let seg = cs_segments[seg_idx];
-    var r = eval_segment(p, seg);
-    let arc_start = seg.arc_range.x;
-    let arc_end = seg.arc_range.y;
-    r.u = arc_start + r.u * (arc_end - arc_start);
+
+// --- Workgroup state for the sort+fine kernel (one workgroup per coarse tile) ---
+// The coarse result list: (segment_idx_or_tiling, entry_idx) pairs, loaded from
+// the scattered slots, sorted in place, read by all threads in the fine phase.
+var<workgroup> wg_cseg: array<u32, 512>;
+var<workgroup> wg_centry: array<u32, 512>;
+var<workgroup> wg_ccount: u32;
+// Contour bbox of a closed entry, folded by thread 0 in cs_scatter_closed.
+var<workgroup> wg_bbox: vec4<f32>;
+
+// Sentinel for unused DrawData tiling slots and sort padding.
+const CULL_SENTINEL: u32 = 0xFFFFFFFFu;
+// Coarse slots K3 reserves for the draw's tilings when clamping the scattered
+// contour slots, so an overflowing tile can never drop the background.
+const TILING_RESERVE: u32 = 4u;
+
+// Style reach band half-width for the cull: the outermost stop distance plus
+// the pattern's perpendicular reach plus the AA safety margin; dashed/arrowed
+// caps tilt with the pattern angle, widening with the tile half-diagonal.
+fn style_reach(style: GpuStyle, tile_thd: f32) -> f32 {
+    var reach = style_max_dist(style) + pattern_perp_reach(style) + 0.5;
+    if style.pattern_type == PATTERN_DASHED || style.pattern_type == PATTERN_ARROWED {
+        reach = reach + tile_thd * abs(tan(style.pattern_param2));
+    }
+    return reach;
+}
+
+// Conservative bbox (min.xy, max.xy) of one segment in its LOCAL frame.
+// Line/point: endpoint box. Arc: bbox of the 30-degree sub-chord endpoints
+// inflated by the per-piece sagitta (the split of `arc_box_interval`), so the
+// bound hugs the curve instead of swallowing the chord's whole bulge side.
+fn seg_bbox(seg: GpuSegment) -> vec4<f32> {
+    let s = seg.endpoints.xy;
+    let e = seg.endpoints.zw;
+    let curvature = seg.params.x;
+    var lo = min(s, e);
+    var hi = max(s, e);
+    if length(e - s) >= POINT_EPS && abs(curvature) >= LINE_EPS {
+        let ap = arc_from_endpoints(s, e, curvature);
+        var k = u32(ceil(abs(ap.sweep) / 0.5235988)); // PI/6 per sub-chord
+        k = clamp(k, 1u, 8u);
+        let step = ap.sweep / f32(k);
+        let sag = ap.radius * (1.0 - cos(0.5 * abs(step)));
+        var ang = ap.start_angle;
+        for (var j = 0u; j <= k; j = j + 1u) {
+            let p = ap.center + ap.radius * vec2(cos(ang), sin(ang));
+            lo = min(lo, p - vec2(sag, sag));
+            hi = max(hi, p + vec2(sag, sag));
+            ang = ang + step;
+        }
+    }
+    return vec4(lo, hi);
+}
+
+// Inclusive coarse-tile range of a draw covered by the world bbox [lo, hi];
+// empty (x0 > x1) when the bbox misses the grid or the draw is a fallback
+// (coarse_cols == 0). Grid pixels are local: px = (world + camera) * zoom * scale.
+struct TileRange {
+    x0: u32,
+    x1: u32,
+    y0: u32,
+    y1: u32,
+}
+fn coarse_range(draw: DrawData, lo: vec2<f32>, hi: vec2<f32>) -> TileRange {
+    var r: TileRange;
+    r.x0 = 1u; r.x1 = 0u; r.y0 = 1u; r.y1 = 0u;
+    if draw.coarse_cols == 0u || draw.coarse_rows == 0u {
+        return r;
+    }
+    let cs = draw.camera_zoom * draw.scale_factor;
+    let coarse_px = TILE_SIZE * f32(COARSE_FACTOR);
+    let px_lo = (lo + draw.camera_position) * cs / coarse_px;
+    let px_hi = (hi + draw.camera_position) * cs / coarse_px;
+    let x0f = floor(px_lo.x);
+    let y0f = floor(px_lo.y);
+    let x1f = floor(px_hi.x);
+    let y1f = floor(px_hi.y);
+    if x1f < 0.0 || y1f < 0.0
+        || x0f >= f32(draw.coarse_cols) || y0f >= f32(draw.coarse_rows) {
+        return r;
+    }
+    r.x0 = u32(max(x0f, 0.0));
+    r.y0 = u32(max(y0f, 0.0));
+    r.x1 = u32(min(x1f, f32(draw.coarse_cols - 1u)));
+    r.y1 = u32(min(y1f, f32(draw.coarse_rows - 1u)));
     return r;
 }
 
-// --- Workgroup state for the two-level build (one workgroup per coarse tile) ---
-// Entry candidates that reach the 64px coarse tile (cooperative bin). The 16
-// lanes fill DISJOINT windows of CAND_PER_LANE each (no atomics, no race), so
-// the surviving set is deterministic; CAND_SENTINEL marks an unused slot.
-const CAND_PER_LANE: u32 = 16u;             // per-lane keep-nearest window
-const MAX_WG_CANDIDATES: u32 = 256u;        // 16 lanes * CAND_PER_LANE
-const CAND_SENTINEL: u32 = 0xFFFFFFFFu;
-var<workgroup> wg_candidates: array<u32, 256>;
-// The coarse result list: (segment_idx_or_tiling, entry_idx) pairs, built by
-// thread 0, read by all threads in the fine phase. Mirrored to cs_coarse_slots.
-var<workgroup> wg_cseg: array<u32, 256>;
-var<workgroup> wg_centry: array<u32, 256>;
-var<workgroup> wg_ccount: u32;
+// World-space box (min.xy, max.xy) of coarse tile (tx, ty) of a draw.
+fn coarse_tile_box(draw: DrawData, tx: u32, ty: u32) -> vec4<f32> {
+    let inv_cs = 1.0 / (draw.camera_zoom * draw.scale_factor);
+    let coarse_px = TILE_SIZE * f32(COARSE_FACTOR);
+    let cmin_px = vec2(f32(tx), f32(ty)) * coarse_px;
+    let lo = cmin_px * inv_cs - draw.camera_position;
+    let hi = (cmin_px + vec2(coarse_px, coarse_px)) * inv_cs - draw.camera_position;
+    return vec4(lo, hi);
+}
 
-// Append (or, when full, keep-nearest replace) into the coarse list. Single-
-// threaded (thread 0 only), so no atomics. `prio` = closest box distance.
-fn coarse_push(
-    count: ptr<function, u32>,
-    slot_dist: ptr<function, array<f32, MAX_COARSE_SLOTS>>,
-    seg_idx: u32,
-    entry_idx: u32,
-    prio: f32,
-) {
-    if *count < MAX_COARSE_SLOTS {
-        wg_cseg[*count] = seg_idx;
-        wg_centry[*count] = entry_idx;
-        (*slot_dist)[*count] = prio;
-        *count += 1u;
-    } else {
-        // Coarse tile full: keep the NEAREST MAX_COARSE_SLOTS - replace the
-        // farthest if this one is nearer (so a crowded tile keeps the segments
-        // that dominate its pixels, not an arbitrary first 256 by scan order).
-        var maxi = 0u;
-        var maxd = (*slot_dist)[0];
-        for (var k = 1u; k < MAX_COARSE_SLOTS; k = k + 1u) {
-            if (*slot_dist)[k] > maxd { maxd = (*slot_dist)[k]; maxi = k; }
-        }
-        if prio < maxd {
-            wg_cseg[maxi] = seg_idx;
-            wg_centry[maxi] = entry_idx;
-            (*slot_dist)[maxi] = prio;
-        }
+// Reserve one coarse slot of `coarse_global` and write the (seg, entry) pair.
+// Beyond the cap the pair is DROPPED first-come (the scatter cannot rank by
+// distance like the old single-threaded keep-nearest did); the count keeps
+// rising past the cap so true demand stays observable. See plan/scatter-binning.md.
+fn coarse_append(coarse_global: u32, seg_field: u32, entry_idx: u32) {
+    let idx = atomicAdd(&cs_coarse_counts[coarse_global], 1u);
+    if idx < MAX_COARSE_SLOTS {
+        let base = coarse_global * COARSE_STRIDE;
+        cs_coarse_slots[base + idx * 2u] = seg_field;
+        cs_coarse_slots[base + idx * 2u + 1u] = entry_idx;
     }
 }
 
-// Write an 8-bit coarse-list index into fine slot `slot` (4 indices per u32).
-// Mask-write preserves the word's already-written bytes; bytes past the fine
+// Write a 16-bit coarse-list index into fine slot `slot` (2 indices per u32).
+// Mask-write preserves the word's already-written half; halves past the fine
 // count are never read, so stale data there is harmless.
 fn fine_set(fine_base: u32, slot: u32, coarse_idx: u32) {
-    let word = fine_base + (slot >> 2u);
-    let shift = (slot & 3u) * 8u;
-    cs_fine_slots[word] = (cs_fine_slots[word] & ~(0xFFu << shift))
-        | ((coarse_idx & 0xFFu) << shift);
+    let word = fine_base + (slot >> 1u);
+    let shift = (slot & 1u) * 16u;
+    cs_fine_slots[word] = (cs_fine_slots[word] & ~(0xFFFFu << shift))
+        | ((coarse_idx & 0xFFFFu) << shift);
 }
 
-// Append (or keep-nearest replace) a coarse-list index into a fine tile. Single-
-// threaded per fine tile (each thread owns one), so no atomics.
+// Read the k-th 16-bit fine slot back (compute-side mirror of the fragment's
+// `fine_coarse_index`).
+fn cs_fine_get(fine_base: u32, k: u32) -> u32 {
+    let word = cs_fine_slots[fine_base + (k >> 1u)];
+    return (word >> ((k & 1u) * 16u)) & 0xFFFFu;
+}
+
+// Append (or keep-nearest replace) a coarse-list index into a fine tile.
+// Single-threaded per fine tile (each thread owns one), so no atomics.
+// Returns true when an existing slot was REPLACED: the list is then no longer
+// index-ascending and the caller must re-sort it, because the fragment folds
+// CONSECUTIVE same-entry references into one contour (a scrambled list splits
+// an entry into multiple runs, compositing it twice).
 fn fine_push(
     fine_base: u32,
     count: ptr<function, u32>,
     slot_dist: ptr<function, array<f32, MAX_FINE_SLOTS>>,
     coarse_idx: u32,
     prio: f32,
-) {
+) -> bool {
     if *count < MAX_FINE_SLOTS {
         fine_set(fine_base, *count, coarse_idx);
         (*slot_dist)[*count] = prio;
         *count += 1u;
-    } else {
-        var maxi = 0u;
-        var maxd = (*slot_dist)[0];
-        for (var k = 1u; k < MAX_FINE_SLOTS; k = k + 1u) {
-            if (*slot_dist)[k] > maxd { maxd = (*slot_dist)[k]; maxi = k; }
-        }
-        if prio < maxd {
-            fine_set(fine_base, maxi, coarse_idx);
-            (*slot_dist)[maxi] = prio;
-        }
+        return false;
     }
+    var maxi = 0u;
+    var maxd = (*slot_dist)[0];
+    for (var k = 1u; k < MAX_FINE_SLOTS; k = k + 1u) {
+        if (*slot_dist)[k] > maxd { maxd = (*slot_dist)[k]; maxi = k; }
+    }
+    if prio < maxd {
+        fine_set(fine_base, maxi, coarse_idx);
+        (*slot_dist)[maxi] = prio;
+        return true;
+    }
+    return false;
 }
 
 // ============================================================================
@@ -962,221 +1052,258 @@ fn tiling_box_dist(tt: u32, params: vec4<f32>, cc: vec2<f32>, ch: vec2<f32>) -> 
     return td;
 }
 
-// Two-level spatial index. ONE workgroup per 64px coarse tile (4x4 = 16 threads,
-// one per fine tile). Phase 0: cooperatively bin entry candidates of the coarse
-// tile. Phase 1: thread 0 builds the coarse (segment, entry) result list (the
-// expensive cull, at 64px). Phase 2: each thread re-culls that list at 16px and
-// writes compact 8-bit indices into its fine tile - the memory win (16x more fine
-// tiles, 1 byte/slot vs 8) for one indirection at shade time.
-@compute @workgroup_size(4, 4, 1)
-fn cs_build_index(
-    @builtin(global_invocation_id) gid: vec3<u32>,
+// ============================================================================
+// Scatter cull (see plan/scatter-binning.md)
+//
+// The gather build scanned EVERY entry x segment from EVERY coarse tile -
+// O(tiles x segments) regardless of visibility. The scatter flips the
+// iteration: each (entry, segment) pair visits only the coarse tiles inside
+// its reach-inflated bbox and appends itself where the EXACT interval test
+// passes. Work is proportional to actual segment-tile overlaps. The cull TEST
+// is unchanged (`seg_box_interval` interval vs the style reach band), so the
+// conservative-over-approximation contract holds as before.
+//
+// cs_scatter_open   - one thread per (draw, entry, segment) triple (open entries)
+// cs_scatter_closed - one workgroup per closed entry (interior-aware)
+// cs_sort_fine      - one workgroup per coarse tile: sort + fine re-cull
+// ============================================================================
+
+// Flat work-item index for the scatter kernels: the x dimension is capped at
+// 65535 workgroups, so y extends it (see the dispatch in run_deferred_compute).
+fn scatter_flat_id(wid: vec3<u32>, lidx: u32) -> u32 {
+    return (wid.y * 65535u + wid.x) * 64u + lidx;
+}
+
+// One thread per (draw, entry, segment) triple of an OPEN entry. Kbound
+// tightening (only potential-nearest segments) needs cross-segment state and
+// is left to the fine phase; extra coarse slots are safe, the fragment folds
+// the nearest segment anyway.
+@compute @workgroup_size(64, 1, 1)
+fn cs_scatter_open(
     @builtin(workgroup_id) wid: vec3<u32>,
-    @builtin(local_invocation_id) lid: vec3<u32>,
+    @builtin(local_invocation_index) lidx: u32,
+) {
+    let i = scatter_flat_id(wid, lidx);
+    if i >= cs_cull_meta[0] { return; }
+    let draw_idx = cs_cull_list[i * 3u];
+    let entry_idx = cs_cull_list[i * 3u + 1u];
+    let seg_idx = cs_cull_list[i * 3u + 2u];
+    let draw = cs_draws[draw_idx];
+    let entry = cs_entries[entry_idx];
+    let style = cs_styles[entry.style_idx];
+
+    let inv_cs = 1.0 / (draw.camera_zoom * draw.scale_factor);
+    let coarse_thd = TILE_SIZE * f32(COARSE_FACTOR) * 0.70710678 * inv_cs;
+    let reach = style_reach(style, coarse_thd);
+
+    let seg = cs_segments[seg_idx];
+    let bb = seg_bbox(seg);
+    let lo = bb.xy + entry.translate - vec2(reach, reach);
+    let hi = bb.zw + entry.translate + vec2(reach, reach);
+    let r = coarse_range(draw, lo, hi);
+    if r.x0 > r.x1 || r.y0 > r.y1 { return; }
+
+    for (var ty = r.y0; ty <= r.y1; ty++) {
+        for (var tx = r.x0; tx <= r.x1; tx++) {
+            let tb = coarse_tile_box(draw, tx, ty);
+            let bmin = tb.xy - entry.translate;
+            let bmax = tb.zw - entry.translate;
+            if seg_box_interval(seg, bmin, bmax).x <= reach {
+                coarse_append(draw.coarse_base + ty * draw.coarse_cols + tx, seg_idx, entry_idx);
+            }
+        }
+    }
+}
+
+// One 64-thread workgroup per CLOSED entry. Thread 0 folds the contour bbox
+// (the interior is inside it, so bbox iteration cannot miss interior-only
+// tiles); the reach-inflated, grid-clipped tile range is strided across the
+// threads, each running the exact per-entry gather test per tile: keep the
+// tile when the contour band reaches it (`mu <= reach`) OR the tile centre is
+// inside the fill (`center_signed < 0`), then push every segment that can be
+// the per-pixel nearest anywhere in the tile (`iv.x <= kbound`).
+@compute @workgroup_size(64, 1, 1)
+fn cs_scatter_closed(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(local_invocation_index) lidx: u32,
+) {
+    let pair_i = wid.y * 65535u + wid.x;
+    // wid is uniform across the workgroup, so this return is uniform and safe
+    // before the barrier below.
+    if pair_i >= cs_cull_meta[1] { return; }
+    let draw_idx = cs_cull_list[pair_i * 2u];
+    let entry_idx = cs_cull_list[pair_i * 2u + 1u];
+    let draw = cs_draws[draw_idx];
+    let entry = cs_entries[entry_idx];
+    let style = cs_styles[entry.style_idx];
+
+    if lidx == 0u {
+        var lo = vec2(1e30, 1e30);
+        var hi = vec2(-1e30, -1e30);
+        for (var s = 0u; s < entry.segment_count; s++) {
+            let bb = seg_bbox(cs_segments[entry.segment_start + s]);
+            lo = min(lo, bb.xy);
+            hi = max(hi, bb.zw);
+        }
+        wg_bbox = vec4(lo, hi);
+    }
+    workgroupBarrier();
+
+    let inv_cs = 1.0 / (draw.camera_zoom * draw.scale_factor);
+    let coarse_thd = TILE_SIZE * f32(COARSE_FACTOR) * 0.70710678 * inv_cs;
+    let reach = style_reach(style, coarse_thd);
+    let lo = wg_bbox.xy + entry.translate - vec2(reach, reach);
+    let hi = wg_bbox.zw + entry.translate + vec2(reach, reach);
+    let r = coarse_range(draw, lo, hi);
+    if r.x0 > r.x1 || r.y0 > r.y1 { return; }
+
+    let ncols = r.x1 - r.x0 + 1u;
+    let ntiles = ncols * (r.y1 - r.y0 + 1u);
+    for (var t = lidx; t < ntiles; t += 64u) {
+        let tx = r.x0 + t % ncols;
+        let ty = r.y0 + t / ncols;
+        let tb = coarse_tile_box(draw, tx, ty);
+        let bmin = tb.xy - entry.translate;
+        let bmax = tb.zw - entry.translate;
+        let lp_center = (bmin + bmax) * 0.5;
+
+        var mu = 1e30;
+        var kbound = 1e30;
+        var center_signed = 1e30;
+        var center_abs = 1e30;
+        for (var s = 0u; s < entry.segment_count; s++) {
+            let seg = cs_segments[entry.segment_start + s];
+            let iv = seg_box_interval(seg, bmin, bmax);
+            mu = min(mu, iv.x);
+            kbound = min(kbound, iv.y);
+            let rc = eval_segment(lp_center, seg);
+            if abs(rc.dist) < center_abs { center_abs = abs(rc.dist); center_signed = rc.dist; }
+        }
+        var visible = mu <= reach;
+        if !visible && center_signed < 0.0 { visible = true; }
+        if !visible { continue; }
+
+        let cg = draw.coarse_base + ty * draw.coarse_cols + tx;
+        for (var s = 0u; s < entry.segment_count; s++) {
+            let seg_idx = entry.segment_start + s;
+            if seg_box_interval(cs_segments[seg_idx], bmin, bmax).x <= kbound {
+                coarse_append(cg, seg_idx, entry_idx);
+            }
+        }
+    }
+}
+
+// One 64-thread workgroup per coarse tile (dispatch x/y = coarse grid, z =
+// draw index). Loads the scattered slots (clamped, TILING_RESERVE spare),
+// appends the draw's tilings, bitonic-sorts by (entry, seg) - a UNIQUE total
+// order, so the frame is deterministic regardless of atomic append order -
+// writes the sorted list back, then threads 0..15 run the fine re-cull
+// (unchanged 16px logic, keep-nearest, 16-bit refs).
+@compute @workgroup_size(64, 1, 1)
+fn cs_sort_fine(
+    @builtin(workgroup_id) wid: vec3<u32>,
     @builtin(local_invocation_index) lindex: u32,
 ) {
     let draw = cs_draws[wid.z];
-    // wid is uniform across the workgroup, so this early return is uniform and
-    // safe before the barriers below. Aborts surplus workgroups (and every
-    // workgroup of a fallback draw with coarse_cols == 0).
+    // Uniform abort for surplus workgroups and fallback draws (coarse_cols == 0).
     if wid.x >= draw.coarse_cols || wid.y >= draw.coarse_rows { return; }
 
     let inv_cs = 1.0 / (draw.camera_zoom * draw.scale_factor);
     let thd = TILE_SIZE * 0.70710678 * inv_cs;           // fine half diagonal
     let coarse_px = TILE_SIZE * f32(COARSE_FACTOR);       // 64
     let coarse_thd = coarse_px * 0.70710678 * inv_cs;     // coarse half diagonal
+    let coarse_global = draw.coarse_base + wid.y * draw.coarse_cols + wid.x;
+    let cbase = coarse_global * COARSE_STRIDE;
 
-    // Coarse tile box in world.
-    let cmin_px = vec2(f32(wid.x) * coarse_px, f32(wid.y) * coarse_px);
-    let coarse_min = cmin_px * inv_cs - draw.camera_position;
-    let coarse_max = (cmin_px + vec2(coarse_px, coarse_px)) * inv_cs - draw.camera_position;
-    let coarse_center = (coarse_min + coarse_max) * 0.5;
-    let coarse_half = (coarse_max - coarse_min) * 0.5;
+    // Load the scattered slots; pad the tail with sort sentinels.
+    let demand = atomicLoad(&cs_coarse_counts[coarse_global]);
+    let loaded = min(demand, MAX_COARSE_SLOTS - TILING_RESERVE);
+    for (var s = lindex; s < MAX_COARSE_SLOTS; s += 64u) {
+        if s < loaded {
+            wg_cseg[s] = cs_coarse_slots[cbase + s * 2u];
+            wg_centry[s] = cs_coarse_slots[cbase + s * 2u + 1u];
+        } else {
+            wg_cseg[s] = CULL_SENTINEL;
+            wg_centry[s] = CULL_SENTINEL;
+        }
+    }
+    workgroupBarrier();
 
-    // --- Phase 0: cooperative entry binning (16 threads), with the EXACT cull
-    // visibility (not a cheap AABB) so the candidate list is tight - the false-
-    // positive entries an AABB would add never waste a candidate slot.
-    //
-    // HARD CANDIDATE CAP (deliberate, lossy), now a DETERMINISTIC, DISTANCE-RANKED
-    // drop. A coarse 64px tile records at most MAX_WG_CANDIDATES (256) visible
-    // entries. Each of the 16 lanes keeps its own nearest CAND_PER_LANE entries
-    // (keep-nearest by `prio` = |dist| at the coarse centre, already computed
-    // here) over its strided subset, then writes its disjoint window of the
-    // candidate array. With no atomic append, the surviving subset no longer
-    // depends on thread-interleave order, so a still camera renders a stable
-    // image (no frame-to-frame flicker) and the kept entries are the nearest
-    // ones, not an arbitrary race winner.
-    //
-    // This replaced an earlier scan-all fallback that, on overflow, rescanned every
-    // entry of the draw (draw.entry_count) so nothing was ever lost. The fallback was
-    // removed on purpose: it made the worst case an unbounded per-tile rescan, while
-    // the cap keeps the inner loop bounded and the cost predictable.
-    //
-    // Failure scenario: a dense, zoomed-out region (stacked/cloned nodes, a fanned
-    // hub) where one 64px tile genuinely holds >256 in-reach entries. The farthest
-    // excess contours are dropped for that tile - stably, and only the farthest.
-    //
-    // Why this is accepted: the cull above is EXACT, not a loose AABB, so a slot is
-    // only ever spent on an entry whose contour actually reaches the tile - >256 such
-    // entries in a single 64px box only happens when that box is packed far past any
-    // per-contour legibility, where a single dropped contour is sub-pixel/occluded and
-    // visually indistinguishable from the mass. Outside that regime the cap is never
-    // approached. The lossless path is gone; this tradeoff is intentional. The
-    // per-lane split makes the keep global-nearest only approximately (a crowded
-    // lane can evict an entry a sparse lane would keep), which is well inside that
-    // already-illegible regime.
-    var local_idx: array<u32, CAND_PER_LANE>;
-    var local_dist: array<f32, CAND_PER_LANE>;
-    var local_count = 0u;
-    let entry_end = draw.entry_start + draw.entry_count;
-    for (var bi: u32 = draw.entry_start + lindex; bi < entry_end; bi = bi + 16u) {
-        let entry = cs_entries[bi];
-        let style = cs_styles[entry.style_idx];
-        var visible = false;
-        var prio = 1e30;
-        if entry.entry_type == ENTRY_TILING {
+    // Thread 0 appends the draw's tilings (reach-tested at coarse resolution).
+    if lindex == 0u {
+        let cmin_px = vec2(f32(wid.x), f32(wid.y)) * coarse_px;
+        let coarse_min = cmin_px * inv_cs - draw.camera_position;
+        let coarse_max = (cmin_px + vec2(coarse_px, coarse_px)) * inv_cs - draw.camera_position;
+        let coarse_center = (coarse_min + coarse_max) * 0.5;
+        let coarse_half = (coarse_max - coarse_min) * 0.5;
+        var cnt = loaded;
+        var draw_tilings = array<u32, 4>(draw.tiling0, draw.tiling1, draw.tiling2, draw.tiling3);
+        for (var k = 0u; k < TILING_RESERVE; k++) {
+            let te = draw_tilings[k];
+            if te == CULL_SENTINEL { continue; }
+            let entry = cs_entries[te];
+            let style = cs_styles[entry.style_idx];
             let td = tiling_box_dist(entry.tiling_type, entry.tiling_params,
                 coarse_center, coarse_half);
-            visible = td - coarse_thd <= style_max_dist(style) + 0.5;
-            prio = td;
-        } else {
-            let is_closed = (entry.flags & FLAG_CLOSED) != 0u;
-            let bmin = coarse_min - entry.translate;
-            let bmax = coarse_max - entry.translate;
-            var reach = style_max_dist(style) + pattern_perp_reach(style) + 0.5;
-            if style.pattern_type == PATTERN_DASHED || style.pattern_type == PATTERN_ARROWED {
-                reach = reach + coarse_thd * abs(tan(style.pattern_param2));
-            }
-            var mu = 1e30;
-            var center_signed = 1e30;
-            var center_abs = 1e30;
-            let lp_center = coarse_center - entry.translate;
-            for (var s: u32 = 0u; s < entry.segment_count; s++) {
-                let seg = cs_segments[entry.segment_start + s];
-                mu = min(mu, seg_box_interval(seg, bmin, bmax).x);
-                let rc = eval_segment(lp_center, seg);
-                if abs(rc.dist) < center_abs { center_abs = abs(rc.dist); center_signed = rc.dist; }
-            }
-            visible = (mu <= reach);
-            if !visible && is_closed && center_signed < 0.0 { visible = true; }
-            prio = center_abs;
-        }
-        if !visible { continue; }
-        // keep-nearest into this lane's local window (mirrors coarse_push)
-        if local_count < CAND_PER_LANE {
-            local_idx[local_count] = bi;
-            local_dist[local_count] = prio;
-            local_count = local_count + 1u;
-        } else {
-            var maxi = 0u;
-            var maxd = local_dist[0];
-            for (var k = 1u; k < CAND_PER_LANE; k = k + 1u) {
-                if local_dist[k] > maxd { maxd = local_dist[k]; maxi = k; }
-            }
-            if prio < maxd {
-                local_idx[maxi] = bi;
-                local_dist[maxi] = prio;
+            if td - coarse_thd <= style_max_dist(style) + 0.5 {
+                wg_cseg[cnt] = te | TILING_BIT;
+                wg_centry[cnt] = te;
+                cnt++;
             }
         }
+        wg_ccount = cnt;
     }
-    // Publish this lane's window. Disjoint per lane, so no atomics; pad the unused
-    // tail with CAND_SENTINEL for Phase 1 to skip.
-    let cand_base = lindex * CAND_PER_LANE;
-    for (var s: u32 = 0u; s < CAND_PER_LANE; s = s + 1u) {
-        if s < local_count { wg_candidates[cand_base + s] = local_idx[s]; }
-        else { wg_candidates[cand_base + s] = CAND_SENTINEL; }
-    }
-    workgroupBarrier();
+    // `workgroupUniformLoad` both synchronizes and yields a PROVABLY uniform
+    // value, so the barrier inside the count-dependent sort loop below is
+    // legal under WGSL uniformity analysis.
+    let ccount = workgroupUniformLoad(&wg_ccount);
 
-    // --- Phase 1: thread 0 builds the coarse result list over the 64px box ---
+    // Bitonic sort, ascending (entry, seg); sentinel pairs sink to the tail.
+    // Entries were pushed in z order, so entry-ascending is front-to-back and
+    // the fragment sees contiguous runs. The network is sized to the next
+    // power of two covering the LIVE slots: a near-empty tile (the common
+    // case for small clipped node draws) pays ~log2(4)^2 stages instead of
+    // the fixed 512-wide network's 45. Elements past `n` are all sentinels
+    // (maximal keys), so leaving them out keeps the array globally sorted.
+    var n = 2u;
+    while n < ccount { n = n << 1u; }
+    for (var k = 2u; k <= n; k = k << 1u) {
+        for (var j = k >> 1u; j > 0u; j = j >> 1u) {
+            for (var i = lindex; i < n; i += 64u) {
+                let ixj = i ^ j;
+                if ixj > i {
+                    let e_a = wg_centry[i];
+                    let s_a = wg_cseg[i];
+                    let e_b = wg_centry[ixj];
+                    let s_b = wg_cseg[ixj];
+                    let a_gt_b = e_a > e_b || (e_a == e_b && s_a > s_b);
+                    let ascending = (i & k) == 0u;
+                    if ascending == a_gt_b {
+                        wg_centry[i] = e_b;
+                        wg_cseg[i] = s_b;
+                        wg_centry[ixj] = e_a;
+                        wg_cseg[ixj] = s_a;
+                    }
+                }
+            }
+            workgroupBarrier();
+        }
+    }
+
+    // Write the sorted list back for the fragment shader.
+    for (var s = lindex; s < ccount; s += 64u) {
+        cs_coarse_slots[cbase + s * 2u] = wg_cseg[s];
+        cs_coarse_slots[cbase + s * 2u + 1u] = wg_centry[s];
+    }
     if lindex == 0u {
-        var ccount = 0u;
-        var cdist: array<f32, MAX_COARSE_SLOTS>;
-        for (var ci: u32 = 0u; ci < MAX_WG_CANDIDATES; ci = ci + 1u) {
-            let i = wg_candidates[ci];
-            if i == CAND_SENTINEL { continue; }
-            let entry = cs_entries[i];
-            let style = cs_styles[entry.style_idx];
-
-            if entry.entry_type == ENTRY_TILING {
-                let td = tiling_box_dist(entry.tiling_type, entry.tiling_params,
-                    coarse_center, coarse_half);
-                if td - coarse_thd <= style_max_dist(style) + 0.5 {
-                    coarse_push(&ccount, &cdist, i | TILING_BIT, i, td);
-                }
-                continue;
-            }
-
-            let is_closed = (entry.flags & FLAG_CLOSED) != 0u;
-            let bmin = coarse_min - entry.translate;
-            let bmax = coarse_max - entry.translate;
-            var reach = style_max_dist(style) + pattern_perp_reach(style) + 0.5;
-            if style.pattern_type == PATTERN_DASHED || style.pattern_type == PATTERN_ARROWED {
-                reach = reach + coarse_thd * abs(tan(style.pattern_param2));
-            }
-
-            var mu = 1e30;
-            var kbound = 1e30;
-            var center_signed = 1e30;
-            var center_abs = 1e30;
-            let lp_center = coarse_center - entry.translate;
-            for (var s: u32 = 0u; s < entry.segment_count; s++) {
-                let seg = cs_segments[entry.segment_start + s];
-                let iv = seg_box_interval(seg, bmin, bmax);
-                mu = min(mu, iv.x);
-                kbound = min(kbound, iv.y);
-                let rc = eval_segment(lp_center, seg);
-                if abs(rc.dist) < center_abs { center_abs = abs(rc.dist); center_signed = rc.dist; }
-            }
-            var visible = (mu <= reach);
-            if !visible && is_closed && center_signed < 0.0 { visible = true; }
-            if !visible { continue; }
-
-            for (var s: u32 = 0u; s < entry.segment_count; s++) {
-                let seg_idx = entry.segment_start + s;
-                let iv = seg_box_interval(cs_segments[seg_idx], bmin, bmax);
-                // Priority = |distance| at the box centre, not iv.x: segments
-                // inside the box all have iv.x = 0 (a tie that strands the
-                // last-pushed one on overflow), whereas the centre distance ranks
-                // by how much each dominates the tile.
-                if iv.x <= kbound {
-                    let cd = abs(eval_segment(lp_center, cs_segments[seg_idx]).dist);
-                    coarse_push(&ccount, &cdist, seg_idx, i, cd);
-                }
-            }
-        }
-
-        // Sort by entry index (entries are pushed in z_order), so the fine phase
-        // and the fragment see contiguous, front-to-back entry runs.
-        for (var si: u32 = 1u; si < ccount; si++) {
-            let s_seg = wg_cseg[si];
-            let s_ent = wg_centry[si];
-            var sj = si;
-            while sj > 0u && wg_centry[sj - 1u] > s_ent {
-                wg_cseg[sj] = wg_cseg[sj - 1u];
-                wg_centry[sj] = wg_centry[sj - 1u];
-                sj--;
-            }
-            wg_cseg[sj] = s_seg;
-            wg_centry[sj] = s_ent;
-        }
-
-        wg_ccount = ccount;
-        let coarse_global = draw.coarse_base + wid.y * draw.coarse_cols + wid.x;
-        let cbase = coarse_global * COARSE_STRIDE;
-        for (var j: u32 = 0u; j < ccount; j++) {
-            cs_coarse_slots[cbase + j * 2u] = wg_cseg[j];
-            cs_coarse_slots[cbase + j * 2u + 1u] = wg_centry[j];
-        }
-        cs_coarse_counts[coarse_global] = ccount;
+        atomicStore(&cs_coarse_counts[coarse_global], ccount);
     }
-    workgroupBarrier();
-    let ccount = wg_ccount;
 
-    // --- Phase 2: each thread finalizes its 16px fine tile ---
-    let fine_col = gid.x;
-    let fine_row = gid.y;
-    // Per-thread (non-uniform) return, but no barrier follows, so it is allowed.
+    // --- Fine phase: threads 0..15, one 16px tile each (unchanged logic) ---
+    // Per-thread (non-uniform) returns; no barrier follows, so they are allowed.
+    if lindex >= 16u { return; }
+    let fine_col = wid.x * COARSE_FACTOR + (lindex % COARSE_FACTOR);
+    let fine_row = wid.y * COARSE_FACTOR + (lindex / COARSE_FACTOR);
     if fine_col >= draw.grid_cols || fine_row >= draw.grid_rows { return; }
     let fine_tile_idx = draw.tile_base + fine_row * draw.grid_cols + fine_col;
     let fine_base = fine_tile_idx * FINE_STRIDE;
@@ -1188,6 +1315,7 @@ fn cs_build_index(
 
     var fcount = 0u;
     var fdist: array<f32, MAX_FINE_SLOTS>;
+    var freplaced = false;
     var j = 0u;
     while j < ccount {
         let raw = wg_cseg[j];
@@ -1198,7 +1326,7 @@ fn cs_build_index(
         if (raw & TILING_BIT) != 0u {
             let td = tiling_box_dist(entry.tiling_type, entry.tiling_params, fworld, fhalf);
             if td - thd <= style_max_dist(style) + 0.5 {
-                fine_push(fine_base, &fcount, &fdist, j, td);
+                freplaced = fine_push(fine_base, &fcount, &fdist, j, td) || freplaced;
             }
             j++;
             continue;
@@ -1207,10 +1335,7 @@ fn cs_build_index(
         let is_closed = (entry.flags & FLAG_CLOSED) != 0u;
         let bmin = fworld - fhalf - entry.translate;
         let bmax = fworld + fhalf - entry.translate;
-        var reach = style_max_dist(style) + pattern_perp_reach(style) + 0.5;
-        if style.pattern_type == PATTERN_DASHED || style.pattern_type == PATTERN_ARROWED {
-            reach = reach + thd * abs(tan(style.pattern_param2));
-        }
+        let reach = style_reach(style, thd);
 
         // The entry's contiguous run in the coarse list.
         var k = j;
@@ -1238,21 +1363,37 @@ fn cs_build_index(
         var visible = (mu <= reach);
         if !visible && is_closed && center_signed < 0.0 { visible = true; }
 
-        // Pass 2: reference (8-bit) every coarse slot of the run that can be the
-        // per-pixel nearest in this fine tile.
+        // Pass 2: reference (16-bit) every coarse slot of the run that can be
+        // the per-pixel nearest in this fine tile.
         if visible {
             for (var t: u32 = j; t < k; t++) {
                 let iv = seg_box_interval(cs_segments[wg_cseg[t]], bmin, bmax);
                 if iv.x <= kbound {
-                    // Priority = |distance| at the fine tile centre (see the
-                    // coarse pass): ranks by dominance, and breaks the iv.x = 0
-                    // tie among segments inside the tile.
+                    // Priority = |distance| at the fine tile centre: ranks by
+                    // dominance, and breaks the iv.x = 0 tie among segments
+                    // inside the tile.
                     let cd = abs(eval_segment(lp_center, cs_segments[wg_cseg[t]]).dist);
-                    fine_push(fine_base, &fcount, &fdist, t, cd);
+                    freplaced = fine_push(fine_base, &fcount, &fdist, t, cd) || freplaced;
                 }
             }
         }
         j = k;
+    }
+
+    // Keep-nearest replacement scrambles the reference order; ascending
+    // indices into the SORTED coarse list restore entry-contiguous,
+    // front-to-back runs for the fragment fold. Only overflowing tiles
+    // (>MAX_FINE_SLOTS surviving candidates) ever pay this.
+    if freplaced {
+        for (var a = 1u; a < fcount; a++) {
+            let v = cs_fine_get(fine_base, a);
+            var b = a;
+            while b > 0u && cs_fine_get(fine_base, b - 1u) > v {
+                fine_set(fine_base, b, cs_fine_get(fine_base, b - 1u));
+                b--;
+            }
+            fine_set(fine_base, b, v);
+        }
     }
 
     cs_fine_counts[fine_tile_idx] = fcount;

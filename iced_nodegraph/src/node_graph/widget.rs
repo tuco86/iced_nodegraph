@@ -726,7 +726,13 @@ where
         // every edge line above every shadow. The node bodies (Layer 4) paint
         // over all of it. The grid is no longer marked cacheable: the dynamic
         // shadows/edges sharing this draw would never let the static-background
-        // texture cache hit.
+        // texture cache hit. Node shadows within the z1 band are pushed in
+        // STABLE node-index order rather than the selection-sorted `z_indices`
+        // (see below) - bg_layer is a single SdfPrimitive whose geometry hash
+        // covers entry push order, so ordering shadows by `z_indices` would
+        // make every selection click re-hash and rebuild the whole background
+        // (all edge biarcs included) just to reshuffle translucent shadows
+        // that composite the same either way.
         // ========================================
         let bg_layer = {
             let mut bg = SdfPrimitive::with_capacity(self.nodes.len() + self.edges.len() * 4 + 1);
@@ -838,10 +844,15 @@ where
             for (shape, style) in &edge_shadows {
                 bg.push(shape, style, [0.0, 0.0]);
             }
-            for &node_index in &z_indices {
-                let Some(geom) = node_geoms[node_index].as_ref() else {
-                    continue;
-                };
+            // Node shadows are pushed in STABLE node-index order, not
+            // `z_indices` (which re-sorts by (selected, z) on every selection
+            // change) - see the rationale above. Shadow-over-shadow blending
+            // is commutative for overlapping nodes that share the same shadow
+            // color/alpha (premultiplied "over" with equal operands); with
+            // differing custom shadow styles the overlap blend can shift
+            // marginally, an accepted trade for not rebuilding the whole
+            // bg_layer (edge biarcs included) on every selection click.
+            for geom in node_geoms.iter().flatten() {
                 if !geom.resolved.has_shadow() {
                     continue;
                 }

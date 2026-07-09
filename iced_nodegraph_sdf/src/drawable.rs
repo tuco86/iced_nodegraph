@@ -7,7 +7,7 @@ use glam::Vec2;
 
 /// A single arc segment - the ONE geometric primitive ("Arc is all you need").
 ///
-/// Encoded by its endpoints plus a signed curvature (see [`crate::segment`]):
+/// Encoded by its endpoints plus a signed curvature (see `crate::segment`):
 /// `curvature == 0` is a straight line, `start == end` is a point (junction
 /// marker, sign from `heading`), otherwise it is the minor arc of radius
 /// `1/|curvature|` bulging to the side `curvature`'s sign selects. There is no

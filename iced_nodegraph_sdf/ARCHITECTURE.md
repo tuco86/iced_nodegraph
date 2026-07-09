@@ -111,7 +111,7 @@ Drawable (local) + Style + translate  ->  GpuDrawEntry + GpuStyle + [GpuSegment]
 
 Pure data mapping. Geometry is stored in the shape's **local** frame; the world
 placement rides per-instance in `entry.translate`, evaluated as
-`world_p - translate`. Buffer sizes: `GpuSegment` 64 B, `GpuDrawEntry` 80 B,
+`world_p - translate`. Buffer sizes: `GpuSegment` 64 B, `GpuDrawEntry` 64 B,
 `GpuStyle` 16-byte-aligned (~340 B). `DrawData` (camera, zoom, time, grid dims)
 is separate and per-draw.
 
@@ -126,43 +126,74 @@ is separate and per-draw.
 - *Style dedup*: byte-identical compiled styles share one buffer slot.
 - *Geometry-hash slot reuse*: a primitive byte-identical to last frame (shapes,
   placements, styles) skips evaluate + upload entirely and reuses resident data.
+  The `Shape` recipe hash is computed once at CONSTRUCTION (each constructor and
+  operator folds its params and child hashes), so `hash()` is an O(1) field read.
+
+Alongside the entry batch, `prepare` builds the scatter work lists for Stage 2:
+(draw, entry, segment) triples of open entries and (draw, entry) pairs of
+closed entries, in persistent buffers with the same slot-reuse lifecycle as
+the geometry; the draw's tiling entry ids (4, sentinel-padded) ride inside its
+`DrawData`. Each compute pipeline binds at most 8 storage buffers - the
+WebGPU spec-default per-stage limit, which wasm enforces.
 
 Cacheable booleans are evaluated through a frame-surviving `ShapeCache` (LRU,
 content-hash keyed), so a unique node body's boolean runs once across frames.
 
-### Stage 2: Compute shader (GPU) — two-level tile spatial index
+**Resident-index skip:** the cull result depends on the geometry buffers and on
+every `DrawData` field EXCEPT `time`. `prepare` keys each draw's DrawData-sans-
+time (`cull_key`); when no key changed, no slot rebuilt and no index buffer
+regrew, the whole Stage-2 dispatch is skipped and the resident index reused -
+idle redraws and time-only animation frames recull nothing
+(`SdfStats::cull_skipped`).
 
-`cs_build_index` builds a two-level index, both levels persisted to storage
-buffers:
+### Stage 2: Compute shader (GPU) — scatter-built two-level tile index
+
+Three kernels (see `plan/scatter-binning.md`) build a two-level index, both
+levels persisted to storage buffers:
 
 - **Coarse** 64x64-pixel tiles (`COARSE_FACTOR = 4` fine tiles per axis). Each
-  holds up to `MAX_COARSE_SLOTS = 256` `(segment_idx, entry_idx)` results (two u32
+  holds up to `MAX_COARSE_SLOTS = 512` `(segment_idx, entry_idx)` results (two u32
   each), sorted by entry so the fragment shader walks one shape at a time in
   z-order. Tilings are marked by `TILING_BIT` on the segment field, as before.
-- **Fine** 16x16-pixel tiles. Each holds up to `MAX_FINE_SLOTS = 128` **8-bit**
-  indices into its parent coarse tile's result, packed 4 per u32
-  (`FINE_STRIDE = 32`). The fragment dereferences a fine index through the coarse
+- **Fine** 16x16-pixel tiles. Each holds up to `MAX_FINE_SLOTS = 128` **16-bit**
+  indices into its parent coarse tile's result, packed 2 per u32
+  (`FINE_STRIDE = 64`). The fragment dereferences a fine index through the coarse
   tile to recover the `(segment, entry)`.
 
 The split trades one indirection for memory: the fat coarse slots exist once per
-(few) coarse tiles; the 16x-more-numerous fine tiles cost one byte per slot, not
+(few) coarse tiles; the 16x-more-numerous fine tiles cost two bytes per slot, not
 eight.
 
-**One dispatch, one workgroup per coarse tile** (`workgroup_size(4, 4)` = 16
-threads, one per fine tile):
-1. All 16 threads cooperatively bin the entries VISIBLE in the 64px tile into
-   workgroup memory, using the exact cull visibility (the `seg_box_interval`-based
-   `mu <= reach` / closed-fill test, not a cheap AABB) so the candidate list is
-   tight. The `MAX_WG_CANDIDATES = 256` cap is hard: a tile with more than 256
-   visible entries drops the excess (no scan-all fallback) - acceptable because at
-   that density a dropped contour is invisible, and the exact test makes >256 rare.
-2. Thread 0 runs the coarse cull over the candidates and writes the coarse result
-   (with keep-nearest eviction at the 256 cap), then sorts it by entry.
-3. After a `workgroupBarrier`, each thread re-culls one fine tile over the coarse
-   result and writes its 8-bit references (keep-nearest at the 128 cap).
+**The build SCATTERS work-proportionally instead of gathering per tile.** The
+former gather kernel scanned every entry x segment from every coarse tile -
+O(tiles x segments) regardless of visibility, a zoom-independent cost floor.
+The scatter build's work is proportional to actual segment-tile overlaps:
 
-The draw index is the dispatch z-axis (`workgroup_id.z`), so each draw reads its
-own `DrawData` with no per-draw uniform, and the frame issues one `queue.submit`.
+1. `cs_scatter_open` - one thread per (draw, entry, segment) triple of an OPEN
+   entry. The segment's conservative bbox (arc sub-chord endpoints inflated by
+   sagitta), inflated by the style reach, is mapped to the draw's coarse tile
+   range; each tile in range gets the exact `seg_box_interval` test and, on
+   pass, an atomic append of the (segment, entry) slot. Short biarc pieces
+   follow the curve, so a diagonal edge never floods its whole bbox.
+2. `cs_scatter_closed` - one 64-thread workgroup per CLOSED entry. Thread 0
+   folds the contour bbox (the interior lies inside it, so bbox iteration
+   cannot miss interior-only tiles); the reach-inflated, grid-clipped range is
+   strided across threads, each running the exact per-entry test (band reach
+   OR centre-sign interior keep) and appending every segment that can be the
+   per-pixel nearest anywhere in the tile.
+3. `cs_sort_fine` - one 64-thread workgroup per coarse tile (draw index on the
+   dispatch z-axis). Loads the scattered slots, appends the draw's tilings,
+   bitonic-sorts by (entry, seg) - a unique total order, so the frame is
+   DETERMINISTIC regardless of atomic append order - writes the sorted list
+   back, then threads 0..15 re-cull one 16px fine tile each and write the
+   16-bit references (keep-nearest at the 128 cap).
+
+Coarse overflow past 512 drops slots first-come (the old single-threaded
+keep-nearest ranking is not expressible with atomic appends); the doubled cap
+makes that pathological-only, and the count keeps rising past the cap so true
+demand stays observable. The counts buffer is cleared by
+`CommandEncoder::clear_buffer` before the pass; all dispatches share one
+compute pass and one `queue.submit` per frame.
 
 **Cull contract (the load-bearing invariant), applied at BOTH levels.** For each
 (segment, tile box) the cull computes the exact distance **interval** `[m, M]` the
@@ -178,17 +209,17 @@ that interval overlaps the style's reach band. The cull must be a conservative
   is a hole. Never under-include.
 - A closed fill whose interior covers the tile but whose contour is far is kept via
   the nearest-segment sign at the tile centre, trusted only far from the contour.
-- Keep-nearest eviction (when a tile exceeds its cap) ranks by `|distance|` at the
-  tile centre, so the segments that dominate the tile's pixels survive a tie among
-  segments that all overlap the box.
+- Fine-level eviction (when a fine tile exceeds its 128 references) is
+  keep-nearest, ranked by `|distance|` at the tile centre, so the segments that
+  dominate the tile's pixels survive.
 
 ### Stage 3: Fragment shader (GPU) — per-pixel rendering
 
 `fs_main` runs per pixel:
 
 1. Transform the pixel to world coordinates.
-2. Look up its fine tile, and dereference each 8-bit slot through the parent coarse
-   tile to recover its `(segment, entry)`.
+2. Look up its fine tile, and dereference each 16-bit slot through the parent
+   coarse tile to recover its `(segment, entry)`.
 3. For each entry (shape) in the resolved slot list, front to back:
    a. fold to the **nearest segment** (minimum `abs(dist)`) over that entry's slots,
       evaluated at `world_p - entry.translate`;

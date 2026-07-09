@@ -32,12 +32,26 @@ pub(crate) struct SharedSdfResources {
     pub render_group0_layout: BindGroupLayout,
     /// Compute group 0: draws(read), draw_entries(read), segments(read), styles(read)
     pub compute_group0_layout: BindGroupLayout,
-    /// Compute group 1: coarse_counts(rw), coarse_slots(rw), fine_counts(rw), fine_slots(rw)
-    pub compute_group1_layout: BindGroupLayout,
+    /// Scatter-kernel group 1: coarse_counts(rw), coarse_slots(rw),
+    /// cull_list(r), cull_meta(r). One layout for both scatter kernels; the
+    /// bind group selects the list content (open triples vs closed pairs).
+    pub compute_scatter_group1_layout: BindGroupLayout,
+    /// Sort/fine-kernel group 1: coarse_counts(rw), coarse_slots(rw),
+    /// fine_counts(rw), fine_slots(rw).
+    ///
+    /// Group 1 is split per kernel so every compute pipeline binds at most
+    /// 4 + 4 storage buffers - the WebGPU spec-default
+    /// `maxStorageBuffersPerShaderStage` (8), which wasm/WebGPU enforces.
+    pub compute_sort_group1_layout: BindGroupLayout,
     _render_pipeline_layout: PipelineLayout,
-    _compute_pipeline_layout: PipelineLayout,
+    _scatter_pipeline_layout: PipelineLayout,
+    _sort_pipeline_layout: PipelineLayout,
     pub render_pipeline: RenderPipeline,
-    pub compute_pipeline: ComputePipeline,
+    /// Scatter cull kernels (see plan/scatter-binning.md): per-open-segment
+    /// scatter, per-closed-entry scatter, then per-coarse-tile sort + fine.
+    pub scatter_open_pipeline: ComputePipeline,
+    pub scatter_closed_pipeline: ComputePipeline,
+    pub sort_fine_pipeline: ComputePipeline,
 }
 
 impl SharedSdfResources {
@@ -69,7 +83,8 @@ impl SharedSdfResources {
 
         let render_group0_layout = create_render_group0_layout(device);
         let compute_group0_layout = create_compute_group0_layout(device);
-        let compute_group1_layout = create_compute_group1_layout(device);
+        let compute_scatter_group1_layout = create_compute_scatter_group1_layout(device);
+        let compute_sort_group1_layout = create_compute_sort_group1_layout(device);
 
         let render_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Some("SDF Render Pipeline Layout"),
@@ -77,33 +92,55 @@ impl SharedSdfResources {
             ..Default::default()
         });
 
-        let compute_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-            label: Some("SDF Compute Pipeline Layout"),
-            bind_group_layouts: &[&compute_group0_layout, &compute_group1_layout],
+        let scatter_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: Some("SDF Scatter Pipeline Layout"),
+            bind_group_layouts: &[&compute_group0_layout, &compute_scatter_group1_layout],
+            ..Default::default()
+        });
+        let sort_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: Some("SDF Sort Pipeline Layout"),
+            bind_group_layouts: &[&compute_group0_layout, &compute_sort_group1_layout],
             ..Default::default()
         });
 
         let render_pipeline =
             create_render_pipeline(device, format, &render_pipeline_layout, &shader_module);
 
-        let compute_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
-            label: Some("SDF Compute Pipeline"),
-            layout: Some(&compute_pipeline_layout),
-            module: &shader_module,
-            entry_point: Some("cs_build_index"),
-            compilation_options: PipelineCompilationOptions::default(),
-            cache: None,
-        });
+        let compute = |label: &str, entry: &str, layout: &PipelineLayout| {
+            device.create_compute_pipeline(&ComputePipelineDescriptor {
+                label: Some(label),
+                layout: Some(layout),
+                module: &shader_module,
+                entry_point: Some(entry),
+                compilation_options: PipelineCompilationOptions::default(),
+                cache: None,
+            })
+        };
+        let scatter_open_pipeline = compute(
+            "SDF Scatter Open",
+            "cs_scatter_open",
+            &scatter_pipeline_layout,
+        );
+        let scatter_closed_pipeline = compute(
+            "SDF Scatter Closed",
+            "cs_scatter_closed",
+            &scatter_pipeline_layout,
+        );
+        let sort_fine_pipeline = compute("SDF Sort Fine", "cs_sort_fine", &sort_pipeline_layout);
 
         Self {
             _shader_module: shader_module,
             render_group0_layout,
             compute_group0_layout,
-            compute_group1_layout,
+            compute_scatter_group1_layout,
+            compute_sort_group1_layout,
             _render_pipeline_layout: render_pipeline_layout,
-            _compute_pipeline_layout: compute_pipeline_layout,
+            _scatter_pipeline_layout: scatter_pipeline_layout,
+            _sort_pipeline_layout: sort_pipeline_layout,
             render_pipeline,
-            compute_pipeline,
+            scatter_open_pipeline,
+            scatter_closed_pipeline,
+            sort_fine_pipeline,
         }
     }
 }
@@ -188,7 +225,7 @@ fn create_render_group0_layout(device: &Device) -> BindGroupLayout {
                 },
                 count: None,
             },
-            // binding 6: coarse_slots (read) - the fine 8-bit indices dereference here
+            // binding 6: coarse_slots (read) - the fine 16-bit indices dereference here
             BindGroupLayoutEntry {
                 binding: 6,
                 visibility: ShaderStages::FRAGMENT,
@@ -266,12 +303,32 @@ fn create_compute_group0_layout(device: &Device) -> BindGroupLayout {
     })
 }
 
-/// Compute group 1: the two-level index outputs, all read_write -
-/// coarse_counts, coarse_slots, fine_counts, fine_slots. The draw index is read
-/// from the dispatch z-axis (`workgroup_id.z`), so no per-draw uniform is bound.
-fn create_compute_group1_layout(device: &Device) -> BindGroupLayout {
+/// Scatter-kernel group 1: the coarse outputs (read_write) plus the read-only
+/// work list and live-count meta. The draw index is read from the work list
+/// items themselves.
+fn create_compute_scatter_group1_layout(device: &Device) -> BindGroupLayout {
     use std::num::NonZeroU64;
-    let rw = |binding: u32| BindGroupLayoutEntry {
+    let buf = |binding: u32, read_only: bool| BindGroupLayoutEntry {
+        binding,
+        visibility: ShaderStages::COMPUTE,
+        ty: BindingType::Buffer {
+            ty: BufferBindingType::Storage { read_only },
+            has_dynamic_offset: false,
+            min_binding_size: Some(NonZeroU64::new(4).unwrap()),
+        },
+        count: None,
+    };
+    device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+        label: Some("SDF Compute Scatter Group 1"),
+        entries: &[buf(0, false), buf(1, false), buf(2, true), buf(3, true)],
+    })
+}
+
+/// Sort/fine-kernel group 1: the two-level index outputs, all read_write. The
+/// draw index is read from the dispatch z-axis (`workgroup_id.z`).
+fn create_compute_sort_group1_layout(device: &Device) -> BindGroupLayout {
+    use std::num::NonZeroU64;
+    let buf = |binding: u32| BindGroupLayoutEntry {
         binding,
         visibility: ShaderStages::COMPUTE,
         ty: BindingType::Buffer {
@@ -282,8 +339,8 @@ fn create_compute_group1_layout(device: &Device) -> BindGroupLayout {
         count: None,
     };
     device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-        label: Some("SDF Compute Group 1"),
-        entries: &[rw(0), rw(1), rw(2), rw(3)],
+        label: Some("SDF Compute Sort Group 1"),
+        entries: &[buf(0), buf(1), buf(2), buf(3)],
     })
 }
 

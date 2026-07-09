@@ -23,10 +23,10 @@ use crate::style::Style;
 // Must match WGSL constants
 const TILE_SIZE: f32 = 16.0;
 const COARSE_FACTOR: u32 = 4;
-const MAX_COARSE_SLOTS: u32 = 256;
+const MAX_COARSE_SLOTS: u32 = 512;
 const COARSE_STRIDE: u32 = MAX_COARSE_SLOTS * 2;
 const MAX_FINE_SLOTS: u32 = 128;
-const FINE_STRIDE: u32 = MAX_FINE_SLOTS / 4;
+const FINE_STRIDE: u32 = MAX_FINE_SLOTS / 2;
 
 /// One draw for the batched `gpu_frame_times` bench:
 /// `(drawables, bounds_origin_px, grid_w_px, grid_h_px, camera)`.
@@ -64,10 +64,27 @@ struct TestRenderer {
     device: Device,
     queue: Queue,
     render_pipeline: RenderPipeline,
-    compute_pipeline: ComputePipeline,
+    scatter_open_pipeline: ComputePipeline,
+    scatter_closed_pipeline: ComputePipeline,
+    sort_fine_pipeline: ComputePipeline,
     render_group0_layout: BindGroupLayout,
     compute_group0_layout: BindGroupLayout,
-    compute_group1_layout: BindGroupLayout,
+    compute_scatter_group1_layout: BindGroupLayout,
+    compute_sort_group1_layout: BindGroupLayout,
+}
+
+/// Scatter-cull inputs mirroring production `prepare` (see
+/// plan/scatter-binning.md): the flat work lists plus the live-count meta
+/// buffer the kernels read (`arrayLength` reports capacity, not live length).
+struct CullLists {
+    pairs: Buffer,
+    closed: Buffer,
+    meta: Buffer,
+    /// Per-draw tiling entry ids (sentinel-padded), injected into
+    /// `DrawData.tilings` (they ride per draw, not in a storage binding).
+    tilings: Vec<[u32; 4]>,
+    pair_triples: u32,
+    closed_pairs: u32,
 }
 
 impl TestRenderer {
@@ -108,7 +125,8 @@ impl TestRenderer {
 
         let render_group0_layout = Self::create_render_layout(&device);
         let compute_group0_layout = Self::create_compute_layout0(&device);
-        let compute_group1_layout = Self::create_compute_layout1(&device);
+        let compute_scatter_group1_layout = Self::create_compute_scatter_layout1(&device);
+        let compute_sort_group1_layout = Self::create_compute_sort_layout1(&device);
 
         let render_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: None,
@@ -117,7 +135,12 @@ impl TestRenderer {
         });
         let compute_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[&compute_group0_layout, &compute_group1_layout],
+            bind_group_layouts: &[&compute_group0_layout, &compute_scatter_group1_layout],
+            ..Default::default()
+        });
+        let sort_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[&compute_group0_layout, &compute_sort_group1_layout],
             ..Default::default()
         });
 
@@ -153,23 +176,31 @@ impl TestRenderer {
             multiview: None,
             cache: None,
         });
-        let compute_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
-            label: None,
-            layout: Some(&compute_layout),
-            module: &shader,
-            entry_point: Some("cs_build_index"),
-            compilation_options: PipelineCompilationOptions::default(),
-            cache: None,
-        });
+        let compute = |entry: &str, layout: &PipelineLayout| {
+            device.create_compute_pipeline(&ComputePipelineDescriptor {
+                label: None,
+                layout: Some(layout),
+                module: &shader,
+                entry_point: Some(entry),
+                compilation_options: PipelineCompilationOptions::default(),
+                cache: None,
+            })
+        };
+        let scatter_open_pipeline = compute("cs_scatter_open", &compute_layout);
+        let scatter_closed_pipeline = compute("cs_scatter_closed", &compute_layout);
+        let sort_fine_pipeline = compute("cs_sort_fine", &sort_layout);
 
         Self {
             device,
             queue,
             render_pipeline,
-            compute_pipeline,
+            scatter_open_pipeline,
+            scatter_closed_pipeline,
+            sort_fine_pipeline,
             render_group0_layout,
             compute_group0_layout,
-            compute_group1_layout,
+            compute_scatter_group1_layout,
+            compute_sort_group1_layout,
         }
     }
 
@@ -239,7 +270,7 @@ impl TestRenderer {
             coarse_cols: grid_cols.div_ceil(COARSE_FACTOR),
             coarse_rows: grid_rows.div_ceil(COARSE_FACTOR),
             coarse_base: 0,
-            _pad0: 0,
+            tilings: [u32::MAX; 4],
         };
 
         self.execute_render(
@@ -268,6 +299,12 @@ impl TestRenderer {
         grid_cols: u32,
         grid_rows: u32,
     ) -> Vec<[u8; 4]> {
+        let cull_lists = self.build_cull_lists(
+            gpu_entries,
+            &[(draw_data.entry_start, draw_data.entry_count)],
+        );
+        let mut draw_data = draw_data;
+        draw_data.tilings = cull_lists.tilings[0];
         let draws_buf = self.create_storage(&[draw_data]);
         let entries_buf = self.create_storage(gpu_entries);
         let segments_buf = self.create_storage(gpu_segments);
@@ -345,28 +382,24 @@ impl TestRenderer {
                 },
             ],
         });
-        let compute_bg1 = self.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &self.compute_group1_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: coarse_counts_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: coarse_slots_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: fine_counts_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: fine_slots_buf.as_entire_binding(),
-                },
-            ],
-        });
+        let scatter_open_bg1 = self.create_scatter_bg1(
+            &coarse_counts_buf,
+            &coarse_slots_buf,
+            &cull_lists.pairs,
+            &cull_lists.meta,
+        );
+        let scatter_closed_bg1 = self.create_scatter_bg1(
+            &coarse_counts_buf,
+            &coarse_slots_buf,
+            &cull_lists.closed,
+            &cull_lists.meta,
+        );
+        let sort_bg1 = self.create_sort_bg1(
+            &coarse_counts_buf,
+            &coarse_slots_buf,
+            &fine_counts_buf,
+            &fine_slots_buf,
+        );
 
         let texture = self.device.create_texture(&TextureDescriptor {
             label: None,
@@ -398,10 +431,13 @@ impl TestRenderer {
             .create_command_encoder(&CommandEncoderDescriptor::default());
         if grid_cols > 0 && grid_rows > 0 {
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-            pass.set_pipeline(&self.compute_pipeline);
             pass.set_bind_group(0, &compute_bg0, &[]);
-            pass.set_bind_group(1, &compute_bg1, &[]);
-            pass.dispatch_workgroups(
+            self.record_cull(
+                &mut pass,
+                &cull_lists,
+                &scatter_open_bg1,
+                &scatter_closed_bg1,
+                &sort_bg1,
                 grid_cols.div_ceil(COARSE_FACTOR),
                 grid_rows.div_ceil(COARSE_FACTOR),
                 1,
@@ -538,9 +574,15 @@ impl TestRenderer {
             coarse_cols,
             coarse_rows,
             coarse_base: 0,
-            _pad0: 0,
+            tilings: [u32::MAX; 4],
         };
 
+        let cull_lists = self.build_cull_lists(
+            &gpu_entries,
+            &[(draw_data.entry_start, draw_data.entry_count)],
+        );
+        let mut draw_data = draw_data;
+        draw_data.tilings = cull_lists.tilings[0];
         let draws_buf = self.create_storage(&[draw_data]);
         let entries_buf = self.create_storage(&gpu_entries);
         let segments_buf = self.create_storage(&gpu_segments);
@@ -614,28 +656,24 @@ impl TestRenderer {
                 },
             ],
         });
-        let compute_bg1 = self.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &self.compute_group1_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: coarse_counts_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: coarse_slots_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: fine_counts_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: fine_slots_buf.as_entire_binding(),
-                },
-            ],
-        });
+        let scatter_open_bg1 = self.create_scatter_bg1(
+            &coarse_counts_buf,
+            &coarse_slots_buf,
+            &cull_lists.pairs,
+            &cull_lists.meta,
+        );
+        let scatter_closed_bg1 = self.create_scatter_bg1(
+            &coarse_counts_buf,
+            &coarse_slots_buf,
+            &cull_lists.closed,
+            &cull_lists.meta,
+        );
+        let sort_bg1 = self.create_sort_bg1(
+            &coarse_counts_buf,
+            &coarse_slots_buf,
+            &fine_counts_buf,
+            &fine_slots_buf,
+        );
 
         let texture = self.device.create_texture(&TextureDescriptor {
             label: None,
@@ -683,10 +721,17 @@ impl TestRenderer {
                     end_of_pass_write_index: Some(1),
                 }),
             });
-            pass.set_pipeline(&self.compute_pipeline);
             pass.set_bind_group(0, &compute_bg0, &[]);
-            pass.set_bind_group(1, &compute_bg1, &[]);
-            pass.dispatch_workgroups(coarse_cols, coarse_rows, 1);
+            self.record_cull(
+                &mut pass,
+                &cull_lists,
+                &scatter_open_bg1,
+                &scatter_closed_bg1,
+                &sort_bg1,
+                coarse_cols,
+                coarse_rows,
+                1,
+            );
         }
         {
             let mut pass = enc.begin_render_pass(&RenderPassDescriptor {
@@ -810,7 +855,7 @@ impl TestRenderer {
                 coarse_cols,
                 coarse_rows,
                 coarse_base,
-                _pad0: 0,
+                tilings: [u32::MAX; 4],
             });
             tile_base += grid_cols * grid_rows;
             coarse_base += coarse_cols * coarse_rows;
@@ -820,6 +865,14 @@ impl TestRenderer {
         let total_coarse = coarse_base.max(1);
         let num_draws = draw_datas.len() as u32;
 
+        let draw_ranges: Vec<(u32, u32)> = draw_datas
+            .iter()
+            .map(|d| (d.entry_start, d.entry_count))
+            .collect();
+        let cull_lists = self.build_cull_lists(&gpu_entries, &draw_ranges);
+        for (d, dd) in draw_datas.iter_mut().enumerate() {
+            dd.tilings = cull_lists.tilings[d];
+        }
         let draws_buf = self.create_storage(&draw_datas);
         let entries_buf = self.create_storage(&gpu_entries);
         let segments_buf = self.create_storage(&gpu_segments);
@@ -893,28 +946,24 @@ impl TestRenderer {
                 },
             ],
         });
-        let compute_bg1 = self.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &self.compute_group1_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: coarse_counts_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: coarse_slots_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: fine_counts_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: fine_slots_buf.as_entire_binding(),
-                },
-            ],
-        });
+        let scatter_open_bg1 = self.create_scatter_bg1(
+            &coarse_counts_buf,
+            &coarse_slots_buf,
+            &cull_lists.pairs,
+            &cull_lists.meta,
+        );
+        let scatter_closed_bg1 = self.create_scatter_bg1(
+            &coarse_counts_buf,
+            &coarse_slots_buf,
+            &cull_lists.closed,
+            &cull_lists.meta,
+        );
+        let sort_bg1 = self.create_sort_bg1(
+            &coarse_counts_buf,
+            &coarse_slots_buf,
+            &fine_counts_buf,
+            &fine_slots_buf,
+        );
 
         let texture = self.device.create_texture(&TextureDescriptor {
             label: None,
@@ -962,11 +1011,14 @@ impl TestRenderer {
                     end_of_pass_write_index: Some(1),
                 }),
             });
-            pass.set_pipeline(&self.compute_pipeline);
             pass.set_bind_group(0, &compute_bg0, &[]);
-            pass.set_bind_group(1, &compute_bg1, &[]);
-            // One dispatch, z = draw count: each layer culls its own draw's grid.
-            pass.dispatch_workgroups(
+            // One batch, z = draw count: each sort layer culls its own draw's grid.
+            self.record_cull(
+                &mut pass,
+                &cull_lists,
+                &scatter_open_bg1,
+                &scatter_closed_bg1,
+                &sort_bg1,
                 max_cols.div_ceil(COARSE_FACTOR),
                 max_rows.div_ceil(COARSE_FACTOR),
                 num_draws,
@@ -1109,10 +1161,16 @@ impl TestRenderer {
             coarse_cols: grid_cols.div_ceil(COARSE_FACTOR),
             coarse_rows: grid_rows.div_ceil(COARSE_FACTOR),
             coarse_base: 0,
-            _pad0: 0,
+            tilings: [u32::MAX; 4],
         };
 
         // Encode to GPU format via encase
+        let cull_lists = self.build_cull_lists(
+            &gpu_entries,
+            &[(draw_data.entry_start, draw_data.entry_count)],
+        );
+        let mut draw_data = draw_data;
+        draw_data.tilings = cull_lists.tilings[0];
         let draws_buf = self.create_storage(&[draw_data]);
         let entries_buf = self.create_storage(&gpu_entries);
         let segments_buf = self.create_storage(&gpu_segments);
@@ -1191,28 +1249,24 @@ impl TestRenderer {
                 },
             ],
         });
-        let compute_bg1 = self.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &self.compute_group1_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: coarse_counts_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: coarse_slots_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: fine_counts_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: fine_slots_buf.as_entire_binding(),
-                },
-            ],
-        });
+        let scatter_open_bg1 = self.create_scatter_bg1(
+            &coarse_counts_buf,
+            &coarse_slots_buf,
+            &cull_lists.pairs,
+            &cull_lists.meta,
+        );
+        let scatter_closed_bg1 = self.create_scatter_bg1(
+            &coarse_counts_buf,
+            &coarse_slots_buf,
+            &cull_lists.closed,
+            &cull_lists.meta,
+        );
+        let sort_bg1 = self.create_sort_bg1(
+            &coarse_counts_buf,
+            &coarse_slots_buf,
+            &fine_counts_buf,
+            &fine_slots_buf,
+        );
 
         // Render target
         let texture = self.device.create_texture(&TextureDescriptor {
@@ -1249,10 +1303,13 @@ impl TestRenderer {
         // Compute pass
         {
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-            pass.set_pipeline(&self.compute_pipeline);
             pass.set_bind_group(0, &compute_bg0, &[]);
-            pass.set_bind_group(1, &compute_bg1, &[]);
-            pass.dispatch_workgroups(
+            self.record_cull(
+                &mut pass,
+                &cull_lists,
+                &scatter_open_bg1,
+                &scatter_closed_bg1,
+                &sort_bg1,
                 grid_cols.div_ceil(COARSE_FACTOR),
                 grid_rows.div_ceil(COARSE_FACTOR),
                 1,
@@ -1390,7 +1447,7 @@ impl TestRenderer {
             coarse_cols: grid_cols.div_ceil(COARSE_FACTOR),
             coarse_rows: grid_rows.div_ceil(COARSE_FACTOR),
             coarse_base: 0,
-            _pad0: 0,
+            tilings: [u32::MAX; 4],
         };
         self.execute_render(
             &gpu_entries,
@@ -1741,6 +1798,158 @@ impl TestRenderer {
         out
     }
 
+    /// Classify every entry of every draw into the scatter work lists exactly
+    /// as production `prepare` does: tilings ride per-draw (4 sentinel-padded
+    /// slots), closed entries feed the interior-aware kernel, open entries
+    /// expand to (draw, entry, segment) triples.
+    fn build_cull_lists(&self, entries: &[GpuDrawEntry], draw_ranges: &[(u32, u32)]) -> CullLists {
+        const FLAG_CLOSED: u32 = 1;
+        const ENTRY_TILING: u32 = 2;
+        const SENTINEL: u32 = u32::MAX;
+        let mut pairs: Vec<u32> = Vec::new();
+        let mut closed: Vec<u32> = Vec::new();
+        let mut tilings: Vec<[u32; 4]> = Vec::new();
+        for (d, &(start, count)) in draw_ranges.iter().enumerate() {
+            let mut tile_ids = [SENTINEL; 4];
+            let mut n_tilings = 0usize;
+            for i in 0..count {
+                let abs = start + i;
+                let e = &entries[abs as usize];
+                if e.entry_type == ENTRY_TILING {
+                    if n_tilings < tile_ids.len() {
+                        tile_ids[n_tilings] = abs;
+                        n_tilings += 1;
+                    }
+                } else if e.flags & FLAG_CLOSED != 0 {
+                    closed.extend_from_slice(&[d as u32, abs]);
+                } else {
+                    for s in e.segment_start..e.segment_start + e.segment_count {
+                        pairs.extend_from_slice(&[d as u32, abs, s]);
+                    }
+                }
+            }
+            tilings.push(tile_ids);
+        }
+        let pair_triples = (pairs.len() / 3) as u32;
+        let closed_pairs = (closed.len() / 2) as u32;
+        // Empty lists still need a non-zero binding; the meta counts gate reads.
+        if pairs.is_empty() {
+            pairs.push(0);
+        }
+        if closed.is_empty() {
+            closed.push(0);
+        }
+        CullLists {
+            pairs: self.create_storage(&pairs),
+            closed: self.create_storage(&closed),
+            meta: self.create_storage(&[pair_triples, closed_pairs]),
+            tilings,
+            pair_triples,
+            closed_pairs,
+        }
+    }
+
+    /// Group-1 bind group for one scatter kernel: coarse outputs + work list
+    /// + meta. `list` selects the content (open triples vs closed pairs).
+    fn create_scatter_bg1(
+        &self,
+        coarse_counts: &Buffer,
+        coarse_slots: &Buffer,
+        list: &Buffer,
+        meta: &Buffer,
+    ) -> BindGroup {
+        self.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &self.compute_scatter_group1_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: coarse_counts.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: coarse_slots.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: list.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: meta.as_entire_binding(),
+                },
+            ],
+        })
+    }
+
+    /// Group-1 bind group for the sort/fine kernel: the index outputs.
+    fn create_sort_bg1(
+        &self,
+        coarse_counts: &Buffer,
+        coarse_slots: &Buffer,
+        fine_counts: &Buffer,
+        fine_slots: &Buffer,
+    ) -> BindGroup {
+        self.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &self.compute_sort_group1_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: coarse_counts.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: coarse_slots.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: fine_counts.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: fine_slots.as_entire_binding(),
+                },
+            ],
+        })
+    }
+
+    /// Record the scatter-cull dispatch sequence, binding each kernel's own
+    /// group 1 (8-storage-buffers-per-stage limit). Group 0 must already be
+    /// set. Freshly created storage buffers are zero-initialized by WebGPU,
+    /// so unlike production no coarse-counts clear is needed here.
+    #[allow(clippy::too_many_arguments)]
+    fn record_cull(
+        &self,
+        pass: &mut ComputePass<'_>,
+        lists: &CullLists,
+        open_bg1: &BindGroup,
+        closed_bg1: &BindGroup,
+        sort_bg1: &BindGroup,
+        coarse_cols: u32,
+        coarse_rows: u32,
+        draws: u32,
+    ) {
+        if lists.pair_triples > 0 {
+            let wgs = lists.pair_triples.div_ceil(64);
+            pass.set_pipeline(&self.scatter_open_pipeline);
+            pass.set_bind_group(1, open_bg1, &[]);
+            pass.dispatch_workgroups(wgs.min(65535), wgs.div_ceil(65535), 1);
+        }
+        if lists.closed_pairs > 0 {
+            pass.set_pipeline(&self.scatter_closed_pipeline);
+            pass.set_bind_group(1, closed_bg1, &[]);
+            pass.dispatch_workgroups(
+                lists.closed_pairs.min(65535),
+                lists.closed_pairs.div_ceil(65535),
+                1,
+            );
+        }
+        pass.set_pipeline(&self.sort_fine_pipeline);
+        pass.set_bind_group(1, sort_bg1, &[]);
+        pass.dispatch_workgroups(coarse_cols, coarse_rows, draws);
+    }
+
     fn create_storage<T: ShaderType + ShaderSize + WriteInto>(&self, items: &[T]) -> Buffer {
         let mut scratch = Vec::new();
         let mut writer = StorageBuffer::new(&mut scratch);
@@ -1784,7 +1993,19 @@ impl TestRenderer {
         })
     }
 
-    fn create_compute_layout1(device: &Device) -> BindGroupLayout {
+    fn create_compute_scatter_layout1(device: &Device) -> BindGroupLayout {
+        device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[
+                bgl_storage_rw(0, 4),
+                bgl_storage_rw(1, 4),
+                bgl_storage(2, ShaderStages::COMPUTE, 4),
+                bgl_storage(3, ShaderStages::COMPUTE, 4),
+            ],
+        })
+    }
+
+    fn create_compute_sort_layout1(device: &Device) -> BindGroupLayout {
         device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: None,
             entries: &[
@@ -3681,10 +3902,10 @@ fn zoomed_out_many_entries_no_dropped_shapes() {
     );
 }
 
-/// A tile holding more than MAX_SLOTS_PER_TILE segments must keep the NEAREST
-/// ones, not an arbitrary first-32 by scan order. A near, tile-filling shape
-/// pushed LAST (highest scan index) would be dropped by first-32; keep-nearest
-/// retains it because its |dist| at the tile centre is smallest.
+/// A fine tile holding more references than MAX_FINE_SLOTS must keep the
+/// NEAREST ones, not an arbitrary first-N by push order. A near, tile-filling
+/// shape pushed LAST (highest index) would be dropped by first-N; the fine
+/// keep-nearest retains it because its |dist| at the tile centre is smallest.
 #[test]
 fn overflowing_tile_keeps_nearest_not_first() {
     let r = shared_renderer();
@@ -4188,6 +4409,300 @@ fn zoomed_out_per_node_fills_all_render() {
         empty.len(),
         centers.len(),
         empty,
+    );
+}
+
+/// The spatial-index cull dispatch is skipped exactly while the resident index
+/// is valid (`SdfStats::cull_skipped`, published by `trim`): an unchanged
+/// frame and a TIME-ONLY (animation) frame keep last frame's index; a camera
+/// move, a zoom change, or a geometry change (placement) invalidate it; the
+/// first frame after an invalidation is skipped again.
+/// Full-pipeline frame (prepare -> deferred compute -> draw -> readback -> trim)
+/// driving `SdfPipeline` exactly as iced does. For slot-reuse regression tests
+/// that need PIXEL evidence across frames.
+fn render_pipeline_frame(
+    r: &TestRenderer,
+    pipeline: &mut crate::primitive::SdfPipeline,
+    prims: &[&crate::primitive::SdfPrimitive],
+    w: u32,
+    h: u32,
+) -> Vec<[u8; 4]> {
+    use iced::Rectangle;
+    use iced_wgpu::graphics::Viewport;
+    use iced_wgpu::primitive::{Pipeline, Primitive};
+
+    let full = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(w as f32, h as f32));
+    let viewport = Viewport::with_physical_size(iced::Size::new(w, h), 1.0);
+    for p in prims {
+        p.prepare(pipeline, &r.device, &r.queue, &full, &viewport);
+    }
+
+    let texture = r.device.create_texture(&TextureDescriptor {
+        label: None,
+        size: Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: TextureDimension::D2,
+        format: TextureFormat::Rgba8Unorm,
+        usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&TextureViewDescriptor::default());
+    let row_bytes = w * 4;
+    let padded_row = (row_bytes + 255) & !255;
+    let readback = r.device.create_buffer(&BufferDescriptor {
+        label: None,
+        size: (padded_row * h) as u64,
+        usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+
+    let mut encoder = r
+        .device
+        .create_command_encoder(&CommandEncoderDescriptor::default());
+    {
+        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+            label: None,
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view: &view,
+                resolve_target: None,
+                ops: Operations {
+                    load: LoadOp::Clear(Color::TRANSPARENT),
+                    store: StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        // The first draw submits the deferred cull compute (production order).
+        for p in prims {
+            p.draw(pipeline, &mut pass);
+        }
+    }
+    encoder.copy_texture_to_buffer(
+        TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: Origin3d::ZERO,
+            aspect: TextureAspect::All,
+        },
+        TexelCopyBufferInfo {
+            buffer: &readback,
+            layout: TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded_row),
+                rows_per_image: Some(h),
+            },
+        },
+        Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+    );
+    let idx = r.queue.submit(Some(encoder.finish()));
+    readback.slice(..).map_async(MapMode::Read, |_| {});
+    r.device
+        .poll(PollType::Wait {
+            submission_index: Some(idx),
+            timeout: Some(std::time::Duration::from_secs(10)),
+        })
+        .unwrap();
+    let data = readback.slice(..).get_mapped_range();
+    let mut px = vec![[0u8; 4]; (w * h) as usize];
+    for y in 0..h {
+        let src = (y * padded_row) as usize;
+        for x in 0..w as usize {
+            let i = src + x * 4;
+            px[(y * w) as usize + x] = [data[i], data[i + 1], data[i + 2], data[i + 3]];
+        }
+    }
+    drop(data);
+    readback.unmap();
+    Pipeline::trim(pipeline);
+    px
+}
+
+/// A rebuild with UNCHANGED buffer counts must poison slot reuse for LATER
+/// primitives: instancing and style dedup make a later primitive's resident
+/// entries reference an EARLIER primitive's segment/style slots by absolute
+/// index, so an in-place content change (a recolor keeps every count) would
+/// otherwise be silently adopted by every reusing referencer.
+#[test]
+fn rebuild_poisons_later_slot_reuse() {
+    use crate::primitive::{SdfPipeline, SdfPrimitive};
+    use crate::shape::Shape;
+    use iced_wgpu::primitive::Pipeline;
+
+    let r = shared_renderer();
+    let (w, h) = (128u32, 64u32);
+    let red = Style::solid(rgba(1.0, 0.0, 0.0, 1.0));
+    let blue = Style::solid(rgba(0.0, 0.0, 1.0, 1.0));
+
+    let prim = |style: &Style, x: f32| {
+        let mut p = SdfPrimitive::new();
+        p.push(&Shape::circle(20.0), style, [x, 32.0]);
+        p.camera(0.0, 0.0, 1.0)
+    };
+
+    let mut pipeline = SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
+    // Frames 1+2: A and B identical red circles (B's entry references A's
+    // segments and style slot); frame 2 is the steady reuse state.
+    for _ in 0..2 {
+        let a = prim(&red, 32.0);
+        let b = prim(&red, 96.0);
+        let px = render_pipeline_frame(&r, &mut pipeline, &[&a, &b], w, h);
+        let pb = TestRenderer::pixel_at(&px, w, 96, 32);
+        assert!(pb[0] > 200 && pb[2] < 60, "B must start red, got {pb:?}");
+    }
+    // Frame 3: A recolors to blue - byte counts unchanged, every cursor still
+    // lines up. B is untouched and MUST stay red; a stale reuse would leave
+    // B's resident entry pointing at A's restyled slot.
+    let a = prim(&blue, 32.0);
+    let b = prim(&red, 96.0);
+    let px = render_pipeline_frame(&r, &mut pipeline, &[&a, &b], w, h);
+    let pa = TestRenderer::pixel_at(&px, w, 32, 32);
+    let pb = TestRenderer::pixel_at(&px, w, 96, 32);
+    assert!(
+        pa[2] > 200 && pa[0] < 60,
+        "A must recolor to blue, got {pa:?}"
+    );
+    assert!(
+        pb[0] > 200 && pb[2] < 60,
+        "B adopted A's restyle through a stale cross-primitive reference: {pb:?}",
+    );
+}
+
+/// A primitive that goes EMPTY for a frame must invalidate its slot record:
+/// later primitives repack shifted-down and overwrite its resident ranges, so
+/// a revival with the old content would stale-match its old cursors and render
+/// other primitives' bytes.
+#[test]
+fn empty_frame_invalidates_slot_reuse() {
+    use crate::primitive::{SdfPipeline, SdfPrimitive};
+    use crate::shape::Shape;
+    use iced_wgpu::primitive::Pipeline;
+
+    let r = shared_renderer();
+    let (w, h) = (128u32, 64u32);
+    let red = Style::solid(rgba(1.0, 0.0, 0.0, 1.0));
+    let green = Style::solid(rgba(0.0, 1.0, 0.0, 1.0));
+
+    let circle = |style: &Style| {
+        let mut p = SdfPrimitive::new();
+        p.push(&Shape::circle(20.0), style, [32.0, 32.0]);
+        p.camera(0.0, 0.0, 1.0)
+    };
+    let rect = |style: &Style| {
+        let mut p = SdfPrimitive::new();
+        p.push(
+            &Shape::rounded_box([40.0, 40.0], [4.0; 4]),
+            style,
+            [96.0, 32.0],
+        );
+        p.camera(0.0, 0.0, 1.0)
+    };
+
+    let mut pipeline = SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
+    // Frame 1: red circle (A) + green rect (B).
+    let a = circle(&red);
+    let b = rect(&green);
+    let _ = render_pipeline_frame(&r, &mut pipeline, &[&a, &b], w, h);
+    // Frame 2: A is EMPTY; B repacks at A's old buffer offsets.
+    let a_empty = SdfPrimitive::new();
+    let b = rect(&green);
+    let _ = render_pipeline_frame(&r, &mut pipeline, &[&a_empty, &b], w, h);
+    // Frame 3: A revives with its frame-1 content and frame-1 cursors. Without
+    // slot invalidation it stale-matches and renders B's resident bytes.
+    let a = circle(&red);
+    let b = rect(&green);
+    let px = render_pipeline_frame(&r, &mut pipeline, &[&a, &b], w, h);
+    let pa = TestRenderer::pixel_at(&px, w, 32, 32);
+    let pb = TestRenderer::pixel_at(&px, w, 96, 32);
+    assert!(
+        pa[0] > 200 && pa[1] < 60,
+        "revived primitive must render its own red circle, got {pa:?}",
+    );
+    assert!(pb[1] > 200, "B must stay a green rect, got {pb:?}");
+}
+
+#[test]
+fn cull_dispatch_skipped_while_index_valid() {
+    use iced::Rectangle;
+    use iced_wgpu::graphics::Viewport;
+    use iced_wgpu::primitive::{Pipeline, Primitive};
+
+    use crate::primitive::{SdfPipeline, SdfPrimitive, sdf_stats};
+    use crate::shape::Shape;
+
+    let r = shared_renderer();
+    let (w, h) = (256u32, 256u32);
+    let full = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(w as f32, h as f32));
+    let viewport = Viewport::with_physical_size(iced::Size::new(w, h), 1.0);
+    let style = Style::solid(rgba(0.3, 0.4, 0.5, 1.0));
+
+    let frame = |pipeline: &mut SdfPipeline,
+                 placement: [f32; 2],
+                 cam: [f32; 2],
+                 zoom: f32,
+                 time: f32|
+     -> bool {
+        let mut p = SdfPrimitive::new();
+        p.push(
+            &Shape::rounded_box([60.0, 40.0], [4.0; 4]),
+            &style,
+            placement,
+        );
+        let p = p.camera(cam[0], cam[1], zoom).time(time);
+        p.prepare(pipeline, &r.device, &r.queue, &full, &viewport);
+        Pipeline::trim(pipeline);
+        sdf_stats().cull_skipped
+    };
+
+    let mut pipeline = SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
+    let base = ([100.0_f32, 100.0], [0.0_f32, 0.0], 1.0_f32);
+
+    // Frame 0: everything is new - the index must be built.
+    assert!(
+        !frame(&mut pipeline, base.0, base.1, base.2, 0.0),
+        "first frame must cull"
+    );
+    // Frame 1: byte-identical - the resident index is valid.
+    assert!(
+        frame(&mut pipeline, base.0, base.1, base.2, 0.0),
+        "identical frame must skip"
+    );
+    // Frame 2: only `time` advanced (animation) - reach bands and tile boxes
+    // are time-independent, so the index stays valid.
+    assert!(
+        frame(&mut pipeline, base.0, base.1, base.2, 0.5),
+        "time-only frame must skip"
+    );
+    // Frame 3: camera pan - tile world boxes moved, recull.
+    assert!(
+        !frame(&mut pipeline, base.0, [25.0, 0.0], base.2, 0.5),
+        "pan must recull"
+    );
+    // Frame 4: unchanged again at the new camera - skip resumes.
+    assert!(
+        frame(&mut pipeline, base.0, [25.0, 0.0], base.2, 0.5),
+        "steady frame must skip"
+    );
+    // Frame 5: zoom change - recull.
+    assert!(
+        !frame(&mut pipeline, base.0, [25.0, 0.0], 2.0, 0.5),
+        "zoom must recull"
+    );
+    // Frame 6: geometry change (placement) - buffers rewritten, recull.
+    assert!(
+        !frame(&mut pipeline, [130.0, 100.0], [25.0, 0.0], 2.0, 0.5),
+        "geometry change must recull",
     );
 }
 

@@ -46,7 +46,7 @@
   <text x="56" y="394" font-size="14" font-weight="700" fill="#1b2026">4 &#183; Index (compute shader)</text>
   <text x="56" y="417" font-size="12" fill="#3a424c">One dispatch builds a two-level index: 64px</text>
   <text x="56" y="435" font-size="12" fill="#3a424c">coarse tiles hold the (segment, entry) cull</text>
-  <text x="56" y="453" font-size="12" fill="#3a424c">results; 16px fine tiles hold 8-bit indices</text>
+  <text x="56" y="453" font-size="12" fill="#3a424c">results; 16px fine tiles hold 16-bit indices</text>
   <text x="56" y="471" font-size="12" fill="#3a424c">into them. Culling uses an exact interval.</text>
   <text x="56" y="500" font-size="12" fill="#5b6672" font-style="italic">fine index &#8594; coarse result &#8594; (segment, entry)</text>
 

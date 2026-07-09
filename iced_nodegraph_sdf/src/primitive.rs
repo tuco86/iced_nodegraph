@@ -4,8 +4,10 @@
 //! a compute shader to build the tile spatial index, then renders via
 //! a fullscreen triangle that reads the index for per-tile evaluation.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+
+use parking_lot::Mutex;
 use web_time::Instant;
 
 use iced::Rectangle;
@@ -18,7 +20,7 @@ use iced_wgpu::primitive::{Pipeline, Primitive};
 
 use std::collections::HashMap;
 
-use crate::compile::{compile_local_at, entry_referencing};
+use crate::compile::{ENTRY_TILING, FLAG_CLOSED, compile_local_at, entry_referencing};
 use crate::pattern::PatternType;
 use crate::pipeline::{buffer, types};
 use crate::shape::{Shape, ShapeCache};
@@ -35,24 +37,29 @@ static LAST_STATS: Mutex<types::SdfStats> = Mutex::new(types::SdfStats {
     cache_hits: 0,
     cache_misses: 0,
     cache_hit_rate: 0.0,
+    cull_skipped: false,
 });
 
 /// Read performance statistics from the last completed frame.
 pub fn sdf_stats() -> types::SdfStats {
-    LAST_STATS.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    LAST_STATS.lock().clone()
 }
 
 // Must match WGSL constants
 const TILE_SIZE: f32 = 16.0;
 // Two-level index: 64px coarse tiles (4x4 fine tiles) hold the (segment, entry)
-// results; 16px fine tiles hold 8-bit indices into them.
+// results; 16px fine tiles hold 16-bit indices into them.
 const COARSE_FACTOR: u32 = 4;
-// Coarse: 256 (segment_idx, entry_idx) pairs per tile.
-const MAX_COARSE_SLOTS: u32 = 256;
+// Coarse: 512 (segment_idx, entry_idx) pairs per tile (scatter appends
+// first-come; the sort kernel clamps, reserving slots for tilings).
+const MAX_COARSE_SLOTS: u32 = 512;
 const COARSE_STRIDE: u32 = MAX_COARSE_SLOTS * 2;
-// Fine: 128 8-bit indices per tile, packed 4 per u32.
+// Fine: 128 16-bit indices per tile, packed 2 per u32.
 const MAX_FINE_SLOTS: u32 = 128;
-const FINE_STRIDE: u32 = MAX_FINE_SLOTS / 4;
+const FINE_STRIDE: u32 = MAX_FINE_SLOTS / 2;
+// Per-draw tiling slots in the scatter lists; sentinel-padded.
+const TILING_RESERVE: u32 = 4;
+const CULL_SENTINEL: u32 = u32::MAX;
 
 /// One queued draw: a position-free [`Shape`] (evaluated once by the pipeline's
 /// frame-surviving `ShapeCache` when cacheable) placed at world `placement` (the
@@ -200,6 +207,34 @@ impl KeyHasher {
     }
 }
 
+/// Folds every [`types::DrawData`] field EXCEPT `time` into a key. The spatial
+/// index depends on camera, viewport, grid geometry and entry ranges - but
+/// never on the animation clock (reach bands and tile boxes are
+/// time-independent; time only animates style evaluation in the fragment
+/// shader). A time-only change must therefore compare EQUAL so the resident
+/// index is kept and the cull dispatch is skipped.
+fn cull_key(d: &types::DrawData) -> u64 {
+    let mut h = KeyHasher::new();
+    h.f32(d.bounds_origin.0[0]);
+    h.f32(d.bounds_origin.0[1]);
+    h.f32(d.camera_position.0[0]);
+    h.f32(d.camera_position.0[1]);
+    h.f32(d.camera_zoom);
+    h.f32(d.scale_factor);
+    h.u32(d.entry_count);
+    h.u32(d.entry_start);
+    h.u32(d.grid_cols);
+    h.u32(d.grid_rows);
+    h.u32(d.tile_base);
+    h.u32(d.coarse_cols);
+    h.u32(d.coarse_rows);
+    h.u32(d.coarse_base);
+    for t in d.tilings {
+        h.u32(t);
+    }
+    h.0
+}
+
 /// Folds a [`Style`]'s geometry-relevant recipe (stops, pattern, transfer, df) into
 /// `h`. Used by [`SdfPrimitive::geometry_hash`] to detect whether a primitive's
 /// compiled output would differ from last frame - so the camera/time are NOT here.
@@ -313,15 +348,38 @@ impl Default for SdfPrimitive {
 /// frame: its geometry hash plus the exact ranges it occupies. A primitive at the
 /// same slot whose hash matches AND whose buffer cursors line up with these starts
 /// reuses the resident data (no eval/upload) by skipping over the ranges.
+///
+/// Slots are POSITIONAL (prepare order), and reuse is additionally coupled to the
+/// buffer cursors because the geometry buffers are packed front-to-back each
+/// frame. Keying slots by content hash alone would NOT survive a reorder (e.g.
+/// the selection-driven z-resort): the resident bytes would sit at the wrong
+/// offsets, and entries reference segments/styles of OTHER primitives by
+/// absolute index (cross-primitive instancing + style dedup), so relocating a
+/// block requires reference fix-ups. Order-independent reuse therefore needs
+/// stable arena residency for segment/entry/style blocks - future work, planned
+/// with the scatter-binning index.
 #[derive(Clone, Copy)]
 struct SlotState {
     geom_hash: u64,
+    /// The draw slot the primitive occupied. The scatter lists embed the draw
+    /// index, so reuse requires the same slot (an empty primitive earlier in
+    /// the order shifts draw indices without moving any buffer cursor).
+    draw_slot: u32,
     seg_start: u32,
     seg_count: u32,
     entry_start: u32,
     entry_count: u32,
     style_start: u32,
     style_count: u32,
+    /// Scatter-list ranges (u32 elements: pairs are triples, closed are 2-tuples).
+    pair_start: u32,
+    pair_count: u32,
+    closed_start: u32,
+    closed_count: u32,
+    /// The primitive's tiling entry ids (sentinel-padded); under reuse the
+    /// compile loop never runs, so the ids for `DrawData.tilings` come from
+    /// here.
+    tilings: [u32; TILING_RESERVE as usize],
 }
 
 pub struct SdfPipeline {
@@ -332,11 +390,22 @@ pub struct SdfPipeline {
     segments_buffer: buffer::Buffer<types::GpuSegment>,
     styles_buffer: buffer::Buffer<types::GpuStyle>,
     // Two-level spatial index. Coarse (64px) tiles hold the (segment, entry)
-    // results; fine (16px) tiles hold 8-bit indices into the parent coarse tile.
+    // results; fine (16px) tiles hold 16-bit indices into the parent coarse tile.
     coarse_counts_buffer: iced::wgpu::Buffer,
     coarse_slots_buffer: iced::wgpu::Buffer,
     fine_counts_buffer: iced::wgpu::Buffer,
     fine_slots_buffer: iced::wgpu::Buffer,
+    /// Scatter work lists (see plan/scatter-binning.md): flat u32 lists with
+    /// the same clear/skip/push_bulk slot-reuse lifecycle as the geometry
+    /// buffers. `cull_pairs` holds (draw, entry, segment) triples of open
+    /// entries; `cull_closed` holds (draw, entry) pairs of closed entries.
+    /// Tiling entry ids ride inside `DrawData` (no extra storage binding).
+    cull_pairs_buffer: buffer::Buffer<u32>,
+    cull_closed_buffer: buffer::Buffer<u32>,
+    /// Live scatter-list element counts for the kernels ([triples, pairs]),
+    /// written once per culled frame (`arrayLength` reports capacity, not the
+    /// live length).
+    cull_meta_buffer: iced::wgpu::Buffer,
     fine_capacity: u32,
     coarse_capacity: u32,
     /// Hard ceilings so neither slot binding exceeds the device's
@@ -350,8 +419,14 @@ pub struct SdfPipeline {
     // Bind groups
     render_group0: BindGroup,
     compute_group0: BindGroup,
-    compute_group1: BindGroup,
-    bind_group_gens: (u64, u64, u64, u64, u64), // draws, entries, segments, styles, spatial
+    /// Per-kernel group-1 bind groups: the compute stage must stay within the
+    /// WebGPU spec-default 8 storage buffers per stage, so each kernel binds
+    /// only its own 4 group-1 buffers (group 0 holds the other 4).
+    scatter_open_group1: BindGroup,
+    scatter_closed_group1: BindGroup,
+    sort_group1: BindGroup,
+    // draws, entries, segments, styles, spatial, pairs, closed
+    bind_group_gens: (u64, u64, u64, u64, u64, u64, u64),
     // Frame state
     total_fine_tiles: u32,
     total_coarse_tiles: u32,
@@ -389,6 +464,20 @@ pub struct SdfPipeline {
     /// primitives compare against to skip re-evaluating unchanged geometry. A slot
     /// holds `None` until first written; structural changes overwrite it.
     slots: Vec<Option<SlotState>>,
+    /// Per draw-slot cull key of the LAST frame (see [`cull_key`]): every
+    /// `DrawData` field except `time`. Survives `trim`; compared during
+    /// `prepare` to detect whether the resident spatial index is still valid.
+    prev_cull_keys: Vec<u64>,
+    /// Set when any prepare this frame invalidates the resident spatial index:
+    /// a geometry rebuild (buffer bytes changed or moved), a cull-key mismatch
+    /// (camera, viewport, grid, entry ranges, new draw slot), or an
+    /// index-buffer regrowth. Cleared in `trim`; read by
+    /// `run_deferred_compute`, which SKIPS the whole cull dispatch while the
+    /// index is valid (idle redraws and time-only animation frames).
+    cull_dirty: bool,
+    /// Set by the FIRST rebuild of a frame; poisons slot reuse for every
+    /// later prepare (see the reuse-filter comment). Cleared in `trim`.
+    frame_rebuilt: bool,
 }
 
 /// The two-level index buffers, in bind order for compute group 1:
@@ -502,7 +591,42 @@ fn create_compute_group0(
     })
 }
 
-fn create_compute_group1(
+/// Group 1 for the scatter kernels: coarse outputs + the kernel's work list
+/// (open triples or closed pairs) + the live-count meta buffer.
+fn create_scatter_group1(
+    device: &Device,
+    shared: &SharedSdfResources,
+    coarse_counts: &iced::wgpu::Buffer,
+    coarse_slots: &iced::wgpu::Buffer,
+    cull_list: &buffer::Buffer<u32>,
+    cull_meta: &iced::wgpu::Buffer,
+) -> BindGroup {
+    device.create_bind_group(&BindGroupDescriptor {
+        label: Some("sdf_scatter_g1"),
+        layout: &shared.compute_scatter_group1_layout,
+        entries: &[
+            BindGroupEntry {
+                binding: 0,
+                resource: coarse_counts.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: coarse_slots.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: cull_list.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 3,
+                resource: cull_meta.as_entire_binding(),
+            },
+        ],
+    })
+}
+
+/// Group 1 for the sort/fine kernel: coarse outputs + fine outputs.
+fn create_sort_group1(
     device: &Device,
     shared: &SharedSdfResources,
     coarse_counts: &iced::wgpu::Buffer,
@@ -511,8 +635,8 @@ fn create_compute_group1(
     fine_slots: &iced::wgpu::Buffer,
 ) -> BindGroup {
     device.create_bind_group(&BindGroupDescriptor {
-        label: Some("sdf_compute_g1"),
-        layout: &shared.compute_group1_layout,
+        label: Some("sdf_sort_g1"),
+        layout: &shared.compute_sort_group1_layout,
         entries: &[
             BindGroupEntry {
                 binding: 0,
@@ -543,6 +667,14 @@ impl Pipeline for SdfPipeline {
         let entries_buffer = buffer::Buffer::new(device, Some("sdf_entries"), usage);
         let segments_buffer = buffer::Buffer::new(device, Some("sdf_segments"), usage);
         let styles_buffer = buffer::Buffer::new(device, Some("sdf_styles"), usage);
+        let cull_pairs_buffer = buffer::Buffer::new(device, Some("sdf_cull_pairs"), usage);
+        let cull_closed_buffer = buffer::Buffer::new(device, Some("sdf_cull_closed"), usage);
+        let cull_meta_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("sdf_cull_meta"),
+            size: 8,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         let (coarse_counts_buffer, coarse_slots_buffer, fine_counts_buffer, fine_slots_buffer) =
             create_index_buffers(device, 256, 64);
@@ -566,7 +698,23 @@ impl Pipeline for SdfPipeline {
             &segments_buffer,
             &styles_buffer,
         );
-        let compute_group1 = create_compute_group1(
+        let scatter_open_group1 = create_scatter_group1(
+            device,
+            &shared,
+            &coarse_counts_buffer,
+            &coarse_slots_buffer,
+            &cull_pairs_buffer,
+            &cull_meta_buffer,
+        );
+        let scatter_closed_group1 = create_scatter_group1(
+            device,
+            &shared,
+            &coarse_counts_buffer,
+            &coarse_slots_buffer,
+            &cull_closed_buffer,
+            &cull_meta_buffer,
+        );
+        let sort_group1 = create_sort_group1(
             device,
             &shared,
             &coarse_counts_buffer,
@@ -582,6 +730,9 @@ impl Pipeline for SdfPipeline {
             entries_buffer,
             segments_buffer,
             styles_buffer,
+            cull_pairs_buffer,
+            cull_closed_buffer,
+            cull_meta_buffer,
             coarse_counts_buffer,
             coarse_slots_buffer,
             fine_counts_buffer,
@@ -594,8 +745,10 @@ impl Pipeline for SdfPipeline {
             spatial_index_gen: 0,
             render_group0,
             compute_group0,
-            compute_group1,
-            bind_group_gens: (0, 0, 0, 0, 0),
+            scatter_open_group1,
+            scatter_closed_group1,
+            sort_group1,
+            bind_group_gens: (0, 0, 0, 0, 0, 0, 0),
             total_fine_tiles: 0,
             total_coarse_tiles: 0,
             pending_dispatches: Mutex::new(Vec::new()),
@@ -608,6 +761,9 @@ impl Pipeline for SdfPipeline {
             frame_shape_slots: HashMap::new(),
             frame_style_slots: HashMap::new(),
             slots: Vec::new(),
+            prev_cull_keys: Vec::new(),
+            cull_dirty: true,
+            frame_rebuilt: false,
         }
     }
 
@@ -620,19 +776,25 @@ impl Pipeline for SdfPipeline {
         self.frame_stats.cache_hits = self.shape_cache.hits();
         self.frame_stats.cache_misses = self.shape_cache.misses();
         self.frame_stats.cache_hit_rate = self.shape_cache.hit_rate();
-        if let Ok(mut s) = LAST_STATS.lock() {
-            *s = self.frame_stats.clone();
-        }
+        self.frame_stats.cull_skipped = !self.cull_dirty;
+        *LAST_STATS.lock() = self.frame_stats.clone();
         self.frame_stats = types::SdfStats::default();
+        // Stale tail keys of a shrunken draw set must not validate a later,
+        // larger frame's slots.
+        self.prev_cull_keys.truncate(self.draw_data_buffer.len());
+        self.cull_dirty = false;
+        self.frame_rebuilt = false;
         self.draw_data_buffer.clear();
         self.entries_buffer.clear();
         self.segments_buffer.clear();
         self.styles_buffer.clear();
+        self.cull_pairs_buffer.clear();
+        self.cull_closed_buffer.clear();
         self.frame_shape_slots.clear();
         self.frame_style_slots.clear();
         self.total_fine_tiles = 0;
         self.total_coarse_tiles = 0;
-        self.pending_dispatches.get_mut().unwrap().clear();
+        self.pending_dispatches.get_mut().clear();
         self.compute_submitted
             .store(false, std::sync::atomic::Ordering::Relaxed);
     }
@@ -653,6 +815,20 @@ impl SdfPipeline {
         pass.pop_debug_group();
     }
 
+    /// Records `key` (see [`cull_key`]) for draw slot `slot`, marking the
+    /// resident spatial index dirty on any mismatch - a new slot or a changed
+    /// DrawData-sans-time. Called once per prepare, so an unchanged frame
+    /// leaves `cull_dirty` false and the cull dispatch is skipped.
+    fn note_cull_key(&mut self, slot: usize, key: u64) {
+        if self.prev_cull_keys.get(slot).copied() != Some(key) {
+            self.cull_dirty = true;
+            if slot >= self.prev_cull_keys.len() {
+                self.prev_cull_keys.resize(slot + 1, 0);
+            }
+            self.prev_cull_keys[slot] = key;
+        }
+    }
+
     /// Runs every cull dispatch recorded this frame in ONE encoder + ONE submit.
     /// Called once, from the first `draw` (all prepares are complete, so the buffers
     /// are final). Replaces the former one-submit-per-primitive path, whose
@@ -662,41 +838,75 @@ impl SdfPipeline {
         else {
             return;
         };
-        let dispatches = self.pending_dispatches.lock().unwrap();
-        if !dispatches.is_empty() {
-            let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
-                label: Some("sdf_compute_batch"),
+        // Resident-index skip: when no prepare this frame invalidated the
+        // spatial index (geometry, cameras, viewports and grids all unchanged -
+        // an idle redraw or a time-only animation frame), the buffers still
+        // hold last frame's exact cull result and the dispatch is skipped.
+        if !self.cull_dirty {
+            return;
+        }
+        let dispatches = self.pending_dispatches.lock();
+        if dispatches.is_empty() {
+            return;
+        }
+        // Live scatter-list lengths for the kernels; `arrayLength` would report
+        // buffer capacity.
+        let pair_triples = (self.cull_pairs_buffer.len() / 3) as u32;
+        let closed_pairs = (self.cull_closed_buffer.len() / 2) as u32;
+        let mut meta = [0u8; 8];
+        meta[..4].copy_from_slice(&pair_triples.to_le_bytes());
+        meta[4..].copy_from_slice(&closed_pairs.to_le_bytes());
+        queue.write_buffer(&self.cull_meta_buffer, 0, &meta);
+
+        let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
+            label: Some("sdf_compute_batch"),
+        });
+        // The scatter kernels append via atomicAdd; the per-tile counts must
+        // start at zero. Clearing the whole buffer is cheaper than tracking the
+        // used range and the slots themselves need no clear (bounded by count).
+        encoder.clear_buffer(&self.coarse_counts_buffer, 0, None);
+        {
+            let mut pass = encoder.begin_compute_pass(&iced::wgpu::ComputePassDescriptor {
+                label: Some("sdf_spatial_index"),
+                timestamp_writes: None,
             });
-            {
-                let mut pass = encoder.begin_compute_pass(&iced::wgpu::ComputePassDescriptor {
-                    label: Some("sdf_spatial_index"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&self.shared.compute_pipeline);
-                pass.set_bind_group(0, &self.compute_group0, &[]);
-                pass.set_bind_group(1, &self.compute_group1, &[]);
-                // One dispatch for the whole frame: the z-axis is the draw index
-                // (read as workgroup_id.z), so each draw selects its own DrawData
-                // without a per-draw uniform. x/y are sized to the LARGEST draw
-                // grid; smaller draws' surplus workgroups self-abort at the grid
-                // bound (`col/row >= grid_cols/rows`). z spans every draw, so the
-                // few non-culled slots (empty/blit) get a layer that returns at
-                // once. z is bounded by maxComputeWorkgroupsPerDimension (65535).
-                let max_cols = dispatches.iter().map(|&(c, _)| c).max().unwrap_or(0);
-                let max_rows = dispatches.iter().map(|&(_, r)| r).max().unwrap_or(0);
-                let draw_count = self.draw_data_buffer.len() as u32;
-                // One workgroup per 64px coarse tile (workgroup_size 4x4 = one
-                // thread per fine tile). ceil(max fine grid / 4) covers the
-                // largest draw's coarse grid; smaller draws' surplus workgroups
-                // self-abort at `wid >= coarse_cols/rows`.
+            pass.set_bind_group(0, &self.compute_group0, &[]);
+            // Storage writes are ordered between dispatches of one pass, so the
+            // sort kernel sees every scattered slot. Each kernel binds its own
+            // group 1 (8-storage-buffers-per-stage limit, see the WGSL).
+            //
+            // Work-item dispatches are 1D flattened; x is capped at 65535
+            // workgroups and y extends it (see `scatter_flat_id`).
+            if pair_triples > 0 {
+                let wgs = pair_triples.div_ceil(64);
+                pass.set_pipeline(&self.shared.scatter_open_pipeline);
+                pass.set_bind_group(1, &self.scatter_open_group1, &[]);
+                pass.dispatch_workgroups(wgs.min(65535), wgs.div_ceil(65535), 1);
+            }
+            if closed_pairs > 0 {
+                // One workgroup per closed entry.
+                pass.set_pipeline(&self.shared.scatter_closed_pipeline);
+                pass.set_bind_group(1, &self.scatter_closed_group1, &[]);
+                pass.dispatch_workgroups(closed_pairs.min(65535), closed_pairs.div_ceil(65535), 1);
+            }
+            // Sort + fine re-cull: one workgroup per coarse tile. The z-axis is
+            // the draw index (read as workgroup_id.z); x/y are sized to the
+            // LARGEST draw grid, smaller draws' surplus workgroups self-abort at
+            // the grid bound. z is bounded by maxComputeWorkgroupsPerDimension.
+            let max_cols = dispatches.iter().map(|&(c, _)| c).max().unwrap_or(0);
+            let max_rows = dispatches.iter().map(|&(_, r)| r).max().unwrap_or(0);
+            let draw_count = self.draw_data_buffer.len() as u32;
+            if max_cols > 0 && max_rows > 0 && draw_count > 0 {
+                pass.set_pipeline(&self.shared.sort_fine_pipeline);
+                pass.set_bind_group(1, &self.sort_group1, &[]);
                 pass.dispatch_workgroups(
                     max_cols.div_ceil(COARSE_FACTOR),
                     max_rows.div_ceil(COARSE_FACTOR),
                     draw_count,
                 );
             }
-            queue.submit(std::iter::once(encoder.finish()));
         }
+        queue.submit(std::iter::once(encoder.finish()));
     }
 }
 
@@ -712,11 +922,19 @@ impl Primitive for SdfPrimitive {
         viewport: &Viewport,
     ) {
         if self.entries.is_empty() {
-            self.draw_slot
-                .store(pipeline.draw_data_buffer.len() as u32, Ordering::Relaxed);
-            let _ = pipeline
-                .draw_data_buffer
-                .push(device, queue, types::DrawData::default());
+            let draw_index = pipeline.draw_data_buffer.len() as u32;
+            self.draw_slot.store(draw_index, Ordering::Relaxed);
+            // Invalidate the slot record: while this primitive is empty, later
+            // primitives pack shifted-down and overwrite its resident ranges,
+            // so a later frame with the old content must NOT stale-match
+            // (`Buffer::skip` reclaims by LENGTH, not content).
+            if let Some(s) = pipeline.slots.get_mut(draw_index as usize) {
+                *s = None;
+            }
+            // `DrawData::default()` carries sentinel tiling ids.
+            let dd = types::DrawData::default();
+            pipeline.note_cull_key(draw_index as usize, cull_key(&dd));
+            let _ = pipeline.draw_data_buffer.push(device, queue, dd);
             return;
         }
 
@@ -725,6 +943,8 @@ impl Primitive for SdfPrimitive {
         let entry_start = pipeline.entries_buffer.len() as u32;
         let seg_start = pipeline.segments_buffer.len() as u32;
         let style_start = pipeline.styles_buffer.len() as u32;
+        let pair_start = pipeline.cull_pairs_buffer.len() as u32;
+        let closed_start = pipeline.cull_closed_buffer.len() as u32;
         let draw_slot = pipeline.draw_data_buffer.len();
 
         // Skip the whole geometry rebuild when this slot's primitive is byte-for-
@@ -732,6 +952,15 @@ impl Primitive for SdfPrimitive {
         // wrote then (so no earlier primitive shifted the packed offsets). The
         // resident segments/entries/styles are then reused in place - no eval, no
         // upload - by advancing the cursors over them.
+        //
+        // `!frame_rebuilt` guards cross-primitive references: instancing and
+        // style dedup make a later primitive's resident entries point into an
+        // EARLIER primitive's segment/style ranges by absolute index. An
+        // earlier rebuild with unchanged counts leaves every cursor aligned
+        // while replacing the referenced bytes (a recolor or resize keeps the
+        // segment count), so the first rebuild of a frame poisons reuse for
+        // every later slot. Order-independent reuse needs arena residency
+        // (plan/arena-residency.md).
         let geom_hash = self.geometry_hash();
         let reuse = pipeline
             .slots
@@ -739,17 +968,32 @@ impl Primitive for SdfPrimitive {
             .copied()
             .flatten()
             .filter(|s| {
-                s.geom_hash == geom_hash
+                !pipeline.frame_rebuilt
+                    && s.geom_hash == geom_hash
+                    && s.draw_slot == draw_slot as u32
                     && s.seg_start == seg_start
                     && s.entry_start == entry_start
                     && s.style_start == style_start
+                    && s.pair_start == pair_start
+                    && s.closed_start == closed_start
             });
 
+        // The draw's tiling entry ids for `DrawData.tilings`: recorded by the
+        // compile loop on rebuild, replayed from the slot record under reuse.
+        let dd_tilings;
         if let Some(s) = reuse {
             pipeline.segments_buffer.skip(s.seg_count as usize);
             pipeline.entries_buffer.skip(s.entry_count as usize);
             pipeline.styles_buffer.skip(s.style_count as usize);
+            pipeline.cull_pairs_buffer.skip(s.pair_count as usize);
+            pipeline.cull_closed_buffer.skip(s.closed_count as usize);
+            dd_tilings = s.tilings;
         } else {
+            // The resident spatial index references the old buffer contents;
+            // a rebuild changes (or moves) them, so the cull must rerun - and
+            // every LATER slot's reuse is off the table (see the reuse filter).
+            pipeline.cull_dirty = true;
+            pipeline.frame_rebuilt = true;
             // Accumulate this primitive's GPU data, then upload each buffer in ONE
             // bulk write. The old per-entry pushes issued ~3 `queue.write_buffer`
             // calls per entry (1500+ per frame for 500 nodes) - that submission
@@ -760,6 +1004,9 @@ impl Primitive for SdfPrimitive {
             seg_batch.clear();
             let mut style_batch: Vec<types::GpuStyle> = Vec::with_capacity(self.entries.len());
             let mut entry_batch: Vec<types::GpuDrawEntry> = Vec::with_capacity(self.entries.len());
+            let mut pair_batch: Vec<u32> = Vec::new();
+            let mut closed_batch: Vec<u32> = Vec::new();
+            let mut tiling_ids = [CULL_SENTINEL; TILING_RESERVE as usize];
 
             for (i, entry) in self.entries.iter().enumerate() {
                 let segment_offset = seg_base + seg_batch.len() as u32;
@@ -816,6 +1063,28 @@ impl Primitive for SdfPrimitive {
                             style_batch.push(gpu_style);
                             idx
                         });
+                // Scatter work-list classification (see plan/scatter-binning.md):
+                // tilings ride per-draw, closed entries go to the interior-aware
+                // kernel, open entries expand to per-segment triples. Indices are
+                // ABSOLUTE, so instanced entries reference the shared range.
+                let entry_abs = entry_start + i as u32;
+                if gpu_entry.entry_type == ENTRY_TILING {
+                    if let Some(slot) = tiling_ids.iter_mut().find(|t| **t == CULL_SENTINEL) {
+                        *slot = entry_abs;
+                    } else {
+                        debug_assert!(
+                            false,
+                            "more than {TILING_RESERVE} tiling entries in one primitive",
+                        );
+                    }
+                } else if gpu_entry.flags & FLAG_CLOSED != 0 {
+                    closed_batch.extend_from_slice(&[draw_slot as u32, entry_abs]);
+                } else {
+                    let seg_end = gpu_entry.segment_start + gpu_entry.segment_count;
+                    for s in gpu_entry.segment_start..seg_end {
+                        pair_batch.extend_from_slice(&[draw_slot as u32, entry_abs, s]);
+                    }
+                }
                 entry_batch.push(gpu_entry);
             }
 
@@ -828,23 +1097,36 @@ impl Primitive for SdfPrimitive {
             let _ = pipeline
                 .entries_buffer
                 .push_bulk(device, queue, &entry_batch);
+            let _ = pipeline
+                .cull_pairs_buffer
+                .push_bulk(device, queue, &pair_batch);
+            let _ = pipeline
+                .cull_closed_buffer
+                .push_bulk(device, queue, &closed_batch);
             seg_batch.clear();
             pipeline.segment_scratch = seg_batch; // restore the reused allocation
 
             // Record what this slot now occupies so a later frame can reuse it.
             let state = SlotState {
                 geom_hash,
+                draw_slot: draw_slot as u32,
                 seg_start,
                 seg_count: pipeline.segments_buffer.len() as u32 - seg_start,
                 entry_start,
                 entry_count: pipeline.entries_buffer.len() as u32 - entry_start,
                 style_start,
                 style_count: pipeline.styles_buffer.len() as u32 - style_start,
+                pair_start,
+                pair_count: pipeline.cull_pairs_buffer.len() as u32 - pair_start,
+                closed_start,
+                closed_count: pipeline.cull_closed_buffer.len() as u32 - closed_start,
+                tilings: tiling_ids,
             };
             if draw_slot >= pipeline.slots.len() {
                 pipeline.slots.resize(draw_slot + 1, None);
             }
             pipeline.slots[draw_slot] = Some(state);
+            dd_tilings = tiling_ids;
         }
 
         let entry_count = self.entries.len() as u32;
@@ -908,6 +1190,8 @@ impl Primitive for SdfPrimitive {
             pipeline.fine_capacity = new_fine;
             pipeline.coarse_capacity = new_coarse;
             pipeline.spatial_index_gen += 1;
+            // The recreated index buffers no longer hold last frame's result.
+            pipeline.cull_dirty = true;
         }
 
         // This draw's index into the DrawData buffer. The batched cull reads it
@@ -916,27 +1200,24 @@ impl Primitive for SdfPrimitive {
         let draw_index = pipeline.draw_data_buffer.len() as u32; // index after push
         self.draw_slot.store(draw_index, Ordering::Relaxed);
 
-        // Push DrawData
-        let _ = pipeline.draw_data_buffer.push(
-            device,
-            queue,
-            types::DrawData {
-                bounds_origin: grid_origin,
-                camera_position: camera_pos,
-                camera_zoom: self.camera_zoom,
-                scale_factor: scale,
-                time: self.time,
-                entry_count,
-                entry_start,
-                grid_cols,
-                grid_rows,
-                tile_base,
-                coarse_cols,
-                coarse_rows,
-                coarse_base,
-                _pad0: 0,
-            },
-        );
+        let dd = types::DrawData {
+            bounds_origin: grid_origin,
+            camera_position: camera_pos,
+            camera_zoom: self.camera_zoom,
+            scale_factor: scale,
+            time: self.time,
+            entry_count,
+            entry_start,
+            grid_cols,
+            grid_rows,
+            tile_base,
+            coarse_cols,
+            coarse_rows,
+            coarse_base,
+            tilings: dd_tilings,
+        };
+        pipeline.note_cull_key(draw_index as usize, cull_key(&dd));
+        let _ = pipeline.draw_data_buffer.push(device, queue, dd);
 
         // Recreate bind groups if any buffer generation changed
         let gens = (
@@ -945,6 +1226,8 @@ impl Primitive for SdfPrimitive {
             pipeline.segments_buffer.generation(),
             pipeline.styles_buffer.generation(),
             pipeline.spatial_index_gen,
+            pipeline.cull_pairs_buffer.generation(),
+            pipeline.cull_closed_buffer.generation(),
         );
         if gens != pipeline.bind_group_gens {
             pipeline.render_group0 = create_render_group0(
@@ -966,7 +1249,23 @@ impl Primitive for SdfPrimitive {
                 &pipeline.segments_buffer,
                 &pipeline.styles_buffer,
             );
-            pipeline.compute_group1 = create_compute_group1(
+            pipeline.scatter_open_group1 = create_scatter_group1(
+                device,
+                &pipeline.shared,
+                &pipeline.coarse_counts_buffer,
+                &pipeline.coarse_slots_buffer,
+                &pipeline.cull_pairs_buffer,
+                &pipeline.cull_meta_buffer,
+            );
+            pipeline.scatter_closed_group1 = create_scatter_group1(
+                device,
+                &pipeline.shared,
+                &pipeline.coarse_counts_buffer,
+                &pipeline.coarse_slots_buffer,
+                &pipeline.cull_closed_buffer,
+                &pipeline.cull_meta_buffer,
+            );
+            pipeline.sort_group1 = create_sort_group1(
                 device,
                 &pipeline.shared,
                 &pipeline.coarse_counts_buffer,
@@ -983,7 +1282,6 @@ impl Primitive for SdfPrimitive {
         pipeline
             .pending_dispatches
             .get_mut()
-            .unwrap()
             .push((grid_cols, grid_rows));
         if pipeline.frame_queue.is_none() {
             pipeline.frame_device = Some(device.clone());

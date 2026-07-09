@@ -89,8 +89,12 @@ impl<T: ShaderSize> Buffer<T> {
         let required_size = self.live_len * item_size;
 
         if self.buffer_wgpu.size() < required_size as u64 {
-            let new_size = ((required_size as f32 * BUFFER_GROWTH_FACTOR) as u64)
-                .max((BUFFER_MIN_ITEMS * T::SHADER_SIZE.get() as usize) as u64);
+            // Align up to 4: 1.5x growth of a 4-aligned size is not always
+            // 4-aligned (e.g. 132 -> 198), and storage bindings require it.
+            let new_size = (((required_size as f32 * BUFFER_GROWTH_FACTOR) as u64)
+                .max((BUFFER_MIN_ITEMS * T::SHADER_SIZE.get() as usize) as u64)
+                + 3)
+                & !3;
             self.buffer_wgpu = create_wgpu_buffer(device, self.label, new_size, self.usage);
             self.generation += 1;
             self.rewrite_all(queue);
@@ -155,8 +159,11 @@ impl<T: ShaderSize> Buffer<T> {
         let required_size = self.live_len * item_size;
 
         if self.buffer_wgpu.size() < required_size as u64 {
-            let new_size = ((required_size as f32 * BUFFER_GROWTH_FACTOR) as u64)
-                .max((BUFFER_MIN_ITEMS * T::SHADER_SIZE.get() as usize) as u64);
+            // Align up to 4 (see `push`).
+            let new_size = (((required_size as f32 * BUFFER_GROWTH_FACTOR) as u64)
+                .max((BUFFER_MIN_ITEMS * T::SHADER_SIZE.get() as usize) as u64)
+                + 3)
+                & !3;
             self.buffer_wgpu = create_wgpu_buffer(device, self.label, new_size, self.usage);
             self.generation += 1;
             self.rewrite_all(queue);

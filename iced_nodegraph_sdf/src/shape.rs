@@ -18,6 +18,11 @@
 //!
 //! Hashes COMPOSE: a shape's hash is a pure function of its sub-expression
 //! hashes, so `base - union(cuts)` shared across nodes shares a cache slot.
+//!
+//! Hashing happens INCREMENTALLY: each constructor and operator runs one
+//! FNV-1a pass over its own opcode/operands and folds in the already-computed
+//! `hash` of every child `Shape`, so `Shape::hash` is an O(1) field read, never
+//! a tree walk.
 
 use std::collections::HashMap;
 use std::f32::consts::FRAC_PI_2;
@@ -27,28 +32,16 @@ use crate::curve::Curve;
 use crate::drawable::Drawable;
 use crate::tiling::Tiling;
 
-/// A position-free geometry definition: the single input to the renderer. A
-/// `Shape` is an expression tree of primitives (`RoundedBox`, `Circle`, the open
-/// strokes `Line`/`Bezier`/`Arc`, the degenerate `Point`, and `Tiling`) and
-/// operations (`Translate`, and the booleans `Difference`, `Union`,
-/// `Intersection`), built in a LOCAL frame. World placement is a
-/// SEPARATE per-instance translate passed to `push` - so two identical shapes at
-/// different positions share one cache slot (they hash equal).
-///
-/// Build with constructors + operators, exactly as authored:
-/// ```
-/// use iced_nodegraph_sdf::Shape;
-/// let body = Shape::rounded_box([200.0, 120.0], [8.0; 4]);
-/// let pin0 = Shape::circle(5.0).translate([0.0, 30.0]);
-/// let pin1 = Shape::circle(5.0).translate([0.0, 90.0]);
-/// let node = body - pin0 - pin1; // `-` = Difference, left-associative
-/// ```
-///
-/// Origins: every primitive is centred on the local origin (`RoundedBox` spans
-/// `-size/2 .. size/2`, `Circle` is centred) - placement and pin offsets are then
-/// symmetric, which keeps coordinates small and float-precise.
+/// A position-free geometry recipe: an expression tree of primitives
+/// (`RoundedBox`, `Circle`, the open strokes `Line`/`Bezier`/`Arc`, the
+/// degenerate `Point`, and `Tiling`) and operations (`Translate`, and the
+/// booleans `Difference`, `Union`, `Intersection`), built in a LOCAL frame.
+/// Every operand of an operation variant is a [`Shape`] (never a bare
+/// `ShapeExpr`), so its already-computed hash is available to fold in
+/// without re-walking the subtree - see [`Shape`] for the incremental
+/// hashing scheme.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Shape {
+pub(crate) enum ShapeExpr {
     /// Rounded box centred on the local origin (spanning `-size/2 .. size/2`).
     /// `radii` are the four corner radii: `[top_left, top_right, bottom_right,
     /// bottom_left]`.
@@ -66,7 +59,7 @@ pub enum Shape {
     },
     /// Open circular arc stroke: `sweep` radians of a circle of `radius` about
     /// `center`, starting at angle `start`. Unlike the centred primitives this
-    /// carries its `center` directly (like [`Shape::Line`]).
+    /// carries its `center` directly (like [`ShapeExpr::Line`]).
     Arc {
         center: [f32; 2],
         radius: f32,
@@ -90,24 +83,82 @@ pub enum Shape {
     Intersection(Box<Shape>, Box<Shape>),
 }
 
+/// A position-free geometry definition: the single input to the renderer. A
+/// `Shape` pairs a `ShapeExpr` recipe with its content-addressed `hash`,
+/// folded INCREMENTALLY as the recipe is built - every constructor and
+/// operator below runs one FNV-1a pass over its own opcode/operands plus its
+/// children's already-computed hashes, so [`Shape::hash`] is an O(1) field
+/// read, never a tree walk. World placement is a SEPARATE per-instance
+/// translate passed to `push` - so two identical shapes at different
+/// positions share one cache slot (they hash equal).
+///
+/// Build with constructors + operators, exactly as authored:
+/// ```
+/// use iced_nodegraph_sdf::Shape;
+/// let body = Shape::rounded_box([200.0, 120.0], [8.0; 4]);
+/// let pin0 = Shape::circle(5.0).translate([0.0, 30.0]);
+/// let pin1 = Shape::circle(5.0).translate([0.0, 90.0]);
+/// let node = body - pin0 - pin1; // `-` = Difference, left-associative
+/// ```
+///
+/// Origins: every primitive is centred on the local origin (`RoundedBox` spans
+/// `-size/2 .. size/2`, `Circle` is centred) - placement and pin offsets are then
+/// symmetric, which keeps coordinates small and float-precise.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Shape {
+    hash: u64,
+    expr: ShapeExpr,
+}
+
 impl Shape {
+    /// The recipe tree. `pub(crate)` so `evaluate`/`is_cacheable` (and any
+    /// future in-crate consumer) can match on it; never exposed outside the
+    /// crate, so external code stays limited to constructors/operators/the
+    /// `hash`/`evaluate`/`is_cacheable`/`translate` methods.
+    pub(crate) fn expr(&self) -> &ShapeExpr {
+        &self.expr
+    }
+
     /// Rounded box with its top-left corner at the local origin and per-corner
     /// `radii` `[top_left, top_right, bottom_right, bottom_left]`.
     pub fn rounded_box(size: impl Into<[f32; 2]>, radii: impl Into<[f32; 4]>) -> Self {
-        Shape::RoundedBox {
-            size: size.into(),
-            radii: radii.into(),
+        let size = size.into();
+        let radii = radii.into();
+        let mut h = Fnv::new();
+        h.write_u32(OP_ROUNDED_BOX);
+        h.write_f32(size[0]);
+        h.write_f32(size[1]);
+        for r in radii {
+            h.write_f32(r);
+        }
+        Shape {
+            hash: h.finish(),
+            expr: ShapeExpr::RoundedBox { size, radii },
         }
     }
     /// Circle of `radius`, centred on the local origin. Place it with `translate`.
     pub fn circle(radius: f32) -> Self {
-        Shape::Circle { radius }
+        let mut h = Fnv::new();
+        h.write_u32(OP_CIRCLE);
+        h.write_f32(radius);
+        Shape {
+            hash: h.finish(),
+            expr: ShapeExpr::Circle { radius },
+        }
     }
     /// Open straight segment from `a` to `b`.
     pub fn line(a: impl Into<[f32; 2]>, b: impl Into<[f32; 2]>) -> Self {
-        Shape::Line {
-            a: a.into(),
-            b: b.into(),
+        let a = a.into();
+        let b = b.into();
+        let mut h = Fnv::new();
+        h.write_u32(OP_LINE);
+        h.write_f32(a[0]);
+        h.write_f32(a[1]);
+        h.write_f32(b[0]);
+        h.write_f32(b[1]);
+        Shape {
+            hash: h.finish(),
+            expr: ShapeExpr::Line { a, b },
         }
     }
     /// Open cubic bezier through the four control points.
@@ -117,35 +168,80 @@ impl Shape {
         p2: impl Into<[f32; 2]>,
         p3: impl Into<[f32; 2]>,
     ) -> Self {
-        Shape::Bezier {
-            p0: p0.into(),
-            p1: p1.into(),
-            p2: p2.into(),
-            p3: p3.into(),
+        let p0 = p0.into();
+        let p1 = p1.into();
+        let p2 = p2.into();
+        let p3 = p3.into();
+        let mut h = Fnv::new();
+        h.write_u32(OP_BEZIER);
+        for p in [p0, p1, p2, p3] {
+            h.write_f32(p[0]);
+            h.write_f32(p[1]);
+        }
+        Shape {
+            hash: h.finish(),
+            expr: ShapeExpr::Bezier { p0, p1, p2, p3 },
         }
     }
     /// Open circular arc stroke: `sweep` radians of a circle of `radius` about
     /// `center`, starting at angle `start`.
     pub fn arc(center: impl Into<[f32; 2]>, radius: f32, start: f32, sweep: f32) -> Self {
-        Shape::Arc {
-            center: center.into(),
-            radius,
-            start,
-            sweep,
+        let center = center.into();
+        let mut h = Fnv::new();
+        h.write_u32(OP_ARC);
+        h.write_f32(center[0]);
+        h.write_f32(center[1]);
+        h.write_f32(radius);
+        h.write_f32(start);
+        h.write_f32(sweep);
+        Shape {
+            hash: h.finish(),
+            expr: ShapeExpr::Arc {
+                center,
+                radius,
+                start,
+                sweep,
+            },
         }
     }
     /// A single oriented point at the local origin (place it with `translate`);
     /// `heading` orients its distance field.
     pub fn point(heading: f32) -> Self {
-        Shape::Point { heading }
+        let mut h = Fnv::new();
+        h.write_u32(OP_POINT);
+        h.write_f32(heading);
+        Shape {
+            hash: h.finish(),
+            expr: ShapeExpr::Point { heading },
+        }
     }
     /// An infinite analytic background tiling (grid/dots/triangles/hex).
     pub fn tiling(tiling: Tiling) -> Self {
-        Shape::Tiling(tiling)
+        let mut h = Fnv::new();
+        h.write_u32(OP_TILING);
+        let (tt, params) = tiling.to_gpu();
+        h.write_u32(tt as u32);
+        for p in params {
+            h.write_f32(p);
+        }
+        Shape {
+            hash: h.finish(),
+            expr: ShapeExpr::Tiling(tiling),
+        }
     }
     /// This shape shifted by `offset` (an operation, returns a new `Shape`).
     pub fn translate(self, offset: impl Into<[f32; 2]>) -> Self {
-        Shape::Translate(Box::new(self), offset.into())
+        let offset = offset.into();
+        let mut h = Fnv::new();
+        h.write_u32(OP_TRANSLATE);
+        h.write_f32(offset[0]);
+        h.write_f32(offset[1]);
+        // Fold in the child's hash BEFORE moving it into the box.
+        h.write_u64(self.hash);
+        Shape {
+            hash: h.finish(),
+            expr: ShapeExpr::Translate(Box::new(self), offset),
+        }
     }
 }
 
@@ -153,21 +249,42 @@ impl std::ops::Sub for Shape {
     type Output = Shape;
     /// `a - b` = subtract `b` from `a`.
     fn sub(self, rhs: Shape) -> Shape {
-        Shape::Difference(Box::new(self), Box::new(rhs))
+        let mut h = Fnv::new();
+        h.write_u32(OP_DIFFERENCE);
+        h.write_u64(self.hash);
+        h.write_u64(rhs.hash);
+        Shape {
+            hash: h.finish(),
+            expr: ShapeExpr::Difference(Box::new(self), Box::new(rhs)),
+        }
     }
 }
 impl std::ops::BitOr for Shape {
     type Output = Shape;
     /// `a | b` = the union of `a` and `b` (set algebra).
     fn bitor(self, rhs: Shape) -> Shape {
-        Shape::Union(Box::new(self), Box::new(rhs))
+        let mut h = Fnv::new();
+        h.write_u32(OP_UNION);
+        h.write_u64(self.hash);
+        h.write_u64(rhs.hash);
+        Shape {
+            hash: h.finish(),
+            expr: ShapeExpr::Union(Box::new(self), Box::new(rhs)),
+        }
     }
 }
 impl std::ops::BitAnd for Shape {
     type Output = Shape;
     /// `a & b` = the intersection of `a` and `b`.
     fn bitand(self, rhs: Shape) -> Shape {
-        Shape::Intersection(Box::new(self), Box::new(rhs))
+        let mut h = Fnv::new();
+        h.write_u32(OP_INTERSECTION);
+        h.write_u64(self.hash);
+        h.write_u64(rhs.hash);
+        Shape {
+            hash: h.finish(),
+            expr: ShapeExpr::Intersection(Box::new(self), Box::new(rhs)),
+        }
     }
 }
 
@@ -227,140 +344,61 @@ impl Fnv {
 }
 
 impl Shape {
-    /// Mix this shape's op code, operands, and sub-hashes into `h`.
-    fn hash_into(&self, h: &mut Fnv) {
-        match self {
-            Shape::RoundedBox { size, radii } => {
-                h.write_u32(OP_ROUNDED_BOX);
-                h.write_f32(size[0]);
-                h.write_f32(size[1]);
-                for r in radii {
-                    h.write_f32(*r);
-                }
-            }
-            Shape::Circle { radius } => {
-                h.write_u32(OP_CIRCLE);
-                h.write_f32(*radius);
-            }
-            Shape::Line { a, b } => {
-                h.write_u32(OP_LINE);
-                h.write_f32(a[0]);
-                h.write_f32(a[1]);
-                h.write_f32(b[0]);
-                h.write_f32(b[1]);
-            }
-            Shape::Bezier { p0, p1, p2, p3 } => {
-                h.write_u32(OP_BEZIER);
-                for p in [p0, p1, p2, p3] {
-                    h.write_f32(p[0]);
-                    h.write_f32(p[1]);
-                }
-            }
-            Shape::Arc {
-                center,
-                radius,
-                start,
-                sweep,
-            } => {
-                h.write_u32(OP_ARC);
-                h.write_f32(center[0]);
-                h.write_f32(center[1]);
-                h.write_f32(*radius);
-                h.write_f32(*start);
-                h.write_f32(*sweep);
-            }
-            Shape::Point { heading } => {
-                h.write_u32(OP_POINT);
-                h.write_f32(*heading);
-            }
-            Shape::Tiling(t) => {
-                h.write_u32(OP_TILING);
-                let (tt, params) = t.to_gpu();
-                h.write_u32(tt as u32);
-                for p in params {
-                    h.write_f32(p);
-                }
-            }
-            Shape::Translate(inner, off) => {
-                h.write_u32(OP_TRANSLATE);
-                h.write_f32(off[0]);
-                h.write_f32(off[1]);
-                h.write_u64(inner.hash());
-            }
-            Shape::Difference(a, b) => {
-                h.write_u32(OP_DIFFERENCE);
-                // Compose: fold sub-hashes (each a pure function of its shape).
-                h.write_u64(a.hash());
-                h.write_u64(b.hash());
-            }
-            Shape::Union(a, b) => {
-                h.write_u32(OP_UNION);
-                h.write_u64(a.hash());
-                h.write_u64(b.hash());
-            }
-            Shape::Intersection(a, b) => {
-                h.write_u32(OP_INTERSECTION);
-                h.write_u64(a.hash());
-                h.write_u64(b.hash());
-            }
-        }
-    }
-
     /// Whether this shape is worth caching across frames. Only the expensive
     /// boolean re-stitch (`Difference`/`Union`/`Intersection`) is cached; bare
     /// primitives and open strokes evaluate cheaply and - for edges - change
     /// every frame, so they bypass the frame-surviving cache and never churn its
     /// LRU. `Translate` inherits its inner shape's cacheability.
     pub fn is_cacheable(&self) -> bool {
-        match self {
-            Shape::Difference(..) | Shape::Union(..) | Shape::Intersection(..) => true,
-            Shape::Translate(inner, _) => inner.is_cacheable(),
+        match self.expr() {
+            ShapeExpr::Difference(..) | ShapeExpr::Union(..) | ShapeExpr::Intersection(..) => true,
+            ShapeExpr::Translate(inner, _) => inner.is_cacheable(),
             _ => false,
         }
     }
 
-    /// Content-addressed hash of the DEFINITION (not the evaluated arcs).
-    /// Placement-stable: equal for two identical shapes at different positions.
+    /// Content-addressed hash of the DEFINITION (not the evaluated arcs),
+    /// folded incrementally by the constructors and operator impls above.
+    /// Placement-stable: equal for two identical shapes at different
+    /// positions. O(1): a cached field read, not a tree walk.
     pub fn hash(&self) -> u64 {
-        let mut h = Fnv::new();
-        self.hash_into(&mut h);
-        h.finish()
+        self.hash
     }
 
     /// Materialize the shape to local-frame geometry (the expensive step the
     /// cache stores). A left-associative `a - b - c` is flattened into one
     /// `difference_many` for a single clean re-stitch.
     pub fn evaluate(&self) -> Drawable {
-        match self {
-            Shape::RoundedBox { size, radii } => eval_rounded_box(*size, *radii),
-            Shape::Circle { radius } => Curve::circle([0.0, 0.0], *radius),
-            Shape::Line { a, b } => Curve::line(*a, *b),
-            Shape::Bezier { p0, p1, p2, p3 } => Curve::bezier(*p0, *p1, *p2, *p3),
-            Shape::Arc {
+        match self.expr() {
+            ShapeExpr::RoundedBox { size, radii } => eval_rounded_box(*size, *radii),
+            ShapeExpr::Circle { radius } => Curve::circle([0.0, 0.0], *radius),
+            ShapeExpr::Line { a, b } => Curve::line(*a, *b),
+            ShapeExpr::Bezier { p0, p1, p2, p3 } => Curve::bezier(*p0, *p1, *p2, *p3),
+            ShapeExpr::Arc {
                 center,
                 radius,
                 start,
                 sweep,
             } => Curve::arc_segment(*center, *radius, *start, *sweep),
-            Shape::Point { heading } => Curve::point([0.0, 0.0], *heading),
-            Shape::Tiling(t) => {
+            ShapeExpr::Point { heading } => Curve::point([0.0, 0.0], *heading),
+            ShapeExpr::Tiling(t) => {
                 let (tt, params) = t.to_gpu();
                 Drawable::new_tiling(tt, params)
             }
-            Shape::Translate(inner, off) => inner.evaluate().translated(off[0], off[1]),
-            Shape::Difference(_, _) => {
+            ShapeExpr::Translate(inner, off) => inner.evaluate().translated(off[0], off[1]),
+            ShapeExpr::Difference(_, _) => {
                 // Flatten the left-nested difference chain into base + cuts.
                 let mut cuts = Vec::new();
                 let mut node = self;
-                while let Shape::Difference(base, cut) = node {
+                while let ShapeExpr::Difference(base, cut) = node.expr() {
                     cuts.push(cut.evaluate());
                     node = base;
                 }
                 cuts.reverse();
                 boolean::difference_many(&node.evaluate(), &cuts)
             }
-            Shape::Union(a, b) => boolean::union(&a.evaluate(), &b.evaluate()),
-            Shape::Intersection(a, b) => boolean::intersection(&a.evaluate(), &b.evaluate()),
+            ShapeExpr::Union(a, b) => boolean::union(&a.evaluate(), &b.evaluate()),
+            ShapeExpr::Intersection(a, b) => boolean::intersection(&a.evaluate(), &b.evaluate()),
         }
     }
 }
