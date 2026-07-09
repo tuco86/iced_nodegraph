@@ -1,4 +1,6 @@
-# cargo-deny configuration. Run with `cargo deny check`.
+# cargo-deny configuration. CI runs `cargo deny --log-level error check`
+# (suppresses the intentional duplicate-version warnings); run plain
+# `cargo deny check` locally to see them.
 #
 # Pre-publish supply-chain gate (see plan/dependency-audit): screens the full
 # dependency tree for security advisories, license surprises, and unexpected
@@ -17,6 +19,15 @@ ignore = [
     # ab_glyph -> owned_ttf_parser, both deep in the iced/winit stack.
     # Tracked so the ignore stays auditable; revisit when upstream drops it.
     "RUSTSEC-2026-0192",
+    # quick-xml < 0.41 DoS vectors on untrusted XML: NsReader namespace
+    # memory exhaustion (2026-0195) and quadratic duplicate-attribute check
+    # (2026-0194). Only dependent is wayland-scanner (build-time proc-macro,
+    # latest 0.31.10 pins quick-xml ^0.39, no upgrade path yet). It parses
+    # bundled, trusted Wayland protocol XML at compile time, so the
+    # untrusted-input vector does not apply. Revisit when wayland-scanner
+    # moves to quick-xml >= 0.41.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
 ]
 
 [licenses]
