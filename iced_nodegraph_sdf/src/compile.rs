@@ -11,6 +11,58 @@ pub(crate) const FLAG_CLOSED: u32 = 1; // entry.flags
 pub(crate) const ENTRY_TILING: u32 = 2;
 const SEG_FLAG_SIGNED: u32 = 1; // segment.flags
 const STYLE_FLAG_HAS_PATTERN: u32 = 1;
+/// The style-independent per-shape metadata an entry needs beyond the segment
+/// range: everything [`entry_from_meta`] reads that would otherwise require the
+/// evaluated [`Drawable`]. The pipeline stores this alongside a resident
+/// segment range (plan/arena-residency.md), so an instance of an
+/// already-resident shape builds its entry WITHOUT re-evaluating the shape -
+/// for a non-cacheable stroke (an edge) that skips the whole biarc fit.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct EntryMeta {
+    pub entry_type: u32,
+    /// Entry flags (bit 0 = closed contour).
+    pub flags: u32,
+    pub segment_count: u32,
+    pub tiling_type: u32,
+    pub tiling_params: [f32; 4],
+}
+
+/// Extracts the [`EntryMeta`] of an evaluated local drawable.
+pub(crate) fn entry_meta(local: &Drawable) -> EntryMeta {
+    EntryMeta {
+        entry_type: local.drawable_type as u32,
+        flags: if local.is_closed { FLAG_CLOSED } else { 0 },
+        segment_count: local.segments.len() as u32,
+        tiling_type: local.tiling_type.map_or(0, |t| t as u32),
+        tiling_params: local.tiling_params,
+    }
+}
+
+/// Build a command from shape metadata placed at `translate`, referencing the
+/// segment range at `segment_start`. The metadata path of [`entry_referencing`]:
+/// callers holding a resident [`EntryMeta`] need no evaluated drawable at all.
+pub(crate) fn entry_from_meta(
+    meta: &EntryMeta,
+    style: &Style,
+    z_order: u32,
+    translate: [f32; 2],
+    segment_start: u32,
+) -> (GpuDrawEntry, GpuStyle) {
+    let entry = GpuDrawEntry {
+        entry_type: meta.entry_type,
+        style_idx: 0,
+        z_order,
+        flags: meta.flags,
+        segment_start,
+        segment_count: meta.segment_count,
+        tiling_type: meta.tiling_type,
+        _pad: 0,
+        tiling_params: GpuVec4(meta.tiling_params),
+        translate: GpuVec2(translate),
+        _translate_pad: GpuVec2([0.0, 0.0]),
+    };
+    (entry, compile_style(style))
+}
 
 /// Compile an ALREADY-LOCAL drawable (e.g. a `ShapeCache` entry, evaluated once
 /// at the local origin) placed at world `translate`. Geometry is stored verbatim
@@ -59,26 +111,7 @@ pub(crate) fn entry_referencing(
     translate: [f32; 2],
     segment_start: u32,
 ) -> (GpuDrawEntry, GpuStyle) {
-    let mut flags = 0u32;
-    if local.is_closed {
-        flags |= FLAG_CLOSED;
-    }
-
-    let entry = GpuDrawEntry {
-        entry_type: local.drawable_type as u32,
-        style_idx: 0,
-        z_order,
-        flags,
-        segment_start,
-        segment_count: local.segments.len() as u32,
-        tiling_type: local.tiling_type.map_or(0, |t| t as u32),
-        _pad: 0,
-        tiling_params: GpuVec4(local.tiling_params),
-        translate: GpuVec2(translate),
-        _translate_pad: GpuVec2([0.0, 0.0]),
-    };
-
-    (entry, compile_style(style))
+    entry_from_meta(&entry_meta(local), style, z_order, translate, segment_start)
 }
 
 fn c2v(c: Color) -> GpuVec4 {

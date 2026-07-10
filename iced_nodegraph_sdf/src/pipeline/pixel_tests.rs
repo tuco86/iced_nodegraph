@@ -4529,13 +4529,14 @@ fn render_pipeline_frame(
     px
 }
 
-/// A rebuild with UNCHANGED buffer counts must poison slot reuse for LATER
-/// primitives: instancing and style dedup make a later primitive's resident
-/// entries reference an EARLIER primitive's segment/style slots by absolute
-/// index, so an in-place content change (a recolor keeps every count) would
-/// otherwise be silently adopted by every reusing referencer.
+/// A primitive recoloring in place must not leak into primitives whose
+/// resident entries reference its shared segment/style slots (instancing and
+/// style dedup are cross-primitive, by absolute index). Under arena residency
+/// the shared slots are refcounted and CONTENT-keyed: the recolor allocates a
+/// NEW style slot while the referencing block keeps the old one alive - no
+/// adoption, and the untouched primitive never rebuilds.
 #[test]
-fn rebuild_poisons_later_slot_reuse() {
+fn recolor_does_not_leak_into_referencing_primitives() {
     use crate::primitive::{SdfPipeline, SdfPrimitive};
     use crate::shape::Shape;
     use iced_wgpu::primitive::Pipeline;
@@ -4561,9 +4562,10 @@ fn rebuild_poisons_later_slot_reuse() {
         let pb = TestRenderer::pixel_at(&px, w, 96, 32);
         assert!(pb[0] > 200 && pb[2] < 60, "B must start red, got {pb:?}");
     }
-    // Frame 3: A recolors to blue - byte counts unchanged, every cursor still
-    // lines up. B is untouched and MUST stay red; a stale reuse would leave
-    // B's resident entry pointing at A's restyled slot.
+    // Frame 3: A recolors to blue - byte counts unchanged. B is untouched and
+    // MUST stay red: B's resident block holds a refcount on the ORIGINAL red
+    // style slot, so A's restyle lands in a fresh slot instead of mutating
+    // the shared bytes under B.
     let a = prim(&blue, 32.0);
     let b = prim(&red, 96.0);
     let px = render_pipeline_frame(&r, &mut pipeline, &[&a, &b], w, h);
@@ -4579,12 +4581,12 @@ fn rebuild_poisons_later_slot_reuse() {
     );
 }
 
-/// A primitive that goes EMPTY for a frame must invalidate its slot record:
-/// later primitives repack shifted-down and overwrite its resident ranges, so
-/// a revival with the old content would stale-match its old cursors and render
-/// other primitives' bytes.
+/// A primitive that goes EMPTY for a frame must invalidate its per-slot
+/// scatter record: later slots' scatter ranges pack shifted-down over its
+/// resident range, so a revival with the old content would stale-match its
+/// old cursors and cull against other primitives' list bytes.
 #[test]
-fn empty_frame_invalidates_slot_reuse() {
+fn empty_frame_invalidates_scatter_record() {
     use crate::primitive::{SdfPipeline, SdfPrimitive};
     use crate::shape::Shape;
     use iced_wgpu::primitive::Pipeline;
@@ -4614,12 +4616,12 @@ fn empty_frame_invalidates_slot_reuse() {
     let a = circle(&red);
     let b = rect(&green);
     let _ = render_pipeline_frame(&r, &mut pipeline, &[&a, &b], w, h);
-    // Frame 2: A is EMPTY; B repacks at A's old buffer offsets.
+    // Frame 2: A is EMPTY; B's scatter range repacks at A's old offsets.
     let a_empty = SdfPrimitive::new();
     let b = rect(&green);
     let _ = render_pipeline_frame(&r, &mut pipeline, &[&a_empty, &b], w, h);
-    // Frame 3: A revives with its frame-1 content and frame-1 cursors. Without
-    // slot invalidation it stale-matches and renders B's resident bytes.
+    // Frame 3: A revives with its frame-1 content and frame-1 scatter
+    // cursors. Without invalidation it stale-matches B's resident list bytes.
     let a = circle(&red);
     let b = rect(&green);
     let px = render_pipeline_frame(&r, &mut pipeline, &[&a, &b], w, h);
@@ -4630,6 +4632,133 @@ fn empty_frame_invalidates_slot_reuse() {
         "revived primitive must render its own red circle, got {pa:?}",
     );
     assert!(pb[1] > 200, "B must stay a green rect, got {pb:?}");
+}
+/// Arena-residency acceptance (plan/arena-residency.md): reordering the
+/// prepare order - the selection-driven z-resort - must NOT re-evaluate or
+/// re-upload any unmoved primitive. Geometry reuse is content-keyed, so a pure
+/// reorder is 100% resident hits; only the scatter lists re-pack. Pixel
+/// evidence: the reordered frame renders identically to a fresh pipeline
+/// given the same order.
+#[test]
+fn reorder_reuses_resident_blocks_without_rebuild() {
+    use crate::primitive::{SdfPipeline, SdfPrimitive, sdf_stats};
+    use crate::shape::Shape;
+    use iced_wgpu::primitive::Pipeline;
+
+    let r = shared_renderer();
+    let (w, h) = (128u32, 64u32);
+    let red = Style::solid(rgba(1.0, 0.0, 0.0, 1.0));
+    let green = Style::solid(rgba(0.0, 1.0, 0.0, 1.0));
+    let blue = Style::solid(rgba(0.0, 0.0, 1.0, 1.0));
+
+    // Three DISTINCT primitives that overlap pairwise, so a draw-slot mix-up
+    // (wrong DrawData for a shifted slot) is pixel-visible in the overlaps.
+    let prim = |shape: &Shape, style: &Style, x: f32| {
+        let mut p = SdfPrimitive::new();
+        p.push(shape, style, [x, 32.0]);
+        p.camera(0.0, 0.0, 1.0)
+    };
+    let make = || {
+        (
+            prim(&Shape::circle(20.0), &red, 40.0),
+            prim(&Shape::rounded_box([40.0, 30.0], [4.0; 4]), &green, 64.0),
+            prim(&Shape::circle(16.0), &blue, 88.0),
+        )
+    };
+
+    let mut pipeline = SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
+    // Frame 1: everything is new.
+    let (a, b, c) = make();
+    let _ = render_pipeline_frame(&r, &mut pipeline, &[&a, &b, &c], w, h);
+    assert_eq!(sdf_stats().geometry_rebuilds, 3, "frame 1 compiles all");
+    // Frame 2: steady state, all resident.
+    let (a, b, c) = make();
+    let _ = render_pipeline_frame(&r, &mut pipeline, &[&a, &b, &c], w, h);
+    assert_eq!(
+        sdf_stats().geometry_rebuilds,
+        0,
+        "steady frame rebuilds none"
+    );
+    assert_eq!(sdf_stats().resident_hits, 3);
+    // Frame 3: REORDERED [C, A, B]. The acceptance assertion: zero rebuilds -
+    // no unmoved primitive re-evaluates - while every slot's draw data and
+    // scatter range repacks around the resident geometry.
+    let (a, b, c) = make();
+    let px = render_pipeline_frame(&r, &mut pipeline, &[&c, &a, &b], w, h);
+    let stats = sdf_stats();
+    assert_eq!(
+        stats.geometry_rebuilds, 0,
+        "a pure reorder must not re-evaluate any primitive",
+    );
+    assert_eq!(stats.resident_hits, 3);
+
+    // Pixel evidence: identical to a fresh pipeline rendering the same order.
+    let mut fresh = SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
+    let (a, b, c) = make();
+    let px_ref = render_pipeline_frame(&r, &mut fresh, &[&c, &a, &b], w, h);
+    assert_eq!(
+        px, px_ref,
+        "reordered resident frame must render identically to a fresh build",
+    );
+}
+
+/// Arena-residency acceptance: steady-state memory stays BOUNDED under churn.
+/// A primitive whose shape changes every frame (drag-like) mints a new block
+/// per frame; eviction ages the stale blocks out after `RESIDENT_MAX_AGE`
+/// frames and the free lists recycle their ranges, so the live segment count
+/// plateaus instead of growing with frame count.
+#[test]
+fn churned_geometry_stays_bounded() {
+    use crate::primitive::{SdfPipeline, SdfPrimitive, sdf_stats};
+    use crate::shape::Shape;
+    use iced_wgpu::primitive::Pipeline;
+
+    let r = shared_renderer();
+    let (w, h) = (128u32, 64u32);
+    let style = Style::solid(rgba(0.9, 0.5, 0.1, 1.0));
+
+    let churn_prim = |i: u32| {
+        // A different width every frame: a genuinely new shape (new segment
+        // upload), like an edge whose endpoint moves under a drag.
+        let mut p = SdfPrimitive::new();
+        p.push(
+            &Shape::rounded_box([40.0 + i as f32 * 0.5, 30.0], [4.0; 4]),
+            &style,
+            [64.0, 32.0],
+        );
+        p.camera(0.0, 0.0, 1.0)
+    };
+
+    let mut pipeline = SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
+    let px = render_pipeline_frame(&r, &mut pipeline, &[&churn_prim(0)], w, h);
+    let per_frame = sdf_stats().segment_count;
+    assert!(per_frame > 0, "one shape's segments must be live");
+    let pc = TestRenderer::pixel_at(&px, w, 64, 32);
+    assert!(pc[3] > 200, "churn rect must render, got {pc:?}");
+
+    let mut plateau = 0;
+    for i in 1..40u32 {
+        let px = render_pipeline_frame(&r, &mut pipeline, &[&churn_prim(i)], w, h);
+        assert_eq!(sdf_stats().geometry_rebuilds, 1, "churn frame {i} rebuilds");
+        if i == 25 {
+            plateau = sdf_stats().segment_count;
+            let pc = TestRenderer::pixel_at(&px, w, 64, 32);
+            assert!(pc[3] > 200, "churn rect must keep rendering, got {pc:?}");
+        }
+    }
+    let stats = sdf_stats();
+    // Live segments = resident blocks x per-shape segments; eviction caps the
+    // block count at RESIDENT_MAX_AGE + live, so the count PLATEAUS.
+    assert_eq!(
+        stats.segment_count, plateau,
+        "live segments must plateau under churn, not grow with frame count",
+    );
+    assert!(
+        stats.segment_count <= per_frame * 12,
+        "live segments {} exceed the eviction bound ({} per frame)",
+        stats.segment_count,
+        per_frame,
+    );
 }
 
 #[test]

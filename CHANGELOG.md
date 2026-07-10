@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- SDF geometry buffers (segments/entries/styles) are persistent arenas with
+  content-keyed, refcounted residency: reuse survives any draw reorder, so a
+  selection z-resort or node add/remove re-evaluates only the primitives that
+  actually changed (was: everything after the first change, a ~2-3 ms hitch on
+  500 nodes). Shape residency also skips the biarc fit for unmoved edges on a
+  background rebuild; cold prepare on the 500-node scene drops ~7-9 ms ->
+  ~5 ms. Unused blocks age out after 8 frames; a rare compaction
+  (`SdfStats::arena_compactions`) resets the arenas when fragmented. New
+  per-frame counters: `SdfStats::resident_hits` / `geometry_rebuilds`.
 - Rebuilt the SDF tile cull as a scatter pipeline (per-segment/per-entry
   scatter + deterministic per-tile sort): index-build GPU time drops ~4.4x on
   a 500-node scene, output pixel-identical. Coarse tiles grow to 512 slots

@@ -20,8 +20,11 @@ use iced_wgpu::primitive::{Pipeline, Primitive};
 
 use std::collections::HashMap;
 
-use crate::compile::{ENTRY_TILING, FLAG_CLOSED, compile_local_at, entry_referencing};
+use crate::compile::{
+    ENTRY_TILING, EntryMeta, FLAG_CLOSED, compile_local_at, entry_from_meta, entry_meta,
+};
 use crate::pattern::PatternType;
+use crate::pipeline::arena::ArenaAlloc;
 use crate::pipeline::{buffer, types};
 use crate::shape::{Shape, ShapeCache};
 use crate::shared::SharedSdfResources;
@@ -38,6 +41,9 @@ static LAST_STATS: Mutex<types::SdfStats> = Mutex::new(types::SdfStats {
     cache_misses: 0,
     cache_hit_rate: 0.0,
     cull_skipped: false,
+    resident_hits: 0,
+    geometry_rebuilds: 0,
+    arena_compactions: 0,
 });
 
 /// Read performance statistics from the last completed frame.
@@ -60,6 +66,19 @@ const FINE_STRIDE: u32 = MAX_FINE_SLOTS / 2;
 // Per-draw tiling slots in the scatter lists; sentinel-padded.
 const TILING_RESERVE: u32 = 4;
 const CULL_SENTINEL: u32 = u32::MAX;
+/// Frames a resident geometry block may go unused before eviction returns its
+/// arena ranges to the free lists. Small on purpose: blocks in steady use are
+/// touched every frame (age 0), so this only bounds how long CHURNED content
+/// (a dragged primitive mints a new block per frame) lingers. A block that
+/// comes back within the window (a quick select/deselect toggle) reuses its
+/// residency; beyond it, only that one primitive re-compiles.
+const RESIDENT_MAX_AGE: u64 = 8;
+/// Compaction heuristic: reset the residency state when any arena's high-water
+/// mark exceeds `COMPACT_SLACK_FACTOR x` its live count AND the floor below.
+/// The floor keeps small scenes from compacting over noise; the factor bounds
+/// steady-state waste to a constant multiple of the live data.
+const COMPACT_MIN_HIGH_WATER: u32 = 4096;
+const COMPACT_SLACK_FACTOR: u32 = 4;
 
 /// One queued draw: a position-free [`Shape`] (evaluated once by the pipeline's
 /// frame-surviving `ShapeCache` when cacheable) placed at world `placement` (the
@@ -344,47 +363,95 @@ impl Default for SdfPrimitive {
 
 // --- Pipeline ---
 
-/// Per draw-slot record of what a primitive wrote into the persistent buffers last
-/// frame: its geometry hash plus the exact ranges it occupies. A primitive at the
-/// same slot whose hash matches AND whose buffer cursors line up with these starts
-/// reuses the resident data (no eval/upload) by skipping over the ranges.
-///
-/// Slots are POSITIONAL (prepare order), and reuse is additionally coupled to the
-/// buffer cursors because the geometry buffers are packed front-to-back each
-/// frame. Keying slots by content hash alone would NOT survive a reorder (e.g.
-/// the selection-driven z-resort): the resident bytes would sit at the wrong
-/// offsets, and entries reference segments/styles of OTHER primitives by
-/// absolute index (cross-primitive instancing + style dedup), so relocating a
-/// block requires reference fix-ups. Order-independent reuse therefore needs
-/// stable arena residency for segment/entry/style blocks - future work, planned
-/// with the scatter-binning index.
-#[derive(Clone, Copy)]
-struct SlotState {
-    geom_hash: u64,
-    /// The draw slot the primitive occupied. The scatter lists embed the draw
-    /// index, so reuse requires the same slot (an empty primitive earlier in
-    /// the order shifts draw indices without moving any buffer cursor).
-    draw_slot: u32,
-    seg_start: u32,
-    seg_count: u32,
+// --- Arena residency (plan/arena-residency.md) ---
+//
+// The segment/entry/style buffers are persistent arenas: a primitive's
+// compiled output is allocated once, NEVER moves while resident, and is keyed
+// by CONTENT (`geometry_hash`), not by draw slot. Reuse therefore survives any
+// reorder of the prepare order (selection z-resort, node add/remove) - the
+// coupling the old packed-per-frame slots could not break: entries reference
+// segments and styles of OTHER primitives by absolute index, and packing
+// front-to-back made every offset positional.
+
+/// A primitive's resident geometry: the arena ranges its compiled output
+/// occupies plus everything a later frame needs to draw it without
+/// re-evaluating anything.
+struct ResidentBlock {
+    /// Globally unique block id (monotonic, never reused). Scatter-slot
+    /// records key on this to prove "same bytes" across frames without
+    /// comparing ranges (a freed range can be re-allocated to new content).
+    block_gen: u64,
+    /// The block's contiguous range in the entry arena. Draws need entry
+    /// contiguity only WITHIN one primitive; `DrawData.entry_start` points
+    /// here, wherever the block sits.
     entry_start: u32,
     entry_count: u32,
-    style_start: u32,
-    style_count: u32,
-    /// Scatter-list ranges (u32 elements: pairs are triples, closed are 2-tuples).
+    /// Shape hashes this block references in `resident_shapes` (refcounted
+    /// ONCE per block); decremented when the block is evicted.
+    shape_refs: Vec<u64>,
+    /// Compiled-style hashes this block references in `resident_styles`.
+    style_refs: Vec<u64>,
+    /// Draw-slot-free scatter data: flattened (entry, segment) absolute index
+    /// pairs of OPEN entries. Each frame that cannot skip prefixes the current
+    /// draw slot and pushes to the packed cull lists - flat u32 writes, never
+    /// a re-evaluation.
+    pairs: Vec<u32>,
+    /// Absolute entry indices of CLOSED entries (same per-frame prefixing).
+    closed: Vec<u32>,
+    /// The primitive's tiling entry ids (sentinel-padded) for
+    /// `DrawData.tilings`; the compile loop never runs on a hit, so they are
+    /// replayed from here.
+    tilings: [u32; TILING_RESERVE as usize],
+    /// `frame_counter` value of the last frame that used this block. Blocks
+    /// unused for [`RESIDENT_MAX_AGE`] frames are evicted in `trim`.
+    last_used: u64,
+}
+
+/// A unique shape's segments, resident in the segment arena and shared by
+/// every block whose entries reference the range - the GPU-instancing dedup,
+/// now cross-frame and refcounted. `meta` carries what entry construction
+/// needs beyond the range, so an instance of a resident shape never
+/// re-evaluates it: for a non-cacheable edge stroke that skips the whole biarc
+/// fit when only placement or style changed.
+struct ShapeResidency {
+    seg_start: u32,
+    meta: EntryMeta,
+    /// Resident blocks referencing this range; freed back to the arena at 0.
+    refs: u32,
+    /// Block gen that last took a ref: dedups refcounting within one block (a
+    /// block with N instances of a shape holds ONE ref).
+    last_ref_gen: u64,
+}
+
+/// A deduplicated compiled style resident in the style arena (a single slot),
+/// mirroring [`ShapeResidency`] for styles.
+struct StyleResidency {
+    idx: u32,
+    refs: u32,
+    last_ref_gen: u64,
+}
+
+/// Per draw-slot record of the scatter-list ranges written last frame. The
+/// packed cull lists stay per-frame POSITIONAL (they embed the draw slot), so
+/// their reuse is cursor-coupled like the old geometry path - but their
+/// content is SELF-CONTAINED (the own block's indices, the own slot), so
+/// block identity plus cursor equality suffices and no cross-slot poison
+/// exists; a forced rebuild is a cheap prefix-write from the resident block.
+#[derive(Clone, Copy)]
+struct ScatterSlot {
+    /// [`ResidentBlock::gen`] whose data the ranges hold.
+    block_gen: u64,
     pair_start: u32,
     pair_count: u32,
     closed_start: u32,
     closed_count: u32,
-    /// The primitive's tiling entry ids (sentinel-padded); under reuse the
-    /// compile loop never runs, so the ids for `DrawData.tilings` come from
-    /// here.
-    tilings: [u32; TILING_RESERVE as usize],
 }
 
 pub struct SdfPipeline {
     shared: Arc<SharedSdfResources>,
-    // Data buffers
+    // Data buffers. `draw_data` is per-frame (packed in prepare order); the
+    // entry/segment/style buffers are persistent ARENAS whose ranges are
+    // placed by the allocators below and survive `trim`.
     draw_data_buffer: buffer::Buffer<types::DrawData>,
     entries_buffer: buffer::Buffer<types::GpuDrawEntry>,
     segments_buffer: buffer::Buffer<types::GpuSegment>,
@@ -448,36 +515,48 @@ pub struct SdfPipeline {
     /// persistent pipeline, NOT the per-frame primitive, and is deliberately not
     /// cleared by `trim` so a unique shape's boolean runs once across frames.
     shape_cache: ShapeCache,
-    /// Per-FRAME map recipe-hash -> segment_start in this frame's segment buffer.
-    /// The first instance of a shape uploads its segments; every later identical
-    /// instance is a command referencing that range (GPU instancing). Cleared by
-    /// `trim` because the segment buffer is rebuilt each frame.
-    frame_shape_slots: HashMap<u64, u32>,
-    /// Per-FRAME map compiled-style-hash -> `style_idx` in this frame's style
-    /// buffer. Mirrors `frame_shape_slots` for styles: the first entry with a
-    /// given look uploads one `GpuStyle`; identical entries (e.g. every node with
-    /// the same fill) reuse that slot instead of duplicating ~336 bytes each.
-    /// Cleared by `trim` because the style buffer is rebuilt each frame.
-    frame_style_slots: HashMap<u64, u32>,
-    /// Per draw-slot geometry record from the LAST frame, indexed by draw slot.
-    /// Survives `trim` (unlike the per-frame maps): it is what this frame's
-    /// primitives compare against to skip re-evaluating unchanged geometry. A slot
-    /// holds `None` until first written; structural changes overwrite it.
-    slots: Vec<Option<SlotState>>,
+    /// Resident geometry blocks keyed by [`SdfPrimitive::geometry_hash`]:
+    /// byte-identical primitives reuse their block wherever they sit in the
+    /// prepare order. Survives `trim`; unused blocks age out (see
+    /// [`RESIDENT_MAX_AGE`]) and a compaction resets the whole map.
+    resident: HashMap<u64, ResidentBlock>,
+    /// Frame-surviving map recipe-hash -> resident segment range + entry
+    /// metadata (refcounted; see [`ShapeResidency`]). The first instance of a
+    /// shape EVER uploads its segments; every later identical instance - in
+    /// any primitive, any frame - references that range (GPU instancing).
+    resident_shapes: HashMap<u64, ShapeResidency>,
+    /// Frame-surviving map compiled-style-hash -> resident `style_idx`.
+    /// Mirrors `resident_shapes` for styles: entries that look identical share
+    /// ONE `GpuStyle` slot instead of duplicating ~336 bytes each.
+    resident_styles: HashMap<u64, StyleResidency>,
+    /// Range allocators for the three geometry arenas (element indices into
+    /// the matching buffers).
+    seg_arena: ArenaAlloc,
+    entry_arena: ArenaAlloc,
+    style_arena: ArenaAlloc,
+    /// Per draw-slot scatter-list record of the LAST frame (see
+    /// [`ScatterSlot`]). Survives `trim`.
+    scatter_slots: Vec<Option<ScatterSlot>>,
+    /// Frame counter (incremented in `trim`); drives block LRU aging.
+    frame_counter: u64,
+    /// Monotonic [`ResidentBlock::gen`] source.
+    next_block_gen: u64,
+    /// Lifetime arena-compaction count (reported in [`types::SdfStats`]).
+    compactions: u64,
+    /// Reused scratch for the per-frame scatter prefix-writes.
+    pair_scratch: Vec<u32>,
+    closed_scratch: Vec<u32>,
     /// Per draw-slot cull key of the LAST frame (see [`cull_key`]): every
     /// `DrawData` field except `time`. Survives `trim`; compared during
     /// `prepare` to detect whether the resident spatial index is still valid.
     prev_cull_keys: Vec<u64>,
     /// Set when any prepare this frame invalidates the resident spatial index:
-    /// a geometry rebuild (buffer bytes changed or moved), a cull-key mismatch
-    /// (camera, viewport, grid, entry ranges, new draw slot), or an
-    /// index-buffer regrowth. Cleared in `trim`; read by
+    /// a geometry rebuild or scatter-list rewrite (list bytes changed or
+    /// moved), a cull-key mismatch (camera, viewport, grid, entry ranges, new
+    /// draw slot), or an index-buffer regrowth. Cleared in `trim`; read by
     /// `run_deferred_compute`, which SKIPS the whole cull dispatch while the
     /// index is valid (idle redraws and time-only animation frames).
     cull_dirty: bool,
-    /// Set by the FIRST rebuild of a frame; poisons slot reuse for every
-    /// later prepare (see the reuse-filter comment). Cleared in `trim`.
-    frame_rebuilt: bool,
 }
 
 /// The two-level index buffers, in bind order for compute group 1:
@@ -758,45 +837,55 @@ impl Pipeline for SdfPipeline {
             segment_scratch: Vec::new(),
             frame_stats: types::SdfStats::default(),
             shape_cache: ShapeCache::new(4096),
-            frame_shape_slots: HashMap::new(),
-            frame_style_slots: HashMap::new(),
-            slots: Vec::new(),
+            resident: HashMap::new(),
+            resident_shapes: HashMap::new(),
+            resident_styles: HashMap::new(),
+            seg_arena: ArenaAlloc::new(),
+            entry_arena: ArenaAlloc::new(),
+            style_arena: ArenaAlloc::new(),
+            scatter_slots: Vec::new(),
+            frame_counter: 0,
+            next_block_gen: 0,
+            compactions: 0,
+            pair_scratch: Vec::new(),
+            closed_scratch: Vec::new(),
             prev_cull_keys: Vec::new(),
             cull_dirty: true,
-            frame_rebuilt: false,
         }
     }
 
     fn trim(&mut self) {
-        // Capture frame metrics from the buffers/cache BEFORE clearing them.
+        // Capture frame metrics from the arenas/cache BEFORE clearing.
         self.frame_stats.tile_count = self.total_fine_tiles;
-        self.frame_stats.segment_count = self.segments_buffer.len() as u32;
-        self.frame_stats.unique_shapes = self.frame_shape_slots.len() as u32;
-        self.frame_stats.unique_styles = self.frame_style_slots.len() as u32;
+        self.frame_stats.segment_count = self.seg_arena.live();
+        self.frame_stats.unique_shapes = self.resident_shapes.len() as u32;
+        self.frame_stats.unique_styles = self.resident_styles.len() as u32;
         self.frame_stats.cache_hits = self.shape_cache.hits();
         self.frame_stats.cache_misses = self.shape_cache.misses();
         self.frame_stats.cache_hit_rate = self.shape_cache.hit_rate();
         self.frame_stats.cull_skipped = !self.cull_dirty;
+        self.frame_stats.arena_compactions = self.compactions;
         *LAST_STATS.lock() = self.frame_stats.clone();
         self.frame_stats = types::SdfStats::default();
         // Stale tail keys of a shrunken draw set must not validate a later,
         // larger frame's slots.
         self.prev_cull_keys.truncate(self.draw_data_buffer.len());
         self.cull_dirty = false;
-        self.frame_rebuilt = false;
+        // Per-frame buffers only: entries/segments/styles are arena-resident
+        // and survive across frames.
         self.draw_data_buffer.clear();
-        self.entries_buffer.clear();
-        self.segments_buffer.clear();
-        self.styles_buffer.clear();
         self.cull_pairs_buffer.clear();
         self.cull_closed_buffer.clear();
-        self.frame_shape_slots.clear();
-        self.frame_style_slots.clear();
         self.total_fine_tiles = 0;
         self.total_coarse_tiles = 0;
         self.pending_dispatches.get_mut().clear();
         self.compute_submitted
             .store(false, std::sync::atomic::Ordering::Relaxed);
+        // Residency lifecycle: age out unused blocks, then compact when the
+        // arenas' high-water mark runs too far ahead of the live data.
+        self.frame_counter += 1;
+        self.evict_expired();
+        self.maybe_compact();
     }
 }
 
@@ -827,6 +916,78 @@ impl SdfPipeline {
             }
             self.prev_cull_keys[slot] = key;
         }
+    }
+    /// Evicts resident blocks unused for more than [`RESIDENT_MAX_AGE`] frames:
+    /// their entry range returns to the arena and their shape/style refcounts
+    /// drop (freeing shared ranges that hit zero). Blocks in steady use are
+    /// touched every frame and never age; this only reclaims churn (a dragged
+    /// primitive mints a new block per frame) and content that left the scene.
+    fn evict_expired(&mut self) {
+        let mut expired: Vec<u64> = Vec::new();
+        for (k, b) in &self.resident {
+            if self.frame_counter - b.last_used > RESIDENT_MAX_AGE {
+                expired.push(*k);
+            }
+        }
+        for k in expired {
+            if let Some(b) = self.resident.remove(&k) {
+                self.release_block(b);
+            }
+        }
+    }
+
+    /// Returns an evicted block's arena ranges: the entry range directly, the
+    /// shared shape/style ranges via refcount (freed at zero).
+    fn release_block(&mut self, block: ResidentBlock) {
+        self.entry_arena.free(block.entry_start, block.entry_count);
+        for h in &block.shape_refs {
+            if let Some(r) = self.resident_shapes.get_mut(h) {
+                r.refs -= 1;
+                if r.refs == 0 {
+                    self.seg_arena.free(r.seg_start, r.meta.segment_count);
+                    self.resident_shapes.remove(h);
+                }
+            }
+        }
+        for h in &block.style_refs {
+            if let Some(r) = self.resident_styles.get_mut(h) {
+                r.refs -= 1;
+                if r.refs == 0 {
+                    self.style_arena.free(r.idx, 1);
+                    self.resident_styles.remove(h);
+                }
+            }
+        }
+    }
+
+    /// Compaction: when any arena's high-water mark runs
+    /// [`COMPACT_SLACK_FACTOR`]x ahead of its live count (fragmentation the
+    /// free lists cannot reclaim), drop the WHOLE residency state and let the
+    /// next frame rebuild tightly packed. One frame of full re-evaluation and
+    /// re-upload - the old per-reorder behavior as the rare worst case.
+    /// Running between frames (from `trim`) means no draw of the current frame
+    /// can hold references into the dropped arenas.
+    fn maybe_compact(&mut self) {
+        fn slack(a: &ArenaAlloc) -> bool {
+            a.high_water() > COMPACT_MIN_HIGH_WATER
+                && a.high_water() > a.live().saturating_mul(COMPACT_SLACK_FACTOR)
+        }
+        if !(slack(&self.seg_arena) || slack(&self.entry_arena) || slack(&self.style_arena)) {
+            return;
+        }
+        self.resident.clear();
+        self.resident_shapes.clear();
+        self.resident_styles.clear();
+        self.seg_arena.clear();
+        self.entry_arena.clear();
+        self.style_arena.clear();
+        self.segments_buffer.clear();
+        self.entries_buffer.clear();
+        self.styles_buffer.clear();
+        self.scatter_slots.clear();
+        // The resident spatial index references the dropped ranges; rebuild.
+        self.cull_dirty = true;
+        self.compactions += 1;
     }
 
     /// Runs every cull dispatch recorded this frame in ONE encoder + ONE submit.
@@ -909,6 +1070,208 @@ impl SdfPipeline {
         queue.submit(std::iter::once(encoder.finish()));
     }
 }
+/// Compiles a primitive's entries into freshly allocated arena ranges and
+/// returns the [`ResidentBlock`] describing them - the residency MISS path.
+///
+/// A free function over explicit pipeline fields (not `&mut SdfPipeline`) so
+/// the caller can hold the `resident` map entry open while building the block
+/// (disjoint field borrows).
+///
+/// Per entry, segments resolve in three tiers:
+/// 1. shape already RESIDENT (any frame, any primitive): reference the range,
+///    take one refcount per block - no evaluation at all, which for a
+///    non-cacheable edge stroke skips the whole biarc fit;
+/// 2. shape new but seen EARLIER IN THIS BLOCK: reference its pending local
+///    range (classic per-frame instancing);
+/// 3. genuinely new: evaluate (through the boolean cache when cacheable) and
+///    compile into the pending batch.
+///
+/// Styles mirror the same three tiers with single-slot ranges.
+///
+/// Pending entries carry batch-LOCAL offsets; after one allocation per arena
+/// they are fixed up to absolute indices and uploaded in ONE write per buffer
+/// (per-entry writes were the dominant prepare cost before bulk uploads).
+#[allow(clippy::too_many_arguments)]
+fn compile_block(
+    device: &Device,
+    queue: &Queue,
+    entries: &[DrawEntry],
+    shape_cache: &mut ShapeCache,
+    resident_shapes: &mut HashMap<u64, ShapeResidency>,
+    resident_styles: &mut HashMap<u64, StyleResidency>,
+    seg_arena: &mut ArenaAlloc,
+    entry_arena: &mut ArenaAlloc,
+    style_arena: &mut ArenaAlloc,
+    segments_buffer: &mut buffer::Buffer<types::GpuSegment>,
+    entries_buffer: &mut buffer::Buffer<types::GpuDrawEntry>,
+    styles_buffer: &mut buffer::Buffer<types::GpuStyle>,
+    seg_scratch: &mut Vec<types::GpuSegment>,
+    block_gen: u64,
+    frame: u64,
+) -> ResidentBlock {
+    seg_scratch.clear();
+    let mut new_styles: Vec<types::GpuStyle> = Vec::new();
+    let mut entry_batch: Vec<types::GpuDrawEntry> = Vec::with_capacity(entries.len());
+    let mut shape_refs: Vec<u64> = Vec::new();
+    let mut style_refs: Vec<u64> = Vec::new();
+    // Entries whose segment_start / style_idx are batch-local and need the
+    // arena base added after allocation.
+    let mut seg_fixups: Vec<u32> = Vec::new();
+    let mut style_fixups: Vec<u32> = Vec::new();
+    // First instances of NEW shapes/styles in this block: hash -> pending
+    // local offset (+ metadata for shapes).
+    let mut local_new_shapes: HashMap<u64, (u32, EntryMeta)> = HashMap::new();
+    let mut local_new_styles: HashMap<u64, u32> = HashMap::new();
+
+    for (i, entry) in entries.iter().enumerate() {
+        let hash = entry.shape.hash();
+        let (mut gpu_entry, gpu_style) = if let Some(r) = resident_shapes.get_mut(&hash) {
+            if r.last_ref_gen != block_gen {
+                r.last_ref_gen = block_gen;
+                r.refs += 1;
+                shape_refs.push(hash);
+            }
+            entry_from_meta(
+                &r.meta,
+                &entry.style,
+                i as u32,
+                entry.placement,
+                r.seg_start,
+            )
+        } else if let Some(&(local_start, ref meta)) = local_new_shapes.get(&hash) {
+            seg_fixups.push(i as u32);
+            entry_from_meta(meta, &entry.style, i as u32, entry.placement, local_start)
+        } else {
+            // Evaluate the shape to LOCAL geometry: cacheable booleans come
+            // from the frame-surviving cache (one boolean for all identical
+            // shapes); cheap primitives and ephemeral strokes (edges) evaluate
+            // fresh. The clone breaks the cache borrow before the batch is
+            // touched; it copies arcs, not the boolean.
+            let local = if entry.shape.is_cacheable() {
+                shape_cache.get_or_eval(&entry.shape).clone()
+            } else {
+                entry.shape.evaluate()
+            };
+            let local_start = seg_scratch.len() as u32;
+            // Base 0: the entry's segment_start comes out batch-local and is
+            // fixed up to `seg_base + local_start` after allocation.
+            let out = compile_local_at(
+                &local,
+                &entry.style,
+                i as u32,
+                entry.placement,
+                0,
+                seg_scratch,
+            );
+            local_new_shapes.insert(hash, (local_start, entry_meta(&local)));
+            seg_fixups.push(i as u32);
+            out
+        };
+        // Deduplicate styles exactly as segments: every entry with a
+        // byte-identical compiled style shares ONE resident slot, so N nodes
+        // that look alike hold one GpuStyle, not N. Transparent to the shader,
+        // which still reads per-entry `style_idx`.
+        let style_hash = hash_gpu_style(&gpu_style);
+        gpu_entry.style_idx = if let Some(r) = resident_styles.get_mut(&style_hash) {
+            if r.last_ref_gen != block_gen {
+                r.last_ref_gen = block_gen;
+                r.refs += 1;
+                style_refs.push(style_hash);
+            }
+            r.idx
+        } else if let Some(&local_idx) = local_new_styles.get(&style_hash) {
+            style_fixups.push(i as u32);
+            local_idx
+        } else {
+            let local_idx = new_styles.len() as u32;
+            new_styles.push(gpu_style);
+            local_new_styles.insert(style_hash, local_idx);
+            style_fixups.push(i as u32);
+            local_idx
+        };
+        entry_batch.push(gpu_entry);
+    }
+
+    // One allocation and one bulk write per arena; fix the pending local
+    // offsets up to absolute indices first.
+    let seg_base = seg_arena.alloc(seg_scratch.len() as u32);
+    let style_base = style_arena.alloc(new_styles.len() as u32);
+    let entry_start = entry_arena.alloc(entry_batch.len() as u32);
+    for &i in &seg_fixups {
+        entry_batch[i as usize].segment_start += seg_base;
+    }
+    for &i in &style_fixups {
+        entry_batch[i as usize].style_idx += style_base;
+    }
+    segments_buffer.write_at(device, queue, seg_base as usize, seg_scratch);
+    styles_buffer.write_at(device, queue, style_base as usize, &new_styles);
+    entries_buffer.write_at(device, queue, entry_start as usize, &entry_batch);
+    seg_scratch.clear();
+
+    // The pending shapes/styles are resident now; register them for sharing.
+    for (hash, (local_start, meta)) in local_new_shapes {
+        resident_shapes.insert(
+            hash,
+            ShapeResidency {
+                seg_start: seg_base + local_start,
+                meta,
+                refs: 1,
+                last_ref_gen: block_gen,
+            },
+        );
+        shape_refs.push(hash);
+    }
+    for (hash, local_idx) in local_new_styles {
+        resident_styles.insert(
+            hash,
+            StyleResidency {
+                idx: style_base + local_idx,
+                refs: 1,
+                last_ref_gen: block_gen,
+            },
+        );
+        style_refs.push(hash);
+    }
+
+    // Scatter classification (see plan/scatter-binning.md), draw-slot-free:
+    // tilings ride per-draw, closed entries go to the interior-aware kernel,
+    // open entries expand to per-segment index pairs. Indices are ABSOLUTE,
+    // so instanced entries reference the shared resident range.
+    let mut tilings = [CULL_SENTINEL; TILING_RESERVE as usize];
+    let mut pairs: Vec<u32> = Vec::new();
+    let mut closed: Vec<u32> = Vec::new();
+    for (i, e) in entry_batch.iter().enumerate() {
+        let entry_abs = entry_start + i as u32;
+        if e.entry_type == ENTRY_TILING {
+            if let Some(slot) = tilings.iter_mut().find(|t| **t == CULL_SENTINEL) {
+                *slot = entry_abs;
+            } else {
+                debug_assert!(
+                    false,
+                    "more than {TILING_RESERVE} tiling entries in one primitive",
+                );
+            }
+        } else if e.flags & FLAG_CLOSED != 0 {
+            closed.push(entry_abs);
+        } else {
+            for s in e.segment_start..e.segment_start + e.segment_count {
+                pairs.extend_from_slice(&[entry_abs, s]);
+            }
+        }
+    }
+
+    ResidentBlock {
+        block_gen,
+        entry_start,
+        entry_count: entry_batch.len() as u32,
+        shape_refs,
+        style_refs,
+        pairs,
+        closed,
+        tilings,
+        last_used: frame,
+    }
+}
 
 impl Primitive for SdfPrimitive {
     type Pipeline = SdfPipeline;
@@ -924,11 +1287,11 @@ impl Primitive for SdfPrimitive {
         if self.entries.is_empty() {
             let draw_index = pipeline.draw_data_buffer.len() as u32;
             self.draw_slot.store(draw_index, Ordering::Relaxed);
-            // Invalidate the slot record: while this primitive is empty, later
-            // primitives pack shifted-down and overwrite its resident ranges,
-            // so a later frame with the old content must NOT stale-match
-            // (`Buffer::skip` reclaims by LENGTH, not content).
-            if let Some(s) = pipeline.slots.get_mut(draw_index as usize) {
+            // Invalidate the slot's scatter record: while this primitive is
+            // empty, later slots' scatter ranges pack shifted-down over its
+            // resident range, so a later frame with the old content must NOT
+            // stale-match (`Buffer::skip` reclaims by LENGTH, not content).
+            if let Some(s) = pipeline.scatter_slots.get_mut(draw_index as usize) {
                 *s = None;
             }
             // `DrawData::default()` carries sentinel tiling ids.
@@ -940,193 +1303,107 @@ impl Primitive for SdfPrimitive {
 
         let prepare_start = Instant::now();
         let scale = viewport.scale_factor();
-        let entry_start = pipeline.entries_buffer.len() as u32;
-        let seg_start = pipeline.segments_buffer.len() as u32;
-        let style_start = pipeline.styles_buffer.len() as u32;
         let pair_start = pipeline.cull_pairs_buffer.len() as u32;
         let closed_start = pipeline.cull_closed_buffer.len() as u32;
         let draw_slot = pipeline.draw_data_buffer.len();
 
-        // Skip the whole geometry rebuild when this slot's primitive is byte-for-
-        // byte identical to last frame AND the buffer cursors line up with where it
-        // wrote then (so no earlier primitive shifted the packed offsets). The
-        // resident segments/entries/styles are then reused in place - no eval, no
-        // upload - by advancing the cursors over them.
-        //
-        // `!frame_rebuilt` guards cross-primitive references: instancing and
-        // style dedup make a later primitive's resident entries point into an
-        // EARLIER primitive's segment/style ranges by absolute index. An
-        // earlier rebuild with unchanged counts leaves every cursor aligned
-        // while replacing the referenced bytes (a recolor or resize keeps the
-        // segment count), so the first rebuild of a frame poisons reuse for
-        // every later slot. Order-independent reuse needs arena residency
-        // (plan/arena-residency.md).
+        // Geometry residency (plan/arena-residency.md): a primitive whose
+        // compiled bytes are identical to a resident block's (hash over every
+        // entry's shape, placement and style) reuses that block WHEREVER it
+        // sits in the prepare order - no eval, no upload. A miss compiles into
+        // freshly allocated arena ranges; nothing else moves, so a reorder or
+        // an earlier rebuild invalidates nothing.
         let geom_hash = self.geometry_hash();
-        let reuse = pipeline
-            .slots
+        let frame = pipeline.frame_counter;
+        let (block_gen, entry_start, dd_tilings) = match pipeline.resident.entry(geom_hash) {
+            std::collections::hash_map::Entry::Occupied(e) => {
+                let b = e.into_mut();
+                b.last_used = frame;
+                pipeline.frame_stats.resident_hits += 1;
+                (b.block_gen, b.entry_start, b.tilings)
+            }
+            std::collections::hash_map::Entry::Vacant(v) => {
+                // The resident spatial index references the current draw set's
+                // entry/segment indices; new content means the cull must rerun.
+                pipeline.cull_dirty = true;
+                pipeline.frame_stats.geometry_rebuilds += 1;
+                pipeline.next_block_gen += 1;
+                let b = v.insert(compile_block(
+                    device,
+                    queue,
+                    &self.entries,
+                    &mut pipeline.shape_cache,
+                    &mut pipeline.resident_shapes,
+                    &mut pipeline.resident_styles,
+                    &mut pipeline.seg_arena,
+                    &mut pipeline.entry_arena,
+                    &mut pipeline.style_arena,
+                    &mut pipeline.segments_buffer,
+                    &mut pipeline.entries_buffer,
+                    &mut pipeline.styles_buffer,
+                    &mut pipeline.segment_scratch,
+                    pipeline.next_block_gen,
+                    frame,
+                ));
+                (b.block_gen, b.entry_start, b.tilings)
+            }
+        };
+
+        // Scatter work lists (plan/scatter-binning.md): still per-frame packed
+        // - they embed the draw slot - with the same skip-or-push lifecycle.
+        // Same block at the same cursors means the resident list bytes are
+        // valid; anything else re-pushes the block's draw-slot-free index
+        // pairs with the current slot prefixed. Flat u32 writes; geometry is
+        // never re-evaluated here.
+        let record = pipeline
+            .scatter_slots
             .get(draw_slot)
             .copied()
             .flatten()
-            .filter(|s| {
-                !pipeline.frame_rebuilt
-                    && s.geom_hash == geom_hash
-                    && s.draw_slot == draw_slot as u32
-                    && s.seg_start == seg_start
-                    && s.entry_start == entry_start
-                    && s.style_start == style_start
-                    && s.pair_start == pair_start
-                    && s.closed_start == closed_start
+            .filter(|r| {
+                r.block_gen == block_gen
+                    && r.pair_start == pair_start
+                    && r.closed_start == closed_start
             });
-
-        // The draw's tiling entry ids for `DrawData.tilings`: recorded by the
-        // compile loop on rebuild, replayed from the slot record under reuse.
-        let dd_tilings;
-        if let Some(s) = reuse {
-            pipeline.segments_buffer.skip(s.seg_count as usize);
-            pipeline.entries_buffer.skip(s.entry_count as usize);
-            pipeline.styles_buffer.skip(s.style_count as usize);
-            pipeline.cull_pairs_buffer.skip(s.pair_count as usize);
-            pipeline.cull_closed_buffer.skip(s.closed_count as usize);
-            dd_tilings = s.tilings;
+        if let Some(r) = record {
+            pipeline.cull_pairs_buffer.skip(r.pair_count as usize);
+            pipeline.cull_closed_buffer.skip(r.closed_count as usize);
         } else {
-            // The resident spatial index references the old buffer contents;
-            // a rebuild changes (or moves) them, so the cull must rerun - and
-            // every LATER slot's reuse is off the table (see the reuse filter).
+            // The list bytes on the GPU change; the resident index is stale.
             pipeline.cull_dirty = true;
-            pipeline.frame_rebuilt = true;
-            // Accumulate this primitive's GPU data, then upload each buffer in ONE
-            // bulk write. The old per-entry pushes issued ~3 `queue.write_buffer`
-            // calls per entry (1500+ per frame for 500 nodes) - that submission
-            // overhead, not the boolean, was what remained of v3's per-frame cost.
-            let seg_base = seg_start;
-            let style_base = style_start;
-            let mut seg_batch = std::mem::take(&mut pipeline.segment_scratch);
-            seg_batch.clear();
-            let mut style_batch: Vec<types::GpuStyle> = Vec::with_capacity(self.entries.len());
-            let mut entry_batch: Vec<types::GpuDrawEntry> = Vec::with_capacity(self.entries.len());
-            let mut pair_batch: Vec<u32> = Vec::new();
-            let mut closed_batch: Vec<u32> = Vec::new();
-            let mut tiling_ids = [CULL_SENTINEL; TILING_RESERVE as usize];
-
-            for (i, entry) in self.entries.iter().enumerate() {
-                let segment_offset = seg_base + seg_batch.len() as u32;
-                // Evaluate the shape to LOCAL geometry: cacheable booleans come from
-                // the frame-surviving cache (one boolean for all identical shapes);
-                // cheap primitives and ephemeral strokes (edges) evaluate fresh. The
-                // clone breaks the cache borrow before the batch is touched; it
-                // copies arcs, not the boolean.
-                let local = if entry.shape.is_cacheable() {
-                    pipeline.shape_cache.get_or_eval(&entry.shape).clone()
-                } else {
-                    entry.shape.evaluate()
-                };
-                let hash = entry.shape.hash();
-                let (mut gpu_entry, gpu_style) =
-                    if let Some(&shared_start) = pipeline.frame_shape_slots.get(&hash) {
-                        // Segments already in the batch this frame: one tiny command
-                        // referencing the shared range, NO new segments uploaded.
-                        entry_referencing(
-                            &local,
-                            &entry.style,
-                            i as u32,
-                            entry.placement,
-                            shared_start,
-                        )
-                    } else {
-                        pipeline.frame_shape_slots.insert(hash, segment_offset);
-                        // Pass `seg_base` (the buffer base), NOT `segment_offset`:
-                        // `compile_local_at` adds the batch position (`seg_batch.len()`)
-                        // itself, so it lands at `seg_base + seg_batch.len()` =
-                        // `segment_offset`. Passing the already-offset value would
-                        // double-count the batch length, indexing every entry after the
-                        // first past its real segments.
-                        compile_local_at(
-                            &local,
-                            &entry.style,
-                            i as u32,
-                            entry.placement,
-                            seg_base,
-                            &mut seg_batch,
-                        )
-                    };
-                // Deduplicate styles within the frame exactly as segments are: every
-                // entry with a byte-identical compiled style shares ONE slot, so N
-                // nodes that look alike upload one GpuStyle, not N. Transparent to the
-                // shader, which still reads per-entry `style_idx`.
-                let style_hash = hash_gpu_style(&gpu_style);
-                gpu_entry.style_idx =
-                    *pipeline
-                        .frame_style_slots
-                        .entry(style_hash)
-                        .or_insert_with(|| {
-                            let idx = style_base + style_batch.len() as u32;
-                            style_batch.push(gpu_style);
-                            idx
-                        });
-                // Scatter work-list classification (see plan/scatter-binning.md):
-                // tilings ride per-draw, closed entries go to the interior-aware
-                // kernel, open entries expand to per-segment triples. Indices are
-                // ABSOLUTE, so instanced entries reference the shared range.
-                let entry_abs = entry_start + i as u32;
-                if gpu_entry.entry_type == ENTRY_TILING {
-                    if let Some(slot) = tiling_ids.iter_mut().find(|t| **t == CULL_SENTINEL) {
-                        *slot = entry_abs;
-                    } else {
-                        debug_assert!(
-                            false,
-                            "more than {TILING_RESERVE} tiling entries in one primitive",
-                        );
-                    }
-                } else if gpu_entry.flags & FLAG_CLOSED != 0 {
-                    closed_batch.extend_from_slice(&[draw_slot as u32, entry_abs]);
-                } else {
-                    let seg_end = gpu_entry.segment_start + gpu_entry.segment_count;
-                    for s in gpu_entry.segment_start..seg_end {
-                        pair_batch.extend_from_slice(&[draw_slot as u32, entry_abs, s]);
-                    }
-                }
-                entry_batch.push(gpu_entry);
+            let block = &pipeline.resident[&geom_hash];
+            let mut pair_batch = std::mem::take(&mut pipeline.pair_scratch);
+            pair_batch.clear();
+            pair_batch.reserve(block.pairs.len() / 2 * 3);
+            for pair in block.pairs.chunks_exact(2) {
+                pair_batch.extend_from_slice(&[draw_slot as u32, pair[0], pair[1]]);
             }
-
-            let _ = pipeline
-                .segments_buffer
-                .push_bulk(device, queue, &seg_batch);
-            let _ = pipeline
-                .styles_buffer
-                .push_bulk(device, queue, &style_batch);
-            let _ = pipeline
-                .entries_buffer
-                .push_bulk(device, queue, &entry_batch);
+            let mut closed_batch = std::mem::take(&mut pipeline.closed_scratch);
+            closed_batch.clear();
+            closed_batch.reserve(block.closed.len() * 2);
+            for &e in &block.closed {
+                closed_batch.extend_from_slice(&[draw_slot as u32, e]);
+            }
             let _ = pipeline
                 .cull_pairs_buffer
                 .push_bulk(device, queue, &pair_batch);
             let _ = pipeline
                 .cull_closed_buffer
                 .push_bulk(device, queue, &closed_batch);
-            seg_batch.clear();
-            pipeline.segment_scratch = seg_batch; // restore the reused allocation
-
-            // Record what this slot now occupies so a later frame can reuse it.
-            let state = SlotState {
-                geom_hash,
-                draw_slot: draw_slot as u32,
-                seg_start,
-                seg_count: pipeline.segments_buffer.len() as u32 - seg_start,
-                entry_start,
-                entry_count: pipeline.entries_buffer.len() as u32 - entry_start,
-                style_start,
-                style_count: pipeline.styles_buffer.len() as u32 - style_start,
-                pair_start,
-                pair_count: pipeline.cull_pairs_buffer.len() as u32 - pair_start,
-                closed_start,
-                closed_count: pipeline.cull_closed_buffer.len() as u32 - closed_start,
-                tilings: tiling_ids,
-            };
-            if draw_slot >= pipeline.slots.len() {
-                pipeline.slots.resize(draw_slot + 1, None);
+            if draw_slot >= pipeline.scatter_slots.len() {
+                pipeline.scatter_slots.resize(draw_slot + 1, None);
             }
-            pipeline.slots[draw_slot] = Some(state);
-            dd_tilings = tiling_ids;
+            pipeline.scatter_slots[draw_slot] = Some(ScatterSlot {
+                block_gen,
+                pair_start,
+                pair_count: pair_batch.len() as u32,
+                closed_start,
+                closed_count: closed_batch.len() as u32,
+            });
+            pair_batch.clear();
+            closed_batch.clear();
+            pipeline.pair_scratch = pair_batch;
+            pipeline.closed_scratch = closed_batch;
         }
 
         let entry_count = self.entries.len() as u32;

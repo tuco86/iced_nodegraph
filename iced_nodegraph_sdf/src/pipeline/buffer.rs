@@ -185,6 +185,63 @@ impl<T: ShaderSize> Buffer<T> {
         }
         start_slot
     }
+    /// Writes `items` at element index `offset`, extending the live length to
+    /// cover the range if it ends past it. This is the ARENA write path
+    /// (plan/arena-residency.md): ranges are placed by an external allocator
+    /// and stay resident across frames, so there is no per-frame cursor -
+    /// `clear`/`skip` are never called on an arena buffer and `live_len` is its
+    /// high-water mark. Growth recreates the GPU buffer and rewrites the whole
+    /// mirror, so every resident range survives a regrow at the same offsets
+    /// (the arena invariant: blocks never move while live).
+    pub fn write_at(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        offset: usize,
+        items: &[T],
+    ) where
+        T: ShaderType + ShaderSize + WriteInto + Clone + Default,
+    {
+        if items.is_empty() {
+            return;
+        }
+        let end = offset + items.len();
+        if self.buffer_vec.len() < end {
+            self.buffer_vec.resize(end, T::default());
+        }
+        self.buffer_vec[offset..end].clone_from_slice(items);
+        self.live_len = self.live_len.max(end);
+
+        let item_size = T::SHADER_SIZE.get() as usize;
+        let required_size = self.live_len * item_size;
+        if self.buffer_wgpu.size() < required_size as u64 {
+            // Align up to 4 (see `push`).
+            let new_size = (((required_size as f32 * BUFFER_GROWTH_FACTOR) as u64)
+                .max((BUFFER_MIN_ITEMS * T::SHADER_SIZE.get() as usize) as u64)
+                + 3)
+                & !3;
+            self.buffer_wgpu = create_wgpu_buffer(device, self.label, new_size, self.usage);
+            self.generation += 1;
+            self.rewrite_all(queue);
+        } else {
+            let total_write = items.len() * item_size;
+            self.scratch.clear();
+            self.scratch.resize(total_write, 0);
+            for (i, item) in items.iter().enumerate() {
+                let item_offset = i * item_size;
+                let slice = &mut self.scratch[item_offset..item_offset + item_size];
+                let mut writer = encase::StorageBuffer::new(slice);
+                writer
+                    .write(item)
+                    .expect("Failed to write to storage buffer");
+            }
+            queue.write_buffer(
+                &self.buffer_wgpu,
+                (offset * item_size) as u64,
+                &self.scratch,
+            );
+        }
+    }
 
     /// Rewinds the live length to 0 WITHOUT dropping the CPU mirror or GPU data,
     /// so next frame's writes overwrite in place and unwritten slots keep their

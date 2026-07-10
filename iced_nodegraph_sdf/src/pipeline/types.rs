@@ -278,16 +278,17 @@ pub struct SdfStats {
     pub tile_count: u32,
     /// CPU time spent in `prepare` this frame.
     pub prepare_cpu_us: u64,
-    /// Distinct shapes whose geometry was uploaded this frame (after dedup). The
-    /// per-frame GPU-instancing analogue of the shape cache: identical shapes
-    /// upload their segments ONCE, so this is << `entry_count` on repeated nodes.
+    /// Distinct shapes RESIDENT in the segment arena (refcounted, shared across
+    /// primitives and frames). The GPU-instancing analogue of the shape cache:
+    /// identical shapes hold their segments ONCE, so this is << `entry_count`
+    /// on repeated nodes.
     pub unique_shapes: u32,
-    /// `GpuSegment`s uploaded this frame. With instancing this tracks
+    /// Live `GpuSegment`s in the segment arena. With instancing this tracks
     /// unique-shape geometry, not draw count.
     pub segment_count: u32,
-    /// Distinct compiled styles uploaded this frame (after dedup). The style-side
-    /// analogue of `unique_shapes`: entries that look identical share one
-    /// `GpuStyle`, so this is << `entry_count` when many nodes share a look.
+    /// Distinct compiled styles resident in the style arena (refcounted). The
+    /// style-side analogue of `unique_shapes`: entries that look identical share
+    /// one `GpuStyle`, so this is << `entry_count` when many nodes share a look.
     pub unique_styles: u32,
     /// Shape-cache hits over the pipeline's lifetime (Improvement A).
     pub cache_hits: u64,
@@ -301,6 +302,18 @@ pub struct SdfStats {
     /// (geometry, cameras, viewports, grids) - idle redraws and time-only
     /// animation frames.
     pub cull_skipped: bool,
+    /// Primitives served this frame from a resident arena block: geometry
+    /// byte-identical to an earlier frame, reused in place regardless of draw
+    /// order - no shape evaluation, no upload (plan/arena-residency.md).
+    pub resident_hits: u32,
+    /// Primitives that compiled and uploaded geometry this frame (an arena
+    /// residency miss). On a reorder-only frame (selection z-resort) this stays
+    /// 0; a drag rebuilds exactly the changed primitives.
+    pub geometry_rebuilds: u32,
+    /// Lifetime count of arena compactions: full residency resets taken when
+    /// the arenas' high-water mark runs far ahead of the live data. The next
+    /// frame after a compaction re-uploads everything (the rare worst case).
+    pub arena_compactions: u64,
 }
 
 #[cfg(test)]
