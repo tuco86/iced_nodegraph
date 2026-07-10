@@ -314,6 +314,17 @@ pub struct SdfStats {
     /// the arenas' high-water mark runs far ahead of the live data. The next
     /// frame after a compaction re-uploads everything (the rare worst case).
     pub arena_compactions: u64,
+    /// Highest per-coarse-tile pair demand seen by the most recent COMPLETED
+    /// cull readback (async, at least one frame behind; sticky across frames
+    /// without a cull). The scatter's demand counters keep counting past the
+    /// slot cap, so this is TRUE demand - headroom against the coarse cap is
+    /// directly visible (plan/exact-slot-allocation.md, option 3).
+    pub coarse_demand_max: u32,
+    /// Coarse tiles whose demand exceeded the usable slot cap in that
+    /// readback: tiles that DROPPED pairs first-come (the one nondeterminism
+    /// of the scatter cull). Zero in healthy scenes; nonzero is the evidence
+    /// that exact slot allocation is needed.
+    pub coarse_overflow_tiles: u32,
 }
 
 #[cfg(test)]

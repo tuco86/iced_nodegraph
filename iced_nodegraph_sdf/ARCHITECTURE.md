@@ -155,6 +155,10 @@ levels persisted to storage buffers:
   holds up to `MAX_COARSE_SLOTS = 512` `(segment_idx, entry_idx)` results (two u32
   each), sorted by entry so the fragment shader walks one shape at a time in
   z-order. Tilings are marked by `TILING_BIT` on the segment field, as before.
+  Past the cap, pairs drop first-come; the demand counters keep counting, and
+  an async readback taken between the scatter and the sort surfaces the true
+  per-tile demand as `SdfStats::coarse_demand_max` / `coarse_overflow_tiles`
+  (one frame delayed, non-blocking - see plan/exact-slot-allocation.md).
 - **Fine** 16x16-pixel tiles. Each holds up to `MAX_FINE_SLOTS = 128` **16-bit**
   indices into its parent coarse tile's result, packed 2 per u32
   (`FINE_STRIDE = 64`). The fragment dereferences a fine index through the coarse

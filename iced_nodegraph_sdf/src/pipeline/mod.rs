@@ -2,6 +2,7 @@
 
 pub(crate) mod arena;
 pub(crate) mod buffer;
+pub(crate) mod overflow;
 pub(crate) mod types;
 
 #[cfg(test)]

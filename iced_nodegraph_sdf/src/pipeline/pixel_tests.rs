@@ -4835,6 +4835,82 @@ fn cull_dispatch_skipped_while_index_valid() {
     );
 }
 
+/// Coarse-slot overflow telemetry (plan/exact-slot-allocation.md, option 3):
+/// `SdfStats` reports the TRUE per-tile pair demand of the latest completed
+/// cull readback. A healthy scene reports its demand with zero overflowing
+/// tiles; a pathological scene (hundreds of shapes stacked into ONE 64px
+/// coarse tile) reports demand past the usable cap and flags the tiles that
+/// dropped pairs first-come. The values are sticky: an idle (cull-skipped)
+/// frame keeps reporting the last cull's readback.
+#[test]
+fn coarse_overflow_telemetry_reports_true_demand() {
+    use crate::primitive::{SdfPipeline, SdfPrimitive};
+    use crate::shape::Shape;
+    use iced_wgpu::primitive::Pipeline;
+
+    let r = shared_renderer();
+    let (w, h) = (128u32, 128u32);
+    let style = Style::solid(rgba(0.9, 0.4, 0.2, 1.0));
+    // `n` circles stacked at (32, 32) - the middle of coarse tile (0, 0) at
+    // zoom 1 / camera 0. Radii vary so every entry is a genuinely distinct
+    // drawable (no shape sharing shortcut); all stay well inside the tile.
+    let stack = |n: usize| -> SdfPrimitive {
+        let mut p = SdfPrimitive::with_capacity(n);
+        for i in 0..n {
+            let radius = 3.0 + (i % 5) as f32 * 0.5;
+            p.push(&Shape::circle(radius), &style, [32.0, 32.0]);
+        }
+        p.camera(0.0, 0.0, 1.0)
+    };
+
+    let mut pipeline = SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
+
+    // Healthy scene: demand visible, no overflow. The frame harness waits on
+    // the render submission before `trim`, so the async readback has already
+    // completed when the stats are published.
+    let healthy = stack(10);
+    render_pipeline_frame(&r, &mut pipeline, &[&healthy], w, h);
+    let stats = crate::primitive::sdf_stats();
+    assert!(
+        stats.coarse_demand_max >= 10 && stats.coarse_demand_max <= MAX_COARSE_SLOTS,
+        "healthy demand must be visible, got {}",
+        stats.coarse_demand_max
+    );
+    assert_eq!(
+        stats.coarse_overflow_tiles, 0,
+        "healthy scene must not report overflow"
+    );
+
+    // Pathological scene: each circle compiles to several arc segments and the
+    // scatter appends one pair PER SEGMENT per covered tile, so 600 stacked
+    // circles demand far more slots than the usable cap (512 minus the tiling
+    // reserve) in every tile they touch - pairs WERE dropped and the telemetry
+    // must say so. Demand counts slot APPENDS (the budget being exhausted),
+    // not drawables, so at least one pair per circle is a safe lower bound.
+    let overflowing = stack(600);
+    render_pipeline_frame(&r, &mut pipeline, &[&overflowing], w, h);
+    let stats = crate::primitive::sdf_stats();
+    assert!(
+        stats.coarse_demand_max >= 600,
+        "true demand past the cap (600 circles > {MAX_COARSE_SLOTS} slots) must be reported, got {}",
+        stats.coarse_demand_max
+    );
+    assert!(
+        stats.coarse_overflow_tiles >= 1,
+        "overflowing tiles must be flagged, got {}",
+        stats.coarse_overflow_tiles
+    );
+    let (demand, tiles) = (stats.coarse_demand_max, stats.coarse_overflow_tiles);
+
+    // Idle frame: byte-identical scene, cull skipped, no new readback - the
+    // last completed values stay visible instead of flickering to zero.
+    render_pipeline_frame(&r, &mut pipeline, &[&overflowing], w, h);
+    let stats = crate::primitive::sdf_stats();
+    assert!(stats.cull_skipped, "identical frame must skip the cull");
+    assert_eq!(stats.coarse_demand_max, demand, "report must be sticky");
+    assert_eq!(stats.coarse_overflow_tiles, tiles, "report must be sticky");
+}
+
 /// TEMP measure-first probe (ignored): steady-state `prepare` CPU cost of an IDLE
 /// 500-node frame (same scene re-prepared each frame, no camera change). Sizes the
 /// prize for the persistent-buffer / dirty-skip work: how much CPU an unchanged

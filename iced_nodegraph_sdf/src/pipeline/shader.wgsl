@@ -858,7 +858,10 @@ fn coarse_tile_box(draw: DrawData, tx: u32, ty: u32) -> vec4<f32> {
 // Reserve one coarse slot of `coarse_global` and write the (seg, entry) pair.
 // Beyond the cap the pair is DROPPED first-come (the scatter cannot rank by
 // distance like the old single-threaded keep-nearest did); the count keeps
-// rising past the cap so true demand stays observable. See plan/scatter-binning.md.
+// rising past the cap, so between the scatter and the sort it holds TRUE
+// demand - the overflow telemetry snapshots it in that window (the sort then
+// overwrites it with the clamped render list length). See
+// plan/scatter-binning.md and plan/exact-slot-allocation.md.
 fn coarse_append(coarse_global: u32, seg_field: u32, entry_idx: u32) {
     let idx = atomicAdd(&cs_coarse_counts[coarse_global], 1u);
     if idx < MAX_COARSE_SLOTS {

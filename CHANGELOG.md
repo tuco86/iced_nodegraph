@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Coarse-slot overflow telemetry: `SdfStats::coarse_demand_max` /
+  `coarse_overflow_tiles` report the true per-tile demand of the scatter cull
+  via a non-blocking async readback (one frame delayed), making first-come
+  slot drops in pathologically dense tiles observable instead of silent. Zero
+  cost when nothing overflows.
+
 ### Changed
 
 - SDF geometry buffers (segments/entries/styles) are persistent arenas with

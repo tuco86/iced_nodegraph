@@ -25,6 +25,7 @@ use crate::compile::{
 };
 use crate::pattern::PatternType;
 use crate::pipeline::arena::ArenaAlloc;
+use crate::pipeline::overflow::OverflowProbe;
 use crate::pipeline::{buffer, types};
 use crate::shape::{Shape, ShapeCache};
 use crate::shared::SharedSdfResources;
@@ -44,6 +45,8 @@ static LAST_STATS: Mutex<types::SdfStats> = Mutex::new(types::SdfStats {
     resident_hits: 0,
     geometry_rebuilds: 0,
     arena_compactions: 0,
+    coarse_demand_max: 0,
+    coarse_overflow_tiles: 0,
 });
 
 /// Read performance statistics from the last completed frame.
@@ -557,6 +560,13 @@ pub struct SdfPipeline {
     /// `run_deferred_compute`, which SKIPS the whole cull dispatch while the
     /// index is valid (idle redraws and time-only animation frames).
     cull_dirty: bool,
+    /// Async readback of the coarse demand counters (overflow telemetry, see
+    /// [`crate::pipeline::overflow`]). Mutex for the same reason as
+    /// `pending_dispatches`: the copy is recorded from the immutable `draw`.
+    overflow_probe: Mutex<OverflowProbe>,
+    /// Most recent completed demand readback: (max per-tile demand, tiles over
+    /// the usable cap). Sticky between culls; reported in [`types::SdfStats`].
+    coarse_demand: (u32, u32),
 }
 
 /// The two-level index buffers, in bind order for compute group 1:
@@ -851,10 +861,25 @@ impl Pipeline for SdfPipeline {
             closed_scratch: Vec::new(),
             prev_cull_keys: Vec::new(),
             cull_dirty: true,
+            overflow_probe: Mutex::new(OverflowProbe::new()),
+            coarse_demand: (0, 0),
         }
     }
 
     fn trim(&mut self) {
+        // Harvest a completed coarse-demand readback, if any (non-blocking;
+        // polls only while one is outstanding). Values are sticky until the
+        // next completed readback so idle frames keep reporting the last cull.
+        if let Some(device) = self.frame_device.as_ref()
+            && let Some(report) = self
+                .overflow_probe
+                .get_mut()
+                .harvest(device, MAX_COARSE_SLOTS - TILING_RESERVE)
+        {
+            self.coarse_demand = (report.demand_max, report.overflow_tiles);
+        }
+        self.frame_stats.coarse_demand_max = self.coarse_demand.0;
+        self.frame_stats.coarse_overflow_tiles = self.coarse_demand.1;
         // Capture frame metrics from the arenas/cache BEFORE clearing.
         self.frame_stats.tile_count = self.total_fine_tiles;
         self.frame_stats.segment_count = self.seg_arena.live();
@@ -1026,15 +1051,15 @@ impl SdfPipeline {
         // start at zero. Clearing the whole buffer is cheaper than tracking the
         // used range and the slots themselves need no clear (bounded by count).
         encoder.clear_buffer(&self.coarse_counts_buffer, 0, None);
+        let mut probe = self.overflow_probe.lock();
         {
             let mut pass = encoder.begin_compute_pass(&iced::wgpu::ComputePassDescriptor {
-                label: Some("sdf_spatial_index"),
+                label: Some("sdf_scatter"),
                 timestamp_writes: None,
             });
             pass.set_bind_group(0, &self.compute_group0, &[]);
-            // Storage writes are ordered between dispatches of one pass, so the
-            // sort kernel sees every scattered slot. Each kernel binds its own
-            // group 1 (8-storage-buffers-per-stage limit, see the WGSL).
+            // Each kernel binds its own group 1 (8-storage-buffers-per-stage
+            // limit, see the WGSL).
             //
             // Work-item dispatches are 1D flattened; x is capped at 65535
             // workgroups and y extends it (see `scatter_flat_id`).
@@ -1050,6 +1075,27 @@ impl SdfPipeline {
                 pass.set_bind_group(1, &self.scatter_closed_group1, &[]);
                 pass.dispatch_workgroups(closed_pairs.min(65535), closed_pairs.div_ceil(65535), 1);
             }
+        }
+        // Overflow telemetry: snapshot the demand counters BETWEEN scatter and
+        // sort - the only window where they hold TRUE demand (the sort kernel
+        // overwrites each count with the clamped render list length). The copy
+        // lands in a staging buffer mapped asynchronously after submit; `trim`
+        // harvests it a frame later without blocking. Skipped while a readback
+        // is still outstanding (sampling, never queueing). Splitting the pass
+        // costs one begin/end; ordering between passes and copies of one
+        // encoder is guaranteed, so the sort still sees every scattered slot.
+        probe.record_copy(
+            device,
+            &mut encoder,
+            &self.coarse_counts_buffer,
+            self.total_coarse_tiles as u64 * 4,
+        );
+        {
+            let mut pass = encoder.begin_compute_pass(&iced::wgpu::ComputePassDescriptor {
+                label: Some("sdf_sort_fine"),
+                timestamp_writes: None,
+            });
+            pass.set_bind_group(0, &self.compute_group0, &[]);
             // Sort + fine re-cull: one workgroup per coarse tile. The z-axis is
             // the draw index (read as workgroup_id.z); x/y are sized to the
             // LARGEST draw grid, smaller draws' surplus workgroups self-abort at
@@ -1068,6 +1114,7 @@ impl SdfPipeline {
             }
         }
         queue.submit(std::iter::once(encoder.finish()));
+        probe.map_pending();
     }
 }
 /// Compiles a primitive's entries into freshly allocated arena ranges and
