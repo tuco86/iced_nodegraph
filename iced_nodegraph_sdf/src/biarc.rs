@@ -16,9 +16,12 @@
 //! the same tolerance - a future arc-count optimization; this single-arc form is
 //! the robust equivalent under the same deviation gate.)
 //!
-//! Tolerance is in the same world units as the geometry; callers make it
-//! zoom-aware (`world_tol ~= 0.25px / zoom`) so a curve does not facet when
-//! zoomed in.
+//! Tolerance is in the same world units as the geometry. Production uses the
+//! FIXED `CUBIC_ARC_TOL` (curve.rs); screen-space error = tolerance * zoom, so
+//! it is bounded by the camera's zoom clamp (<= 0.5 px at the widget's max
+//! zoom of 10). A zoom-aware tolerance is a deliberate non-goal: it would put
+//! the zoom into the shape recipe hash and invalidate resident edge geometry
+//! on zoom. Revisit only if the zoom clamp ever rises above ~10.
 
 use glam::Vec2;
 

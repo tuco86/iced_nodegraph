@@ -24,8 +24,9 @@ use crate::biarc::{ArcPiece, cubic_to_arcs};
 use crate::drawable::{Drawable, DrawableType, Segment};
 
 /// Arc-spline tolerance (world units) for approximating cubic beziers as arcs in
-/// the arc-only model. Matches the widget's edge tolerance; world-space, so a
-/// curve built once does not visibly facet at typical zoom.
+/// the arc-only model. Fixed on purpose: screen-space error = 0.05 * zoom, i.e.
+/// <= 0.5 px across the widget's whole zoom clamp [0.1, 10.0], and a fixed value
+/// keeps shape recipe hashes (and thus resident edge geometry) zoom-invariant.
 const CUBIC_ARC_TOL: f32 = 0.05;
 
 /// Geometry construction namespace.
