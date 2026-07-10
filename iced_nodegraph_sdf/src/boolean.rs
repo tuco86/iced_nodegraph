@@ -1380,6 +1380,9 @@ mod tests {
         );
     }
 
+    // The closed-loop guard is a debug_assert: it compiles out of release
+    // builds, so this test only exists where the panic can happen.
+    #[cfg(debug_assertions)]
     #[test]
     #[should_panic(expected = "closed contour")]
     fn open_contour_input_trips_assert() {
