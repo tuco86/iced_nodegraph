@@ -183,8 +183,15 @@ struct SdfResult {
 @group(0) @binding(1) var<storage, read> cs_entries: array<GpuDrawEntry>;
 @group(0) @binding(2) var<storage, read> cs_segments: array<GpuSegment>;
 @group(0) @binding(3) var<storage, read> cs_styles: array<GpuStyle>;
+// Sort/fine launch dims: x = live draw count, y = total live coarse tiles
+// this frame. A UNIFORM binding (the compute stage sits at the WebGPU
+// spec-default limit of 8 storage buffers); a uniform is also required
+// because `arrayLength` reports buffer CAPACITY, not the live length.
+@group(0) @binding(7) var<uniform> cs_launch: vec2<u32>;
 
-// draw_index is carried by the dispatch z-axis (workgroup_id.z), not a uniform.
+// The scatter kernels carry their work-item index in the flattened dispatch
+// (see scatter_flat_id); the sort/fine kernel maps its flat workgroup id to
+// (draw, coarse tile) via cs_launch + the coarse_base prefix sums.
 //
 // The compute stage must stay within the WebGPU spec-default limit of 8
 // storage buffers per stage (group 0 already binds 4), so group 1 holds at
@@ -1196,26 +1203,44 @@ fn cs_scatter_closed(
     }
 }
 
-// One 64-thread workgroup per coarse tile (dispatch x/y = coarse grid, z =
-// draw index). Loads the scattered slots (clamped, TILING_RESERVE spare),
-// appends the draw's tilings, bitonic-sorts by (entry, seg) - a UNIQUE total
-// order, so the frame is deterministic regardless of atomic append order -
-// writes the sorted list back, then threads 0..15 run the fine re-cull
-// (unchanged 16px logic, keep-nearest, 16-bit refs).
+// One 64-thread workgroup per LIVE coarse tile, dispatched 1D-flat over
+// cs_launch.y tiles (x capped at 65535 workgroups, y extends it). The old
+// (max_cols, max_rows, draw) grid dispatched the LARGEST draw's grid for
+// every draw; on a 500-node scene 99% of workgroups were dead on arrival
+// and their launch overhead dominated the whole cull pass (~2 ms).
+// Loads the scattered slots (clamped, TILING_RESERVE spare), appends the
+// draw's tilings, bitonic-sorts by (entry, seg) - a UNIQUE total order, so
+// the frame is deterministic regardless of atomic append order - writes the
+// sorted list back, then threads 0..15 run the fine re-cull (unchanged 16px
+// logic, keep-nearest, 16-bit refs).
 @compute @workgroup_size(64, 1, 1)
 fn cs_sort_fine(
     @builtin(workgroup_id) wid: vec3<u32>,
     @builtin(local_invocation_index) lindex: u32,
 ) {
-    let draw = cs_draws[wid.z];
-    // Uniform abort for surplus workgroups and fallback draws (coarse_cols == 0).
-    if wid.x >= draw.coarse_cols || wid.y >= draw.coarse_rows { return; }
+    let flat = wid.y * 65535u + wid.x;
+    // Uniform across the workgroup: safe before the barriers below.
+    if flat >= cs_launch.y { return; }
+    // Owning draw: the LARGEST d with coarse_base <= flat. coarse_base is the
+    // exclusive prefix sum of the draws' coarse grids, so a zero-tile draw
+    // (fallback grid 0) ties with its successor's base and loses the
+    // largest-index pick - it owns no workgroup, like the old per-grid abort.
+    var lo = 0u;
+    var hi = cs_launch.x - 1u;
+    while lo < hi {
+        let mid = (lo + hi + 1u) >> 1u;
+        if cs_draws[mid].coarse_base <= flat { lo = mid; } else { hi = mid - 1u; }
+    }
+    let draw = cs_draws[lo];
+    let coarse_local = flat - draw.coarse_base;
+    let ccol = coarse_local % draw.coarse_cols;
+    let crow = coarse_local / draw.coarse_cols;
 
     let inv_cs = 1.0 / (draw.camera_zoom * draw.scale_factor);
     let thd = TILE_SIZE * 0.70710678 * inv_cs;           // fine half diagonal
     let coarse_px = TILE_SIZE * f32(COARSE_FACTOR);       // 64
     let coarse_thd = coarse_px * 0.70710678 * inv_cs;     // coarse half diagonal
-    let coarse_global = draw.coarse_base + wid.y * draw.coarse_cols + wid.x;
+    let coarse_global = flat;
     let cbase = coarse_global * COARSE_STRIDE;
 
     // Load the scattered slots; pad the tail with sort sentinels.
@@ -1234,7 +1259,7 @@ fn cs_sort_fine(
 
     // Thread 0 appends the draw's tilings (reach-tested at coarse resolution).
     if lindex == 0u {
-        let cmin_px = vec2(f32(wid.x), f32(wid.y)) * coarse_px;
+        let cmin_px = vec2(f32(ccol), f32(crow)) * coarse_px;
         let coarse_min = cmin_px * inv_cs - draw.camera_position;
         let coarse_max = (cmin_px + vec2(coarse_px, coarse_px)) * inv_cs - draw.camera_position;
         let coarse_center = (coarse_min + coarse_max) * 0.5;
@@ -1305,8 +1330,8 @@ fn cs_sort_fine(
     // --- Fine phase: threads 0..15, one 16px tile each (unchanged logic) ---
     // Per-thread (non-uniform) returns; no barrier follows, so they are allowed.
     if lindex >= 16u { return; }
-    let fine_col = wid.x * COARSE_FACTOR + (lindex % COARSE_FACTOR);
-    let fine_row = wid.y * COARSE_FACTOR + (lindex / COARSE_FACTOR);
+    let fine_col = ccol * COARSE_FACTOR + (lindex % COARSE_FACTOR);
+    let fine_row = crow * COARSE_FACTOR + (lindex / COARSE_FACTOR);
     if fine_col >= draw.grid_cols || fine_row >= draw.grid_rows { return; }
     let fine_tile_idx = draw.tile_base + fine_row * draw.grid_cols + fine_col;
     let fine_base = fine_tile_idx * FINE_STRIDE;

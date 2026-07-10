@@ -476,6 +476,10 @@ pub struct SdfPipeline {
     /// written once per culled frame (`arrayLength` reports capacity, not the
     /// live length).
     cull_meta_buffer: iced::wgpu::Buffer,
+    /// Sort/fine launch dims uniform ([live draw count, total coarse tiles]),
+    /// written once per culled frame; drives the flat 1D sort dispatch and
+    /// the kernel's draw binary search.
+    cull_launch_buffer: iced::wgpu::Buffer,
     fine_capacity: u32,
     coarse_capacity: u32,
     /// Hard ceilings so neither slot binding exceeds the device's
@@ -500,15 +504,15 @@ pub struct SdfPipeline {
     // Frame state
     total_fine_tiles: u32,
     total_coarse_tiles: u32,
-    // Deferred cull-compute: each prepare only RECORDS its dispatch params here;
+    // Deferred cull-compute: each prepare only RECORDS that a cull is pending;
     // the FIRST draw runs ALL culls in one encoder + one `queue.submit` (was one
     // submit per primitive - ~70us each, the dominant prepare cost). Because the
-    // dispatch is recorded after every prepare, the tile buffer can grow freely
-    // during prepares with NO copy (nothing is computed until the end). Mutex/
-    // AtomicBool (not RefCell/Cell) because the Pipeline must be Sync per iced's
-    // `Primitive` bound. `frame_device`/`frame_queue` are cloned in prepare so the
+    // dispatch is deferred to the end, the tile buffer can grow freely during
+    // prepares with NO copy (nothing is computed until the end). AtomicBool
+    // (not Cell) because the Pipeline must be Sync per iced's `Primitive`
+    // bound. `frame_device`/`frame_queue` are cloned in prepare so the
     // immutable `draw` can build + submit the batched compute.
-    pending_dispatches: Mutex<Vec<(u32, u32)>>, // (grid_cols, grid_rows) per culled draw
+    cull_pending: std::sync::atomic::AtomicBool,
     compute_submitted: std::sync::atomic::AtomicBool,
     frame_device: Option<Device>,
     frame_queue: Option<Queue>,
@@ -562,7 +566,7 @@ pub struct SdfPipeline {
     cull_dirty: bool,
     /// Async readback of the coarse demand counters (overflow telemetry, see
     /// [`crate::pipeline::overflow`]). Mutex for the same reason as
-    /// `pending_dispatches`: the copy is recorded from the immutable `draw`.
+    /// `cull_pending`: the copy is recorded from the immutable `draw`.
     overflow_probe: Mutex<OverflowProbe>,
     /// Most recent completed demand readback: (max per-tile demand, tiles over
     /// the usable cap). Sticky between culls; reported in [`types::SdfStats`].
@@ -655,6 +659,7 @@ fn create_compute_group0(
     entries: &buffer::Buffer<types::GpuDrawEntry>,
     segments: &buffer::Buffer<types::GpuSegment>,
     styles: &buffer::Buffer<types::GpuStyle>,
+    launch: &iced::wgpu::Buffer,
 ) -> BindGroup {
     device.create_bind_group(&BindGroupDescriptor {
         label: Some("sdf_compute_g0"),
@@ -675,6 +680,10 @@ fn create_compute_group0(
             BindGroupEntry {
                 binding: 3,
                 resource: styles.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 7,
+                resource: launch.as_entire_binding(),
             },
         ],
     })
@@ -764,6 +773,12 @@ impl Pipeline for SdfPipeline {
             usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let cull_launch_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("sdf_cull_launch"),
+            size: 8,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         let (coarse_counts_buffer, coarse_slots_buffer, fine_counts_buffer, fine_slots_buffer) =
             create_index_buffers(device, 256, 64);
@@ -786,6 +801,7 @@ impl Pipeline for SdfPipeline {
             &entries_buffer,
             &segments_buffer,
             &styles_buffer,
+            &cull_launch_buffer,
         );
         let scatter_open_group1 = create_scatter_group1(
             device,
@@ -840,7 +856,8 @@ impl Pipeline for SdfPipeline {
             bind_group_gens: (0, 0, 0, 0, 0, 0, 0),
             total_fine_tiles: 0,
             total_coarse_tiles: 0,
-            pending_dispatches: Mutex::new(Vec::new()),
+            cull_launch_buffer,
+            cull_pending: std::sync::atomic::AtomicBool::new(false),
             compute_submitted: std::sync::atomic::AtomicBool::new(false),
             frame_device: None,
             frame_queue: None,
@@ -903,7 +920,8 @@ impl Pipeline for SdfPipeline {
         self.cull_closed_buffer.clear();
         self.total_fine_tiles = 0;
         self.total_coarse_tiles = 0;
-        self.pending_dispatches.get_mut().clear();
+        self.cull_pending
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         self.compute_submitted
             .store(false, std::sync::atomic::Ordering::Relaxed);
         // Residency lifecycle: age out unused blocks, then compact when the
@@ -1031,8 +1049,7 @@ impl SdfPipeline {
         if !self.cull_dirty {
             return;
         }
-        let dispatches = self.pending_dispatches.lock();
-        if dispatches.is_empty() {
+        if !self.cull_pending.load(std::sync::atomic::Ordering::Relaxed) {
             return;
         }
         // Live scatter-list lengths for the kernels; `arrayLength` would report
@@ -1043,6 +1060,14 @@ impl SdfPipeline {
         meta[..4].copy_from_slice(&pair_triples.to_le_bytes());
         meta[4..].copy_from_slice(&closed_pairs.to_le_bytes());
         queue.write_buffer(&self.cull_meta_buffer, 0, &meta);
+        // Sort/fine launch dims: live draw count + total coarse tiles (the
+        // flat dispatch below is 1 workgroup per LIVE coarse tile; the kernel
+        // binary-searches its draw over the coarse_base prefix sums).
+        let draw_count = self.draw_data_buffer.len() as u32;
+        let mut launch = [0u8; 8];
+        launch[..4].copy_from_slice(&draw_count.to_le_bytes());
+        launch[4..].copy_from_slice(&self.total_coarse_tiles.to_le_bytes());
+        queue.write_buffer(&self.cull_launch_buffer, 0, &launch);
 
         let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
             label: Some("sdf_compute_batch"),
@@ -1096,21 +1121,17 @@ impl SdfPipeline {
                 timestamp_writes: None,
             });
             pass.set_bind_group(0, &self.compute_group0, &[]);
-            // Sort + fine re-cull: one workgroup per coarse tile. The z-axis is
-            // the draw index (read as workgroup_id.z); x/y are sized to the
-            // LARGEST draw grid, smaller draws' surplus workgroups self-abort at
-            // the grid bound. z is bounded by maxComputeWorkgroupsPerDimension.
-            let max_cols = dispatches.iter().map(|&(c, _)| c).max().unwrap_or(0);
-            let max_rows = dispatches.iter().map(|&(_, r)| r).max().unwrap_or(0);
-            let draw_count = self.draw_data_buffer.len() as u32;
-            if max_cols > 0 && max_rows > 0 && draw_count > 0 {
+            // Sort + fine re-cull: one workgroup per LIVE coarse tile,
+            // dispatched 1D-flat (x capped at 65535, y extends it). The old
+            // (max grid) x (draw count) dispatch launched the largest draw's
+            // grid for EVERY draw; with hundreds of small clipped node draws
+            // ~99% of the workgroups were dead on arrival and their launch
+            // overhead dominated the pass.
+            let wgs = self.total_coarse_tiles;
+            if wgs > 0 && draw_count > 0 {
                 pass.set_pipeline(&self.shared.sort_fine_pipeline);
                 pass.set_bind_group(1, &self.sort_group1, &[]);
-                pass.dispatch_workgroups(
-                    max_cols.div_ceil(COARSE_FACTOR),
-                    max_rows.div_ceil(COARSE_FACTOR),
-                    draw_count,
-                );
+                pass.dispatch_workgroups(wgs.min(65535), wgs.div_ceil(65535), 1);
             }
         }
         queue.submit(std::iter::once(encoder.finish()));
@@ -1572,6 +1593,7 @@ impl Primitive for SdfPrimitive {
                 &pipeline.entries_buffer,
                 &pipeline.segments_buffer,
                 &pipeline.styles_buffer,
+                &pipeline.cull_launch_buffer,
             );
             pipeline.scatter_open_group1 = create_scatter_group1(
                 device,
@@ -1600,13 +1622,12 @@ impl Primitive for SdfPrimitive {
             pipeline.bind_group_gens = gens;
         }
 
-        // Record this cull dispatch; the FIRST draw runs them all in one encoder +
-        // one submit (against the now-final buffers). Stash device/queue so the
-        // immutable `draw` can build and submit that batch.
+        // Record that a cull is pending; the FIRST draw runs them all in one
+        // encoder + one submit (against the now-final buffers). Stash device/
+        // queue so the immutable `draw` can build and submit that batch.
         pipeline
-            .pending_dispatches
-            .get_mut()
-            .push((grid_cols, grid_rows));
+            .cull_pending
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         if pipeline.frame_queue.is_none() {
             pipeline.frame_device = Some(device.clone());
             pipeline.frame_queue = Some(queue.clone());

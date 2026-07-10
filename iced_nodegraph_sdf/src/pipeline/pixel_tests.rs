@@ -89,10 +89,17 @@ struct CullLists {
 
 impl TestRenderer {
     fn new() -> Self {
-        let instance = Instance::new(&InstanceDescriptor {
-            backends: Backends::all(),
-            ..Default::default()
-        });
+        // `.with_env()` honors WGPU_BACKEND / WGPU_DEBUG etc. In particular
+        // WGPU_DEBUG=1 on a release build enables debug labels ("sdf_index",
+        // "sdf_shade") without validation layers, so external profilers
+        // (Nsight GPU Trace, RenderDoc) can attribute GPU time per pass.
+        let instance = Instance::new(
+            &InstanceDescriptor {
+                backends: Backends::all(),
+                ..Default::default()
+            }
+            .with_env(),
+        );
         let adapter = pollster::block_on(instance.request_adapter(&RequestAdapterOptions {
             power_preference: PowerPreference::LowPower,
             compatible_surface: None,
@@ -360,28 +367,14 @@ impl TestRenderer {
                 },
             ],
         });
-        let compute_bg0 = self.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &self.compute_group0_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: draws_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: entries_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: segments_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: styles_buf.as_entire_binding(),
-                },
-            ],
-        });
+        let compute_bg0 = self.create_compute_bg0(
+            &draws_buf,
+            &entries_buf,
+            &segments_buf,
+            &styles_buf,
+            1,
+            grid_cols.div_ceil(COARSE_FACTOR) * grid_rows.div_ceil(COARSE_FACTOR),
+        );
         let scatter_open_bg1 = self.create_scatter_bg1(
             &coarse_counts_buf,
             &coarse_slots_buf,
@@ -438,9 +431,7 @@ impl TestRenderer {
                 &scatter_open_bg1,
                 &scatter_closed_bg1,
                 &sort_bg1,
-                grid_cols.div_ceil(COARSE_FACTOR),
-                grid_rows.div_ceil(COARSE_FACTOR),
-                1,
+                grid_cols.div_ceil(COARSE_FACTOR) * grid_rows.div_ceil(COARSE_FACTOR),
             );
         }
         {
@@ -634,28 +625,14 @@ impl TestRenderer {
                 },
             ],
         });
-        let compute_bg0 = self.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &self.compute_group0_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: draws_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: entries_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: segments_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: styles_buf.as_entire_binding(),
-                },
-            ],
-        });
+        let compute_bg0 = self.create_compute_bg0(
+            &draws_buf,
+            &entries_buf,
+            &segments_buf,
+            &styles_buf,
+            1,
+            coarse_cols * coarse_rows,
+        );
         let scatter_open_bg1 = self.create_scatter_bg1(
             &coarse_counts_buf,
             &coarse_slots_buf,
@@ -728,9 +705,7 @@ impl TestRenderer {
                 &scatter_open_bg1,
                 &scatter_closed_bg1,
                 &sort_bg1,
-                coarse_cols,
-                coarse_rows,
-                1,
+                coarse_cols * coarse_rows,
             );
         }
         {
@@ -796,6 +771,7 @@ impl TestRenderer {
         canvas_w: u32,
         canvas_h: u32,
         zoom: f32,
+        marker_spans: &[(&str, u32)],
     ) -> Option<(f64, f64)> {
         if !self.device.features().contains(Features::TIMESTAMP_QUERY) {
             return None;
@@ -811,6 +787,12 @@ impl TestRenderer {
         let mut max_cols = 0u32;
         let mut max_rows = 0u32;
 
+        // Per-draw raster rects, mirroring iced_wgpu's primitive path which
+        // sets viewport+scissor to each primitive's bounds before its draw.
+        let rects: Vec<(f32, f32, u32, u32)> = draws
+            .iter()
+            .map(|(_, origin_px, gw, gh, _)| (origin_px[0], origin_px[1], *gw, *gh))
+            .collect();
         for (drawables, origin_px, gw, gh, cam) in draws {
             let entry_start = gpu_entries.len() as u32;
             for (i, (drawable, style)) in drawables.iter().enumerate() {
@@ -924,28 +906,14 @@ impl TestRenderer {
                 },
             ],
         });
-        let compute_bg0 = self.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &self.compute_group0_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: draws_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: entries_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: segments_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: styles_buf.as_entire_binding(),
-                },
-            ],
-        });
+        let compute_bg0 = self.create_compute_bg0(
+            &draws_buf,
+            &entries_buf,
+            &segments_buf,
+            &styles_buf,
+            num_draws,
+            coarse_base,
+        );
         let scatter_open_bg1 = self.create_scatter_bg1(
             &coarse_counts_buf,
             &coarse_slots_buf,
@@ -1012,16 +980,15 @@ impl TestRenderer {
                 }),
             });
             pass.set_bind_group(0, &compute_bg0, &[]);
-            // One batch, z = draw count: each sort layer culls its own draw's grid.
+            // One batch over the frame's live coarse tiles; each workgroup
+            // finds its draw via the coarse_base prefix sums.
             self.record_cull(
                 &mut pass,
                 &cull_lists,
                 &scatter_open_bg1,
                 &scatter_closed_bg1,
                 &sort_bg1,
-                max_cols.div_ceil(COARSE_FACTOR),
-                max_rows.div_ceil(COARSE_FACTOR),
-                num_draws,
+                coarse_base,
             );
         }
         {
@@ -1046,7 +1013,36 @@ impl TestRenderer {
             });
             pass.set_pipeline(&self.render_pipeline);
             pass.set_bind_group(0, &render_bg, &[]);
-            pass.draw(0..3, 0..num_draws);
+            // Production (iced_wgpu lib.rs) issues each primitive as its own
+            // draw with viewport+scissor set to its bounds, so the fullscreen
+            // triangle only rasterizes the draw's box. One instanced draw
+            // without that clipping would rasterize EVERY instance across the
+            // whole canvas and drown the measurement in early-out fragments.
+            // `marker_spans` additionally wraps consecutive draw ranges in
+            // debug groups so external profilers can attribute time.
+            let issue = |pass: &mut wgpu::RenderPass<'_>, d: u32| {
+                let (x, y, gw, gh) = rects[d as usize];
+                let sx = (x.max(0.0) as u32).min(canvas_w);
+                let sy = (y.max(0.0) as u32).min(canvas_h);
+                let sw = gw.min(canvas_w - sx);
+                let sh = gh.min(canvas_h - sy);
+                pass.set_viewport(x, y, gw as f32, gh as f32, 0.0, 1.0);
+                pass.set_scissor_rect(sx, sy, sw, sh);
+                pass.draw(0..3, d..d + 1);
+            };
+            let mut start = 0u32;
+            for (name, count) in marker_spans {
+                let end = (start + count).min(num_draws);
+                pass.push_debug_group(name);
+                for d in start..end {
+                    issue(&mut pass, d);
+                }
+                pass.pop_debug_group();
+                start = end;
+            }
+            for d in start..num_draws {
+                issue(&mut pass, d);
+            }
         }
         enc.resolve_query_set(&qs, 0..4, &resolve, 0);
         enc.copy_buffer_to_buffer(&resolve, 0, &readback, 0, 32);
@@ -1227,28 +1223,14 @@ impl TestRenderer {
                 },
             ],
         });
-        let compute_bg0 = self.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &self.compute_group0_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: draws_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: entries_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: segments_buf.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: styles_buf.as_entire_binding(),
-                },
-            ],
-        });
+        let compute_bg0 = self.create_compute_bg0(
+            &draws_buf,
+            &entries_buf,
+            &segments_buf,
+            &styles_buf,
+            1,
+            grid_cols.div_ceil(COARSE_FACTOR) * grid_rows.div_ceil(COARSE_FACTOR),
+        );
         let scatter_open_bg1 = self.create_scatter_bg1(
             &coarse_counts_buf,
             &coarse_slots_buf,
@@ -1310,9 +1292,7 @@ impl TestRenderer {
                 &scatter_open_bg1,
                 &scatter_closed_bg1,
                 &sort_bg1,
-                grid_cols.div_ceil(COARSE_FACTOR),
-                grid_rows.div_ceil(COARSE_FACTOR),
-                1,
+                grid_cols.div_ceil(COARSE_FACTOR) * grid_rows.div_ceil(COARSE_FACTOR),
             );
         }
 
@@ -1918,7 +1898,6 @@ impl TestRenderer {
     /// group 1 (8-storage-buffers-per-stage limit). Group 0 must already be
     /// set. Freshly created storage buffers are zero-initialized by WebGPU,
     /// so unlike production no coarse-counts clear is needed here.
-    #[allow(clippy::too_many_arguments)]
     fn record_cull(
         &self,
         pass: &mut ComputePass<'_>,
@@ -1926,17 +1905,18 @@ impl TestRenderer {
         open_bg1: &BindGroup,
         closed_bg1: &BindGroup,
         sort_bg1: &BindGroup,
-        coarse_cols: u32,
-        coarse_rows: u32,
-        draws: u32,
+        total_coarse: u32,
     ) {
         if lists.pair_triples > 0 {
             let wgs = lists.pair_triples.div_ceil(64);
+            pass.push_debug_group("cull_scatter_open");
             pass.set_pipeline(&self.scatter_open_pipeline);
             pass.set_bind_group(1, open_bg1, &[]);
             pass.dispatch_workgroups(wgs.min(65535), wgs.div_ceil(65535), 1);
+            pass.pop_debug_group();
         }
         if lists.closed_pairs > 0 {
+            pass.push_debug_group("cull_scatter_closed");
             pass.set_pipeline(&self.scatter_closed_pipeline);
             pass.set_bind_group(1, closed_bg1, &[]);
             pass.dispatch_workgroups(
@@ -1944,10 +1924,18 @@ impl TestRenderer {
                 lists.closed_pairs.div_ceil(65535),
                 1,
             );
+            pass.pop_debug_group();
         }
-        pass.set_pipeline(&self.sort_fine_pipeline);
-        pass.set_bind_group(1, sort_bg1, &[]);
-        pass.dispatch_workgroups(coarse_cols, coarse_rows, draws);
+        // One workgroup per LIVE coarse tile, 1D-flat (x capped at 65535,
+        // y extends); the kernel binary-searches its draw over the
+        // coarse_base prefix sums carried by the cs_launch uniform.
+        if total_coarse > 0 {
+            pass.push_debug_group("cull_sort_fine");
+            pass.set_pipeline(&self.sort_fine_pipeline);
+            pass.set_bind_group(1, sort_bg1, &[]);
+            pass.dispatch_workgroups(total_coarse.min(65535), total_coarse.div_ceil(65535), 1);
+            pass.pop_debug_group();
+        }
     }
 
     fn create_storage<T: ShaderType + ShaderSize + WriteInto>(&self, items: &[T]) -> Buffer {
@@ -1960,6 +1948,55 @@ impl TestRenderer {
                 contents: &scratch,
                 usage: BufferUsages::STORAGE,
             })
+    }
+
+    /// Compute group 0 for one culled frame: the shared data buffers plus the
+    /// sort/fine launch-dims uniform (live draw count, total coarse tiles).
+    fn create_compute_bg0(
+        &self,
+        draws: &Buffer,
+        entries: &Buffer,
+        segments: &Buffer,
+        styles: &Buffer,
+        num_draws: u32,
+        total_coarse: u32,
+    ) -> BindGroup {
+        let mut launch = [0u8; 8];
+        launch[..4].copy_from_slice(&num_draws.to_le_bytes());
+        launch[4..].copy_from_slice(&total_coarse.to_le_bytes());
+        let launch_buf = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("sdf_cull_launch"),
+                contents: &launch,
+                usage: BufferUsages::UNIFORM,
+            });
+        self.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &self.compute_group0_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: draws.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: entries.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: segments.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: styles.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 7,
+                    resource: launch_buf.as_entire_binding(),
+                },
+            ],
+        })
     }
 
     fn create_render_layout(device: &Device) -> BindGroupLayout {
@@ -1989,6 +2026,17 @@ impl TestRenderer {
                 bgl_storage(1, ShaderStages::COMPUTE, GpuDrawEntry::SHADER_SIZE.get()),
                 bgl_storage(2, ShaderStages::COMPUTE, GpuSegment::SHADER_SIZE.get()),
                 bgl_storage(3, ShaderStages::COMPUTE, GpuStyle::SHADER_SIZE.get()),
+                // Sort/fine launch dims uniform (see the WGSL cs_launch doc).
+                BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: std::num::NonZeroU64::new(8),
+                    },
+                    count: None,
+                },
             ],
         })
     }
@@ -5203,9 +5251,6 @@ fn measure_drag_prepare_cost() {
 #[test]
 #[ignore]
 fn measure_gpu_shader_cost() {
-    use crate::shape::Shape;
-    use crate::tiling::Tiling;
-
     let r = shared_renderer();
     if !r.device.features().contains(Features::TIMESTAMP_QUERY) {
         println!("\nTIMESTAMP_QUERY unsupported on this adapter - cannot measure GPU time.\n");
@@ -5219,36 +5264,7 @@ fn measure_gpu_shader_cost() {
     let fill_style = Style::solid(rgba(0.30, 0.32, 0.40, 1.0));
     let edge_style = Style::stroke(rgba(0.55, 0.6, 0.7, 1.0), Pattern::solid(2.0));
 
-    // Background tiling (covers every pixel - the fragment baseline).
-    let bg = Shape::tiling(Tiling::grid(40.0, 40.0, 1.0)).evaluate();
-
-    // 500 node bodies (rounded box minus two pin circles) placed across the view.
-    let mut nodes = Vec::new();
-    for col in 0..25 {
-        for row in 0..20 {
-            let i = col * 20 + row;
-            let nw = 70.0 + (i % 7) as f32 * 6.0;
-            let nh = 60.0 + (i % 5) as f32 * 5.0;
-            let wx = (24.0 + col as f32 * 24.0) / zoom - cam[0];
-            let wy = (20.0 + row as f32 * 24.0) / zoom - cam[1];
-            let body = Shape::rounded_box([nw, nh], [6.0; 4])
-                - Shape::circle(5.0).translate([-nw * 0.5, 0.0])
-                - Shape::circle(5.0).translate([nw * 0.5, 0.0]);
-            nodes.push(body.evaluate().translated(wx, wy));
-        }
-    }
-
-    // 640 arc-spline bezier edges.
-    let mut edges = Vec::new();
-    for i in 0..640u32 {
-        let a = (i % 25) as f32 * 24.0 + 24.0;
-        let b = (i % 20) as f32 * 24.0 + 20.0;
-        let p0 = [a / zoom - cam[0], b / zoom - cam[1]];
-        let p3 = [(a + 60.0) / zoom - cam[0], (b + 40.0) / zoom - cam[1]];
-        let p1 = [p0[0] + 80.0, p0[1]];
-        let p2 = [p3[0] - 80.0, p3[1]];
-        edges.push(Shape::bezier(p0, p1, p2, p3).evaluate());
-    }
+    let (bg, nodes, edges) = bench_scene(zoom, cam);
 
     // Reference: the LUMPED single draw (all 1141 entries in one DrawData) - every
     // coarse tile scans all 1141, an artifact of lumping.
@@ -5277,9 +5293,14 @@ fn measure_gpu_shader_cost() {
     for (i, ns) in node_slices.iter().enumerate() {
         let nb = nodes[i].bounds();
         let (cx, cy) = ((nb[0] + nb[2]) * 0.5, (nb[1] + nb[3]) * 0.5);
-        // 32px clip (~2 fine tiles) centred on the node, like the widget's per-node clip.
+        // 32px clip (~2 fine tiles) centred on the node, like the widget's
+        // per-node clip, at the node's REAL screen position: production
+        // scatters these draws across the canvas; stacking them at the origin
+        // would blend 500 draws onto the same pixels and serialize the ROPs.
         let ncam = [16.0 / zoom - cx, 16.0 / zoom - cy];
-        frame.push((&ns[..], [0.0, 0.0], 32, 32, ncam));
+        let (col, row) = ((i / 20) as f32, (i % 20) as f32);
+        let origin = [24.0 + col * 24.0 - 16.0, 20.0 + row * 24.0 - 16.0];
+        frame.push((&ns[..], origin, 32, 32, ncam));
     }
 
     let lumped_t = {
@@ -5295,11 +5316,11 @@ fn measure_gpu_shader_cost() {
         (c, f)
     };
     let frame_t = {
-        let _ = r.gpu_frame_times(&frame, w, h, zoom);
+        let _ = r.gpu_frame_times(&frame, w, h, zoom, &[]);
         let mut c = f64::INFINITY;
         let mut f = f64::INFINITY;
         for _ in 0..10 {
-            if let Some(t) = r.gpu_frame_times(&frame, w, h, zoom) {
+            if let Some(t) = r.gpu_frame_times(&frame, w, h, zoom, &[]) {
                 c = c.min(t.0);
                 f = f.min(t.1);
             }
@@ -5323,10 +5344,119 @@ fn measure_gpu_shader_cost() {
     println!(
         "  (faithful = bg + edges full-screen + 500 clipped node draws, ONE z-batched dispatch)"
     );
-    println!(
-        "  (fragment is slightly inflated: clipped nodes overdraw the canvas corner in this bench)"
-    );
     println!("----------------------------------------------------------------------\n");
+}
+
+/// Representative 500-node benchmark scene: background grid tiling (covers
+/// every pixel), 500 node bodies (rounded box minus two pin circles), and 640
+/// arc-spline bezier edges. Shared by the GPU cost probes.
+fn bench_scene(
+    zoom: f32,
+    cam: [f32; 2],
+) -> (
+    crate::drawable::Drawable,
+    Vec<crate::drawable::Drawable>,
+    Vec<crate::drawable::Drawable>,
+) {
+    use crate::shape::Shape;
+    use crate::tiling::Tiling;
+
+    let bg = Shape::tiling(Tiling::grid(40.0, 40.0, 1.0)).evaluate();
+
+    let mut nodes = Vec::new();
+    for col in 0..25 {
+        for row in 0..20 {
+            let i = col * 20 + row;
+            let nw = 70.0 + (i % 7) as f32 * 6.0;
+            let nh = 60.0 + (i % 5) as f32 * 5.0;
+            let wx = (24.0 + col as f32 * 24.0) / zoom - cam[0];
+            let wy = (20.0 + row as f32 * 24.0) / zoom - cam[1];
+            let body = Shape::rounded_box([nw, nh], [6.0; 4])
+                - Shape::circle(5.0).translate([-nw * 0.5, 0.0])
+                - Shape::circle(5.0).translate([nw * 0.5, 0.0]);
+            nodes.push(body.evaluate().translated(wx, wy));
+        }
+    }
+
+    let mut edges = Vec::new();
+    for i in 0..640u32 {
+        let a = (i % 25) as f32 * 24.0 + 24.0;
+        let b = (i % 20) as f32 * 24.0 + 20.0;
+        let p0 = [a / zoom - cam[0], b / zoom - cam[1]];
+        let p3 = [(a + 60.0) / zoom - cam[0], (b + 40.0) / zoom - cam[1]];
+        let p1 = [p0[0] + 80.0, p0[1]];
+        let p2 = [p3[0] - 80.0, p3[1]];
+        edges.push(Shape::bezier(p0, p1, p2, p3).evaluate());
+    }
+
+    (bg, nodes, edges)
+}
+
+/// Instance ranges of the probe's frame layout, for per-category shade
+/// markers: [bg, edges, 500 node fills].
+const SHADE_SPANS: &[(&str, u32)] = &[("shade_bg", 1), ("shade_edges", 1), ("shade_nodes", 500)];
+
+/// GPU Trace capture target (ignored), driven by `gpu_trace.py` at the repo
+/// root: renders the representative 500-node
+/// frame (production-faithful batched layout, as in `measure_gpu_shader_cost`)
+/// in a tight loop so an external profiler can attach and trace the labeled
+/// passes ("sdf_index" compute, "sdf_shade" render, "shade_*" categories).
+/// Run WGPU_DEBUG=1 on a release build to get those labels without
+/// validation-layer overhead.
+/// Loops for GPU_PROBE_SECS seconds (default 30). Standalone:
+///   cargo test -p iced_nodegraph_sdf --release gpu_probe_loop -- --ignored --nocapture
+#[test]
+#[ignore]
+fn gpu_probe_loop() {
+    let r = shared_renderer();
+    if !r.device.features().contains(Features::TIMESTAMP_QUERY) {
+        println!("\nTIMESTAMP_QUERY unsupported on this adapter - cannot measure GPU time.\n");
+        return;
+    }
+
+    let (w, h, zoom) = (1280u32, 768u32, 0.24131_f32);
+    let cam = [-327.7_f32, -132.0];
+    let dark = Style::solid(rgba(0.12, 0.13, 0.16, 1.0));
+    let fill_style = Style::solid(rgba(0.30, 0.32, 0.40, 1.0));
+    let edge_style = Style::stroke(rgba(0.55, 0.6, 0.7, 1.0), Pattern::solid(2.0));
+    let (bg, nodes, edges) = bench_scene(zoom, cam);
+
+    let bg_slice: Vec<(&crate::drawable::Drawable, &Style)> = vec![(&bg, &dark)];
+    let edges_slice: Vec<(&crate::drawable::Drawable, &Style)> =
+        edges.iter().map(|e| (e, &edge_style)).collect();
+    let node_slices: Vec<Vec<(&crate::drawable::Drawable, &Style)>> =
+        nodes.iter().map(|n| vec![(n, &fill_style)]).collect();
+
+    let mut frame: Vec<FrameDraw> = Vec::with_capacity(2 + node_slices.len());
+    frame.push((&bg_slice[..], [0.0, 0.0], w, h, cam));
+    frame.push((&edges_slice[..], [0.0, 0.0], w, h, cam));
+    for (i, ns) in node_slices.iter().enumerate() {
+        let nb = nodes[i].bounds();
+        let (cx, cy) = ((nb[0] + nb[2]) * 0.5, (nb[1] + nb[3]) * 0.5);
+        // 32px clip centred on the node, at its real screen position (see
+        // measure_gpu_shader_cost: stacked clips would serialize the ROPs).
+        let ncam = [16.0 / zoom - cx, 16.0 / zoom - cy];
+        let (col, row) = ((i / 20) as f32, (i % 20) as f32);
+        let origin = [24.0 + col * 24.0 - 16.0, 20.0 + row * 24.0 - 16.0];
+        frame.push((&ns[..], origin, 32, 32, ncam));
+    }
+
+    let secs: u64 = std::env::var("GPU_PROBE_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(30);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+    let (mut iters, mut c_min, mut f_min) = (0u64, f64::INFINITY, f64::INFINITY);
+    while std::time::Instant::now() < deadline {
+        if let Some((c, f)) = r.gpu_frame_times(&frame, w, h, zoom, SHADE_SPANS) {
+            c_min = c_min.min(c);
+            f_min = f_min.min(f);
+        }
+        iters += 1;
+    }
+    println!(
+        "gpu_probe_loop: {iters} frames, best compute {c_min:.1} us, best fragment {f_min:.1} us"
+    );
 }
 
 /// Tile-budget overflow must DEGRADE, not panic. A draw whose tile grid would push

@@ -27,3 +27,6 @@ nul
 
 # Local render debug artifacts
 *.png
+
+# Nsight Graphics injection overlay writes its ImGui layout to the cwd
+/imgui.ini

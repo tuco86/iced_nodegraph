@@ -30,7 +30,8 @@ pub(crate) struct SharedSdfResources {
     /// Render group 0: draws, draw_entries, segments, styles, fine_counts,
     /// fine_slots, coarse_slots
     pub render_group0_layout: BindGroupLayout,
-    /// Compute group 0: draws(read), draw_entries(read), segments(read), styles(read)
+    /// Compute group 0: draws(read), draw_entries(read), segments(read),
+    /// styles(read) + the sort/fine launch dims uniform (binding 7).
     pub compute_group0_layout: BindGroupLayout,
     /// Scatter-kernel group 1: coarse_counts(rw), coarse_slots(rw),
     /// cull_list(r), cull_meta(r). One layout for both scatter kernels; the
@@ -296,6 +297,19 @@ fn create_compute_group0_layout(device: &Device) -> BindGroupLayout {
                         NonZeroU64::new(<types::GpuStyle as ShaderSize>::SHADER_SIZE.get())
                             .unwrap(),
                     ),
+                },
+                count: None,
+            },
+            // Sort/fine launch dims (live draw count, total coarse tiles):
+            // a uniform, since the compute stage is at the 8-storage-buffer
+            // limit. Binding 7 to stay clear of the render group's 4-6.
+            BindGroupLayoutEntry {
+                binding: 7,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(NonZeroU64::new(8).unwrap()),
                 },
                 count: None,
             },

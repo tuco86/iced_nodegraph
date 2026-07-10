@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Scripted GPU profiling: `gpu_trace.py` drives the Nsight Graphics CLI
+  headlessly and prints per-pass GPU times plus hardware counters (SM/L2/DRAM
+  throughput, warp-stall breakdown) for the SDF pipeline, via the new ignored
+  `gpu_probe_loop` test; `--demo <name>` traces a demo binary for whole-frame
+  GPU times instead. The headless test renderer now honors `WGPU_*` env vars
+  (`WGPU_DEBUG=1` on release builds emits pass labels without validation
+  overhead). The probe splits the shade pass into per-category markers
+  (background / edges / node fills).
+
+### Changed
+
+- The sort/fine cull kernel dispatches one workgroup per LIVE coarse tile
+  (1D-flat; the kernel binary-searches its draw over the `coarse_base`
+  prefix sums, fed by a small uniform since `arrayLength` reports capacity).
+  The old (largest grid) x (draw count) dispatch launched ~120k workgroups
+  on the 500-node scene with 99% dead on arrival; their launch overhead was
+  77% of the cull pass and read as DRAM/L2 saturation. Cull GPU time drops
+  3.8x (2.7 ms -> 0.72 ms at base clocks; interaction-frame GPU total
+  3.4 ms -> 1.45 ms), output pixel-identical.
+
+### Fixed
+
+- The GPU frame probe (`gpu_frame_times`) now mirrors iced_wgpu's
+  per-primitive viewport/scissor clipping. Previously every instance
+  rasterized the full canvas, inflating the production-faithful fragment
+  measurement ~10x on the 500-node scene (6.4 ms -> 0.6 ms); the node clips
+  also sit at their real screen positions instead of stacked at the origin.
+
 ## [0.3.0] - 2026-07-10
 
 ### Added
