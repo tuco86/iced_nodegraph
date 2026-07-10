@@ -68,7 +68,7 @@ where
         value as f32,
         move |v| on_change(v.round() as i32),
     )
-    .step(1.0)
+    .step(1.0_f32)
     .width(Length::Fill);
 
     // Expand/collapse button - minimal height

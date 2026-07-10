@@ -61,8 +61,10 @@ impl renderer::Renderer for Stub {
 
 impl text::Renderer for Stub {
     type Font = iced::Font;
-    type Paragraph = ();
-    type Editor = ();
+    // Real (GPU-free) types: iced_core's `()` impls are debug_assertions-gated
+    // and break release test builds; these tests never lay out text.
+    type Paragraph = iced_wgpu::graphics::text::Paragraph;
+    type Editor = iced_wgpu::graphics::text::Editor;
 
     const ICON_FONT: iced::Font = iced::Font::DEFAULT;
     const CHECKMARK_ICON: char = '0';

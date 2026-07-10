@@ -245,7 +245,7 @@ impl App {
                 "Value",
                 input_bg,
                 column![
-                    slider(-1.0..=1.0, self.value, Message::Value).step(0.01),
+                    slider(-1.0..=1.0, self.value, Message::Value).step(0.01_f32),
                     text(format!("{:.2}", self.value)).size(11),
                     pin!(Right, 0usize, text("n"), Output, Port::Number),
                 ]

@@ -55,20 +55,20 @@ pub fn sdf_stats() -> types::SdfStats {
 }
 
 // Must match WGSL constants
-const TILE_SIZE: f32 = 16.0;
+pub(crate) const TILE_SIZE: f32 = 16.0;
 // Two-level index: 64px coarse tiles (4x4 fine tiles) hold the (segment, entry)
 // results; 16px fine tiles hold 16-bit indices into them.
-const COARSE_FACTOR: u32 = 4;
+pub(crate) const COARSE_FACTOR: u32 = 4;
 // Coarse: 512 (segment_idx, entry_idx) pairs per tile (scatter appends
 // first-come; the sort kernel clamps, reserving slots for tilings).
-const MAX_COARSE_SLOTS: u32 = 512;
-const COARSE_STRIDE: u32 = MAX_COARSE_SLOTS * 2;
+pub(crate) const MAX_COARSE_SLOTS: u32 = 512;
+pub(crate) const COARSE_STRIDE: u32 = MAX_COARSE_SLOTS * 2;
 // Fine: 128 16-bit indices per tile, packed 2 per u32.
-const MAX_FINE_SLOTS: u32 = 128;
-const FINE_STRIDE: u32 = MAX_FINE_SLOTS / 2;
+pub(crate) const MAX_FINE_SLOTS: u32 = 128;
+pub(crate) const FINE_STRIDE: u32 = MAX_FINE_SLOTS / 2;
 // Per-draw tiling slots in the scatter lists; sentinel-padded.
-const TILING_RESERVE: u32 = 4;
-const CULL_SENTINEL: u32 = u32::MAX;
+pub(crate) const TILING_RESERVE: u32 = 4;
+pub(crate) const CULL_SENTINEL: u32 = u32::MAX;
 /// Frames a resident geometry block may go unused before eviction returns its
 /// arena ranges to the free lists. Small on purpose: blocks in steady use are
 /// touched every frame (age 0), so this only bounds how long CHURNED content
@@ -1539,9 +1539,9 @@ impl Primitive for SdfPrimitive {
             pipeline.cull_dirty = true;
         }
 
-        // This draw's index into the DrawData buffer. The batched cull reads it
-        // from the dispatch z-axis (workgroup_id.z); `draw_slot` carries it to the
-        // matching render instance in `draw`.
+        // This draw's index into the DrawData buffer. The batched cull maps its
+        // flat workgroup id back to it via the coarse_base prefix sums;
+        // `draw_slot` carries it to the matching render instance in `draw`.
         let draw_index = pipeline.draw_data_buffer.len() as u32; // index after push
         self.draw_slot.store(draw_index, Ordering::Relaxed);
 

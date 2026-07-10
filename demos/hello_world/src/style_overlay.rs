@@ -42,12 +42,12 @@ impl NodeOverlay {
         self.fill_color = Some(v.into());
         self
     }
-    pub fn corner_radius(mut self, v: impl Into<f32>) -> Self {
-        self.corner_radius = Some(v.into());
+    pub fn corner_radius(mut self, v: f32) -> Self {
+        self.corner_radius = Some(v);
         self
     }
-    pub fn opacity(mut self, v: impl Into<f32>) -> Self {
-        self.opacity = Some(v.into());
+    pub fn opacity(mut self, v: f32) -> Self {
+        self.opacity = Some(v);
         self
     }
     pub fn border_color(mut self, v: impl Into<ColorQuad>) -> Self {
@@ -58,8 +58,8 @@ impl NodeOverlay {
         self.border_pattern = Some(v.into());
         self
     }
-    pub fn border_outline_width(mut self, v: impl Into<f32>) -> Self {
-        self.border_outline_width = Some(v.into());
+    pub fn border_outline_width(mut self, v: f32) -> Self {
+        self.border_outline_width = Some(v);
         self
     }
     pub fn border_outline_color(mut self, v: impl Into<ColorQuad>) -> Self {
@@ -70,8 +70,8 @@ impl NodeOverlay {
         self.shadow_color = Some(v.into());
         self
     }
-    pub fn shadow_distance(mut self, v: impl Into<f32>) -> Self {
-        self.shadow_distance = Some(v.into());
+    pub fn shadow_distance(mut self, v: f32) -> Self {
+        self.shadow_distance = Some(v);
         self
     }
     pub fn shadow_offset(mut self, v: impl Into<(f32, f32)>) -> Self {
@@ -165,8 +165,8 @@ impl EdgeOverlay {
         self.pattern = Some(v.into());
         self
     }
-    pub fn stroke_outline_width(mut self, v: impl Into<f32>) -> Self {
-        self.stroke_outline_width = Some(v.into());
+    pub fn stroke_outline_width(mut self, v: f32) -> Self {
+        self.stroke_outline_width = Some(v);
         self
     }
     pub fn stroke_outline_color(mut self, v: impl Into<ColorQuad>) -> Self {
@@ -177,16 +177,16 @@ impl EdgeOverlay {
         self.border_color = Some(v.into());
         self
     }
-    pub fn border_width(mut self, v: impl Into<f32>) -> Self {
-        self.border_width = Some(v.into());
+    pub fn border_width(mut self, v: f32) -> Self {
+        self.border_width = Some(v);
         self
     }
-    pub fn border_gap(mut self, v: impl Into<f32>) -> Self {
-        self.border_gap = Some(v.into());
+    pub fn border_gap(mut self, v: f32) -> Self {
+        self.border_gap = Some(v);
         self
     }
-    pub fn border_outline_width(mut self, v: impl Into<f32>) -> Self {
-        self.border_outline_width = Some(v.into());
+    pub fn border_outline_width(mut self, v: f32) -> Self {
+        self.border_outline_width = Some(v);
         self
     }
     pub fn border_outline_color(mut self, v: impl Into<ColorQuad>) -> Self {
@@ -201,12 +201,12 @@ impl EdgeOverlay {
         self.shadow_color = Some(v.into());
         self
     }
-    pub fn shadow_expand(mut self, v: impl Into<f32>) -> Self {
-        self.shadow_expand = Some(v.into());
+    pub fn shadow_expand(mut self, v: f32) -> Self {
+        self.shadow_expand = Some(v);
         self
     }
-    pub fn shadow_blur(mut self, v: impl Into<f32>) -> Self {
-        self.shadow_blur = Some(v.into());
+    pub fn shadow_blur(mut self, v: f32) -> Self {
+        self.shadow_blur = Some(v);
         self
     }
     pub fn shadow_offset(mut self, v: impl Into<(f32, f32)>) -> Self {
@@ -317,12 +317,12 @@ impl GraphOverlay {
         self.tiling_kind = Some(v.into());
         self
     }
-    pub fn tiling_spacing(mut self, v: impl Into<f32>) -> Self {
-        self.tiling_spacing = Some(v.into());
+    pub fn tiling_spacing(mut self, v: f32) -> Self {
+        self.tiling_spacing = Some(v);
         self
     }
-    pub fn tiling_thickness(mut self, v: impl Into<f32>) -> Self {
-        self.tiling_thickness = Some(v.into());
+    pub fn tiling_thickness(mut self, v: f32) -> Self {
+        self.tiling_thickness = Some(v);
         self
     }
     pub fn tiling_color(mut self, v: impl Into<Color>) -> Self {
@@ -395,8 +395,8 @@ impl PinOverlay {
         self.color = Some(v.into());
         self
     }
-    pub fn radius(mut self, v: impl Into<f32>) -> Self {
-        self.radius = Some(v.into());
+    pub fn radius(mut self, v: f32) -> Self {
+        self.radius = Some(v);
         self
     }
     pub fn shape(mut self, v: impl Into<PinShape>) -> Self {
@@ -407,8 +407,8 @@ impl PinOverlay {
         self.border_color = Some(v.into());
         self
     }
-    pub fn border_width(mut self, v: impl Into<f32>) -> Self {
-        self.border_width = Some(v.into());
+    pub fn border_width(mut self, v: f32) -> Self {
+        self.border_width = Some(v);
         self
     }
 

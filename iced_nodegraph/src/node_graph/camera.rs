@@ -183,6 +183,22 @@ impl Default for Camera2D {
 }
 
 impl Camera2D {
+    /// Zoom clamp bounds: keep the world<->screen transforms invertible and
+    /// well-conditioned (`world_to_screen` inverts the scale). Enforced by
+    /// every zoom entry point (`zoom_at`, `with_zoom_and_position`).
+    pub const ZOOM_MIN: f32 = 0.1;
+    pub const ZOOM_MAX: f32 = 10.0;
+
+    /// Clamp a zoom factor into [`ZOOM_MIN`](Self::ZOOM_MIN)..=[`ZOOM_MAX`](Self::ZOOM_MAX);
+    /// non-finite input (corrupt persistence, division fallout) becomes 1.0.
+    fn clamp_zoom(zoom: f32) -> f32 {
+        if zoom.is_finite() {
+            zoom.clamp(Self::ZOOM_MIN, Self::ZOOM_MAX)
+        } else {
+            1.0
+        }
+    }
+
     pub fn new() -> Self {
         Self {
             zoom: Scale::new(1.0),
@@ -193,10 +209,12 @@ impl Camera2D {
 
     /// Create a camera with custom zoom and position.
     ///
-    /// Used for restoring camera state from persistence and testing.
+    /// Used for restoring camera state from persistence and testing. The zoom
+    /// is clamped like every other entry point, so a corrupt or zero value can
+    /// never poison the (inverted) camera transform.
     pub fn with_zoom_and_position(zoom: f32, position: WorldPoint) -> Self {
         Self {
-            zoom: Scale::new(zoom),
+            zoom: Scale::new(Self::clamp_zoom(zoom)),
             position,
             viewport_origin: ScreenVector::zero(),
         }
@@ -268,7 +286,7 @@ impl Camera2D {
         //   pos2 = pos1 + screen * (1/zoom1 - 1/zoom2)
 
         let old_zoom = self.zoom.get();
-        let new_zoom = (old_zoom + offset).clamp(0.1, 10.0);
+        let new_zoom = Self::clamp_zoom(old_zoom + offset);
 
         // Cursor must be relative to the widget origin; screen = origin + (world + pos) * zoom.
         let local_x = cursor_screen.x - self.viewport_origin.x;
@@ -381,6 +399,28 @@ mod tests {
 
     fn point_approx_eq(a: WorldPoint, b: WorldPoint) -> bool {
         approx_eq(a.x, b.x) && approx_eq(a.y, b.y)
+    }
+
+    /// Degenerate restored zoom (0, negative, NaN, inf - e.g. corrupt
+    /// persistence) must clamp instead of poisoning the inverted transform:
+    /// `world_to_screen` panics on a non-invertible scale.
+    #[test]
+    fn restored_zoom_is_clamped_and_invertible() {
+        for (input, expected) in [
+            (0.0, Camera2D::ZOOM_MIN),
+            (-3.0, Camera2D::ZOOM_MIN),
+            (1e9, Camera2D::ZOOM_MAX),
+            (f32::NAN, 1.0),
+            (f32::INFINITY, 1.0),
+        ] {
+            let cam = Camera2D::with_zoom_and_position(input, WorldPoint::new(5.0, -7.0));
+            assert_eq!(cam.zoom(), expected, "zoom {input} should clamp");
+            // Must not panic, and must actually invert.
+            let p = cam
+                .world_to_screen()
+                .transform_point(euclid::Point2D::new(1.0, 2.0));
+            assert!(p.x.is_finite() && p.y.is_finite());
+        }
     }
 
     #[test]

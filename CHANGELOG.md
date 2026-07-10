@@ -28,6 +28,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   77% of the cull pass and read as DRAM/L2 saturation. Cull GPU time drops
   3.8x (2.7 ms -> 0.72 ms at base clocks; interaction-frame GPU total
   3.4 ms -> 1.45 ms), output pixel-identical.
+- Test mock renderers use real `iced_graphics` paragraph/editor types instead
+  of `()` (whose iced_core impls are debug_assertions-gated), so
+  `cargo test --release` compiles across the workspace. Demo style-overlay
+  setters take `f32` directly, resolving Rust's deprecated
+  `f32: From<f64>` literal fallback (rust-lang/rust#154024) ahead of it
+  becoming a hard error.
+- `Camera2D` clamps zoom at every entry point (`ZOOM_MIN`/`ZOOM_MAX`, non-finite
+  input falls back to 1.0): a zero/NaN zoom restored from persistence can no
+  longer panic the inverted camera transform.
+- The WGSL/Rust layout constants (tile strides, slot caps, flags) are guarded
+  by a consistency test; the test-side duplicates now import the production
+  constants.
 
 ### Fixed
 

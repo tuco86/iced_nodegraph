@@ -82,8 +82,11 @@ impl renderer::Renderer for Rec {
 
 impl text::Renderer for Rec {
     type Font = iced::Font;
-    type Paragraph = ();
-    type Editor = ();
+    // Real (GPU-free) paragraph/editor types: the `()` impls in iced_core are
+    // debug_assertions-gated, which broke `cargo test --release`. These tests
+    // never lay out text; the types are only trait plumbing.
+    type Paragraph = iced_wgpu::graphics::text::Paragraph;
+    type Editor = iced_wgpu::graphics::text::Editor;
 
     const ICON_FONT: iced::Font = iced::Font::DEFAULT;
     const CHECKMARK_ICON: char = '0';

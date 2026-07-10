@@ -20,13 +20,49 @@ use crate::pattern::Pattern;
 use crate::pipeline::types::*;
 use crate::style::Style;
 
-// Must match WGSL constants
-const TILE_SIZE: f32 = 16.0;
-const COARSE_FACTOR: u32 = 4;
-const MAX_COARSE_SLOTS: u32 = 512;
-const COARSE_STRIDE: u32 = MAX_COARSE_SLOTS * 2;
-const MAX_FINE_SLOTS: u32 = 128;
-const FINE_STRIDE: u32 = MAX_FINE_SLOTS / 2;
+// Layout constants shared with production; the WGSL side is guarded by
+// `wgsl_constants_match_rust` below.
+use crate::primitive::{
+    COARSE_FACTOR, COARSE_STRIDE, FINE_STRIDE, MAX_COARSE_SLOTS, MAX_FINE_SLOTS, TILE_SIZE,
+};
+
+/// The WGSL constants must mirror the Rust-side layout constants; the two
+/// definition sites historically had no drift guard. Parses the shader source
+/// (the exact string the pipelines compile) and compares every shared value.
+#[test]
+fn wgsl_constants_match_rust() {
+    let src = include_str!("shader.wgsl");
+    let get_u32 = |name: &str| -> u32 {
+        let pat = format!("const {name}: u32 = ");
+        let start = src
+            .find(&pat)
+            .unwrap_or_else(|| panic!("`{name}` not found in shader.wgsl"))
+            + pat.len();
+        let lit = src[start..]
+            .split('u')
+            .next()
+            .expect("u32 literal before `u` suffix");
+        if let Some(hex) = lit.strip_prefix("0x") {
+            u32::from_str_radix(hex, 16).unwrap()
+        } else {
+            lit.parse().unwrap()
+        }
+    };
+    assert_eq!(get_u32("COARSE_FACTOR"), COARSE_FACTOR);
+    assert_eq!(get_u32("MAX_COARSE_SLOTS"), MAX_COARSE_SLOTS);
+    assert_eq!(get_u32("COARSE_STRIDE"), COARSE_STRIDE);
+    assert_eq!(get_u32("MAX_FINE_SLOTS"), MAX_FINE_SLOTS);
+    assert_eq!(get_u32("FINE_STRIDE"), FINE_STRIDE);
+    assert_eq!(get_u32("TILING_RESERVE"), crate::primitive::TILING_RESERVE);
+    assert_eq!(get_u32("CULL_SENTINEL"), crate::primitive::CULL_SENTINEL);
+    assert_eq!(get_u32("FLAG_CLOSED"), crate::compile::FLAG_CLOSED);
+    assert_eq!(get_u32("ENTRY_TILING"), crate::compile::ENTRY_TILING);
+    // TILE_SIZE is an f32 on both sides.
+    assert!(
+        src.contains(&format!("const TILE_SIZE: f32 = {TILE_SIZE:?};")),
+        "TILE_SIZE mismatch: Rust has {TILE_SIZE:?}"
+    );
+}
 
 /// One draw for the batched `gpu_frame_times` bench:
 /// `(drawables, bounds_origin_px, grid_w_px, grid_h_px, camera)`.
@@ -760,9 +796,10 @@ impl TestRenderer {
 
     /// GPU time (compute + render, microseconds) of a full BATCHED frame: each draw
     /// is its own DrawData (its own grid/clip/camera + entry range), and the index
-    /// builds as ONE dispatch over the z-axis - exactly the production layout, where
-    /// the GPU overlaps all draws. This is the only faithful measure of a multi-draw
-    /// scene; per-draw isolation (`gpu_pass_times`) cannot capture that concurrency.
+    /// builds as ONE flat batched dispatch over every draw's live coarse tiles -
+    /// exactly the production layout, where the GPU overlaps all draws. This is
+    /// the only faithful measure of a multi-draw scene; per-draw isolation
+    /// (`gpu_pass_times`) cannot capture that concurrency.
     /// Each draw: `(drawables, bounds_origin_px, grid_w_px, grid_h_px, camera)`.
     /// `None` if the adapter lacks `TIMESTAMP_QUERY`.
     fn gpu_frame_times(
@@ -5279,8 +5316,8 @@ fn measure_gpu_shader_cost() {
     }
 
     // FAITHFUL: the production layout - each primitive is its OWN draw, one BATCHED
-    // dispatch over the z-axis so the GPU overlaps them. bg + edges cover the screen;
-    // each node fill is clipped to ~its bounds with its own centring camera.
+    // flat cull dispatch over all draws so the GPU overlaps them. bg + edges cover
+    // the screen; each node fill is clipped to ~its bounds with its own centring camera.
     let bg_slice: Vec<(&crate::drawable::Drawable, &Style)> = vec![(&bg, &dark)];
     let edges_slice: Vec<(&crate::drawable::Drawable, &Style)> =
         edges.iter().map(|e| (e, &edge_style)).collect();
@@ -5342,7 +5379,7 @@ fn measure_gpu_shader_cost() {
         frame_t.1
     );
     println!(
-        "  (faithful = bg + edges full-screen + 500 clipped node draws, ONE z-batched dispatch)"
+        "  (faithful = bg + edges full-screen + 500 clipped node draws, ONE batched cull dispatch)"
     );
     println!("----------------------------------------------------------------------\n");
 }

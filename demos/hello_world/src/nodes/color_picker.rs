@@ -97,7 +97,7 @@ where
         slider(0.0..=1.0, color.r, move |r| {
             on_change_r(Color::from_rgb(r, color.g, color.b))
         })
-        .step(0.01)
+        .step(0.01_f32)
         .width(Length::Fill),
     ]
     .spacing(4)
@@ -108,7 +108,7 @@ where
         slider(0.0..=1.0, color.g, move |g| {
             on_change_g(Color::from_rgb(color.r, g, color.b))
         })
-        .step(0.01)
+        .step(0.01_f32)
         .width(Length::Fill),
     ]
     .spacing(4)
@@ -119,7 +119,7 @@ where
         slider(0.0..=1.0, color.b, move |b| {
             on_change_b(Color::from_rgb(color.r, color.g, b))
         })
-        .step(0.01)
+        .step(0.01_f32)
         .width(Length::Fill),
     ]
     .spacing(4)

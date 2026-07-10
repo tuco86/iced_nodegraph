@@ -376,7 +376,7 @@ impl Application {
         let opacity_slider = column![
             text("Opacity").size(12).color(text_color),
             row![
-                slider(0.1..=1.0, self.opacity, Message::OpacityChanged).step(0.05),
+                slider(0.1..=1.0, self.opacity, Message::OpacityChanged).step(0.05_f32),
                 text(format!("{:.2}", self.opacity))
                     .size(12)
                     .color(text_color),
@@ -388,7 +388,7 @@ impl Application {
         let border_slider = column![
             text("Border Width").size(12).color(text_color),
             row![
-                slider(0.5..=5.0, self.border_width, Message::BorderWidthChanged).step(0.5),
+                slider(0.5..=5.0, self.border_width, Message::BorderWidthChanged).step(0.5_f32),
                 text(format!("{:.1}", self.border_width))
                     .size(12)
                     .color(text_color),

@@ -339,7 +339,8 @@ fn create_compute_scatter_group1_layout(device: &Device) -> BindGroupLayout {
 }
 
 /// Sort/fine-kernel group 1: the two-level index outputs, all read_write. The
-/// draw index is read from the dispatch z-axis (`workgroup_id.z`).
+/// kernel maps its flat workgroup id to (draw, coarse tile) via the
+/// `cs_launch` uniform and the `coarse_base` prefix sums.
 fn create_compute_sort_group1_layout(device: &Device) -> BindGroupLayout {
     use std::num::NonZeroU64;
     let buf = |binding: u32| BindGroupLayoutEntry {
