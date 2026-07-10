@@ -23,6 +23,8 @@
 //! - **Scroll** - Zoom in/out (zoom out to see all 500 nodes)
 //! - **Right-drag** - Pan the canvas
 //! - **Drag nodes** - Move individual nodes
+//! - **Stats toggle** (top right) - show/hide the live timing panel; while
+//!   hidden the demo renders no frames between interactions
 //!
 //! ## About This Benchmark
 //!
@@ -45,7 +47,7 @@ pub fn wasm_init() {
 use graph::generate_procedural_graph;
 use iced::{
     Color, Element, Length, Point, Rectangle, Subscription, Theme, Vector, mouse,
-    widget::{canvas, column, container, opaque, row, stack, text},
+    widget::{canvas, column, container, opaque, row, stack, text, toggler},
 };
 use iced_nodegraph::{
     Counts, GraphInfo, PinInfo, PinRef, PinStatus, PinStyle, default_pin_style, edge, node,
@@ -127,6 +129,9 @@ enum ApplicationMessage {
         indices: Vec<usize>,
     },
     Info(GraphInfo),
+    /// Stats-panel toggle (top right). Hiding the panel also drops the
+    /// `on_info` subscription, so the demo stops rendering while idle.
+    StatsToggled(bool),
     /// Camera reported by the widget on pan/zoom release (uncontrolled camera).
     /// Used only to read off exact coordinates when reproducing the pan/zoom
     /// float-collapse display bug.
@@ -149,6 +154,9 @@ struct Application {
     /// Per-op CPU time (microseconds) for the last `HIST_CAP` frames, oldest
     /// first. Each entry mirrors `GraphInfo::timings` order.
     history: VecDeque<Vec<f32>>,
+    /// Whether the live stats panel (and with it the `on_info`-driven frame
+    /// stream) is active. Off = the demo only redraws on interaction.
+    stats_visible: bool,
 }
 
 impl Default for Application {
@@ -162,6 +170,7 @@ impl Default for Application {
             camera: (Point::ORIGIN, 1.0),
             latest_info: None,
             history: VecDeque::with_capacity(HIST_CAP),
+            stats_visible: true,
         }
     }
 }
@@ -194,6 +203,15 @@ impl Application {
             ApplicationMessage::CameraReport { pos, zoom } => {
                 self.camera = (pos, zoom);
             }
+            ApplicationMessage::StatsToggled(on) => {
+                self.stats_visible = on;
+                if !on {
+                    // Drop stale data so a re-enabled panel starts fresh
+                    // instead of presenting an old chart as current.
+                    self.latest_info = None;
+                    self.history.clear();
+                }
+            }
             ApplicationMessage::Info(info) => {
                 let frame: Vec<f32> = info
                     .timings
@@ -221,8 +239,13 @@ impl Application {
                 .on_move(|delta, indices| ApplicationMessage::NodesMoved { delta, indices })
                 .on_select(ApplicationMessage::SelectionChanged)
                 .selection(&self.selected_nodes)
-                .on_pan(|pos, zoom| ApplicationMessage::CameraReport { pos, zoom })
-                .on_info(ApplicationMessage::Info);
+                .on_pan(|pos, zoom| ApplicationMessage::CameraReport { pos, zoom });
+        // The `on_info` frame stream exists only while the stats panel is
+        // shown: live per-frame diagnostics force continuous redraws, so with
+        // the panel hidden the demo is fully idle between interactions.
+        if self.stats_visible {
+            ng = ng.on_info(ApplicationMessage::Info);
+        }
 
         // Add all nodes
         for (index, (position, node_type)) in self.nodes.iter().enumerate() {
@@ -237,15 +260,29 @@ impl Application {
             ng.push_edge(edge!(*from, *to));
         }
 
-        let stats = self.stats_panel();
+        // Top-right overlay: the toggle chip, plus the stats panel while shown.
+        // `opaque` ensures the overlay claims wheel/click events for its own
+        // area so the NodeGraph below doesn't react through it.
+        let toggle = container(
+            toggler(self.stats_visible)
+                .label("stats")
+                .size(16.0)
+                .text_size(11)
+                .on_toggle(ApplicationMessage::StatsToggled),
+        )
+        .style(panel_style)
+        .padding([4, 10]);
+
+        let mut overlay = column![toggle].spacing(8).align_x(iced::Alignment::End);
+        if self.stats_visible {
+            overlay = overlay.push(self.stats_panel());
+        }
 
         let graph_view: iced::Element<'_, ApplicationMessage> = ng.into();
 
-        // `opaque` ensures the stats panel claims wheel/click events for its
-        // own area so the NodeGraph below doesn't react through it.
         stack![
             graph_view,
-            container(opaque(stats))
+            container(opaque(overlay))
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .padding(10)
@@ -327,26 +364,27 @@ impl Application {
         .padding(12)
         .width(Length::Fixed(248.0));
 
-        container(body)
-            .style(|theme: &Theme| {
-                let palette = theme.extended_palette();
-                let bg = palette.background.base.color;
-                container::Style {
-                    background: Some(iced::Background::Color(Color { a: 0.92, ..bg })),
-                    border: iced::Border {
-                        color: palette.background.strong.color,
-                        width: 1.0,
-                        radius: 10.0.into(),
-                    },
-                    ..container::Style::default()
-                }
-            })
-            .into()
+        container(body).style(panel_style).into()
     }
 
     fn subscription(&self) -> Subscription<ApplicationMessage> {
         // The widget self-drives redraws while anything animates; no frame clock needed.
         Subscription::none()
+    }
+}
+
+/// Translucent chip/panel background shared by the stats panel and its toggle.
+fn panel_style(theme: &Theme) -> container::Style {
+    let palette = theme.extended_palette();
+    let bg = palette.background.base.color;
+    container::Style {
+        background: Some(iced::Background::Color(Color { a: 0.92, ..bg })),
+        border: iced::Border {
+            color: palette.background.strong.color,
+            width: 1.0,
+            radius: 10.0.into(),
+        },
+        ..container::Style::default()
     }
 }
 
