@@ -4959,6 +4959,165 @@ fn measure_idle_prepare_cost() {
     println!("----------------------------------------------------------------\n");
 }
 
+/// TEMP measure-first probe (ignored): steady-state `prepare` CPU cost of a DRAG
+/// frame on the same representative scene as `measure_idle_prepare_cost` (bg
+/// tiling + 500 node fills + 640 bezier edges in one batch). Each frame moves
+/// ONE node: its fill primitive gets a new placement and the 3 edges incident
+/// to it get new control points, so the edge batch's block hash changes every
+/// frame and `compile_block` re-runs over all 640 edges - but the 637 unmoved
+/// edges hit the shape-residency map and skip the biarc fit. Answers whether
+/// arena residency already meets the <= ~2 ms drag-frame target from
+/// plan/edge-biarc-cache.md or whether the fit still dominates. `build` is the
+/// widget-side cost of reconstructing the changed primitives (hashing included);
+/// `prepare` is the renderer-side cost the plan targets. Run with:
+///   cargo test -p iced_nodegraph_sdf --release drag_prepare_cost -- --ignored --nocapture
+#[test]
+#[ignore]
+fn measure_drag_prepare_cost() {
+    use crate::primitive::{SdfPipeline, SdfPrimitive};
+    use crate::shape::Shape;
+    use crate::tiling::Tiling;
+    use iced::Rectangle;
+    use iced_wgpu::graphics::Viewport;
+    use iced_wgpu::primitive::{Pipeline, Primitive};
+
+    let r = shared_renderer();
+    let (w, h) = (1280u32, 768u32);
+    let zoom = 0.24131_f32;
+    let cam = [-327.7_f32, -132.0];
+    let full = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(w as f32, h as f32));
+    let viewport = Viewport::with_physical_size(iced::Size::new(w, h), 1.0);
+
+    let dark = Style::solid(rgba(0.12, 0.13, 0.16, 1.0));
+    let fill_style = Style::solid(rgba(0.30, 0.32, 0.40, 1.0));
+    let edge_style = Style::stroke(
+        rgba(0.55, 0.6, 0.7, 1.0),
+        crate::pattern::Pattern::solid(2.0),
+    );
+
+    let mut bg = SdfPrimitive::new();
+    bg.push(
+        &Shape::tiling(Tiling::grid(40.0, 40.0, 1.0)),
+        &dark,
+        [0.0, 0.0],
+    );
+    let bg = bg.camera(cam[0], cam[1], zoom);
+
+    let node_center =
+        |i: usize| -> [f32; 2] { [24.0 + (i / 20) as f32 * 24.0, 20.0 + (i % 20) as f32 * 24.0] };
+
+    // Node fill primitive for node `i` centered at screen-space `c` (same math
+    // as measure_idle_prepare_cost).
+    let make_fill = |i: usize, c: [f32; 2]| -> (SdfPrimitive, Rectangle) {
+        let nw = 70.0 + (i % 7) as f32 * 6.0;
+        let nh = 60.0 + (i % 5) as f32 * 5.0;
+        let cw = nw * zoom + 4.0;
+        let ch = nh * zoom + 4.0;
+        let placement = [c[0] / zoom - cam[0], c[1] / zoom - cam[1]];
+        let clip = Rectangle::new(
+            iced::Point::new(c[0] - cw * 0.5, c[1] - ch * 0.5),
+            iced::Size::new(cw, ch),
+        );
+        let cx = cam[0] - clip.x / zoom;
+        let cy = cam[1] - clip.y / zoom;
+        let body = Shape::rounded_box([nw, nh], [6.0; 4])
+            - Shape::circle(5.0).translate([-nw * 0.5, 0.0])
+            - Shape::circle(5.0).translate([nw * 0.5, 0.0]);
+        let mut fill = SdfPrimitive::new();
+        fill.push(&body, &fill_style, placement);
+        (fill.camera(cx, cy, zoom), clip)
+    };
+
+    // 499 static node fills; node 0 is rebuilt per frame at the dragged position.
+    let statics: Vec<(SdfPrimitive, Rectangle)> = (1..500usize)
+        .map(|i| make_fill(i, node_center(i)))
+        .collect();
+
+    // Edge batch: 640 beziers, the first K_MOVED anchored at the dragged node's
+    // position so a drag re-fits exactly those edges each frame. Rebuilt from
+    // scratch every frame, like the widget's view.
+    const K_MOVED: usize = 3;
+    let make_edges = |drag: [f32; 2]| -> SdfPrimitive {
+        let mut edges = SdfPrimitive::with_capacity(640);
+        for i in 0..640usize {
+            let (a, b) = if i < K_MOVED {
+                (drag[0], drag[1] + i as f32 * 4.0)
+            } else {
+                ((i % 25) as f32 * 24.0 + 24.0, (i % 20) as f32 * 24.0 + 20.0)
+            };
+            let p0 = [a / zoom - cam[0], b / zoom - cam[1]];
+            let p3 = [(a + 60.0) / zoom - cam[0], (b + 40.0) / zoom - cam[1]];
+            let p1 = [p0[0] + 80.0, p0[1]];
+            let p2 = [p3[0] - 80.0, p3[1]];
+            edges.push(&Shape::bezier(p0, p1, p2, p3), &edge_style, [0.0, 0.0]);
+        }
+        edges.camera(cam[0], cam[1], zoom)
+    };
+
+    struct FrameRow {
+        build_us: u64,
+        prepare_us: u64,
+        rebuilds: u32,
+        hits: u32,
+        segments: u32,
+    }
+
+    // One drag frame: node 0 sits at a per-frame position; its fill and the edge
+    // batch are reconstructed (build), then the whole scene re-prepares with the
+    // same trim/flush harness as measure_idle_prepare_cost.
+    let mut pipeline = SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
+    let mut rows: Vec<FrameRow> = Vec::new();
+    for t in 0..24u32 {
+        let c = node_center(0);
+        let pos = [c[0] + t as f32 * 3.0, c[1] + t as f32 * 2.0];
+
+        let started = std::time::Instant::now();
+        let (dragged, drag_clip) = make_fill(0, pos);
+        let edges = make_edges(pos);
+        let build_us = started.elapsed().as_micros() as u64;
+
+        Pipeline::trim(&mut pipeline);
+        bg.prepare(&mut pipeline, &r.device, &r.queue, &full, &viewport);
+        edges.prepare(&mut pipeline, &r.device, &r.queue, &full, &viewport);
+        dragged.prepare(&mut pipeline, &r.device, &r.queue, &drag_clip, &viewport);
+        for (p, bnd) in &statics {
+            p.prepare(&mut pipeline, &r.device, &r.queue, bnd, &viewport);
+        }
+        Pipeline::trim(&mut pipeline);
+        let stats = crate::primitive::sdf_stats();
+        rows.push(FrameRow {
+            build_us,
+            prepare_us: stats.prepare_cpu_us,
+            rebuilds: stats.geometry_rebuilds,
+            hits: stats.resident_hits,
+            segments: stats.segment_count,
+        });
+    }
+
+    println!("\n--- drag prepare CPU cost: 1 node + {K_MOVED} incident edges move per frame ---");
+    println!("scene: bg tiling + 500 node fills + 640 bezier edges (one batch)");
+    for (t, row) in rows.iter().enumerate() {
+        let tag = if t == 0 { " (cold)" } else { "" };
+        println!(
+            "frame {t:>2}: build {:>6.3} ms | prepare {:>6.3} ms | rebuilds {:>2} | hits {:>3} | live segs {:>5}{tag}",
+            row.build_us as f64 / 1000.0,
+            row.prepare_us as f64 / 1000.0,
+            row.rebuilds,
+            row.hits,
+            row.segments,
+        );
+    }
+    let mut steady: Vec<u64> = rows[4..].iter().map(|r| r.prepare_us).collect();
+    steady.sort_unstable();
+    println!(
+        "steady drag prepare: min {:.3} / median {:.3} / max {:.3} ms (plan target <= ~2 ms)",
+        steady[0] as f64 / 1000.0,
+        steady[steady.len() / 2] as f64 / 1000.0,
+        steady[steady.len() - 1] as f64 / 1000.0,
+    );
+    println!("-------------------------------------------------------------------\n");
+}
+
 /// GPU shader cost probe (ignored): times the compute (two-level index) pass and
 /// the render (shade) pass via timestamp queries, on the same representative scene
 /// as `measure_idle_prepare_cost` (bg tiling + 500 node fills + 640 edges). This is
