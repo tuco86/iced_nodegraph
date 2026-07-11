@@ -98,6 +98,20 @@ distance before the stop lookup, using the segment's arc-length `u` for layout:
 
 A non-zero `flow_speed` shifts `u` by `time * flow_speed` for animated flow.
 
+### Math types: glam here, euclid above
+
+This crate does all vector math with `glam::Vec2`; the widget crate above does
+all of its math with `euclid`'s typed spaces. That split is deliberate, not
+drift. `iced_nodegraph` juggles two coordinate spaces (screen and world), and
+euclid's `ScreenPoint`/`WorldPoint` make mixing them a compile error - the bug
+class its `Camera2D` exists to prevent. Inside this crate there is exactly one
+space (the entry's local frame), so typed spaces would protect nothing and the
+point/vector ceremony would only obscure the solver math (biarc fitting, the
+boolean clipper, the SDF reference field). The seam is unit-free by design:
+the public API takes plain `[f32; 2]`, and neither math library appears in any
+public signature. Each `Cargo.toml` declares only its own math dependency, so
+a cross-use is a compile error today; keep it that way.
+
 ## GPU pipeline
 
 ### Stage 1: Compile (CPU)

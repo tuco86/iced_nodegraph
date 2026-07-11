@@ -10,8 +10,9 @@
 //! winding and junction points. This module clips two regions against each
 //! other and re-stitches the surviving boundary into a fresh [`Drawable`].
 //!
-//! Only `Line` and `Arc` segments participate; bezier segments are not
-//! supported as boolean operands (node shapes never use them).
+//! Operands decompose into `Line` and `Arc` boundary edges only - in the
+//! arcs-only model a [`Segment`] cannot represent anything else; `Point`
+//! junctions are dropped and regenerated when the result is stitched.
 
 use std::f32::consts::TAU;
 
@@ -327,7 +328,8 @@ fn arc_arc(
 type Loop = Vec<Edge>;
 
 /// Decompose a closed [`Drawable`] into one or more boundary loops. `Point`
-/// junctions are dropped (regenerated on output); beziers are unsupported.
+/// junctions are dropped (regenerated on output); every remaining segment is a
+/// line or a minor arc by construction.
 fn from_drawable(d: &Drawable) -> Vec<Loop> {
     debug_assert!(
         d.is_closed(),

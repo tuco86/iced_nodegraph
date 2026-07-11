@@ -126,7 +126,8 @@ impl Segment {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum DrawableType {
-    /// Single curve segment (line or bezier). Stroke only.
+    /// Open stroke: one or more arc segments (a line, an arc, or an
+    /// arc-splined cubic). Stroke only, never filled.
     CurveSegment = 0,
     /// Closed or open shape (multiple connected segments). May be filled.
     Shape = 1,

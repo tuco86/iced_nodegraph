@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The README was rebuilt around what a first-time visitor needs: a hero
+  screenshot of the live WASM demo (`assets/hero.png`, linked to the hosted
+  demo), a per-demo live-run table, and a controls table corrected against the
+  widget source (Shift+click adds to selection, Ctrl+A selects all, Ctrl+drag
+  cuts edges, Shift+drag forks an edge). Internal sections (dependency list,
+  project tree, architecture duplicate) moved out or dropped.
 - The sort/fine cull kernel dispatches one workgroup per LIVE coarse tile
   (1D-flat; the kernel binary-searches its draw over the `coarse_base`
   prefix sums, fed by a small uniform since `arrayLength` reports capacity).

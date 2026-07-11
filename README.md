@@ -4,58 +4,36 @@
 
 <h1 align="center">iced_nodegraph</h1>
 
+<p align="center">A node graph editor widget for <a href="https://github.com/iced-rs/iced">iced</a>.</p>
+
 <p align="center">
   <a href="https://crates.io/crates/iced_nodegraph"><img src="https://img.shields.io/crates/v/iced_nodegraph.svg" alt="crates.io"></a>
   <a href="https://docs.rs/iced_nodegraph"><img src="https://img.shields.io/docsrs/iced_nodegraph" alt="docs.rs"></a>
+  <a href="https://github.com/tuco86/iced_nodegraph/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
 </p>
 
-A high-performance node graph editor widget for the [Iced](https://github.com/iced-rs/iced) GUI framework, featuring SDF-based GPU rendering via a custom WGPU pipeline and type-safe coordinate transformations.
+<p align="center">
+  <a href="https://tuco86.github.io/iced_nodegraph/demo_hello_world/index.html">
+    <img src="https://raw.githubusercontent.com/tuco86/iced_nodegraph/main/assets/hero.png" alt="The hello_world demo: an email workflow graph with four connected nodes" width="800">
+  </a>
+  <br>
+  <em><a href="https://tuco86.github.io/iced_nodegraph/demo_hello_world/index.html">Run this demo in your browser</a> (WebGPU required, Chrome recommended)</em>
+</p>
 
-**[Live Demo](https://tuco86.github.io/iced_nodegraph/demo_hello_world/index.html) | [Documentation](https://tuco86.github.io/iced_nodegraph/iced_nodegraph/)**
+Nodes are ordinary iced widgets - sliders, text inputs, whatever your `view`
+builds - placed on an infinite zoom/pan canvas and wired together through typed
+pins. The widget holds no graph state: your application owns the data model,
+and connections, moves, and deletes arrive as messages, like any other iced
+widget. Everything on the canvas is drawn by a single WGPU pipeline as signed
+distance fields, so it stays sharp at every zoom level and handles graphs with
+hundreds of nodes.
 
-## Project Structure
-
-This is a **Cargo workspace** containing:
-
-- **`iced_nodegraph/`** - Core node graph widget library
-- **`iced_nodegraph_sdf/`** - SDF rendering engine (signed distance fields on GPU)
-- **`demos/`** - Demonstration applications
-  - [`hello_world`](https://github.com/tuco86/iced_nodegraph/tree/main/demos/hello_world) - Basic usage and command palette
-  - [`styling`](https://github.com/tuco86/iced_nodegraph/tree/main/demos/styling) - Theming and visual customization
-  - [`interaction`](https://github.com/tuco86/iced_nodegraph/tree/main/demos/interaction) - Pin rules and connection validation
-  - [`500_nodes`](https://github.com/tuco86/iced_nodegraph/tree/main/demos/500_nodes) - Performance benchmark (500 nodes, 640 edges)
-  - [`shader_editor`](https://github.com/tuco86/iced_nodegraph/tree/main/demos/shader_editor) - Visual WGSL shader editor
-
-## Development Status
-
-Pre-1.0: the public API may still change between minor versions. See the
-[crates.io page](https://crates.io/crates/iced_nodegraph) for the current
-release and [CHANGELOG.md](https://github.com/tuco86/iced_nodegraph/blob/main/CHANGELOG.md)
-for what changed.
-
-**Target**: Iced 0.14 | **Platforms**: Windows, macOS, Linux, WebAssembly (Chrome)
-
-## Features
-
-- **Nodes** - Draggable containers for custom widgets with configurable styling
-- **Pins** - Connection points with type checking, directional flow, and visual feedback
-- **Edges** - Bezier curve connections with patterns (solid, dashed, arrowed, dotted)
-- **Plug Behavior** - Cable-like connections that snap on hover, not on release
-- **Zoom and Pan** - Smooth infinite canvas with zoom-at-cursor
-- **Box Selection** - Drag to select multiple nodes, Ctrl+click to toggle
-- **SDF Rendering** - All shapes rendered via signed distance fields for crisp edges at any zoom
-- **Spatial Index** - Compute shader builds a per-tile index for efficient culling
-- **Theme Support** - Integrates with Iced's 22 built-in themes
-- **Generic IDs** - Type-safe node, pin, and edge identifiers
-
-## Quick Start
+## Getting started
 
 ```bash
 cargo add iced_nodegraph
 cargo add iced --features wgpu
 ```
-
-Basic example:
 
 ```rust
 use iced_nodegraph::prelude::*;
@@ -67,152 +45,98 @@ fn view(&self) -> Element<Message> {
         .on_connect(|from, to| Message::Connected(from, to))
         .on_move(|delta, node_ids| Message::Moved(delta, node_ids));
 
-    // Nodes are built with node(id, position, widget) and pushed onto the graph.
+    // A node is an id, a position, and any iced widget as content.
     ng.push_node(node(0, Point::new(200.0, 150.0), my_node_widget()));
     ng.push_node(node(1, Point::new(525.0, 175.0), another_node()));
 
-    // An edge connects two pins, addressed by PinRef::new(node_id, pin_id).
-    // edge! defaults the edge id to (); use edge(from, to, id) for a custom id.
+    // An edge connects two pins, addressed as (node id, pin id).
     ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)));
 
     ng.into()
 }
 ```
 
-`node(..)` and `edge!(..)` return builders, so per-node and per-edge styling can be
-chained before pushing: `node(id, pos, w).style(..).pin_style(..)` and
-`edge!(from, to).style(..)`.
+`node(..)` and `edge!(..)` are builders: chain `.style(..)` for per-node and
+per-edge looks, starting from presets like `NodeStyle::input()` or
+`EdgeStyle::error()`. The [crate docs](https://docs.rs/iced_nodegraph) cover
+styling, connection validation, and the callback contract in detail.
 
-### Styling presets
+## Demos
 
-Ready-made looks save reinventing them: `NodeStyle::input()` / `process()` /
-`output()` and `EdgeStyle::error()` / `disabled()` / `highlighted()` (plus
-`data_flow()` and `debug()`). Strokes use `Pattern` (`solid` / `dashed` / `dotted`,
-with `.flow(speed)` to animate). A full cookbook - presets, the struct-update
-override idiom, and per-node status styling - is in the
-[crate docs](https://tuco86.github.io/iced_nodegraph/iced_nodegraph/).
+Every demo runs natively and in the browser.
 
-See [`demos/hello_world/`](https://github.com/tuco86/iced_nodegraph/tree/main/demos/hello_world) for a complete working example.
-
-### Running Demos
+| Demo | Live | Shows |
+|------|------|-------|
+| [`hello_world`](https://github.com/tuco86/iced_nodegraph/tree/main/demos/hello_world) | [run](https://tuco86.github.io/iced_nodegraph/demo_hello_world/index.html) | Command palette, theme switching, selection, clone/delete, persistence |
+| [`styling`](https://github.com/tuco86/iced_nodegraph/tree/main/demos/styling) | [run](https://tuco86.github.io/iced_nodegraph/demo_styling/index.html) | Style presets and live node styling controls |
+| [`interaction`](https://github.com/tuco86/iced_nodegraph/tree/main/demos/interaction) | [run](https://tuco86.github.io/iced_nodegraph/demo_interaction/index.html) | Pin direction and type rules, connection validation, snap feedback |
+| [`500_nodes`](https://github.com/tuco86/iced_nodegraph/tree/main/demos/500_nodes) | [run](https://tuco86.github.io/iced_nodegraph/demo_500_nodes/index.html) | 500 nodes / 640 edges stress test with a runtime stats overlay |
+| [`shader_editor`](https://github.com/tuco86/iced_nodegraph/tree/main/demos/shader_editor) | [run](https://tuco86.github.io/iced_nodegraph/demo_shader_editor/index.html) | Visual WGSL editor: the graph compiles to a running shader |
 
 ```bash
-git clone https://github.com/tuco86/iced_nodegraph
-cd iced_nodegraph
-
-cargo run -p demo_hello_world
-cargo run -p demo_styling
-cargo run -p demo_interaction
+cargo run -p demo_hello_world             # also: demo_styling, demo_interaction, demo_shader_editor
 cargo run --release -p demo_500_nodes
-cargo run -p demo_shader_editor
-cargo run -p iced_nodegraph --example basic   # live logic-gate playground
 ```
 
-## Building
-
-```bash
-cargo build -p iced_nodegraph          # Core library
-cargo build --workspace                # Everything
-cargo test -p iced_nodegraph           # Core library tests
-cargo test -p iced_nodegraph_sdf       # SDF engine tests
-cargo clippy --workspace -- -D warnings
-```
-
-### WASM Build
-
-```bash
-./build_docs.sh
-```
-
-Builds rustdoc plus every demo as WASM (into `target/doc/`) - the same script
-CI runs to deploy the live demo and docs. Requires `wasm-pack` and the
-`wasm32-unknown-unknown` target. A WebGPU-capable browser (Chrome/Chromium
-recommended) is needed to run the result.
-
-## Benchmarks
-
-The CPU-side per-frame cost (building node silhouettes, layering, and stroking
-edges into one SDF primitive - the work the `on_info()` callback times) is measured
-with criterion:
-
-```bash
-cargo bench -p iced_nodegraph        # frame_prep: 100 / 500 / 2000 nodes
-```
-
-The cost scales roughly linearly with element count. Indicative figures on an
-Apple Silicon dev machine: ~1.2 ms at 100 nodes, ~6 ms at 500 nodes (the
-`demo_500_nodes` scale), ~22 ms at 2000 nodes. Per-pixel culling runs separately
-on the GPU (a compute-shader tile index), so it is not part of this CPU figure.
-
-## Architecture
-
-```
-iced_nodegraph/                    # Workspace root
-├── iced_nodegraph/                # Core widget library
-│   └── src/
-│       ├── node_graph/            # Main widget + camera + state
-│       ├── node_pin/              # Pin widget
-│       ├── style/                 # Styling and config types
-│       ├── content.rs             # Layout helpers (node_header, node_footer)
-│       ├── ids.rs                 # Generic ID system
-│       └── prelude.rs             # Convenience re-exports
-├── iced_nodegraph_sdf/                      # SDF rendering engine
-│   └── src/
-│       ├── drawable.rs            # Segment-based shapes (lines, arcs, beziers)
-│       ├── curve.rs               # Shape builders (rect, rounded_rect, circle)
-│       ├── boolean.rs             # Boolean ops (union, difference) on contours
-│       ├── style.rs               # Distance-stop style chains
-│       ├── pattern.rs             # Stroke patterns (dashed, arrowed, dotted)
-│       ├── tiling.rs              # Tiling backgrounds (grid, dots, ...)
-│       ├── compile.rs             # Drawable + Style -> GPU buffers
-│       ├── primitive.rs           # Iced rendering primitive
-│       └── pipeline/              # WGPU pipeline, buffers, shader
-└── demos/                         # Demo applications
-```
-
-### SDF Rendering Pipeline
-
-The renderer uses signed distance fields evaluated on the GPU:
-
-1. **Compile** - shape contours (segments) and styles are compiled to GPU data
-2. **Upload** - segments, draw entries, and styles are written to GPU storage buffers
-3. **Spatial Index** - a compute shader builds a per-tile segment list for culling
-4. **Render** - the fragment shader evaluates only the segments in each pixel's tile
-
-All geometry (nodes, edges, pins, shadows, outlines) is rendered through this single pipeline. A style is a distance-stop chain controlling appearance: fill, gradient, stroke pattern, border, and shadow.
-
-### Coordinate System
-
-Type-safe coordinate spaces using the `euclid` crate:
-
-- **Screen Space** (`ScreenPoint`) - Physical pixel coordinates
-- **World Space** (`WorldPoint`) - Virtual canvas coordinates
-
-Transformations are compile-time checked. See [`camera.rs`](https://github.com/tuco86/iced_nodegraph/blob/main/iced_nodegraph/src/node_graph/camera.rs) for formulas and tests.
-
-## Interaction
+## Controls
 
 | Action | Input |
 |--------|-------|
 | Pan | Right mouse drag |
-| Zoom | Scroll wheel (at cursor) |
+| Zoom | Scroll wheel (zooms at cursor) |
 | Connect | Drag from pin to pin |
-| Disconnect | Click connected pin to unplug |
-| Move node | Drag node header |
-| Box select | Left drag on background |
-| Toggle select | Ctrl+click |
-| Clone | Ctrl+D |
-| Delete | Delete key |
-| Cut edges | Alt+drag across edges |
+| Disconnect | Click a connected pin to unplug |
+| Fork edge | Shift+drag from a connected pin |
+| Move node | Drag node |
+| Box select | Left drag on empty canvas |
+| Add to selection | Shift+click |
+| Select all | Ctrl+A |
+| Clone selection | Ctrl+D |
+| Delete selection | Delete / Backspace |
+| Cut edges | Ctrl+drag across edges |
 
-## Dependencies
+Ctrl is Cmd on macOS. Connections snap while dragging near a compatible pin -
+like plugging in a cable - rather than on mouse release, and compatible targets
+pulse during the drag.
 
-- **iced** 0.14 - GUI framework
-- **iced_wgpu** 0.14 - WebGPU renderer
-- **euclid** - Type-safe coordinate math
-- **glam** - Vector math for SDF evaluation
-- **encase** - WGSL buffer layout
+## How it works
+
+**Your app owns the graph.** The widget is stateless between frames: it renders
+the nodes and edges you pass in and reports intent (`on_connect`, `on_move`,
+`on_delete`, ...) through callbacks. Your update logic applies the change and
+the next `view` reflects it - the plain iced loop, no hidden state to sync.
+
+**One GPU pipeline.** Node bodies, edges, pins, shadows, and the background
+grid are compiled into a single signed-distance-field scene and rendered by
+the in-tree [`iced_nodegraph_sdf`](https://github.com/tuco86/iced_nodegraph/tree/main/iced_nodegraph_sdf)
+crate. A compute-shader tile index culls per pixel, and animated stroke
+patterns drive their own redraws. Details in
+[ARCHITECTURE.md](https://github.com/tuco86/iced_nodegraph/blob/main/iced_nodegraph_sdf/ARCHITECTURE.md).
+
+**Typed coordinates.** Screen space and world space are distinct
+[`euclid`](https://docs.rs/euclid) types, so mixing them up is a compile error.
+
+## Compatibility
+
+- Targets iced **0.14** with the wgpu renderer (the SDF pipeline has no
+  tiny-skia fallback).
+- Native: Windows, macOS, Linux. Web: WebAssembly on WebGPU-capable browsers -
+  there is no WebGL fallback, so Chrome/Chromium is recommended.
+- Pre-1.0: minor releases may change the API. See the
+  [CHANGELOG](https://github.com/tuco86/iced_nodegraph/blob/main/CHANGELOG.md).
+
+## Development
+
+The workspace contains the widget (`iced_nodegraph`), the SDF renderer
+(`iced_nodegraph_sdf`), and the demos.
+
+```bash
+cargo test --workspace
+cargo clippy --workspace -- -D warnings
+cargo bench -p iced_nodegraph      # CPU frame-prep cost at 100/500/2000 nodes
+./build_docs.sh                    # rustdoc + all demos as WASM (needs wasm-pack)
+```
 
 ## License
 
-See [LICENSE](https://github.com/tuco86/iced_nodegraph/blob/main/LICENSE) file for details.
+[MIT](https://github.com/tuco86/iced_nodegraph/blob/main/LICENSE)
