@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::node_graph::input::KeyAction;
+use iced::touch;
 
 // Click detection threshold (in world-space pixels)
 const PIN_CLICK_THRESHOLD: f32 = 8.0;
@@ -12,6 +13,11 @@ const PIN_CLICK_THRESHOLD: f32 = 8.0;
 // Hysteresis thresholds for edge snap/unsnap (prevents jitter at boundary)
 const SNAP_THRESHOLD: f32 = 10.0; // Distance to enter snap zone
 const UNSNAP_THRESHOLD: f32 = 15.0; // Distance to leave snap zone (larger = more stable)
+
+// Touch gesture thresholds: maximum travel (screen px) and duration for a
+// press+lift pair to count as a tap.
+const TOUCH_TAP_TRAVEL: f32 = 8.0;
+const TOUCH_TAP_MAX_SECS: f32 = 0.3;
 
 /// Mutable per-event context threaded through the `update` handlers.
 ///
@@ -209,6 +215,22 @@ where
             shell.request_redraw();
         }
 
+        // Touch: translate the finger stream into the pointer model the rest
+        // of this function speaks. Single finger emulates the left button
+        // (with a synthesized Available cursor); two fingers pinch-zoom and
+        // pan natively and never reach the pointer path. Children see the
+        // synthesized mouse events instead of raw touch, so embedded content
+        // stays operable by touch without double handling.
+        let synthesized = if let Event::Touch(touch_event) = event {
+            self.apply_touch(state, touch_event, shell)
+        } else {
+            None
+        };
+        let (event, screen_cursor) = match &synthesized {
+            Some((event, cursor)) => (event, *cursor),
+            None => (event, screen_cursor),
+        };
+
         let graph_move_offset = if let Dragging::Graph(origin) = state.dragging {
             screen_cursor.position().map(|cursor_position| {
                 let cursor_world: WorldPoint = state
@@ -368,6 +390,143 @@ where
                     }
                 },
             );
+    }
+
+    /// Folds one touch event into the finger list and returns the pointer
+    /// event to process in its place, if any.
+    ///
+    /// A lone finger emulates the left mouse button (press/move/lift become
+    /// `ButtonPressed(Left)`/`CursorMoved`/`ButtonReleased` with an
+    /// `Available` cursor at the contact point); a press on empty space pans
+    /// instead of box-selecting (see `start_box_select_or_cut`). Two fingers
+    /// pinch-zoom and pan the camera directly, committing through `on_pan`
+    /// like wheel zoom, and return `None`.
+    fn apply_touch(
+        &self,
+        state: &mut NodeGraphState,
+        event: &touch::Event,
+        shell: &mut Shell<'_, Message>,
+    ) -> Option<(Event, mouse::Cursor)> {
+        match *event {
+            touch::Event::FingerPressed { id, position } => {
+                if let Some(entry) = state.fingers.iter_mut().find(|(f, _)| *f == id) {
+                    entry.1 = position;
+                    return None;
+                }
+                state.fingers.push((id, position));
+                match state.fingers.len() {
+                    1 => {
+                        state.touch_tap = Some((id, position, state.time));
+                        Some((
+                            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                            mouse::Cursor::Available(position),
+                        ))
+                    }
+                    2 => {
+                        // Entering the pinch: a second contact cancels any
+                        // in-progress one-finger drag.
+                        state.touch_tap = None;
+                        if state.dragging != Dragging::None {
+                            state.dragging = Dragging::None;
+                            if let Some(handler) = self.on_drag_end_handler() {
+                                shell.publish(handler());
+                            }
+                            shell.request_redraw();
+                        }
+                        None
+                    }
+                    _ => None,
+                }
+            }
+            touch::Event::FingerMoved { id, position } => {
+                let index = state.fingers.iter().position(|(f, _)| *f == id)?;
+                if state.fingers.len() == 1 {
+                    state.fingers[0].1 = position;
+                    // A travelling finger is a drag, not a tap.
+                    if let Some((_, start, _)) = state.touch_tap
+                        && start.distance(position) > TOUCH_TAP_TRAVEL
+                    {
+                        state.touch_tap = None;
+                    }
+                    return Some((
+                        Event::Mouse(mouse::Event::CursorMoved { position }),
+                        mouse::Cursor::Available(position),
+                    ));
+                }
+                if index < 2 {
+                    // Pinch: zoom by the contact-distance ratio at the new
+                    // midpoint, then pan by the midpoint travel.
+                    let prev = (state.fingers[0].1, state.fingers[1].1);
+                    state.fingers[index].1 = position;
+                    let next = (state.fingers[0].1, state.fingers[1].1);
+
+                    let prev_distance = prev.0.distance(prev.1);
+                    let next_distance = next.0.distance(next.1);
+                    let prev_mid =
+                        Point::new((prev.0.x + prev.1.x) / 2.0, (prev.0.y + prev.1.y) / 2.0);
+                    let next_mid =
+                        Point::new((next.0.x + next.1.x) / 2.0, (next.0.y + next.1.y) / 2.0);
+
+                    if prev_distance > 1.0 && next_distance > 1.0 {
+                        let zoom_delta =
+                            (next_distance / prev_distance - 1.0) * state.camera.zoom();
+                        let mid: ScreenPoint = next_mid.into_euclid();
+                        state.camera = state.camera.zoom_at(mid, zoom_delta);
+                    }
+                    let zoom = state.camera.zoom();
+                    let pan = WorldPoint::new(next_mid.x / zoom, next_mid.y / zoom)
+                        - WorldPoint::new(prev_mid.x / zoom, prev_mid.y / zoom);
+                    state.camera = state.camera.move_by(pan);
+
+                    // Commit continuously, mirroring wheel zoom.
+                    if let Some(handler) = self.on_pan_handler() {
+                        let pos = state.camera.position();
+                        shell.publish(handler(Point::new(pos.x, pos.y), state.camera.zoom()));
+                    }
+                    shell.capture_event();
+                    shell.request_redraw();
+                } else {
+                    state.fingers[index].1 = position;
+                }
+                None
+            }
+            touch::Event::FingerLifted { id, position }
+            | touch::Event::FingerLost { id, position } => {
+                state.fingers.retain(|(f, _)| *f != id);
+                if !state.fingers.is_empty() {
+                    return None;
+                }
+                let lost = matches!(event, touch::Event::FingerLost { .. });
+                // Tap on empty space (quick, motionless, not cancelled): clear
+                // the selection, matching a mouse click on empty space (which
+                // on touch starts a pan instead of a clearing box-select).
+                if let Some((tap_id, _, pressed_at)) = state.touch_tap.take()
+                    && tap_id == id
+                    && !lost
+                    && state.time - pressed_at <= TOUCH_TAP_MAX_SECS
+                    && matches!(state.dragging, Dragging::Graph(_))
+                    && !state.selected_nodes.is_empty()
+                {
+                    state.selected_nodes.clear();
+                    if let Some(handler) = self.on_select_handler() {
+                        shell.publish(handler(vec![]));
+                    }
+                    shell.request_redraw();
+                }
+                // Release whichever button the active drag listens for: a
+                // touch pan runs as `Dragging::Graph`, which commits on the
+                // keymap's pan button.
+                let button = if matches!(state.dragging, Dragging::Graph(_)) {
+                    self.keymap.pan_button
+                } else {
+                    mouse::Button::Left
+                };
+                Some((
+                    Event::Mouse(mouse::Event::ButtonReleased(button)),
+                    mouse::Cursor::Available(position),
+                ))
+            }
+        }
     }
 
     /// Handles an in-progress edge-cutting drag: extends the cut trail on cursor
@@ -1230,6 +1389,16 @@ where
                     trail: vec![cursor_position],
                     pending_cuts: std::collections::HashSet::new(),
                 };
+                shell.capture_event();
+                return;
+            }
+
+            // Touch: a press on empty space pans the graph. Box selection
+            // needs a keyboard for its additive mode and pan is the dominant
+            // touch expectation; a tap (no travel) clears the selection on
+            // lift instead (see `apply_touch`).
+            if !state.fingers.is_empty() {
+                state.dragging = Dragging::Graph(cursor_position);
                 shell.capture_event();
                 return;
             }

@@ -10,7 +10,7 @@
 use super::GraphInfo;
 use super::camera::Camera2D;
 use super::euclid::WorldPoint;
-use iced::{Point, keyboard};
+use iced::{Point, keyboard, touch};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use web_time::Instant;
@@ -69,6 +69,13 @@ pub(super) struct NodeGraphState {
     /// Monotonic counter that feeds into `node_z`. Bumped on move release and
     /// on first sight of a new node index.
     pub(super) z_counter: u64,
+    /// Currently pressed touch contacts in press order (screen positions).
+    /// The first entry is the "primary" finger that emulates the left mouse
+    /// button; the first two entries drive the pinch gesture.
+    pub(super) fingers: Vec<(touch::Finger, Point)>,
+    /// Tap candidate: (finger, press position, press time from `time`).
+    /// Cleared when the finger travels or a second finger joins.
+    pub(super) touch_tap: Option<(touch::Finger, Point, f32)>,
 }
 
 impl Default for NodeGraphState {
@@ -87,6 +94,8 @@ impl Default for NodeGraphState {
             last_info: RefCell::new(None),
             node_z: HashMap::new(),
             z_counter: 0,
+            fingers: Vec::new(),
+            touch_tap: None,
         }
     }
 }

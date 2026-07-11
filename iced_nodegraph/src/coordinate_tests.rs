@@ -19,6 +19,7 @@ use iced::advanced::renderer::Renderer as _;
 use iced::advanced::widget::{Tree, Widget};
 use iced::advanced::{Layout, layout, mouse, renderer};
 use iced::keyboard;
+use iced::touch;
 use iced::{
     Background, Color, Element, Length, Pixels, Point, Rectangle, Size, Theme, Transformation,
     Vector,
@@ -1081,5 +1082,144 @@ fn rebound_pan_button_commits_a_pan() {
         msgs.len(),
         1,
         "rebound pan button must commit exactly one pan: {msgs:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Touch gestures: the widget translates the finger stream into its pointer
+// model (single finger = left button, empty-space drag = pan, two fingers =
+// pinch). These drive the full `update` path with synthetic touch events.
+// ---------------------------------------------------------------------------
+
+fn finger_press(id: u64, position: Point) -> (iced::Event, mouse::Cursor) {
+    (
+        iced::Event::Touch(touch::Event::FingerPressed {
+            id: touch::Finger(id),
+            position,
+        }),
+        mouse::Cursor::Unavailable,
+    )
+}
+
+fn finger_move(id: u64, position: Point) -> (iced::Event, mouse::Cursor) {
+    (
+        iced::Event::Touch(touch::Event::FingerMoved {
+            id: touch::Finger(id),
+            position,
+        }),
+        mouse::Cursor::Unavailable,
+    )
+}
+
+fn finger_lift(id: u64, position: Point) -> (iced::Event, mouse::Cursor) {
+    (
+        iced::Event::Touch(touch::Event::FingerLifted {
+            id: touch::Finger(id),
+            position,
+        }),
+        mouse::Cursor::Unavailable,
+    )
+}
+
+#[test]
+fn touch_drag_on_empty_space_pans_the_graph() {
+    let graph: NodeGraph<'static, usize, usize, (), (Point, f32), Theme, Rec> =
+        NodeGraph::default()
+            .width(Length::Fixed(400.0))
+            .height(Length::Fixed(400.0))
+            .on_pan(|position, zoom| (position, zoom));
+
+    let msgs = run_events(
+        graph,
+        &[
+            finger_press(1, Point::new(300.0, 300.0)),
+            finger_move(1, Point::new(250.0, 300.0)),
+            finger_lift(1, Point::new(250.0, 300.0)),
+        ],
+    );
+    assert_eq!(
+        msgs.len(),
+        1,
+        "touch pan must commit exactly once: {msgs:?}"
+    );
+    let (position, zoom) = msgs[0];
+    assert!(
+        (position.x + 50.0).abs() < 1e-3 && position.y.abs() < 1e-3,
+        "touch pan committed the wrong offset: {position:?}",
+    );
+    assert!((zoom - 1.0).abs() < 1e-6);
+}
+
+#[test]
+fn touch_tap_selects_a_node_and_empty_tap_clears() {
+    let graph: NodeGraph<'static, usize, usize, (), Vec<usize>, Theme, Rec> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .on_select(|ids| ids);
+
+    let msgs = run_events(
+        graph,
+        &[
+            // Tap on node 0 (world 10,10 + 40x20 probe; camera identity).
+            finger_press(1, Point::new(30.0, 20.0)),
+            finger_lift(1, Point::new(30.0, 20.0)),
+            // Tap on empty space clears the selection on lift.
+            finger_press(1, Point::new(300.0, 300.0)),
+            finger_lift(1, Point::new(300.0, 300.0)),
+        ],
+    );
+    assert_eq!(
+        msgs,
+        vec![vec![0], vec![]],
+        "tap must select on press and empty tap must clear on lift",
+    );
+}
+
+#[test]
+fn two_finger_pinch_zooms_the_camera() {
+    let graph: NodeGraph<'static, usize, usize, (), (Point, f32), Theme, Rec> =
+        NodeGraph::default()
+            .width(Length::Fixed(400.0))
+            .height(Length::Fixed(400.0))
+            .on_pan(|position, zoom| (position, zoom));
+
+    let msgs = run_events(
+        graph,
+        &[
+            finger_press(1, Point::new(100.0, 200.0)),
+            finger_press(2, Point::new(300.0, 200.0)),
+            // Contact distance 200 -> 300: zoom 1.0 -> 1.5.
+            finger_move(2, Point::new(400.0, 200.0)),
+        ],
+    );
+    let (_, zoom) = *msgs.last().expect("pinch published no camera commit");
+    assert!(
+        (zoom - 1.5).abs() < 1e-4,
+        "pinch must scale zoom by the distance ratio, got {zoom}",
+    );
+}
+
+#[test]
+fn second_finger_cancels_a_touch_node_drag() {
+    let graph: NodeGraph<'static, usize, usize, (), &'static str, Theme, Rec> =
+        NodeGraph::default()
+            .width(Length::Fixed(400.0))
+            .height(Length::Fixed(400.0))
+            .on_move(|_, _| "move")
+            .on_drag_end(|| "end");
+
+    let msgs = run_events(
+        graph,
+        &[
+            // Press on node 0 starts a node drag (on_move is wired).
+            finger_press(1, Point::new(30.0, 20.0)),
+            // A second contact enters pinch mode and cancels the drag.
+            finger_press(2, Point::new(300.0, 200.0)),
+        ],
+    );
+    assert_eq!(
+        msgs,
+        vec!["end"],
+        "second finger must cancel the drag via on_drag_end",
     );
 }
