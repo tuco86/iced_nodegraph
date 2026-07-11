@@ -80,24 +80,27 @@ cargo run --release -p demo_500_nodes
 
 ## Controls
 
-| Action | Input |
-|--------|-------|
-| Pan | Right mouse drag |
-| Zoom | Scroll wheel (zooms at cursor) |
-| Connect | Drag from pin to pin |
-| Disconnect | Click a connected pin to unplug |
-| Fork edge | Shift+drag from a connected pin |
-| Move node | Drag node |
-| Box select | Left drag on empty canvas |
-| Add to selection | Shift+click |
-| Select all | Ctrl+A |
-| Clone selection | Ctrl+D |
-| Delete selection | Delete / Backspace |
-| Cut edges | Ctrl+drag across edges |
+| Action | Mouse / Keyboard | Touch |
+|--------|------------------|-------|
+| Pan | Right mouse drag | One-finger drag on empty canvas, or two-finger drag |
+| Zoom | Scroll wheel (zooms at cursor) | Two-finger pinch |
+| Connect | Drag from pin to pin | Drag from pin to pin |
+| Disconnect | Click a connected pin to unplug | Tap a connected pin to unplug |
+| Fork edge | Shift+drag from a connected pin | - |
+| Move node | Drag node | Drag node |
+| Box select | Left drag on empty canvas | - (empty-canvas drag pans) |
+| Add to selection | Shift+click | - |
+| Select all | Ctrl+A | - |
+| Clone selection | Ctrl+D (web: Alt+D) | - |
+| Delete selection | Delete / Backspace (web: Delete) | - |
+| Cut edges | Ctrl+drag across edges | - |
 
-Ctrl is Cmd on macOS. Connections snap while dragging near a compatible pin -
-like plugging in a cable - rather than on mouse release, and compatible targets
-pulse during the drag.
+Ctrl is Cmd on macOS. On the web, clone avoids `Ctrl/Cmd+D` (the browser's
+bookmark shortcut) and delete drops the `Backspace` alternative (legacy
+back-navigation). Every binding is host-rebindable through
+`NodeGraph::keymap` - see the `Keymap` type. Connections snap while dragging
+near a compatible pin - like plugging in a cable - rather than on mouse
+release, and compatible targets pulse during the drag.
 
 ## How it works
 

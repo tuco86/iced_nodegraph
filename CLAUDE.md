@@ -330,6 +330,7 @@ Styles are concrete, flat structs (no `Option`/`merge` config layer):
 | `node_graph/widget/update.rs` | Event path | `update_impl`, `Dragging` state machine |
 | `node_graph/widget/camera_overlay.rs` | Pop-out overlay wrapper | `CameraOverlay` |
 | `node_graph/camera.rs` | Zoom/pan transforms | `Camera2D`, coordinate math |
+| `node_graph/input.rs` | Rebindable keymap | `Keymap`, `KeyCombo`, `KeyAction` |
 | `node_graph/euclid.rs` | Type-safe coords | `WorldPoint`, `ScreenPoint`, `IntoIced` |
 | `node_graph/state.rs` | Interaction state | `State`, `DragState` |
 | `node_pin/mod.rs` | Connection points | `NodePin`, `PinEnd`, `PinInfo`, `PinSide` |

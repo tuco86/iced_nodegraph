@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Touch support: a single finger emulates the left mouse button (tap selects,
+  drag moves nodes or drags edges), a one-finger drag on empty canvas pans
+  (instead of box-selecting; a quick tap there clears the selection), and two
+  fingers pinch-zoom and pan the camera. Embedded node content receives the
+  synthesized mouse events, so sliders and inputs stay operable by touch.
+- Host-configurable, platform-aware keymap: `NodeGraph::keymap` takes a
+  `Keymap` (re-exported with `KeyCombo`, `ComboKey`, `KeyAction`) whose key
+  bindings can be rebound or disabled individually and whose pointer fields
+  (`pan_button`, `edge_cut_modifiers`, `multi_select_modifiers`) replace the
+  hardcoded Right-button/Cmd/Shift gates. Key combos match layout-independently
+  (physical key via `Key::to_latin`) and with exact modifier state. The wasm32
+  default rebinds clone to `Alt+D` (browsers reserve `Cmd/Ctrl+D` for
+  bookmarking at chrome level) and drops the `Backspace` delete alternative
+  (legacy back-navigation).
 - Scripted GPU profiling: `gpu_trace.py` drives the Nsight Graphics CLI
   headlessly and prints per-pass GPU times plus hardware counters (SM/L2/DRAM
   throughput, warp-stall breakdown) for the SDF pipeline, via the new ignored
@@ -20,6 +34,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Keyboard shortcuts now require the exact modifier state of their combo:
+  `Cmd+Shift+A` no longer triggers Select All (previously any superset of the
+  required modifiers matched). Shortcut letters resolve from the physical key
+  position on non-Latin layouts instead of the logical character.
+- The `Widget::update` event path was restructured into per-`Dragging`-variant
+  handlers with a shared `UpdateCtx`; the mirrored unplug-FROM/unplug-TO blocks
+  collapsed into one parameterized path. No behavior change intended beyond the
+  keymap items above; the drag/selection test suites cover the move.
 - The README was rebuilt around what a first-time visitor needs: a hero
   screenshot of the live WASM demo (`assets/hero.png`, linked to the hosted
   demo), a per-demo live-run table, and a controls table corrected against the

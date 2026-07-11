@@ -23,7 +23,8 @@
 //! - **Drag from pins** - Create connections between nodes
 //! - **Drag nodes** - Move nodes around the canvas
 //! - **Scroll** - Zoom in/out
-//! - **Middle-drag** - Pan the canvas
+//! - **Right-drag** - Pan the canvas
+//! - **Ctrl/Cmd+L** - Select all (rebound from Ctrl/Cmd+A via `keymap`)
 //!
 //! ## Connection Rules
 //!
@@ -41,7 +42,8 @@ use iced::{
     widget::{Space, button, column, container, row, scrollable, text},
 };
 use iced_nodegraph::{
-    PinInfo as NgPinInfo, PinRef, PinStatus, PinStyle, default_pin_style, edge, node, pin,
+    KeyCombo, Keymap, PinInfo as NgPinInfo, PinRef, PinStatus, PinStyle, default_pin_style, edge,
+    node, pin,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -462,6 +464,12 @@ impl App {
                 .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })
                 .on_move(|delta, node_ids| Message::NodesMoved { delta, node_ids })
                 .on_select(Message::SelectionChanged)
+                // Rebound keymap: Select All lives on Cmd/Ctrl+L here to
+                // demonstrate host rebinding (see the rules panel).
+                .keymap(Keymap {
+                    select_all: Some(KeyCombo::command('l')),
+                    ..Keymap::default()
+                })
                 .selection(&self.selected_nodes);
 
         // Node 0: Number Generator
@@ -565,6 +573,7 @@ impl App {
             text("- Integer implicitly converts to Float").size(12),
             text("- Single-connection pins reject additional connections").size(12),
             text("- Duplicate connections are rejected").size(12),
+            text("- Keymap rebind: Select All is Ctrl/Cmd+L in this demo").size(12),
         ]
         .spacing(4)
         .padding(8);
