@@ -325,7 +325,10 @@ Styles are concrete, flat structs (no `Option`/`merge` config layer):
 | Module | Purpose | Key Types |
 |--------|---------|-----------|
 | `node_graph/mod.rs` | Main widget, builders | `NodeGraph`, `Node`, `Edge`, `PinRef`, `DragInfo` |
-| `node_graph/widget.rs` | Widget trait impl | `node_graph()` constructor |
+| `node_graph/widget.rs` | Widget trait impl (trunk) | `node_graph()` constructor |
+| `node_graph/widget/draw.rs` | Render path | `draw_impl`, SDF layer batching |
+| `node_graph/widget/update.rs` | Event path | `update_impl`, `Dragging` state machine |
+| `node_graph/widget/camera_overlay.rs` | Pop-out overlay wrapper | `CameraOverlay` |
 | `node_graph/camera.rs` | Zoom/pan transforms | `Camera2D`, coordinate math |
 | `node_graph/euclid.rs` | Type-safe coords | `WorldPoint`, `ScreenPoint`, `IntoIced` |
 | `node_graph/state.rs` | Interaction state | `State`, `DragState` |
@@ -347,7 +350,7 @@ Styles are concrete, flat structs (no `Option`/`merge` config layer):
 ```
 lib.rs (public API)
   ├── node_graph/ (widget)
-  │     ├── widget.rs (iced Widget trait)
+  │     ├── widget.rs (iced Widget trait; draw/update/camera_overlay submodules)
   │     ├── state.rs (interaction)
   │     └── camera.rs (transforms)
   ├── node_pin/ (pin widget)
