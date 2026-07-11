@@ -93,7 +93,7 @@ cargo run --release -p demo_500_nodes
 | Select all | Ctrl+A | - |
 | Clone selection | Ctrl+D (web: Alt+D) | - |
 | Delete selection | Delete / Backspace (web: Delete) | - |
-| Cut edges | Ctrl+drag across edges | - |
+| Cut edges | Ctrl+click an edge, or Ctrl+drag across edges | - |
 
 Ctrl is Cmd on macOS. On the web, clone avoids `Ctrl/Cmd+D` (the browser's
 bookmark shortcut) and delete drops the `Backspace` alternative (legacy
