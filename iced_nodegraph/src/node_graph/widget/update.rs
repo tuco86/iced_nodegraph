@@ -12,6 +12,22 @@ const PIN_CLICK_THRESHOLD: f32 = 8.0;
 const SNAP_THRESHOLD: f32 = 10.0; // Distance to enter snap zone
 const UNSNAP_THRESHOLD: f32 = 15.0; // Distance to leave snap zone (larger = more stable)
 
+/// Mutable per-event context threaded through the `update` handlers.
+///
+/// One instance is built at the top of the `update_with` closure and passed
+/// down by `&mut`; handlers destructure it (`let UpdateCtx { tree, shell, .. }
+/// = &mut *ctx;`) so disjoint field borrows preserve the inline borrow
+/// choreography of the original single-function form (`tree.state` vs
+/// `tree.children` vs `shell`).
+struct UpdateCtx<'a, 'b, 'm, Message> {
+    tree: &'a mut Tree,
+    layout: Layout<'b>,
+    event: &'a Event,
+    world_cursor: mouse::Cursor,
+    screen_cursor: mouse::Cursor,
+    shell: &'a mut Shell<'m, Message>,
+}
+
 impl<N, P, E, UI, Message, Renderer> NodeGraph<'_, N, P, UI, Message, iced::Theme, Renderer, E>
 where
     N: NodeId + 'static,
@@ -216,7 +232,15 @@ where
                 &clipped_viewport,
                 screen_cursor,
                 |viewport, world_cursor| {
-                    let state = tree.state.downcast_mut::<NodeGraphState>();
+                    let mut ctx = UpdateCtx {
+                        tree,
+                        layout,
+                        event,
+                        world_cursor,
+                        screen_cursor,
+                        shell,
+                    };
+                    let state = ctx.tree.state.downcast_mut::<NodeGraphState>();
 
                     if state.dragging != Dragging::None
                         && let Event::Mouse(mouse::Event::CursorMoved { .. }) = event
@@ -225,471 +249,34 @@ where
                         if let Some(cursor_position) = world_cursor.position()
                             && let Some(handler) = self.on_drag_update_handler()
                         {
-                            shell.publish(handler(cursor_position));
+                            ctx.shell.publish(handler(cursor_position));
                         }
-                        shell.capture_event();
-                        shell.request_redraw();
+                        ctx.shell.capture_event();
+                        ctx.shell.request_redraw();
                     }
 
+                    // The `Dragging` state machine, part 1: transitions of an
+                    // in-progress drag, one handler per variant. Part 2 - the
+                    // `None -> *` entry transitions - is the button-press
+                    // dispatch at the bottom of this closure, after child
+                    // propagation.
                     match state.dragging.clone() {
                         Dragging::None => {}
-                        Dragging::EdgeCutting { .. } => match event {
-                            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                                if let Some(cursor_position) = world_cursor.position() {
-                                    let cursor_position: WorldPoint = cursor_position.into_euclid();
-
-                                    // Update trail and check which edges intersect with cutting line
-                                    if let Dragging::EdgeCutting {
-                                        ref mut trail,
-                                        ref mut pending_cuts,
-                                    } = state.dragging
-                                    {
-                                        trail.push(cursor_position);
-
-                                        // Get cutting line: from start point to current cursor
-                                        let cut_start =
-                                            trail.first().copied().unwrap_or(cursor_position);
-                                        let cut_end = cursor_position;
-
-                                        // Clear and recalculate - only edges intersecting cutting line are highlighted
-                                        pending_cuts.clear();
-
-                                        // Check each edge for intersection with the cutting line
-                                        for (edge_idx, (_id, from_ref, to_ref, _style)) in
-                                            self.edges.iter().enumerate()
-                                        {
-                                            // Resolve user IDs to indices
-                                            let from_node_idx =
-                                                match self.node_index(&from_ref.node_id) {
-                                                    Some(idx) => idx,
-                                                    None => continue,
-                                                };
-                                            let to_node_idx = match self.node_index(&to_ref.node_id)
-                                            {
-                                                Some(idx) => idx,
-                                                None => continue,
-                                            };
-
-                                            // Get pin positions and sides for bezier calculation
-                                            let from_pin_data = layout
-                                                .children()
-                                                .nth(from_node_idx)
-                                                .and_then(|node_layout| {
-                                                    tree.children.get(from_node_idx).and_then(
-                                                        |node_tree| {
-                                                            let pins = find_pins::<P, UI>(
-                                                                node_tree,
-                                                                node_layout,
-                                                            );
-                                                            pins.iter()
-                                                                .find(|(_, state, _)| {
-                                                                    state.pin_id == from_ref.pin_id
-                                                                })
-                                                                .map(|(_, state, (pos, _))| {
-                                                                    (*pos, state.side)
-                                                                })
-                                                        },
-                                                    )
-                                                });
-                                            let to_pin_data = layout
-                                                .children()
-                                                .nth(to_node_idx)
-                                                .and_then(|node_layout| {
-                                                    tree.children.get(to_node_idx).and_then(
-                                                        |node_tree| {
-                                                            let pins = find_pins::<P, UI>(
-                                                                node_tree,
-                                                                node_layout,
-                                                            );
-                                                            pins.iter()
-                                                                .find(|(_, state, _)| {
-                                                                    state.pin_id == to_ref.pin_id
-                                                                })
-                                                                .map(|(_, state, (pos, _))| {
-                                                                    (*pos, state.side)
-                                                                })
-                                                        },
-                                                    )
-                                                });
-
-                                            if let (Some((p0, from_side)), Some((p3, to_side))) =
-                                                (from_pin_data, to_pin_data)
-                                            {
-                                                // Calculate bezier control points
-                                                let dir_from = pin_side_direction(from_side.into());
-                                                let dir_to = pin_side_direction(to_side.into());
-                                                let l = adaptive_bezier_length(
-                                                    [p0.x, p0.y],
-                                                    [p3.x, p3.y],
-                                                );
-                                                let p1 = Point::new(
-                                                    p0.x + dir_from[0] * l,
-                                                    p0.y + dir_from[1] * l,
-                                                );
-                                                let p2 = Point::new(
-                                                    p3.x + dir_to[0] * l,
-                                                    p3.y + dir_to[1] * l,
-                                                );
-
-                                                // Check if cutting line intersects this bezier edge
-                                                if line_intersects_bezier(
-                                                    cut_start.into_iced(),
-                                                    cut_end.into_iced(),
-                                                    p0,
-                                                    p1,
-                                                    p2,
-                                                    p3,
-                                                ) {
-                                                    pending_cuts.insert(edge_idx);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                shell.request_redraw();
-                            }
-                            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                                // Delete all pending edges on release
-                                if let Dragging::EdgeCutting { pending_cuts, .. } = &state.dragging
-                                {
-                                    for &edge_idx in pending_cuts.iter() {
-                                        if let Some((_id, from_ref, to_ref, _)) =
-                                            self.edges.get(edge_idx)
-                                        {
-                                            // Edges already store user IDs (PinRef<N, P>)
-                                            if let Some(handler) = self.on_disconnect_handler() {
-                                                shell.publish(handler(
-                                                    from_ref.clone(),
-                                                    to_ref.clone(),
-                                                ));
-                                            }
-                                        }
-                                    }
-                                }
-                                state.dragging = Dragging::None;
-                                shell.capture_event();
-                                shell.request_redraw();
-                            }
-                            _ => {}
-                        },
-                        Dragging::Graph(origin) => {
-                            if let Event::Mouse(mouse::Event::ButtonReleased(
-                                mouse::Button::Right,
-                            )) = event
-                            {
-                                if let Some(cursor_position) = screen_cursor.position() {
-                                    let screen_to_world = state.camera.screen_to_world();
-                                    let cursor_position: ScreenPoint =
-                                        cursor_position.into_euclid();
-                                    let cursor_position: WorldPoint =
-                                        screen_to_world.transform_point(cursor_position);
-                                    let offset = cursor_position - origin;
-                                    state.camera = state.camera.move_by(offset);
-
-                                    // Commit the new camera position on pan release.
-                                    if let Some(handler) = self.on_pan_handler() {
-                                        let pos = state.camera.position();
-                                        shell.publish(handler(
-                                            Point::new(pos.x, pos.y),
-                                            state.camera.zoom(),
-                                        ));
-                                    }
-                                }
-                                state.dragging = Dragging::None;
-                                shell.capture_event();
-                                shell.request_redraw();
-                            }
-                        }
+                        Dragging::EdgeCutting { .. } => self.handle_edge_cutting(&mut ctx),
+                        Dragging::Graph(origin) => self.handle_graph_pan(&mut ctx, origin),
                         Dragging::Node(node_index, origin) => {
-                            if let Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) =
-                                event
-                            {
-                                if let Some(cursor_position) = world_cursor.position() {
-                                    let cursor_position = cursor_position.into_euclid();
-                                    let offset = cursor_position - origin;
-
-                                    // A press+release without motion is a click, not
-                                    // a move: don't emit a spurious move (which would
-                                    // dirty host state / undo history on a plain
-                                    // selection click). Only report an actual drag.
-                                    let moved = offset.x.abs() > f32::EPSILON
-                                        || offset.y.abs() > f32::EPSILON;
-
-                                    // Translate internal index to user ID
-                                    if let Some(node_id) = self.index_to_node_id(node_index)
-                                        && moved
-                                    {
-                                        // Call on_move handler if set
-                                        if let Some(handler) = self.on_move_handler() {
-                                            shell.publish(handler(
-                                                offset.into_iced(),
-                                                vec![node_id],
-                                            ));
-                                        }
-                                    }
-                                }
-                                // Promote this node to the top of the z-order on drop.
-                                state.promote_z(node_index);
-                                state.dragging = Dragging::None;
-                                // Emit drag end event
-                                if let Some(handler) = self.on_drag_end_handler() {
-                                    shell.publish(handler());
-                                }
-                                shell.capture_event();
-                                shell.invalidate_layout();
-                                shell.request_redraw();
-                            }
+                            self.handle_node_drag(&mut ctx, node_index, origin)
                         }
-                        Dragging::Edge(from_node, from_pin, _) => match event {
-                            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                                // Check if cursor is over a valid target pin to transition to EdgeOver
-                                if let Some(cursor_position) = world_cursor.position() {
-                                    // Copy valid_drop_targets before iterating over tree.children
-                                    let valid_targets = state.valid_drop_targets.clone();
-
-                                    // Extract from_pin_id while iterating (need access to tree.children)
-                                    let mut from_pin_id: Option<P> = None;
-                                    let mut from_dir: Option<PinDirection> = None;
-                                    let mut target_info: Option<(usize, usize, P, PinDirection)> =
-                                        None;
-
-                                    // Check all pins for proximity and validity (use SNAP_THRESHOLD to enter)
-                                    for (node_index, (node_layout, node_tree)) in
-                                        layout.children().zip(&tree.children).enumerate()
-                                    {
-                                        for (pin_index, pin_state, (a, b)) in
-                                            find_pins::<P, UI>(node_tree, node_layout)
-                                        {
-                                            // Extract from_pin_id when we find the source pin
-                                            if node_index == from_node && pin_index == from_pin {
-                                                from_pin_id = Some(pin_state.pin_id.clone());
-                                                from_dir = Some(pin_state.direction);
-                                            }
-
-                                            // Pin positions are already in world space (from layout)
-                                            let distance = a
-                                                .distance(cursor_position)
-                                                .min(b.distance(cursor_position));
-
-                                            // Use SNAP_THRESHOLD for entering snap zone
-                                            if distance < SNAP_THRESHOLD && target_info.is_none() {
-                                                // Check if this pin is in valid_drop_targets
-                                                if valid_targets.contains(&(node_index, pin_index))
-                                                {
-                                                    target_info = Some((
-                                                        node_index,
-                                                        pin_index,
-                                                        pin_state.pin_id.clone(),
-                                                        pin_state.direction,
-                                                    ));
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    if let Some((to_node, to_pin, to_pin_id, to_dir)) = target_info
-                                    {
-                                        // Fire EdgeConnected event immediately on snap (plug behavior)
-                                        let from_node_id = self.index_to_node_id(from_node);
-                                        let to_node_id = self.index_to_node_id(to_node);
-
-                                        if let (Some(from_nid), Some(to_nid), Some(from_pid)) =
-                                            (from_node_id, to_node_id, from_pin_id)
-                                        {
-                                            // Normalize to output -> input so the reported
-                                            // endpoints match the rendered data-flow direction,
-                                            // independent of which pin the drag started on.
-                                            let (from_ref, to_ref) = orient_connection(
-                                                from_dir.unwrap_or(PinDirection::Both),
-                                                to_dir,
-                                                PinRef::new(from_nid.clone(), from_pid),
-                                                PinRef::new(to_nid.clone(), to_pin_id),
-                                            );
-
-                                            if let Some(handler) = self.on_connect_handler() {
-                                                shell.publish(handler(from_ref, to_ref));
-                                            }
-                                        }
-
-                                        state.dragging = Dragging::EdgeOver(
-                                            from_node, from_pin, to_node, to_pin,
-                                        );
-                                    }
-                                }
-                                shell.request_redraw();
-                            }
-                            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                                state.dragging = Dragging::None;
-                                // Emit drag end event
-                                if let Some(handler) = self.on_drag_end_handler() {
-                                    shell.publish(handler());
-                                }
-                                shell.capture_event();
-                                shell.request_redraw();
-                            }
-                            _ => {}
-                        },
-                        Dragging::EdgeOver(from_node, from_pin, to_node, to_pin) => match event {
-                            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                                // Check if still over the target pin, otherwise go back to Edge state
-                                // Use UNSNAP_THRESHOLD (larger than SNAP_THRESHOLD) to prevent jitter
-                                if let Some(cursor_position) = world_cursor.position() {
-                                    // Extract pin IDs and check distance in one pass through tree.children
-                                    let mut still_over_pin = false;
-                                    let mut from_pin_id: Option<P> = None;
-                                    let mut to_pin_id: Option<P> = None;
-                                    let mut from_dir: Option<PinDirection> = None;
-                                    let mut to_dir: Option<PinDirection> = None;
-
-                                    for (node_index, (node_layout, node_tree)) in
-                                        layout.children().zip(&tree.children).enumerate()
-                                    {
-                                        for (pin_index, pin_state, (a, b)) in
-                                            find_pins::<P, UI>(node_tree, node_layout)
-                                        {
-                                            // Extract from_pin_id
-                                            if node_index == from_node && pin_index == from_pin {
-                                                from_pin_id = Some(pin_state.pin_id.clone());
-                                                from_dir = Some(pin_state.direction);
-                                            }
-                                            // Extract to_pin_id and check distance
-                                            if node_index == to_node && pin_index == to_pin {
-                                                to_pin_id = Some(pin_state.pin_id.clone());
-                                                to_dir = Some(pin_state.direction);
-                                                let distance = a
-                                                    .distance(cursor_position)
-                                                    .min(b.distance(cursor_position));
-                                                still_over_pin = distance < UNSNAP_THRESHOLD;
-                                            }
-                                        }
-                                    }
-
-                                    if !still_over_pin {
-                                        // Fire EdgeDisconnected event when leaving snap (plug behavior)
-                                        let from_node_id = self.index_to_node_id(from_node);
-                                        let to_node_id = self.index_to_node_id(to_node);
-
-                                        if let (
-                                            Some(from_nid),
-                                            Some(to_nid),
-                                            Some(from_pid),
-                                            Some(to_pid),
-                                        ) = (from_node_id, to_node_id, from_pin_id, to_pin_id)
-                                        {
-                                            // Match the output -> input order used when the
-                                            // edge connected, so the user's edge list lookup
-                                            // removes the same pair it inserted.
-                                            let (from_ref, to_ref) = orient_connection(
-                                                from_dir.unwrap_or(PinDirection::Both),
-                                                to_dir.unwrap_or(PinDirection::Both),
-                                                PinRef::new(from_nid.clone(), from_pid),
-                                                PinRef::new(to_nid.clone(), to_pid),
-                                            );
-
-                                            if let Some(handler) = self.on_disconnect_handler() {
-                                                shell.publish(handler(from_ref, to_ref));
-                                            }
-                                        }
-
-                                        // Moved away from pin, go back to dragging
-                                        state.dragging = Dragging::Edge(
-                                            from_node,
-                                            from_pin,
-                                            cursor_position.into_euclid(),
-                                        );
-                                    }
-                                }
-                                shell.request_redraw();
-                            }
-                            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                                // Edge already connected via snap event - just end the drag
-                                state.dragging = Dragging::None;
-                                // Emit drag end event
-                                if let Some(handler) = self.on_drag_end_handler() {
-                                    shell.publish(handler());
-                                }
-                                shell.capture_event();
-                                shell.request_redraw();
-                            }
-                            _ => {}
-                        },
-                        Dragging::BoxSelect(start, _current) => match event {
-                            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                                // Update the box selection end point
-                                if let Some(cursor_position) = world_cursor.position() {
-                                    state.dragging =
-                                        Dragging::BoxSelect(start, cursor_position.into_euclid());
-                                }
-                                shell.request_redraw();
-                            }
-                            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                                // Complete box selection - find nodes that intersect the selection rectangle
-                                if let Some(cursor_position) = world_cursor.position() {
-                                    let end: WorldPoint = cursor_position.into_euclid();
-                                    let selection_rect = selection_rect_from_points(start, end);
-
-                                    // Without Shift: replace selection. With Shift: add to selection.
-                                    if !state.modifiers.shift() {
-                                        state.selected_nodes.clear();
-                                    }
-
-                                    // Find all nodes that intersect the selection rectangle
-                                    for (node_index, node_layout) in layout.children().enumerate() {
-                                        if rects_intersect(&selection_rect, &node_layout.bounds()) {
-                                            state.selected_nodes.insert(node_index);
-                                        }
-                                    }
-
-                                    // Notify selection change
-                                    let indices: Vec<usize> =
-                                        state.selected_nodes.iter().copied().collect();
-                                    let selected = self.translate_node_ids(&indices);
-                                    if let Some(handler) = self.on_select_handler() {
-                                        shell.publish(handler(selected));
-                                    }
-                                }
-                                state.dragging = Dragging::None;
-                                // Emit drag end event
-                                if let Some(handler) = self.on_drag_end_handler() {
-                                    shell.publish(handler());
-                                }
-                                shell.capture_event();
-                                shell.request_redraw();
-                            }
-                            _ => {}
-                        },
-                        Dragging::GroupMove(origin) => match event {
-                            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                                shell.request_redraw();
-                            }
-                            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                                // Complete group move - notify all selected nodes moved
-                                let indices: Vec<usize> =
-                                    state.selected_nodes.iter().copied().collect();
-                                if let Some(cursor_position) = world_cursor.position() {
-                                    let cursor_position: WorldPoint = cursor_position.into_euclid();
-                                    let offset = cursor_position - origin;
-
-                                    // Translate internal indices to user IDs
-                                    let node_ids = self.translate_node_ids(&indices);
-                                    let delta = offset.into_iced();
-                                    if let Some(handler) = self.on_move_handler() {
-                                        shell.publish(handler(delta, node_ids));
-                                    }
-                                }
-                                // Promote moved nodes to the top of the z-order.
-                                state.promote_z_many(&indices);
-                                state.dragging = Dragging::None;
-                                // Emit drag end event
-                                if let Some(handler) = self.on_drag_end_handler() {
-                                    shell.publish(handler());
-                                }
-                                shell.capture_event();
-                                shell.invalidate_layout();
-                                shell.request_redraw();
-                            }
-                            _ => {}
-                        },
+                        Dragging::Edge(from_node, from_pin, _) => {
+                            self.handle_edge_drag(&mut ctx, from_node, from_pin)
+                        }
+                        Dragging::EdgeOver(from_node, from_pin, to_node, to_pin) => {
+                            self.handle_edge_over(&mut ctx, from_node, from_pin, to_node, to_pin)
+                        }
+                        Dragging::BoxSelect(start, _current) => {
+                            self.handle_box_select(&mut ctx, start)
+                        }
+                        Dragging::GroupMove(origin) => self.handle_group_move(&mut ctx, origin),
                     }
 
                     // Iterate top-first so the topmost node's child widgets get a
@@ -703,13 +290,13 @@ where
                     // shared mode is how snap targets receive cursor updates while
                     // an edge is being dragged. Only short-circuit when one of the
                     // children itself takes the event.
-                    let pre_captured = shell.is_event_captured();
+                    let pre_captured = ctx.shell.is_event_captured();
                     for &node_index in z_indices.iter().rev() {
                         let Some((_id, _pos, element, _style, _)) = self.nodes.get_mut(node_index)
                         else {
                             continue;
                         };
-                        let Some(child_tree) = tree.children.get_mut(node_index) else {
+                        let Some(child_tree) = ctx.tree.children.get_mut(node_index) else {
                             continue;
                         };
                         let Some(child_layout) = layout.children().nth(node_index) else {
@@ -722,18 +309,19 @@ where
                             world_cursor,
                             renderer,
                             clipboard,
-                            shell,
+                            ctx.shell,
                             viewport,
                         );
-                        if !pre_captured && shell.is_event_captured() {
+                        if !pre_captured && ctx.shell.is_event_captured() {
                             break;
                         }
                     }
 
-                    if shell.is_event_captured() {
+                    if ctx.shell.is_event_captured() {
                         return;
                     }
 
+                    let state = ctx.tree.state.downcast_mut::<NodeGraphState>();
                     // Delete/Backspace: Delete selected nodes.
                     // Handled AFTER child widgets so text inputs can consume the event
                     // first. Gated on on_delete: without a handler the delete cannot be
@@ -750,11 +338,11 @@ where
                         let indices: Vec<usize> = state.selected_nodes.iter().copied().collect();
                         let node_ids = self.translate_node_ids(&indices);
                         if let Some(handler) = self.on_delete_handler() {
-                            shell.publish(handler(node_ids));
+                            ctx.shell.publish(handler(node_ids));
                         }
                         state.selected_nodes.clear();
-                        shell.capture_event();
-                        shell.request_redraw();
+                        ctx.shell.capture_event();
+                        ctx.shell.request_redraw();
                     }
 
                     // Only process mouse events if cursor is within our bounds
@@ -762,436 +350,920 @@ where
                         return;
                     }
 
+                    // The `Dragging` state machine, part 2: `None -> *` entry
+                    // transitions from button presses.
                     match event {
                         Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                            // Shift+drag from an occupied pin forks a NEW edge instead
-                            // of unplugging the existing one. Captured here while `state`
-                            // is still borrowable, before the pin hit-test reborrows tree.
-                            let shift_held = state.modifiers.shift();
-
-                            // Command+Click (Cmd on macOS, Ctrl elsewhere): edge cut tool
-                            if state.modifiers.command()
-                                && let Some(cursor_position) = world_cursor.position()
-                            {
-                                // Check if click is near any edge
-                                for (_id, from_ref, to_ref, _style) in &self.edges {
-                                    // Resolve user IDs to indices
-                                    let from_node_idx = match self.node_index(&from_ref.node_id) {
-                                        Some(idx) => idx,
-                                        None => continue,
-                                    };
-                                    let to_node_idx = match self.node_index(&to_ref.node_id) {
-                                        Some(idx) => idx,
-                                        None => continue,
-                                    };
-
-                                    // Get pin positions for both ends of the edge
-                                    let from_pin_pos = layout
-                                        .children()
-                                        .nth(from_node_idx)
-                                        .and_then(|node_layout| {
-                                            tree.children.get(from_node_idx).and_then(|node_tree| {
-                                                let pins =
-                                                    find_pins::<P, UI>(node_tree, node_layout);
-                                                pins.iter()
-                                                    .find(|(_, state, _)| {
-                                                        state.pin_id == from_ref.pin_id
-                                                    })
-                                                    .map(|(_, _, (a, _))| *a)
-                                            })
-                                        });
-                                    let to_pin_pos = layout.children().nth(to_node_idx).and_then(
-                                        |node_layout| {
-                                            tree.children.get(to_node_idx).and_then(|node_tree| {
-                                                let pins =
-                                                    find_pins::<P, UI>(node_tree, node_layout);
-                                                pins.iter()
-                                                    .find(|(_, state, _)| {
-                                                        state.pin_id == to_ref.pin_id
-                                                    })
-                                                    .map(|(_, _, (a, _))| *a)
-                                            })
-                                        },
-                                    );
-
-                                    if let (Some(from_pos), Some(to_pos)) =
-                                        (from_pin_pos, to_pin_pos)
-                                    {
-                                        // Check if cursor is near the edge line (using simple distance to line segment)
-                                        let distance = point_to_line_distance(
-                                            cursor_position,
-                                            from_pos,
-                                            to_pos,
-                                        );
-                                        const EDGE_CUT_THRESHOLD: f32 = 10.0;
-
-                                        if distance < EDGE_CUT_THRESHOLD {
-                                            // Edges already store user IDs
-                                            if let Some(handler) = self.on_disconnect_handler() {
-                                                shell.publish(handler(
-                                                    from_ref.clone(),
-                                                    to_ref.clone(),
-                                                ));
-                                            }
-                                            shell.capture_event();
-                                            shell.request_redraw();
-                                            return;
-                                        }
-                                    }
-                                }
-                            }
-
-                            if let Some(cursor_position) = world_cursor.position() {
-                                // Per-node hit-test, top-first by z-order: check this
-                                // node's pins first, then its body. The first node to
-                                // own the cursor — pin OR body — wins. This way a body
-                                // on top blocks click-through to a pin hidden beneath
-                                // (no accidental edge-drag from a covered pin), while
-                                // the snap logic during an active edge drag still sees
-                                // all pins regardless of cover.
-                                for &node_index in z_indices.iter().rev() {
-                                    let Some(node_layout) = layout.children().nth(node_index)
-                                    else {
-                                        continue;
-                                    };
-                                    let Some(node_tree) = tree.children.get(node_index) else {
-                                        continue;
-                                    };
-                                    let pins = find_pins::<P, UI>(node_tree, node_layout);
-                                    // Get node_id for this node_index
-                                    let current_node_id = match self.index_to_node_id(node_index) {
-                                        Some(id) => id,
-                                        None => continue,
-                                    };
-
-                                    for (pin_index, pin_state, (a, b)) in pins {
-                                        // Pin positions from layout are ALREADY in world space
-                                        // because layout was created with .move_to(world_position)
-                                        let distance = a
-                                            .distance(cursor_position)
-                                            .min(b.distance(cursor_position));
-
-                                        if distance < PIN_CLICK_THRESHOLD
-                                            && !pin_state.interactions_disabled
-                                        {
-                                            // Check if this pin has existing connections.
-                                            // Without shift, "unplug" the clicked end (like
-                                            // pulling a cable). With shift held, skip the
-                                            // unplug entirely and fall through to start a
-                                            // fresh edge, leaving existing connections intact.
-                                            if !shift_held {
-                                                for (_id, from_ref, to_ref, _style) in &self.edges {
-                                                    // If we clicked the "from" pin, unplug FROM and drag it
-                                                    // Keep TO pin connected, drag away from it
-                                                    if from_ref.node_id == current_node_id
-                                                        && from_ref.pin_id == pin_state.pin_id
-                                                    {
-                                                        // Magnetic plug: grabbing a connected pin
-                                                        // does NOT disconnect yet. Enter the snapped
-                                                        // EdgeOver state anchored at the OTHER (TO)
-                                                        // end; the hysteresis in the EdgeOver handler
-                                                        // fires on_disconnect only once the cursor
-                                                        // leaves the grabbed pin by more than
-                                                        // UNSNAP_THRESHOLD.
-                                                        // Resolve to_ref to indices for internal Dragging state
-                                                        let to_node_idx = match self
-                                                            .node_index(&to_ref.node_id)
-                                                        {
-                                                            Some(idx) => idx,
-                                                            None => continue,
-                                                        };
-                                                        let to_pin_idx = {
-                                                            let to_tree = match tree
-                                                                .children
-                                                                .get(to_node_idx)
-                                                            {
-                                                                Some(t) => t,
-                                                                None => continue,
-                                                            };
-                                                            let to_layout = match layout
-                                                                .children()
-                                                                .nth(to_node_idx)
-                                                            {
-                                                                Some(l) => l,
-                                                                None => continue,
-                                                            };
-                                                            let to_pins = find_pins::<P, UI>(
-                                                                to_tree, to_layout,
-                                                            );
-                                                            match to_pins.iter().position(
-                                                                |(_, s, _)| {
-                                                                    s.pin_id == to_ref.pin_id
-                                                                },
-                                                            ) {
-                                                                Some(idx) => idx,
-                                                                None => continue,
-                                                            }
-                                                        };
-                                                        // Compute valid targets for the new drag
-                                                        let valid_targets = compute_valid_targets(
-                                                            self,
-                                                            tree,
-                                                            layout,
-                                                            to_node_idx,
-                                                            to_pin_idx,
-                                                            Some((from_ref, to_ref)),
-                                                        );
-                                                        let state = tree
-                                                            .state
-                                                            .downcast_mut::<NodeGraphState>();
-                                                        state.valid_drop_targets = valid_targets;
-                                                        // Anchor at the TO pin, hold the grabbed
-                                                        // FROM pin snapped (still connected).
-                                                        state.dragging = Dragging::EdgeOver(
-                                                            to_node_idx,
-                                                            to_pin_idx,
-                                                            node_index,
-                                                            pin_index,
-                                                        );
-                                                        shell.capture_event();
-                                                        return;
-                                                    }
-                                                    // If we clicked the "to" pin, unplug TO and drag it
-                                                    // Keep FROM pin connected, drag away from it
-                                                    else if to_ref.node_id == current_node_id
-                                                        && to_ref.pin_id == pin_state.pin_id
-                                                    {
-                                                        // Magnetic plug: grabbing a connected pin
-                                                        // does NOT disconnect yet. Enter the snapped
-                                                        // EdgeOver state anchored at the OTHER (FROM)
-                                                        // end; the hysteresis in the EdgeOver handler
-                                                        // fires on_disconnect only once the cursor
-                                                        // leaves the grabbed pin by more than
-                                                        // UNSNAP_THRESHOLD.
-                                                        // Resolve from_ref to indices for internal Dragging state
-                                                        let from_node_idx = match self
-                                                            .node_index(&from_ref.node_id)
-                                                        {
-                                                            Some(idx) => idx,
-                                                            None => continue,
-                                                        };
-                                                        let from_pin_idx = {
-                                                            let from_tree = match tree
-                                                                .children
-                                                                .get(from_node_idx)
-                                                            {
-                                                                Some(t) => t,
-                                                                None => continue,
-                                                            };
-                                                            let from_layout = match layout
-                                                                .children()
-                                                                .nth(from_node_idx)
-                                                            {
-                                                                Some(l) => l,
-                                                                None => continue,
-                                                            };
-                                                            let from_pins = find_pins::<P, UI>(
-                                                                from_tree,
-                                                                from_layout,
-                                                            );
-                                                            match from_pins.iter().position(
-                                                                |(_, s, _)| {
-                                                                    s.pin_id == from_ref.pin_id
-                                                                },
-                                                            ) {
-                                                                Some(idx) => idx,
-                                                                None => continue,
-                                                            }
-                                                        };
-                                                        // Compute valid targets for the new drag
-                                                        let valid_targets = compute_valid_targets(
-                                                            self,
-                                                            tree,
-                                                            layout,
-                                                            from_node_idx,
-                                                            from_pin_idx,
-                                                            Some((from_ref, to_ref)),
-                                                        );
-                                                        let state = tree
-                                                            .state
-                                                            .downcast_mut::<NodeGraphState>();
-                                                        state.valid_drop_targets = valid_targets;
-                                                        // Anchor at the FROM pin, hold the grabbed
-                                                        // TO pin snapped (still connected).
-                                                        state.dragging = Dragging::EdgeOver(
-                                                            from_node_idx,
-                                                            from_pin_idx,
-                                                            node_index,
-                                                            pin_index,
-                                                        );
-                                                        shell.capture_event();
-                                                        return;
-                                                    }
-                                                }
-                                            } // end if !shift_held
-
-                                            // No existing connection (or shift held to fork a
-                                            // new edge): start a fresh drag - but only if
-                                            // on_connect is wired. Without it a dropped edge
-                                            // cannot persist, so let the press fall through to
-                                            // node selection instead.
-                                            if self.on_connect_handler().is_some() {
-                                                // Compute valid targets ONCE at drag-start
-                                                let valid_targets = compute_valid_targets(
-                                                    self, tree, layout, node_index, pin_index, None,
-                                                );
-                                                let state =
-                                                    tree.state.downcast_mut::<NodeGraphState>();
-                                                state.valid_drop_targets = valid_targets;
-                                                state.dragging = Dragging::Edge(
-                                                    node_index,
-                                                    pin_index,
-                                                    cursor_position.into_euclid(),
-                                                );
-                                                // Emit drag start event
-                                                if let Some(handler) = self.on_drag_start_handler()
-                                                {
-                                                    shell.publish(handler(DragInfo::Edge {
-                                                        from_node: current_node_id.clone(),
-                                                        from_pin: pin_state.pin_id.clone(),
-                                                    }));
-                                                }
-                                                shell.capture_event();
-                                                return;
-                                            }
-                                        }
-                                    }
-
-                                    // Body check for this same node (still top-first).
-                                    if world_cursor.is_over(node_layout.bounds()) {
-                                        let state = tree.state.downcast_mut::<NodeGraphState>();
-                                        let already_selected =
-                                            state.selected_nodes.contains(&node_index);
-                                        let modifiers = state.modifiers;
-                                        let selection_changed;
-
-                                        // Handle selection based on modifiers
-                                        if modifiers.shift() {
-                                            // Shift+Click: Toggle selection
-                                            if already_selected {
-                                                state.selected_nodes.remove(&node_index);
-                                            } else {
-                                                state.selected_nodes.insert(node_index);
-                                            }
-                                            selection_changed = true;
-                                        } else if !already_selected {
-                                            // Regular click on unselected node: clear and select only this one
-                                            state.selected_nodes.clear();
-                                            state.selected_nodes.insert(node_index);
-                                            selection_changed = true;
-                                        } else {
-                                            // Clicking on already-selected node without modifier, keep selection (for group drag)
-                                            selection_changed = false;
-                                        }
-
-                                        // Get the new selection for callback
-                                        let new_selection: Vec<usize> =
-                                            state.selected_nodes.iter().copied().collect();
-
-                                        // Decide between single node drag or group move -
-                                        // only when on_move is wired. Node positions come
-                                        // from the host, so without on_move a drag would move
-                                        // the node visually then snap back on the next frame;
-                                        // gate it off (selection below still fires).
-                                        if self.on_move_handler().is_some() {
-                                            if state.selected_nodes.len() > 1
-                                                && state.selected_nodes.contains(&node_index)
-                                            {
-                                                // Multiple nodes selected, start group move
-                                                let selected: Vec<usize> =
-                                                    state.selected_nodes.iter().copied().collect();
-                                                state.dragging = Dragging::GroupMove(
-                                                    cursor_position.into_euclid(),
-                                                );
-                                                // Emit drag start event for group
-                                                if let Some(handler) = self.on_drag_start_handler()
-                                                {
-                                                    shell.publish(handler(DragInfo::Group {
-                                                        node_ids: self
-                                                            .translate_node_ids(&selected),
-                                                    }));
-                                                }
-                                            } else {
-                                                // Single node drag
-                                                state.dragging = Dragging::Node(
-                                                    node_index,
-                                                    cursor_position.into_euclid(),
-                                                );
-                                                // Emit drag start event for single node
-                                                if let Some(handler) = self.on_drag_start_handler()
-                                                    && let Some(node_id) =
-                                                        self.index_to_node_id(node_index)
-                                                {
-                                                    shell.publish(handler(DragInfo::Node {
-                                                        node_id,
-                                                    }));
-                                                }
-                                            }
-                                        }
-
-                                        // Notify selection change
-                                        if selection_changed {
-                                            let selected = self.translate_node_ids(&new_selection);
-                                            if let Some(handler) = self.on_select_handler() {
-                                                shell.publish(handler(selected));
-                                            }
-                                        }
-
-                                        shell.capture_event();
-                                        return;
-                                    }
-                                }
-                            }
-                            // Nothing hit - start box selection on empty space,
-                            // unless COMMAND is held (reserved for edge cutting).
-                            if let Some(cursor_position) = world_cursor.position() {
-                                let cursor_position: WorldPoint = cursor_position.into_euclid();
-                                let state = tree.state.downcast_mut::<NodeGraphState>();
-
-                                // Command+Left drag: start edge cutting mode instead of box selection
-                                if state.modifiers.command() {
-                                    state.dragging = Dragging::EdgeCutting {
-                                        trail: vec![cursor_position],
-                                        pending_cuts: std::collections::HashSet::new(),
-                                    };
-                                    shell.capture_event();
-                                    return;
-                                }
-
-                                // Clear selection unless Shift is held
-                                if !state.modifiers.shift() {
-                                    state.selected_nodes.clear();
-                                }
-
-                                state.dragging =
-                                    Dragging::BoxSelect(cursor_position, cursor_position);
-                                // Emit drag start event for box select
-                                if let Some(handler) = self.on_drag_start_handler() {
-                                    shell.publish(handler(DragInfo::BoxSelect {
-                                        start_x: cursor_position.x,
-                                        start_y: cursor_position.y,
-                                    }));
-                                }
-                                shell.capture_event();
-                            }
+                            self.handle_left_press(&mut ctx, &z_indices)
                         }
                         Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
-                            // Right-click: start graph panning
-                            if let Some(cursor_position) = screen_cursor.position() {
-                                let cursor_position: ScreenPoint = cursor_position.into_euclid();
-                                let cursor_position: WorldPoint = state
-                                    .camera
-                                    .screen_to_world()
-                                    .transform_point(cursor_position);
-                                let state = tree.state.downcast_mut::<NodeGraphState>();
-                                state.dragging = Dragging::Graph(cursor_position.into_euclid());
-                                shell.capture_event();
-                            }
+                            self.handle_right_press(&mut ctx)
                         }
                         _ => {}
                     }
                 },
             );
+    }
+
+    /// Handles an in-progress edge-cutting drag: extends the cut trail on cursor
+    /// move and commits every pending cut on release.
+    fn handle_edge_cutting(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>) {
+        let UpdateCtx {
+            tree,
+            layout,
+            event,
+            world_cursor,
+            shell,
+            ..
+        } = &mut *ctx;
+        let state = tree.state.downcast_mut::<NodeGraphState>();
+        match event {
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                if let Some(cursor_position) = world_cursor.position() {
+                    let cursor_position: WorldPoint = cursor_position.into_euclid();
+
+                    // Update trail and check which edges intersect with cutting line
+                    if let Dragging::EdgeCutting {
+                        ref mut trail,
+                        ref mut pending_cuts,
+                    } = state.dragging
+                    {
+                        trail.push(cursor_position);
+
+                        // Get cutting line: from start point to current cursor
+                        let cut_start = trail.first().copied().unwrap_or(cursor_position);
+                        let cut_end = cursor_position;
+
+                        // Clear and recalculate - only edges intersecting cutting line are highlighted
+                        pending_cuts.clear();
+
+                        // Check each edge for intersection with the cutting line
+                        for (edge_idx, (_id, from_ref, to_ref, _style)) in
+                            self.edges.iter().enumerate()
+                        {
+                            // Resolve user IDs to indices
+                            let from_node_idx = match self.node_index(&from_ref.node_id) {
+                                Some(idx) => idx,
+                                None => continue,
+                            };
+                            let to_node_idx = match self.node_index(&to_ref.node_id) {
+                                Some(idx) => idx,
+                                None => continue,
+                            };
+
+                            // Get pin positions and sides for bezier calculation
+                            let from_pin_data =
+                                layout
+                                    .children()
+                                    .nth(from_node_idx)
+                                    .and_then(|node_layout| {
+                                        tree.children.get(from_node_idx).and_then(|node_tree| {
+                                            let pins = find_pins::<P, UI>(node_tree, node_layout);
+                                            pins.iter()
+                                                .find(|(_, state, _)| {
+                                                    state.pin_id == from_ref.pin_id
+                                                })
+                                                .map(|(_, state, (pos, _))| (*pos, state.side))
+                                        })
+                                    });
+                            let to_pin_data =
+                                layout.children().nth(to_node_idx).and_then(|node_layout| {
+                                    tree.children.get(to_node_idx).and_then(|node_tree| {
+                                        let pins = find_pins::<P, UI>(node_tree, node_layout);
+                                        pins.iter()
+                                            .find(|(_, state, _)| state.pin_id == to_ref.pin_id)
+                                            .map(|(_, state, (pos, _))| (*pos, state.side))
+                                    })
+                                });
+
+                            if let (Some((p0, from_side)), Some((p3, to_side))) =
+                                (from_pin_data, to_pin_data)
+                            {
+                                // Calculate bezier control points
+                                let dir_from = pin_side_direction(from_side.into());
+                                let dir_to = pin_side_direction(to_side.into());
+                                let l = adaptive_bezier_length([p0.x, p0.y], [p3.x, p3.y]);
+                                let p1 = Point::new(p0.x + dir_from[0] * l, p0.y + dir_from[1] * l);
+                                let p2 = Point::new(p3.x + dir_to[0] * l, p3.y + dir_to[1] * l);
+
+                                // Check if cutting line intersects this bezier edge
+                                if line_intersects_bezier(
+                                    cut_start.into_iced(),
+                                    cut_end.into_iced(),
+                                    p0,
+                                    p1,
+                                    p2,
+                                    p3,
+                                ) {
+                                    pending_cuts.insert(edge_idx);
+                                }
+                            }
+                        }
+                    }
+                }
+                shell.request_redraw();
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                // Delete all pending edges on release
+                if let Dragging::EdgeCutting { pending_cuts, .. } = &state.dragging {
+                    for &edge_idx in pending_cuts.iter() {
+                        if let Some((_id, from_ref, to_ref, _)) = self.edges.get(edge_idx) {
+                            // Edges already store user IDs (PinRef<N, P>)
+                            if let Some(handler) = self.on_disconnect_handler() {
+                                shell.publish(handler(from_ref.clone(), to_ref.clone()));
+                            }
+                        }
+                    }
+                }
+                state.dragging = Dragging::None;
+                shell.capture_event();
+                shell.request_redraw();
+            }
+            _ => {}
+        }
+    }
+
+    /// Handles an in-progress graph pan: commits the camera offset on
+    /// right-button release.
+    fn handle_graph_pan(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>, origin: WorldPoint) {
+        let UpdateCtx {
+            tree,
+            event,
+            screen_cursor,
+            shell,
+            ..
+        } = &mut *ctx;
+        let state = tree.state.downcast_mut::<NodeGraphState>();
+        if let Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)) = event {
+            if let Some(cursor_position) = screen_cursor.position() {
+                let screen_to_world = state.camera.screen_to_world();
+                let cursor_position: ScreenPoint = cursor_position.into_euclid();
+                let cursor_position: WorldPoint = screen_to_world.transform_point(cursor_position);
+                let offset = cursor_position - origin;
+                state.camera = state.camera.move_by(offset);
+
+                // Commit the new camera position on pan release.
+                if let Some(handler) = self.on_pan_handler() {
+                    let pos = state.camera.position();
+                    shell.publish(handler(Point::new(pos.x, pos.y), state.camera.zoom()));
+                }
+            }
+            state.dragging = Dragging::None;
+            shell.capture_event();
+            shell.request_redraw();
+        }
+    }
+
+    /// Handles an in-progress single-node drag: reports the final offset on
+    /// release (a motionless press+release is a click, not a move).
+    fn handle_node_drag(
+        &self,
+        ctx: &mut UpdateCtx<'_, '_, '_, Message>,
+        node_index: usize,
+        origin: WorldPoint,
+    ) {
+        let UpdateCtx {
+            tree,
+            event,
+            world_cursor,
+            shell,
+            ..
+        } = &mut *ctx;
+        let state = tree.state.downcast_mut::<NodeGraphState>();
+        if let Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) = event {
+            if let Some(cursor_position) = world_cursor.position() {
+                let cursor_position = cursor_position.into_euclid();
+                let offset = cursor_position - origin;
+
+                // A press+release without motion is a click, not
+                // a move: don't emit a spurious move (which would
+                // dirty host state / undo history on a plain
+                // selection click). Only report an actual drag.
+                let moved = offset.x.abs() > f32::EPSILON || offset.y.abs() > f32::EPSILON;
+
+                // Translate internal index to user ID
+                if let Some(node_id) = self.index_to_node_id(node_index)
+                    && moved
+                {
+                    // Call on_move handler if set
+                    if let Some(handler) = self.on_move_handler() {
+                        shell.publish(handler(offset.into_iced(), vec![node_id]));
+                    }
+                }
+            }
+            // Promote this node to the top of the z-order on drop.
+            state.promote_z(node_index);
+            state.dragging = Dragging::None;
+            // Emit drag end event
+            if let Some(handler) = self.on_drag_end_handler() {
+                shell.publish(handler());
+            }
+            shell.capture_event();
+            shell.invalidate_layout();
+            shell.request_redraw();
+        }
+    }
+
+    /// Handles an in-progress edge drag: snap-tests against the valid drop
+    /// targets and fires `on_connect` immediately on snap (plug behavior).
+    fn handle_edge_drag(
+        &self,
+        ctx: &mut UpdateCtx<'_, '_, '_, Message>,
+        from_node: usize,
+        from_pin: usize,
+    ) {
+        let UpdateCtx {
+            tree,
+            layout,
+            event,
+            world_cursor,
+            shell,
+            ..
+        } = &mut *ctx;
+        let state = tree.state.downcast_mut::<NodeGraphState>();
+        match event {
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                // Check if cursor is over a valid target pin to transition to EdgeOver
+                if let Some(cursor_position) = world_cursor.position() {
+                    // Copy valid_drop_targets before iterating over tree.children
+                    let valid_targets = state.valid_drop_targets.clone();
+
+                    // Extract from_pin_id while iterating (need access to tree.children)
+                    let mut from_pin_id: Option<P> = None;
+                    let mut from_dir: Option<PinDirection> = None;
+                    let mut target_info: Option<(usize, usize, P, PinDirection)> = None;
+
+                    // Check all pins for proximity and validity (use SNAP_THRESHOLD to enter)
+                    for (node_index, (node_layout, node_tree)) in
+                        layout.children().zip(&tree.children).enumerate()
+                    {
+                        for (pin_index, pin_state, (a, b)) in
+                            find_pins::<P, UI>(node_tree, node_layout)
+                        {
+                            // Extract from_pin_id when we find the source pin
+                            if node_index == from_node && pin_index == from_pin {
+                                from_pin_id = Some(pin_state.pin_id.clone());
+                                from_dir = Some(pin_state.direction);
+                            }
+
+                            // Pin positions are already in world space (from layout)
+                            let distance =
+                                a.distance(cursor_position).min(b.distance(cursor_position));
+
+                            // Use SNAP_THRESHOLD for entering snap zone
+                            if distance < SNAP_THRESHOLD && target_info.is_none() {
+                                // Check if this pin is in valid_drop_targets
+                                if valid_targets.contains(&(node_index, pin_index)) {
+                                    target_info = Some((
+                                        node_index,
+                                        pin_index,
+                                        pin_state.pin_id.clone(),
+                                        pin_state.direction,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some((to_node, to_pin, to_pin_id, to_dir)) = target_info {
+                        // Fire EdgeConnected event immediately on snap (plug behavior)
+                        let from_node_id = self.index_to_node_id(from_node);
+                        let to_node_id = self.index_to_node_id(to_node);
+
+                        if let (Some(from_nid), Some(to_nid), Some(from_pid)) =
+                            (from_node_id, to_node_id, from_pin_id)
+                        {
+                            // Normalize to output -> input so the reported
+                            // endpoints match the rendered data-flow direction,
+                            // independent of which pin the drag started on.
+                            let (from_ref, to_ref) = orient_connection(
+                                from_dir.unwrap_or(PinDirection::Both),
+                                to_dir,
+                                PinRef::new(from_nid.clone(), from_pid),
+                                PinRef::new(to_nid.clone(), to_pin_id),
+                            );
+
+                            if let Some(handler) = self.on_connect_handler() {
+                                shell.publish(handler(from_ref, to_ref));
+                            }
+                        }
+
+                        state.dragging = Dragging::EdgeOver(from_node, from_pin, to_node, to_pin);
+                    }
+                }
+                shell.request_redraw();
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                state.dragging = Dragging::None;
+                // Emit drag end event
+                if let Some(handler) = self.on_drag_end_handler() {
+                    shell.publish(handler());
+                }
+                shell.capture_event();
+                shell.request_redraw();
+            }
+            _ => {}
+        }
+    }
+
+    /// Handles the snapped state of an edge drag: unsnap hysteresis
+    /// (`UNSNAP_THRESHOLD`) fires `on_disconnect` and falls back to `Edge`.
+    fn handle_edge_over(
+        &self,
+        ctx: &mut UpdateCtx<'_, '_, '_, Message>,
+        from_node: usize,
+        from_pin: usize,
+        to_node: usize,
+        to_pin: usize,
+    ) {
+        let UpdateCtx {
+            tree,
+            layout,
+            event,
+            world_cursor,
+            shell,
+            ..
+        } = &mut *ctx;
+        let state = tree.state.downcast_mut::<NodeGraphState>();
+        match event {
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                // Check if still over the target pin, otherwise go back to Edge state
+                // Use UNSNAP_THRESHOLD (larger than SNAP_THRESHOLD) to prevent jitter
+                if let Some(cursor_position) = world_cursor.position() {
+                    // Extract pin IDs and check distance in one pass through tree.children
+                    let mut still_over_pin = false;
+                    let mut from_pin_id: Option<P> = None;
+                    let mut to_pin_id: Option<P> = None;
+                    let mut from_dir: Option<PinDirection> = None;
+                    let mut to_dir: Option<PinDirection> = None;
+
+                    for (node_index, (node_layout, node_tree)) in
+                        layout.children().zip(&tree.children).enumerate()
+                    {
+                        for (pin_index, pin_state, (a, b)) in
+                            find_pins::<P, UI>(node_tree, node_layout)
+                        {
+                            // Extract from_pin_id
+                            if node_index == from_node && pin_index == from_pin {
+                                from_pin_id = Some(pin_state.pin_id.clone());
+                                from_dir = Some(pin_state.direction);
+                            }
+                            // Extract to_pin_id and check distance
+                            if node_index == to_node && pin_index == to_pin {
+                                to_pin_id = Some(pin_state.pin_id.clone());
+                                to_dir = Some(pin_state.direction);
+                                let distance =
+                                    a.distance(cursor_position).min(b.distance(cursor_position));
+                                still_over_pin = distance < UNSNAP_THRESHOLD;
+                            }
+                        }
+                    }
+
+                    if !still_over_pin {
+                        // Fire EdgeDisconnected event when leaving snap (plug behavior)
+                        let from_node_id = self.index_to_node_id(from_node);
+                        let to_node_id = self.index_to_node_id(to_node);
+
+                        if let (Some(from_nid), Some(to_nid), Some(from_pid), Some(to_pid)) =
+                            (from_node_id, to_node_id, from_pin_id, to_pin_id)
+                        {
+                            // Match the output -> input order used when the
+                            // edge connected, so the user's edge list lookup
+                            // removes the same pair it inserted.
+                            let (from_ref, to_ref) = orient_connection(
+                                from_dir.unwrap_or(PinDirection::Both),
+                                to_dir.unwrap_or(PinDirection::Both),
+                                PinRef::new(from_nid.clone(), from_pid),
+                                PinRef::new(to_nid.clone(), to_pid),
+                            );
+
+                            if let Some(handler) = self.on_disconnect_handler() {
+                                shell.publish(handler(from_ref, to_ref));
+                            }
+                        }
+
+                        // Moved away from pin, go back to dragging
+                        state.dragging =
+                            Dragging::Edge(from_node, from_pin, cursor_position.into_euclid());
+                    }
+                }
+                shell.request_redraw();
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                // Edge already connected via snap event - just end the drag
+                state.dragging = Dragging::None;
+                // Emit drag end event
+                if let Some(handler) = self.on_drag_end_handler() {
+                    shell.publish(handler());
+                }
+                shell.capture_event();
+                shell.request_redraw();
+            }
+            _ => {}
+        }
+    }
+
+    /// Handles an in-progress box selection: tracks the moving corner and
+    /// commits the intersecting set on release (Shift adds to the selection).
+    fn handle_box_select(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>, start: WorldPoint) {
+        let UpdateCtx {
+            tree,
+            layout,
+            event,
+            world_cursor,
+            shell,
+            ..
+        } = &mut *ctx;
+        let state = tree.state.downcast_mut::<NodeGraphState>();
+        match event {
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                // Update the box selection end point
+                if let Some(cursor_position) = world_cursor.position() {
+                    state.dragging = Dragging::BoxSelect(start, cursor_position.into_euclid());
+                }
+                shell.request_redraw();
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                // Complete box selection - find nodes that intersect the selection rectangle
+                if let Some(cursor_position) = world_cursor.position() {
+                    let end: WorldPoint = cursor_position.into_euclid();
+                    let selection_rect = selection_rect_from_points(start, end);
+
+                    // Without Shift: replace selection. With Shift: add to selection.
+                    if !state.modifiers.shift() {
+                        state.selected_nodes.clear();
+                    }
+
+                    // Find all nodes that intersect the selection rectangle
+                    for (node_index, node_layout) in layout.children().enumerate() {
+                        if rects_intersect(&selection_rect, &node_layout.bounds()) {
+                            state.selected_nodes.insert(node_index);
+                        }
+                    }
+
+                    // Notify selection change
+                    let indices: Vec<usize> = state.selected_nodes.iter().copied().collect();
+                    let selected = self.translate_node_ids(&indices);
+                    if let Some(handler) = self.on_select_handler() {
+                        shell.publish(handler(selected));
+                    }
+                }
+                state.dragging = Dragging::None;
+                // Emit drag end event
+                if let Some(handler) = self.on_drag_end_handler() {
+                    shell.publish(handler());
+                }
+                shell.capture_event();
+                shell.request_redraw();
+            }
+            _ => {}
+        }
+    }
+
+    /// Handles an in-progress group move: reports one shared delta for every
+    /// selected node on release.
+    fn handle_group_move(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>, origin: WorldPoint) {
+        let UpdateCtx {
+            tree,
+            event,
+            world_cursor,
+            shell,
+            ..
+        } = &mut *ctx;
+        let state = tree.state.downcast_mut::<NodeGraphState>();
+        match event {
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                shell.request_redraw();
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                // Complete group move - notify all selected nodes moved
+                let indices: Vec<usize> = state.selected_nodes.iter().copied().collect();
+                if let Some(cursor_position) = world_cursor.position() {
+                    let cursor_position: WorldPoint = cursor_position.into_euclid();
+                    let offset = cursor_position - origin;
+
+                    // Translate internal indices to user IDs
+                    let node_ids = self.translate_node_ids(&indices);
+                    let delta = offset.into_iced();
+                    if let Some(handler) = self.on_move_handler() {
+                        shell.publish(handler(delta, node_ids));
+                    }
+                }
+                // Promote moved nodes to the top of the z-order.
+                state.promote_z_many(&indices);
+                state.dragging = Dragging::None;
+                // Emit drag end event
+                if let Some(handler) = self.on_drag_end_handler() {
+                    shell.publish(handler());
+                }
+                shell.capture_event();
+                shell.invalidate_layout();
+                shell.request_redraw();
+            }
+            _ => {}
+        }
+    }
+
+    /// Dispatches a left-button press: edge cut, then per-node pin/body
+    /// hit-test (top-first by z-order), then the empty-space fallback.
+    ///
+    /// This holds every `Dragging::None -> *` transition of the left button;
+    /// in-progress transitions live in the `handle_*` methods above.
+    fn handle_left_press(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>, z_indices: &[usize]) {
+        // Shift+drag from an occupied pin forks a NEW edge instead of
+        // unplugging the existing one.
+        let state = ctx.tree.state.downcast_mut::<NodeGraphState>();
+        let shift_held = state.modifiers.shift();
+        let command_held = state.modifiers.command();
+
+        // Command+Click (Cmd on macOS, Ctrl elsewhere): edge cut tool.
+        if command_held && self.try_cut_edge_at_cursor(ctx) {
+            return;
+        }
+
+        if let Some(cursor_position) = ctx.world_cursor.position() {
+            // Per-node hit-test, top-first by z-order: check this node's pins
+            // first, then its body. The first node to own the cursor - pin OR
+            // body - wins. This way a body on top blocks click-through to a
+            // pin hidden beneath (no accidental edge-drag from a covered pin),
+            // while the snap logic during an active edge drag still sees all
+            // pins regardless of cover.
+            for &node_index in z_indices.iter().rev() {
+                if self.try_press_node(ctx, node_index, cursor_position, shift_held) {
+                    return;
+                }
+            }
+        }
+
+        // Nothing hit - start box selection on empty space, unless COMMAND is
+        // held (reserved for edge cutting).
+        self.start_box_select_or_cut(ctx);
+    }
+
+    /// Cuts the first edge within `EDGE_CUT_THRESHOLD` of the cursor
+    /// (Command+Click edge cut). Returns whether a cut consumed the press.
+    fn try_cut_edge_at_cursor(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>) -> bool {
+        let UpdateCtx {
+            tree,
+            layout,
+            world_cursor,
+            shell,
+            ..
+        } = &mut *ctx;
+        let Some(cursor_position) = world_cursor.position() else {
+            return false;
+        };
+        // Check if click is near any edge
+        for (_id, from_ref, to_ref, _style) in &self.edges {
+            // Resolve user IDs to indices
+            let from_node_idx = match self.node_index(&from_ref.node_id) {
+                Some(idx) => idx,
+                None => continue,
+            };
+            let to_node_idx = match self.node_index(&to_ref.node_id) {
+                Some(idx) => idx,
+                None => continue,
+            };
+
+            // Get pin positions for both ends of the edge
+            let from_pin_pos = layout
+                .children()
+                .nth(from_node_idx)
+                .and_then(|node_layout| {
+                    tree.children.get(from_node_idx).and_then(|node_tree| {
+                        let pins = find_pins::<P, UI>(node_tree, node_layout);
+                        pins.iter()
+                            .find(|(_, state, _)| state.pin_id == from_ref.pin_id)
+                            .map(|(_, _, (a, _))| *a)
+                    })
+                });
+            let to_pin_pos = layout.children().nth(to_node_idx).and_then(|node_layout| {
+                tree.children.get(to_node_idx).and_then(|node_tree| {
+                    let pins = find_pins::<P, UI>(node_tree, node_layout);
+                    pins.iter()
+                        .find(|(_, state, _)| state.pin_id == to_ref.pin_id)
+                        .map(|(_, _, (a, _))| *a)
+                })
+            });
+
+            if let (Some(from_pos), Some(to_pos)) = (from_pin_pos, to_pin_pos) {
+                // Check if cursor is near the edge line (using simple distance to line segment)
+                let distance = point_to_line_distance(cursor_position, from_pos, to_pos);
+                const EDGE_CUT_THRESHOLD: f32 = 10.0;
+
+                if distance < EDGE_CUT_THRESHOLD {
+                    // Edges already store user IDs
+                    if let Some(handler) = self.on_disconnect_handler() {
+                        shell.publish(handler(from_ref.clone(), to_ref.clone()));
+                    }
+                    shell.capture_event();
+                    shell.request_redraw();
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Hit-tests one node's pins and body for a left press.
+    ///
+    /// Pin hits within `PIN_CLICK_THRESHOLD` either unplug an existing
+    /// connection (magnetic plug) or start a fresh edge drag; a body hit
+    /// selects and starts a node/group drag. Returns whether this node
+    /// consumed the press.
+    fn try_press_node(
+        &self,
+        ctx: &mut UpdateCtx<'_, '_, '_, Message>,
+        node_index: usize,
+        cursor_position: Point,
+        shift_held: bool,
+    ) -> bool {
+        let Some(node_layout) = ctx.layout.children().nth(node_index) else {
+            return false;
+        };
+        let Some(node_tree) = ctx.tree.children.get(node_index) else {
+            return false;
+        };
+        // Owned snapshot: the helpers below re-borrow the tree mutably
+        // (state downcast, compute_valid_targets), so borrowed pin states
+        // cannot stay alive across those calls.
+        let pins: Vec<(usize, P, bool, (Point, Point))> =
+            find_pins::<P, UI>(node_tree, node_layout)
+                .into_iter()
+                .map(|(i, s, pos)| (i, s.pin_id.clone(), s.interactions_disabled, pos))
+                .collect();
+        let Some(current_node_id) = self.index_to_node_id(node_index) else {
+            return false;
+        };
+
+        for (pin_index, pin_id, disabled, (a, b)) in pins {
+            // Pin positions from layout are ALREADY in world space because
+            // layout was created with .move_to(world_position).
+            let distance = a.distance(cursor_position).min(b.distance(cursor_position));
+            if distance < PIN_CLICK_THRESHOLD && !disabled {
+                // Check if this pin has existing connections. Without shift,
+                // "unplug" the clicked end (like pulling a cable). With shift
+                // held, skip the unplug entirely and fall through to start a
+                // fresh edge, leaving existing connections intact.
+                if !shift_held {
+                    for (_id, from_ref, to_ref, _style) in &self.edges {
+                        // Clicked the "from" end: unplug FROM, stay anchored at TO.
+                        if from_ref.node_id == current_node_id && from_ref.pin_id == pin_id {
+                            if self.try_start_unplug(
+                                ctx,
+                                to_ref,
+                                (from_ref, to_ref),
+                                (node_index, pin_index),
+                            ) {
+                                return true;
+                            }
+                        }
+                        // Clicked the "to" end: unplug TO, stay anchored at FROM.
+                        else if to_ref.node_id == current_node_id && to_ref.pin_id == pin_id {
+                            if self.try_start_unplug(
+                                ctx,
+                                from_ref,
+                                (from_ref, to_ref),
+                                (node_index, pin_index),
+                            ) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+
+                // No existing connection (or shift held to fork a new edge):
+                // start a fresh drag - but only if on_connect is wired.
+                // Without it a dropped edge cannot persist, so let the press
+                // fall through to node selection instead.
+                if self.try_start_edge_drag(
+                    ctx,
+                    node_index,
+                    pin_index,
+                    &pin_id,
+                    &current_node_id,
+                    cursor_position,
+                ) {
+                    return true;
+                }
+            }
+        }
+
+        // Body check for this same node (still top-first).
+        if ctx.world_cursor.is_over(node_layout.bounds()) {
+            self.select_or_drag_node(ctx, node_index, cursor_position);
+            return true;
+        }
+        false
+    }
+
+    /// Starts the "unplug" drag for one end of an existing edge.
+    ///
+    /// Magnetic plug: grabbing a connected pin does NOT disconnect yet. The
+    /// drag enters the snapped `EdgeOver` state anchored at the OTHER
+    /// (`anchor`) end; the hysteresis in `handle_edge_over` fires
+    /// `on_disconnect` only once the cursor leaves the grabbed pin by more
+    /// than `UNSNAP_THRESHOLD`. Returns `false` when the anchor end cannot
+    /// be resolved (caller then tries the next edge).
+    fn try_start_unplug(
+        &self,
+        ctx: &mut UpdateCtx<'_, '_, '_, Message>,
+        anchor: &PinRef<N, P>,
+        edge: (&PinRef<N, P>, &PinRef<N, P>),
+        grabbed: (usize, usize),
+    ) -> bool {
+        let Some(anchor_node_idx) = self.node_index(&anchor.node_id) else {
+            return false;
+        };
+        let Some(anchor_pin_idx) =
+            resolve_pin_index::<P, UI>(ctx.tree, ctx.layout, anchor_node_idx, &anchor.pin_id)
+        else {
+            return false;
+        };
+        // Compute valid targets for the new drag, excluding the grabbed edge
+        // so it can be dropped back onto its own input.
+        let valid_targets = compute_valid_targets(
+            self,
+            ctx.tree,
+            ctx.layout,
+            anchor_node_idx,
+            anchor_pin_idx,
+            Some(edge),
+        );
+        let state = ctx.tree.state.downcast_mut::<NodeGraphState>();
+        state.valid_drop_targets = valid_targets;
+        // Anchor at the kept end, hold the grabbed pin snapped (still
+        // connected).
+        state.dragging = Dragging::EdgeOver(anchor_node_idx, anchor_pin_idx, grabbed.0, grabbed.1);
+        ctx.shell.capture_event();
+        true
+    }
+
+    /// Starts a fresh edge drag from a pin, gated on `on_connect` being
+    /// wired (without it a dropped edge cannot persist).
+    fn try_start_edge_drag(
+        &self,
+        ctx: &mut UpdateCtx<'_, '_, '_, Message>,
+        node_index: usize,
+        pin_index: usize,
+        pin_id: &P,
+        node_id: &N,
+        cursor_position: Point,
+    ) -> bool {
+        if self.on_connect_handler().is_none() {
+            return false;
+        }
+        // Compute valid targets ONCE at drag-start.
+        let valid_targets =
+            compute_valid_targets(self, ctx.tree, ctx.layout, node_index, pin_index, None);
+        let state = ctx.tree.state.downcast_mut::<NodeGraphState>();
+        state.valid_drop_targets = valid_targets;
+        state.dragging = Dragging::Edge(node_index, pin_index, cursor_position.into_euclid());
+        if let Some(handler) = self.on_drag_start_handler() {
+            ctx.shell.publish(handler(DragInfo::Edge {
+                from_node: node_id.clone(),
+                from_pin: pin_id.clone(),
+            }));
+        }
+        ctx.shell.capture_event();
+        true
+    }
+
+    /// Applies click-selection semantics for a node body press and starts the
+    /// matching drag (`Node` or `GroupMove`, gated on `on_move` being wired).
+    fn select_or_drag_node(
+        &self,
+        ctx: &mut UpdateCtx<'_, '_, '_, Message>,
+        node_index: usize,
+        cursor_position: Point,
+    ) {
+        let UpdateCtx { tree, shell, .. } = &mut *ctx;
+        let state = tree.state.downcast_mut::<NodeGraphState>();
+        let already_selected = state.selected_nodes.contains(&node_index);
+        let modifiers = state.modifiers;
+        let selection_changed;
+
+        // Handle selection based on modifiers
+        if modifiers.shift() {
+            // Shift+Click: Toggle selection
+            if already_selected {
+                state.selected_nodes.remove(&node_index);
+            } else {
+                state.selected_nodes.insert(node_index);
+            }
+            selection_changed = true;
+        } else if !already_selected {
+            // Regular click on unselected node: clear and select only this one
+            state.selected_nodes.clear();
+            state.selected_nodes.insert(node_index);
+            selection_changed = true;
+        } else {
+            // Clicking on already-selected node without modifier, keep selection (for group drag)
+            selection_changed = false;
+        }
+
+        // Get the new selection for callback
+        let new_selection: Vec<usize> = state.selected_nodes.iter().copied().collect();
+
+        // Decide between single node drag or group move -
+        // only when on_move is wired. Node positions come
+        // from the host, so without on_move a drag would move
+        // the node visually then snap back on the next frame;
+        // gate it off (selection below still fires).
+        if self.on_move_handler().is_some() {
+            if state.selected_nodes.len() > 1 && state.selected_nodes.contains(&node_index) {
+                // Multiple nodes selected, start group move
+                let selected: Vec<usize> = state.selected_nodes.iter().copied().collect();
+                state.dragging = Dragging::GroupMove(cursor_position.into_euclid());
+                // Emit drag start event for group
+                if let Some(handler) = self.on_drag_start_handler() {
+                    shell.publish(handler(DragInfo::Group {
+                        node_ids: self.translate_node_ids(&selected),
+                    }));
+                }
+            } else {
+                // Single node drag
+                state.dragging = Dragging::Node(node_index, cursor_position.into_euclid());
+                // Emit drag start event for single node
+                if let Some(handler) = self.on_drag_start_handler()
+                    && let Some(node_id) = self.index_to_node_id(node_index)
+                {
+                    shell.publish(handler(DragInfo::Node { node_id }));
+                }
+            }
+        }
+
+        // Notify selection change
+        if selection_changed {
+            let selected = self.translate_node_ids(&new_selection);
+            if let Some(handler) = self.on_select_handler() {
+                shell.publish(handler(selected));
+            }
+        }
+
+        shell.capture_event();
+    }
+
+    /// Starts the empty-space press interaction: edge-cutting with COMMAND
+    /// held, box selection otherwise (Shift keeps the current selection).
+    fn start_box_select_or_cut(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>) {
+        let UpdateCtx {
+            tree,
+            world_cursor,
+            shell,
+            ..
+        } = &mut *ctx;
+        if let Some(cursor_position) = world_cursor.position() {
+            let cursor_position: WorldPoint = cursor_position.into_euclid();
+            let state = tree.state.downcast_mut::<NodeGraphState>();
+
+            // Command+Left drag: start edge cutting mode instead of box selection
+            if state.modifiers.command() {
+                state.dragging = Dragging::EdgeCutting {
+                    trail: vec![cursor_position],
+                    pending_cuts: std::collections::HashSet::new(),
+                };
+                shell.capture_event();
+                return;
+            }
+
+            // Clear selection unless Shift is held
+            if !state.modifiers.shift() {
+                state.selected_nodes.clear();
+            }
+
+            state.dragging = Dragging::BoxSelect(cursor_position, cursor_position);
+            // Emit drag start event for box select
+            if let Some(handler) = self.on_drag_start_handler() {
+                shell.publish(handler(DragInfo::BoxSelect {
+                    start_x: cursor_position.x,
+                    start_y: cursor_position.y,
+                }));
+            }
+            shell.capture_event();
+        }
+    }
+
+    /// Starts a graph pan from a right-button press.
+    fn handle_right_press(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>) {
+        let UpdateCtx {
+            tree,
+            screen_cursor,
+            shell,
+            ..
+        } = &mut *ctx;
+        let state = tree.state.downcast_mut::<NodeGraphState>();
+        // Right-click: start graph panning
+        if let Some(cursor_position) = screen_cursor.position() {
+            let cursor_position: ScreenPoint = cursor_position.into_euclid();
+            let cursor_position: WorldPoint = state
+                .camera
+                .screen_to_world()
+                .transform_point(cursor_position);
+            let state = tree.state.downcast_mut::<NodeGraphState>();
+            state.dragging = Dragging::Graph(cursor_position.into_euclid());
+            shell.capture_event();
+        }
     }
 }
 
@@ -1300,6 +1372,23 @@ where
     }
 
     valid_targets
+}
+
+/// Resolves a pin's positional index within `node_idx` from its user pin id.
+///
+/// The index is the pin's position in `find_pins` walk order, which is also
+/// the `pin_index` the drag states store.
+fn resolve_pin_index<P: PinId + 'static, UI: 'static>(
+    tree: &Tree,
+    layout: Layout<'_>,
+    node_idx: usize,
+    pin_id: &P,
+) -> Option<usize> {
+    let node_tree = tree.children.get(node_idx)?;
+    let node_layout = layout.children().nth(node_idx)?;
+    find_pins::<P, UI>(node_tree, node_layout)
+        .iter()
+        .position(|(_, s, _)| s.pin_id == *pin_id)
 }
 
 /// Creates a selection rectangle from two corner points (handles any corner order)
