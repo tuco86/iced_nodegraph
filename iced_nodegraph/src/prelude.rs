@@ -17,6 +17,9 @@ pub use crate::{NodeGraph, PinRef};
 // Pin and status vocabulary passed to `style` / `pin_style` / `can_connect` closures.
 pub use crate::{EdgeStatus, NodeStatus, PinDirection, PinEnd, PinInfo, PinSide, PinStatus};
 
+// Input rebinding: the keymap and its combo vocabulary.
+pub use crate::{ComboKey, KeyAction, KeyCombo, Keymap};
+
 // Composable `can_connect` predicates (compose `default_can_connect` to keep the
 // built-in rules when overriding validation).
 pub use crate::connection::{default_can_connect, direction_ok, input_not_occupied, not_same_node};

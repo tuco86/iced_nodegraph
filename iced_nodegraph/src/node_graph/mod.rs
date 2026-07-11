@@ -380,6 +380,9 @@ pub struct NodeGraph<
     /// direction check only applies as the default when this is unset).
     pub(super) can_connect:
         Option<Box<dyn Fn(PinEnd<'_, N, P, UI>, PinEnd<'_, N, P, UI>) -> bool + 'a>>,
+    /// Key and pointer bindings; platform defaults unless overridden via
+    /// [`keymap`](Self::keymap).
+    pub(super) keymap: input::Keymap,
 }
 
 impl<N, P, E, UI, Message, Theme, Renderer> Default
@@ -413,6 +416,7 @@ where
             dragging_edge_style_fn: None,
             view: None,
             can_connect: None,
+            keymap: input::Keymap::default(),
         }
     }
 }
@@ -572,6 +576,27 @@ where
         f: impl Fn(PinEnd<'_, N, P, UI>, PinEnd<'_, N, P, UI>) -> bool + 'a,
     ) -> Self {
         self.can_connect = Some(Box::new(f));
+        self
+    }
+
+    /// Overrides the key and pointer bindings.
+    ///
+    /// The default [`Keymap`](crate::Keymap) is platform-aware (e.g. clone is
+    /// `Alt+D` on the web because browsers reserve `Cmd/Ctrl+D`); pass a
+    /// modified copy to rebind or disable individual actions:
+    ///
+    /// ```
+    /// use iced_nodegraph::{Keymap, node_graph};
+    /// use iced_wgpu::Renderer;
+    ///
+    /// let keymap = Keymap {
+    ///     select_all: None, // disable Select All
+    ///     ..Keymap::default()
+    /// };
+    /// let graph = node_graph::<(), iced::Theme, Renderer>().keymap(keymap);
+    /// ```
+    pub fn keymap(mut self, keymap: input::Keymap) -> Self {
+        self.keymap = keymap;
         self
     }
 

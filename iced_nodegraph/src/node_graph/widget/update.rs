@@ -4,6 +4,7 @@
 //! Split out of `widget.rs` mechanically.
 
 use super::*;
+use crate::node_graph::input::KeyAction;
 
 // Click detection threshold (in world-space pixels)
 const PIN_CLICK_THRESHOLD: f32 = 8.0;
@@ -129,17 +130,22 @@ where
             state.modifiers = *modifiers;
         }
 
-        // Handle keyboard shortcuts
-        if let Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event {
-            match key {
-                // Ctrl+D: Clone selected nodes. Gated on on_clone: without a handler
-                // the clone cannot be persisted, so leave the shortcut unhandled and
-                // let the key fall through instead of silently swallowing it.
-                keyboard::Key::Character(c)
-                    if c.as_str() == "d"
-                        && modifiers.command()
-                        && !state.selected_nodes.is_empty()
-                        && self.on_clone_handler().is_some() =>
+        // Handle keyboard shortcuts through the host-configurable keymap
+        // (`NodeGraph::keymap`). DeleteSelection is handled AFTER child
+        // widgets (further down) so text inputs can consume the key first.
+        if let Event::Keyboard(keyboard::Event::KeyPressed {
+            key,
+            physical_key,
+            modifiers,
+            ..
+        }) = event
+        {
+            match self.keymap.key_action(key, *physical_key, *modifiers) {
+                // Gated on on_clone: without a handler the clone cannot be
+                // persisted, so leave the shortcut unhandled and let the key
+                // fall through instead of silently swallowing it.
+                Some(KeyAction::CloneSelection)
+                    if !state.selected_nodes.is_empty() && self.on_clone_handler().is_some() =>
                 {
                     let indices: Vec<usize> = state.selected_nodes.iter().copied().collect();
                     let node_ids = self.translate_node_ids(&indices);
@@ -148,8 +154,7 @@ where
                     }
                     shell.capture_event();
                 }
-                // Ctrl+A: Select all nodes
-                keyboard::Key::Character(c) if c.as_str() == "a" && modifiers.command() => {
+                Some(KeyAction::SelectAll) => {
                     let count = self.nodes.len();
                     state.selected_nodes = (0..count).collect();
                     let indices: Vec<usize> = state.selected_nodes.iter().copied().collect();
@@ -160,10 +165,7 @@ where
                     shell.capture_event();
                     shell.request_redraw();
                 }
-                // Escape: Clear selection
-                keyboard::Key::Named(keyboard::key::Named::Escape)
-                    if !state.selected_nodes.is_empty() =>
-                {
+                Some(KeyAction::ClearSelection) if !state.selected_nodes.is_empty() => {
                     state.selected_nodes.clear();
                     if let Some(handler) = self.on_select_handler() {
                         shell.publish(handler(vec![]));
@@ -171,7 +173,6 @@ where
                     shell.capture_event();
                     shell.request_redraw();
                 }
-                // Delete/Backspace handled AFTER child widgets to let text inputs consume it first
                 _ => {}
             }
         }
@@ -326,12 +327,14 @@ where
                     // Handled AFTER child widgets so text inputs can consume the event
                     // first. Gated on on_delete: without a handler the delete cannot be
                     // persisted, so don't consume the key (let it fall through).
-                    if let Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = event
-                        && matches!(
-                            key,
-                            keyboard::Key::Named(keyboard::key::Named::Delete)
-                                | keyboard::Key::Named(keyboard::key::Named::Backspace)
-                        )
+                    if let Event::Keyboard(keyboard::Event::KeyPressed {
+                        key,
+                        physical_key,
+                        modifiers,
+                        ..
+                    }) = event
+                        && self.keymap.key_action(key, *physical_key, *modifiers)
+                            == Some(KeyAction::DeleteSelection)
                         && !state.selected_nodes.is_empty()
                         && self.on_delete_handler().is_some()
                     {
@@ -356,8 +359,10 @@ where
                         Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                             self.handle_left_press(&mut ctx, &z_indices)
                         }
-                        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
-                            self.handle_right_press(&mut ctx)
+                        Event::Mouse(mouse::Event::ButtonPressed(button))
+                            if *button == self.keymap.pan_button =>
+                        {
+                            self.handle_pan_press(&mut ctx)
                         }
                         _ => {}
                     }
@@ -494,7 +499,9 @@ where
             ..
         } = &mut *ctx;
         let state = tree.state.downcast_mut::<NodeGraphState>();
-        if let Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)) = event {
+        if let Event::Mouse(mouse::Event::ButtonReleased(button)) = event
+            && *button == self.keymap.pan_button
+        {
             if let Some(cursor_position) = screen_cursor.position() {
                 let screen_to_world = state.camera.screen_to_world();
                 let cursor_position: ScreenPoint = cursor_position.into_euclid();
@@ -789,8 +796,9 @@ where
                     let end: WorldPoint = cursor_position.into_euclid();
                     let selection_rect = selection_rect_from_points(start, end);
 
-                    // Without Shift: replace selection. With Shift: add to selection.
-                    if !state.modifiers.shift() {
+                    // Without the multi-select modifier (keymap, default
+                    // Shift): replace selection. With it: add to selection.
+                    if !state.modifiers.contains(self.keymap.multi_select_modifiers) {
                         state.selected_nodes.clear();
                     }
 
@@ -870,14 +878,14 @@ where
     /// This holds every `Dragging::None -> *` transition of the left button;
     /// in-progress transitions live in the `handle_*` methods above.
     fn handle_left_press(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>, z_indices: &[usize]) {
-        // Shift+drag from an occupied pin forks a NEW edge instead of
-        // unplugging the existing one.
+        // Multi-select-modifier+drag from an occupied pin forks a NEW edge
+        // instead of unplugging the existing one.
         let state = ctx.tree.state.downcast_mut::<NodeGraphState>();
-        let shift_held = state.modifiers.shift();
-        let command_held = state.modifiers.command();
+        let multi_select_held = state.modifiers.contains(self.keymap.multi_select_modifiers);
+        let edge_cut_held = state.modifiers.contains(self.keymap.edge_cut_modifiers);
 
-        // Command+Click (Cmd on macOS, Ctrl elsewhere): edge cut tool.
-        if command_held && self.try_cut_edge_at_cursor(ctx) {
+        // Edge-cut chord (keymap, default Cmd/Ctrl+Click): edge cut tool.
+        if edge_cut_held && self.try_cut_edge_at_cursor(ctx) {
             return;
         }
 
@@ -889,7 +897,7 @@ where
             // while the snap logic during an active edge drag still sees all
             // pins regardless of cover.
             for &node_index in z_indices.iter().rev() {
-                if self.try_press_node(ctx, node_index, cursor_position, shift_held) {
+                if self.try_press_node(ctx, node_index, cursor_position, multi_select_held) {
                     return;
                 }
             }
@@ -976,7 +984,7 @@ where
         ctx: &mut UpdateCtx<'_, '_, '_, Message>,
         node_index: usize,
         cursor_position: Point,
-        shift_held: bool,
+        multi_select_held: bool,
     ) -> bool {
         let Some(node_layout) = ctx.layout.children().nth(node_index) else {
             return false;
@@ -1001,33 +1009,31 @@ where
             // layout was created with .move_to(world_position).
             let distance = a.distance(cursor_position).min(b.distance(cursor_position));
             if distance < PIN_CLICK_THRESHOLD && !disabled {
-                // Check if this pin has existing connections. Without shift,
-                // "unplug" the clicked end (like pulling a cable). With shift
-                // held, skip the unplug entirely and fall through to start a
-                // fresh edge, leaving existing connections intact.
-                if !shift_held {
+                // Check if this pin has existing connections. Without the
+                // multi-select modifier, "unplug" the clicked end (like
+                // pulling a cable). With it held, skip the unplug entirely and
+                // fall through to start a fresh edge, leaving existing
+                // connections intact.
+                if !multi_select_held {
                     for (_id, from_ref, to_ref, _style) in &self.edges {
-                        // Clicked the "from" end: unplug FROM, stay anchored at TO.
-                        if from_ref.node_id == current_node_id && from_ref.pin_id == pin_id {
-                            if self.try_start_unplug(
-                                ctx,
-                                to_ref,
-                                (from_ref, to_ref),
-                                (node_index, pin_index),
-                            ) {
-                                return true;
-                            }
-                        }
-                        // Clicked the "to" end: unplug TO, stay anchored at FROM.
-                        else if to_ref.node_id == current_node_id && to_ref.pin_id == pin_id {
-                            if self.try_start_unplug(
-                                ctx,
-                                from_ref,
-                                (from_ref, to_ref),
-                                (node_index, pin_index),
-                            ) {
-                                return true;
-                            }
+                        // Unplug the clicked end, staying anchored at the
+                        // other one: grabbing "from" anchors at TO and vice
+                        // versa.
+                        let anchor =
+                            if from_ref.node_id == current_node_id && from_ref.pin_id == pin_id {
+                                to_ref
+                            } else if to_ref.node_id == current_node_id && to_ref.pin_id == pin_id {
+                                from_ref
+                            } else {
+                                continue;
+                            };
+                        if self.try_start_unplug(
+                            ctx,
+                            anchor,
+                            (from_ref, to_ref),
+                            (node_index, pin_index),
+                        ) {
+                            return true;
                         }
                     }
                 }
@@ -1143,9 +1149,10 @@ where
         let modifiers = state.modifiers;
         let selection_changed;
 
-        // Handle selection based on modifiers
-        if modifiers.shift() {
-            // Shift+Click: Toggle selection
+        // Handle selection based on the multi-select modifier (keymap,
+        // default Shift).
+        if modifiers.contains(self.keymap.multi_select_modifiers) {
+            // Multi-select click: toggle selection membership
             if already_selected {
                 state.selected_nodes.remove(&node_index);
             } else {
@@ -1217,8 +1224,8 @@ where
             let cursor_position: WorldPoint = cursor_position.into_euclid();
             let state = tree.state.downcast_mut::<NodeGraphState>();
 
-            // Command+Left drag: start edge cutting mode instead of box selection
-            if state.modifiers.command() {
+            // Edge-cut chord held: start edge cutting mode instead of box selection
+            if state.modifiers.contains(self.keymap.edge_cut_modifiers) {
                 state.dragging = Dragging::EdgeCutting {
                     trail: vec![cursor_position],
                     pending_cuts: std::collections::HashSet::new(),
@@ -1227,8 +1234,8 @@ where
                 return;
             }
 
-            // Clear selection unless Shift is held
-            if !state.modifiers.shift() {
+            // Clear selection unless the multi-select modifier is held
+            if !state.modifiers.contains(self.keymap.multi_select_modifiers) {
                 state.selected_nodes.clear();
             }
 
@@ -1244,8 +1251,8 @@ where
         }
     }
 
-    /// Starts a graph pan from a right-button press.
-    fn handle_right_press(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>) {
+    /// Starts a graph pan from a press of the keymap's pan button.
+    fn handle_pan_press(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>) {
         let UpdateCtx {
             tree,
             screen_cursor,

@@ -18,6 +18,7 @@ use std::rc::Rc;
 use iced::advanced::renderer::Renderer as _;
 use iced::advanced::widget::{Tree, Widget};
 use iced::advanced::{Layout, layout, mouse, renderer};
+use iced::keyboard;
 use iced::{
     Background, Color, Element, Length, Pixels, Point, Rectangle, Size, Theme, Transformation,
     Vector,
@@ -896,5 +897,189 @@ fn hosted_content_sandwiched_between_sdf_layers() {
         content[0] + 1 < content[1],
         "an SDF layer must separate node 0's content from node 1's: {:?}",
         rec.events,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Keymap wiring: the widget resolves keyboard shortcuts and the pan button
+// through `NodeGraph::keymap` (host-rebindable). Resolver-only coverage lives
+// in `node_graph::input`; these tests prove the widget event path honors a
+// rebound or disabled binding end to end, reusing this file's mock renderer.
+// ---------------------------------------------------------------------------
+
+fn key_press(c: char, code: keyboard::key::Code, modifiers: keyboard::Modifiers) -> iced::Event {
+    let key = keyboard::Key::Character(c.to_string().into());
+    iced::Event::Keyboard(keyboard::Event::KeyPressed {
+        key: key.clone(),
+        modified_key: key,
+        physical_key: keyboard::key::Physical::Code(code),
+        location: keyboard::Location::Standard,
+        modifiers,
+        text: None,
+        repeat: false,
+    })
+}
+
+/// Builds a two-node graph, feeds it `events` (each with its cursor), and
+/// returns every message the widget published.
+fn run_events<Msg: 'static>(
+    mut graph: NodeGraph<'static, usize, usize, (), Msg, Theme, Rec>,
+    events: &[(iced::Event, mouse::Cursor)],
+) -> Vec<Msg> {
+    graph.push_node(node(
+        0_usize,
+        Point::new(10.0, 10.0),
+        Element::from(ContentProbe),
+    ));
+    graph.push_node(node(
+        1_usize,
+        Point::new(120.0, 10.0),
+        Element::from(ContentProbe),
+    ));
+
+    let mut tree = Tree::new(&graph as &dyn Widget<Msg, Theme, Rec>);
+    let renderer = Rec::new(Rc::new(RefCell::new(Recorded::default())));
+    let layout_node = graph.layout(
+        &mut tree,
+        &renderer,
+        &layout::Limits::new(Size::ZERO, Size::new(1024.0, 768.0)),
+    );
+    let layout = Layout::new(&layout_node);
+    let viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
+
+    let mut msgs: Vec<Msg> = Vec::new();
+    let mut clipboard = clipboard::Null;
+    for (event, cursor) in events {
+        let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
+        graph.update(
+            &mut tree,
+            event,
+            layout,
+            *cursor,
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+    }
+    msgs
+}
+
+#[test]
+fn default_keymap_select_all_publishes_selection() {
+    let graph: NodeGraph<'static, usize, usize, (), Vec<usize>, Theme, Rec> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .on_select(|ids| ids);
+
+    let msgs = run_events(
+        graph,
+        &[(
+            key_press('a', keyboard::key::Code::KeyA, keyboard::Modifiers::COMMAND),
+            mouse::Cursor::Unavailable,
+        )],
+    );
+    let mut selected = msgs
+        .into_iter()
+        .next()
+        .expect("select-all published no selection");
+    selected.sort_unstable();
+    assert_eq!(selected, vec![0, 1]);
+}
+
+#[test]
+fn rebound_select_all_moves_to_the_new_combo() {
+    let keymap = crate::Keymap {
+        select_all: Some(crate::KeyCombo::command('l')),
+        ..crate::Keymap::default()
+    };
+    let graph: NodeGraph<'static, usize, usize, (), Vec<usize>, Theme, Rec> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .keymap(keymap)
+        .on_select(|ids| ids);
+
+    let msgs = run_events(
+        graph,
+        &[
+            // The default combo must be inert once rebound.
+            (
+                key_press('a', keyboard::key::Code::KeyA, keyboard::Modifiers::COMMAND),
+                mouse::Cursor::Unavailable,
+            ),
+            (
+                key_press('l', keyboard::key::Code::KeyL, keyboard::Modifiers::COMMAND),
+                mouse::Cursor::Unavailable,
+            ),
+        ],
+    );
+    assert_eq!(msgs.len(), 1, "only the rebound combo may select: {msgs:?}");
+    let mut selected = msgs.into_iter().next().unwrap();
+    selected.sort_unstable();
+    assert_eq!(selected, vec![0, 1]);
+}
+
+#[test]
+fn keymap_none_disables_all_shortcuts() {
+    let graph: NodeGraph<'static, usize, usize, (), Vec<usize>, Theme, Rec> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .keymap(crate::Keymap::none())
+        .on_select(|ids| ids);
+
+    let msgs = run_events(
+        graph,
+        &[(
+            key_press('a', keyboard::key::Code::KeyA, keyboard::Modifiers::COMMAND),
+            mouse::Cursor::Unavailable,
+        )],
+    );
+    assert!(msgs.is_empty(), "disabled keymap still published: {msgs:?}");
+}
+
+#[test]
+fn rebound_pan_button_commits_a_pan() {
+    let over = mouse::Cursor::Available(Point::new(200.0, 200.0));
+    let events = |button: mouse::Button| {
+        vec![
+            (
+                iced::Event::Mouse(mouse::Event::ButtonPressed(button)),
+                over,
+            ),
+            (
+                iced::Event::Mouse(mouse::Event::ButtonReleased(button)),
+                over,
+            ),
+        ]
+    };
+
+    // Default keymap: middle button is unbound, no pan is committed.
+    let default_graph: NodeGraph<'static, usize, usize, (), (Point, f32), Theme, Rec> =
+        NodeGraph::default()
+            .width(Length::Fixed(400.0))
+            .height(Length::Fixed(400.0))
+            .on_pan(|position, zoom| (position, zoom));
+    let msgs = run_events(default_graph, &events(mouse::Button::Middle));
+    assert!(
+        msgs.is_empty(),
+        "unbound middle button committed a pan: {msgs:?}"
+    );
+
+    // Rebound to middle: the same press/release pair commits a pan.
+    let keymap = crate::Keymap {
+        pan_button: mouse::Button::Middle,
+        ..crate::Keymap::default()
+    };
+    let rebound_graph: NodeGraph<'static, usize, usize, (), (Point, f32), Theme, Rec> =
+        NodeGraph::default()
+            .width(Length::Fixed(400.0))
+            .height(Length::Fixed(400.0))
+            .keymap(keymap)
+            .on_pan(|position, zoom| (position, zoom));
+    let msgs = run_events(rebound_graph, &events(mouse::Button::Middle));
+    assert_eq!(
+        msgs.len(),
+        1,
+        "rebound pan button must commit exactly one pan: {msgs:?}"
     );
 }

@@ -210,24 +210,18 @@ impl Keymap {
         physical: Physical,
         modifiers: Modifiers,
     ) -> Option<KeyAction> {
-        if let Some(combo) = &self.select_all {
-            if combo.matches(key, physical, modifiers) {
-                return Some(KeyAction::SelectAll);
-            }
-        }
+        let hit =
+            |combo: Option<KeyCombo>| combo.is_some_and(|c| c.matches(key, physical, modifiers));
 
-        if let Some(combo) = &self.clear_selection {
-            if combo.matches(key, physical, modifiers) {
-                return Some(KeyAction::ClearSelection);
-            }
+        if hit(self.select_all) {
+            return Some(KeyAction::SelectAll);
         }
-
-        if let Some(combo) = &self.clone_selection {
-            if combo.matches(key, physical, modifiers) {
-                return Some(KeyAction::CloneSelection);
-            }
+        if hit(self.clear_selection) {
+            return Some(KeyAction::ClearSelection);
         }
-
+        if hit(self.clone_selection) {
+            return Some(KeyAction::CloneSelection);
+        }
         if self
             .delete_selection
             .iter()
