@@ -7,12 +7,17 @@ use super::*;
 use crate::node_graph::input::KeyAction;
 use iced::touch;
 
-// Click detection threshold (in world-space pixels)
+// Click detection threshold (screen px; divide by zoom before comparing
+// against world-space distances so the hit target stays constant on screen)
 const PIN_CLICK_THRESHOLD: f32 = 8.0;
 
-// Hysteresis thresholds for edge snap/unsnap (prevents jitter at boundary)
+// Hysteresis thresholds for edge snap/unsnap (prevents jitter at boundary).
+// Screen px, scaled by 1/zoom at the comparison sites like PIN_CLICK_THRESHOLD.
 const SNAP_THRESHOLD: f32 = 10.0; // Distance to enter snap zone
 const UNSNAP_THRESHOLD: f32 = 15.0; // Distance to leave snap zone (larger = more stable)
+
+// Edge-cut click distance (screen px, scaled by 1/zoom like the above)
+const EDGE_CUT_THRESHOLD: f32 = 10.0;
 
 // Touch gesture thresholds: maximum travel (screen px) and duration for a
 // press+lift pair to count as a tap.
@@ -753,6 +758,8 @@ where
                 if let Some(cursor_position) = world_cursor.position() {
                     // Copy valid_drop_targets before iterating over tree.children
                     let valid_targets = state.valid_drop_targets.clone();
+                    // Screen-space threshold: constant hit target at any zoom.
+                    let snap_threshold = SNAP_THRESHOLD / state.camera.zoom();
 
                     // Extract from_pin_id while iterating (need access to tree.children)
                     let mut from_pin_id: Option<P> = None;
@@ -777,7 +784,7 @@ where
                                 a.distance(cursor_position).min(b.distance(cursor_position));
 
                             // Use SNAP_THRESHOLD for entering snap zone
-                            if distance < SNAP_THRESHOLD && target_info.is_none() {
+                            if distance < snap_threshold && target_info.is_none() {
                                 // Check if this pin is in valid_drop_targets
                                 if valid_targets.contains(&(node_index, pin_index)) {
                                     target_info = Some((
@@ -856,6 +863,7 @@ where
                 // Check if still over the target pin, otherwise go back to Edge state
                 // Use UNSNAP_THRESHOLD (larger than SNAP_THRESHOLD) to prevent jitter
                 if let Some(cursor_position) = world_cursor.position() {
+                    let unsnap_threshold = UNSNAP_THRESHOLD / state.camera.zoom();
                     // Extract pin IDs and check distance in one pass through tree.children
                     let mut still_over_pin = false;
                     let mut from_pin_id: Option<P> = None;
@@ -880,7 +888,7 @@ where
                                 to_dir = Some(pin_state.direction);
                                 let distance =
                                     a.distance(cursor_position).min(b.distance(cursor_position));
-                                still_over_pin = distance < UNSNAP_THRESHOLD;
+                                still_over_pin = distance < unsnap_threshold;
                             }
                         }
                     }
@@ -1040,6 +1048,11 @@ where
         // Multi-select-modifier+drag from an occupied pin forks a NEW edge
         // instead of unplugging the existing one.
         let state = ctx.tree.state.downcast_mut::<NodeGraphState>();
+        // A press while another drag is in progress (e.g. left press during a
+        // pan) must not hijack the state machine mid-drag.
+        if state.dragging != Dragging::None {
+            return;
+        }
         let multi_select_held = state.modifiers.contains(self.keymap.multi_select_modifiers);
         let edge_cut_held = state.modifiers.contains(self.keymap.edge_cut_modifiers);
 
@@ -1080,6 +1093,9 @@ where
         let Some(cursor_position) = world_cursor.position() else {
             return false;
         };
+        // Screen-space threshold: constant hit target at any zoom.
+        let cut_threshold =
+            EDGE_CUT_THRESHOLD / tree.state.downcast_ref::<NodeGraphState>().camera.zoom();
         // Check if click is near any edge
         for (_id, from_ref, to_ref, _style) in &self.edges {
             // Resolve user IDs to indices
@@ -1092,8 +1108,8 @@ where
                 None => continue,
             };
 
-            // Get pin positions for both ends of the edge
-            let from_pin_pos = layout
+            // Get pin positions and sides for both ends of the edge
+            let from_pin_data = layout
                 .children()
                 .nth(from_node_idx)
                 .and_then(|node_layout| {
@@ -1101,24 +1117,37 @@ where
                         let pins = find_pins::<P, UI>(node_tree, node_layout);
                         pins.iter()
                             .find(|(_, state, _)| state.pin_id == from_ref.pin_id)
-                            .map(|(_, _, (a, _))| *a)
+                            .map(|(_, state, (a, _))| (*a, state.side))
                     })
                 });
-            let to_pin_pos = layout.children().nth(to_node_idx).and_then(|node_layout| {
+            let to_pin_data = layout.children().nth(to_node_idx).and_then(|node_layout| {
                 tree.children.get(to_node_idx).and_then(|node_tree| {
                     let pins = find_pins::<P, UI>(node_tree, node_layout);
                     pins.iter()
                         .find(|(_, state, _)| state.pin_id == to_ref.pin_id)
-                        .map(|(_, _, (a, _))| *a)
+                        .map(|(_, state, (a, _))| (*a, state.side))
                 })
             });
 
-            if let (Some(from_pos), Some(to_pos)) = (from_pin_pos, to_pin_pos) {
-                // Check if cursor is near the edge line (using simple distance to line segment)
-                let distance = point_to_line_distance(cursor_position, from_pos, to_pos);
-                const EDGE_CUT_THRESHOLD: f32 = 10.0;
-
-                if distance < EDGE_CUT_THRESHOLD {
+            if let (Some((from_pos, from_side)), Some((to_pos, to_side))) =
+                (from_pin_data, to_pin_data)
+            {
+                // Measure against the rendered bezier, not the straight
+                // chord: same control-point construction as the draw path.
+                let dir_from = pin_side_direction(from_side.into());
+                let dir_to = pin_side_direction(to_side.into());
+                let l = adaptive_bezier_length(
+                    [from_pos.x, from_pos.y],
+                    [to_pos.x, to_pos.y],
+                );
+                let p1 = Point::new(
+                    from_pos.x + dir_from[0] * l,
+                    from_pos.y + dir_from[1] * l,
+                );
+                let p2 = Point::new(to_pos.x + dir_to[0] * l, to_pos.y + dir_to[1] * l);
+                let distance =
+                    point_to_bezier_distance(cursor_position, from_pos, p1, p2, to_pos);
+                if distance < cut_threshold {
                     // Edges already store user IDs
                     if let Some(handler) = self.on_disconnect_handler() {
                         shell.publish(handler(from_ref.clone(), to_ref.clone()));
@@ -1163,11 +1192,20 @@ where
             return false;
         };
 
+        // Screen-space threshold: constant hit target at any zoom.
+        let click_threshold = PIN_CLICK_THRESHOLD
+            / ctx
+                .tree
+                .state
+                .downcast_ref::<NodeGraphState>()
+                .camera
+                .zoom();
+
         for (pin_index, pin_id, disabled, (a, b)) in pins {
             // Pin positions from layout are ALREADY in world space because
             // layout was created with .move_to(world_position).
             let distance = a.distance(cursor_position).min(b.distance(cursor_position));
-            if distance < PIN_CLICK_THRESHOLD && !disabled {
+            if distance < click_threshold && !disabled {
                 // Check if this pin has existing connections. Without the
                 // multi-select modifier, "unplug" the clicked end (like
                 // pulling a cable). With it held, skip the unplug entirely and
@@ -1429,6 +1467,11 @@ where
             ..
         } = &mut *ctx;
         let state = tree.state.downcast_mut::<NodeGraphState>();
+        // Never cancel an in-progress node/edge/box drag: that would drop the
+        // drag without emitting on_drag_end or committing the move.
+        if state.dragging != Dragging::None {
+            return;
+        }
         // Right-click: start graph panning
         if let Some(cursor_position) = screen_cursor.position() {
             let cursor_position: ScreenPoint = cursor_position.into_euclid();
@@ -1584,6 +1627,31 @@ fn selection_rect_from_points(a: WorldPoint, b: WorldPoint) -> Rectangle {
 /// Checks if two rectangles intersect (have any overlapping area)
 fn rects_intersect(a: &Rectangle, b: &Rectangle) -> bool {
     a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y
+}
+
+/// Minimum distance from a point to a cubic bezier, via uniform flattening.
+///
+/// 32 segments keep the flattening error far below the 10px cut threshold
+/// for edge-scale curves; no allocation.
+fn point_to_bezier_distance(point: Point, p0: Point, p1: Point, p2: Point, p3: Point) -> f32 {
+    const SEGMENTS: u32 = 32;
+    let mut prev = p0;
+    let mut min_dist = f32::MAX;
+    for i in 1..=SEGMENTS {
+        let t = i as f32 / SEGMENTS as f32;
+        let it = 1.0 - t;
+        let a = it * it * it;
+        let b = 3.0 * it * it * t;
+        let c = 3.0 * it * t * t;
+        let d = t * t * t;
+        let cur = Point::new(
+            a * p0.x + b * p1.x + c * p2.x + d * p3.x,
+            a * p0.y + b * p1.y + c * p2.y + d * p3.y,
+        );
+        min_dist = min_dist.min(point_to_line_distance(point, prev, cur));
+        prev = cur;
+    }
+    min_dist
 }
 
 /// Calculates the distance from a point to a line segment

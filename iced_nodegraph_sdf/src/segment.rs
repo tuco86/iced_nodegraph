@@ -42,6 +42,12 @@ pub(crate) fn from_center_arc(
         sweep.abs() < PI + 1e-3,
         "arc sweep {sweep} must be split below PI before encoding",
     );
+    debug_assert!(radius > 0.0, "arc radius {radius} must be positive");
+    // A degenerate radius collapses to a point at the center instead of
+    // emitting endpoints mirrored through it.
+    if radius <= 0.0 {
+        return (center, center, 0.0);
+    }
     let start = center + Vec2::new(start_angle.cos(), start_angle.sin()) * radius;
     let end_a = start_angle + sweep;
     let end = center + Vec2::new(end_a.cos(), end_a.sin()) * radius;

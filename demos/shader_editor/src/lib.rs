@@ -260,12 +260,24 @@ impl Application {
             }
             Message::EdgeDisconnected { from, to } => {
                 self.visual_edges.retain(|(f, t)| !(f == &from && t == &to));
-                self.shader_graph.connections.retain(|c| {
-                    !(c.from_node == from.node_id
-                        && c.from_socket == from.pin_id
-                        && c.to_node == to.node_id
-                        && c.to_socket == to.pin_id)
-                });
+
+                // Convert visual pin indices to shader socket indices and
+                // resolve graph indices to node ids, mirroring EdgeConnected.
+                let from_node = self.shader_graph.nodes.get(from.node_id);
+                let to_node = self.shader_graph.nodes.get(to.node_id);
+                if let (Some(from_node), Some(to_node)) = (from_node, to_node) {
+                    let from_id = from_node.id;
+                    let to_id = to_node.id;
+                    let from_socket = from.pin_id.saturating_sub(from_node.inputs.len());
+                    let to_socket = to.pin_id;
+
+                    self.shader_graph.connections.retain(|c| {
+                        !(c.from_node == from_id
+                            && c.from_socket == from_socket
+                            && c.to_node == to_id
+                            && c.to_socket == to_socket)
+                    });
+                }
                 self.recompile();
                 return Task::none();
             }

@@ -345,12 +345,12 @@ fn sd_tiling(p: vec2<f32>, tiling_type: u32, params: vec4<f32>) -> SdfResult {
     let spacing = params.xy;
     switch tiling_type {
         case TILING_GRID: {
-            // Unsigned distance to nearest grid line
+            // Signed distance to the nearest grid line band (params.z = thickness)
             let fx = ((p.x % spacing.x) + spacing.x) % spacing.x;
             let mx = min(fx, spacing.x - fx);
             let fy = ((p.y % spacing.y) + spacing.y) % spacing.y;
             let my = min(fy, spacing.y - fy);
-            return SdfResult(min(mx, my), 0.0);
+            return SdfResult(min(mx, my) - params.z * 0.5, 0.0);
         }
         case TILING_DOTS: {
             let radius = params.z;
@@ -373,7 +373,8 @@ fn sd_tiling(p: vec2<f32>, tiling_type: u32, params: vec4<f32>) -> SdfResult {
             let m2 = min(f2, h - f2);
             let f3 = ((d3 % h) + h) % h;
             let m3 = min(f3, h - f3);
-            return SdfResult(min(min(m1, m2), m3), 0.0);
+            // params.z = line thickness
+            return SdfResult(min(min(m1, m2), m3) - params.z * 0.5, 0.0);
         }
         case TILING_HEX: {
             let size = params.x * 0.5;  // apothem = flat-to-flat / 2
@@ -396,12 +397,13 @@ fn sd_tiling(p: vec2<f32>, tiling_type: u32, params: vec4<f32>) -> SdfResult {
             let cx = edge * 1.5 * qi;
             let cy = edge * s3 * (0.5 * qi + ri);
             let delta = p - vec2(cx, cy);
-            // Unsigned distance to nearest hex edge (IQ's sdHexagon)
+            // Unsigned distance to nearest hex edge (IQ's sdHexagon),
+            // inset by half the line thickness (params.z)
             let k = vec3(-0.866025404, 0.5, 0.577350269);
             var d = abs(delta);
             d -= 2.0 * min(dot(k.xy, d), 0.0) * k.xy;
             d -= vec2(clamp(d.x, -k.z * size, k.z * size), size);
-            return SdfResult(abs(length(d) * sign(d.y)), 0.0);
+            return SdfResult(abs(length(d) * sign(d.y)) - params.z * 0.5, 0.0);
         }
         default: {
             return SdfResult(1e10, 0.0);

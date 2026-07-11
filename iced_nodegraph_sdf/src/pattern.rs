@@ -79,10 +79,18 @@ impl Pattern {
     }
 
     /// Dashed stroke with angled caps.
+    ///
+    /// `angle` is clamped to +-1.2 rad (~69 deg): the shader shears dash
+    /// coordinates by `tan(angle)` and corrects by `cos(angle)`, both of
+    /// which degenerate toward +-pi/2.
     pub fn dashed_angle(thickness: f32, dash: f32, gap: f32, angle: f32) -> Self {
         Self {
             thickness,
-            pattern_type: PatternType::Dashed { dash, gap, angle },
+            pattern_type: PatternType::Dashed {
+                dash,
+                gap,
+                angle: clamp_cap_angle(angle),
+            },
             flow_speed: 0.0,
         }
     }
@@ -102,13 +110,15 @@ impl Pattern {
     }
 
     /// Arrow-style angled dashes with custom angle.
+    ///
+    /// `angle` is clamped to +-1.2 rad (~69 deg); see [`Pattern::dashed_angle`].
     pub fn arrowed_angle(thickness: f32, segment: f32, gap: f32, angle: f32) -> Self {
         Self {
             thickness,
             pattern_type: PatternType::Arrowed {
                 segment,
                 gap,
-                angle,
+                angle: clamp_cap_angle(angle),
             },
             flow_speed: 0.0,
         }
@@ -164,14 +174,26 @@ impl Pattern {
     pub(crate) fn as_gpu(self) -> (u32, f32, f32, f32, f32, f32) {
         match self.pattern_type {
             PatternType::Solid => (0, self.thickness, 0.0, 0.0, 0.0, self.flow_speed),
-            PatternType::Dashed { dash, gap, angle } => {
-                (1, self.thickness, dash, gap, angle, self.flow_speed)
-            }
+            PatternType::Dashed { dash, gap, angle } => (
+                1,
+                self.thickness,
+                dash,
+                gap,
+                clamp_cap_angle(angle),
+                self.flow_speed,
+            ),
             PatternType::Arrowed {
                 segment,
                 gap,
                 angle,
-            } => (2, self.thickness, segment, gap, angle, self.flow_speed),
+            } => (
+                2,
+                self.thickness,
+                segment,
+                gap,
+                clamp_cap_angle(angle),
+                self.flow_speed,
+            ),
             PatternType::Dotted { spacing, radius } => {
                 (3, self.thickness, spacing, radius, 0.0, self.flow_speed)
             }
@@ -187,6 +209,17 @@ impl Pattern {
             } => (5, self.thickness, segment, gap, dot_radius, self.flow_speed),
         }
     }
+}
+
+/// Clamps a dash/arrow cap angle to a range where the shader's `tan(angle)`
+/// shear and `cos(angle)` Lipschitz correction stay well-conditioned; at
+/// +-pi/2 both degenerate (inf/NaN coordinates, zero-width strokes).
+fn clamp_cap_angle(angle: f32) -> f32 {
+    const MAX_CAP_ANGLE: f32 = 1.2; // rad, ~69 deg
+    if angle.is_nan() {
+        return 0.0;
+    }
+    angle.clamp(-MAX_CAP_ANGLE, MAX_CAP_ANGLE)
 }
 
 #[cfg(test)]

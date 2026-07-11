@@ -5801,3 +5801,63 @@ fn widget_edge_shape_renders_as_stroke() {
         worst.1,
     );
 }
+
+/// The `DrawData` slot each primitive renders with is the one assigned in
+/// `prepare`, NOT a draw-order counter: iced prepares every queued instance
+/// but skips drawing the ones whose bounds snap empty or fall off the
+/// viewport, so a counter would hand every later primitive the wrong
+/// camera/tiles (the washed-nodes desync). The widget-level pixel test
+/// (`offscreen_node_does_not_desync_later_nodes` in iced_nodegraph) can only
+/// observe this through pixel thresholds; this pins the index mapping
+/// directly, including across an EMPTY primitive (the prepared-but-never-
+/// drawn analogue, which still consumes a DrawData slot).
+#[test]
+fn prepare_assigns_draw_slots_independent_of_draw_order() {
+    use crate::primitive::{SdfPipeline, SdfPrimitive};
+    use crate::shape::Shape;
+    use iced::Rectangle;
+    use iced_wgpu::graphics::Viewport;
+    use iced_wgpu::primitive::{Pipeline, Primitive};
+
+    let r = shared_renderer();
+    let (w, h) = (64u32, 64u32);
+    let full = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(w as f32, h as f32));
+    let viewport = Viewport::with_physical_size(iced::Size::new(w, h), 1.0);
+    let style = Style::solid(rgba(1.0, 0.0, 0.0, 1.0));
+
+    let mut pipeline = SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
+
+    let mut a = SdfPrimitive::new();
+    a.push(&Shape::circle(10.0), &style, [16.0, 16.0]);
+    let b = SdfPrimitive::new(); // empty: prepared, never drawn
+    let mut c = SdfPrimitive::new();
+    c.push(&Shape::circle(10.0), &style, [48.0, 48.0]);
+
+    Pipeline::trim(&mut pipeline);
+    a.prepare(&mut pipeline, &r.device, &r.queue, &full, &viewport);
+    b.prepare(&mut pipeline, &r.device, &r.queue, &full, &viewport);
+    c.prepare(&mut pipeline, &r.device, &r.queue, &full, &viewport);
+
+    assert_eq!(a.draw_slot_for_test(), 0, "first prepared primitive owns slot 0");
+    assert_eq!(b.draw_slot_for_test(), 1, "empty primitive still consumes its slot");
+    assert_eq!(
+        c.draw_slot_for_test(),
+        2,
+        "slot must come from prepare order, not from how many primitives get drawn",
+    );
+
+    // A second frame must re-assign the same slots (trim resets the buffer).
+    Pipeline::trim(&mut pipeline);
+    a.prepare(&mut pipeline, &r.device, &r.queue, &full, &viewport);
+    b.prepare(&mut pipeline, &r.device, &r.queue, &full, &viewport);
+    c.prepare(&mut pipeline, &r.device, &r.queue, &full, &viewport);
+    assert_eq!(
+        (
+            a.draw_slot_for_test(),
+            b.draw_slot_for_test(),
+            c.draw_slot_for_test()
+        ),
+        (0, 1, 2),
+        "slot assignment must be stable across frames",
+    );
+}

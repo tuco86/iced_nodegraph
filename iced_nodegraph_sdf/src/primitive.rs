@@ -177,6 +177,13 @@ impl SdfPrimitive {
         self.entries.iter().any(|e| e.style.is_animated())
     }
 
+    /// The `DrawData` slot assigned in the last `prepare` (test hook for the
+    /// prepare/draw index-mapping contract).
+    #[cfg(test)]
+    pub(crate) fn draw_slot_for_test(&self) -> u32 {
+        self.draw_slot.load(Ordering::Relaxed)
+    }
+
     /// Hashes everything that determines this primitive's COMPILED geometry buffers
     /// (each entry's shape, world placement and style) - but NOT the camera, time or
     /// debug flags, which live in `DrawData` and never touch the segment/entry/style

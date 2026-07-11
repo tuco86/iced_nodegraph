@@ -37,7 +37,7 @@
 //! - [`Edge::style`] - per-edge style
 //! - [`NodeGraph::graph_style`] / [`NodeGraph::dragging_edge_style`] - graph chrome
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::time::Duration;
@@ -328,6 +328,9 @@ pub struct NodeGraph<
         Option<NodeStyleFn<'a, Theme>>,
         Option<PinStyleFn<'a, P, UI, Theme>>,
     )>,
+    /// Id -> index map backing `node_index`: O(1) lookups and deterministic
+    /// duplicate detection in `push_node` (first push wins).
+    node_lookup: HashMap<N, usize>,
     /// Edges with user-defined pin references and config overrides.
     /// Pin IDs are resolved to local indices at render time.
     /// Config fields set to Some() override theme defaults.
@@ -397,6 +400,7 @@ where
         Self {
             size: Size::new(Length::Fill, Length::Fill),
             nodes: Vec::new(),
+            node_lookup: HashMap::new(),
             edges: Vec::new(),
             graph_style: None,
             on_connect: None,
@@ -445,24 +449,31 @@ where
     ///
     /// The node will use theme defaults from `default_node_style()`.
     ///
-    /// Node IDs must be unique: lookups resolve to the first match, so a duplicate
-    /// id silently shadows another node (e.g. it renders doubled while dragging). In
-    /// debug builds this asserts uniqueness; prefer a stable id from your data (a DB
-    /// key, `uuid::Uuid`, a typed newtype) over a hand-managed counter.
+    /// Node IDs must be unique: a duplicate push is ignored (the first node
+    /// with the id wins), and debug builds assert on it. Prefer a stable id
+    /// from your data (a DB key, `uuid::Uuid`, a typed newtype) over a
+    /// hand-managed counter.
     pub fn push_node(&mut self, node: Node<'a, N, P, UI, Message, Theme, Renderer>) {
-        debug_assert!(
-            !self.nodes.iter().any(|(n, ..)| n == &node.id),
-            "duplicate node id {:?}: lookups resolve to the first match, so duplicate \
-             ids render and behave undefined - node ids must be unique",
-            node.id,
-        );
-        self.nodes.push((
-            node.id,
-            node.position,
-            node.element,
-            node.style_fn,
-            node.pin_style_fn,
-        ));
+        match self.node_lookup.entry(node.id.clone()) {
+            std::collections::hash_map::Entry::Occupied(_) => {
+                debug_assert!(
+                    false,
+                    "duplicate node id {:?}: node ids must be unique; \
+                     the duplicate push is ignored (first wins)",
+                    node.id,
+                );
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(self.nodes.len());
+                self.nodes.push((
+                    node.id,
+                    node.position,
+                    node.element,
+                    node.style_fn,
+                    node.pin_style_fn,
+                ));
+            }
+        }
     }
 
     /// Adds an edge to the graph.
@@ -488,7 +499,7 @@ where
     /// The internal index of a node by its user id. Linear scan: the node Vec is
     /// the single source of truth, the index is a transient render-time detail.
     pub(super) fn node_index(&self, id: &N) -> Option<usize> {
-        self.nodes.iter().position(|(n, ..)| n == id)
+        self.node_lookup.get(id).copied()
     }
 
     /// Sets the graph chrome style (background, etc.) as a theme-derived closure.

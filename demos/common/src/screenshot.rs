@@ -121,10 +121,16 @@ impl ScreenshotHelper {
 }
 
 /// Platform-agnostic async sleep (no tokio dependency needed).
+///
+/// Sleeps on a dedicated spawned thread and completes a oneshot the async
+/// side awaits, so no executor worker is parked for the duration.
 async fn async_io_sleep(ms: u64) {
-    // Use a simple thread::sleep in a blocking task
-    // This works because Iced's executor handles blocking tasks
-    std::thread::sleep(std::time::Duration::from_millis(ms));
+    let (tx, rx) = iced::futures::channel::oneshot::channel::<()>();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+        let _ = tx.send(());
+    });
+    let _ = rx.await;
 }
 
 fn save_png(path: &std::path::Path, screenshot: &window::Screenshot) -> Result<(), String> {

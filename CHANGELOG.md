@@ -76,6 +76,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rasterized the full canvas, inflating the production-faithful fragment
   measurement ~10x on the 500-node scene (6.4 ms -> 0.6 ms); the node clips
   also sit at their real screen positions instead of stacked at the origin.
+- A pan-button press during a node/edge/box drag (or a left press during a
+  pan) no longer hijacks the drag state machine mid-drag: the in-progress
+  drag would be silently discarded without `on_drag_end` or a committed
+  move/camera. Entry transitions now require an idle drag state.
+- `Tiling::grid`/`triangles`/`hex` line `thickness` now takes effect in the
+  SDF shader (previously packed but never read; only `Dots` consumed its
+  parameter). The widget's style-side `expand` workaround was removed.
+- Command+Click edge cut now hit-tests the rendered bezier instead of the
+  straight chord between pins, so clicking the visible curve cuts it and
+  clicking empty space near the invisible chord does not.
+- Pin-click, edge-cut and snap/unsnap thresholds are screen-space (divided
+  by zoom at each comparison), keeping hit targets a constant on-screen size
+  across the 0.1x-10x zoom range instead of shrinking to sub-pixel when
+  zoomed out.
+- `push_node` ignores a duplicate node id deterministically in release
+  builds (first push wins; debug builds still assert) and node-id lookups
+  are O(1) via an id-to-index map instead of a linear scan.
+- `Pattern::dashed_angle`/`arrowed_angle` clamp the cap angle to +-1.2 rad;
+  values near +-pi/2 degenerated the shader's `tan`/`cos` dash math into
+  NaN or invisible strokes.
+- The draw path builds the per-node pin table once per frame instead of
+  re-walking the widget tree (`find_pins`) per edge endpoint, drag preview,
+  foreground and diagnostics pass.
+- The shader_editor demo removes the matching shader-graph connection when
+  an edge is unplugged (visual pin indices were compared against socket
+  indices, so disconnects never matched and stale connections accumulated).
 
 ## [0.3.0] - 2026-07-10
 

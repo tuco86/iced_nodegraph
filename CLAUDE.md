@@ -292,8 +292,9 @@ let world_cursor: WorldPoint = camera.screen_to_world().transform_point(cursor_p
 ```
 
 **Click Detection Thresholds**:
-- `PIN_CLICK_THRESHOLD = 8.0` pixels (in world space)
-- `EDGE_CLICK_THRESHOLD = 8.0` pixels (in world space)
+- `PIN_CLICK_THRESHOLD = 8.0` screen px (divided by `camera.zoom()` at the
+  comparison sites, so the on-screen hit target is constant at any zoom)
+- `EDGE_CUT_THRESHOLD = 10.0` screen px (same 1/zoom scaling)
 
 ### Style System Pattern
 Styles are concrete, flat structs (no `Option`/`merge` config layer):

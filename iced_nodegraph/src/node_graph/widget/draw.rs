@@ -350,20 +350,25 @@ where
             Dragging::Edge(_, _, _) | Dragging::EdgeOver(_, _, _, _)
         );
 
+        // Per-frame pin table, built ONCE per node: `find_pins` is a
+        // Vec-allocating tree walk, and the drag preview, node geometry,
+        // edge loop, foreground and info passes all need pin positions.
+        // Indexed by node index; padded so lookups never go out of bounds.
+        let mut node_pins: Vec<Vec<(usize, &NodePinState<P, UI>, (Point, Point))>> = layout
+            .children()
+            .zip(&tree.children)
+            .map(|(node_layout, node_tree)| find_pins::<P, UI>(node_tree, node_layout))
+            .collect();
+        node_pins.resize_with(self.nodes.len(), Vec::new);
+
         // The pin an edge drag started from, surfaced as `other` to pin_style so
         // candidate pins can react to what is being dragged toward them.
         let drag_source: Option<NodePinState<P, UI>> = match state.dragging {
             Dragging::Edge(from_node, from_pin, _)
-            | Dragging::EdgeOver(from_node, from_pin, _, _) => tree
-                .children
+            | Dragging::EdgeOver(from_node, from_pin, _, _) => node_pins
                 .get(from_node)
-                .zip(layout.children().nth(from_node))
-                .and_then(|(nt, nl)| {
-                    find_pins::<P, UI>(nt, nl)
-                        .into_iter()
-                        .nth(from_pin)
-                        .map(|(_, s, _)| s.clone())
-                }),
+                .and_then(|pins| pins.get(from_pin))
+                .map(|(_, s, _)| (*s).clone()),
             _ => None,
         };
 
@@ -464,7 +469,9 @@ where
                 let (_id, _position, _element, node_style, node_pin_style) =
                     &self.nodes[node_index];
                 let node_layout = layout.children().nth(node_index)?;
-                let node_tree = tree.children.get(node_index)?;
+                // Gate only: a node without a tree child gets no geometry
+                // (its pins are already absent from `node_pins`).
+                let _node_tree = tree.children.get(node_index)?;
                 let status = if state.selected_nodes.contains(&node_index) {
                     NodeStatus::Selected
                 } else {
@@ -475,13 +482,13 @@ where
                 let position: WorldPoint =
                     (node_layout.bounds().position().into_euclid().to_vector() + offset).to_point();
                 let size = node_layout.bounds().size();
-                let pins = find_pins::<P, UI>(node_tree, node_layout);
+                let pins = &node_pins[node_index];
                 let center = [
                     position.x + size.width * 0.5,
                     position.y + size.height * 0.5,
                 ];
                 let cut_params = pin_cutout_params(
-                    &pins,
+                    pins,
                     node_pin_style.as_ref(),
                     drag_source.as_ref(),
                     theme,
@@ -555,23 +562,10 @@ where
                 let Some(to_node_idx) = self.node_index(&to.node_id) else {
                     continue;
                 };
-                let Some(from_node_tree) = tree.children.get(from_node_idx) else {
-                    continue;
-                };
-                let Some(from_node_layout) = layout.children().nth(from_node_idx) else {
-                    continue;
-                };
-                let Some(to_node_tree) = tree.children.get(to_node_idx) else {
-                    continue;
-                };
-                let Some(to_node_layout) = layout.children().nth(to_node_idx) else {
-                    continue;
-                };
-
                 let from_offset = compute_node_offset(from_node_idx);
                 let to_offset = compute_node_offset(to_node_idx);
 
-                let from_pins = find_pins::<P, UI>(from_node_tree, from_node_layout);
+                let from_pins = &node_pins[from_node_idx];
                 let Some((_, from_pin_state, (from_pin_pos, _))) = from_pins
                     .iter()
                     .find(|(_, state, _)| state.pin_id == from.pin_id)
@@ -579,7 +573,7 @@ where
                     continue;
                 };
 
-                let to_pins = find_pins::<P, UI>(to_node_tree, to_node_layout);
+                let to_pins = &node_pins[to_node_idx];
                 let Some((_, to_pin_state, (to_pin_pos, _))) = to_pins
                     .iter()
                     .find(|(_, state, _)| state.pin_id == to.pin_id)
@@ -675,12 +669,10 @@ where
                     TilingKind::Triangles => Tiling::triangles(tiling.spacing, tiling.thickness),
                     TilingKind::Hex => Tiling::hex(tiling.spacing, tiling.thickness),
                 });
-                // Grid/triangle/hex give the unsigned distance to the line, so
-                // their thickness comes from the style; dots bake the radius in.
-                let style = match tiling.kind {
-                    TilingKind::Dots => Style::solid(tiling.color),
-                    _ => Style::solid(tiling.color).expand(tiling.thickness * 0.5),
-                };
+                // Thickness is baked into the tiling SDF (params.z) for all
+                // kinds: grid/triangle/hex subtract half the line thickness,
+                // dots bake the radius in.
+                let style = Style::solid(tiling.color);
                 bg.push(&tiling_shape, &style, [0.0, 0.0]);
             }
 
@@ -716,12 +708,8 @@ where
         // z-position; it is never folded into the background batch.
         if let Dragging::Edge(from_node_idx, from_pin_idx, _) = &state.dragging
             && let Some(cursor_pos) = cursor.position()
-            && let (Some(from_tree), Some(from_layout)) = (
-                tree.children.get(*from_node_idx),
-                layout.children().nth(*from_node_idx),
-            )
         {
-            let from_pins = find_pins::<P, UI>(from_tree, from_layout);
+            let from_pins = &node_pins[*from_node_idx];
             if let Some((_, from_pin_state, (from_pin_pos, _))) = from_pins.get(*from_pin_idx) {
                 let from_offset = compute_node_offset(*from_node_idx);
                 let start_pos = (from_pin_pos.into_euclid().to_vector() + from_offset).to_point();
@@ -812,7 +800,7 @@ where
 
             // Pins drive the foreground (border halo plus indicators); the body
             // cutouts they imply are already baked into `node_outline`.
-            let pins = find_pins::<P, UI>(node_tree, node_layout);
+            let pins = &node_pins[node_index];
 
             // Layer 4a: Node Fill
             let fill_pad = 2.0 / cam_zoom;
@@ -1190,12 +1178,10 @@ where
                 if in_view {
                     nodes_in += 1;
                 }
-                if let (Some(nt), Some(nl)) = (tree.children.get(i), layout.children().nth(i)) {
-                    let pin_count = find_pins::<P, UI>(nt, nl).len();
-                    pins_total += pin_count;
-                    if in_view {
-                        pins_in += pin_count;
-                    }
+                let pin_count = node_pins[i].len();
+                pins_total += pin_count;
+                if in_view {
+                    pins_in += pin_count;
                 }
             }
             let edges_in = self
