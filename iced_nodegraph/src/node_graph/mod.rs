@@ -188,6 +188,7 @@ impl<'a, N, P, E, UI, Theme> Edge<'a, N, P, E, UI, Theme> {
 
 pub mod camera;
 pub(crate) mod euclid;
+pub(crate) mod input;
 pub(crate) mod state;
 pub(crate) mod widget;
 
