@@ -46,8 +46,6 @@ pub(super) struct NodeGraphState {
     /// the new state with the still-stale external value).
     pub(super) last_synced_external: Option<HashSet<usize>>,
     pub(super) modifiers: keyboard::Modifiers,
-    /// Tracks if left mouse button is pressed (for Fruit Ninja edge cutting)
-    pub(super) left_mouse_down: bool,
     /// Valid drop targets computed at edge drag start.
     /// Contains (node_index, pin_index) pairs that are valid connection targets.
     /// Only populated during Edge/EdgeOver dragging states.
@@ -83,7 +81,6 @@ impl Default for NodeGraphState {
             selected_nodes: HashSet::new(),
             last_synced_external: None,
             modifiers: keyboard::Modifiers::default(),
-            left_mouse_down: false,
             valid_drop_targets: HashSet::new(),
             last_synced_view: None,
             sdf_animated: Cell::new(false),
@@ -293,7 +290,6 @@ mod tests {
         assert_eq!(state.time, 0.0);
         assert!(state.last_update.is_none());
         assert!(state.selected_nodes.is_empty());
-        assert!(!state.left_mouse_down);
         assert!(state.valid_drop_targets.is_empty());
         assert!(state.node_z.is_empty());
         assert_eq!(state.z_counter, 0);

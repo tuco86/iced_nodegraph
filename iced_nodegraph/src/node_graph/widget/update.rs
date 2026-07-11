@@ -160,11 +160,6 @@ where
             }
         }
 
-        // Track left mouse button state globally (for Fruit Ninja edge cutting)
-        if let Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) = event {
-            state.left_mouse_down = false;
-        }
-
         // `position_over` rejects Levitating cursors (sibling above claimed the
         // event in a `stack`) and cursors outside the graph's layout bounds.
         // Without this guard, scrolling above an overlapping widget zooms the
@@ -321,19 +316,19 @@ where
                                                 (from_pin_data, to_pin_data)
                                             {
                                                 // Calculate bezier control points
-                                                let dir_from = pin_side_to_direction(from_side);
-                                                let dir_to = pin_side_to_direction(to_side);
+                                                let dir_from = pin_side_direction(from_side.into());
+                                                let dir_to = pin_side_direction(to_side.into());
                                                 let l = adaptive_bezier_length(
                                                     [p0.x, p0.y],
                                                     [p3.x, p3.y],
                                                 );
                                                 let p1 = Point::new(
-                                                    p0.x + dir_from.0 * l,
-                                                    p0.y + dir_from.1 * l,
+                                                    p0.x + dir_from[0] * l,
+                                                    p0.y + dir_from[1] * l,
                                                 );
                                                 let p2 = Point::new(
-                                                    p3.x + dir_to.0 * l,
-                                                    p3.y + dir_to.1 * l,
+                                                    p3.x + dir_to[0] * l,
+                                                    p3.y + dir_to[1] * l,
                                                 );
 
                                                 // Check if cutting line intersects this bezier edge
@@ -368,8 +363,6 @@ where
                                                     to_ref.clone(),
                                                 ));
                                             }
-                                            // Note: EdgeDisconnected message not fired for edge cutting
-                                            // because edges are not registered with IDs in current design
                                         }
                                     }
                                 }
@@ -771,15 +764,12 @@ where
 
                     match event {
                         Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                            // Track left mouse button state for Fruit Ninja edge cutting
-                            state.left_mouse_down = true;
-
                             // Shift+drag from an occupied pin forks a NEW edge instead
                             // of unplugging the existing one. Captured here while `state`
                             // is still borrowable, before the pin hit-test reborrows tree.
                             let shift_held = state.modifiers.shift();
 
-                            // Ctrl+Click: Edge cut tool
+                            // Command+Click (Cmd on macOS, Ctrl elsewhere): edge cut tool
                             if state.modifiers.command()
                                 && let Some(cursor_position) = world_cursor.position()
                             {
@@ -1152,13 +1142,13 @@ where
                                     }
                                 }
                             }
-                            // Nothing hit - start box selection on empty space
-                            // But NOT when Ctrl is held (reserved for Fruit Ninja edge cutting)
+                            // Nothing hit - start box selection on empty space,
+                            // unless COMMAND is held (reserved for edge cutting).
                             if let Some(cursor_position) = world_cursor.position() {
                                 let cursor_position: WorldPoint = cursor_position.into_euclid();
                                 let state = tree.state.downcast_mut::<NodeGraphState>();
 
-                                // Ctrl+Left: Start edge cutting mode instead of box selection
+                                // Command+Left drag: start edge cutting mode instead of box selection
                                 if state.modifiers.command() {
                                     state.dragging = Dragging::EdgeCutting {
                                         trail: vec![cursor_position],
@@ -1474,17 +1464,5 @@ fn solve_cubic(a: f32, b: f32, c: f32, d: f32) -> Vec<f32> {
             let u = (-q_new / 2.0).cbrt();
             vec![2.0 * u + offset, -u + offset]
         }
-    }
-}
-
-/// Converts a PinSide to a direction vector (matches shader get_pin_direction).
-fn pin_side_to_direction(side: crate::node_pin::PinSide) -> (f32, f32) {
-    use crate::node_pin::PinSide;
-    match side {
-        PinSide::Left => (-1.0, 0.0),
-        PinSide::Right => (1.0, 0.0),
-        PinSide::Top => (0.0, -1.0),
-        PinSide::Bottom => (0.0, 1.0),
-        PinSide::Row => (1.0, 0.0), // Default to right
     }
 }

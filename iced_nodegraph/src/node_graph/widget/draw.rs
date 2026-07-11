@@ -101,18 +101,6 @@ fn world_bbox_to_screen_bounds(
     ]
 }
 
-/// Returns the tangent direction vector for a pin side.
-/// Left=(-1,0), Right=(1,0), Top=(0,-1), Bottom=(0,1)
-fn pin_side_direction(side: u32) -> [f32; 2] {
-    match side {
-        0 => [-1.0, 0.0], // Left
-        1 => [1.0, 0.0],  // Right
-        2 => [0.0, -1.0], // Top
-        3 => [0.0, 1.0],  // Bottom
-        _ => [1.0, 0.0],  // Default (Row)
-    }
-}
-
 /// Construct the open `Shape` for an edge based on curve type and pin sides. The
 /// geometry is world-space (edges are ephemeral, never deduped), so callers push
 /// it with a zero placement.

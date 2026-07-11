@@ -63,6 +63,20 @@ fn adaptive_bezier_length(start: [f32; 2], end: [f32; 2]) -> f32 {
     BEZIER_SEGMENT_LENGTH.min(d * 0.5).max(1.0)
 }
 
+/// Returns the tangent direction vector for a pin side in the shader's `u32`
+/// side encoding (matches `get_pin_direction` in the WGSL).
+/// Left=(-1,0), Right=(1,0), Top=(0,-1), Bottom=(0,1); anything else (Row,
+/// synthetic mirror sides) defaults to (1,0).
+fn pin_side_direction(side: u32) -> [f32; 2] {
+    match side {
+        0 => [-1.0, 0.0], // Left
+        1 => [1.0, 0.0],  // Right
+        2 => [0.0, -1.0], // Top
+        3 => [0.0, 1.0],  // Bottom
+        _ => [1.0, 0.0],  // Default (Row)
+    }
+}
+
 impl<N, P, E, UI, Message, Renderer> iced_wgpu::core::Widget<Message, iced::Theme, Renderer>
     for NodeGraph<'_, N, P, UI, Message, iced::Theme, Renderer, E>
 where
