@@ -5,6 +5,10 @@ if ($env:CLAUDE_PROJECT_DIR) {
     Set-Location $env:CLAUDE_PROJECT_DIR -ErrorAction SilentlyContinue
 }
 
+# Format check - capture output
+$fmtOutput = cargo fmt --all --check 2>&1
+$fmtStatus = $LASTEXITCODE
+
 # Check - capture output
 $checkOutput = cargo check -p iced_nodegraph 2>&1
 $checkStatus = $LASTEXITCODE
@@ -13,6 +17,14 @@ $checkStatus = $LASTEXITCODE
 $testOutput = cargo test -p iced_nodegraph 2>&1
 $testStatus = $LASTEXITCODE
 
+
+# Show errors if any
+if ($fmtStatus -ne 0) {
+    Write-Output "## cargo fmt --check failed"
+    Write-Output "run 'cargo fmt --all' to fix formatting"
+    $fmtOutput | Select-String -Pattern "^Diff in" | Select-Object -First 20
+    Write-Output ""
+}
 # Show errors if any
 if ($checkStatus -ne 0) {
     Write-Output "## cargo check failed"

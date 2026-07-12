@@ -1,0 +1,11 @@
+#!/bin/sh
+# Enforce rustfmt on every commit (maintainer request: keep main fmt-clean).
+# Lives in the versioned .githooks/ dir; activated via a RELATIVE hooks path:
+#   git config core.hooksPath .githooks
+# An absolute path here silently disabled all hooks after a repo move once.
+if ! cargo fmt --all --check; then
+    echo >&2
+    echo "commit blocked: code is not rustfmt-clean." >&2
+    echo "run 'cargo fmt --all', then re-stage and commit." >&2
+    exit 1
+fi

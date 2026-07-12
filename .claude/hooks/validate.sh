@@ -4,6 +4,10 @@
 
 cd "$CLAUDE_PROJECT_DIR" || exit 0
 
+# Format check - capture output
+fmt_output=$(cargo fmt --all --check 2>&1)
+fmt_status=$?
+
 # Check native - capture output
 check_output=$(cargo check -p iced_nodegraph 2>&1)
 check_status=$?
@@ -16,6 +20,13 @@ wasm_status=$?
 test_output=$(cargo test -p iced_nodegraph 2>&1)
 test_status=$?
 
+
+if [ $fmt_status -ne 0 ]; then
+    echo "## cargo fmt --check failed"
+    echo "run 'cargo fmt --all' to fix formatting"
+    echo "$fmt_output" | grep -E "^Diff in" | head -20
+    echo ""
+fi
 # Only output if there were errors
 if [ $check_status -ne 0 ]; then
     echo "## cargo check (native) failed"
