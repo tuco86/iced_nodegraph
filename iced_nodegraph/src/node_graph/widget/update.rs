@@ -1136,17 +1136,10 @@ where
                 // chord: same control-point construction as the draw path.
                 let dir_from = pin_side_direction(from_side.into());
                 let dir_to = pin_side_direction(to_side.into());
-                let l = adaptive_bezier_length(
-                    [from_pos.x, from_pos.y],
-                    [to_pos.x, to_pos.y],
-                );
-                let p1 = Point::new(
-                    from_pos.x + dir_from[0] * l,
-                    from_pos.y + dir_from[1] * l,
-                );
+                let l = adaptive_bezier_length([from_pos.x, from_pos.y], [to_pos.x, to_pos.y]);
+                let p1 = Point::new(from_pos.x + dir_from[0] * l, from_pos.y + dir_from[1] * l);
                 let p2 = Point::new(to_pos.x + dir_to[0] * l, to_pos.y + dir_to[1] * l);
-                let distance =
-                    point_to_bezier_distance(cursor_position, from_pos, p1, p2, to_pos);
+                let distance = point_to_bezier_distance(cursor_position, from_pos, p1, p2, to_pos);
                 if distance < cut_threshold {
                     // Edges already store user IDs
                     if let Some(handler) = self.on_disconnect_handler() {

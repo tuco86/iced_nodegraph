@@ -5838,8 +5838,16 @@ fn prepare_assigns_draw_slots_independent_of_draw_order() {
     b.prepare(&mut pipeline, &r.device, &r.queue, &full, &viewport);
     c.prepare(&mut pipeline, &r.device, &r.queue, &full, &viewport);
 
-    assert_eq!(a.draw_slot_for_test(), 0, "first prepared primitive owns slot 0");
-    assert_eq!(b.draw_slot_for_test(), 1, "empty primitive still consumes its slot");
+    assert_eq!(
+        a.draw_slot_for_test(),
+        0,
+        "first prepared primitive owns slot 0"
+    );
+    assert_eq!(
+        b.draw_slot_for_test(),
+        1,
+        "empty primitive still consumes its slot"
+    );
     assert_eq!(
         c.draw_slot_for_test(),
         2,
