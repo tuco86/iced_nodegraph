@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 560" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, sans-serif">
+  <rect x="0" y="0" width="960" height="560" rx="12" fill="#fbfcfe" stroke="#d9dee5"/>
+  <text x="32" y="40" font-size="20" font-weight="700" fill="#1b2026">Scatter, not gather</text>
+  <text x="32" y="60" font-size="13" fill="#5b6672">A gather build asks every tile &#8220;which of ALL segments touch me?&#8221; &#8212; a cost floor that ignores visibility. The scatter</text>
+  <text x="32" y="77" font-size="13" fill="#5b6672">flips the iteration: each (entry, segment) visits only the coarse tiles inside its own reach, then one sort makes it deterministic.</text>
+
+  <defs>
+    <marker id="arG" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#9aa6b4"/>
+    </marker>
+    <marker id="arB" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#2f6df6"/>
+    </marker>
+  </defs>
+
+  <!-- left: gather (before) -->
+  <g transform="translate(32,100)">
+    <text x="0" y="0" font-size="13" font-weight="700" fill="#9aa6b4">Gather (before)</text>
+    <g transform="translate(0,14)">
+      <rect x="0" y="0" width="220" height="176" fill="#ffffff" stroke="#cfd8e3"/>
+      <g stroke="#eef2f7" stroke-width="1">
+        <line x1="44" y1="0" x2="44" y2="176"/><line x1="88" y1="0" x2="88" y2="176"/>
+        <line x1="132" y1="0" x2="132" y2="176"/><line x1="176" y1="0" x2="176" y2="176"/>
+        <line x1="0" y1="44" x2="220" y2="44"/><line x1="0" y1="88" x2="220" y2="88"/>
+        <line x1="0" y1="132" x2="220" y2="132"/>
+      </g>
+      <!-- every tile reaches for the whole segment list -->
+      <g stroke="#9aa6b4" stroke-width="1.2" fill="none">
+        <path d="M 22 22 C 120 10 200 30 268 62" marker-end="url(#arG)"/>
+        <path d="M 110 66 C 180 60 230 70 268 80" marker-end="url(#arG)"/>
+        <path d="M 198 22 C 230 30 250 45 268 68" marker-end="url(#arG)"/>
+        <path d="M 66 154 C 160 160 230 140 268 112" marker-end="url(#arG)"/>
+        <path d="M 154 110 C 210 108 240 104 268 98" marker-end="url(#arG)"/>
+        <path d="M 198 154 C 235 150 255 135 268 120" marker-end="url(#arG)"/>
+      </g>
+      <rect x="272" y="40" width="118" height="104" rx="8" fill="#f4f6f9" stroke="#9aa6b4"/>
+      <text x="331" y="80" font-size="11" fill="#3a424c" text-anchor="middle">ALL entries</text>
+      <text x="331" y="96" font-size="11" fill="#3a424c" text-anchor="middle">&#215;</text>
+      <text x="331" y="112" font-size="11" fill="#3a424c" text-anchor="middle">ALL segments</text>
+    </g>
+    <text x="0" y="216" font-size="11" fill="#5b6672">Every tile scans every entry &#215; segment &#8212; O(tiles &#215; segments)</text>
+    <text x="0" y="233" font-size="11" fill="#5b6672">no matter what is visible: a zoom-independent cost floor.</text>
+  </g>
+
+  <!-- right: scatter (now) -->
+  <g transform="translate(516,100)">
+    <text x="0" y="0" font-size="13" font-weight="700" fill="#2f6df6">Scatter (now)</text>
+    <g transform="translate(0,14)">
+      <rect x="0" y="0" width="220" height="176" fill="#ffffff" stroke="#cfd8e3"/>
+      <!-- tiles that pass the exact interval test -->
+      <g fill="#dbeafe">
+        <rect x="0" y="132" width="44" height="44"/>
+        <rect x="44" y="88" width="44" height="44"/>
+        <rect x="44" y="132" width="44" height="44"/>
+        <rect x="88" y="44" width="44" height="44"/>
+        <rect x="132" y="0" width="44" height="44"/>
+        <rect x="132" y="44" width="44" height="44"/>
+        <rect x="176" y="0" width="44" height="44"/>
+      </g>
+      <g stroke="#eef2f7" stroke-width="1">
+        <line x1="44" y1="0" x2="44" y2="176"/><line x1="88" y1="0" x2="88" y2="176"/>
+        <line x1="132" y1="0" x2="132" y2="176"/><line x1="176" y1="0" x2="176" y2="176"/>
+        <line x1="0" y1="44" x2="220" y2="44"/><line x1="0" y1="88" x2="220" y2="88"/>
+        <line x1="0" y1="132" x2="220" y2="132"/>
+      </g>
+      <!-- reach-inflated bbox of the segment -->
+      <rect x="4" y="18" width="212" height="152" fill="none" stroke="#7048e8" stroke-width="1.6" stroke-dasharray="5 4"/>
+      <!-- the segment itself -->
+      <path d="M 12 162 C 72 162 92 46 206 34" fill="none" stroke="#2f6df6" stroke-width="4"/>
+      <text x="216" y="10" font-size="10" fill="#7048e8" text-anchor="end">reach-inflated bbox</text>
+    </g>
+    <text x="242" y="120" font-size="10" fill="#2f6df6">appended</text>
+    <text x="242" y="133" font-size="10" fill="#2f6df6">tiles</text>
+    <path d="M 246 138 C 235 150 225 156 214 160" fill="none" stroke="#2f6df6" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#arB)"/>
+    <text x="0" y="216" font-size="11" fill="#5b6672">Each (entry, segment) walks only its bbox tile range and appends</text>
+    <text x="0" y="233" font-size="11" fill="#5b6672">where the exact interval test passes &#8212; work &#8733; actual overlaps.</text>
+  </g>
+  <!-- bottom: the three kernels -->
+  <g transform="translate(32,368)">
+    <g font-family="ui-monospace, monospace" font-size="12" font-weight="700">
+      <rect x="0" y="0" width="380" height="56" rx="8" fill="#eff4ff" stroke="#a9c4f8"/>
+      <text x="12" y="20" fill="#2f6df6">cs_scatter_open</text>
+      <rect x="0" y="72" width="380" height="56" rx="8" fill="#eff4ff" stroke="#a9c4f8"/>
+      <text x="12" y="92" fill="#2f6df6">cs_scatter_closed</text>
+      <rect x="520" y="24" width="376" height="86" rx="8" fill="#f3effe" stroke="#c9bdf2"/>
+      <text x="532" y="44" fill="#7048e8">cs_sort_fine</text>
+    </g>
+    <g font-size="11" fill="#5b6672">
+      <text x="12" y="38">one thread per open (draw, entry, segment) triple</text>
+      <text x="12" y="110">one workgroup per closed contour; the centre-sign</text>
+      <text x="12" y="124">keep holds interior-only tiles</text>
+      <text x="532" y="62">one workgroup per LIVE coarse tile: bitonic</text>
+      <text x="532" y="76">sort by (entry, seg) &#8212; deterministic despite</text>
+      <text x="532" y="90">atomic appends &#8212; then 16 threads re-cull</text>
+      <text x="532" y="104">the 16px fine tiles into 16-bit refs</text>
+    </g>
+    <g stroke="#9aa6b4" stroke-width="1.4" fill="none">
+      <path d="M 380 28 C 440 28 470 48 516 58" marker-end="url(#arG)"/>
+      <path d="M 380 100 C 440 100 470 84 516 74" marker-end="url(#arG)"/>
+    </g>
+    <text x="448" y="36" font-size="10" fill="#9aa6b4">atomic</text>
+    <text x="448" y="48" font-size="10" fill="#9aa6b4">append</text>
+  </g>
+
+  <text x="32" y="540" font-size="12" fill="#5b6672">Past the 512-slot cap appends drop first-come; the demand counters keep counting, and an async readback reports true demand (SdfStats).</text>
+</svg>

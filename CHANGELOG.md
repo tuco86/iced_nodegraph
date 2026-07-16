@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `docs/scatter.svg`: a diagram of the gather-to-scatter index-build flip
+  (bbox walk + exact interval append, the three cull kernels), embedded in
+  the SDF README's Part 5, which previously covered scatter in prose only.
+
 ### Fixed
 
 - Stale SDF docs: `tiles.svg` still showed the pre-doubling 256 coarse slots

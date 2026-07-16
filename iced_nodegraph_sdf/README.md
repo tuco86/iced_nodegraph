@@ -294,6 +294,8 @@ one that matters (which would be a visible hole). For a line and a point the
 interval is exact; for an arc (the one non-convex case) it is bounded by splitting
 the arc into shallow sub-chords.
 
+<img src="docs/scatter.svg" alt="Gather scans every segment from every tile; scatter sends each segment to only the tiles in its reach, then a per-tile sort makes the frame deterministic." width="100%">
+
 **The index is built by SCATTER, not by gather.** Iterating every entry from
 every tile costs O(tiles &times; segments) no matter what is visible — a
 zoom-independent floor. Instead each (entry, segment) pair visits only the
