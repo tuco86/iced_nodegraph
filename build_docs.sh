@@ -20,6 +20,12 @@
 
 set -e
 
+# getrandom 0.3 (nanoid -> rand 0.9) has no implicit browser backend:
+# wasm32-unknown-unknown needs this cfg plus the `wasm_js` crate feature
+# (see demos/hello_world/Cargo.toml). Scoped to the wasm target so the
+# native `cargo doc` build below is unaffected.
+export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS='--cfg getrandom_backend="wasm_js"'
+
 # Color codes
 CYAN='\033[0;36m'
 YELLOW='\033[1;33m'

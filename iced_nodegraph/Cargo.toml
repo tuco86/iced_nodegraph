@@ -26,10 +26,10 @@ web-time.workspace = true
 # iced::advanced; this stays out of the published crate's [dependencies].
 iced = { workspace = true, features = ["advanced"] }
 iced_test = { workspace = true }
-proptest = "1"
-criterion = "0.5"
+proptest.workspace = true
+criterion.workspace = true
 pollster.workspace = true
-png = "0.18"
+png.workspace = true
 
 [[bench]]
 name = "frame_prep"

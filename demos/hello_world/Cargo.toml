@@ -30,7 +30,7 @@ iced = { workspace = true, features = ["wgpu"] }
 iced_palette.workspace = true
 
 # ID generation (nanoid runs on both native and WASM, see getrandom below)
-nanoid = "0.4"
+nanoid.workspace = true
 
 # WASM-specific dependencies
 wasm-bindgen = { workspace = true, optional = true }
@@ -45,10 +45,12 @@ console_error_panic_hook = { workspace = true, optional = true }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
-directories = "6.0"
+directories.workspace = true
 
 # WASM: Embed Fira Sans font (system fonts not available in browser)
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 iced = { workspace = true, features = ["wgpu", "fira-sans"] }
-# Enable JS backend for getrandom (required by nanoid on WASM)
-getrandom = { version = "0.2", features = ["js"] }
+# Enable JS backend for getrandom 0.3 (required by nanoid/rand on WASM).
+# Also needs `--cfg getrandom_backend="wasm_js"`, exported in build_docs.sh
+# (or a local .cargo/config.toml for ad-hoc wasm checks).
+getrandom = { workspace = true, features = ["wasm_js"] }

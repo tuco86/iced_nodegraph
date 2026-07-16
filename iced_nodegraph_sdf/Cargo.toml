@@ -19,7 +19,7 @@ parking_lot.workspace = true
 
 [dev-dependencies]
 pollster.workspace = true
-png = "0.18"
+png.workspace = true
 
 # WASM: Enable WebGL in iced_wgpu for fallback support
 [target.'cfg(target_arch = "wasm32")'.dependencies]
