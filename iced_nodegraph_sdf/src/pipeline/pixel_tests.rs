@@ -5127,10 +5127,10 @@ fn measure_idle_prepare_cost() {
 /// to it get new control points, so the edge batch's block hash changes every
 /// frame and `compile_block` re-runs over all 640 edges - but the 637 unmoved
 /// edges hit the shape-residency map and skip the biarc fit. Answers whether
-/// arena residency already meets the <= ~2 ms drag-frame target from
-/// plan/edge-biarc-cache.md or whether the fit still dominates. `build` is the
+/// arena residency already meets the <= ~2 ms drag-frame target (it does;
+/// measured median 0.72 ms) or whether the fit still dominates. `build` is the
 /// widget-side cost of reconstructing the changed primitives (hashing included);
-/// `prepare` is the renderer-side cost the plan targets. Run with:
+/// `prepare` is the renderer-side cost this probe targets. Run with:
 ///   cargo test -p iced_nodegraph_sdf --release drag_prepare_cost -- --ignored --nocapture
 #[test]
 #[ignore]
