@@ -109,8 +109,10 @@ The fit (see [`src/biarc.rs`](src/biarc.rs)) is adaptive subdivision: fit one ar
 through a piece's two endpoints and its midpoint, measure the worst deviation of
 the true cubic from that arc, and if it exceeds tolerance, split the piece in half
 (de Casteljau) and recurse. A near-flat piece becomes a line instead. The
-tolerance is sub-pixel in world units, so a curve does not facet at normal zoom,
-and each emitted arc carries its **exact** arc length (`r * |sweep|`), which keeps
+tolerance is a fixed 0.05 world units — at most half a pixel of screen error
+across the widget's whole zoom range, and fixed on purpose, so a shape's recipe
+hash stays zoom-invariant and zooming never re-fits resident geometry. Each
+emitted arc carries its **exact** arc length (`r * |sweep|`), which keeps
 dash spacing and flow animation even along the curve.
 
 The payoff is that the GPU's distance evaluator only ever sees a line or a minor
@@ -228,18 +230,24 @@ An *entry* is a draw command: it points at a contiguous range of segments, names
 a style, carries the world translate, and holds the shape's bounding box. Compile
 is pure data mapping — no logic.
 
-Three forms of deduplication shrink what actually reaches the GPU:
+Three forms of deduplication shrink what actually reaches the GPU — and all
+three survive across frames, because the buffers are persistent *arenas*
+(see [`src/pipeline/arena.rs`](src/pipeline/arena.rs)) whose contents never
+move while resident:
 
-- **Segment instancing.** The first instance of a shape this frame uploads its
-  segments; every later identical shape emits a tiny entry that *references* the
-  same segment range. 500 identical nodes upload one node's worth of arcs, not 500.
-- **Style dedup.** Byte-identical compiled styles share one slot, so N nodes that
-  look alike upload one `GpuStyle`, not N.
-- **Geometry-hash slot reuse.** Each primitive hashes everything that determines
-  its compiled buffers (shapes, placements, styles — but *not* camera or time). If
-  this frame's hash matches last frame's and the buffer cursors line up, the whole
-  evaluate-and-upload step is skipped and the resident GPU data is reused in place.
-  Panning or animating a static graph re-uploads nothing.
+- **Segment instancing.** The first instance of a shape *ever* uploads its
+  segments; every later identical shape — in any primitive, any frame — emits a
+  tiny entry that *references* the same resident segment range. 500 identical
+  nodes upload one node's worth of arcs, not 500.
+- **Style dedup.** Byte-identical compiled styles share one resident slot, so N
+  nodes that look alike upload one `GpuStyle`, not N.
+- **Content-keyed residency.** Each primitive hashes everything that determines
+  its compiled buffers (shapes, placements, styles — but *not* camera or time).
+  A hash that matches a resident block reuses that block *wherever it sits* —
+  no re-evaluate, no re-upload, independent of draw order, so a z-reorder or a
+  node add/remove invalidates nothing else. Blocks unused for a few frames age
+  out and return their ranges to the arena. Panning or animating a static graph
+  re-uploads nothing.
 
 The camera, time, and debug flags live in a separate small `DrawData` record, so
 they can change every frame without touching the geometry buffers at all.
@@ -295,9 +303,10 @@ kernel scatters open strokes per segment, one handles closed contours per
 entry (their interiors need the centre-sign keep), and a third sorts every
 coarse tile's slots by (entry, segment) — a unique total order that makes the
 frame deterministic regardless of atomic append order — before its threads
-re-cull the 16px fine tiles into compact 16-bit references. The draw index
-rides the dispatch's z-axis, so each draw selects its own `DrawData` with no
-per-draw uniform, and the whole frame is **one** `queue.submit` — skipped
+re-cull the 16px fine tiles into compact 16-bit references. Every kernel is
+dispatched flat and sized to the actual work — the sort runs one workgroup per
+*live* coarse tile and binary-searches its owning draw, so no workgroup is dead
+on arrival — and the whole frame is **one** `queue.submit` — skipped
 entirely while nothing that affects the index changed (camera, viewport,
 geometry): an idle or animation-only frame reuses the resident index.
 
@@ -378,9 +387,10 @@ flow animation is smooth.
 The architecture is built so that a *static or panning* graph does almost no work,
 and a *changing* graph pays only for what changed:
 
-- **Evaluate nothing unchanged.** The geometry-hash slot reuse (Part 4) skips the
-  entire CPU evaluate-and-upload when a primitive is byte-identical to last frame
-  — which is every frame you are just panning or zooming a static graph.
+- **Evaluate nothing unchanged.** The content-keyed residency (Part 4) skips the
+  entire CPU evaluate-and-upload when a primitive's compiled bytes match a
+  resident block — which is every frame you are just panning or zooming a
+  static graph.
 - **Evaluate each unique shape once.** The content-addressed shape cache (Part 3)
   means 500 identical nodes pay for one boolean re-stitch, and only edges (which
   genuinely change) re-evaluate.
@@ -478,6 +488,7 @@ style, pattern, and tiling, with a tile-occupancy debug overlay.
 | [`src/color.rs`](src/color.rs) | `ColorQuad`, the four-corner colour field |
 | [`src/compile.rs`](src/compile.rs) | arcs + styles &rarr; GPU structs |
 | [`src/primitive.rs`](src/primitive.rs) | `SdfPrimitive` + `SdfPipeline` (prepare / index / draw) |
+| [`src/pipeline/arena.rs`](src/pipeline/arena.rs) | range allocator for the persistent geometry arenas |
 | [`src/pipeline/shader.wgsl`](src/pipeline/shader.wgsl) | all GPU code (vertex, compute, fragment) |
 | [`src/pipeline/types.rs`](src/pipeline/types.rs) | GPU struct layouts (must match the WGSL) |
 

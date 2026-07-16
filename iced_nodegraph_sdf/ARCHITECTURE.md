@@ -134,12 +134,20 @@ is separate and per-draw.
 - `SEG_FLAG_SIGNED` (segment): part of a closed contour.
 - `STYLE_FLAG_HAS_PATTERN` (style).
 
-**Three deduplications run here (see `src/primitive.rs::prepare`):**
-- *Segment instancing*: the first instance of a shape this frame uploads its
-  segments; identical instances emit an entry referencing the shared range.
-- *Style dedup*: byte-identical compiled styles share one buffer slot.
-- *Geometry-hash slot reuse*: a primitive byte-identical to last frame (shapes,
-  placements, styles) skips evaluate + upload entirely and reuses resident data.
+**Three deduplications run here (see `src/primitive.rs::prepare`). All three are
+cross-frame: the segment/entry/style buffers are persistent arenas
+(`src/pipeline/arena.rs`) whose contents never move while resident:**
+- *Segment instancing*: the first instance of a shape EVER uploads its segments;
+  identical instances - in any primitive, any frame - emit an entry referencing
+  the shared resident range (refcounted, freed at zero).
+- *Style dedup*: byte-identical compiled styles share one resident buffer slot.
+- *Content-keyed residency*: a primitive whose compiled bytes (shapes,
+  placements, styles) hash-match a resident block reuses it WHEREVER it sits in
+  the prepare order - no evaluate, no upload; a reorder or an earlier rebuild
+  invalidates nothing. Blocks unused for `RESIDENT_MAX_AGE` (8) frames return
+  their ranges to the arenas; when an arena's high-water mark runs far ahead of
+  its live count, the residency state is dropped and the next frame rebuilds
+  tightly packed (`SdfStats::arena_compactions`).
   The `Shape` recipe hash is computed once at CONSTRUCTION (each constructor and
   operator folds its params and child hashes), so `hash()` is an O(1) field read.
 
@@ -199,8 +207,11 @@ The scatter build's work is proportional to actual segment-tile overlaps:
    strided across threads, each running the exact per-entry test (band reach
    OR centre-sign interior keep) and appending every segment that can be the
    per-pixel nearest anywhere in the tile.
-3. `cs_sort_fine` - one 64-thread workgroup per coarse tile (draw index on the
-   dispatch z-axis). Loads the scattered slots, appends the draw's tilings,
+3. `cs_sort_fine` - one 64-thread workgroup per LIVE coarse tile, dispatched
+   1D-flat; each workgroup binary-searches its owning draw over the draws'
+   coarse-base prefix sums, so no workgroup is dead on arrival (the old
+   per-draw-grid dispatch launched the largest draw's grid for every draw).
+   Loads the scattered slots, appends the draw's tilings,
    bitonic-sorts by (entry, seg) - a unique total order, so the frame is
    DETERMINISTIC regardless of atomic append order - writes the sorted list
    back, then threads 0..15 re-cull one 16px fine tile each and write the
@@ -315,4 +326,6 @@ flow (which produced a 1px tile-boundary seam on some GPUs).
 | `src/pipeline/shader.wgsl` | all GPU code (vertex, fragment, compute) |
 | `src/pipeline/types.rs` | GPU struct layouts (must match the WGSL) |
 | `src/pipeline/buffer.rs` | dynamic GPU buffer wrapper |
+| `src/pipeline/arena.rs` | range allocator for the persistent geometry arenas |
+| `src/pipeline/overflow.rs` | async coarse-slot demand readback (`OverflowProbe`) |
 | `src/pipeline/pixel_tests.rs` | headless pixel-level rendering tests |

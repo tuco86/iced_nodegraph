@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Stale SDF docs: `tiles.svg` still showed the pre-doubling 256 coarse slots
+  (2KB/tile) and 8-bit fine packing; README/ARCHITECTURE still described the
+  removed z-axis cull dispatch and the cursor-based slot reuse that arena
+  residency replaced. All now match the shipped constants and kernels.
+
 ## [0.4.0] - 2026-07-11
 
 ### Added
