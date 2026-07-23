@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-23
+
 ### Added
 
 - `docs/scatter.svg`: a diagram of the gather-to-scatter index-build flip
@@ -19,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (2KB/tile) and 8-bit fine packing; README/ARCHITECTURE still described the
   removed z-axis cull dispatch and the cursor-based slot reuse that arena
   residency replaced. All now match the shipped constants and kernels.
+- Zero corner radius panic: a `Shape::rounded_box(_, [0.0; 4])` (the selection
+  box and toggle indicator, drawn when clicking near a node corner) emitted a
+  degenerate zero-radius arc per corner, tripping `from_center_arc`'s
+  positive-radius debug assert. A non-positive-radius arc is now a sharp turn
+  (heading rotates, no segment), so a zero-radius box evaluates to a plain
+  rectangle.
 
 ## [0.4.0] - 2026-07-11
 
@@ -219,6 +227,7 @@ Initial release.
 - Z-ordering by last-moved with selected nodes drawn on top.
 - Demos: `hello_world`, `styling`, `interaction`, `500_nodes`, `shader_editor`.
 
+[0.4.1]: https://github.com/tuco86/iced_nodegraph/releases/tag/v0.4.1
 [0.4.0]: https://github.com/tuco86/iced_nodegraph/releases/tag/v0.4.0
 [0.3.0]: https://github.com/tuco86/iced_nodegraph/releases/tag/v0.3.0
 [0.2.0]: https://github.com/tuco86/iced_nodegraph/releases/tag/v0.2.0

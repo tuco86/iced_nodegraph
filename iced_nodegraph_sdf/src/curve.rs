@@ -207,6 +207,14 @@ impl ShapeBuilder {
     /// Arc forward. Positive sweep = clockwise (center to the RIGHT).
     /// Single exact arc segment, no approximation.
     pub fn arc(mut self, radius: f32, sweep: f32) -> Self {
+        // A non-positive radius is a sharp corner (e.g. a rounded box with a
+        // zero corner radius): turn in place by `sweep` and emit no segment.
+        // Emitting a zero-radius arc would trip `from_center_arc`'s positive-
+        // radius invariant downstream.
+        if radius <= 0.0 {
+            self.heading += sweep;
+            return self;
+        }
         let perp = if sweep >= 0.0 {
             self.right_vec()
         } else {

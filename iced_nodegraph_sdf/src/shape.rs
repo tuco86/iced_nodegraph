@@ -608,6 +608,24 @@ mod tests {
     }
 
     #[test]
+    fn zero_corner_radius_evaluates_as_sharp_rectangle() {
+        // A zero corner radius (the selection box / toggle indicator) must not
+        // emit degenerate zero-radius arcs: those trip `from_center_arc`'s
+        // positive-radius invariant. Each corner is a sharp turn, so the box is
+        // four lines and the bounds match the requested size.
+        let d = Shape::rounded_box([80.0, 40.0], [0.0; 4]).evaluate();
+        assert_eq!(d.segment_count(), 4);
+        let b = d.bounds();
+        let expected = [-40.0, -20.0, 40.0, 20.0];
+        for i in 0..4 {
+            assert!(
+                (b[i] - expected[i]).abs() < 1e-4,
+                "bounds differ at {i}: {b:?} vs {expected:?}"
+            );
+        }
+    }
+
+    #[test]
     fn arc_and_point_evaluate_to_their_curve_primitives() {
         let arc = Shape::arc([10.0, -5.0], 40.0, -FRAC_PI_2, FRAC_PI_2).evaluate();
         let arc_direct = Curve::arc_segment([10.0, -5.0], 40.0, -FRAC_PI_2, FRAC_PI_2);
