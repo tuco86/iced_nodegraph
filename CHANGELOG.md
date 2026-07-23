@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-07-23
+
+### Fixed
+
+- SDF render bind-group layout declared the `draws` storage buffer visible to
+  the vertex stage, though only the fragment shader reads it. That required the
+  `VERTEX_STORAGE` downlevel flag and failed `create_bind_group_layout` on
+  backends/devices without it (e.g. OpenGL). Binding 0 is now fragment-only.
+- Removed the WebGL wasm fallback. The renderer reads storage buffers in the
+  fragment stage, which WebGL2 does not provide (its
+  `max_storage_buffers_per_shader_stage` is 0), so the fallback crashed at
+  bind-group-layout creation. The SDF crate no longer enables `iced_wgpu`'s
+  `webgl` feature, matching the documented WebGPU-only browser support; without
+  WebGPU the app now fails to acquire an adapter instead of crashing mid-frame.
+
 ## [0.4.1] - 2026-07-23
 
 ### Added
@@ -227,6 +242,7 @@ Initial release.
 - Z-ordering by last-moved with selected nodes drawn on top.
 - Demos: `hello_world`, `styling`, `interaction`, `500_nodes`, `shader_editor`.
 
+[0.4.2]: https://github.com/tuco86/iced_nodegraph/releases/tag/v0.4.2
 [0.4.1]: https://github.com/tuco86/iced_nodegraph/releases/tag/v0.4.1
 [0.4.0]: https://github.com/tuco86/iced_nodegraph/releases/tag/v0.4.0
 [0.3.0]: https://github.com/tuco86/iced_nodegraph/releases/tag/v0.3.0
