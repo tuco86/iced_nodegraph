@@ -20,6 +20,17 @@ This document provides essential context for Claude Code when working on the ice
 
 A task is only complete when all checks pass and code is pushed.
 
+**Git hooks (enforce the above automatically):** versioned hooks live in
+`.githooks/`. Enable them once per clone with:
+
+```
+git config core.hooksPath .githooks
+```
+
+- `pre-commit` runs `cargo fmt --all -- --check` (mirrors the CI format gate).
+- `pre-push` runs the full CI-equivalent gate: fmt check, clippy `-D warnings`
+  on both crates, both test suites (SDF serialized), and the wasm check.
+
 **Pre-Publish Requirement (before any `cargo publish`):**
 - The CI semver gate (`.github/workflows/ci.yml`) runs `cargo semver-checks` for
   `iced_nodegraph` and `iced_nodegraph_sdf` against the most recent release tag

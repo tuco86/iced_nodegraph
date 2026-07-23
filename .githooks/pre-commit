@@ -1,11 +1,11 @@
-#!/bin/sh
-# Enforce rustfmt on every commit (maintainer request: keep main fmt-clean).
-# Lives in the versioned .githooks/ dir; activated via a RELATIVE hooks path:
-#   git config core.hooksPath .githooks
-# An absolute path here silently disabled all hooks after a repo move once.
-if ! cargo fmt --all --check; then
-    echo >&2
-    echo "commit blocked: code is not rustfmt-clean." >&2
-    echo "run 'cargo fmt --all', then re-stage and commit." >&2
+#!/usr/bin/env bash
+# Fast gate: mirror the CI format check so an unformatted commit never lands.
+# Fix with `cargo fmt --all`, then re-stage.
+set -euo pipefail
+
+if ! cargo fmt --all -- --check; then
+    echo
+    echo "pre-commit: rustfmt found unformatted code (see diff above)."
+    echo "  run: cargo fmt --all   then re-stage and commit."
     exit 1
 fi

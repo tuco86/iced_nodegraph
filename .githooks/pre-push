@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Full gate: mirror the CI `test` job plus the CLAUDE.md wasm check, so a push
+# that would go red on CI fails locally first. Slow by design (clippy + tests).
+set -euo pipefail
+
+echo "pre-push: cargo fmt --all -- --check"
+cargo fmt --all -- --check
+
+echo "pre-push: cargo clippy -p iced_nodegraph -p iced_nodegraph_sdf -- -D warnings"
+cargo clippy -p iced_nodegraph -p iced_nodegraph_sdf -- -D warnings
+
+echo "pre-push: cargo test -p iced_nodegraph"
+cargo test -p iced_nodegraph
+
+# The SDF pixel tests each spin up a full wgpu device; serialize them like CI.
+echo "pre-push: cargo test -p iced_nodegraph_sdf -- --test-threads=1"
+cargo test -p iced_nodegraph_sdf -- --test-threads=1
+
+# WASM compilation is checked locally only (CI is native-only).
+if rustup target list --installed 2>/dev/null | grep -qx wasm32-unknown-unknown; then
+    echo "pre-push: cargo check -p iced_nodegraph --target wasm32-unknown-unknown"
+    cargo check -p iced_nodegraph --target wasm32-unknown-unknown
+else
+    echo "pre-push: skipping wasm check (target wasm32-unknown-unknown not installed)"
+fi

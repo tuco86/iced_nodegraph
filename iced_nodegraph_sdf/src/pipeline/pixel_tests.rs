@@ -2040,11 +2040,7 @@ impl TestRenderer {
         device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: None,
             entries: &[
-                bgl_storage(
-                    0,
-                    ShaderStages::FRAGMENT,
-                    DrawData::SHADER_SIZE.get(),
-                ),
+                bgl_storage(0, ShaderStages::FRAGMENT, DrawData::SHADER_SIZE.get()),
                 bgl_storage(1, ShaderStages::FRAGMENT, GpuDrawEntry::SHADER_SIZE.get()),
                 bgl_storage(2, ShaderStages::FRAGMENT, GpuSegment::SHADER_SIZE.get()),
                 bgl_storage(3, ShaderStages::FRAGMENT, GpuStyle::SHADER_SIZE.get()),
