@@ -154,7 +154,7 @@ fn create_render_group0_layout(device: &Device) -> BindGroupLayout {
         entries: &[
             BindGroupLayoutEntry {
                 binding: 0,
-                visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
+                visibility: ShaderStages::FRAGMENT,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,

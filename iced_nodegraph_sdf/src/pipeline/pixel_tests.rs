@@ -2042,7 +2042,7 @@ impl TestRenderer {
             entries: &[
                 bgl_storage(
                     0,
-                    ShaderStages::VERTEX_FRAGMENT,
+                    ShaderStages::FRAGMENT,
                     DrawData::SHADER_SIZE.get(),
                 ),
                 bgl_storage(1, ShaderStages::FRAGMENT, GpuDrawEntry::SHADER_SIZE.get()),
