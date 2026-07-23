@@ -31,6 +31,10 @@ A task is only complete when all checks pass and code is pushed.
   prefer additive changes, and when a break is genuinely warranted, make it
   deliberately and bump the minor version in the same change.
 
+**Release process:** the full step-by-step release checklist (version bump in
+all three `Cargo.toml` fields, CHANGELOG, gates, tag, publish order, next dev
+cycle) lives in [`RELEASING.md`](RELEASING.md). Follow it for every release.
+
 ## Automatic Validation
 
 **Via SubagentStop hook:**
