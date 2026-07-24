@@ -236,18 +236,22 @@ impl KeyHasher {
     }
 }
 
-/// Folds every [`types::DrawData`] field EXCEPT `time` into a key. The spatial
-/// index depends on camera, viewport, grid geometry and entry ranges - but
-/// never on the animation clock (reach bands and tile boxes are
+/// Folds every [`types::DrawData`] field EXCEPT `time` into a key, PLUS
+/// `grid_base` (the tile-quantized window base, plan/world-space-cull.md
+/// §3.2-§3.3, NOT itself a `DrawData` field). The spatial index depends on
+/// the world-anchored grid window, viewport, grid geometry and entry ranges -
+/// but never on the animation clock (reach bands and tile boxes are
 /// time-independent; time only animates style evaluation in the fragment
-/// shader). A time-only change must therefore compare EQUAL so the resident
-/// index is kept and the cull dispatch is skipped.
-fn cull_key(d: &types::DrawData) -> u64 {
+/// shader) and never on the continuous `camera_position`/`bounds_origin`
+/// directly: only `grid_base` (the quantized window) matters, so a sub-tile
+/// pan compares EQUAL and the resident index is kept. Bonus: `bounds_origin`
+/// is not hashed at all, so moving the widget on-screen (same camera/zoom/
+/// size, e.g. a panel resize elsewhere) also keeps the index valid - tile
+/// membership is world-anchored, independent of the widget's screen position.
+fn cull_key(d: &types::DrawData, grid_base: [i64; 2]) -> u64 {
     let mut h = KeyHasher::new();
-    h.f32(d.bounds_origin.0[0]);
-    h.f32(d.bounds_origin.0[1]);
-    h.f32(d.camera_position.0[0]);
-    h.f32(d.camera_position.0[1]);
+    h.u64(grid_base[0] as u64);
+    h.u64(grid_base[1] as u64);
     h.f32(d.camera_zoom);
     h.f32(d.scale_factor);
     h.u32(d.entry_count);
@@ -1371,7 +1375,7 @@ impl Primitive for SdfPrimitive {
             }
             // `DrawData::default()` carries sentinel tiling ids.
             let dd = types::DrawData::default();
-            pipeline.note_cull_key(draw_index as usize, cull_key(&dd));
+            pipeline.note_cull_key(draw_index as usize, cull_key(&dd, [0, 0]));
             let _ = pipeline.draw_data_buffer.push(device, queue, dd);
             return;
         }
@@ -1484,12 +1488,32 @@ impl Primitive for SdfPrimitive {
         let entry_count = self.entries.len() as u32;
         let camera_pos = types::GpuVec2::new(self.camera_position.0, self.camera_position.1);
         let grid_origin = types::GpuVec2::new(bounds.x * scale, bounds.y * scale);
-        let mut grid_cols = ((bounds.width * scale / TILE_SIZE).ceil() as u32).max(1);
-        let mut grid_rows = ((bounds.height * scale / TILE_SIZE).ceil() as u32).max(1);
 
-        // Coarse grid: one 64px tile per 4x4 block of fine tiles.
-        let mut coarse_cols = grid_cols.div_ceil(COARSE_FACTOR);
-        let mut coarse_rows = grid_rows.div_ceil(COARSE_FACTOR);
+        // World-anchored cull grid (plan/world-space-cull.md §4.3): decompose the
+        // pan into whole coarse tiles (`grid_base`, hashed by `cull_key`) plus a
+        // sub-tile remainder (`grid_offset`, uploaded every frame like `camera_pos`)
+        // so the tile index depends only on the world window, not on continuous
+        // `camera_position` - a sub-tile pan leaves `grid_base` unchanged.
+        let cs = (self.camera_zoom * scale) as f64;
+        let coarse_px = (TILE_SIZE * COARSE_FACTOR as f32) as f64; // 64.0
+        let pan_x = self.camera_position.0 as f64 * cs;
+        let pan_y = self.camera_position.1 as f64 * cs;
+        let grid_base = [
+            (-pan_x / coarse_px).floor() as i64,
+            (-pan_y / coarse_px).floor() as i64,
+        ];
+        let grid_offset = types::GpuVec2::new(
+            (-pan_x).rem_euclid(coarse_px) as f32,
+            (-pan_y).rem_euclid(coarse_px) as f32,
+        );
+
+        // Coarse grid: one 64px tile per 4x4 block of fine tiles. +1 apron per
+        // axis: the world-anchored window is never tile-aligned to the viewport,
+        // so it always straddles one extra tile (plan §3.4).
+        let mut coarse_cols = ((bounds.width * scale / coarse_px as f32).ceil() as u32).max(1) + 1;
+        let mut coarse_rows = ((bounds.height * scale / coarse_px as f32).ceil() as u32).max(1) + 1;
+        let mut grid_cols = coarse_cols * COARSE_FACTOR;
+        let mut grid_rows = coarse_rows * COARSE_FACTOR;
 
         // Allocate this primitive's tile regions. If EITHER level would push its
         // total past the device's storage-binding limit (e.g. many large
@@ -1555,6 +1579,7 @@ impl Primitive for SdfPrimitive {
         let dd = types::DrawData {
             bounds_origin: grid_origin,
             camera_position: camera_pos,
+            grid_offset,
             camera_zoom: self.camera_zoom,
             scale_factor: scale,
             time: self.time,
@@ -1567,8 +1592,10 @@ impl Primitive for SdfPrimitive {
             coarse_rows,
             coarse_base,
             tilings: dd_tilings,
+            _pad0: 0,
+            _pad1: 0,
         };
-        pipeline.note_cull_key(draw_index as usize, cull_key(&dd));
+        pipeline.note_cull_key(draw_index as usize, cull_key(&dd, grid_base));
         let _ = pipeline.draw_data_buffer.push(device, queue, dd);
 
         // Recreate bind groups if any buffer generation changed

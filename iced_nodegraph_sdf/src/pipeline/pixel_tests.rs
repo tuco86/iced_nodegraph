@@ -302,6 +302,7 @@ impl TestRenderer {
                 bounds_origin_logical[1] * scale,
             ),
             camera_position: GpuVec2::new(camera_position[0], camera_position[1]),
+            grid_offset: GpuVec2::ZERO,
             camera_zoom: zoom,
             scale_factor: scale,
             time: 0.0,
@@ -314,6 +315,8 @@ impl TestRenderer {
             coarse_rows: grid_rows.div_ceil(COARSE_FACTOR),
             coarse_base: 0,
             tilings: [u32::MAX; 4],
+            _pad0: 0,
+            _pad1: 0,
         };
 
         self.execute_render(
@@ -590,6 +593,7 @@ impl TestRenderer {
         let draw_data = DrawData {
             bounds_origin: GpuVec2::ZERO,
             camera_position: GpuVec2::new(cam[0], cam[1]),
+            grid_offset: GpuVec2::ZERO,
             camera_zoom: zoom,
             scale_factor: scale,
             time: 0.0,
@@ -602,6 +606,8 @@ impl TestRenderer {
             coarse_rows,
             coarse_base: 0,
             tilings: [u32::MAX; 4],
+            _pad0: 0,
+            _pad1: 0,
         };
 
         let cull_lists = self.build_cull_lists(
@@ -863,6 +869,7 @@ impl TestRenderer {
             draw_datas.push(DrawData {
                 bounds_origin: GpuVec2::new(origin_px[0] * scale, origin_px[1] * scale),
                 camera_position: GpuVec2::new(cam[0], cam[1]),
+                grid_offset: GpuVec2::ZERO,
                 camera_zoom: zoom,
                 scale_factor: scale,
                 time: 0.0,
@@ -875,6 +882,8 @@ impl TestRenderer {
                 coarse_rows,
                 coarse_base,
                 tilings: [u32::MAX; 4],
+                _pad0: 0,
+                _pad1: 0,
             });
             tile_base += grid_cols * grid_rows;
             coarse_base += coarse_cols * coarse_rows;
@@ -1183,6 +1192,7 @@ impl TestRenderer {
         let draw_data = DrawData {
             bounds_origin: GpuVec2::new(0.0, 0.0),
             camera_position: GpuVec2::new(cam_x, cam_y),
+            grid_offset: GpuVec2::ZERO,
             camera_zoom: zoom,
             scale_factor: scale,
             time,
@@ -1195,6 +1205,8 @@ impl TestRenderer {
             coarse_rows: grid_rows.div_ceil(COARSE_FACTOR),
             coarse_base: 0,
             tilings: [u32::MAX; 4],
+            _pad0: 0,
+            _pad1: 0,
         };
 
         // Encode to GPU format via encase
@@ -1453,6 +1465,7 @@ impl TestRenderer {
         let draw_data = DrawData {
             bounds_origin: GpuVec2::new(bounds_origin_phys[0], bounds_origin_phys[1]),
             camera_position: GpuVec2::new(camera[0], camera[1]),
+            grid_offset: GpuVec2::ZERO,
             camera_zoom: zoom,
             scale_factor: scale,
             time: 0.0,
@@ -1465,6 +1478,8 @@ impl TestRenderer {
             coarse_rows: grid_rows.div_ceil(COARSE_FACTOR),
             coarse_base: 0,
             tilings: [u32::MAX; 4],
+            _pad0: 0,
+            _pad1: 0,
         };
         self.execute_render(
             &gpu_entries,
@@ -4495,9 +4510,10 @@ fn zoomed_out_per_node_fills_all_render() {
 
 /// The spatial-index cull dispatch is skipped exactly while the resident index
 /// is valid (`SdfStats::cull_skipped`, published by `trim`): an unchanged
-/// frame and a TIME-ONLY (animation) frame keep last frame's index; a camera
-/// move, a zoom change, or a geometry change (placement) invalidate it; the
-/// first frame after an invalidation is skipped again.
+/// frame, a TIME-ONLY (animation) frame, and a SUB-TILE pan (world-anchored
+/// grid, plan/world-space-cull.md §4) keep last frame's index; a
+/// TILE-CROSSING pan, a zoom change, or a geometry change (placement)
+/// invalidate it; the first frame after an invalidation is skipped again.
 /// Full-pipeline frame (prepare -> deferred compute -> draw -> readback -> trim)
 /// driving `SdfPipeline` exactly as iced does. For slot-reuse regression tests
 /// that need PIXEL evidence across frames.
@@ -4876,9 +4892,11 @@ fn cull_dispatch_skipped_while_index_valid() {
     };
 
     let mut pipeline = SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
-    let base = ([100.0_f32, 100.0], [0.0_f32, 0.0], 1.0_f32);
+    let base = ([100.0_f32, 100.0], [10.0_f32, 10.0], 1.0_f32);
 
-    // Frame 0: everything is new - the index must be built.
+    // Frame 0: everything is new - the index must be built. `cam = [10, 10]`
+    // (zoom = scale = 1, so `pan_px = cam`) gives `grid_base.x =
+    // floor(-10/64) = -1`, deliberately off a 64px tile boundary.
     assert!(
         !frame(&mut pipeline, base.0, base.1, base.2, 0.0),
         "first frame must cull"
@@ -4894,26 +4912,132 @@ fn cull_dispatch_skipped_while_index_valid() {
         frame(&mut pipeline, base.0, base.1, base.2, 0.5),
         "time-only frame must skip"
     );
-    // Frame 3: camera pan - tile world boxes moved, recull.
+    // Frame 3: sub-tile pan, `cam = [50, 10]` - `grid_base.x =
+    // floor(-50/64) = -1`, the SAME tile-quantized window as the base
+    // (plan/world-space-cull.md §3.3): the world-anchored index is reused.
     assert!(
-        !frame(&mut pipeline, base.0, [25.0, 0.0], base.2, 0.5),
-        "pan must recull"
+        frame(&mut pipeline, base.0, [50.0, 10.0], base.2, 0.5),
+        "sub-tile pan must skip"
     );
-    // Frame 4: unchanged again at the new camera - skip resumes.
+    // Frame 4: tile-crossing pan, `cam = [90, 10]` - `grid_base.x =
+    // floor(-90/64) = -2` crosses into the next coarse tile: recull.
     assert!(
-        frame(&mut pipeline, base.0, [25.0, 0.0], base.2, 0.5),
-        "steady frame must skip"
+        !frame(&mut pipeline, base.0, [90.0, 10.0], base.2, 0.5),
+        "tile-crossing pan must recull"
     );
     // Frame 5: zoom change - recull.
     assert!(
-        !frame(&mut pipeline, base.0, [25.0, 0.0], 2.0, 0.5),
+        !frame(&mut pipeline, base.0, [90.0, 10.0], 2.0, 0.5),
         "zoom must recull"
     );
     // Frame 6: geometry change (placement) - buffers rewritten, recull.
     assert!(
-        !frame(&mut pipeline, [130.0, 100.0], [25.0, 0.0], 2.0, 0.5),
+        !frame(&mut pipeline, [130.0, 100.0], [90.0, 10.0], 2.0, 0.5),
         "geometry change must recull",
     );
+}
+
+/// The load-bearing invariant of the world-anchored cull grid
+/// (plan/world-space-cull.md §3.3): a SUB-TILE pan (same `grid_base`) reuses
+/// the resident spatial index (`cull_skipped == true`) AND renders the exact
+/// same scene shifted by exactly the pan, in pixels - proving index reuse
+/// across a pan is pixel-correct, not merely dispatch-skipped by luck. A
+/// whole-pixel pan is used so AA sampling positions are identical too.
+#[test]
+fn pan_within_tile_reuses_index_pixel_identical() {
+    use crate::primitive::{SdfPipeline, SdfPrimitive, sdf_stats};
+    use crate::shape::Shape;
+    use iced_wgpu::primitive::Pipeline;
+
+    let r = shared_renderer();
+    let (w, h) = (256u32, 256u32);
+    let style = Style::solid(rgba(0.3, 0.4, 0.5, 1.0));
+    let placement = [100.0_f32, 100.0];
+
+    let scene = |cam: [f32; 2]| -> SdfPrimitive {
+        let mut p = SdfPrimitive::new();
+        p.push(
+            &Shape::rounded_box([60.0, 40.0], [4.0; 4]),
+            &style,
+            placement,
+        );
+        p.camera(cam[0], cam[1], 1.0)
+    };
+
+    let mut pipeline = SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
+    // `grid_base.x = floor(-10/64) = floor(-20/64) = -1`: same tile-quantized
+    // window, a 10px whole-pixel sub-tile pan.
+    let px1 = render_pipeline_frame(&r, &mut pipeline, &[&scene([10.0, 10.0])], w, h);
+    let px2 = render_pipeline_frame(&r, &mut pipeline, &[&scene([20.0, 10.0])], w, h);
+    assert!(
+        sdf_stats().cull_skipped,
+        "sub-tile pan must reuse the resident index"
+    );
+
+    let shift = 10u32;
+    let mut visible = false;
+    for y in 0..h {
+        for x in shift..w {
+            let before = px1[(y * w + (x - shift)) as usize];
+            let after = px2[(y * w + x) as usize];
+            visible |= after[3] > 0;
+            assert_eq!(
+                before, after,
+                "reused-index frame must be an exact {shift}px shift at ({x}, {y})"
+            );
+        }
+    }
+    assert!(visible, "the shape must actually render somewhere");
+}
+
+/// Counterpart to [`pan_within_tile_reuses_index_pixel_identical`]: a
+/// TILE-CROSSING pan changes `grid_base` and forces a recull
+/// (`cull_skipped == false`), but the rebuilt index must still render the
+/// exact same scene, shifted by exactly the pan - proving the recull path
+/// stays pixel-correct under the new world-anchored math (plan
+/// §3.4/§4, the `+1` apron).
+#[test]
+fn pan_across_tile_boundary_recull_pixel_identical() {
+    use crate::primitive::{SdfPipeline, SdfPrimitive, sdf_stats};
+    use crate::shape::Shape;
+    use iced_wgpu::primitive::Pipeline;
+
+    let r = shared_renderer();
+    let (w, h) = (256u32, 256u32);
+    let style = Style::solid(rgba(0.3, 0.4, 0.5, 1.0));
+    let placement = [100.0_f32, 100.0];
+
+    let scene = |cam: [f32; 2]| -> SdfPrimitive {
+        let mut p = SdfPrimitive::new();
+        p.push(
+            &Shape::rounded_box([60.0, 40.0], [4.0; 4]),
+            &style,
+            placement,
+        );
+        p.camera(cam[0], cam[1], 1.0)
+    };
+
+    let mut pipeline = SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
+    // `grid_base.x = floor(-10/64) = -1` vs `floor(-90/64) = -2`: crosses a
+    // 64px coarse-tile boundary, an 80px whole-pixel pan.
+    let px1 = render_pipeline_frame(&r, &mut pipeline, &[&scene([10.0, 10.0])], w, h);
+    let px2 = render_pipeline_frame(&r, &mut pipeline, &[&scene([90.0, 10.0])], w, h);
+    assert!(!sdf_stats().cull_skipped, "tile-crossing pan must recull");
+
+    let shift = 80u32;
+    let mut visible = false;
+    for y in 0..h {
+        for x in shift..w {
+            let before = px1[(y * w + (x - shift)) as usize];
+            let after = px2[(y * w + x) as usize];
+            visible |= after[3] > 0;
+            assert_eq!(
+                before, after,
+                "recull frame must be an exact {shift}px shift at ({x}, {y})"
+            );
+        }
+    }
+    assert!(visible, "the shape must actually render somewhere");
 }
 
 /// Coarse-slot overflow telemetry (plan/exact-slot-allocation.md, option 3):
