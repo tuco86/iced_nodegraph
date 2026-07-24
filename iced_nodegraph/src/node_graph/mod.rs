@@ -42,7 +42,7 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::time::Duration;
 
-use iced::{Length, Point, Size, Vector};
+use iced::{Length, Padding, Point, Rectangle, Size, Vector};
 
 use crate::ids::{EdgeId, NodeId, PinId};
 use crate::node_pin::{PinEnd, PinInfo};
@@ -291,6 +291,113 @@ impl<N: Clone, P: Clone> PinRef<N, P> {
     }
 }
 
+/// Programmatic focus target for [`NodeGraph::focus`]: what the camera
+/// should frame. The app only names ids (or `All`/`Selection`/an explicit
+/// world rect); the widget resolves them to a world AABB from its live
+/// layout in `update()` -- the app never computes node bounds itself.
+#[derive(Clone, Debug)]
+pub enum FocusTarget<N, E = ()> {
+    /// Every node in the graph.
+    All,
+    /// The current selection ([`NodeGraph::selection`] or internal
+    /// click/box-select state). An empty selection is a no-op, mirroring
+    /// Blender's "View Selected".
+    Selection,
+    /// A single node by id.
+    Node(N),
+    /// The union of several nodes' bounds.
+    Nodes(Vec<N>),
+    /// The union of an edge's two endpoint nodes' bounds (seeing a
+    /// connection means seeing both ends it connects).
+    Edge(E),
+    /// The union of several edges' endpoint nodes' bounds.
+    Edges(Vec<E>),
+    /// An explicit world-space rectangle -- the `fitBounds` escape hatch for
+    /// targets the widget cannot resolve on its own.
+    Rect(Rectangle),
+}
+
+/// Options for [`NodeGraph::focus`] and the keymap frame actions: padding,
+/// zoom bounds, and the optional tween. See
+/// [`Camera2D::fit`](camera::Camera2D::fit) for the exact math.
+#[derive(Clone, Debug)]
+pub struct FocusOptions {
+    /// Per-side screen-px padding around the fitted bounds.
+    pub padding: Padding,
+    /// Extra lower zoom bound, intersected with
+    /// [`Camera2D::ZOOM_MIN`](camera::Camera2D::ZOOM_MIN). `None` leaves
+    /// only the camera's own floor in effect.
+    pub min_zoom: Option<f32>,
+    /// Extra upper zoom bound, intersected with
+    /// [`Camera2D::ZOOM_MAX`](camera::Camera2D::ZOOM_MAX). Defaults to
+    /// `Some(1.0)` so focusing a single small node fits it at native size
+    /// instead of zooming in arbitrarily far.
+    pub max_zoom: Option<f32>,
+    /// Tween toward the target instead of jumping. `None` jumps immediately.
+    pub animation: Option<FocusAnimation>,
+}
+
+impl Default for FocusOptions {
+    fn default() -> Self {
+        Self {
+            padding: Padding::new(40.0),
+            min_zoom: None,
+            max_zoom: Some(1.0),
+            animation: Some(FocusAnimation::default()),
+        }
+    }
+}
+
+/// The tween a [`FocusOptions::animation`] runs: duration plus easing curve.
+#[derive(Clone, Copy, Debug)]
+pub struct FocusAnimation {
+    /// How long the camera takes to reach the target. A zero duration
+    /// behaves like `animation: None` (an immediate jump).
+    pub duration: Duration,
+    /// The easing curve driving the interpolation.
+    pub easing: Easing,
+}
+
+impl Default for FocusAnimation {
+    fn default() -> Self {
+        Self {
+            duration: Duration::from_millis(300),
+            easing: Easing::EaseInOutCubic,
+        }
+    }
+}
+
+/// Easing curve for a [`FocusAnimation`], applied to the tween's normalized
+/// progress `t` in `[0, 1]`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Easing {
+    /// No easing: constant velocity.
+    Linear,
+    /// Slow start and end, fast middle. The default -- matches tldraw's
+    /// camera animation curve.
+    EaseInOutCubic,
+    /// Fast start, slow end.
+    EaseOutCubic,
+}
+
+impl Easing {
+    /// Applies the curve to `t`, clamped to `[0, 1]`.
+    pub fn apply(self, t: f32) -> f32 {
+        let t = t.clamp(0.0, 1.0);
+        match self {
+            Easing::Linear => t,
+            Easing::EaseInOutCubic => {
+                if t < 0.5 {
+                    4.0 * t * t * t
+                } else {
+                    1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
+                }
+            }
+            Easing::EaseOutCubic => 1.0 - (1.0 - t).powi(3),
+        }
+    }
+}
+
 /// Node graph widget with generic ID types.
 ///
 /// # Type Parameters
@@ -378,6 +485,11 @@ pub struct NodeGraph<
     /// pan/zoom interaction internally and committing via `on_pan`. Mirrors the
     /// `selection()` / `on_select` controlled pattern.
     pub(super) view: Option<(Point, f32)>,
+    /// Declarative programmatic focus/frame request set via
+    /// [`focus`](Self::focus): a nonce (`seq`), what to frame, and how.
+    /// Deduped against `state.last_focus_seq`, mirroring the `view` /
+    /// `last_synced_view` pattern just above.
+    pub(super) focus: Option<(u64, FocusTarget<N, E>, FocusOptions)>,
     /// Custom validation callback for pin connection compatibility.
     /// When set, it is authoritative in `compute_valid_targets` (the built-in
     /// direction check only applies as the default when this is unset).
@@ -419,6 +531,7 @@ where
             cutting_tool_style_fn: None,
             dragging_edge_style_fn: None,
             view: None,
+            focus: None,
             can_connect: None,
             keymap: input::Keymap::default(),
         }
@@ -442,6 +555,23 @@ where
     /// to origin) and the view snaps there.
     pub fn view(mut self, position: Point, zoom: f32) -> Self {
         self.view = Some((position, zoom));
+        self
+    }
+
+    /// Declarative programmatic focus/frame request. `seq` is a monotonic
+    /// nonce: the widget performs the fit the first time it sees a new
+    /// `seq` and dedupes on repeats -- the immediate-mode substitute for
+    /// "call `fitView()` once". Bump `seq` to re-trigger the same focus
+    /// action (e.g. re-clicking a "focus node" button).
+    ///
+    /// The app only names a [`FocusTarget`] (ids, `All`/`Selection`, or an
+    /// explicit [`FocusTarget::Rect`]); the widget resolves it to a world
+    /// AABB from its live layout in `update()` and fits the camera to it,
+    /// committing through [`on_pan`](Self::on_pan) like any other camera
+    /// change. An unknown id or empty selection is a no-op: no camera
+    /// change, no `on_pan`.
+    pub fn focus(mut self, seq: u64, target: FocusTarget<N, E>, opts: FocusOptions) -> Self {
+        self.focus = Some((seq, target, opts));
         self
     }
 

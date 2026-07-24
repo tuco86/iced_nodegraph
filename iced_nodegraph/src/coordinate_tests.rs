@@ -27,8 +27,9 @@ use iced::{
 use iced_wgpu::core::clipboard;
 use iced_wgpu::core::image;
 use iced_wgpu::core::text;
+use web_time::Instant;
 
-use crate::{NodeGraph, node};
+use crate::{FocusOptions, FocusTarget, NodeGraph, node};
 
 // ---------------------------------------------------------------------------
 // Recording renderer: tracks the transformation stack (composed like
@@ -921,6 +922,23 @@ fn key_press(c: char, code: keyboard::key::Code, modifiers: keyboard::Modifiers)
     })
 }
 
+fn named_key_press(
+    named: keyboard::key::Named,
+    code: keyboard::key::Code,
+    modifiers: keyboard::Modifiers,
+) -> iced::Event {
+    let key = keyboard::Key::Named(named);
+    iced::Event::Keyboard(keyboard::Event::KeyPressed {
+        key: key.clone(),
+        modified_key: key,
+        physical_key: keyboard::key::Physical::Code(code),
+        location: keyboard::Location::Standard,
+        modifiers,
+        text: None,
+        repeat: false,
+    })
+}
+
 /// Builds a two-node graph, feeds it `events` (each with its cursor), and
 /// returns every message the widget published.
 fn run_events<Msg: 'static>(
@@ -1222,4 +1240,172 @@ fn second_finger_cancels_a_touch_node_drag() {
         vec!["end"],
         "second finger must cancel the drag via on_drag_end",
     );
+}
+
+// ---------------------------------------------------------------------------
+// Fit-to-view: `Home`/`f` keymap actions and the declarative `.focus()` prop.
+// Both resolve a `FocusTarget` from live layout and drive the camera through
+// `Camera2D::fit`; see `node_graph::camera` for the pure-math coverage.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn frame_all_keypress_emits_on_pan() {
+    // `Home` uses the same default `FocusOptions` as `.focus()` (a 300ms
+    // tween), so the press itself only starts the tween; the first
+    // `RedrawRequested` after it ticks the tween and commits through
+    // `on_pan`. The message count is deterministic (exactly one redraw was
+    // sent) even though the tick's exact camera value is wall-clock timed.
+    let graph: NodeGraph<'static, usize, usize, (), (Point, f32), Theme, Rec> =
+        NodeGraph::default()
+            .width(Length::Fixed(400.0))
+            .height(Length::Fixed(400.0))
+            .on_pan(|position, zoom| (position, zoom));
+
+    let msgs = run_events(
+        graph,
+        &[
+            (
+                named_key_press(
+                    keyboard::key::Named::Home,
+                    keyboard::key::Code::Home,
+                    keyboard::Modifiers::empty(),
+                ),
+                mouse::Cursor::Unavailable,
+            ),
+            (
+                iced::Event::Window(iced::window::Event::RedrawRequested(Instant::now())),
+                mouse::Cursor::Unavailable,
+            ),
+        ],
+    );
+    assert_eq!(
+        msgs.len(),
+        1,
+        "Home must start a tween that commits exactly one on_pan on the next redraw: {msgs:?}"
+    );
+}
+
+#[test]
+fn frame_selection_with_nothing_selected_is_a_noop() {
+    // Bare `f` with an empty selection resolves no AABB: no camera change,
+    // no `on_pan`, mirroring Blender's "View Selected" on an empty pick.
+    let graph: NodeGraph<'static, usize, usize, (), (Point, f32), Theme, Rec> =
+        NodeGraph::default()
+            .width(Length::Fixed(400.0))
+            .height(Length::Fixed(400.0))
+            .on_pan(|position, zoom| (position, zoom));
+
+    let msgs = run_events(
+        graph,
+        &[(
+            key_press('f', keyboard::key::Code::KeyF, keyboard::Modifiers::empty()),
+            mouse::Cursor::Unavailable,
+        )],
+    );
+    assert!(
+        msgs.is_empty(),
+        "frame-selection with nothing selected must be a no-op: {msgs:?}"
+    );
+}
+
+#[test]
+fn frame_all_without_on_pan_falls_through_unconsumed() {
+    // No `on_pan` handler: the widget cannot commit a fit, so `Home` must
+    // not be swallowed (mirrors Clone falling through without `on_clone`).
+    let graph: NodeGraph<'static, usize, usize, (), (), Theme, Rec> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0));
+
+    let msgs = run_events(
+        graph,
+        &[(
+            named_key_press(
+                keyboard::key::Named::Home,
+                keyboard::key::Code::Home,
+                keyboard::Modifiers::empty(),
+            ),
+            mouse::Cursor::Unavailable,
+        )],
+    );
+    assert!(
+        msgs.is_empty(),
+        "Home without on_pan must publish nothing: {msgs:?}"
+    );
+}
+
+#[test]
+fn focus_seq_dedups_and_new_seq_retriggers() {
+    // Deterministic jump path (`animation: None`): `.focus()` fits exactly
+    // once per new `seq`, no matter how many rebuilds arrive with the same
+    // value, and fits again the moment `seq` changes -- mirroring
+    // `view()`/`last_synced_view`. Rebuilds a fresh `NodeGraph` value per
+    // call while reusing one `Tree`, exactly like a real app re-running
+    // `view()` every frame over persistent widget state.
+    let jump_opts = FocusOptions {
+        animation: None,
+        ..FocusOptions::default()
+    };
+    let build = |seq: u64| -> NodeGraph<'static, usize, usize, (), (Point, f32), Theme, Rec> {
+        let mut graph = NodeGraph::default()
+            .width(Length::Fixed(400.0))
+            .height(Length::Fixed(400.0))
+            .on_pan(|position, zoom| (position, zoom))
+            .focus(seq, FocusTarget::All, jump_opts.clone());
+        graph.push_node(node(
+            0_usize,
+            Point::new(10.0, 10.0),
+            Element::from(ContentProbe),
+        ));
+        graph.push_node(node(
+            1_usize,
+            Point::new(120.0, 10.0),
+            Element::from(ContentProbe),
+        ));
+        graph
+    };
+
+    let mut graph = build(1);
+    let mut tree = Tree::new(&graph as &dyn Widget<(Point, f32), Theme, Rec>);
+    let renderer = Rec::new(Rc::new(RefCell::new(Recorded::default())));
+    let layout_node = graph.layout(
+        &mut tree,
+        &renderer,
+        &layout::Limits::new(Size::ZERO, Size::new(1024.0, 768.0)),
+    );
+    let layout = Layout::new(&layout_node);
+    let viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
+    let mut clipboard = clipboard::Null;
+    let no_op_event = iced::Event::Mouse(mouse::Event::CursorMoved {
+        position: Point::ORIGIN,
+    });
+    let mut msgs: Vec<(Point, f32)> = Vec::new();
+
+    let mut send = |graph: &mut NodeGraph<'static, usize, usize, (), (Point, f32), Theme, Rec>,
+                    tree: &mut Tree,
+                    msgs: &mut Vec<(Point, f32)>| {
+        let mut shell = iced_wgpu::core::Shell::new(msgs);
+        graph.update(
+            tree,
+            &no_op_event,
+            layout,
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+    };
+
+    send(&mut graph, &mut tree, &mut msgs);
+    assert_eq!(msgs.len(), 1, "seq 1 must fit once: {msgs:?}");
+
+    // Same seq again, rebuilt (as a real app does every frame): deduped.
+    graph = build(1);
+    send(&mut graph, &mut tree, &mut msgs);
+    assert_eq!(msgs.len(), 1, "repeating seq 1 must dedup: {msgs:?}");
+
+    // New seq: fits again.
+    graph = build(2);
+    send(&mut graph, &mut tree, &mut msgs);
+    assert_eq!(msgs.len(), 2, "seq 2 must re-trigger the fit: {msgs:?}");
 }

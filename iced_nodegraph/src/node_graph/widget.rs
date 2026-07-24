@@ -26,7 +26,7 @@ use web_time::Instant;
 use super::{
     Counts, DragInfo, GraphInfo, NodeGraph, OpTiming, RenderContext,
     euclid::{IntoIced, WorldVector},
-    state::{Dragging, NodeGraphState, z_render_indices},
+    state::{CameraTween, Dragging, NodeGraphState, z_render_indices},
 };
 use super::{EdgeStyleFn, NodeStyleFn, PinStyleFn};
 use crate::{

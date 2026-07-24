@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Fit-to-view: `Home`/`f` keymap actions frame all nodes / the current
+  selection, and the declarative `NodeGraph::focus(seq, target, opts)` prop
+  frames a `FocusTarget` (`All`/`Selection`/`Node(s)`/`Edge(s)`/an explicit
+  `Rect`) programmatically, nonce-deduped like `view()`. The widget resolves
+  ids to a world AABB from live layout - the app never computes node bounds.
+  `Camera2D::fit` is the pure, unit-tested core; `FocusOptions` controls
+  padding, zoom bounds, and an optional `FocusAnimation` tween (default
+  300ms `EaseInOutCubic`, center-based interpolation with geometric zoom,
+  `None` jumps immediately). A running tween aborts on user pan/zoom input,
+  suppresses the routine `view()` sync while active, and yields to an
+  explicit app `view()` override.
+
 ## [0.4.2] - 2026-07-23
 
 ### Fixed
