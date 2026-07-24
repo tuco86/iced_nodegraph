@@ -33,7 +33,7 @@ use crate::drawable::Drawable;
 use crate::tiling::Tiling;
 
 /// A position-free geometry recipe: an expression tree of primitives
-/// (`RoundedBox`, `Circle`, the open strokes `Line`/`Bezier`/`Arc`, the
+/// (`RoundedBox`, `Circle`, the open strokes `Line`/`Bezier`/`Arc`/`Path`, the
 /// degenerate `Point`, and `Tiling`) and operations (`Translate`, and the
 /// booleans `Difference`, `Union`, `Intersection`), built in a LOCAL frame.
 /// Every operand of an operation variant is a [`Shape`] (never a bare
@@ -66,6 +66,14 @@ pub(crate) enum ShapeExpr {
         start: f32,
         sweep: f32,
     },
+    /// Open multi-segment stroke: `start`, then a chain of [`PathSeg`]s each
+    /// assumed to end exactly where the next begins - one Drawable, one
+    /// stroke styling, one cumulative arc length (`plan/routing-pins.md`
+    /// Section 5). Evaluated through [`crate::curve::ShapeBuilder`]'s
+    /// coordinate API (`line_to`/`arc_to`/`bezier_to`) so arc length runs
+    /// continuously across every segment, exactly like the closed contours
+    /// built by `Curve::rounded_rect` et al.
+    Path { start: [f32; 2], segs: Vec<PathSeg> },
     /// A single oriented point (a degenerate zero-length segment) at the local
     /// origin; `heading` orients its distance field. Place it with `translate`.
     Point { heading: f32 },
@@ -81,6 +89,33 @@ pub(crate) enum ShapeExpr {
     Union(Box<Shape>, Box<Shape>),
     /// `0 & 1`: the intersection of two shapes (`a & b`).
     Intersection(Box<Shape>, Box<Shape>),
+}
+
+/// One edge of a [`ShapeExpr::Path`] / [`Shape::path`] multi-segment stroke:
+/// a line, a circular arc, or a cubic bezier, each assumed to end exactly
+/// where the next segment (or the path's own `start`) begins. Fields mirror
+/// [`crate::curve::ShapeBuilder`]'s coordinate API
+/// (`line_to`/`arc_to`/`bezier_to`) so evaluation is a direct fold over the
+/// builder: the caller supplies absolute world-space coordinates, never a
+/// turtle heading.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PathSeg {
+    /// Straight segment from the current point to `to`.
+    Line { to: [f32; 2] },
+    /// Circular arc of `radius` about `center`, `sweep` radians clockwise
+    /// from the current point (which must already lie on the circle).
+    Arc {
+        center: [f32; 2],
+        radius: f32,
+        sweep: f32,
+    },
+    /// Cubic bezier from the current point to `to`, via control points
+    /// `c1`/`c2` (materialised as an arc-spline, like [`Shape::bezier`]).
+    Bezier {
+        c1: [f32; 2],
+        c2: [f32; 2],
+        to: [f32; 2],
+    },
 }
 
 /// A position-free geometry definition: the single input to the renderer. A
@@ -204,6 +239,56 @@ impl Shape {
             },
         }
     }
+    /// Open multi-segment stroke starting at `start`: a chain of [`PathSeg`]s
+    /// (line/arc/bezier), each assumed to end exactly where the next begins.
+    /// Evaluated as ONE Drawable with a single stroke styling and a single
+    /// cumulative arc length - the routing-anchor "cable" primitive
+    /// (`plan/routing-pins.md` Section 5).
+    pub fn path(start: impl Into<[f32; 2]>, segments: impl IntoIterator<Item = PathSeg>) -> Self {
+        let start = start.into();
+        let segs: Vec<PathSeg> = segments.into_iter().collect();
+        let mut h = Fnv::new();
+        h.write_u32(OP_PATH);
+        h.write_f32(start[0]);
+        h.write_f32(start[1]);
+        // Segment count guards against ambiguity between differently-shaped
+        // segment sequences: without it two recipes could in principle share
+        // an op/operand byte stream under a different split.
+        h.write_u32(segs.len() as u32);
+        for seg in &segs {
+            match *seg {
+                PathSeg::Line { to } => {
+                    h.write_u32(OP_LINE);
+                    h.write_f32(to[0]);
+                    h.write_f32(to[1]);
+                }
+                PathSeg::Arc {
+                    center,
+                    radius,
+                    sweep,
+                } => {
+                    h.write_u32(OP_ARC);
+                    h.write_f32(center[0]);
+                    h.write_f32(center[1]);
+                    h.write_f32(radius);
+                    h.write_f32(sweep);
+                }
+                PathSeg::Bezier { c1, c2, to } => {
+                    h.write_u32(OP_BEZIER);
+                    h.write_f32(c1[0]);
+                    h.write_f32(c1[1]);
+                    h.write_f32(c2[0]);
+                    h.write_f32(c2[1]);
+                    h.write_f32(to[0]);
+                    h.write_f32(to[1]);
+                }
+            }
+        }
+        Shape {
+            hash: h.finish(),
+            expr: ShapeExpr::Path { start, segs },
+        }
+    }
     /// A single oriented point at the local origin (place it with `translate`);
     /// `heading` orients its distance field.
     pub fn point(heading: f32) -> Self {
@@ -301,6 +386,7 @@ const OP_INTERSECTION: u32 = 8;
 const OP_TILING: u32 = 9;
 const OP_ARC: u32 = 10;
 const OP_POINT: u32 = 11;
+const OP_PATH: u32 = 12;
 
 /// Canonical bit pattern of an `f32`: `-0.0` collapses to `+0.0` and every NaN
 /// to one quiet NaN, so semantically-equal operands hash equal across platforms.
@@ -380,6 +466,25 @@ impl Shape {
                 start,
                 sweep,
             } => Curve::arc_segment(*center, *radius, *start, *sweep),
+            ShapeExpr::Path { start, segs } => {
+                // Fold through ShapeBuilder's coordinate API so cumulative arc
+                // length runs continuously across every segment - the same
+                // machinery `Curve::rounded_rect` et al. use for closed
+                // contours, here left open (`.end()`, never `.close()`).
+                let mut builder = Curve::shape(*start, 0.0);
+                for seg in segs {
+                    builder = match *seg {
+                        PathSeg::Line { to } => builder.line_to(to),
+                        PathSeg::Arc {
+                            center,
+                            radius,
+                            sweep,
+                        } => builder.arc_to(center, radius, sweep),
+                        PathSeg::Bezier { c1, c2, to } => builder.bezier_to(c1, c2, to),
+                    };
+                }
+                builder.end()
+            }
             ShapeExpr::Point { heading } => Curve::point([0.0, 0.0], *heading),
             ShapeExpr::Tiling(t) => {
                 let (tt, params) = t.to_gpu();
@@ -720,5 +825,113 @@ mod tests {
             );
             assert!((ps.heading - ws.heading).abs() < 1e-3, "heading differs");
         }
+    }
+
+    #[test]
+    fn path_line_then_arc_is_one_open_stroke() {
+        // Line east then a quarter-circle arc continuing clockwise - the
+        // "straight leg into a corner" shape from routing-pins.md Section 4.
+        let path = Shape::path(
+            [0.0, 0.0],
+            [
+                PathSeg::Line { to: [40.0, 0.0] },
+                PathSeg::Arc {
+                    center: [40.0, 10.0],
+                    radius: 10.0,
+                    sweep: FRAC_PI_2,
+                },
+            ],
+        )
+        .evaluate();
+
+        assert!(
+            !path.is_closed(),
+            "an open path must never be a fillable contour"
+        );
+        assert_eq!(
+            path.segment_count(),
+            2,
+            "one GPU segment per PathSeg, single Drawable"
+        );
+        // Arc length is continuous across segments: line (40) + quarter circle
+        // (radius * PI/2), reusing ShapeBuilder's running accumulator.
+        let expected = 40.0 + 10.0 * FRAC_PI_2;
+        assert!(
+            (path.total_arc_length() - expected).abs() < 1e-3,
+            "arc length not continuous: {} vs {expected}",
+            path.total_arc_length()
+        );
+    }
+
+    #[test]
+    fn path_hash_equal_for_identical_recipe_and_differs_otherwise() {
+        let recipe = || {
+            Shape::path(
+                [0.0, 0.0],
+                [
+                    PathSeg::Line { to: [10.0, 0.0] },
+                    PathSeg::Arc {
+                        center: [10.0, 10.0],
+                        radius: 10.0,
+                        sweep: FRAC_PI_2,
+                    },
+                ],
+            )
+        };
+        assert_eq!(
+            recipe().hash(),
+            recipe().hash(),
+            "same recipe, independently built, must hash equal"
+        );
+
+        let different_start = Shape::path(
+            [1.0, 0.0],
+            [
+                PathSeg::Line { to: [10.0, 0.0] },
+                PathSeg::Arc {
+                    center: [10.0, 10.0],
+                    radius: 10.0,
+                    sweep: FRAC_PI_2,
+                },
+            ],
+        );
+        assert_ne!(recipe().hash(), different_start.hash());
+
+        let different_sweep = Shape::path(
+            [0.0, 0.0],
+            [
+                PathSeg::Line { to: [10.0, 0.0] },
+                PathSeg::Arc {
+                    center: [10.0, 10.0],
+                    radius: 10.0,
+                    sweep: FRAC_PI_2 + 0.1,
+                },
+            ],
+        );
+        assert_ne!(recipe().hash(), different_sweep.hash());
+
+        // Same params, different segment kind must not collide: the op code is
+        // folded into the hash per segment, not just the operand floats.
+        let as_line = Shape::path([0.0, 0.0], [PathSeg::Line { to: [10.0, 0.0] }]);
+        let as_bezier = Shape::path(
+            [0.0, 0.0],
+            [PathSeg::Bezier {
+                c1: [10.0, 0.0],
+                c2: [10.0, 0.0],
+                to: [10.0, 0.0],
+            }],
+        );
+        assert_ne!(as_line.hash(), as_bezier.hash());
+
+        // A Path is its own op: never collides with an equivalent standalone
+        // Line shape, even though the endpoints match.
+        assert_ne!(as_line.hash(), Shape::line([0.0, 0.0], [10.0, 0.0]).hash());
+    }
+
+    #[test]
+    fn path_neg_zero_and_zero_hash_equal() {
+        let a = Shape::path([0.0, 0.0], [PathSeg::Line { to: [0.0, 0.0] }]);
+        let b = Shape::path([-0.0, -0.0], [PathSeg::Line { to: [-0.0, -0.0] }]);
+        assert_eq!(a.hash(), b.hash());
     }
 }
