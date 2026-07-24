@@ -66,6 +66,6 @@ pub use drawable::Drawable;
 pub use pattern::Pattern;
 pub use pipeline::types::SdfStats;
 pub use primitive::{SdfPrimitive, sdf_stats};
-pub use shape::{Shape, ShapeCache};
+pub use shape::{PathSeg, Shape, ShapeCache};
 pub use style::{Stop, Style, Transfer};
 pub use tiling::Tiling;

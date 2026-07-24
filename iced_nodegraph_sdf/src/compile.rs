@@ -172,6 +172,9 @@ fn compile_style(style: &Style) -> GpuStyle {
 mod tests {
     use super::*;
     use crate::curve::Curve;
+    use crate::pattern::Pattern;
+    use crate::shape::{PathSeg, Shape};
+    use std::f32::consts::FRAC_PI_2;
 
     /// A command that REFERENCES a shared segment range (GPU instancing) is
     /// byte-identical to the full compile's command - so a second instance can
@@ -191,5 +194,37 @@ mod tests {
         assert_eq!(full.translate.0, refd.translate.0);
         assert_eq!(full.flags, refd.flags);
         assert_eq!(full.entry_type, refd.entry_type);
+    }
+
+    /// `Shape::path` needs no dedicated wiring here: this module is generic
+    /// over an already-evaluated `Drawable`, so the routing-anchor cable
+    /// (Line then Arc) compiles through the same `compile_local_at` as any
+    /// other non-cacheable open stroke (an edge) - one command, one segment
+    /// range, unclosed.
+    #[test]
+    fn path_compiles_as_single_open_stroke_entry() {
+        let local = Shape::path(
+            [0.0, 0.0],
+            [
+                PathSeg::Line { to: [40.0, 0.0] },
+                PathSeg::Arc {
+                    center: [40.0, 10.0],
+                    radius: 10.0,
+                    sweep: FRAC_PI_2,
+                },
+            ],
+        )
+        .evaluate();
+        let style = Style::stroke(iced::Color::WHITE, Pattern::solid(2.0));
+
+        let mut segs = Vec::new();
+        let (entry, _) = compile_local_at(&local, &style, 0, [0.0, 0.0], 0, &mut segs);
+
+        assert_eq!(
+            entry.segment_count, 2,
+            "one drawable, one command, one GPU segment per PathSeg"
+        );
+        assert_eq!(segs.len(), 2);
+        assert_eq!(entry.flags, 0, "an open path is never a closed contour");
     }
 }
