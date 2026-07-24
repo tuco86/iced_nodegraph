@@ -10,6 +10,11 @@ on:
 # pre-push checklist (see CLAUDE.md).
 env:
   CARGO_TERM_COLOR: always
+  # Drop debuginfo in CI: the workspace dev profile is opt-level=1, and
+  # debuginfo is the single biggest contributor to target/ size. Cutting it
+  # keeps the cached target/ small so the ~14 GB ubuntu-latest disk does not
+  # fill (a full disk crashes the runner itself: "No space left on device").
+  CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:
   test:
@@ -18,6 +23,16 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # ubuntu-latest ships ~25 GB of preinstalled SDKs (Android, .NET, GHC,
+      # CodeQL) we never use. Reclaim it up front so the Rust build + restored
+      # cargo cache cannot exhaust the disk mid-run.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune --all --force || true
+          df -h /
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
