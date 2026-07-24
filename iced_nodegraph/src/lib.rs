@@ -258,7 +258,8 @@ pub use connection::{default_can_connect, direction_ok, input_not_occupied, not_
 pub use content::{EdgeRadii, node_footer, node_header};
 pub use ids::{EdgeId, NodeId, PinId};
 pub use node_graph::{
-    Counts, DragInfo, Edge, GraphInfo, Node, NodeGraph, OpTiming, PinRef,
+    Counts, DragInfo, Easing, Edge, FocusAnimation, FocusOptions, FocusTarget, GraphInfo, Node,
+    NodeGraph, OpTiming, PinRef,
     camera::Camera2D,
     edge,
     input::{ComboKey, KeyAction, KeyCombo, Keymap},

@@ -156,12 +156,13 @@
 //!
 //! Run tests with: `cargo test --lib camera`
 
+use super::FocusOptions;
 use super::euclid::{
     IntoEuclid, IntoIced, Screen, ScreenPoint, ScreenRect, ScreenToWorld, ScreenVector, World,
     WorldPoint, WorldRect, WorldSize, WorldVector,
 };
 use euclid::{Scale, Transform2D};
-use iced::Rectangle;
+use iced::{Padding, Rectangle, Size};
 use iced_wgpu::core::{mouse, renderer};
 
 #[derive(Debug, Clone, Copy)]
@@ -384,6 +385,82 @@ impl Camera2D {
             ),
         );
         world_viewport.into_iced()
+    }
+
+    /// Computes the target `(position, zoom)` that fits `world_aabb` inside
+    /// `viewport` (layout size, screen px), honoring per-side padding and
+    /// zoom bounds from `opts`. Pure and side-effect free -- the single
+    /// source of the fit math; both [`NodeGraph::focus`](super::NodeGraph::focus)
+    /// and the keymap frame actions resolve a target to a [`WorldRect`] and
+    /// call this, and so do its unit tests.
+    ///
+    /// `viewport_origin` falls out of the derivation entirely (the returned
+    /// `position` is world-relative, independent of where the widget sits
+    /// on screen); the caller is responsible for turning layout-absolute
+    /// node bounds into true world coordinates before building `world_aabb`.
+    pub fn fit(world_aabb: WorldRect, viewport: Size, opts: &FocusOptions) -> (WorldPoint, f32) {
+        let bw = world_aabb.size.width;
+        let bh = world_aabb.size.height;
+
+        // Screen-per-world scale that fits both dimensions; a zero-size
+        // dimension contributes no constraint (ignored) instead of dividing
+        // by zero. Both zero (a degenerate point AABB) falls through to the
+        // zoom clamp below, landing on `max_zoom` (or `ZOOM_MAX`).
+        let aw = viewport.width - opts.padding.left - opts.padding.right;
+        let ah = viewport.height - opts.padding.top - opts.padding.bottom;
+        let zoom_raw = match (bw > 0.0, bh > 0.0) {
+            (true, true) => (aw / bw).min(ah / bh),
+            (true, false) => aw / bw,
+            (false, true) => ah / bh,
+            (false, false) => f32::INFINITY,
+        };
+
+        let min_zoom = opts
+            .min_zoom
+            .map_or(Self::ZOOM_MIN, |m| m.max(Self::ZOOM_MIN));
+        let max_zoom = opts
+            .max_zoom
+            .map_or(Self::ZOOM_MAX, |m| m.min(Self::ZOOM_MAX));
+        // `.max().min()` rather than `.clamp()`: a misconfigured opts pair
+        // (min_zoom > max_zoom) must not panic, unlike the constant-bound
+        // clamp in `clamp_zoom`.
+        let zoom = zoom_raw.max(min_zoom).min(max_zoom);
+
+        let position = Self::position_for_center(world_aabb.center(), zoom, viewport, opts.padding);
+        (position, zoom)
+    }
+
+    /// The camera `position` that centers `center` inside the padded
+    /// `viewport` area at `zoom`. Rendering: `screen = (world + position) *
+    /// zoom + viewport_origin`, so `position = (screen - viewport_origin) /
+    /// zoom - world`; at the padded screen-center this becomes the formula
+    /// below. Shared by [`fit`](Self::fit) (which derives `zoom` too) and
+    /// the focus tween, which drives `center`/`zoom` frame by frame.
+    pub(crate) fn position_for_center(
+        center: WorldPoint,
+        zoom: f32,
+        viewport: Size,
+        padding: Padding,
+    ) -> WorldPoint {
+        WorldPoint::new(
+            (viewport.width + padding.left - padding.right) / 2.0 / zoom - center.x,
+            (viewport.height + padding.top - padding.bottom) / 2.0 / zoom - center.y,
+        )
+    }
+
+    /// The world point currently centered in the padded `viewport` area at
+    /// `zoom`, given a camera `position`. The algebraic inverse of
+    /// [`position_for_center`](Self::position_for_center) -- and, since that
+    /// formula has the self-inverse form `f(x) = k - x`, literally the same
+    /// computation. Used to seed a focus tween's start center from whatever
+    /// the camera currently shows.
+    pub(crate) fn center_for_position(
+        position: WorldPoint,
+        zoom: f32,
+        viewport: Size,
+        padding: Padding,
+    ) -> WorldPoint {
+        Self::position_for_center(position, zoom, viewport, padding)
     }
 }
 
@@ -939,6 +1016,159 @@ mod tests {
         assert!(approx_eq(layout.y, 105.0), "y: got {}", layout.y);
         assert!(approx_eq(layout.width, 400.0), "w: got {}", layout.width);
         assert!(approx_eq(layout.height, 300.0), "h: got {}", layout.height);
+    }
+
+    // === `Camera2D::fit` ===
+
+    #[test]
+    fn fit_centers_aabb_with_no_padding() {
+        // AABB world (0,25)..(100,75), center (50,50). Viewport 400x400, no
+        // padding: zoom is the tighter of the two axis fits (400/100=4 vs
+        // 400/50=8), and the AABB center lands exactly on the origin since
+        // the viewport's unpadded center is also the origin at that zoom.
+        let world_aabb = WorldRect::new(WorldPoint::new(0.0, 25.0), WorldSize::new(100.0, 50.0));
+        let opts = FocusOptions {
+            padding: Padding::ZERO,
+            min_zoom: None,
+            max_zoom: None,
+            animation: None,
+        };
+        let (position, zoom) = Camera2D::fit(world_aabb, Size::new(400.0, 400.0), &opts);
+        assert!(approx_eq(zoom, 4.0), "zoom: got {zoom}");
+        assert!(point_approx_eq(position, WorldPoint::new(0.0, 0.0)));
+    }
+
+    #[test]
+    fn fit_honors_per_side_padding() {
+        // AABB world (-50,-50)..(50,50), center (0,0). Viewport 400x300 with
+        // asymmetric padding narrows the usable rect to 360x200, so the tighter
+        // axis (height, 200/100=2.0 vs width 360/100=3.6) sets zoom, and the
+        // AABB center lands on the *padded* rect's screen center, not the
+        // viewport's.
+        let world_aabb =
+            WorldRect::new(WorldPoint::new(-50.0, -50.0), WorldSize::new(100.0, 100.0));
+        let opts = FocusOptions {
+            padding: Padding {
+                left: 10.0,
+                right: 30.0,
+                top: 0.0,
+                bottom: 100.0,
+            },
+            min_zoom: None,
+            max_zoom: None,
+            animation: None,
+        };
+        let (position, zoom) = Camera2D::fit(world_aabb, Size::new(400.0, 300.0), &opts);
+        assert!(approx_eq(zoom, 2.0), "zoom: got {zoom}");
+        assert!(point_approx_eq(position, WorldPoint::new(95.0, 50.0)));
+    }
+
+    #[test]
+    fn fit_clamps_zoom_to_camera_minimum() {
+        // A huge AABB relative to the viewport drives the raw fit zoom far
+        // below ZOOM_MIN; the result must still clamp to the camera's own
+        // invariant, not divide the viewport into an unusable sliver.
+        let world_aabb = WorldRect::new(
+            WorldPoint::new(-50_000.0, -50_000.0),
+            WorldSize::new(100_000.0, 100_000.0),
+        );
+        let opts = FocusOptions {
+            padding: Padding::ZERO,
+            min_zoom: None,
+            max_zoom: None,
+            animation: None,
+        };
+        let (position, zoom) = Camera2D::fit(world_aabb, Size::new(400.0, 400.0), &opts);
+        assert_eq!(zoom, Camera2D::ZOOM_MIN);
+        assert!(point_approx_eq(position, WorldPoint::new(2000.0, 2000.0)));
+    }
+
+    #[test]
+    fn fit_clamps_zoom_to_camera_maximum_without_a_max_zoom_option() {
+        // A tiny AABB with no `max_zoom` override drives the raw fit zoom far
+        // above ZOOM_MAX; the camera's own ceiling still applies.
+        let world_aabb = WorldRect::new(
+            WorldPoint::new(-0.0005, -0.0005),
+            WorldSize::new(0.001, 0.001),
+        );
+        let opts = FocusOptions {
+            padding: Padding::ZERO,
+            min_zoom: None,
+            max_zoom: None,
+            animation: None,
+        };
+        let (position, zoom) = Camera2D::fit(world_aabb, Size::new(400.0, 400.0), &opts);
+        assert_eq!(zoom, Camera2D::ZOOM_MAX);
+        assert!(point_approx_eq(position, WorldPoint::new(20.0, 20.0)));
+    }
+
+    #[test]
+    fn fit_default_max_zoom_caps_a_single_small_node() {
+        // The documented default (`max_zoom: Some(1.0)`) answers "what
+        // happens when focusing one small node": it fits at native size
+        // instead of zooming in arbitrarily far, even though the raw
+        // per-axis fit (320/40=8, 320/20=16) would zoom in much further.
+        let world_aabb = WorldRect::new(WorldPoint::new(10.0, 5.0), WorldSize::new(40.0, 20.0));
+        let opts = FocusOptions::default();
+        let (position, zoom) = Camera2D::fit(world_aabb, Size::new(400.0, 400.0), &opts);
+        assert_eq!(zoom, 1.0, "raw fit (8x) must be capped to max_zoom");
+        assert!(point_approx_eq(position, WorldPoint::new(170.0, 185.0)));
+    }
+
+    #[test]
+    fn fit_degenerate_point_aabb_centers_at_max_zoom() {
+        // A zero-size AABB (a single point) cannot derive a scale from
+        // either axis; it must still center on that point, landing on
+        // whatever the max zoom bound is instead of dividing by zero.
+        let world_aabb = WorldRect::new(WorldPoint::new(5.0, 5.0), WorldSize::new(0.0, 0.0));
+        let opts = FocusOptions {
+            padding: Padding::ZERO,
+            min_zoom: None,
+            max_zoom: Some(2.0),
+            animation: None,
+        };
+        let (position, zoom) = Camera2D::fit(world_aabb, Size::new(400.0, 400.0), &opts);
+        assert_eq!(zoom, 2.0);
+        assert!(point_approx_eq(position, WorldPoint::new(95.0, 95.0)));
+    }
+
+    #[test]
+    fn fit_position_is_independent_of_viewport_origin() {
+        // `fit` never takes `viewport_origin` -- the returned `position` is
+        // world-relative. Prove that composing it with a camera at several
+        // different origins always renders the AABB center at the same
+        // *offset from that origin* (the padded viewport's screen center),
+        // which is the property the widget's fit path (subtracting
+        // `viewport_origin` before calling `fit`) relies on.
+        let world_aabb = WorldRect::new(WorldPoint::new(-10.0, 15.0), WorldSize::new(60.0, 40.0));
+        let viewport = Size::new(500.0, 350.0);
+        let opts = FocusOptions {
+            padding: Padding::new(20.0),
+            min_zoom: None,
+            max_zoom: None,
+            animation: None,
+        };
+        let (position, zoom) = Camera2D::fit(world_aabb, viewport, &opts);
+        // Uniform padding: the padded rect's screen center coincides with
+        // the unpadded viewport's center.
+        let expected_offset = ScreenPoint::new(viewport.width / 2.0, viewport.height / 2.0);
+
+        for origin in [
+            ScreenVector::new(0.0, 0.0),
+            ScreenVector::new(50.0, 100.0),
+            ScreenVector::new(-20.0, 30.0),
+        ] {
+            let camera =
+                Camera2D::with_zoom_and_position(zoom, position).with_viewport_origin(origin);
+            let screen = camera
+                .world_to_screen()
+                .transform_point(world_aabb.center());
+            assert!(
+                approx_eq(screen.x, origin.x + expected_offset.x)
+                    && approx_eq(screen.y, origin.y + expected_offset.y),
+                "origin {origin:?}: got {screen:?}, want offset {expected_offset:?} from origin"
+            );
+        }
     }
 }
 

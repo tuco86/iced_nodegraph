@@ -20,6 +20,9 @@ pub use crate::{EdgeStatus, NodeStatus, PinDirection, PinEnd, PinInfo, PinSide, 
 // Input rebinding: the keymap and its combo vocabulary.
 pub use crate::{ComboKey, KeyAction, KeyCombo, Keymap};
 
+// Programmatic camera focus: the `.focus()` target/options vocabulary.
+pub use crate::{Easing, FocusAnimation, FocusOptions, FocusTarget};
+
 // Composable `can_connect` predicates (compose `default_can_connect` to keep the
 // built-in rules when overriding validation).
 pub use crate::connection::{default_can_connect, direction_ok, input_not_occupied, not_same_node};
