@@ -50,6 +50,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`Shape::path`**: one open multi-segment stroke as a single drawable, built
+  from a start point plus `PathSeg::{Line, Arc, Bezier}` in absolute
+  coordinates. Arc length runs continuously across the whole path, so a dash
+  or flow pattern phases once over the entire stroke instead of restarting per
+  segment - which is what a routed edge needs to read as one cable.
+
+  `PathSeg::Arc` carries no start angle: the running cursor supplies it, so an
+  explicit one could only ever disagree. Internally this restores the absolute
+  moves (`line_to`/`arc_to`/`bezier_to`) and the open finalizer (`end`) to the
+  crate-private contour builder, which until now emitted closed contours only;
+  a path is therefore never a fillable shape.
 - **Resizable nodes.** `Node::resizable(true)` gives a node a bottom-right
   grip; dragging it reports the size its content should have through
   `NodeGraph::on_resize(|node_id, size| ...)`. Both halves are required - the

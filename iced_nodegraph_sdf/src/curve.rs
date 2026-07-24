@@ -21,6 +21,7 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 
 use glam::Vec2;
 
+use crate::biarc::{ArcPiece, cubic_to_arcs};
 use crate::drawable::{Drawable, DrawableType, Segment};
 
 /// Arc-spline tolerance (world units) for approximating cubic beziers as arcs in
@@ -157,6 +158,14 @@ enum ShapeSegment {
         start_angle: f32,
         sweep: f32,
     },
+    /// Cubic bezier, arc-splined on the CPU when the contour is built (there
+    /// is no GPU bezier: the one GPU primitive is the circular arc).
+    CubicBezier {
+        p0: Vec2,
+        p1: Vec2,
+        p2: Vec2,
+        p3: Vec2,
+    },
 }
 
 impl ShapeBuilder {
@@ -207,6 +216,73 @@ impl ShapeBuilder {
         self
     }
 
+    // --- Absolute API ---
+    //
+    // The turtle above walks by length and sweep; these three place segments at
+    // explicit coordinates instead, for a path whose points are already known
+    // (`Shape::path`). Both share one cursor and heading, so the two styles can
+    // be mixed and the running arc length stays continuous either way.
+
+    /// Straight segment from the cursor to `end`, which becomes the new cursor.
+    pub fn line_to(mut self, end: impl Into<[f32; 2]>) -> Self {
+        let end = Vec2::from(end.into());
+        let dir = end - self.cursor;
+        if dir.length_squared() > 1e-10 {
+            self.heading = heading_from_dir(dir);
+        }
+        self.segments.push(ShapeSegment::Line {
+            a: self.cursor,
+            b: end,
+        });
+        self.cursor = end;
+        self
+    }
+
+    /// Arc around `center` with explicit `radius` and `sweep` radians. The
+    /// start angle comes from the running cursor, so a caller never restates
+    /// where the arc begins.
+    pub fn arc_to(mut self, center: impl Into<[f32; 2]>, radius: f32, sweep: f32) -> Self {
+        let center = Vec2::from(center.into());
+        let start_offset = self.cursor - center;
+        let start_angle = start_offset.y.atan2(start_offset.x);
+
+        self.segments.push(ShapeSegment::Arc {
+            center,
+            radius,
+            start_angle,
+            sweep,
+        });
+
+        let end_angle = start_angle + sweep;
+        self.cursor = center + Vec2::new(end_angle.cos(), end_angle.sin()) * radius;
+        self.heading += sweep;
+        self
+    }
+
+    /// Cubic bezier from the cursor to `end` via the two control points.
+    pub fn bezier_to(
+        mut self,
+        cp1: impl Into<[f32; 2]>,
+        cp2: impl Into<[f32; 2]>,
+        end: impl Into<[f32; 2]>,
+    ) -> Self {
+        let cp1 = Vec2::from(cp1.into());
+        let cp2 = Vec2::from(cp2.into());
+        let end = Vec2::from(end.into());
+        self.segments.push(ShapeSegment::CubicBezier {
+            p0: self.cursor,
+            p1: cp1,
+            p2: cp2,
+            p3: end,
+        });
+        let tangent = end - cp2;
+        if tangent.length_squared() > 1e-10 {
+            self.heading = heading_from_dir(tangent);
+        }
+        self.cursor = end;
+        self
+    }
+
     // --- Finalize ---
 
     /// Close the contour. Fillable.
@@ -218,7 +294,13 @@ impl ShapeBuilder {
                 b: self.start,
             });
         }
-        self.build_drawable()
+        self.build_drawable(true)
+    }
+
+    /// End the contour open: a stroke, with no closing segment back to the
+    /// start and no interior for a fill to claim.
+    pub fn end(self) -> Drawable {
+        self.build_drawable(false)
     }
 
     // --- Internal ---
@@ -239,9 +321,10 @@ impl ShapeBuilder {
     }
 
     /// Lowers the authored segments to the one GPU primitive: lines pass
-    /// through and arcs are split into minor sub-arcs. Every contour a
-    /// [`ShapeBuilder`] produces is closed, so the result is always fillable.
-    fn build_drawable(self) -> Drawable {
+    /// through, arcs are split into minor sub-arcs, and cubics are arc-splined
+    /// on the CPU. `closed` marks the contour fillable; an open one is a stroke
+    /// with no interior.
+    fn build_drawable(self, closed: bool) -> Drawable {
         let mut gpu_segments: Vec<Segment> = Vec::with_capacity(self.segments.len());
         let mut acc = 0.0f32;
 
@@ -249,7 +332,7 @@ impl ShapeBuilder {
             match seg {
                 ShapeSegment::Line { a, b } => {
                     let len = a.distance(*b);
-                    gpu_segments.push(Segment::line(*a, *b, true, acc, acc + len));
+                    gpu_segments.push(Segment::line(*a, *b, closed, acc, acc + len));
                     acc += len;
                 }
                 ShapeSegment::Arc {
@@ -264,9 +347,42 @@ impl ShapeBuilder {
                         *radius,
                         *start_angle,
                         *sweep,
-                        true,
+                        closed,
                         &mut acc,
                     );
+                }
+                ShapeSegment::CubicBezier { p0, p1, p2, p3 } => {
+                    for piece in cubic_to_arcs(*p0, *p1, *p2, *p3, CUBIC_ARC_TOL) {
+                        match piece {
+                            ArcPiece::Line { start, end, length } => {
+                                gpu_segments.push(Segment::line(
+                                    start,
+                                    end,
+                                    closed,
+                                    acc,
+                                    acc + length,
+                                ));
+                                acc += length;
+                            }
+                            ArcPiece::Arc {
+                                center,
+                                radius,
+                                start_angle,
+                                sweep,
+                                ..
+                            } => {
+                                Segment::push_arc(
+                                    &mut gpu_segments,
+                                    center,
+                                    radius,
+                                    start_angle,
+                                    sweep,
+                                    closed,
+                                    &mut acc,
+                                );
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -289,11 +405,17 @@ impl ShapeBuilder {
             segments: gpu_segments,
             total_arc_length: total_length,
             bounds: [min.x, min.y, max.x, max.y],
-            is_closed: true,
+            is_closed: closed,
             tiling_type: None,
             tiling_params: [0.0; 4],
         }
     }
+}
+
+/// Heading for a direction vector, in the builder's convention (0 = UP,
+/// positive = clockwise). Inverse of `heading_vec`.
+fn heading_from_dir(dir: Vec2) -> f32 {
+    dir.x.atan2(-dir.y)
 }
 
 /// Compute signed area of a polygon. Negative = CW in screen Y-down.
@@ -314,6 +436,9 @@ fn signed_area(segments: &[ShapeSegment]) -> f32 {
                 let b = *center + Vec2::new(end_angle.cos(), end_angle.sin()) * *radius;
                 (a.x, a.y, b.x, b.y)
             }
+            // The chord is the polygon edge a bezier contributes; the bulge
+            // either side of it cancels for a winding-direction check.
+            ShapeSegment::CubicBezier { p0, p3, .. } => (p0.x, p0.y, p3.x, p3.y),
         };
         area += (bx - ax) * (by + ay);
     }
