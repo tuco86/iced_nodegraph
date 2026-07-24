@@ -6,6 +6,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Cancel a superseded in-flight run when a ref gets a new push - keeps the
+# parallel feature branches from piling stale runs onto the shared runners.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 # Native-only. The wasm32-unknown-unknown target check stays in the local
 # pre-push checklist (see CLAUDE.md).
 env:
@@ -49,17 +55,16 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
 
-      - name: Cache Cargo dependencies
-        uses: actions/cache@v4
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-ci-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-ci-
+          # Caches only dependency artifacts (not the workspace crates), prunes
+          # stale ones, and zstd-compresses - the old manual `target/` cache had
+          # ballooned to ~3.6 GB and was slow to unpack every run. Only the
+          # default branch WRITES the cache; PR branches restore it read-only,
+          # so the parallel feature branches share one small cache instead of
+          # each saving a multi-GB blob.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Format check
         run: cargo fmt --all -- --check
@@ -91,17 +96,10 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache Cargo dependencies
-        uses: actions/cache@v4
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-semver-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-semver-
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install cargo-semver-checks
         uses: taiki-e/install-action@v2
