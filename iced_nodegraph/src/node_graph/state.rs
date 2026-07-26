@@ -10,7 +10,7 @@
 use super::GraphInfo;
 use super::camera::Camera2D;
 use super::euclid::WorldPoint;
-use iced::{Point, keyboard, touch};
+use iced_widget::core::{Point, keyboard, touch};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use web_time::Instant;

@@ -17,8 +17,8 @@
 //! Layer order matters: the first layer in a returned list is drawn closest to
 //! the viewer (lowest SDF z-order), the last is deepest.
 
-use iced::Color;
 use iced_nodegraph_sdf::{Pattern, Stop, Style};
+use iced_widget::core::Color;
 
 use crate::node_pin::PinDirection;
 

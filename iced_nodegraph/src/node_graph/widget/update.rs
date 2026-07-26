@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::node_graph::input::KeyAction;
-use iced::touch;
+use iced_widget::core::{touch, window};
 
 // Click detection threshold (screen px; divide by zoom before comparing
 // against world-space distances so the hit target stays constant on screen)
@@ -40,7 +40,7 @@ struct UpdateCtx<'a, 'b, 'm, Message> {
     shell: &'a mut Shell<'m, Message>,
 }
 
-impl<N, P, E, UI, Message, Renderer> NodeGraph<'_, N, P, UI, Message, iced::Theme, Renderer, E>
+impl<N, P, E, UI, Message, Renderer> NodeGraph<'_, N, P, UI, Message, Theme, Renderer, E>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
@@ -121,7 +121,7 @@ where
 
         // On each frame, drive continuous redraws for SDF animations and deliver
         // the diagnostics measured during the previous draw().
-        if let Event::Window(iced::window::Event::RedrawRequested(_)) = event {
+        if let Event::Window(window::Event::RedrawRequested(_)) = event {
             if state.sdf_animated.get() {
                 shell.request_redraw();
             }
@@ -1495,7 +1495,7 @@ where
 /// of the occupancy check so it can be dropped back onto its own input. Pass `None`
 /// when starting a fresh edge.
 fn compute_valid_targets<N, P, E, UI, Message, Renderer>(
-    graph: &NodeGraph<'_, N, P, UI, Message, iced::Theme, Renderer, E>,
+    graph: &NodeGraph<'_, N, P, UI, Message, Theme, Renderer, E>,
     tree: &Tree,
     layout: Layout<'_>,
     from_node: usize,

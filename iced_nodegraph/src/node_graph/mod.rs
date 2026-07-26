@@ -42,7 +42,7 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::time::Duration;
 
-use iced::{Length, Point, Size, Vector};
+use iced_widget::core::{Color, Element, Length, Point, Size, Vector};
 
 use crate::ids::{EdgeId, NodeId, PinId};
 use crate::node_pin::{PinEnd, PinInfo};
@@ -75,7 +75,7 @@ pub(crate) type DragEdgeStyleFn<'a, P, UI, Theme> =
 pub struct Node<'a, N, P, UI, Message, Theme, Renderer> {
     id: N,
     position: Point,
-    element: iced::Element<'a, Message, Theme, Renderer>,
+    element: Element<'a, Message, Theme, Renderer>,
     style_fn: Option<NodeStyleFn<'a, Theme>>,
     pin_style_fn: Option<PinStyleFn<'a, P, UI, Theme>>,
 }
@@ -84,7 +84,7 @@ pub struct Node<'a, N, P, UI, Message, Theme, Renderer> {
 pub fn node<'a, N, P, UI, Message, Theme, Renderer>(
     id: N,
     position: Point,
-    element: impl Into<iced::Element<'a, Message, Theme, Renderer>>,
+    element: impl Into<Element<'a, Message, Theme, Renderer>>,
 ) -> Node<'a, N, P, UI, Message, Theme, Renderer> {
     Node {
         id,
@@ -309,8 +309,8 @@ pub struct NodeGraph<
     P = usize,
     UI = (),
     Message = (),
-    Theme = iced::Theme,
-    Renderer = iced::Renderer,
+    Theme = iced_widget::core::Theme,
+    Renderer = iced_widget::renderer::Renderer,
     E = (),
 > where
     N: NodeId,
@@ -324,7 +324,7 @@ pub struct NodeGraph<
     pub(super) nodes: Vec<(
         N,
         Point,
-        iced::Element<'a, Message, Theme, Renderer>,
+        Element<'a, Message, Theme, Renderer>,
         Option<NodeStyleFn<'a, Theme>>,
         Option<PinStyleFn<'a, P, UI, Theme>>,
     )>,
@@ -366,10 +366,10 @@ pub struct NodeGraph<
     on_info: Option<Box<dyn Fn(GraphInfo) -> Message + 'a>>,
     /// Style callback for box selection overlay.
     /// Returns (fill_color, border_color).
-    pub(super) box_select_style_fn: Option<Box<dyn Fn(&Theme) -> (iced::Color, iced::Color) + 'a>>,
+    pub(super) box_select_style_fn: Option<Box<dyn Fn(&Theme) -> (Color, Color) + 'a>>,
     /// Style callback for edge cutting tool overlay.
     /// Returns the line color.
-    pub(super) cutting_tool_style_fn: Option<Box<dyn Fn(&Theme) -> iced::Color + 'a>>,
+    pub(super) cutting_tool_style_fn: Option<Box<dyn Fn(&Theme) -> Color + 'a>>,
     /// Style for the edge being dragged (theme -> resolved style). The graph
     /// injects the source pin's color for inheriting (TRANSPARENT) stroke ends.
     pub(super) dragging_edge_style_fn: Option<DragEdgeStyleFn<'a, P, UI, Theme>>,
@@ -524,10 +524,7 @@ where
     ///         (Color::from_rgba(0.3, 0.6, 1.0, 0.2), Color::from_rgb(0.3, 0.6, 1.0))
     ///     })
     /// ```
-    pub fn box_select_style(
-        mut self,
-        f: impl Fn(&Theme) -> (iced::Color, iced::Color) + 'a,
-    ) -> Self {
+    pub fn box_select_style(mut self, f: impl Fn(&Theme) -> (Color, Color) + 'a) -> Self {
         self.box_select_style_fn = Some(Box::new(f));
         self
     }
@@ -552,7 +549,7 @@ where
     /// node_graph()
     ///     .cutting_tool_style(|theme| Color::from_rgb(1.0, 0.3, 0.3))
     /// ```
-    pub fn cutting_tool_style(mut self, f: impl Fn(&Theme) -> iced::Color + 'a) -> Self {
+    pub fn cutting_tool_style(mut self, f: impl Fn(&Theme) -> Color + 'a) -> Self {
         self.cutting_tool_style_fn = Some(Box::new(f));
         self
     }
@@ -765,13 +762,13 @@ where
 
     pub(super) fn elements_iter(
         &self,
-    ) -> impl Iterator<Item = (Point, &iced::Element<'a, Message, Theme, Renderer>)> {
+    ) -> impl Iterator<Item = (Point, &Element<'a, Message, Theme, Renderer>)> {
         self.nodes.iter().map(|(_, p, e, _, _)| (*p, e))
     }
 
     pub(super) fn elements_iter_mut(
         &mut self,
-    ) -> impl Iterator<Item = (Point, &mut iced::Element<'a, Message, Theme, Renderer>)> {
+    ) -> impl Iterator<Item = (Point, &mut Element<'a, Message, Theme, Renderer>)> {
         self.nodes.iter_mut().map(|(_, p, e, _, _)| (*p, e))
     }
 

@@ -9,7 +9,7 @@
 //! and [`Style::quad_stroke`](crate::Style::quad_stroke) builders consume it
 //! directly.
 
-use iced::Color;
+use iced_wgpu::core::Color;
 
 /// Four corner colors: arc-length (start/end) crossed with distance (near/far).
 #[derive(Debug, Clone, Copy, PartialEq)]

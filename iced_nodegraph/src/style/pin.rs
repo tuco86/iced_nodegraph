@@ -5,7 +5,7 @@
 //! Color fields are [`ColorQuad`]s; a plain `Color` coerces to a solid quad.
 //! Border on/off is the `border_width` sentinel (0 = no border).
 //!
-use iced::Color;
+use iced_widget::core::Color;
 
 use super::ColorQuad;
 use super::PinShape;
@@ -77,11 +77,12 @@ impl PinStyle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iced_widget::core::Theme;
 
     #[test]
     fn struct_update_overrides_over_default() {
         use crate::style::{PinStatus, default_pin_style};
-        let base = default_pin_style(&iced::Theme::Dark, PinStatus::Idle);
+        let base = default_pin_style(&Theme::Dark, PinStatus::Idle);
         let style = PinStyle {
             radius: 10.0,
             shape: PinShape::Square,

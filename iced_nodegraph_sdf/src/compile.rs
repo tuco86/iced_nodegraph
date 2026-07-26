@@ -1,6 +1,6 @@
 //! Compilation: Drawable + Style -> GPU data.
 
-use iced::Color;
+use iced_wgpu::core::Color;
 
 use crate::drawable::Drawable;
 use crate::pipeline::types::{GpuDrawEntry, GpuSegment, GpuStyle, GpuVec2, GpuVec4};
@@ -180,7 +180,7 @@ mod tests {
     fn entry_referencing_matches_full_command() {
         let local = Curve::rounded_rect([0.0, 0.0], [40.0, 25.0], 6.0);
         let t = [100.0, 50.0];
-        let style = Style::solid(iced::Color::WHITE);
+        let style = Style::solid(Color::WHITE);
 
         let mut segs = Vec::new();
         let (full, _) = compile_local_at(&local, &style, 3, t, 0, &mut segs);

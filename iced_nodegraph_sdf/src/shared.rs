@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use encase::ShaderSize;
-use iced::wgpu::{
+use iced_wgpu::wgpu::{
     BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, BlendState,
     BufferBindingType, ColorTargetState, ColorWrites, ComputePipeline, ComputePipelineDescriptor,
     Device, FragmentState, FrontFace, MultisampleState, PipelineCompilationOptions, PipelineLayout,

@@ -11,8 +11,8 @@
 //! On/off is encoded by sentinels (border thickness 0, shadow blur/alpha 0), so
 //! every field is a plain value.
 //!
-use iced::Color;
 use iced_nodegraph_sdf::Pattern;
+use iced_widget::core::Color;
 
 use super::ColorQuad;
 
@@ -140,11 +140,12 @@ impl NodeStyle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iced_widget::core::Theme;
 
     #[test]
     fn struct_update_overrides_over_default() {
         use crate::style::{NodeStatus, default_node_style};
-        let base = default_node_style(&iced::Theme::Dark, NodeStatus::Idle);
+        let base = default_node_style(&Theme::Dark, NodeStatus::Idle);
         // Color coerces to a solid ColorQuad via `into()`.
         let style = NodeStyle {
             fill_color: Color::WHITE.into(),

@@ -4,6 +4,7 @@
 //! rendering-layer overview.
 
 use super::*;
+use iced_widget::core::{Border, Shadow};
 
 /// Line width for the edge cutting overlay (in world-space pixels).
 const EDGE_CUT_LINE_WIDTH: f32 = 3.0;
@@ -270,7 +271,7 @@ fn pin_cutout_params<P: PinId + 'static, UI>(
     cuts
 }
 
-impl<N, P, E, UI, Message, Renderer> NodeGraph<'_, N, P, UI, Message, iced::Theme, Renderer, E>
+impl<N, P, E, UI, Message, Renderer> NodeGraph<'_, N, P, UI, Message, Theme, Renderer, E>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
@@ -284,10 +285,10 @@ where
         &self,
         tree: &Tree,
         renderer: &mut Renderer,
-        theme: &iced::Theme,
+        theme: &Theme,
         style: &renderer::Style,
         layout: layout::Layout<'_>,
-        cursor: iced::mouse::Cursor,
+        cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
         let state = tree.state.downcast_ref::<NodeGraphState>();
@@ -379,8 +380,8 @@ where
             renderer.fill_quad(
                 iced_wgpu::core::renderer::Quad {
                     bounds: layout.bounds(),
-                    border: iced::Border::default(),
-                    shadow: iced::Shadow::default(),
+                    border: Border::default(),
+                    shadow: Shadow::default(),
                     snap: true,
                 },
                 iced_wgpu::core::Background::Color(resolved_graph.background_color),
@@ -399,7 +400,7 @@ where
         // event closure's cursor), so the live preview must compute the cursor
         // in the same space; the `viewport_origin` term cancels in the delta.
         let vo = camera.viewport_origin();
-        let cursor_layout = |cursor_pos: iced::Point| -> WorldPoint {
+        let cursor_layout = |cursor_pos: Point| -> WorldPoint {
             let w = camera
                 .screen_to_world()
                 .transform_point(cursor_pos.into_euclid());

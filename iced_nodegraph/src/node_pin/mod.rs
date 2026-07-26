@@ -32,11 +32,11 @@
 //! - Visual feedback via pulsing animation on valid targets
 
 use crate::ids::PinId;
-use iced::{Element, Event, Length, Point, Rectangle, Size};
 use iced_wgpu::core::{
     Clipboard, Layout, Shell, Widget, layout, mouse, renderer,
     widget::{Tree, tree},
 };
+use iced_widget::core::{Element, Event, Length, Point, Rectangle, Size};
 /// Default pin size when no content widget is provided.
 const DEFAULT_PIN_SIZE: Size = Size::new(50.0, 20.0);
 

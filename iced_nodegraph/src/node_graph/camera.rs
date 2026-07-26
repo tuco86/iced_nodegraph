@@ -161,8 +161,8 @@ use super::euclid::{
     WorldPoint, WorldRect, WorldSize, WorldVector,
 };
 use euclid::{Scale, Transform2D};
-use iced::Rectangle;
 use iced_wgpu::core::{mouse, renderer};
+use iced_widget::core::{Point, Rectangle, Transformation};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Camera2D {
@@ -313,22 +313,22 @@ impl Camera2D {
     /// applies `scale * p` first, then the translation. Shared with the overlay
     /// path so pop-outs (combo box menus, tooltips) anchor and scale exactly
     /// like the node content under them.
-    pub fn layer_transformation(&self) -> iced::Transformation {
+    pub fn layer_transformation(&self) -> Transformation {
         let zoom = self.zoom.get();
         let v_x = self.viewport_origin.x * (1.0 - zoom) + zoom * self.position.x;
         let v_y = self.viewport_origin.y * (1.0 - zoom) + zoom * self.position.y;
-        iced::Transformation::translate(v_x, v_y) * iced::Transformation::scale(zoom)
+        Transformation::translate(v_x, v_y) * Transformation::scale(zoom)
     }
 
     pub fn draw_with<F, Renderer>(
         self,
         renderer: &mut Renderer,
-        viewport: &iced::Rectangle,
+        viewport: &Rectangle,
         cursor: mouse::Cursor,
         f: F,
     ) where
         Renderer: renderer::Renderer,
-        F: FnOnce(&mut Renderer, &iced::Rectangle, mouse::Cursor),
+        F: FnOnce(&mut Renderer, &Rectangle, mouse::Cursor),
     {
         let transformed_cursor = self.cursor_screen_to_layout(cursor);
         let world_viewport = self.viewport_screen_to_layout(viewport);
@@ -338,9 +338,9 @@ impl Camera2D {
         })
     }
 
-    pub fn update_with<F>(self, viewport: &iced::Rectangle, cursor: mouse::Cursor, f: F)
+    pub fn update_with<F>(self, viewport: &Rectangle, cursor: mouse::Cursor, f: F)
     where
-        F: FnOnce(&iced::Rectangle, mouse::Cursor),
+        F: FnOnce(&Rectangle, mouse::Cursor),
     {
         let transformed_cursor = self.cursor_screen_to_layout(cursor);
         let world_viewport = self.viewport_screen_to_layout(viewport);
@@ -356,9 +356,9 @@ impl Camera2D {
     /// term cancels there.
     pub fn cursor_screen_to_layout(&self, cursor: mouse::Cursor) -> mouse::Cursor {
         let to_world = self.screen_to_world();
-        let map = |pos: iced::Point| -> iced::Point {
+        let map = |pos: Point| -> Point {
             let w = to_world.transform_point(pos.into_euclid());
-            iced::Point::new(w.x + self.viewport_origin.x, w.y + self.viewport_origin.y)
+            Point::new(w.x + self.viewport_origin.x, w.y + self.viewport_origin.y)
         };
         match cursor {
             mouse::Cursor::Available(pos) => mouse::Cursor::Available(map(pos)),
@@ -883,7 +883,7 @@ mod tests {
             .with_viewport_origin(ScreenVector::new(40.0, 100.0));
         let world = WorldPoint::new(30.0, 5.0);
 
-        let layout_point = iced::Point::new(40.0 + world.x, 100.0 + world.y);
+        let layout_point = Point::new(40.0 + world.x, 100.0 + world.y);
         let via_layer = layout_point * camera.layer_transformation();
         let via_world_to_screen = camera.world_to_screen().transform_point(world);
 
@@ -906,7 +906,7 @@ mod tests {
         // layout space by the viewport origin.
         let camera = Camera2D::with_zoom_and_position(2.0, WorldPoint::new(10.0, 20.0))
             .with_viewport_origin(ScreenVector::new(40.0, 100.0));
-        let cursor = mouse::Cursor::Available(iced::Point::new(120.0, 150.0));
+        let cursor = mouse::Cursor::Available(Point::new(120.0, 150.0));
 
         let mapped = match camera.cursor_screen_to_layout(cursor) {
             mouse::Cursor::Available(p) => p,

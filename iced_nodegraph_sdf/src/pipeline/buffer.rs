@@ -3,7 +3,7 @@
 #![allow(dead_code)]
 
 use encase::{ShaderSize, ShaderType, internal::WriteInto};
-use iced::wgpu::{self, BindingResource};
+use iced_wgpu::wgpu::{self, BindingResource};
 
 const BUFFER_GROWTH_FACTOR: f32 = 1.5;
 const BUFFER_MIN_ITEMS: usize = 16;

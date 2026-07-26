@@ -10,6 +10,7 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use encase::{ShaderSize, ShaderType, StorageBuffer, internal::WriteInto};
 // iced_wgpu re-exports the exact wgpu crate it renders with, so tests use that
 // instead of a separately-versioned direct `wgpu` dependency.
+use iced_wgpu::core::{Color, Point, Rectangle, Size};
 use iced_wgpu::wgpu;
 use wgpu::util::DeviceExt;
 use wgpu::*;
@@ -477,7 +478,7 @@ impl TestRenderer {
                     view: &view,
                     resolve_target: None,
                     ops: Operations {
-                        load: LoadOp::Clear(Color::TRANSPARENT),
+                        load: LoadOp::Clear(wgpu::Color::TRANSPARENT),
                         store: StoreOp::Store,
                     },
                     depth_slice: None,
@@ -751,7 +752,7 @@ impl TestRenderer {
                     view: &view,
                     resolve_target: None,
                     ops: Operations {
-                        load: LoadOp::Clear(Color::TRANSPARENT),
+                        load: LoadOp::Clear(wgpu::Color::TRANSPARENT),
                         store: StoreOp::Store,
                     },
                     depth_slice: None,
@@ -1035,7 +1036,7 @@ impl TestRenderer {
                     view: &view,
                     resolve_target: None,
                     ops: Operations {
-                        load: LoadOp::Clear(Color::TRANSPARENT),
+                        load: LoadOp::Clear(wgpu::Color::TRANSPARENT),
                         store: StoreOp::Store,
                     },
                     depth_slice: None,
@@ -1341,7 +1342,7 @@ impl TestRenderer {
                     view: &view,
                     resolve_target: None,
                     ops: Operations {
-                        load: LoadOp::Clear(Color::TRANSPARENT),
+                        load: LoadOp::Clear(wgpu::Color::TRANSPARENT),
                         store: StoreOp::Store,
                     },
                     depth_slice: None,
@@ -1497,11 +1498,8 @@ impl TestRenderer {
             &self.queue,
             TextureFormat::Rgba8Unorm,
         );
-        let viewport = Viewport::with_physical_size(iced::Size::new(width, height), 1.0);
-        let bounds = iced::Rectangle::new(
-            iced::Point::ORIGIN,
-            iced::Size::new(width as f32, height as f32),
-        );
+        let viewport = Viewport::with_physical_size(Size::new(width, height), 1.0);
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(width as f32, height as f32));
 
         let target = self.device.create_texture(&TextureDescriptor {
             label: None,
@@ -1537,7 +1535,7 @@ impl TestRenderer {
                     view: &view,
                     resolve_target: None,
                     ops: Operations {
-                        load: LoadOp::Clear(Color::TRANSPARENT),
+                        load: LoadOp::Clear(wgpu::Color::TRANSPARENT),
                         store: StoreOp::Store,
                     },
                     depth_slice: None,
@@ -1588,7 +1586,7 @@ impl TestRenderer {
     /// renders layered custom primitives (each `with_layer` is a clipped pass).
     fn render_primitives_scissored(
         &self,
-        prims: &[(&crate::primitive::SdfPrimitive, iced::Rectangle)],
+        prims: &[(&crate::primitive::SdfPrimitive, Rectangle)],
         width: u32,
         height: u32,
     ) -> Vec<[u8; 4]> {
@@ -1600,7 +1598,7 @@ impl TestRenderer {
             &self.queue,
             TextureFormat::Rgba8Unorm,
         );
-        let viewport = Viewport::with_physical_size(iced::Size::new(width, height), 1.0);
+        let viewport = Viewport::with_physical_size(Size::new(width, height), 1.0);
         let target = self.device.create_texture(&TextureDescriptor {
             label: None,
             size: Extent3d {
@@ -1638,7 +1636,7 @@ impl TestRenderer {
                     resolve_target: None,
                     ops: Operations {
                         load: if i == 0 {
-                            LoadOp::Clear(Color::TRANSPARENT)
+                            LoadOp::Clear(wgpu::Color::TRANSPARENT)
                         } else {
                             LoadOp::Load
                         },
@@ -1701,7 +1699,7 @@ impl TestRenderer {
     /// fresh clear; returns one pixel buffer per frame. `width` multiple of 64.
     fn render_frames_scissored(
         &self,
-        frames: &[Vec<(&crate::primitive::SdfPrimitive, iced::Rectangle)>],
+        frames: &[Vec<(&crate::primitive::SdfPrimitive, Rectangle)>],
         width: u32,
         height: u32,
         scale: f32,
@@ -1716,7 +1714,7 @@ impl TestRenderer {
         );
         // `width`/`height` are PHYSICAL; bounds/clips are LOGICAL, so the scissor
         // and the viewport scale must convert between them like iced does.
-        let viewport = Viewport::with_physical_size(iced::Size::new(width, height), scale);
+        let viewport = Viewport::with_physical_size(Size::new(width, height), scale);
         let target = self.device.create_texture(&TextureDescriptor {
             label: None,
             size: Extent3d {
@@ -1756,7 +1754,7 @@ impl TestRenderer {
                         resolve_target: None,
                         ops: Operations {
                             load: if i == 0 {
-                                LoadOp::Clear(Color::TRANSPARENT)
+                                LoadOp::Clear(wgpu::Color::TRANSPARENT)
                             } else {
                                 LoadOp::Load
                             },
@@ -2140,7 +2138,7 @@ fn solid_stroke_no_tile_seams() {
     let zoom = 1.0;
 
     let line = Curve::line([-60.0, 0.0], [60.0, 0.0]);
-    let style = Style::stroke(iced::Color::WHITE, Pattern::solid(6.0));
+    let style = Style::stroke(Color::WHITE, Pattern::solid(6.0));
 
     let pixels = renderer.render(&[(&line, &style)], width, height, zoom);
 
@@ -2183,7 +2181,7 @@ fn dashed_stroke_no_tile_seams() {
     let zoom = 1.0;
 
     let line = Curve::line([-60.0, 0.0], [60.0, 0.0]);
-    let style = Style::stroke(iced::Color::WHITE, Pattern::dashed(6.0, 14.0, 8.0));
+    let style = Style::stroke(Color::WHITE, Pattern::dashed(6.0, 14.0, 8.0));
 
     let pixels = renderer.render(&[(&line, &style)], width, height, zoom);
 
@@ -2232,7 +2230,7 @@ fn tight_overshoot_bezier_renders_without_holes() {
     let p2 = [-40.0, 15.0];
     let p3 = [20.0, 15.0];
     let curve = Curve::bezier(p0, p1, p2, p3);
-    let style = Style::stroke(iced::Color::WHITE, Pattern::solid(4.0));
+    let style = Style::stroke(Color::WHITE, Pattern::solid(4.0));
 
     let pixels = renderer.render(&[(&curve, &style)], width, height, zoom);
 
@@ -2293,7 +2291,7 @@ fn dashed_stroke_at_angle_preserves_coverage() {
     let line = Curve::line([-160.0, 0.0], [160.0, 0.0]);
     let measure = |angle_deg: f32| -> u32 {
         let style = Style::stroke(
-            iced::Color::WHITE,
+            Color::WHITE,
             Pattern::dashed_angle(6.0, 14.0, 8.0, angle_deg.to_radians()),
         );
         let pixels = renderer.render(&[(&line, &style)], width, height, zoom);
@@ -2338,12 +2336,12 @@ fn bezier_multi_style_no_row_artifacts() {
     let bezier = Curve::bezier([-50.0, -20.0], [-15.0, -20.0], [15.0, 20.0], [50.0, 20.0]);
 
     // Multi-style: stroke + border + shadow (mimics edge editor)
-    let stroke = Style::stroke(iced::Color::WHITE, Pattern::solid(6.0));
+    let stroke = Style::stroke(Color::WHITE, Pattern::solid(6.0));
     let border = Style::stroke(
-        iced::Color::from_rgb(0.8, 0.6, 0.2),
+        Color::from_rgb(0.8, 0.6, 0.2),
         Pattern::solid(14.0), // thickness > stroke = border behind
     );
-    let shadow = Style::shadow(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3), 10.0);
+    let shadow = Style::shadow(Color::from_rgba(0.0, 0.0, 0.0, 0.3), 10.0);
 
     let pixels = renderer.render(
         &[(&bezier, &stroke), (&bezier, &border), (&bezier, &shadow)],
@@ -2410,22 +2408,22 @@ fn edge_editor_defaults_no_row_artifacts() {
     // Default edge editor styles (all visible)
     let thickness = 6.0_f32;
     let stroke = Style::arc_gradient_stroke(
-        iced::Color::from_rgba(0.2, 0.85, 1.0, 1.0),
-        iced::Color::from_rgba(0.6, 0.2, 1.0, 1.0),
+        Color::from_rgba(0.2, 0.85, 1.0, 1.0),
+        Color::from_rgba(0.6, 0.2, 1.0, 1.0),
         Pattern::solid(thickness),
     );
     let outline_total = thickness + 1.2 * 2.0;
     let outline = Style::stroke(
-        iced::Color::from_rgba(0.05, 0.05, 0.15, 1.0),
+        Color::from_rgba(0.05, 0.05, 0.15, 1.0),
         Pattern::solid(outline_total),
     );
     let border_total = thickness + 2.0 * 2.0 + 3.0 * 2.0;
     let border = Style::arc_gradient_stroke(
-        iced::Color::from_rgba(0.95, 0.75, 0.2, 1.0),
-        iced::Color::from_rgba(1.0, 0.3, 0.2, 1.0),
+        Color::from_rgba(0.95, 0.75, 0.2, 1.0),
+        Color::from_rgba(1.0, 0.3, 0.2, 1.0),
         Pattern::solid(border_total),
     );
-    let shadow = Style::shadow(iced::Color::from_rgba(0.0, 0.0, 0.1, 0.35), 10.0);
+    let shadow = Style::shadow(Color::from_rgba(0.0, 0.0, 0.1, 0.35), 10.0);
 
     // Each style applied to both edges (like SdfEdgeCanvas does)
     let mut drawables: Vec<(&crate::drawable::Drawable, &Style)> = Vec::new();
@@ -2495,7 +2493,7 @@ fn bezier_stroke_edge_is_smooth() {
     let border_total = thickness + 2.0 * 2.0 + 3.0 * 2.0;
     // Test with flat color (no gradient) vs gradient to isolate arc-length cause
     let flat_border = Style::stroke(
-        iced::Color::from_rgba(0.95, 0.75, 0.2, 1.0),
+        Color::from_rgba(0.95, 0.75, 0.2, 1.0),
         Pattern::solid(border_total),
     );
     let drawables: Vec<(&crate::drawable::Drawable, &Style)> = vec![(&bezier, &flat_border)];
@@ -2581,22 +2579,22 @@ fn no_missing_rows_in_stroke() {
 
     let thickness = 6.0_f32;
     let stroke = Style::arc_gradient_stroke(
-        iced::Color::from_rgba(0.2, 0.85, 1.0, 1.0),
-        iced::Color::from_rgba(0.6, 0.2, 1.0, 1.0),
+        Color::from_rgba(0.2, 0.85, 1.0, 1.0),
+        Color::from_rgba(0.6, 0.2, 1.0, 1.0),
         Pattern::solid(thickness),
     );
     let outline_total = thickness + 1.2 * 2.0;
     let outline = Style::stroke(
-        iced::Color::from_rgba(0.05, 0.05, 0.15, 1.0),
+        Color::from_rgba(0.05, 0.05, 0.15, 1.0),
         Pattern::solid(outline_total),
     );
     let border_total = thickness + 2.0 * 2.0 + 3.0 * 2.0;
     let border = Style::arc_gradient_stroke(
-        iced::Color::from_rgba(0.95, 0.75, 0.2, 1.0),
-        iced::Color::from_rgba(1.0, 0.3, 0.2, 1.0),
+        Color::from_rgba(0.95, 0.75, 0.2, 1.0),
+        Color::from_rgba(1.0, 0.3, 0.2, 1.0),
         Pattern::solid(border_total),
     );
-    let shadow = Style::shadow(iced::Color::from_rgba(0.0, 0.0, 0.1, 0.35), 10.0);
+    let shadow = Style::shadow(Color::from_rgba(0.0, 0.0, 0.1, 0.35), 10.0);
 
     let edges = [&fwd, &mir];
     let styles_list = [&stroke, &outline, &border, &shadow];
@@ -2660,7 +2658,7 @@ fn bounds_origin_shift_preserves_shape_position() {
     // Shape at world (0, 0). With bounds_origin=(0,0) and camera centering
     // world on screen, the shape lands at screen center.
     let shape = Curve::rounded_rect([0.0, 0.0], [40.0, 25.0], 6.0);
-    let style = Style::solid(iced::Color::from_rgb(1.0, 0.0, 0.0));
+    let style = Style::solid(Color::from_rgb(1.0, 0.0, 0.0));
 
     let cs = zoom;
     let cam_centered = [(width as f32) * 0.5 / cs, (height as f32) * 0.5 / cs];
@@ -2739,7 +2737,7 @@ fn closed_stroke_border_complete() {
     let zoom = 1.0;
 
     let shape = Curve::rounded_rect([0.0, 0.0], [80.0, 40.0], 10.0);
-    let style = Style::stroke(iced::Color::WHITE, Pattern::solid(3.0));
+    let style = Style::stroke(Color::WHITE, Pattern::solid(3.0));
 
     let pixels = renderer.render(&[(&shape, &style)], width, height, zoom);
 
@@ -2776,7 +2774,7 @@ fn closed_solid_fill_large_no_interior_holes() {
 
     // Center is ~100 px from the nearest boundary (many tile widths).
     let shape = Curve::rounded_rect([0.0, 0.0], [200.0, 100.0], 12.0);
-    let style = Style::solid(iced::Color::from_rgb(1.0, 0.0, 0.0));
+    let style = Style::solid(Color::from_rgb(1.0, 0.0, 0.0));
 
     let pixels = renderer.render(&[(&shape, &style)], width, height, zoom);
 
@@ -2815,7 +2813,7 @@ fn closed_circle_solid_fill_does_not_leak_outside() {
     let zoom = 1.0;
 
     let shape = Curve::circle([0.0, 0.0], 20.0);
-    let style = Style::solid(iced::Color::from_rgb(1.0, 0.0, 0.0));
+    let style = Style::solid(Color::from_rgb(1.0, 0.0, 0.0));
 
     let pixels = renderer.render(&[(&shape, &style)], width, height, zoom);
 
@@ -2868,7 +2866,7 @@ fn closed_solid_fill_no_interior_holes() {
 
     // Big enough that the center is many tiles away from any boundary.
     let shape = Curve::rounded_rect([0.0, 0.0], [50.0, 35.0], 8.0);
-    let style = Style::solid(iced::Color::from_rgb(1.0, 0.0, 0.0));
+    let style = Style::solid(Color::from_rgb(1.0, 0.0, 0.0));
 
     let pixels = renderer.render(&[(&shape, &style)], width, height, zoom);
 
@@ -2905,8 +2903,8 @@ fn bezier_stroke_edge_is_smooth_tiled_hidpi() {
 
     let bezier = Curve::bezier([-120.0, -40.0], [-40.0, -40.0], [40.0, 40.0], [120.0, 40.0]);
     let stroke = Style::arc_gradient_stroke(
-        iced::Color::from_rgba(0.2, 0.85, 1.0, 1.0),
-        iced::Color::from_rgba(0.6, 0.2, 1.0, 1.0),
+        Color::from_rgba(0.2, 0.85, 1.0, 1.0),
+        Color::from_rgba(0.6, 0.2, 1.0, 1.0),
         Pattern::solid(6.0),
     );
     let drawables: Vec<(&crate::drawable::Drawable, &Style)> = vec![(&bezier, &stroke)];
@@ -2970,17 +2968,14 @@ fn tiling_alignment_is_invisible() {
     let e1 = Curve::bezier([-120.0, -40.0], [-40.0, -40.0], [40.0, 40.0], [120.0, 40.0]);
     let e2 = Curve::bezier([120.0, -40.0], [40.0, -40.0], [-40.0, 40.0], [-120.0, 40.0]);
     let stroke = Style::arc_gradient_stroke(
-        iced::Color::from_rgba(0.2, 0.85, 1.0, 1.0),
-        iced::Color::from_rgba(0.6, 0.2, 1.0, 1.0),
+        Color::from_rgba(0.2, 0.85, 1.0, 1.0),
+        Color::from_rgba(0.6, 0.2, 1.0, 1.0),
         Pattern::solid(6.0),
     );
-    let outline = Style::stroke(
-        iced::Color::from_rgba(0.05, 0.05, 0.15, 1.0),
-        Pattern::solid(8.4),
-    );
+    let outline = Style::stroke(Color::from_rgba(0.05, 0.05, 0.15, 1.0), Pattern::solid(8.4));
     let border = Style::arc_gradient_stroke(
-        iced::Color::from_rgba(0.95, 0.75, 0.2, 1.0),
-        iced::Color::from_rgba(1.0, 0.3, 0.2, 1.0),
+        Color::from_rgba(0.95, 0.75, 0.2, 1.0),
+        Color::from_rgba(1.0, 0.3, 0.2, 1.0),
         Pattern::solid(16.0),
     );
     // SdfEdgeCanvas applies each style to every edge -> same-style adjacency.
@@ -3052,7 +3047,7 @@ fn shadow_band_outward_alpha_has_no_seam() {
     let shape = Curve::circle([0.0, 0.0], radius);
     // Outward glow: full at the silhouette, fading to transparent at d. Opaque
     // white so the alpha channel reads the band coverage directly.
-    let style = Style::shadow(iced::Color::WHITE, d);
+    let style = Style::shadow(Color::WHITE, d);
 
     let pixels = renderer.render(&[(&shape, &style)], width, height, zoom);
 
@@ -3099,9 +3094,9 @@ fn abutting_chain_bands_stay_opaque_across_boundary() {
     let zoom = 1.0;
 
     let radius = 20.0;
-    let red = iced::Color::from_rgb(0.9, 0.1, 0.1);
-    let green = iced::Color::from_rgb(0.1, 0.9, 0.1);
-    let clear = |c: iced::Color| iced::Color { a: 0.0, ..c };
+    let red = Color::from_rgb(0.9, 0.1, 0.1);
+    let green = Color::from_rgb(0.1, 0.9, 0.1);
+    let clear = |c: Color| Color { a: 0.0, ..c };
     // Red ring [0,10] abutting a green ring [10,20], both opaque, one chain.
     let style = Style {
         stops: vec![
@@ -3190,8 +3185,8 @@ impl Scene {
     }
 }
 
-fn rgba(r: f32, g: f32, b: f32, a: f32) -> iced::Color {
-    iced::Color::from_rgba(r, g, b, a)
+fn rgba(r: f32, g: f32, b: f32, a: f32) -> Color {
+    Color::from_rgba(r, g, b, a)
 }
 
 /// The standard crossing-S edge used by the pattern scenes (matches the edge
@@ -3844,8 +3839,8 @@ fn c2_overflow_is_deterministic_no_flicker() {
 fn premultiplied_band_blend_no_rgb_fringe() {
     let r = shared_renderer();
     let (w, h, zoom) = (256u32, 256u32, 1.0f32);
-    let green = iced::Color::from_rgba(0.0, 1.0, 0.0, 1.0);
-    let red_clear = iced::Color::from_rgba(1.0, 0.0, 0.0, 0.0);
+    let green = Color::from_rgba(0.0, 1.0, 0.0, 1.0);
+    let red_clear = Color::from_rgba(1.0, 0.0, 0.0, 0.0);
     let style = Style {
         stops: vec![
             crate::style::Stop::new(0.0, green),
@@ -4111,7 +4106,7 @@ fn write_png(path: &str, px: &[[u8; 4]], w: u32, h: u32) {
 fn large_boolean_fill_interior_never_hollows() {
     use crate::primitive::SdfPrimitive;
     use crate::shape::Shape;
-    use iced::Rectangle;
+    use Rectangle;
 
     let r = shared_renderer();
     let (w, h) = (384u32, 320u32);
@@ -4121,7 +4116,7 @@ fn large_boolean_fill_interior_never_hollows() {
     let nw = 220.0_f32;
     let nh = 150.0_f32;
     let fill_style = Style::solid(rgba(0.30, 0.32, 0.40, 1.0));
-    let full = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(w as f32, h as f32));
+    let full = Rectangle::new(Point::ORIGIN, Size::new(w as f32, h as f32));
 
     // Body = rounded box minus pin cutouts on the left/right edges (as the widget
     // builds `geom.shape`).
@@ -4204,7 +4199,7 @@ fn pan_sweep_keeps_node_fills_intact() {
     use crate::primitive::SdfPrimitive;
     use crate::shape::Shape;
     use crate::tiling::Tiling;
-    use iced::Rectangle;
+    use Rectangle;
 
     let r = shared_renderer();
     // Logical viewport; physical = logical * scale (DPI), like the user's machine.
@@ -4218,7 +4213,7 @@ fn pan_sweep_keeps_node_fills_intact() {
 
     let dark = Style::solid(rgba(0.12, 0.13, 0.16, 1.0));
     let fill_style = Style::solid(rgba(0.30, 0.32, 0.40, 1.0));
-    let full = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(lw as f32, lh as f32));
+    let full = Rectangle::new(Point::ORIGIN, Size::new(lw as f32, lh as f32));
 
     // Fixed screen lattice of node top-left positions (LOGICAL px).
     let lattice: Vec<(f32, f32)> = {
@@ -4252,10 +4247,7 @@ fn pan_sweep_keeps_node_fills_intact() {
             let wcy = tly / zoom - cam[1] + nh * 0.5;
             let cw = nw * zoom + 4.0;
             let ch = nh * zoom + 4.0;
-            let clip = Rectangle::new(
-                iced::Point::new(tlx - 2.0, tly - 2.0),
-                iced::Size::new(cw, ch),
-            );
+            let clip = Rectangle::new(Point::new(tlx - 2.0, tly - 2.0), Size::new(cw, ch));
             let cx = cam[0] - clip.x / zoom;
             let cy2 = cam[1] - clip.y / zoom;
             let body = Shape::rounded_box([nw, nh], [6.0; 4])
@@ -4377,13 +4369,13 @@ fn zoomed_out_per_node_fills_all_render() {
     use crate::primitive::SdfPrimitive;
     use crate::shape::Shape;
     use crate::tiling::Tiling;
-    use iced::Rectangle;
+    use Rectangle;
 
     let r = shared_renderer();
     let (w, h) = (640u32, 448u32);
     let zoom = 0.24131_f32;
     let cam = [-327.7_f32, -132.0];
-    let full = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(w as f32, h as f32));
+    let full = Rectangle::new(Point::ORIGIN, Size::new(w as f32, h as f32));
 
     let dark = Style::solid(rgba(0.12, 0.13, 0.16, 1.0));
     let fill_style = Style::solid(rgba(0.30, 0.32, 0.40, 1.0));
@@ -4430,8 +4422,8 @@ fn zoomed_out_per_node_fills_all_render() {
             let ch = nh * zoom + 2.0 * pad;
             let placement = [c[0] / zoom - cam[0], c[1] / zoom - cam[1]];
             let clip = Rectangle::new(
-                iced::Point::new(c[0] - cw * 0.5, c[1] - ch * 0.5),
-                iced::Size::new(cw, ch),
+                Point::new(c[0] - cw * 0.5, c[1] - ch * 0.5),
+                Size::new(cw, ch),
             );
             let cx = cam[0] - clip.x / zoom;
             let cy = cam[1] - clip.y / zoom;
@@ -4508,12 +4500,12 @@ fn render_pipeline_frame(
     w: u32,
     h: u32,
 ) -> Vec<[u8; 4]> {
-    use iced::Rectangle;
+    use Rectangle;
     use iced_wgpu::graphics::Viewport;
     use iced_wgpu::primitive::{Pipeline, Primitive};
 
-    let full = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(w as f32, h as f32));
-    let viewport = Viewport::with_physical_size(iced::Size::new(w, h), 1.0);
+    let full = Rectangle::new(Point::ORIGIN, Size::new(w as f32, h as f32));
+    let viewport = Viewport::with_physical_size(Size::new(w, h), 1.0);
     for p in prims {
         p.prepare(pipeline, &r.device, &r.queue, &full, &viewport);
     }
@@ -4552,7 +4544,7 @@ fn render_pipeline_frame(
                 view: &view,
                 resolve_target: None,
                 ops: Operations {
-                    load: LoadOp::Clear(Color::TRANSPARENT),
+                    load: LoadOp::Clear(wgpu::Color::TRANSPARENT),
                     store: StoreOp::Store,
                 },
                 depth_slice: None,
@@ -4844,7 +4836,7 @@ fn churned_geometry_stays_bounded() {
 
 #[test]
 fn cull_dispatch_skipped_while_index_valid() {
-    use iced::Rectangle;
+    use Rectangle;
     use iced_wgpu::graphics::Viewport;
     use iced_wgpu::primitive::{Pipeline, Primitive};
 
@@ -4853,8 +4845,8 @@ fn cull_dispatch_skipped_while_index_valid() {
 
     let r = shared_renderer();
     let (w, h) = (256u32, 256u32);
-    let full = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(w as f32, h as f32));
-    let viewport = Viewport::with_physical_size(iced::Size::new(w, h), 1.0);
+    let full = Rectangle::new(Point::ORIGIN, Size::new(w as f32, h as f32));
+    let viewport = Viewport::with_physical_size(Size::new(w, h), 1.0);
     let style = Style::solid(rgba(0.3, 0.4, 0.5, 1.0));
 
     let frame = |pipeline: &mut SdfPipeline,
@@ -5005,7 +4997,7 @@ fn measure_idle_prepare_cost() {
     use crate::primitive::{SdfPipeline, SdfPrimitive};
     use crate::shape::Shape;
     use crate::tiling::Tiling;
-    use iced::Rectangle;
+    use Rectangle;
     use iced_wgpu::graphics::Viewport;
     use iced_wgpu::primitive::{Pipeline, Primitive};
 
@@ -5013,8 +5005,8 @@ fn measure_idle_prepare_cost() {
     let (w, h) = (1280u32, 768u32);
     let zoom = 0.24131_f32;
     let cam = [-327.7_f32, -132.0];
-    let full = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(w as f32, h as f32));
-    let viewport = Viewport::with_physical_size(iced::Size::new(w, h), 1.0);
+    let full = Rectangle::new(Point::ORIGIN, Size::new(w as f32, h as f32));
+    let viewport = Viewport::with_physical_size(Size::new(w, h), 1.0);
 
     let dark = Style::solid(rgba(0.12, 0.13, 0.16, 1.0));
     let fill_style = Style::solid(rgba(0.30, 0.32, 0.40, 1.0));
@@ -5040,8 +5032,8 @@ fn measure_idle_prepare_cost() {
             let ch = nh * zoom + 4.0;
             let placement = [c[0] / zoom - cam[0], c[1] / zoom - cam[1]];
             let clip = Rectangle::new(
-                iced::Point::new(c[0] - cw * 0.5, c[1] - ch * 0.5),
-                iced::Size::new(cw, ch),
+                Point::new(c[0] - cw * 0.5, c[1] - ch * 0.5),
+                Size::new(cw, ch),
             );
             let cx = cam[0] - clip.x / zoom;
             let cy = cam[1] - clip.y / zoom;
@@ -5134,7 +5126,7 @@ fn measure_drag_prepare_cost() {
     use crate::primitive::{SdfPipeline, SdfPrimitive};
     use crate::shape::Shape;
     use crate::tiling::Tiling;
-    use iced::Rectangle;
+    use Rectangle;
     use iced_wgpu::graphics::Viewport;
     use iced_wgpu::primitive::{Pipeline, Primitive};
 
@@ -5142,8 +5134,8 @@ fn measure_drag_prepare_cost() {
     let (w, h) = (1280u32, 768u32);
     let zoom = 0.24131_f32;
     let cam = [-327.7_f32, -132.0];
-    let full = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(w as f32, h as f32));
-    let viewport = Viewport::with_physical_size(iced::Size::new(w, h), 1.0);
+    let full = Rectangle::new(Point::ORIGIN, Size::new(w as f32, h as f32));
+    let viewport = Viewport::with_physical_size(Size::new(w, h), 1.0);
 
     let dark = Style::solid(rgba(0.12, 0.13, 0.16, 1.0));
     let fill_style = Style::solid(rgba(0.30, 0.32, 0.40, 1.0));
@@ -5172,8 +5164,8 @@ fn measure_drag_prepare_cost() {
         let ch = nh * zoom + 4.0;
         let placement = [c[0] / zoom - cam[0], c[1] / zoom - cam[1]];
         let clip = Rectangle::new(
-            iced::Point::new(c[0] - cw * 0.5, c[1] - ch * 0.5),
-            iced::Size::new(cw, ch),
+            Point::new(c[0] - cw * 0.5, c[1] - ch * 0.5),
+            Size::new(cw, ch),
         );
         let cx = cam[0] - clip.x / zoom;
         let cy = cam[1] - clip.y / zoom;
@@ -5501,7 +5493,7 @@ fn gpu_probe_loop() {
 fn oversized_tile_budget_falls_back_no_panic() {
     use crate::primitive::SdfPrimitive;
     use crate::shape::Shape;
-    use iced::Rectangle;
+    use Rectangle;
 
     let r = shared_renderer();
     let (w, h) = (192u32, 192u32);
@@ -5515,7 +5507,7 @@ fn oversized_tile_budget_falls_back_no_panic() {
     );
     let p = p.camera(0.0, 0.0, 1.0);
     // A clip so large its grid (~3000x3000 tiles) dwarfs any device's tile budget.
-    let huge = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(50_000.0, 50_000.0));
+    let huge = Rectangle::new(Point::ORIGIN, Size::new(50_000.0, 50_000.0));
 
     // Would panic in `create_bind_group` (binding exceeds limit) before the cap.
     let px = r.render_primitives_scissored(&[(&p, huge)], w, h);
@@ -5536,11 +5528,11 @@ fn oversized_tile_budget_falls_back_no_panic() {
 fn idle_frame_reuse_renders_identically() {
     use crate::primitive::SdfPrimitive;
     use crate::shape::Shape;
-    use iced::Rectangle;
+    use Rectangle;
 
     let r = shared_renderer();
     let (w, h) = (192u32, 192u32);
-    let full = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(w as f32, h as f32));
+    let full = Rectangle::new(Point::ORIGIN, Size::new(w as f32, h as f32));
 
     let fill = Style::solid(rgba(0.30, 0.50, 0.70, 1.0));
     let edge = Style::stroke(
@@ -5584,13 +5576,13 @@ fn idle_frame_reuse_renders_identically() {
 fn styles_dedup_across_identical_entries() {
     use crate::primitive::{SdfPipeline, SdfPrimitive};
     use crate::shape::Shape;
-    use iced::Rectangle;
+    use Rectangle;
     use iced_wgpu::graphics::Viewport;
     use iced_wgpu::primitive::{Pipeline, Primitive};
 
     let r = shared_renderer();
     let (w, h) = (256u32, 256u32);
-    let viewport = Viewport::with_physical_size(iced::Size::new(w, h), 1.0);
+    let viewport = Viewport::with_physical_size(Size::new(w, h), 1.0);
     let mut pipeline = SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
 
     let style_a = Style::solid(rgba(0.3, 0.4, 0.5, 1.0));
@@ -5606,7 +5598,7 @@ fn styles_dedup_across_identical_entries() {
             let style = if i % 2 == 0 { &style_a } else { &style_b };
             let mut p = SdfPrimitive::new();
             p.push(&body, style, [60.0, 60.0]);
-            let clip = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(64.0, 64.0));
+            let clip = Rectangle::new(Point::ORIGIN, Size::new(64.0, 64.0));
             (p.camera(0.0, 0.0, 1.0), clip)
         })
         .collect();
@@ -5811,14 +5803,14 @@ fn widget_edge_shape_renders_as_stroke() {
 fn prepare_assigns_draw_slots_independent_of_draw_order() {
     use crate::primitive::{SdfPipeline, SdfPrimitive};
     use crate::shape::Shape;
-    use iced::Rectangle;
+    use Rectangle;
     use iced_wgpu::graphics::Viewport;
     use iced_wgpu::primitive::{Pipeline, Primitive};
 
     let r = shared_renderer();
     let (w, h) = (64u32, 64u32);
-    let full = Rectangle::new(iced::Point::ORIGIN, iced::Size::new(w as f32, h as f32));
-    let viewport = Viewport::with_physical_size(iced::Size::new(w, h), 1.0);
+    let full = Rectangle::new(Point::ORIGIN, Size::new(w as f32, h as f32));
+    let viewport = Viewport::with_physical_size(Size::new(w, h), 1.0);
     let style = Style::solid(rgba(1.0, 0.0, 0.0, 1.0));
 
     let mut pipeline = SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);

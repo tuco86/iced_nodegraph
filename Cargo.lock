@@ -1650,6 +1650,7 @@ dependencies = [
  "iced_nodegraph_sdf",
  "iced_test",
  "iced_wgpu",
+ "iced_widget",
  "png",
  "pollster",
  "proptest",
@@ -1662,7 +1663,6 @@ version = "0.5.0-dev"
 dependencies = [
  "encase",
  "glam 0.33.2",
- "iced",
  "iced_wgpu",
  "parking_lot",
  "png",

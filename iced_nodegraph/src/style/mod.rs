@@ -9,7 +9,7 @@
 //! [`GraphStyle`] and [`SelectionStyle`] (canvas background, selection overlay,
 //! drag-edge colors) are also plain structs; they are not per-element styles.
 
-use iced::{Color, Theme};
+use iced_widget::core::{Color, Theme};
 
 mod defaults;
 mod edge;

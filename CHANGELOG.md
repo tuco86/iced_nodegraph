@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** neither library depends on the `iced` umbrella crate anymore.
+  `iced_nodegraph` now uses `iced_widget` (which re-exports `iced_core` as
+  `core` and `iced_renderer` as `renderer`) and `iced_nodegraph_sdf` uses
+  `iced_wgpu` (which re-exports `iced_core` as `core` and `wgpu`). All public
+  types are unchanged - they were always these crates' types, reached through
+  the umbrella's re-exports.
+
+  The umbrella dependency was declared as `iced = { features = ["wgpu"] }`
+  without `default-features = false`. Because Cargo unifies features
+  additively, that silently switched iced's whole default set back on for every
+  downstream application, even one that carefully wrote
+  `default-features = false` itself. Two consequences, both now gone:
+  `tiny-skia` compiled a second, unused software renderer (`iced_tiny_skia`,
+  `softbuffer`, `tiny-xlib`, `kurbo`) into the binary, and `web-colors` forced
+  colors to be blended in sRGB rather than linear space.
+
+  Dropping the umbrella also drops the windowing shell (`iced_winit`, `winit`,
+  `window_clipboard`, x11/wayland, `mundy`/`zbus`) from the widget's dependency
+  tree, where it never belonged: `cargo tree -p iced_nodegraph -e normal` goes
+  from 221 to 117 crates.
+- **Breaking:** `pub use iced;` is replaced by `pub use iced_widget;` and
+  `pub use iced_wgpu;`. Downstream code that reached for
+  `iced_nodegraph::iced::*` should depend on `iced` directly, or use
+  `iced_nodegraph::iced_widget::core::*`.
+
 ## [0.4.2] - 2026-07-23
 
 ### Fixed

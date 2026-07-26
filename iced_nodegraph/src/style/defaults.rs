@@ -16,8 +16,8 @@
 //! The valid-target pin pulse is time-based and stays in the widget, so
 //! [`default_pin_style`] has no static `ValidTarget` feedback.
 
-use iced::{Color, Theme};
 use iced_nodegraph_sdf::Pattern;
+use iced_widget::core::{Color, Theme};
 
 use super::{
     EdgeCurve, EdgeStatus, EdgeStyle, NodeStatus, NodeStyle, PinShape, PinStatus, PinStyle,
