@@ -1672,11 +1672,11 @@ dependencies = [
 
 [[package]]
 name = "iced_palette"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c59a6a281f850c4551f2c3db0fa595a217943966dcc2d8a2e368e44a70ac173"
+checksum = "4411d589b9bda5a30cd016ec9936910a7a70db281d131fd01fee91d5018f73fe"
 dependencies = [
- "iced",
+ "iced_runtime",
  "iced_widget",
 ]
 

@@ -33,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pub use iced_wgpu;`. Downstream code that reached for
   `iced_nodegraph::iced::*` should depend on `iced` directly, or use
   `iced_nodegraph::iced_widget::core::*`.
+- Demos require `iced_palette` 0.1.1, the first release that also drops the
+  `iced` umbrella crate. Older versions depended on `iced` with default
+  features, which re-enabled `tiny-skia` and `web-colors` for the whole demo
+  graph regardless of what the demos themselves asked for. No demo pulls the
+  software renderer any more.
 
 ### Fixed
 
