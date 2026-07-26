@@ -8,14 +8,23 @@
 //!
 //! Pins are typically created using the [`pin!`] macro for convenience:
 //!
-//! ```ignore
-//! use iced_nodegraph::pin;
+//! ```rust
+//! use iced::widget::text;
+//! use iced_nodegraph::{NodePin, pin};
 //!
+//! #[derive(Clone)]
+//! enum MyKind {
+//!     Audio,
+//! }
+//!
+//! # #[derive(Debug, Clone)]
+//! # enum Message {}
+//! # type Pin<'a, UI> = NodePin<'a, u32, UI, Message, iced::Theme, iced::Renderer>;
 //! // Simple pin with just a label
-//! pin!(Left, 0, text("Input"), Input)
+//! let input: Pin<'_, ()> = pin!(Left, 0, text("Input"), Input);
 //!
 //! // Pin with a user-defined payload
-//! pin!(Right, 1, text("Output"), Output, MyKind::Audio)
+//! let output: Pin<'_, MyKind> = pin!(Right, 1, text("Output"), Output, MyKind::Audio);
 //! ```
 //!
 //! ## Pin Properties
@@ -466,18 +475,26 @@ where
 /// [`Node::pin_style`](crate::Node::pin_style), keyed on the pin's direction,
 /// user info or id.
 ///
-/// ```rust,ignore
-/// use iced_nodegraph::pin;
+/// ```rust
 /// use iced::widget::text;
+/// use iced_nodegraph::{NodePin, pin};
 ///
+/// #[derive(Clone)]
+/// enum MyKind {
+///     Email,
+/// }
+///
+/// # #[derive(Debug, Clone)]
+/// # enum Message {}
+/// # type Pin<'a, UI> = NodePin<'a, &'static str, UI, Message, iced::Theme, iced::Renderer>;
 /// // Full syntax: side, pin_id, content, direction, user info
-/// pin!(Right, "output", text("output"), Output, MyKind::Email)
+/// let full: Pin<'_, MyKind> = pin!(Right, "output", text("output"), Output, MyKind::Email);
 ///
 /// // With direction only (connects to anything)
-/// pin!(Right, "data", text("data"), Output)
+/// let directed: Pin<'_, ()> = pin!(Right, "data", text("data"), Output);
 ///
 /// // Minimal (side, pin_id, content only, defaults: Both direction, no info)
-/// pin!(Right, "data", text("data"))
+/// let minimal: Pin<'_, ()> = pin!(Right, "data", text("data"));
 /// ```
 #[macro_export]
 macro_rules! pin {

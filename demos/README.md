@@ -58,7 +58,14 @@ cargo run
 ```
 
 The shared `demos/common` crate provides a `ScreenshotHelper` for the
-`--screenshot <path.png>` CLI flag used in documentation captures.
+`--screenshot <path.png>` CLI flag used in documentation captures. Wiring it up
+is per demo (state field, `Message` variant, `update` arm, subscription); the
+`interaction` demo shows the full pattern and is the one that currently
+supports the flag:
+
+```bash
+cargo run -p demo_interaction --bin interaction -- --screenshot shot.png
+```
 
 ## Demo Structure
 

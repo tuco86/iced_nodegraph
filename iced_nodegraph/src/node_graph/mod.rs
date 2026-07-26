@@ -159,9 +159,12 @@ pub fn edge<'a, N, P, E, UI, Theme>(
 
 /// Builds an [`Edge`], defaulting the id to `()` when omitted.
 ///
-/// ```ignore
-/// edge!(PinRef::new(0, 0), PinRef::new(1, 0))       // id = ()
-/// edge!(PinRef::new(0, 0), PinRef::new(1, 0), my_id) // id = my_id
+/// ```rust
+/// use iced_nodegraph::{Edge, PinRef, edge};
+///
+/// # type E<'a, Id> = Edge<'a, u32, u32, Id, (), iced::Theme>;
+/// let default_id: E<'_, ()> = edge!(PinRef::new(0, 0), PinRef::new(1, 0));
+/// let explicit_id: E<'_, u8> = edge!(PinRef::new(0, 0), PinRef::new(1, 0), 7);
 /// ```
 #[macro_export]
 macro_rules! edge {

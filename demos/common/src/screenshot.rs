@@ -29,25 +29,51 @@ impl std::fmt::Debug for ScreenshotMessage {
 
 /// Manages screenshot capture lifecycle.
 ///
-/// Embed this in your app state and wire up the subscription, update, and
-/// task methods. Call `ScreenshotHelper::from_args()` to parse CLI flags.
+/// Embed this in your app state, forward [`ScreenshotMessage`] from `update`,
+/// and merge [`subscription`] into the application's subscription. The
+/// `From<ScreenshotMessage>` impl is what lets the helper build its own
+/// follow-up tasks.
+///
+/// [`subscription`]: ScreenshotHelper::subscription
 ///
 /// # Usage
 ///
-/// ```ignore
-/// struct App {
-///     screenshot: ScreenshotHelper,
-///     // ...
+/// ```
+/// use demo_common::{ScreenshotHelper, ScreenshotMessage};
+/// use iced::{Subscription, Task};
+///
+/// #[derive(Debug, Clone)]
+/// enum Message {
+///     Screenshot(ScreenshotMessage),
 /// }
 ///
-/// // In new():
-/// let screenshot = ScreenshotHelper::from_args();
+/// impl From<ScreenshotMessage> for Message {
+///     fn from(msg: ScreenshotMessage) -> Self {
+///         Message::Screenshot(msg)
+///     }
+/// }
 ///
-/// // In update():
-/// Message::Screenshot(msg) => return self.screenshot.update(msg);
+/// struct App {
+///     screenshot: ScreenshotHelper,
+/// }
 ///
-/// // In subscription():
-/// self.screenshot.subscription().map(Message::Screenshot)
+/// impl App {
+///     fn new() -> Self {
+///         Self {
+///             screenshot: ScreenshotHelper::from_args(),
+///         }
+///     }
+///
+///     fn update(&mut self, message: Message) -> Task<Message> {
+///         match message {
+///             Message::Screenshot(msg) => self.screenshot.update(msg),
+///         }
+///     }
+///
+///     fn subscription(&self) -> Subscription<Message> {
+///         self.screenshot.subscription().map(Message::Screenshot)
+///     }
+/// }
 /// ```
 #[derive(Debug, Clone)]
 pub struct ScreenshotHelper {

@@ -34,6 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `iced_nodegraph::iced::*` should depend on `iced` directly, or use
   `iced_nodegraph::iced_widget::core::*`.
 
+### Fixed
+
+- The doc examples for the `pin!` and `edge!` macros and for the `node_pin`
+  module were `ignore`d pseudo-code fragments that did not compile (macro calls
+  in item position, undeclared types). They are now real, compile-checked
+  examples, so `cargo test --doc` covers the macro surface.
+
 ## [0.4.2] - 2026-07-23
 
 ### Fixed
