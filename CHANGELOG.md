@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- SDF cull grid is now **world-anchored** instead of screen-anchored. A new
+  `DrawData.grid_offset` folds the camera pan into the tile lattice, so tile
+  membership depends only on world position, zoom and a tile-quantized window
+  base — not the continuous camera. Panning therefore reuses the resident
+  spatial index and skips the Stage-2 cull dispatch (`SdfStats::cull_skipped`)
+  for every frame that does not cross a 64px coarse-tile boundary (measured: a
+  256px pan runs the cull ~4× instead of ~256×). Output is pixel-identical; the
+  only cost is a one-coarse-tile apron per axis (a small, constant increase in
+  index size). Zoom still reculls as before.
 - **Breaking:** neither library depends on the `iced` umbrella crate anymore.
   `iced_nodegraph` now uses `iced_widget` (which re-exports `iced_core` as
   `core` and `iced_renderer` as `renderer`) and `iced_nodegraph_sdf` uses

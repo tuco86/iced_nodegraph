@@ -156,6 +156,11 @@ pub(crate) struct DrawData {
     pub bounds_origin: GpuVec2,
     /// Camera position (pan offset).
     pub camera_position: GpuVec2,
+    /// World-anchored tile offset in physical pixels, in [0, 64) per axis.
+    /// `local_px + grid_offset` maps a screen pixel onto the world-anchored
+    /// tile grid. Set every frame (like `camera_position`); NOT part of
+    /// `cull_key` (only the tile-quantized window base is).
+    pub grid_offset: GpuVec2,
     /// Camera zoom factor.
     pub camera_zoom: f32,
     /// OS scale factor.
@@ -183,6 +188,11 @@ pub(crate) struct DrawData {
     /// compute stage must stay within the WebGPU spec-default 8 storage
     /// buffers per stage for wasm).
     pub tilings: [u32; 4],
+    /// Padding: keeps `DrawData` a multiple of 16 bytes (the struct's own
+    /// alignment is 8, from the `vec2` fields, which would otherwise round
+    /// its size to 88 - not a multiple of 16).
+    pub _pad0: u32,
+    pub _pad1: u32,
 }
 
 // --- Defaults ---
@@ -246,6 +256,7 @@ impl Default for DrawData {
         Self {
             bounds_origin: GpuVec2::ZERO,
             camera_position: GpuVec2::ZERO,
+            grid_offset: GpuVec2::ZERO,
             camera_zoom: 1.0,
             scale_factor: 1.0,
             time: 0.0,
@@ -258,6 +269,8 @@ impl Default for DrawData {
             coarse_rows: 0,
             coarse_base: 0,
             tilings: [u32::MAX; 4],
+            _pad0: 0,
+            _pad1: 0,
         }
     }
 }

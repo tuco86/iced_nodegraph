@@ -49,6 +49,7 @@ const PATTERN_ARROW_DOTTED: u32 = 5u;
 struct DrawData {
     bounds_origin: vec2<f32>,
     camera_position: vec2<f32>,
+    grid_offset: vec2<f32>,
     camera_zoom: f32,
     scale_factor: f32,
     time: f32,
@@ -68,6 +69,9 @@ struct DrawData {
     tiling1: u32,
     tiling2: u32,
     tiling3: u32,
+    // Padding: keeps DrawData a multiple of 16 bytes (mirrors types.rs).
+    _pad0: u32,
+    _pad1: u32,
 }
 
 struct GpuSegment {
@@ -658,9 +662,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var acc = vec4(0.0);
 
     if draw.grid_cols > 0u {
-        let tile_col = u32(local_px.x / TILE_SIZE);
-        let tile_row = u32(local_px.y / TILE_SIZE);
-        if tile_col >= draw.grid_cols || tile_row >= draw.grid_rows { discard; }
+        let gpx = local_px + draw.grid_offset;
+        var tile_col = u32(gpx.x / TILE_SIZE);
+        var tile_row = u32(gpx.y / TILE_SIZE);
+        tile_col = min(tile_col, draw.grid_cols - 1u);
+        tile_row = min(tile_row, draw.grid_rows - 1u);
 
         let tile_idx = draw.tile_base + tile_row * draw.grid_cols + tile_col;
         let count = fine_counts[tile_idx];
@@ -837,8 +843,8 @@ fn coarse_range(draw: DrawData, lo: vec2<f32>, hi: vec2<f32>) -> TileRange {
     }
     let cs = draw.camera_zoom * draw.scale_factor;
     let coarse_px = TILE_SIZE * f32(COARSE_FACTOR);
-    let px_lo = (lo + draw.camera_position) * cs / coarse_px;
-    let px_hi = (hi + draw.camera_position) * cs / coarse_px;
+    let px_lo = ((lo + draw.camera_position) * cs + draw.grid_offset) / coarse_px;
+    let px_hi = ((hi + draw.camera_position) * cs + draw.grid_offset) / coarse_px;
     let x0f = floor(px_lo.x);
     let y0f = floor(px_lo.y);
     let x1f = floor(px_hi.x);
@@ -858,7 +864,7 @@ fn coarse_range(draw: DrawData, lo: vec2<f32>, hi: vec2<f32>) -> TileRange {
 fn coarse_tile_box(draw: DrawData, tx: u32, ty: u32) -> vec4<f32> {
     let inv_cs = 1.0 / (draw.camera_zoom * draw.scale_factor);
     let coarse_px = TILE_SIZE * f32(COARSE_FACTOR);
-    let cmin_px = vec2(f32(tx), f32(ty)) * coarse_px;
+    let cmin_px = vec2(f32(tx), f32(ty)) * coarse_px - draw.grid_offset;
     let lo = cmin_px * inv_cs - draw.camera_position;
     let hi = (cmin_px + vec2(coarse_px, coarse_px)) * inv_cs - draw.camera_position;
     return vec4(lo, hi);
@@ -1261,7 +1267,7 @@ fn cs_sort_fine(
 
     // Thread 0 appends the draw's tilings (reach-tested at coarse resolution).
     if lindex == 0u {
-        let cmin_px = vec2(f32(ccol), f32(crow)) * coarse_px;
+        let cmin_px = vec2(f32(ccol), f32(crow)) * coarse_px - draw.grid_offset;
         let coarse_min = cmin_px * inv_cs - draw.camera_position;
         let coarse_max = (cmin_px + vec2(coarse_px, coarse_px)) * inv_cs - draw.camera_position;
         let coarse_center = (coarse_min + coarse_max) * 0.5;
@@ -1338,7 +1344,7 @@ fn cs_sort_fine(
     let fine_tile_idx = draw.tile_base + fine_row * draw.grid_cols + fine_col;
     let fine_base = fine_tile_idx * FINE_STRIDE;
 
-    let fcenter = vec2((f32(fine_col) + 0.5) * TILE_SIZE, (f32(fine_row) + 0.5) * TILE_SIZE);
+    let fcenter = vec2((f32(fine_col) + 0.5) * TILE_SIZE, (f32(fine_row) + 0.5) * TILE_SIZE) - draw.grid_offset;
     let fworld = fcenter * inv_cs - draw.camera_position;
     let fhw = TILE_SIZE * 0.5 * inv_cs;
     let fhalf = vec2(fhw, fhw);

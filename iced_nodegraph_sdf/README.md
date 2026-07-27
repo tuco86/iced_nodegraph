@@ -309,8 +309,9 @@ re-cull the 16px fine tiles into compact 16-bit references. Every kernel is
 dispatched flat and sized to the actual work — the sort runs one workgroup per
 *live* coarse tile and binary-searches its owning draw, so no workgroup is dead
 on arrival — and the whole frame is **one** `queue.submit` — skipped
-entirely while nothing that affects the index changed (camera, viewport,
-geometry): an idle or animation-only frame reuses the resident index.
+entirely while nothing that affects the **world-anchored** index changed
+(viewport, geometry, or a pan crossing a 64px tile boundary): an idle,
+animation-only, or sub-tile-pan frame reuses the resident index.
 
 ---
 
