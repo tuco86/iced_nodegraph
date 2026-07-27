@@ -126,8 +126,8 @@ Drawable (local) + Style + translate  ->  GpuDrawEntry + GpuStyle + [GpuSegment]
 Pure data mapping. Geometry is stored in the shape's **local** frame; the world
 placement rides per-instance in `entry.translate`, evaluated as
 `world_p - translate`. Buffer sizes: `GpuSegment` 64 B, `GpuDrawEntry` 64 B,
-`GpuStyle` 16-byte-aligned (~340 B). `DrawData` (camera, zoom, time, grid dims)
-is separate and per-draw.
+`GpuStyle` 16-byte-aligned (~340 B). `DrawData` (camera, zoom, time, grid dims,
+plus the world-anchored `grid_offset`) is separate and per-draw.
 
 **Flags set at compile time:**
 - `FLAG_CLOSED` (entry): the contour is closed (fillable).
@@ -161,12 +161,18 @@ WebGPU spec-default per-stage limit, which wasm enforces.
 Cacheable booleans are evaluated through a frame-surviving `ShapeCache` (LRU,
 content-hash keyed), so a unique node body's boolean runs once across frames.
 
-**Resident-index skip:** the cull result depends on the geometry buffers and on
-every `DrawData` field EXCEPT `time`. `prepare` keys each draw's DrawData-sans-
-time (`cull_key`); when no key changed, no slot rebuilt and no index buffer
-regrew, the whole Stage-2 dispatch is skipped and the resident index reused -
-idle redraws and time-only animation frames recull nothing
-(`SdfStats::cull_skipped`).
+**Resident-index skip:** the tile grid is **world-anchored** — `DrawData.grid_offset`
+folds the camera pan into the tile lattice, so a segment's tile membership depends
+only on its world position, the zoom and a **tile-quantized window base**, never on
+the continuous `camera_position`. The cull result therefore depends on the geometry
+buffers and on every `DrawData` field EXCEPT `time`, `camera_position`,
+`bounds_origin` and `grid_offset` (the last three only shift the window
+continuously). `prepare` keys each draw on that window base plus zoom, viewport,
+grid geometry and entry ranges (`cull_key`); when no key changed, no slot rebuilt
+and no index buffer regrew, the whole Stage-2 dispatch is skipped and the resident
+index reused — idle redraws, time-only animation frames AND **sub-tile pans** recull
+nothing; a pan reculls only when it crosses a 64px coarse-tile boundary
+(`SdfStats::cull_skipped`). Output stays pixel-identical across the reuse.
 
 ### Stage 2: Compute shader (GPU) — scatter-built two-level tile index
 
