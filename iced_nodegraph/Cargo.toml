@@ -13,18 +13,32 @@ categories = ["gui", "graphics", "visualization"]
 [dependencies]
 euclid.workspace = true
 iced_nodegraph_sdf.workspace = true
-# Also supplies `iced_wgpu::core` (= iced_core, re-exported the same way
-# iced_widget::core is), so production code needs no separate iced_widget dep.
 iced_wgpu.workspace = true
+# The `iced` umbrella crate is deliberately NOT a runtime dependency. It drags in
+# the windowing shell (iced_winit -> winit, x11/wayland, clipboard) that a widget
+# never touches, and because Cargo unifies features additively, depending on it
+# would force iced's default features (tiny-skia, web-colors, ...) on every
+# downstream application - which could then never turn them back off.
+#
+# `iced_widget` re-exports everything needed: `core` (= iced_core) and
+# `renderer` (= iced_renderer, for the default `Renderer` type parameter).
 # WebGPU only - there is no WebGL fallback (see crate docs).
-iced = { workspace = true, features = ["wgpu"] }
+iced_widget = { workspace = true, features = ["wgpu"] }
 web-time.workspace = true
 
 [dev-dependencies]
-# "advanced" is only used by the widget-trait test harnesses (coordinate_tests,
-# clipping_tests, overlay_tests) to reach Tree/Widget/Layout directly via
-# iced::advanced; this stays out of the published crate's [dependencies].
-iced = { workspace = true, features = ["advanced"] }
+# The umbrella crate stays a dev-dependency: doctests are written the way users
+# write code (`use iced::widget::text;`), and the widget-trait test harnesses
+# (coordinate_tests, clipping_tests, overlay_tests) reach Tree/Widget/Layout via
+# `iced::advanced`. Building the umbrella crate at all also requires an executor
+# and a winit backend, hence thread-pool/x11/wayland.
+iced = { workspace = true, features = [
+    "wgpu",
+    "advanced",
+    "thread-pool",
+    "x11",
+    "wayland",
+] }
 iced_test = { workspace = true }
 proptest.workspace = true
 criterion.workspace = true

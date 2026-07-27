@@ -16,11 +16,11 @@
 //!    widgets between the two SDF node layers lets nodes overlap correctly.
 //! 4. Graph foreground: interaction tools (selection box, edge-cutting overlay).
 
-use iced::{Element, Event, Length, Point, Rectangle, Size, Theme, Vector, keyboard};
 use iced_wgpu::core::{
     Clipboard, Layout, Shell, layout, mouse, overlay, renderer,
     widget::{self, Tree, tree},
 };
+use iced_widget::core::{Element, Event, Length, Point, Rectangle, Size, Theme, Vector, keyboard};
 use web_time::Instant;
 
 use super::{
@@ -77,8 +77,8 @@ fn pin_side_direction(side: u32) -> [f32; 2] {
     }
 }
 
-impl<N, P, E, UI, Message, Renderer> iced_wgpu::core::Widget<Message, iced::Theme, Renderer>
-    for NodeGraph<'_, N, P, UI, Message, iced::Theme, Renderer, E>
+impl<N, P, E, UI, Message, Renderer> iced_wgpu::core::Widget<Message, Theme, Renderer>
+    for NodeGraph<'_, N, P, UI, Message, Theme, Renderer, E>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
@@ -126,10 +126,10 @@ where
         &self,
         tree: &Tree,
         renderer: &mut Renderer,
-        theme: &iced::Theme,
+        theme: &Theme,
         style: &renderer::Style,
         layout: layout::Layout<'_>,
-        cursor: iced::mouse::Cursor,
+        cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
         self.draw_impl(tree, renderer, theme, style, layout, cursor, viewport);
@@ -146,7 +146,7 @@ where
     }
 
     fn diff(&self, tree: &mut Tree) {
-        let children: Vec<&Element<'_, Message, iced::Theme, Renderer>> =
+        let children: Vec<&Element<'_, Message, Theme, Renderer>> =
             self.elements_iter().map(|(_, e)| e).collect();
         tree.diff_children(&children);
     }
@@ -176,7 +176,7 @@ where
         renderer: &Renderer,
         viewport: &Rectangle,
         _translation: Vector,
-    ) -> Option<overlay::Element<'b, Message, iced::Theme, Renderer>> {
+    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
         // Iced collects pop-out widgets (combo box menus, tooltips, vanilla
         // `menu`) only through `Widget::overlay`. Without forwarding it to the
         // node elements, their underlying widgets draw fine but the pop-out
@@ -191,7 +191,7 @@ where
         // the widget's layout-absolute space; `CameraOverlay` applies the
         // world->screen transform, so the child anchors in that space (zero
         // extra translation) just as it does during draw.
-        let children: Vec<overlay::Element<'b, Message, iced::Theme, Renderer>> = self
+        let children: Vec<overlay::Element<'b, Message, Theme, Renderer>> = self
             .nodes
             .iter_mut()
             .map(|(_, _, element, _, _)| element)
@@ -254,9 +254,8 @@ where
     }
 }
 
-impl<'a, N, P, E, UI, Message, Renderer>
-    From<NodeGraph<'a, N, P, UI, Message, iced::Theme, Renderer, E>>
-    for Element<'a, Message, iced::Theme, Renderer>
+impl<'a, N, P, E, UI, Message, Renderer> From<NodeGraph<'a, N, P, UI, Message, Theme, Renderer, E>>
+    for Element<'a, Message, Theme, Renderer>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
@@ -265,7 +264,7 @@ where
     Renderer: iced_wgpu::core::renderer::Renderer + 'a + iced_wgpu::primitive::Renderer,
     Message: 'static,
 {
-    fn from(graph: NodeGraph<'a, N, P, UI, Message, iced::Theme, Renderer, E>) -> Self {
+    fn from(graph: NodeGraph<'a, N, P, UI, Message, Theme, Renderer, E>) -> Self {
         Element::new(graph)
     }
 }

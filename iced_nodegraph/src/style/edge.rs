@@ -13,8 +13,8 @@
 //! to transparent. On/off is a sentinel: border `width` 0, stroke/border outline
 //! `width` 0, shadow `blur` 0 or color alpha 0.
 //!
-use iced::Color;
 use iced_nodegraph_sdf::Pattern;
+use iced_widget::core::Color;
 
 use super::ColorQuad;
 use super::EdgeCurve;
@@ -137,11 +137,12 @@ impl EdgeStyle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iced_widget::core::Theme;
 
     #[test]
     fn struct_update_overrides_over_default() {
         use crate::style::{EdgeStatus, default_edge_style};
-        let base = default_edge_style(&iced::Theme::Dark, EdgeStatus::Idle);
+        let base = default_edge_style(&Theme::Dark, EdgeStatus::Idle);
         let style = EdgeStyle {
             border_width: 2.0,
             curve: EdgeCurve::Line,

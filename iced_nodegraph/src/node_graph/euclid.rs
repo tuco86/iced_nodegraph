@@ -27,7 +27,7 @@
 //! orphan rules and provide symmetric, discoverable API.
 
 use euclid::{Point2D, Rect, Size2D, Transform2D, Vector2D};
-use iced::{Point, Rectangle, Size, Vector};
+use iced_widget::core::{Point, Rectangle, Size, Vector};
 
 #[derive(Debug, Clone, Copy)]
 pub enum World {}

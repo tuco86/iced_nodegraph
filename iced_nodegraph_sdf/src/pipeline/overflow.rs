@@ -14,7 +14,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use iced::wgpu::{
+use iced_wgpu::wgpu::{
     Buffer, BufferDescriptor, BufferUsages, CommandEncoder, Device, MapMode, PollType,
 };
 

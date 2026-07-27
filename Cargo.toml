@@ -25,12 +25,24 @@ iced_nodegraph = { path = "iced_nodegraph", version = "0.5.0-dev" }
 iced_nodegraph_sdf = { path = "iced_nodegraph_sdf", version = "0.5.0-dev" }
 demo_common = { path = "demos/common" }
 
-# Iced framework
-iced = "0.14"
+# Iced framework.
+#
+# The published libraries depend on `iced_widget`/`iced_wgpu`, never on the
+# `iced` umbrella crate: Cargo unifies features additively, so an umbrella dep
+# here would force iced's defaults (tiny-skia, web-colors, x11, wayland, ...) on
+# every downstream application, which could then never turn them back off.
+#
+# `iced` itself is only for the demo binaries and for tests/doctests, and it
+# keeps `default-features = false` so each member opts in explicitly.
+iced = { version = "0.14", default-features = false }
+iced_widget = "0.14"
 iced_wgpu = "0.14"
 iced_test = "0.14"
 
-iced_palette = "0.1"
+# 0.1.1 is the first release that does not depend on the `iced` umbrella crate.
+# Anything older re-enables iced's defaults for the whole demo graph, which is
+# exactly what the `default-features = false` above exists to prevent.
+iced_palette = "0.1.1"
 
 # Coordinate transformations and math
 euclid = { version = "0.22.11", features = ["bytemuck"] }

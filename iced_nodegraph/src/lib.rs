@@ -309,5 +309,8 @@ mod coordinate_tests;
 #[cfg(test)]
 mod overlay_tests;
 
-// Re-export iced for downstream crates
-pub use iced;
+// Re-exported so downstream crates can name the exact iced types this widget's
+// API is built from without risking a version mismatch. The `iced` umbrella
+// crate is not re-exported: it is not a dependency of this crate (see Cargo.toml).
+pub use iced_wgpu;
+pub use iced_widget;

@@ -202,7 +202,7 @@ This workspace contains a node graph editor built on Iced 0.14:
 
 `ngwa-rs` (a SpacetimeDB backend module) is an optional, separate sibling workspace at `../ngwa-rs`. It is NOT a member of this workspace's `Cargo.toml` and is not required to build or run the widget or demos.
 
-**Dependencies**: Uses `iced = "0.14"` from crates.io and the in-tree `iced_nodegraph_sdf` crate for SDF-based rendering.
+**Dependencies**: The published libraries build on `iced_widget` / `iced_wgpu` 0.14 (plus the in-tree `iced_nodegraph_sdf` crate for SDF-based rendering), never on the `iced` umbrella crate - see the comment in the workspace `Cargo.toml`. `iced` itself is a dependency of the demo binaries and of tests/doctests only, and is declared `default-features = false` so each member opts in explicitly.
 
 **Current Status**: Core functionality is complete - node/pin interaction, edge connections, and coordinate transformations are fully functional with type-safe API.
 

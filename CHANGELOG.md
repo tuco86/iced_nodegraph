@@ -18,6 +18,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   256px pan runs the cull ~4× instead of ~256×). Output is pixel-identical; the
   only cost is a one-coarse-tile apron per axis (a small, constant increase in
   index size). Zoom still reculls as before.
+- **Breaking:** neither library depends on the `iced` umbrella crate anymore.
+  `iced_nodegraph` now uses `iced_widget` (which re-exports `iced_core` as
+  `core` and `iced_renderer` as `renderer`) and `iced_nodegraph_sdf` uses
+  `iced_wgpu` (which re-exports `iced_core` as `core` and `wgpu`). All public
+  types are unchanged - they were always these crates' types, reached through
+  the umbrella's re-exports.
+
+  The umbrella dependency was declared as `iced = { features = ["wgpu"] }`
+  without `default-features = false`. Because Cargo unifies features
+  additively, that silently switched iced's whole default set back on for every
+  downstream application, even one that carefully wrote
+  `default-features = false` itself. Two consequences, both now gone:
+  `tiny-skia` compiled a second, unused software renderer (`iced_tiny_skia`,
+  `softbuffer`, `tiny-xlib`, `kurbo`) into the binary, and `web-colors` forced
+  colors to be blended in sRGB rather than linear space.
+
+  Dropping the umbrella also drops the windowing shell (`iced_winit`, `winit`,
+  `window_clipboard`, x11/wayland, `mundy`/`zbus`) from the widget's dependency
+  tree, where it never belonged: `cargo tree -p iced_nodegraph -e normal` goes
+  from 221 to 117 crates.
+- **Breaking:** `pub use iced;` is replaced by `pub use iced_widget;` and
+  `pub use iced_wgpu;`. Downstream code that reached for
+  `iced_nodegraph::iced::*` should depend on `iced` directly, or use
+  `iced_nodegraph::iced_widget::core::*`.
+- Demos require `iced_palette` 0.1.1, the first release that also drops the
+  `iced` umbrella crate. Older versions depended on `iced` with default
+  features, which re-enabled `tiny-skia` and `web-colors` for the whole demo
+  graph regardless of what the demos themselves asked for. No demo pulls the
+  software renderer any more.
+
+### Fixed
+
+- The doc examples for the `pin!` and `edge!` macros and for the `node_pin`
+  module were `ignore`d pseudo-code fragments that did not compile (macro calls
+  in item position, undeclared types). They are now real, compile-checked
+  examples, so `cargo test --doc` covers the macro surface.
 
 ## [0.4.2] - 2026-07-23
 

@@ -4,9 +4,9 @@
 //! key press maps to, given the current [`Keymap`]. It performs no widget
 //! wiring; the widget owns the event loop and calls [`Keymap::key_action`].
 
-use iced::keyboard::key::{Named, Physical};
-use iced::keyboard::{Key, Modifiers};
-use iced::mouse;
+use iced_widget::core::keyboard::key::{Named, Physical};
+use iced_widget::core::keyboard::{Key, Modifiers};
+use iced_widget::core::mouse;
 
 /// A graph-level action triggered by a keyboard shortcut.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,7 +24,7 @@ pub enum KeyAction {
 /// The logical key half of a [`KeyCombo`].
 ///
 /// `Char` resolves layout-independently (see [`KeyCombo::matches`]); `Named`
-/// matches an [`iced::keyboard::key::Named`] key directly, since named keys
+/// matches an [`iced_widget::core::keyboard::key::Named`] key directly, since named keys
 /// (e.g. `Escape`, `Delete`) carry no layout ambiguity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComboKey {
@@ -237,7 +237,7 @@ impl Keymap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iced::keyboard::key::Code;
+    use iced_widget::core::keyboard::key::Code;
 
     #[test]
     fn select_all_resolves_from_default_combo() {

@@ -17,7 +17,7 @@
 //! stop between opaque ones. Because the whole profile is one entry, bands never
 //! composite against each other, so abutting bands cannot seam.
 
-use iced::Color;
+use iced_wgpu::core::Color;
 
 use crate::color::ColorQuad;
 use crate::pattern::Pattern;

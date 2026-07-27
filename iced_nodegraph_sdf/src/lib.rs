@@ -28,7 +28,7 @@
 //!
 //! ```no_run
 //! use iced_nodegraph_sdf::{Shape, Style, Pattern, SdfPrimitive};
-//! use iced::Color;
+//! use iced_wgpu::core::Color; // re-export of `iced::Color`
 //!
 //! let (cam_x, cam_y, zoom, elapsed) = (0.0, 0.0, 1.0, 0.0);
 //!

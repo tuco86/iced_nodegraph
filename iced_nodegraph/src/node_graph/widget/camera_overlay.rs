@@ -12,11 +12,11 @@ use super::*;
 /// hit-testing (the inverse of the draw transform, mirroring
 /// [`Camera2D::cursor_screen_to_layout`]).
 pub(super) struct CameraOverlay<'a, Message, Renderer> {
-    pub(super) content: overlay::Element<'a, Message, iced::Theme, Renderer>,
+    pub(super) content: overlay::Element<'a, Message, Theme, Renderer>,
     pub(super) camera: crate::node_graph::camera::Camera2D,
 }
 
-impl<Message, Renderer> overlay::Overlay<Message, iced::Theme, Renderer>
+impl<Message, Renderer> overlay::Overlay<Message, Theme, Renderer>
     for CameraOverlay<'_, Message, Renderer>
 where
     Renderer: iced_wgpu::core::renderer::Renderer,
@@ -28,7 +28,7 @@ where
     fn draw(
         &self,
         renderer: &mut Renderer,
-        theme: &iced::Theme,
+        theme: &Theme,
         style: &renderer::Style,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
@@ -83,14 +83,14 @@ where
         &'c mut self,
         layout: Layout<'c>,
         renderer: &Renderer,
-    ) -> Option<overlay::Element<'c, Message, iced::Theme, Renderer>> {
+    ) -> Option<overlay::Element<'c, Message, Theme, Renderer>> {
         let camera = self.camera;
         self.content
             .as_overlay_mut()
             .overlay(layout, renderer)
             .map(|content| {
                 overlay::Element::new(Box::new(CameraOverlay { content, camera })
-                    as Box<dyn overlay::Overlay<Message, iced::Theme, Renderer>>)
+                    as Box<dyn overlay::Overlay<Message, Theme, Renderer>>)
             })
     }
 }

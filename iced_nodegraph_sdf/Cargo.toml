@@ -12,8 +12,11 @@ categories = ["gui", "graphics", "rendering"]
 [dependencies]
 glam.workspace = true
 encase.workspace = true
+# `iced_wgpu` re-exports both `core` (= iced_core) and `wgpu`, so the `iced`
+# umbrella crate is not needed. Depending on it would pull in the windowing
+# shell and, because Cargo unifies features additively, force iced's default
+# features (tiny-skia, web-colors, ...) on every downstream application.
 iced_wgpu.workspace = true
-iced = { workspace = true, features = ["wgpu"] }
 web-time.workspace = true
 parking_lot.workspace = true
 

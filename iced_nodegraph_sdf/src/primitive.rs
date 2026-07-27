@@ -10,13 +10,14 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use parking_lot::Mutex;
 use web_time::Instant;
 
-use iced::Rectangle;
-use iced::wgpu::{
+use iced_wgpu::core::{Color, Rectangle};
+use iced_wgpu::graphics::Viewport;
+use iced_wgpu::primitive::{Pipeline, Primitive};
+use iced_wgpu::wgpu;
+use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BufferDescriptor, BufferUsages,
     CommandEncoderDescriptor, Device, Queue, TextureFormat,
 };
-use iced_wgpu::graphics::Viewport;
-use iced_wgpu::primitive::{Pipeline, Primitive};
 
 use std::collections::HashMap;
 
@@ -224,7 +225,7 @@ impl KeyHasher {
         };
         self.u32(b);
     }
-    fn color(&mut self, c: iced::Color) {
+    fn color(&mut self, c: Color) {
         self.f32(c.r);
         self.f32(c.g);
         self.f32(c.b);
@@ -472,10 +473,10 @@ pub struct SdfPipeline {
     styles_buffer: buffer::Buffer<types::GpuStyle>,
     // Two-level spatial index. Coarse (64px) tiles hold the (segment, entry)
     // results; fine (16px) tiles hold 16-bit indices into the parent coarse tile.
-    coarse_counts_buffer: iced::wgpu::Buffer,
-    coarse_slots_buffer: iced::wgpu::Buffer,
-    fine_counts_buffer: iced::wgpu::Buffer,
-    fine_slots_buffer: iced::wgpu::Buffer,
+    coarse_counts_buffer: wgpu::Buffer,
+    coarse_slots_buffer: wgpu::Buffer,
+    fine_counts_buffer: wgpu::Buffer,
+    fine_slots_buffer: wgpu::Buffer,
     /// Scatter work lists (see plan/scatter-binning.md): flat u32 lists with
     /// the same clear/skip/push_bulk slot-reuse lifecycle as the geometry
     /// buffers. `cull_pairs` holds (draw, entry, segment) triples of open
@@ -486,11 +487,11 @@ pub struct SdfPipeline {
     /// Live scatter-list element counts for the kernels ([triples, pairs]),
     /// written once per culled frame (`arrayLength` reports capacity, not the
     /// live length).
-    cull_meta_buffer: iced::wgpu::Buffer,
+    cull_meta_buffer: wgpu::Buffer,
     /// Sort/fine launch dims uniform ([live draw count, total coarse tiles]),
     /// written once per culled frame; drives the flat 1D sort dispatch and
     /// the kernel's draw binary search.
-    cull_launch_buffer: iced::wgpu::Buffer,
+    cull_launch_buffer: wgpu::Buffer,
     fine_capacity: u32,
     coarse_capacity: u32,
     /// Hard ceilings so neither slot binding exceeds the device's
@@ -590,12 +591,7 @@ fn create_index_buffers(
     device: &Device,
     fine_cap: u32,
     coarse_cap: u32,
-) -> (
-    iced::wgpu::Buffer,
-    iced::wgpu::Buffer,
-    iced::wgpu::Buffer,
-    iced::wgpu::Buffer,
-) {
+) -> (wgpu::Buffer, wgpu::Buffer, wgpu::Buffer, wgpu::Buffer) {
     let fine_cap = fine_cap.max(1) as u64;
     let coarse_cap = coarse_cap.max(1) as u64;
     let usage = BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC;
@@ -623,9 +619,9 @@ fn create_render_group0(
     entries: &buffer::Buffer<types::GpuDrawEntry>,
     segments: &buffer::Buffer<types::GpuSegment>,
     styles: &buffer::Buffer<types::GpuStyle>,
-    fine_counts: &iced::wgpu::Buffer,
-    fine_slots: &iced::wgpu::Buffer,
-    coarse_slots: &iced::wgpu::Buffer,
+    fine_counts: &wgpu::Buffer,
+    fine_slots: &wgpu::Buffer,
+    coarse_slots: &wgpu::Buffer,
 ) -> BindGroup {
     device.create_bind_group(&BindGroupDescriptor {
         label: Some("sdf_render_g0"),
@@ -670,7 +666,7 @@ fn create_compute_group0(
     entries: &buffer::Buffer<types::GpuDrawEntry>,
     segments: &buffer::Buffer<types::GpuSegment>,
     styles: &buffer::Buffer<types::GpuStyle>,
-    launch: &iced::wgpu::Buffer,
+    launch: &wgpu::Buffer,
 ) -> BindGroup {
     device.create_bind_group(&BindGroupDescriptor {
         label: Some("sdf_compute_g0"),
@@ -705,10 +701,10 @@ fn create_compute_group0(
 fn create_scatter_group1(
     device: &Device,
     shared: &SharedSdfResources,
-    coarse_counts: &iced::wgpu::Buffer,
-    coarse_slots: &iced::wgpu::Buffer,
+    coarse_counts: &wgpu::Buffer,
+    coarse_slots: &wgpu::Buffer,
     cull_list: &buffer::Buffer<u32>,
-    cull_meta: &iced::wgpu::Buffer,
+    cull_meta: &wgpu::Buffer,
 ) -> BindGroup {
     device.create_bind_group(&BindGroupDescriptor {
         label: Some("sdf_scatter_g1"),
@@ -738,10 +734,10 @@ fn create_scatter_group1(
 fn create_sort_group1(
     device: &Device,
     shared: &SharedSdfResources,
-    coarse_counts: &iced::wgpu::Buffer,
-    coarse_slots: &iced::wgpu::Buffer,
-    fine_counts: &iced::wgpu::Buffer,
-    fine_slots: &iced::wgpu::Buffer,
+    coarse_counts: &wgpu::Buffer,
+    coarse_slots: &wgpu::Buffer,
+    fine_counts: &wgpu::Buffer,
+    fine_slots: &wgpu::Buffer,
 ) -> BindGroup {
     device.create_bind_group(&BindGroupDescriptor {
         label: Some("sdf_sort_g1"),
@@ -950,7 +946,7 @@ impl SdfPipeline {
     /// Wrapped in a `sdf_shade` debug group so GPU captures (Nsight Graphics,
     /// RenderDoc, PIX) attribute the fragment work to a named block. Debug markers
     /// need no device feature and are no-ops without a capture tool attached.
-    fn record_sdf_instance(&self, pass: &mut iced::wgpu::RenderPass<'_>, draw_index: u32) {
+    fn record_sdf_instance(&self, pass: &mut wgpu::RenderPass<'_>, draw_index: u32) {
         pass.push_debug_group("sdf_shade");
         pass.set_pipeline(&self.shared.render_pipeline);
         pass.set_bind_group(0, &self.render_group0, &[]);
@@ -1089,7 +1085,7 @@ impl SdfPipeline {
         encoder.clear_buffer(&self.coarse_counts_buffer, 0, None);
         let mut probe = self.overflow_probe.lock();
         {
-            let mut pass = encoder.begin_compute_pass(&iced::wgpu::ComputePassDescriptor {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("sdf_scatter"),
                 timestamp_writes: None,
             });
@@ -1127,7 +1123,7 @@ impl SdfPipeline {
             self.total_coarse_tiles as u64 * 4,
         );
         {
-            let mut pass = encoder.begin_compute_pass(&iced::wgpu::ComputePassDescriptor {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("sdf_sort_fine"),
                 timestamp_writes: None,
             });
@@ -1671,11 +1667,7 @@ impl Primitive for SdfPrimitive {
         pipeline.frame_stats.prepare_cpu_us += prepare_start.elapsed().as_micros() as u64;
     }
 
-    fn draw(
-        &self,
-        pipeline: &Self::Pipeline,
-        render_pass: &mut iced::wgpu::RenderPass<'_>,
-    ) -> bool {
+    fn draw(&self, pipeline: &Self::Pipeline, render_pass: &mut wgpu::RenderPass<'_>) -> bool {
         // All prepares are done before any draw: the FIRST draw runs every cull
         // dispatch in ONE encoder + ONE submit (vs one submit per primitive) and
         // any deferred background-cache populate, before any primitive is drawn.
@@ -1707,7 +1699,7 @@ mod tests {
     fn test_primitive_push() {
         let mut p = SdfPrimitive::new();
         let shape = Shape::line([0.0, 0.0], [10.0, 0.0]);
-        let s = Style::stroke(iced::Color::WHITE, crate::pattern::Pattern::solid(2.0));
+        let s = Style::stroke(Color::WHITE, crate::pattern::Pattern::solid(2.0));
         p.push(&shape, &s, [0.0, 0.0]);
         assert_eq!(p.entry_count(), 1);
     }

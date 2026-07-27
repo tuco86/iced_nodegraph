@@ -7,10 +7,9 @@
 //! rounds only the two corners that touch the node edge, so header + body + footer
 //! reconstruct the full rounded outline with a flush seam in between.
 
-use iced::{
-    Border, Color, Element, Length, Theme, border,
-    widget::{Container, container},
-};
+use iced_widget::core::{Border, Color, Element, Length, Theme, border};
+use iced_widget::renderer::Renderer;
+use iced_widget::{Container, container};
 
 /// Which edge of the node a section sits against: a header rounds the top pair
 /// of corners, a footer the bottom pair.
@@ -85,10 +84,10 @@ fn section_border_radius(radii: EdgeRadii, position: ContentPosition) -> border:
 /// let header = node_header(text("Title"), Color::BLACK, (4.0, 8.0));
 /// ```
 pub fn node_header<'a, Message>(
-    content: impl Into<Element<'a, Message, Theme, iced::Renderer>>,
+    content: impl Into<Element<'a, Message, Theme, Renderer>>,
     background: Color,
     radii: impl Into<EdgeRadii>,
-) -> Container<'a, Message, Theme, iced::Renderer>
+) -> Container<'a, Message, Theme, Renderer>
 where
     Message: Clone + 'a,
 {
@@ -110,10 +109,10 @@ where
 /// let footer = node_footer(text("Footer"), Color::from_rgb(0.15, 0.15, 0.15), 5.0);
 /// ```
 pub fn node_footer<'a, Message>(
-    content: impl Into<Element<'a, Message, Theme, iced::Renderer>>,
+    content: impl Into<Element<'a, Message, Theme, Renderer>>,
     background: Color,
     radii: impl Into<EdgeRadii>,
-) -> Container<'a, Message, Theme, iced::Renderer>
+) -> Container<'a, Message, Theme, Renderer>
 where
     Message: Clone + 'a,
 {
@@ -123,11 +122,11 @@ where
 /// Shared rounded-box section for header/footer: fills `background` and rounds
 /// the corners at `position` to `radii`, at `Length::Fill` width.
 fn node_section<'a, Message>(
-    content: impl Into<Element<'a, Message, Theme, iced::Renderer>>,
+    content: impl Into<Element<'a, Message, Theme, Renderer>>,
     background: Color,
     radii: EdgeRadii,
     position: ContentPosition,
-) -> Container<'a, Message, Theme, iced::Renderer>
+) -> Container<'a, Message, Theme, Renderer>
 where
     Message: Clone + 'a,
 {
