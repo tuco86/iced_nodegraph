@@ -5201,6 +5201,95 @@ fn index_pruning_ceiling() {
     );
 }
 
+/// Worst channel difference a production-tessellated curve may show against a
+/// 20x finer reference spline, at the widget's maximum zoom. Measured 137/255
+/// at `CUBIC_ARC_TOL = 0.1`; at 0.5 pixels flip outright (255/255). The budget
+/// sits between the two with margin on both sides.
+const TESSELLATION_MAX_CHANNEL_DELTA: i32 = 180;
+/// Share of the frame that may differ by more than a just-noticeable 8/255.
+/// Measured 0.42% at 0.1, 0.97% at 0.5.
+const TESSELLATION_MAX_DIFFERING_FRACTION: f64 = 0.006;
+
+/// The bezier tessellation tolerance is a QUALITY contract, and until now
+/// nothing tested it. Every other bezier test either compares like against like
+/// (`tiled` vs `untiled` uses the SAME tolerance for both, so it cannot see a
+/// tolerance change) or asserts a structural invariant (no holes, stroke
+/// present). Raising `CUBIC_ARC_TOL` from 0.05 to 0.5 - a tenfold bend away
+/// from the true cubic, plainly visible when zoomed in - left all 155 tests
+/// green.
+///
+/// This closes that hole by rendering against a tolerance-INDEPENDENT
+/// reference: the same curve fitted 20x finer than production. At the widget's
+/// maximum zoom, where `tol * zoom` is largest, production must stay close to
+/// it.
+#[test]
+fn bezier_tessellation_matches_a_finer_reference() {
+    use glam::Vec2;
+
+    let r = shared_renderer();
+    let (w, h) = (512u32, 512u32);
+    let style = Style::stroke(rgba(0.9, 0.9, 0.95, 1.0), Pattern::solid(2.0));
+    // Screen error is `tol * zoom`, so the widget's zoom ceiling is the worst
+    // case; `s` keeps the curve on screen there.
+    let zoom = 10.0_f32;
+    let s = 40.0 / zoom;
+    // An S-curve with an inflection and a broad sweep - the two shapes the
+    // recursive arc fit has to subdivide hardest.
+    let curves = [
+        (
+            Vec2::new(-3.0 * s, -2.0 * s),
+            Vec2::new(2.0 * s, -3.0 * s),
+            Vec2::new(-2.0 * s, 3.0 * s),
+            Vec2::new(3.0 * s, 2.0 * s),
+        ),
+        (
+            Vec2::new(-3.0 * s, -s),
+            Vec2::new(-s, -3.0 * s),
+            Vec2::new(s, 3.0 * s),
+            Vec2::new(3.0 * s, s),
+        ),
+    ];
+
+    for (i, (p0, p1, p2, p3)) in curves.iter().enumerate() {
+        let reference = crate::drawable::Drawable::bezier_arcs(*p0, *p1, *p2, *p3, 0.005);
+        let shipped = Curve::bezier(*p0, *p1, *p2, *p3);
+        let a = r.render_opts(&[(&reference, &style)], w, h, zoom, true);
+        let b = r.render_opts(&[(&shipped, &style)], w, h, zoom, true);
+
+        let mut worst = 0i32;
+        let mut differing = 0usize;
+        for (pa, pb) in a.iter().zip(b.iter()) {
+            let d = (0..4)
+                .map(|k| i32::from(pa[k]) - i32::from(pb[k]))
+                .map(i32::abs)
+                .max()
+                .expect("4 channels");
+            worst = worst.max(d);
+            differing += usize::from(d > 8);
+        }
+        let fraction = differing as f64 / a.len() as f64;
+        assert!(
+            worst <= TESSELLATION_MAX_CHANNEL_DELTA,
+            "curve {i}: production tessellation ({} arcs) differs from the 20x finer \
+             reference ({} arcs) by {worst}/255 on a channel at zoom {zoom}, past the \
+             {TESSELLATION_MAX_CHANNEL_DELTA}/255 budget. A delta near 255 means a pixel \
+             flipped between fully stroke and fully background - the curve is visibly \
+             cutting corners. Check `CUBIC_ARC_TOL`.",
+            shipped.segments.len(),
+            reference.segments.len(),
+        );
+        assert!(
+            fraction <= TESSELLATION_MAX_DIFFERING_FRACTION,
+            "curve {i}: {:.4}% of pixels differ by more than 8/255 from the finer \
+             reference, past the {:.4}% budget ({} vs {} arcs). Check `CUBIC_ARC_TOL`.",
+            fraction * 100.0,
+            TESSELLATION_MAX_DIFFERING_FRACTION * 100.0,
+            shipped.segments.len(),
+            reference.segments.len(),
+        );
+    }
+}
+
 /// Live GPU bytes the 500-node scene's pipeline may own.
 /// Measured 26_257_780 B (25.04 MiB) on this scene; budget is that x1.25,
 /// rounded up to a readable 32 MiB.

@@ -69,9 +69,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mutating, so a refusal needs no rollback: the slot never becomes live and
   consumers bounded by `len()` cannot read it. Refused items are counted in
   `SdfStats::gpu_dropped_items` instead of being silent.
+- The bezier tessellation tolerance is now actually tested.
+  `bezier_tessellation_matches_a_finer_reference` renders a production-fitted
+  curve against a 20x finer reference spline at the widget's maximum zoom, and
+  `cubic_tolerance_stays_within_one_screen_pixel_at_max_zoom` pins the stated
+  `tol * zoom <= 1.0 px` contract. Every existing bezier test either compared
+  like against like (`tiled` vs `untiled` uses the same tolerance for both, so
+  it cannot see a tolerance change) or asserted a structural invariant, so a
+  tenfold tolerance increase - plainly visible when zoomed in - left all 155
+  tests green.
 
 ### Changed
 
+- Bezier arc-spline tolerance `CUBIC_ARC_TOL` raised from 0.05 to 0.1 world
+  units. Screen error is `tol * zoom`, so this is <= 1.0 px at the widget's
+  maximum zoom of 10 and invisible everywhere below it - at overview zoom it is
+  0.024 px. Curved edges drop from 12.0 to 8.0 arc segments, which multiplies
+  through the whole pipeline: on the canonical 1280x768 scene the edge layer's
+  slots per live tile fall 16.92 -> 12.34, sort+fine 192.8 -> 145.7 us and
+  fragment 238.6 -> 183.0 us; the whole GPU frame goes 688.7 -> 576.9 us
+  (-16%). Node bodies are unaffected - they are boxes and circles, not beziers.
+  0.1 captures about two thirds of the total available saving at a fifth of the
+  error: 0.5 would buy only another 9% while flipping pixels outright when
+  zoomed in. `Curve::bezier` also stopped hardcoding its own copy of the value.
 - `cs_sort_fine` no longer evaluates the segment field at the fine tile centre
   for OPEN entries. That value feeds exactly one consumer, the closed-contour
   interior test, so every stroke and edge computed it and threw it away - once

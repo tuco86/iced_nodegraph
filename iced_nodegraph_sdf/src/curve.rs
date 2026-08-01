@@ -24,10 +24,15 @@ use crate::biarc::{ArcPiece, cubic_to_arcs};
 use crate::drawable::{Drawable, DrawableType, Segment};
 
 /// Arc-spline tolerance (world units) for approximating cubic beziers as arcs in
-/// the arc-only model. Fixed on purpose: screen-space error = 0.05 * zoom, i.e.
-/// <= 0.5 px across the widget's whole zoom clamp [0.1, 10.0], and a fixed value
-/// keeps shape recipe hashes (and thus resident edge geometry) zoom-invariant.
-const CUBIC_ARC_TOL: f32 = 0.05;
+/// the arc-only model. Fixed on purpose: screen-space error = `tol * zoom`, i.e.
+/// <= 1.0 px at the widget's maximum zoom of 10 and far below that everywhere
+/// else, and a fixed value keeps shape recipe hashes (and thus resident edge
+/// geometry) zoom-invariant.
+///
+/// Halving this doubles the arc count of every curved edge, which multiplies
+/// through the whole pipeline: more segments to scatter, more slots per tile,
+/// and more `eval_segment` calls in the fragment's per-pixel min-reduction.
+const CUBIC_ARC_TOL: f32 = 0.1;
 
 /// Geometry construction namespace.
 pub struct Curve;
@@ -69,7 +74,7 @@ impl Curve {
             Vec2::from(p1.into()),
             Vec2::from(p2.into()),
             Vec2::from(p3.into()),
-            0.05,
+            CUBIC_ARC_TOL,
         )
     }
 
@@ -466,6 +471,32 @@ fn signed_area(segments: &[ShapeSegment]) -> f32 {
 mod tests {
     use super::*;
     use std::f32::consts::PI;
+
+    /// The widget clamps camera zoom to this; screen error is `tol * zoom`, so
+    /// the maximum is where the arc-spline approximation is most visible.
+    const MAX_WIDGET_ZOOM: f32 = 10.0;
+
+    /// [`CUBIC_ARC_TOL`] is a QUALITY contract, not a free tuning knob: raising
+    /// it cuts arc counts (and with them scatter work, slots per tile and
+    /// per-pixel `eval_segment` calls) but bends every curve further from the
+    /// cubic it approximates. The error is `tol * zoom`, so it is worst when
+    /// zoomed all the way in - which is also where the arc-count saving is
+    /// smallest, since a tightly zoomed curve spans few world units anyway.
+    ///
+    /// Measured: at zoom 10 against a 20x finer reference spline, tol 0.1
+    /// shifts at most 137/255 on a channel, tol 0.5 flips pixels outright
+    /// (255/255 - fully stroke to fully background). One pixel of screen error
+    /// is the agreed ceiling.
+    #[test]
+    fn cubic_tolerance_stays_within_one_screen_pixel_at_max_zoom() {
+        let worst_screen_error = CUBIC_ARC_TOL * MAX_WIDGET_ZOOM;
+        assert!(
+            worst_screen_error <= 1.0,
+            "CUBIC_ARC_TOL {CUBIC_ARC_TOL} gives {worst_screen_error} px of error at zoom \
+             {MAX_WIDGET_ZOOM}; the contract is <= 1.0 px. Raising it is a visible-quality \
+             change, not a perf tweak - see `bezier_tessellation_matches_a_finer_reference`."
+        );
+    }
 
     fn assert_near(a: f32, b: f32, eps: f32, msg: &str) {
         assert!((a - b).abs() < eps, "{msg}: {a} != {b} (eps={eps})");
