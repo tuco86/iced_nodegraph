@@ -34,6 +34,22 @@ pub(crate) struct Buffer<T> {
     generation: u64,
     /// Bytes handed to `queue.write_buffer` since the last `take_written_bytes`.
     written_bytes: u64,
+    /// Hard ceiling for this binding, from the device's
+    /// `max_storage_buffer_binding_size`, rounded down to a 4-byte multiple.
+    ///
+    /// The two-level tile index has always clamped against this limit and
+    /// degraded to `grid_cols = 0` (see `SdfPipeline::max_fine_tiles`); the
+    /// geometry arenas did not, so they grew until wgpu rejected the
+    /// allocation - a hard failure with no fallback at roughly
+    /// `max_bytes / size_of::<T>()` items (2.1 M `GpuSegment`s at the 128 MiB
+    /// wgpu default). Now growth clamps here and a write that cannot fit is
+    /// SKIPPED and counted in `dropped_items` instead.
+    max_bytes: u64,
+    /// Items never uploaded because the binding ceiling was reached. Nonzero
+    /// means the scene exceeds what this device can bind: the excess geometry
+    /// is absent from the frame, and `live_len` never advances over it, so
+    /// consumers bounded by `len()` cannot read the missing slots.
+    dropped_items: u64,
 }
 
 impl<T: ShaderSize> Buffer<T> {
@@ -55,6 +71,8 @@ impl<T: ShaderSize> Buffer<T> {
             usage,
             generation: 0,
             written_bytes: 0,
+            max_bytes: u64::from(device.limits().max_storage_buffer_binding_size) & !3,
+            dropped_items: 0,
         }
     }
 
@@ -84,12 +102,34 @@ impl<T: ShaderSize> Buffer<T> {
         self.live_len == 0
     }
 
+    /// Items this binding can ever hold, from the device's storage-binding
+    /// limit. Pushing past it drops the item (see [`Buffer::dropped_items`]).
+    pub fn capacity_items(&self) -> usize {
+        (self.max_bytes / T::SHADER_SIZE.get()) as usize
+    }
+
+    /// Items never uploaded because [`Buffer::capacity_items`] was exceeded.
+    pub fn dropped_items(&self) -> u64 {
+        self.dropped_items
+    }
+    /// Allocation size for `required` bytes; see [`grown_size`].
+    fn grown_size(&self, required: u64, item_size: u64) -> u64 {
+        grown_size(required, item_size, self.max_bytes)
+    }
+
     #[must_use]
     pub fn push(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, item: T) -> usize
     where
         T: ShaderType + ShaderSize + WriteInto,
     {
         let slot = self.live_len;
+        let item_size = T::SHADER_SIZE.get() as usize;
+        // Capacity check BEFORE any mutation: on refusal `live_len` and the CPU
+        // mirror are untouched, so the slot is simply never live.
+        if ((slot + 1) * item_size) as u64 > self.max_bytes {
+            self.dropped_items += 1;
+            return slot;
+        }
         if slot < self.buffer_vec.len() {
             self.buffer_vec[slot] = item;
         } else {
@@ -97,17 +137,11 @@ impl<T: ShaderSize> Buffer<T> {
         }
         self.live_len += 1;
 
-        let item_size = T::SHADER_SIZE.get() as usize;
         let offset = slot * item_size;
         let required_size = self.live_len * item_size;
 
         if self.buffer_wgpu.size() < required_size as u64 {
-            // Align up to 4: 1.5x growth of a 4-aligned size is not always
-            // 4-aligned (e.g. 132 -> 198), and storage bindings require it.
-            let new_size = (((required_size as f32 * BUFFER_GROWTH_FACTOR) as u64)
-                .max((BUFFER_MIN_ITEMS * T::SHADER_SIZE.get() as usize) as u64)
-                + 3)
-                & !3;
+            let new_size = self.grown_size(required_size as u64, item_size as u64);
             self.buffer_wgpu = create_wgpu_buffer(device, self.label, new_size, self.usage);
             self.generation += 1;
             self.rewrite_all(queue);
@@ -159,6 +193,15 @@ impl<T: ShaderSize> Buffer<T> {
         }
 
         let start_slot = self.live_len;
+        let item_size = T::SHADER_SIZE.get() as usize;
+        // Capacity check BEFORE any mutation (see `push`). The batch is
+        // all-or-nothing: a partially uploaded run would leave the tail slots
+        // holding a previous frame's bytes, which renders as stale geometry
+        // rather than absent geometry.
+        if ((start_slot + items.len()) * item_size) as u64 > self.max_bytes {
+            self.dropped_items += items.len() as u64;
+            return start_slot;
+        }
         // Overwrite the live slots in place; extend the mirror only past its
         // high-water mark so prior-frame allocation is reused, not regrown.
         let overwrite = items
@@ -170,15 +213,10 @@ impl<T: ShaderSize> Buffer<T> {
         }
         self.live_len = start_slot + items.len();
 
-        let item_size = T::SHADER_SIZE.get() as usize;
         let required_size = self.live_len * item_size;
 
         if self.buffer_wgpu.size() < required_size as u64 {
-            // Align up to 4 (see `push`).
-            let new_size = (((required_size as f32 * BUFFER_GROWTH_FACTOR) as u64)
-                .max((BUFFER_MIN_ITEMS * T::SHADER_SIZE.get() as usize) as u64)
-                + 3)
-                & !3;
+            let new_size = self.grown_size(required_size as u64, item_size as u64);
             self.buffer_wgpu = create_wgpu_buffer(device, self.label, new_size, self.usage);
             self.generation += 1;
             self.rewrite_all(queue);
@@ -222,20 +260,23 @@ impl<T: ShaderSize> Buffer<T> {
             return;
         }
         let end = offset + items.len();
+        let item_size = T::SHADER_SIZE.get() as usize;
+        // Capacity check BEFORE any mutation (see `push`). Refusing here keeps
+        // `live_len` below the range, so the arena block is never referenced as
+        // live and no stale bytes are presented as geometry.
+        if (end * item_size) as u64 > self.max_bytes {
+            self.dropped_items += items.len() as u64;
+            return;
+        }
         if self.buffer_vec.len() < end {
             self.buffer_vec.resize(end, T::default());
         }
         self.buffer_vec[offset..end].clone_from_slice(items);
         self.live_len = self.live_len.max(end);
 
-        let item_size = T::SHADER_SIZE.get() as usize;
         let required_size = self.live_len * item_size;
         if self.buffer_wgpu.size() < required_size as u64 {
-            // Align up to 4 (see `push`).
-            let new_size = (((required_size as f32 * BUFFER_GROWTH_FACTOR) as u64)
-                .max((BUFFER_MIN_ITEMS * T::SHADER_SIZE.get() as usize) as u64)
-                + 3)
-                & !3;
+            let new_size = self.grown_size(required_size as u64, item_size as u64);
             self.buffer_wgpu = create_wgpu_buffer(device, self.label, new_size, self.usage);
             self.generation += 1;
             self.rewrite_all(queue);
@@ -282,6 +323,13 @@ impl<T: ShaderSize> Buffer<T> {
         );
         self.live_len += n;
     }
+
+    /// Lowers the binding ceiling so a test can drive the drop path without
+    /// allocating the device's real 128 MiB limit.
+    #[cfg(test)]
+    pub fn set_max_bytes_for_test(&mut self, bytes: u64) {
+        self.max_bytes = bytes & !3;
+    }
 }
 
 fn create_wgpu_buffer(
@@ -296,4 +344,61 @@ fn create_wgpu_buffer(
         usage,
         mapped_at_creation: false,
     })
+}
+
+/// Allocation size for `required` bytes: 1.5x growth, 4-aligned, at least
+/// `BUFFER_MIN_ITEMS`, never past `max_bytes`. Callers must have already
+/// established `required <= max_bytes`.
+///
+/// Free function so the sizing decision - the one that used to hand wgpu an
+/// allocation past `max_storage_buffer_binding_size` - is testable without a
+/// device.
+fn grown_size(required: u64, item_size: u64, max_bytes: u64) -> u64 {
+    let want = (((required as f32 * BUFFER_GROWTH_FACTOR) as u64)
+        .max(BUFFER_MIN_ITEMS as u64 * item_size)
+        + 3)
+        & !3;
+    want.min(max_bytes).max(required)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ITEM: u64 = 64; // GpuSegment
+    const MAX: u64 = 64 * ITEM; // a deliberately tiny ceiling
+
+    /// The guard that was missing: growth must never request more than the
+    /// device's storage-binding limit. That allocation is what wgpu rejects,
+    /// and the geometry arenas had no clamp (the tile index always had one).
+    #[test]
+    fn growth_never_exceeds_the_binding_ceiling() {
+        for n in 1..=64u64 {
+            let size = grown_size(n * ITEM, ITEM, MAX);
+            assert!(size <= MAX, "{n} items -> {size} B, past the {MAX} B cap");
+            assert!(
+                size >= n * ITEM,
+                "{n} items -> {size} B, too small to hold them"
+            );
+            assert_eq!(size % 4, 0, "{n} items -> {size} B is not 4-aligned");
+        }
+    }
+
+    /// Below the cap the 1.5x growth must still apply, or every push reallocates.
+    #[test]
+    fn growth_is_still_geometric_below_the_ceiling() {
+        let required = 20 * ITEM;
+        let size = grown_size(required, ITEM, u64::MAX);
+        assert!(
+            size >= required * 3 / 2,
+            "expected ~1.5x of {required}, got {size}"
+        );
+    }
+
+    /// A request that exactly fills the ceiling is representable and must not
+    /// be rounded up past it.
+    #[test]
+    fn an_exactly_full_request_clamps_to_the_ceiling() {
+        assert_eq!(grown_size(MAX, ITEM, MAX), MAX);
+    }
 }

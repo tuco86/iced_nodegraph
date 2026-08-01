@@ -59,6 +59,7 @@ static LAST_STATS: Mutex<types::SdfStats> = Mutex::new(types::SdfStats {
     index_traffic_bytes: 0,
     fine_evicted_tiles: 0,
     fine_evicted_slots: 0,
+    gpu_dropped_items: 0,
 });
 
 static INDEX_PROBE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -951,6 +952,13 @@ impl Pipeline for SdfPipeline {
         self.frame_stats.fine_live_tiles = self.fine_report.live_tiles;
         self.frame_stats.fine_evicted_tiles = self.fine_report.evicted_tiles;
         self.frame_stats.fine_evicted_slots = self.fine_report.evicted_slots;
+        // Lifetime total across every binding that can hit the device ceiling.
+        self.frame_stats.gpu_dropped_items = self.draw_data_buffer.dropped_items()
+            + self.entries_buffer.dropped_items()
+            + self.segments_buffer.dropped_items()
+            + self.styles_buffer.dropped_items()
+            + self.cull_pairs_buffer.dropped_items()
+            + self.cull_closed_buffer.dropped_items();
         // RAM->GPU traffic: every `Buffer<T>` write plus the two 8-byte uniform
         // writes `run_deferred_compute` issues on a culled frame.
         self.frame_stats.upload_bytes = self.draw_data_buffer.take_written_bytes()

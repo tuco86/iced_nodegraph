@@ -6795,6 +6795,78 @@ fn gpu_cost_report() {
     println!("=====================================================\n");
 }
 
+/// Geometry-arena overflow must DEGRADE, not panic - the sibling contract to
+/// `oversized_tile_budget_falls_back_no_panic`, which the tile index has always
+/// honoured and the geometry arenas did not.
+///
+/// Past the device's `max_storage_buffer_binding_size` the arenas used to keep
+/// growing 1.5x until wgpu rejected the allocation: a hard failure with no
+/// fallback at ~2.1 M `GpuSegment`s on the 128 MiB wgpu default. Now the write
+/// is refused, counted, and `live_len` never advances over it, so the excess is
+/// simply absent from the frame instead of killing the app.
+///
+/// The real ceiling is 128 MiB, far too large to fill in a test, so the ceiling
+/// is lowered instead - the drop path is identical either way.
+#[test]
+fn geometry_arena_ceiling_drops_instead_of_panicking() {
+    let r = shared_renderer();
+    let mut buf: crate::pipeline::buffer::Buffer<GpuSegment> = crate::pipeline::buffer::Buffer::new(
+        &r.device,
+        Some("ceiling_probe"),
+        BufferUsages::STORAGE | BufferUsages::COPY_DST,
+    );
+    // Room for exactly 8 segments.
+    let cap = 8usize;
+    buf.set_max_bytes_for_test(cap as u64 * GpuSegment::SHADER_SIZE.get());
+    assert_eq!(buf.capacity_items(), cap);
+
+    let seg = GpuSegment::default();
+    for i in 0..cap {
+        let slot = buf.push(&r.device, &r.queue, seg.clone());
+        assert_eq!(slot, i, "slot {i} should be accepted below the ceiling");
+    }
+    assert_eq!(buf.len(), cap, "every item below the ceiling must be live");
+    assert_eq!(
+        buf.dropped_items(),
+        0,
+        "nothing may be dropped below the cap"
+    );
+
+    // Past the ceiling: refused, counted, and NOT live.
+    for _ in 0..5 {
+        let _ = buf.push(&r.device, &r.queue, seg.clone());
+    }
+    assert_eq!(
+        buf.len(),
+        cap,
+        "live length must not advance past the ceiling - consumers bound their \
+         reads by len(), so a live slot with no uploaded bytes would render garbage"
+    );
+    assert_eq!(buf.dropped_items(), 5, "every refused push must be counted");
+
+    // The bulk and arena paths take the same gate.
+    let batch = vec![seg.clone(); 4];
+    let _ = buf.push_bulk(&r.device, &r.queue, &batch);
+    assert_eq!(buf.len(), cap, "a batch past the ceiling is all-or-nothing");
+    assert_eq!(buf.dropped_items(), 9);
+
+    buf.write_at(&r.device, &r.queue, cap, &batch);
+    assert_eq!(buf.len(), cap, "an arena write past the ceiling is refused");
+    assert_eq!(buf.dropped_items(), 13);
+
+    // A write that ends EXACTLY at the ceiling is still accepted: the gate is a
+    // strict `>`, and an off-by-one here would drop the last usable item.
+    buf.clear();
+    let full = vec![seg; cap];
+    let _ = buf.push_bulk(&r.device, &r.queue, &full);
+    assert_eq!(buf.len(), cap, "a batch ending exactly at the cap must fit");
+    assert_eq!(
+        buf.dropped_items(),
+        13,
+        "no new drops for the exact-fit batch"
+    );
+}
+
 /// Tile-budget overflow must DEGRADE, not panic. A draw whose tile grid would push
 /// the spatial index past the device's storage-binding limit (the "many nodes
 /// stacked into one spot" pile, simulated here with one absurdly large clip) falls

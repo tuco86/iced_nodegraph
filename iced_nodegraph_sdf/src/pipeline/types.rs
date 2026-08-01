@@ -379,6 +379,13 @@ pub struct SdfStats {
     /// Total candidate segments dropped across all full fine tiles.
     /// Requires [`crate::set_index_probe`].
     pub fine_evicted_slots: u64,
+    /// Geometry items (segments, entries, styles, cull-list words) never
+    /// uploaded because a buffer hit the device's
+    /// `max_storage_buffer_binding_size`. Nonzero means the scene exceeds what
+    /// this device can bind and part of it is ABSENT from the frame - the
+    /// renderer degrades instead of failing the allocation, mirroring the tile
+    /// index's `grid_cols = 0` fallback. Lifetime total, not per frame.
+    pub gpu_dropped_items: u64,
 }
 
 #[cfg(test)]
