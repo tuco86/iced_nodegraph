@@ -20,6 +20,13 @@ const COARSE_STRIDE: u32 = 1024u;     // MAX_COARSE_SLOTS * 2 u32 per coarse til
 // (16 bit because the coarse list is 512 deep, past a u8).
 const MAX_FINE_SLOTS: u32 = 128u;
 const FINE_STRIDE: u32 = 64u;         // MAX_FINE_SLOTS / 2 (u16 packed 2 per u32)
+// `fine_counts[t]` packs TWO fields: the low 16 bits are the live slot count
+// (<= MAX_FINE_SLOTS), the high 16 bits count candidates DROPPED because the
+// tile was already full (saturating). A nonzero high half means the tile's slot
+// list is INCOMPLETE: a dropped segment that would have been the per-pixel
+// nearest renders a wrong distance, so this is a correctness signal, not a
+// quality knob. Surfaced as `SdfStats::fine_evicted_tiles` / `fine_evicted_slots`.
+const FINE_COUNT_MASK: u32 = 0xFFFFu;
 
 const ENTRY_TILING: u32 = 2u;
 // Marker bit: slot segment_idx with this bit set = tiling (segment_idx = entry_idx)
@@ -669,7 +676,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         tile_row = min(tile_row, draw.grid_rows - 1u);
 
         let tile_idx = draw.tile_base + tile_row * draw.grid_cols + tile_col;
-        let count = fine_counts[tile_idx];
+        let count = fine_counts[tile_idx] & FINE_COUNT_MASK;
 
         if count == 0u {
             discard;
@@ -909,10 +916,15 @@ fn cs_fine_get(fine_base: u32, k: u32) -> u32 {
 // index-ascending and the caller must re-sort it, because the fragment folds
 // CONSECUTIVE same-entry references into one contour (a scrambled list splits
 // an entry into multiple runs, compositing it twice).
+//
+// `evicted` counts candidates LOST to a full tile. Both full-tile outcomes lose
+// exactly one candidate - the newcomer is rejected, or it displaces a resident
+// slot - so both increment it.
 fn fine_push(
     fine_base: u32,
     count: ptr<function, u32>,
     slot_dist: ptr<function, array<f32, MAX_FINE_SLOTS>>,
+    evicted: ptr<function, u32>,
     coarse_idx: u32,
     prio: f32,
 ) -> bool {
@@ -922,6 +934,7 @@ fn fine_push(
         *count += 1u;
         return false;
     }
+    *evicted += 1u;
     var maxi = 0u;
     var maxd = (*slot_dist)[0];
     for (var k = 1u; k < MAX_FINE_SLOTS; k = k + 1u) {
@@ -1352,6 +1365,7 @@ fn cs_sort_fine(
     var fcount = 0u;
     var fdist: array<f32, MAX_FINE_SLOTS>;
     var freplaced = false;
+    var fevict = 0u;
     var j = 0u;
     while j < ccount {
         let raw = wg_cseg[j];
@@ -1362,7 +1376,7 @@ fn cs_sort_fine(
         if (raw & TILING_BIT) != 0u {
             let td = tiling_box_dist(entry.tiling_type, entry.tiling_params, fworld, fhalf);
             if td - thd <= style_max_dist(style) + 0.5 {
-                freplaced = fine_push(fine_base, &fcount, &fdist, j, td) || freplaced;
+                freplaced = fine_push(fine_base, &fcount, &fdist, &fevict, j, td) || freplaced;
             }
             j++;
             continue;
@@ -1409,7 +1423,8 @@ fn cs_sort_fine(
                     // dominance, and breaks the iv.x = 0 tie among segments
                     // inside the tile.
                     let cd = abs(eval_segment(lp_center, cs_segments[wg_cseg[t]]).dist);
-                    freplaced = fine_push(fine_base, &fcount, &fdist, t, cd) || freplaced;
+                    freplaced =
+                        fine_push(fine_base, &fcount, &fdist, &fevict, t, cd) || freplaced;
                 }
             }
         }
@@ -1432,5 +1447,5 @@ fn cs_sort_fine(
         }
     }
 
-    cs_fine_counts[fine_tile_idx] = fcount;
+    cs_fine_counts[fine_tile_idx] = fcount | (min(fevict, FINE_COUNT_MASK) << 16u);
 }

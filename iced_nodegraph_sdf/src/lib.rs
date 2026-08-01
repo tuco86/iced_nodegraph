@@ -65,7 +65,7 @@ pub use curve::{Curve, ShapeBuilder};
 pub use drawable::Drawable;
 pub use pattern::Pattern;
 pub use pipeline::types::SdfStats;
-pub use primitive::{SdfPrimitive, sdf_stats};
+pub use primitive::{SdfPrimitive, index_probe_enabled, sdf_stats, set_index_probe};
 pub use shape::{Shape, ShapeCache};
 pub use style::{Stop, Style, Transfer};
 pub use tiling::Tiling;

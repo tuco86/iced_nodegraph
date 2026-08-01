@@ -190,7 +190,18 @@ levels persisted to storage buffers:
 - **Fine** 16x16-pixel tiles. Each holds up to `MAX_FINE_SLOTS = 128` **16-bit**
   indices into its parent coarse tile's result, packed 2 per u32
   (`FINE_STRIDE = 64`). The fragment dereferences a fine index through the coarse
-  tile to recover the `(segment, entry)`.
+  tile to recover the `(segment, entry)`. Past the cap `fine_push` drops one
+  candidate per call - it evicts the resident slot furthest from the tile
+  centre, or rejects the newcomer. A second, OPT-IN async readback
+  (`crate::set_index_probe`) reports both halves of the packed `fine_counts`
+  word: the low 16 bits are the live slot count, the high 16 bits the dropped
+  count. `Sum(counts) * 256` is the `eval_segment` call count the fragment
+  shader performs per frame (`SdfStats::segment_evals` / `fine_slots_max` /
+  `fine_live_tiles`), and `fine_evicted_tiles` / `fine_evicted_slots` flag tiles
+  whose slot list is INCOMPLETE - a dropped segment that would have been the
+  per-pixel nearest renders a wrong distance, so that counter is a correctness
+  signal, not a quality knob. Off by default: it copies 4 bytes per fine tile
+  per culled frame.
 
 The split trades one indirection for memory: the fat coarse slots exist once per
 (few) coarse tiles; the 16x-more-numerous fine tiles cost two bytes per slot, not
@@ -333,5 +344,5 @@ flow (which produced a 1px tile-boundary seam on some GPUs).
 | `src/pipeline/types.rs` | GPU struct layouts (must match the WGSL) |
 | `src/pipeline/buffer.rs` | dynamic GPU buffer wrapper |
 | `src/pipeline/arena.rs` | range allocator for the persistent geometry arenas |
-| `src/pipeline/overflow.rs` | async coarse-slot demand readback (`OverflowProbe`) |
+| `src/pipeline/overflow.rs` | async index readbacks: coarse-slot demand (always on) and per-fine-tile slot counts (opt-in) |
 | `src/pipeline/pixel_tests.rs` | headless pixel-level rendering tests |

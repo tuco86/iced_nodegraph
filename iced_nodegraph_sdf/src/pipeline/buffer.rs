@@ -32,6 +32,8 @@ pub(crate) struct Buffer<T> {
     label: Option<&'static str>,
     usage: wgpu::BufferUsages,
     generation: u64,
+    /// Bytes handed to `queue.write_buffer` since the last `take_written_bytes`.
+    written_bytes: u64,
 }
 
 impl<T: ShaderSize> Buffer<T> {
@@ -52,11 +54,22 @@ impl<T: ShaderSize> Buffer<T> {
             label,
             usage,
             generation: 0,
+            written_bytes: 0,
         }
     }
 
     pub fn generation(&self) -> u64 {
         self.generation
+    }
+
+    /// Bytes handed to `queue.write_buffer` since the last call, then resets the counter.
+    pub fn take_written_bytes(&mut self) -> u64 {
+        std::mem::take(&mut self.written_bytes)
+    }
+
+    /// Size of the live GPU allocation in bytes (capacity, not live length).
+    pub fn gpu_bytes(&self) -> u64 {
+        self.buffer_wgpu.size()
     }
 
     pub fn as_entire_binding(&self) -> BindingResource<'_> {
@@ -106,6 +119,7 @@ impl<T: ShaderSize> Buffer<T> {
                 .write(&self.buffer_vec[slot])
                 .expect("Failed to write to storage buffer");
             queue.write_buffer(&self.buffer_wgpu, offset as u64, &self.scratch);
+            self.written_bytes += self.scratch.len() as u64;
         }
         slot
     }
@@ -132,6 +146,7 @@ impl<T: ShaderSize> Buffer<T> {
                 .expect("Failed to write to storage buffer");
         }
         queue.write_buffer(&self.buffer_wgpu, 0, &self.scratch);
+        self.written_bytes += self.scratch.len() as u64;
     }
 
     #[must_use]
@@ -182,6 +197,7 @@ impl<T: ShaderSize> Buffer<T> {
                     .expect("Failed to write to storage buffer");
             }
             queue.write_buffer(&self.buffer_wgpu, offset as u64, &self.scratch);
+            self.written_bytes += self.scratch.len() as u64;
         }
         start_slot
     }
@@ -240,6 +256,7 @@ impl<T: ShaderSize> Buffer<T> {
                 (offset * item_size) as u64,
                 &self.scratch,
             );
+            self.written_bytes += self.scratch.len() as u64;
         }
     }
 

@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **GPU work and memory counters.** `SdfStats` gains `upload_bytes`,
+  `gpu_bytes`, `index_bytes`, `sdf_draws`, `shaded_px`, `segment_evals`,
+  `fine_slots_max`, `fine_live_tiles`, `fine_evicted_tiles`,
+  `fine_evicted_slots` and `index_traffic_bytes`, so any machine can
+  self-report SDF GPU resource use. These are work and byte counts, not
+  timings: `iced_wgpu` 0.14 hardcodes `Features::empty()`, so a shipped iced
+  app cannot use `TIMESTAMP_QUERY`.
+- `iced_nodegraph_sdf::set_index_probe` / `index_probe_enabled` arm a second,
+  opt-in async readback of the per-fine-tile slot counts. `Sum(fine_counts) * 256`
+  is the `eval_segment` call count the fragment shader performs per frame - the
+  hardware-independent fragment-cost metric. Off by default: it copies 4 bytes
+  per fine tile per culled frame (~480 KiB on a 500-node 1280x768 frame).
+- **Fine-slot eviction telemetry.** `fine_counts` now packs the live slot count
+  in its low 16 bits and the count of candidates DROPPED at the
+  `MAX_FINE_SLOTS` cap in its high 16 bits. Previously a full tile silently
+  discarded a candidate - either evicting the resident slot furthest from the
+  tile centre or rejecting the newcomer - and `fine_slots_max == 128` could not
+  be told apart from "exactly full". A dropped segment that would have been the
+  per-pixel nearest renders a wrong distance, so this is a correctness signal.
+  Currently 0 on every measured configuration.
+
 ### Changed
 
 - SDF cull grid is now **world-anchored** instead of screen-anchored. A new

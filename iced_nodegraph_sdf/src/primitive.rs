@@ -26,7 +26,7 @@ use crate::compile::{
 };
 use crate::pattern::PatternType;
 use crate::pipeline::arena::ArenaAlloc;
-use crate::pipeline::overflow::OverflowProbe;
+use crate::pipeline::overflow::{FineReport, OverflowProbe};
 use crate::pipeline::{buffer, types};
 use crate::shape::{Shape, ShapeCache};
 use crate::shared::SharedSdfResources;
@@ -48,7 +48,33 @@ static LAST_STATS: Mutex<types::SdfStats> = Mutex::new(types::SdfStats {
     arena_compactions: 0,
     coarse_demand_max: 0,
     coarse_overflow_tiles: 0,
+    upload_bytes: 0,
+    gpu_bytes: 0,
+    index_bytes: 0,
+    sdf_draws: 0,
+    shaded_px: 0,
+    segment_evals: 0,
+    fine_slots_max: 0,
+    fine_live_tiles: 0,
+    index_traffic_bytes: 0,
+    fine_evicted_tiles: 0,
+    fine_evicted_slots: 0,
 });
+
+static INDEX_PROBE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Enables the per-fine-tile slot readback behind [`types::SdfStats::segment_evals`],
+/// [`types::SdfStats::fine_slots_max`] and [`types::SdfStats::index_traffic_bytes`].
+/// Off by default: it copies `4 * SdfStats::tile_count` bytes per culled frame.
+/// Diagnostics only.
+pub fn set_index_probe(enabled: bool) {
+    INDEX_PROBE.store(enabled, Ordering::Relaxed);
+}
+
+/// Whether the index probe is enabled.
+pub fn index_probe_enabled() -> bool {
+    INDEX_PROBE.load(Ordering::Relaxed)
+}
 
 /// Read performance statistics from the last completed frame.
 pub fn sdf_stats() -> types::SdfStats {
@@ -583,6 +609,15 @@ pub struct SdfPipeline {
     /// Most recent completed demand readback: (max per-tile demand, tiles over
     /// the usable cap). Sticky between culls; reported in [`types::SdfStats`].
     coarse_demand: (u32, u32),
+    /// Σ min(per-tile demand, `MAX_COARSE_SLOTS`) of the same readback: the
+    /// pair count the sort kernel actually moves. Feeds `index_traffic_bytes`.
+    coarse_demand_sum: u64,
+    /// Most recent completed fine-slot readback. Only populated while
+    /// [`index_probe_enabled`]. Sticky between culls.
+    fine_report: FineReport,
+    /// SDF instance draws recorded into iced's render pass this frame. Atomic
+    /// because `record_sdf_instance` runs from the immutable `draw`.
+    draw_calls: AtomicU32,
 }
 
 /// The two-level index buffers, in bind order for compute group 1:
@@ -887,6 +922,9 @@ impl Pipeline for SdfPipeline {
             cull_dirty: true,
             overflow_probe: Mutex::new(OverflowProbe::new()),
             coarse_demand: (0, 0),
+            coarse_demand_sum: 0,
+            fine_report: FineReport::default(),
+            draw_calls: AtomicU32::new(0),
         }
     }
 
@@ -894,16 +932,68 @@ impl Pipeline for SdfPipeline {
         // Harvest a completed coarse-demand readback, if any (non-blocking;
         // polls only while one is outstanding). Values are sticky until the
         // next completed readback so idle frames keep reporting the last cull.
-        if let Some(device) = self.frame_device.as_ref()
-            && let Some(report) = self
-                .overflow_probe
-                .get_mut()
-                .harvest(device, MAX_COARSE_SLOTS - TILING_RESERVE)
-        {
-            self.coarse_demand = (report.demand_max, report.overflow_tiles);
+        if let Some(device) = self.frame_device.as_ref() {
+            let probe = self.overflow_probe.get_mut();
+            if let Some(report) =
+                probe.harvest_coarse(device, MAX_COARSE_SLOTS - TILING_RESERVE, MAX_COARSE_SLOTS)
+            {
+                self.coarse_demand = (report.demand_max, report.overflow_tiles);
+                self.coarse_demand_sum = report.demand_sum;
+            }
+            if let Some(report) = probe.harvest_fine(device) {
+                self.fine_report = report;
+            }
         }
         self.frame_stats.coarse_demand_max = self.coarse_demand.0;
         self.frame_stats.coarse_overflow_tiles = self.coarse_demand.1;
+        self.frame_stats.segment_evals = self.fine_report.slot_sum * 256;
+        self.frame_stats.fine_slots_max = self.fine_report.slot_max;
+        self.frame_stats.fine_live_tiles = self.fine_report.live_tiles;
+        self.frame_stats.fine_evicted_tiles = self.fine_report.evicted_tiles;
+        self.frame_stats.fine_evicted_slots = self.fine_report.evicted_slots;
+        // RAM->GPU traffic: every `Buffer<T>` write plus the two 8-byte uniform
+        // writes `run_deferred_compute` issues on a culled frame.
+        self.frame_stats.upload_bytes = self.draw_data_buffer.take_written_bytes()
+            + self.entries_buffer.take_written_bytes()
+            + self.segments_buffer.take_written_bytes()
+            + self.styles_buffer.take_written_bytes()
+            + self.cull_pairs_buffer.take_written_bytes()
+            + self.cull_closed_buffer.take_written_bytes()
+            + if self.cull_dirty { 16 } else { 0 };
+        // Live GPU allocation. Index buffers are broken out separately because
+        // they are the term that grows with the viewport and never shrinks.
+        self.frame_stats.index_bytes = self.coarse_counts_buffer.size()
+            + self.coarse_slots_buffer.size()
+            + self.fine_counts_buffer.size()
+            + self.fine_slots_buffer.size();
+        self.frame_stats.gpu_bytes = self.frame_stats.index_bytes
+            + self.draw_data_buffer.gpu_bytes()
+            + self.entries_buffer.gpu_bytes()
+            + self.segments_buffer.gpu_bytes()
+            + self.styles_buffer.gpu_bytes()
+            + self.cull_pairs_buffer.gpu_bytes()
+            + self.cull_closed_buffer.gpu_bytes()
+            + self.cull_meta_buffer.size()
+            + self.cull_launch_buffer.size();
+        self.frame_stats.sdf_draws = self.draw_calls.swap(0, Ordering::Relaxed);
+        // GPU-side bytes the index build moves on a culled frame:
+        //   clear      = total_coarse_tiles * 4
+        //   scatter    = demand_sum * 8                  // one (seg, entry) pair per accepted append
+        //   sort_load  = demand_sum * 8                  // cs_sort_fine loads min(demand, cap) pairs
+        //   sort_store = demand_sum * 8 + total_coarse_tiles * 4
+        //   fine       = total_fine_tiles * 4 + fine_slot_sum * 4   // packed u16 pairs, read-modify-write
+        // Both readbacks lag by a frame, so on a cull-heavy frame so does this.
+        self.frame_stats.index_traffic_bytes = if self.cull_dirty {
+            let coarse_tiles = u64::from(self.total_coarse_tiles);
+            let fine_tiles = u64::from(self.total_fine_tiles);
+            coarse_tiles * 4
+                + self.coarse_demand_sum * 24
+                + coarse_tiles * 4
+                + fine_tiles * 4
+                + self.fine_report.slot_sum * 4
+        } else {
+            0
+        };
         // Capture frame metrics from the arenas/cache BEFORE clearing.
         self.frame_stats.tile_count = self.total_fine_tiles;
         self.frame_stats.segment_count = self.seg_arena.live();
@@ -947,6 +1037,7 @@ impl SdfPipeline {
     /// RenderDoc, PIX) attribute the fragment work to a named block. Debug markers
     /// need no device feature and are no-ops without a capture tool attached.
     fn record_sdf_instance(&self, pass: &mut wgpu::RenderPass<'_>, draw_index: u32) {
+        self.draw_calls.fetch_add(1, Ordering::Relaxed);
         pass.push_debug_group("sdf_shade");
         pass.set_pipeline(&self.shared.render_pipeline);
         pass.set_bind_group(0, &self.render_group0, &[]);
@@ -1116,7 +1207,7 @@ impl SdfPipeline {
         // is still outstanding (sampling, never queueing). Splitting the pass
         // costs one begin/end; ordering between passes and copies of one
         // encoder is guaranteed, so the sort still sees every scattered slot.
-        probe.record_copy(
+        probe.record_coarse(
             device,
             &mut encoder,
             &self.coarse_counts_buffer,
@@ -1140,6 +1231,17 @@ impl SdfPipeline {
                 pass.set_bind_group(1, &self.sort_group1, &[]);
                 pass.dispatch_workgroups(wgs.min(65535), wgs.div_ceil(65535), 1);
             }
+        }
+        // Fragment-work telemetry: after the fine sort has written its per-tile
+        // slot counts, snapshot them for `segment_evals`. Opt-in because it
+        // copies 4 bytes per fine tile (~480 KiB on a 500-node 1280x768 frame).
+        if index_probe_enabled() {
+            probe.record_fine(
+                device,
+                &mut encoder,
+                &self.fine_counts_buffer,
+                self.total_fine_tiles as u64 * 4,
+            );
         }
         queue.submit(std::iter::once(encoder.finish()));
         probe.map_pending();
@@ -1484,6 +1586,19 @@ impl Primitive for SdfPrimitive {
         let entry_count = self.entries.len() as u32;
         let camera_pos = types::GpuVec2::new(self.camera_position.0, self.camera_position.1);
         let grid_origin = types::GpuVec2::new(bounds.x * scale, bounds.y * scale);
+        // Fragment cost: iced sets viewport+scissor to each primitive's physical
+        // bounds clipped to the viewport before its draw (`iced_wgpu/src/lib.rs`
+        // :545-567), so this is the fragment-shader invocation count before the
+        // opaque early-out.
+        let vx = (bounds.x * scale).max(0.0);
+        let vy = (bounds.y * scale).max(0.0);
+        let vw = (bounds.width * scale)
+            .min(viewport.physical_width() as f32 - vx)
+            .max(0.0);
+        let vh = (bounds.height * scale)
+            .min(viewport.physical_height() as f32 - vy)
+            .max(0.0);
+        pipeline.frame_stats.shaded_px += (vw as u64) * (vh as u64);
 
         // World-anchored cull grid (plan/world-space-cull.md §4.3): decompose the
         // pan into whole coarse tiles (`grid_base`, hashed by `cull_key`) plus a

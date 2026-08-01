@@ -338,6 +338,47 @@ pub struct SdfStats {
     /// of the scatter cull). Zero in healthy scenes; nonzero is the evidence
     /// that exact slot allocation is needed.
     pub coarse_overflow_tiles: u32,
+    /// Bytes handed to `queue.write_buffer` this frame across every pipeline
+    /// buffer: the RAM->GPU upload traffic. Zero on a fully resident frame.
+    pub upload_bytes: u64,
+    /// Total live GPU buffer bytes owned by the pipeline (geometry arenas, draw
+    /// data, cull lists and both spatial-index levels). Buffers never shrink, so
+    /// this is a high-water figure.
+    pub gpu_bytes: u64,
+    /// The two-level spatial index's share of `gpu_bytes` (4 KiB per 64px coarse
+    /// tile plus 256 B per 16px fine tile of capacity).
+    pub index_bytes: u64,
+    /// SDF instance draws recorded into iced's render pass this frame (one per
+    /// primitive iced actually drew, not per prepared primitive).
+    pub sdf_draws: u32,
+    /// Physical pixels covered by this frame's prepared draws, summed and clipped
+    /// to the viewport: the fragment-shader invocation count before early-out.
+    pub shaded_px: u64,
+    /// `eval_segment` calls the fragment shader performs per frame, upper-bounded
+    /// as `sum(fine slot count) * 256`; the apron tiles lie partly outside the
+    /// scissor, so the true count is slightly lower. Requires
+    /// [`crate::set_index_probe`]; 0 while the probe is off.
+    pub segment_evals: u64,
+    /// Highest per-fine-tile slot count of the last completed index readback,
+    /// against the 128-slot cap. Requires [`crate::set_index_probe`].
+    pub fine_slots_max: u32,
+    /// Fine tiles holding at least one slot in the last completed readback.
+    /// Requires [`crate::set_index_probe`].
+    pub fine_live_tiles: u32,
+    /// GPU-side bytes the index build reads and writes per culled frame, derived
+    /// from the demand and slot readbacks. 0 on a cull-skipped frame. Requires
+    /// [`crate::set_index_probe`]. Both readbacks are one frame delayed, so on a
+    /// cull-heavy frame this figure lags the frame it describes by one.
+    pub index_traffic_bytes: u64,
+    /// Fine tiles whose slot list is INCOMPLETE: the tile hit the
+    /// `MAX_FINE_SLOTS` cap and dropped at least one candidate segment. A
+    /// dropped segment that would have been the per-pixel nearest renders a
+    /// wrong distance, so a nonzero value here is a correctness signal, not a
+    /// quality tradeoff. Requires [`crate::set_index_probe`].
+    pub fine_evicted_tiles: u32,
+    /// Total candidate segments dropped across all full fine tiles.
+    /// Requires [`crate::set_index_probe`].
+    pub fine_evicted_slots: u64,
 }
 
 #[cfg(test)]
