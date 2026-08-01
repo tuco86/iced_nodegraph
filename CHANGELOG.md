@@ -29,9 +29,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   be told apart from "exactly full". A dropped segment that would have been the
   per-pixel nearest renders a wrong distance, so this is a correctness signal.
   Currently 0 on every measured configuration.
+- Three non-ignored GPU budget tests on the canonical 500-node scene:
+  `gpu_memory_budget_500_nodes` (pipeline and spatial-index bytes),
+  `idle_frame_uploads_nothing` (a static graph re-uploads only the per-frame
+  draw table) and `fragment_work_budget_500_nodes` (`segment_evals`, plus
+  `fine_evicted_tiles == 0` as a hard correctness gate).
+- `gpu_cost_report`, an ignored cost-decomposition probe
+  (`cargo test -p iced_nodegraph_sdf --release gpu_cost_report -- --ignored --nocapture`).
+  It sweeps resolution, DPI scale, scene composition, draw count at near-zero
+  fragment work and ALU amplification, then prices the fragment, bandwidth,
+  fill and per-draw terms at a configurable target GPU and names the dominant
+  one. Tunable through `SDF_PROBE_*` environment variables.
 
 ### Changed
 
+- The `bench_scene` test fixture generated its 640 bezier edges from
+  `(i % 25, i % 20)`, a pair with period `lcm(25, 20) = 100` — so 640 edges
+  collapsed onto 100 distinct curves stacked ~6.4 deep. Per-tile entry counts,
+  and with them the fine-slot demand and the measured fragment cost of the edge
+  layer, were inflated far past any real graph. Now `32 x 20 = 640` on the same
+  24px pitch, one distinct start per edge. Measured effect on the edge layer at
+  1280x768: live fine tiles 406 -> 1614, slots per live tile 67.2 -> 16.9, peak
+  slots per tile 128 (the cap) -> 41, fragment cost 398 -> 241 us. Every
+  `gpu_cost_report` figure recorded before this change understates the index's
+  discrimination and overstates edge cost.
 - SDF cull grid is now **world-anchored** instead of screen-anchored. A new
   `DrawData.grid_offset` folds the camera pan into the tile lattice, so tile
   membership depends only on world position, zoom and a tile-quantized window

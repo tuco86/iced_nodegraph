@@ -75,6 +75,43 @@ type FrameDraw<'a> = (
     [f32; 2],
 );
 
+/// One [`TestRenderer::gpu_frame_probe`] measurement: GPU time plus the
+/// hardware-independent work and memory counters that describe WHY the frame
+/// cost what it did.
+///
+/// `compute_us`/`fragment_us` are totals over `repeat` repetitions; every other
+/// field describes ONE repetition.
+#[derive(Clone, Copy)]
+struct FrameProbe {
+    compute_us: f64,
+    fragment_us: f64,
+    repeat: u32,
+    draws: u32,
+    entries: u32,
+    coarse_tiles: u32,
+    fine_tiles: u32,
+    /// Highest per-coarse-tile render-list length after the sort.
+    coarse_demand_max: u32,
+    /// Sum of per-coarse-tile list lengths, clamped at `MAX_COARSE_SLOTS`.
+    coarse_demand_sum: u64,
+    /// Sum of per-fine-tile slot counts.
+    fine_slot_sum: u64,
+    /// Highest per-fine-tile slot count, against `MAX_FINE_SLOTS`.
+    fine_slot_max: u32,
+    /// Fine tiles holding at least one slot.
+    fine_live_tiles: u32,
+    /// Fine tiles that dropped a candidate at the `MAX_FINE_SLOTS` cap. Nonzero
+    /// means the index is INCOMPLETE for those tiles, not merely approximate.
+    fine_evicted_tiles: u32,
+    /// Live bytes of the four spatial-index buffers.
+    index_bytes: u64,
+    /// `fine_slot_sum * 256`: the `eval_segment` calls the fragment shader
+    /// performs, the fragment-work metric this probe fits against.
+    segment_evals: u64,
+    /// Physical pixels the frame's draws cover, clipped to the canvas.
+    shaded_px: u64,
+}
+
 /// One significant tiled-vs-untiled pixel mismatch: `(x, y, tiled, untiled, delta)`.
 type PixelDiff = (u32, u32, [u8; 4], [u8; 4], i32);
 
@@ -108,6 +145,9 @@ struct TestRenderer {
     compute_group0_layout: BindGroupLayout,
     compute_scatter_group1_layout: BindGroupLayout,
     compute_sort_group1_layout: BindGroupLayout,
+    /// Adapter identity, printed by the cost probes so pasted output is
+    /// attributable to a specific GPU/driver.
+    adapter_info: AdapterInfo,
 }
 
 /// Scatter-cull inputs mirroring production `prepare` (see
@@ -245,6 +285,7 @@ impl TestRenderer {
             compute_group0_layout,
             compute_scatter_group1_layout,
             compute_sort_group1_layout,
+            adapter_info: adapter.get_info(),
         }
     }
 
@@ -809,6 +850,9 @@ impl TestRenderer {
     /// (`gpu_pass_times`) cannot capture that concurrency.
     /// Each draw: `(drawables, bounds_origin_px, grid_w_px, grid_h_px, camera)`.
     /// `None` if the adapter lacks `TIMESTAMP_QUERY`.
+    ///
+    /// Thin wrapper over [`TestRenderer::gpu_frame_probe`] at DPI scale 1.0 and
+    /// one repetition; the counters that probe also returns are discarded.
     fn gpu_frame_times(
         &self,
         draws: &[FrameDraw],
@@ -817,10 +861,36 @@ impl TestRenderer {
         zoom: f32,
         marker_spans: &[(&str, u32)],
     ) -> Option<(f64, f64)> {
+        self.gpu_frame_probe(draws, canvas_w, canvas_h, zoom, 1.0, 1, marker_spans)
+            .map(|p| (p.compute_us, p.fragment_us))
+    }
+
+    /// [`gpu_frame_times`](TestRenderer::gpu_frame_times) plus the hardware-
+    /// independent work counters the cost decomposition needs, and two extra
+    /// axes:
+    ///
+    /// - `scale` is the DPI scale factor. Callers pass PHYSICAL pixel
+    ///   quantities in `draws` and `canvas_w`/`canvas_h`; `scale` only feeds
+    ///   `DrawData.scale_factor` and `bounds_origin`, exactly as production does.
+    /// - `repeat` runs the compute and render passes N times each, serialized,
+    ///   so a fast host GPU can be pushed into a slow GPU's work regime.
+    ///   `compute_us`/`fragment_us` are the TOTAL over all repetitions; every
+    ///   other field describes ONE repetition.
+    #[allow(clippy::too_many_arguments)]
+    fn gpu_frame_probe(
+        &self,
+        draws: &[FrameDraw],
+        canvas_w: u32,
+        canvas_h: u32,
+        zoom: f32,
+        scale: f32,
+        repeat: u32,
+        marker_spans: &[(&str, u32)],
+    ) -> Option<FrameProbe> {
         if !self.device.features().contains(Features::TIMESTAMP_QUERY) {
             return None;
         }
-        let scale = 1.0_f32;
+        let repeat = repeat.max(1);
 
         let mut gpu_segments: Vec<GpuSegment> = Vec::new();
         let mut gpu_entries: Vec<GpuDrawEntry> = Vec::new();
@@ -837,6 +907,16 @@ impl TestRenderer {
             .iter()
             .map(|(_, origin_px, gw, gh, _)| (origin_px[0], origin_px[1], *gw, *gh))
             .collect();
+        // Physical pixels one repetition rasterizes: the same clamped scissor
+        // rects the `issue` closure below computes.
+        let shaded_px: u64 = rects
+            .iter()
+            .map(|&(x, y, gw, gh)| {
+                let sx = (x.max(0.0) as u32).min(canvas_w);
+                let sy = (y.max(0.0) as u32).min(canvas_h);
+                u64::from(gw.min(canvas_w - sx)) * u64::from(gh.min(canvas_h - sy))
+            })
+            .sum();
         for (drawables, origin_px, gw, gh, cam) in draws {
             let entry_start = gpu_entries.len() as u32;
             for (i, (drawable, style)) in drawables.iter().enumerate() {
@@ -868,7 +948,12 @@ impl TestRenderer {
             max_cols = max_cols.max(grid_cols);
             max_rows = max_rows.max(grid_rows);
             draw_datas.push(DrawData {
-                bounds_origin: GpuVec2::new(origin_px[0] * scale, origin_px[1] * scale),
+                // `FrameDraw` carries PHYSICAL pixel quantities throughout, and
+                // `DrawData.bounds_origin` is physical in production too (it is
+                // `bounds * scale_factor` there), so no scaling here. `scale`
+                // reaches the shader only through `scale_factor`, which the WGSL
+                // folds into `camera_zoom * scale_factor`.
+                bounds_origin: GpuVec2::new(origin_px[0], origin_px[1]),
                 camera_position: GpuVec2::new(cam[0], cam[1]),
                 grid_offset: GpuVec2::ZERO,
                 camera_zoom: zoom,
@@ -910,7 +995,7 @@ impl TestRenderer {
             self.device.create_buffer(&BufferDescriptor {
                 label: None,
                 size: size.max(4),
-                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             })
         };
@@ -1017,13 +1102,22 @@ impl TestRenderer {
         let mut enc = self
             .device
             .create_command_encoder(&CommandEncoderDescriptor::default());
-        {
+        for rep in 0..repeat {
+            // `coarse_append` uses atomicAdd, so the demand counters must start
+            // at zero for every repetition to do identical work (production
+            // clears them the same way, `primitive.rs` run_deferred_compute).
+            // `cs_fine_counts` is a plain store and needs no clear.
+            enc.clear_buffer(&coarse_counts_buf, 0, None);
             let mut pass = enc.begin_compute_pass(&ComputePassDescriptor {
                 label: Some("sdf_index"),
-                timestamp_writes: Some(ComputePassTimestampWrites {
-                    query_set: &qs,
-                    beginning_of_pass_write_index: Some(0),
-                    end_of_pass_write_index: Some(1),
+                // wgpu rejects a `timestamp_writes` with neither index set, so
+                // the middle repetitions of an amplified run carry none at all.
+                timestamp_writes: (rep == 0 || rep == repeat - 1).then(|| {
+                    ComputePassTimestampWrites {
+                        query_set: &qs,
+                        beginning_of_pass_write_index: (rep == 0).then_some(0),
+                        end_of_pass_write_index: (rep == repeat - 1).then_some(1),
+                    }
                 }),
             });
             pass.set_bind_group(0, &compute_bg0, &[]);
@@ -1038,23 +1132,27 @@ impl TestRenderer {
                 coarse_base,
             );
         }
-        {
+        for rep in 0..repeat {
             let mut pass = enc.begin_render_pass(&RenderPassDescriptor {
                 label: Some("sdf_shade"),
                 color_attachments: &[Some(RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
                     ops: Operations {
+                        // Clear every repetition: overdraw must not accumulate,
+                        // so each one rasterizes exactly the same fragments.
                         load: LoadOp::Clear(wgpu::Color::TRANSPARENT),
                         store: StoreOp::Store,
                     },
                     depth_slice: None,
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: Some(RenderPassTimestampWrites {
-                    query_set: &qs,
-                    beginning_of_pass_write_index: Some(2),
-                    end_of_pass_write_index: Some(3),
+                timestamp_writes: (rep == 0 || rep == repeat - 1).then(|| {
+                    RenderPassTimestampWrites {
+                        query_set: &qs,
+                        beginning_of_pass_write_index: (rep == 0).then_some(2),
+                        end_of_pass_write_index: (rep == repeat - 1).then_some(3),
+                    }
                 }),
                 occlusion_query_set: None,
             });
@@ -1091,6 +1189,24 @@ impl TestRenderer {
                 issue(&mut pass, d);
             }
         }
+        // Work counters: the post-sort per-tile slot counts. `coarse_counts`
+        // now holds each tile's CLAMPED render-list length (the sort kernel
+        // overwrites true demand with it), `fine_counts` the per-16px-tile slot
+        // count the fragment shader walks.
+        let coarse_bytes = total_coarse as u64 * 4;
+        let fine_bytes = total_tiles as u64 * 4;
+        let count_rb = |size: u64| {
+            self.device.create_buffer(&BufferDescriptor {
+                label: None,
+                size,
+                usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        };
+        let coarse_rb = count_rb(coarse_bytes);
+        let fine_rb = count_rb(fine_bytes);
+        enc.copy_buffer_to_buffer(&coarse_counts_buf, 0, &coarse_rb, 0, coarse_bytes);
+        enc.copy_buffer_to_buffer(&fine_counts_buf, 0, &fine_rb, 0, fine_bytes);
         enc.resolve_query_set(&qs, 0..4, &resolve, 0);
         enc.copy_buffer_to_buffer(&resolve, 0, &readback, 0, 32);
         let idx = self.queue.submit(Some(enc.finish()));
@@ -1111,10 +1227,68 @@ impl TestRenderer {
         drop(data);
         readback.unmap();
 
+        coarse_rb.slice(..).map_async(MapMode::Read, |_| {});
+        fine_rb.slice(..).map_async(MapMode::Read, |_| {});
+        self.device
+            .poll(PollType::Wait {
+                submission_index: None,
+                timeout: Some(std::time::Duration::from_secs(10)),
+            })
+            .unwrap();
+        let (coarse_demand_max, coarse_demand_sum) = {
+            let d = coarse_rb.slice(..).get_mapped_range();
+            let mut max = 0u32;
+            let mut sum = 0u64;
+            for c in d.chunks_exact(4) {
+                let n = u32::from_le_bytes(c.try_into().unwrap());
+                max = max.max(n);
+                sum += u64::from(n.min(MAX_COARSE_SLOTS));
+            }
+            (max, sum)
+        };
+        coarse_rb.unmap();
+        // `fine_counts` packs the live slot count in its low 16 bits and the
+        // dropped-candidate count in its high 16 bits (`FINE_COUNT_MASK`).
+        let (fine_slot_sum, fine_slot_max, fine_live_tiles, fine_evicted_tiles) = {
+            let d = fine_rb.slice(..).get_mapped_range();
+            let mut sum = 0u64;
+            let mut max = 0u32;
+            let mut live = 0u32;
+            let mut evicted = 0u32;
+            for c in d.chunks_exact(4) {
+                let word = u32::from_le_bytes(c.try_into().unwrap());
+                let n = word & 0xFFFF;
+                sum += u64::from(n);
+                max = max.max(n);
+                live += u32::from(n > 0);
+                evicted += u32::from((word >> 16) > 0);
+            }
+            (sum, max, live, evicted)
+        };
+        fine_rb.unmap();
+
         let period = self.queue.get_timestamp_period() as f64;
-        let compute_us = t[1].saturating_sub(t[0]) as f64 * period / 1000.0;
-        let fragment_us = t[3].saturating_sub(t[2]) as f64 * period / 1000.0;
-        Some((compute_us, fragment_us))
+        Some(FrameProbe {
+            compute_us: t[1].saturating_sub(t[0]) as f64 * period / 1000.0,
+            fragment_us: t[3].saturating_sub(t[2]) as f64 * period / 1000.0,
+            repeat,
+            draws: num_draws,
+            entries: gpu_entries.len() as u32,
+            coarse_tiles: total_coarse,
+            fine_tiles: total_tiles,
+            coarse_demand_max,
+            coarse_demand_sum,
+            fine_slot_sum,
+            fine_slot_max,
+            fine_live_tiles,
+            fine_evicted_tiles,
+            index_bytes: coarse_counts_buf.size()
+                + coarse_slots_buf.size()
+                + fine_counts_buf.size()
+                + fine_slots_buf.size(),
+            segment_evals: fine_slot_sum * 256,
+            shaded_px,
+        })
     }
 
     fn render_full(
@@ -4618,6 +4792,397 @@ fn render_pipeline_frame(
     px
 }
 
+/// Like [`render_pipeline_frame`] but drives the pipeline with PER-PRIMITIVE
+/// bounds, the way iced_wgpu actually does: `prepare` sees each primitive's own
+/// rectangle (so each draw gets a tile grid sized to its clip, not to the whole
+/// viewport), and the single render pass sets that primitive's scissor before
+/// its draw. Full-viewport bounds would give all 500 node primitives a
+/// full-viewport grid and inflate `index_bytes` by two orders of magnitude, so
+/// the budget tests below cannot use `render_pipeline_frame`.
+///
+/// One render pass for every primitive (iced keeps one pass and only changes
+/// viewport+scissor), and `Pipeline::trim` last so `crate::sdf_stats()` is
+/// published for the caller.
+fn pipeline_frame_bounded(
+    r: &TestRenderer,
+    pipeline: &mut crate::primitive::SdfPipeline,
+    prims: &[(&crate::primitive::SdfPrimitive, Rectangle)],
+    w: u32,
+    h: u32,
+) -> Vec<[u8; 4]> {
+    use iced_wgpu::graphics::Viewport;
+    use iced_wgpu::primitive::{Pipeline, Primitive};
+
+    let viewport = Viewport::with_physical_size(Size::new(w, h), 1.0);
+    for (p, bounds) in prims {
+        p.prepare(pipeline, &r.device, &r.queue, bounds, &viewport);
+    }
+
+    let texture = r.device.create_texture(&TextureDescriptor {
+        label: None,
+        size: Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: TextureDimension::D2,
+        format: TextureFormat::Rgba8Unorm,
+        usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&TextureViewDescriptor::default());
+    let row_bytes = w * 4;
+    let padded_row = (row_bytes + 255) & !255;
+    let readback = r.device.create_buffer(&BufferDescriptor {
+        label: None,
+        size: (padded_row * h) as u64,
+        usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+
+    let mut encoder = r
+        .device
+        .create_command_encoder(&CommandEncoderDescriptor::default());
+    {
+        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+            label: None,
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view: &view,
+                resolve_target: None,
+                ops: Operations {
+                    load: LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        // The first draw submits the deferred cull compute (production order).
+        for (p, bounds) in prims {
+            let sx = (bounds.x.max(0.0) as u32).min(w);
+            let sy = (bounds.y.max(0.0) as u32).min(h);
+            let sw = (bounds.width as u32).min(w - sx);
+            let sh = (bounds.height as u32).min(h - sy);
+            pass.set_scissor_rect(sx, sy, sw, sh);
+            p.draw(pipeline, &mut pass);
+        }
+    }
+    encoder.copy_texture_to_buffer(
+        TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: Origin3d::ZERO,
+            aspect: TextureAspect::All,
+        },
+        TexelCopyBufferInfo {
+            buffer: &readback,
+            layout: TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded_row),
+                rows_per_image: Some(h),
+            },
+        },
+        Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+    );
+    let idx = r.queue.submit(Some(encoder.finish()));
+    readback.slice(..).map_async(MapMode::Read, |_| {});
+    r.device
+        .poll(PollType::Wait {
+            submission_index: Some(idx),
+            timeout: Some(std::time::Duration::from_secs(10)),
+        })
+        .unwrap();
+    let data = readback.slice(..).get_mapped_range();
+    let mut px = vec![[0u8; 4]; (w * h) as usize];
+    for y in 0..h {
+        let src = (y * padded_row) as usize;
+        for x in 0..w as usize {
+            let i = src + x * 4;
+            px[(y * w) as usize + x] = [data[i], data[i + 1], data[i + 2], data[i + 3]];
+        }
+    }
+    drop(data);
+    readback.unmap();
+    Pipeline::trim(pipeline);
+    px
+}
+
+// The canonical GPU-budget scene, shared by the three budget tests and the
+// `gpu_cost_report` probe so every number below is comparable.
+const BUDGET_W: u32 = 1280;
+const BUDGET_H: u32 = 768;
+const BUDGET_ZOOM: f32 = 0.24131;
+const BUDGET_CAM: [f32; 2] = [-327.7, -132.0];
+
+/// The 500-node budget scene as PRODUCTION primitives: one full-viewport tiling
+/// background (the widget's `bg_layer`) plus one clipped fill primitive per
+/// node, on the same 25x20 layout, zoom and camera as [`bench_scene`].
+///
+/// Returns `(bg, per_node)`; the caller zips them into the `(&prim, bounds)`
+/// slice `pipeline_frame_bounded` takes.
+fn budget_scene() -> (
+    crate::primitive::SdfPrimitive,
+    Vec<(crate::primitive::SdfPrimitive, Rectangle)>,
+) {
+    use crate::primitive::SdfPrimitive;
+    use crate::shape::Shape;
+    use crate::tiling::Tiling;
+
+    let zoom = BUDGET_ZOOM;
+    let cam = BUDGET_CAM;
+    let dark = Style::solid(rgba(0.12, 0.13, 0.16, 1.0));
+    let fill_style = Style::solid(rgba(0.30, 0.32, 0.40, 1.0));
+
+    let mut bg = SdfPrimitive::new();
+    bg.push(
+        &Shape::tiling(Tiling::grid(40.0, 40.0, 1.0)),
+        &dark,
+        [0.0, 0.0],
+    );
+    let bg = bg.camera(cam[0], cam[1], zoom);
+
+    let pad = 2.0_f32;
+    let mut per_node = Vec::with_capacity(500);
+    for col in 0..25 {
+        for row in 0..20 {
+            let i = col * 20 + row;
+            let nw = 70.0 + (i % 7) as f32 * 6.0;
+            let nh = 60.0 + (i % 5) as f32 * 5.0;
+            let sx = 24.0 + col as f32 * 24.0;
+            let sy = 20.0 + row as f32 * 24.0;
+            let placement = [sx / zoom - cam[0], sy / zoom - cam[1]];
+            let cw = nw * zoom + 2.0 * pad;
+            let ch = nh * zoom + 2.0 * pad;
+            let clip = Rectangle::new(Point::new(sx - cw * 0.5, sy - ch * 0.5), Size::new(cw, ch));
+            let body = Shape::rounded_box([nw, nh], [6.0; 4])
+                - Shape::circle(5.0).translate([-nw * 0.5, 0.0])
+                - Shape::circle(5.0).translate([nw * 0.5, 0.0]);
+            let mut fill = SdfPrimitive::new();
+            fill.push(&body, &fill_style, placement);
+            let ncam = (cam[0] - clip.x / zoom, cam[1] - clip.y / zoom);
+            per_node.push((fill.camera(ncam.0, ncam.1, zoom), clip));
+        }
+    }
+    (bg, per_node)
+}
+
+/// Live GPU bytes the 500-node scene's pipeline may own.
+/// Measured 26_257_780 B (25.04 MiB) on this scene; budget is that x1.25,
+/// rounded up to a readable 32 MiB.
+const GPU_BYTES_BUDGET: u64 = 32 * 1024 * 1024;
+/// Spatial-index share of the above - 99.3% of it, because 4 KiB per coarse
+/// tile plus 256 B per fine tile of capacity dwarfs the geometry arenas.
+/// Measured 26_078_900 B (24.87 MiB); budget is that x1.25, rounded to 32 MiB.
+const INDEX_BYTES_BUDGET: u64 = 32 * 1024 * 1024;
+/// `eval_segment` calls the fragment shader performs on that scene.
+/// Measured 10_623_488 (10.62 M, mean 8.60 slots/pixel); budget is that x1.25,
+/// rounded up.
+const SEGMENT_EVALS_BUDGET: u64 = 14_000_000;
+
+/// GPU MEMORY LIMIT for the canonical 500-node frame. The two-level spatial
+/// index costs 4 KiB per 64px coarse tile plus 256 B per 16px fine tile of
+/// CAPACITY, grows 1.5x and never shrinks - it is the term that can silently
+/// explode on a shared-VRAM iGPU, so it carries its own budget on top of the
+/// pipeline total.
+#[test]
+fn gpu_memory_budget_500_nodes() {
+    use iced_wgpu::primitive::Pipeline;
+    let r = shared_renderer();
+    let (bg, per_node) = budget_scene();
+    let full = Rectangle::new(Point::ORIGIN, Size::new(BUDGET_W as f32, BUDGET_H as f32));
+    let mut prims: Vec<(&crate::primitive::SdfPrimitive, Rectangle)> = vec![(&bg, full)];
+    prims.extend(per_node.iter().map(|(p, b)| (p, *b)));
+
+    let mut pipeline =
+        crate::primitive::SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
+    crate::set_index_probe(true);
+    // Frame 0 is cold (arenas empty, index buffers growing); 1-2 are steady.
+    let mut stats = crate::sdf_stats();
+    for _ in 0..3 {
+        let _ = pipeline_frame_bounded(&r, &mut pipeline, &prims, BUDGET_W, BUDGET_H);
+        stats = crate::sdf_stats();
+    }
+    crate::set_index_probe(false);
+
+    println!(
+        "gpu_memory_budget_500_nodes: gpu_bytes {} ({:.2} MiB), index_bytes {} ({:.2} MiB), \
+         tile_count {}, sdf_draws {}",
+        stats.gpu_bytes,
+        stats.gpu_bytes as f64 / (1024.0 * 1024.0),
+        stats.index_bytes,
+        stats.index_bytes as f64 / (1024.0 * 1024.0),
+        stats.tile_count,
+        stats.sdf_draws,
+    );
+    assert!(
+        stats.gpu_bytes <= GPU_BYTES_BUDGET,
+        "pipeline GPU memory {} B ({:.2} MiB) over budget {} B ({:.2} MiB); \
+         tile_count {}, sdf_draws {}, index_bytes {}",
+        stats.gpu_bytes,
+        stats.gpu_bytes as f64 / (1024.0 * 1024.0),
+        GPU_BYTES_BUDGET,
+        GPU_BYTES_BUDGET as f64 / (1024.0 * 1024.0),
+        stats.tile_count,
+        stats.sdf_draws,
+        stats.index_bytes,
+    );
+    assert!(
+        stats.index_bytes <= INDEX_BYTES_BUDGET,
+        "spatial index {} B ({:.2} MiB) over budget {} B ({:.2} MiB); \
+         tile_count {}, sdf_draws {}, gpu_bytes {}",
+        stats.index_bytes,
+        stats.index_bytes as f64 / (1024.0 * 1024.0),
+        INDEX_BYTES_BUDGET,
+        INDEX_BYTES_BUDGET as f64 / (1024.0 * 1024.0),
+        stats.tile_count,
+        stats.sdf_draws,
+        stats.gpu_bytes,
+    );
+}
+
+/// UPLOAD CONTRACT for a static graph: once the geometry arenas are resident
+/// and the spatial index is valid, a redraw of the identical primitive set
+/// re-uploads NOTHING but the per-frame draw table - no segments, no entries,
+/// no styles, no scatter lists, no cull uniforms.
+///
+/// This is the direct measurement of the "RAM->GPU bandwidth saturates the
+/// shared-VRAM iGPU" hypothesis, and it refutes it: the residual traffic is
+/// exactly `sdf_draws * size_of(DrawData)` = 501 * 96 B = 48 KiB per frame,
+/// which at 60 Hz is 2.9 MB/s against an LPDDR4x-4267 iGPU's 68.3 GB/s - four
+/// orders of magnitude below saturation. The assertion is therefore the exact
+/// draw-table figure rather than a threshold: any geometry, style or scatter
+/// write creeping back into an idle frame fails it.
+#[test]
+fn idle_frame_uploads_nothing() {
+    use iced_wgpu::primitive::Pipeline;
+    let r = shared_renderer();
+    let (bg, per_node) = budget_scene();
+    let full = Rectangle::new(Point::ORIGIN, Size::new(BUDGET_W as f32, BUDGET_H as f32));
+    let mut prims: Vec<(&crate::primitive::SdfPrimitive, Rectangle)> = vec![(&bg, full)];
+    prims.extend(per_node.iter().map(|(p, b)| (p, *b)));
+
+    let mut pipeline =
+        crate::primitive::SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
+    let mut uploads = Vec::new();
+    let mut skipped = Vec::new();
+    for _ in 0..3 {
+        let _ = pipeline_frame_bounded(&r, &mut pipeline, &prims, BUDGET_W, BUDGET_H);
+        let s = crate::sdf_stats();
+        uploads.push(s.upload_bytes);
+        skipped.push(s.cull_skipped);
+    }
+    println!("idle_frame_uploads_nothing: upload_bytes {uploads:?}, cull_skipped {skipped:?}");
+    assert!(
+        uploads[0] > 0,
+        "cold frame uploaded nothing - the scene never reached the GPU"
+    );
+    assert!(
+        skipped[2],
+        "idle frame re-ran the cull dispatch: the resident spatial index was invalidated"
+    );
+    let draw_table =
+        u64::from(crate::sdf_stats().sdf_draws) * <DrawData as ShaderSize>::SHADER_SIZE.get();
+    assert_eq!(
+        uploads[2], draw_table,
+        "idle frame uploaded {} B; the only permitted traffic is the {}-byte \
+         per-frame draw table (uploads across frames: {uploads:?})",
+        uploads[2], draw_table,
+    );
+}
+
+/// FRAGMENT-WORK LIMIT for the canonical 500-node frame. `segment_evals` is
+/// `sum(fine slot count) * 256`: the number of `eval_segment` calls the
+/// fragment shader performs, hardware-independent and the term that decides
+/// whether an ALU-poor iGPU can keep up.
+///
+/// `fine_evicted_tiles` is a CORRECTNESS gate, not a budget: a tile that hits
+/// the `MAX_FINE_SLOTS` cap drops a candidate segment, and if that segment
+/// would have been the per-pixel nearest, those pixels render a wrong distance.
+/// (`fine_slots_max <= MAX_FINE_SLOTS` would be vacuous - `fine_push` clamps it
+/// by construction; only the eviction counter can see the loss.)
+#[test]
+fn fragment_work_budget_500_nodes() {
+    use iced_wgpu::primitive::Pipeline;
+    let r = shared_renderer();
+    let (bg, per_node) = budget_scene();
+    let full = Rectangle::new(Point::ORIGIN, Size::new(BUDGET_W as f32, BUDGET_H as f32));
+    let mut prims: Vec<(&crate::primitive::SdfPrimitive, Rectangle)> = vec![(&bg, full)];
+    prims.extend(per_node.iter().map(|(p, b)| (p, *b)));
+
+    // Phase 1: probe OFF must report nothing, or the gate below is vacuous.
+    crate::set_index_probe(false);
+    let mut pipeline =
+        crate::primitive::SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
+    for _ in 0..3 {
+        let _ = pipeline_frame_bounded(&r, &mut pipeline, &prims, BUDGET_W, BUDGET_H);
+    }
+    let off = crate::sdf_stats();
+    assert_eq!(
+        off.segment_evals, 0,
+        "index probe is off but segment_evals reported {}",
+        off.segment_evals
+    );
+
+    // Phase 2: probe ON, fresh pipeline so the cold frame records a readback.
+    crate::set_index_probe(true);
+    let mut pipeline =
+        crate::primitive::SdfPipeline::new(&r.device, &r.queue, TextureFormat::Rgba8Unorm);
+    let mut stats = crate::sdf_stats();
+    for _ in 0..3 {
+        let _ = pipeline_frame_bounded(&r, &mut pipeline, &prims, BUDGET_W, BUDGET_H);
+        stats = crate::sdf_stats();
+    }
+    crate::set_index_probe(false);
+
+    let slots_per_px = stats.segment_evals as f64 / stats.shaded_px.max(1) as f64;
+    println!(
+        "fragment_work_budget_500_nodes: segment_evals {} ({:.2} M), shaded_px {}, \
+         mean slots/px {:.2}, fine_slots_max {}, fine_live_tiles {}, \
+         evicted_tiles {}, evicted_slots {}",
+        stats.segment_evals,
+        stats.segment_evals as f64 / 1e6,
+        stats.shaded_px,
+        slots_per_px,
+        stats.fine_slots_max,
+        stats.fine_live_tiles,
+        stats.fine_evicted_tiles,
+        stats.fine_evicted_slots,
+    );
+    assert!(
+        stats.segment_evals > 0,
+        "index probe is on but segment_evals is 0 - the fine readback never completed"
+    );
+    assert!(
+        stats.segment_evals <= SEGMENT_EVALS_BUDGET,
+        "fragment work {} evals over budget {}; mean slots/px {:.2}, fine_live_tiles {}",
+        stats.segment_evals,
+        SEGMENT_EVALS_BUDGET,
+        slots_per_px,
+        stats.fine_live_tiles,
+    );
+    assert_eq!(
+        stats.fine_evicted_tiles,
+        0,
+        "{} fine tiles hit the {MAX_FINE_SLOTS}-slot cap and dropped {} candidate \
+         segments: those tiles' slot lists are INCOMPLETE and any pixel whose \
+         nearest segment was dropped renders a wrong distance. \
+         fine_slots_max {}, mean slots/px {:.2}, fine_live_tiles {}",
+        stats.fine_evicted_tiles,
+        stats.fine_evicted_slots,
+        stats.fine_slots_max,
+        slots_per_px,
+        stats.fine_live_tiles,
+    );
+}
+
 /// A primitive recoloring in place must not leak into primitives whose
 /// resident entries reference its shared segment/style slots (instancing and
 /// style dedup are cross-primitive, by absolute index). Under arena residency
@@ -5172,15 +5737,16 @@ fn measure_idle_prepare_cost() {
 
     // 640 bezier edges in one batch, like the widget's below-nodes layer. Beziers
     // are NOT cacheable (only booleans are), so every edge re-evaluates each frame -
-    // the prime suspect for idle CPU cost. Distinct control points per edge.
+    // the prime suspect for idle CPU cost. 32 x 20 = 640 gives every edge a
+    // DISTINCT start point (see `bench_scene` for why the pitch is not 25 x 20).
     let edge_style = Style::stroke(
         rgba(0.55, 0.6, 0.7, 1.0),
         crate::pattern::Pattern::solid(2.0),
     );
     let mut edges = SdfPrimitive::with_capacity(640);
     for i in 0..640u32 {
-        let a = (i % 25) as f32 * 24.0 + 24.0;
-        let b = (i % 20) as f32 * 24.0 + 20.0;
+        let a = (i % 32) as f32 * 24.0 + 24.0;
+        let b = (i / 32) as f32 * 24.0 + 20.0;
         let p0 = [a / zoom - cam[0], b / zoom - cam[1]];
         let p3 = [(a + 60.0) / zoom - cam[0], (b + 40.0) / zoom - cam[1]];
         let p1 = [p0[0] + 80.0, p0[1]];
@@ -5436,21 +6002,19 @@ fn measure_gpu_shader_cost() {
     let node_slices: Vec<Vec<(&crate::drawable::Drawable, &Style)>> =
         nodes.iter().map(|n| vec![(n, &fill_style)]).collect();
 
-    let mut frame: Vec<FrameDraw> = Vec::with_capacity(2 + node_slices.len());
-    frame.push((&bg_slice[..], [0.0, 0.0], w, h, cam));
-    frame.push((&edges_slice[..], [0.0, 0.0], w, h, cam));
-    for (i, ns) in node_slices.iter().enumerate() {
-        let nb = nodes[i].bounds();
-        let (cx, cy) = ((nb[0] + nb[2]) * 0.5, (nb[1] + nb[3]) * 0.5);
-        // 32px clip (~2 fine tiles) centred on the node, like the widget's
-        // per-node clip, at the node's REAL screen position: production
-        // scatters these draws across the canvas; stacking them at the origin
-        // would blend 500 draws onto the same pixels and serialize the ROPs.
-        let ncam = [16.0 / zoom - cx, 16.0 / zoom - cy];
-        let (col, row) = ((i / 20) as f32, (i % 20) as f32);
-        let origin = [24.0 + col * 24.0 - 16.0, 20.0 + row * 24.0 - 16.0];
-        frame.push((&ns[..], origin, 32, 32, ncam));
-    }
+    let node_bounds: Vec<[f32; 4]> = nodes.iter().map(|n| n.bounds()).collect();
+    let frame = probe_frame(
+        &bg_slice,
+        &edges_slice,
+        &node_slices,
+        &node_bounds,
+        w,
+        h,
+        zoom,
+        1.0,
+        cam,
+        FrameParts::ALL,
+    );
 
     let lumped_t = {
         let _ = r.gpu_pass_times(&lumped, w, h, zoom, cam);
@@ -5527,10 +6091,16 @@ fn bench_scene(
         }
     }
 
+    // Every edge must be a DISTINCT path. The original `(i % 25, i % 20)` pair
+    // has period lcm(25, 20) = 100, so 640 edges collapsed onto 100 curves
+    // stacked ~6.4 deep: per-tile entry counts - and with them the fine slot
+    // demand and the measured fragment cost of the edge layer - were inflated
+    // far past any real graph. 32 x 20 = 640 keeps the 24px pitch and gives one
+    // distinct start per edge.
     let mut edges = Vec::new();
     for i in 0..640u32 {
-        let a = (i % 25) as f32 * 24.0 + 24.0;
-        let b = (i % 20) as f32 * 24.0 + 20.0;
+        let a = (i % 32) as f32 * 24.0 + 24.0;
+        let b = (i / 32) as f32 * 24.0 + 20.0;
         let p0 = [a / zoom - cam[0], b / zoom - cam[1]];
         let p3 = [(a + 60.0) / zoom - cam[0], (b + 40.0) / zoom - cam[1]];
         let p1 = [p0[0] + 80.0, p0[1]];
@@ -5541,6 +6111,94 @@ fn bench_scene(
     (bg, nodes, edges)
 }
 
+/// Which layers a probe frame contains. Mirrors the widget's emission
+/// (`iced_nodegraph/src/node_graph/widget/draw.rs`): one batched below-nodes
+/// primitive folding the tiling background and every edge, plus one clipped
+/// fill primitive per node.
+#[derive(Clone, Copy, PartialEq)]
+struct FrameParts {
+    bg: bool,
+    edges: bool,
+    nodes: bool,
+}
+
+impl FrameParts {
+    const ALL: Self = Self {
+        bg: true,
+        edges: true,
+        nodes: true,
+    };
+
+    /// A short label for the report tables, e.g. `bg+edges`.
+    fn label(self) -> String {
+        let mut s = String::new();
+        for (on, name) in [
+            (self.bg, "bg"),
+            (self.edges, "edges"),
+            (self.nodes, "nodes"),
+        ] {
+            if on {
+                if !s.is_empty() {
+                    s.push('+');
+                }
+                s.push_str(name);
+            }
+        }
+        if s.is_empty() { "none".into() } else { s }
+    }
+}
+
+/// Builds the production-faithful batched frame at `scale` PHYSICAL pixels per
+/// logical pixel: `bg`/`edges` are full-canvas draws, each node fill is a
+/// `32 * scale` px clipped draw with its own centring camera, laid out on
+/// [`bench_scene`]'s 25x20 screen grid.
+///
+/// `node_bounds[i]` is `nodes[i].bounds()`, passed in so this does no geometry
+/// work. The caller owns the slice storage (`bg_slice`, `edges_slice`,
+/// `node_slices`); this only borrows. Node count comes from the length of
+/// `node_slices`, so truncating it truncates the frame.
+#[allow(clippy::too_many_arguments)]
+fn probe_frame<'a>(
+    bg_slice: &'a [(&'a crate::drawable::Drawable, &'a Style)],
+    edges_slice: &'a [(&'a crate::drawable::Drawable, &'a Style)],
+    node_slices: &'a [Vec<(&'a crate::drawable::Drawable, &'a Style)>],
+    node_bounds: &[[f32; 4]],
+    w: u32,
+    h: u32,
+    zoom: f32,
+    scale: f32,
+    cam: [f32; 2],
+    parts: FrameParts,
+) -> Vec<FrameDraw<'a>> {
+    let (cw, ch) = ((w as f32 * scale) as u32, (h as f32 * scale) as u32);
+    let mut frame: Vec<FrameDraw<'a>> = Vec::with_capacity(2 + node_slices.len());
+    if parts.bg {
+        frame.push((bg_slice, [0.0, 0.0], cw, ch, cam));
+    }
+    if parts.edges {
+        frame.push((edges_slice, [0.0, 0.0], cw, ch, cam));
+    }
+    if parts.nodes {
+        let grid = (32.0 * scale) as u32;
+        for (i, ns) in node_slices.iter().enumerate() {
+            let nb = node_bounds[i];
+            let (cx, cy) = ((nb[0] + nb[2]) * 0.5, (nb[1] + nb[3]) * 0.5);
+            // 32px clip (~2 fine tiles) centred on the node, like the widget's
+            // per-node clip, at the node's REAL screen position: production
+            // scatters these draws across the canvas; stacking them at the
+            // origin would blend every draw onto the same pixels and serialize
+            // the ROPs.
+            let ncam = [16.0 / zoom - cx, 16.0 / zoom - cy];
+            let (col, row) = ((i / 20) as f32, (i % 20) as f32);
+            let origin = [
+                (24.0 + col * 24.0 - 16.0) * scale,
+                (20.0 + row * 24.0 - 16.0) * scale,
+            ];
+            frame.push((&ns[..], origin, grid, grid, ncam));
+        }
+    }
+    frame
+}
 /// Instance ranges of the probe's frame layout, for per-category shade
 /// markers: [bg, edges, 500 node fills].
 const SHADE_SPANS: &[(&str, u32)] = &[("shade_bg", 1), ("shade_edges", 1), ("shade_nodes", 500)];
@@ -5576,19 +6234,19 @@ fn gpu_probe_loop() {
     let node_slices: Vec<Vec<(&crate::drawable::Drawable, &Style)>> =
         nodes.iter().map(|n| vec![(n, &fill_style)]).collect();
 
-    let mut frame: Vec<FrameDraw> = Vec::with_capacity(2 + node_slices.len());
-    frame.push((&bg_slice[..], [0.0, 0.0], w, h, cam));
-    frame.push((&edges_slice[..], [0.0, 0.0], w, h, cam));
-    for (i, ns) in node_slices.iter().enumerate() {
-        let nb = nodes[i].bounds();
-        let (cx, cy) = ((nb[0] + nb[2]) * 0.5, (nb[1] + nb[3]) * 0.5);
-        // 32px clip centred on the node, at its real screen position (see
-        // measure_gpu_shader_cost: stacked clips would serialize the ROPs).
-        let ncam = [16.0 / zoom - cx, 16.0 / zoom - cy];
-        let (col, row) = ((i / 20) as f32, (i % 20) as f32);
-        let origin = [24.0 + col * 24.0 - 16.0, 20.0 + row * 24.0 - 16.0];
-        frame.push((&ns[..], origin, 32, 32, ncam));
-    }
+    let node_bounds: Vec<[f32; 4]> = nodes.iter().map(|n| n.bounds()).collect();
+    let frame = probe_frame(
+        &bg_slice,
+        &edges_slice,
+        &node_slices,
+        &node_bounds,
+        w,
+        h,
+        zoom,
+        1.0,
+        cam,
+        FrameParts::ALL,
+    );
 
     let secs: u64 = std::env::var("GPU_PROBE_SECS")
         .ok()
@@ -5606,6 +6264,478 @@ fn gpu_probe_loop() {
     println!(
         "gpu_probe_loop: {iters} frames, best compute {c_min:.1} us, best fragment {f_min:.1} us"
     );
+}
+
+/// Target ROP fill rate used by the extrapolation: an Iris Xe G7 80EU has
+/// 16 ROPs at ~1.30 GHz = 20.8 GPixel/s.
+const TARGET_GPIXELS_PER_S: f64 = 20.8e9;
+
+/// Reads a `SDF_PROBE_*` knob, falling back to `default`.
+fn probe_env<T: std::str::FromStr>(key: &str, default: T) -> T {
+    std::env::var(key)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
+}
+
+/// GPU-side bytes the index build reads and writes for one repetition of a
+/// probed frame. Same decomposition as `SdfStats::index_traffic_bytes`:
+///   clear      = coarse_tiles * 4
+///   scatter    = demand_sum * 8                 // one (seg, entry) pair appended
+///   sort_load  = demand_sum * 8                 // cs_sort_fine loads them back
+///   sort_store = demand_sum * 8 + coarse_tiles * 4
+///   fine       = fine_tiles * 4 + fine_slot_sum * 4
+fn probe_index_traffic(p: &FrameProbe) -> u64 {
+    u64::from(p.coarse_tiles) * 8
+        + p.coarse_demand_sum * 24
+        + u64::from(p.fine_tiles) * 4
+        + p.fine_slot_sum * 4
+}
+
+/// Least-squares fit of `y = intercept + slope * x`, plus R^2. Returns
+/// `(slope, intercept, r2)`; `r2` is 0 when `y` has no variance.
+fn least_squares(points: &[(f64, f64)]) -> (f64, f64, f64) {
+    let n = points.len() as f64;
+    let mx = points.iter().map(|p| p.0).sum::<f64>() / n;
+    let my = points.iter().map(|p| p.1).sum::<f64>() / n;
+    let sxx: f64 = points.iter().map(|p| (p.0 - mx) * (p.0 - mx)).sum();
+    let sxy: f64 = points.iter().map(|p| (p.0 - mx) * (p.1 - my)).sum();
+    let slope = if sxx == 0.0 { 0.0 } else { sxy / sxx };
+    let intercept = my - slope * mx;
+    let ss_tot: f64 = points.iter().map(|p| (p.1 - my) * (p.1 - my)).sum();
+    let ss_res: f64 = points
+        .iter()
+        .map(|p| {
+            let e = p.1 - (intercept + slope * p.0);
+            e * e
+        })
+        .sum();
+    let r2 = if ss_tot == 0.0 {
+        0.0
+    } else {
+        1.0 - ss_res / ss_tot
+    };
+    (slope, intercept, r2)
+}
+
+/// GPU COST DECOMPOSITION (ignored). Answers "which GPU term would saturate a
+/// weak iGPU on a 500-node frame?" WITHOUT that hardware, by measuring
+/// hardware-independent work counters here and extrapolating on published
+/// throughput ratios.
+///
+/// Five sweeps - resolution, DPI scale, scene composition, draw count at
+/// near-zero fragment work, and ALU amplification - then a derived block that
+/// prices the fragment, bandwidth, fill and per-draw terms at the target
+/// configuration and names the dominant one.
+///
+/// Run with:
+///   cargo test -p iced_nodegraph_sdf --release gpu_cost_report -- --ignored --nocapture
+///
+/// Knobs (all with defaults): `SDF_PROBE_W`/`_H` (1280/768 base canvas),
+/// `SDF_PROBE_NODES` (500), `SDF_PROBE_REPS` (10 timing repetitions, min
+/// reported), `SDF_PROBE_HOST_GFLOPS` (43900, RTX 5070 Ti),
+/// `SDF_PROBE_TARGET_GFLOPS` (1664, Iris Xe G7 80EU),
+/// `SDF_PROBE_TARGET_GBPS` (68.3, LPDDR4x-4267 128-bit),
+/// `SDF_PROBE_TARGET_W`/`_H`/`_SCALE` (1920/1080/1.0).
+#[test]
+#[ignore]
+fn gpu_cost_report() {
+    let r = shared_renderer();
+    if !r.device.features().contains(Features::TIMESTAMP_QUERY) {
+        println!("\nTIMESTAMP_QUERY unsupported on this adapter - cannot measure GPU time.\n");
+        return;
+    }
+
+    let base_w: u32 = probe_env("SDF_PROBE_W", 1280);
+    let base_h: u32 = probe_env("SDF_PROBE_H", 768);
+    let want_nodes: usize = probe_env("SDF_PROBE_NODES", 500);
+    let reps: u32 = probe_env("SDF_PROBE_REPS", 10).max(1);
+    let host_gflops: f64 = probe_env("SDF_PROBE_HOST_GFLOPS", 43900.0);
+    let target_gflops: f64 = probe_env("SDF_PROBE_TARGET_GFLOPS", 1664.0);
+    let target_gbps: f64 = probe_env("SDF_PROBE_TARGET_GBPS", 68.3);
+    let target_w: u32 = probe_env("SDF_PROBE_TARGET_W", 1920);
+    let target_h: u32 = probe_env("SDF_PROBE_TARGET_H", 1080);
+    let target_scale: f32 = probe_env("SDF_PROBE_TARGET_SCALE", 1.0);
+    let alu_ratio = host_gflops / target_gflops;
+
+    let zoom = 0.24131_f32;
+    let cam = [-327.7_f32, -132.0];
+    let dark = Style::solid(rgba(0.12, 0.13, 0.16, 1.0));
+    let fill_style = Style::solid(rgba(0.30, 0.32, 0.40, 1.0));
+    let edge_style = Style::stroke(rgba(0.55, 0.6, 0.7, 1.0), Pattern::solid(2.0));
+    let (bg, nodes, edges) = bench_scene(zoom, cam);
+
+    // `SDF_PROBE_NODES` truncates both sets, keeping the edge:node ratio.
+    let n_nodes = want_nodes.min(nodes.len());
+    let n_edges = edges.len() * n_nodes / nodes.len().max(1);
+    let bg_slice: Vec<(&crate::drawable::Drawable, &Style)> = vec![(&bg, &dark)];
+    let edges_slice: Vec<(&crate::drawable::Drawable, &Style)> =
+        edges[..n_edges].iter().map(|e| (e, &edge_style)).collect();
+    let node_slices: Vec<Vec<(&crate::drawable::Drawable, &Style)>> = nodes[..n_nodes]
+        .iter()
+        .map(|n| vec![(n, &fill_style)])
+        .collect();
+    let node_bounds: Vec<[f32; 4]> = nodes[..n_nodes].iter().map(|n| n.bounds()).collect();
+
+    // Best-of-`reps` per pass (the min rejects scheduler noise; the counters are
+    // deterministic, so any run's copy of them is the same).
+    let best = |frame: &[FrameDraw], cw: u32, ch: u32, scale: f32, repeat: u32| -> FrameProbe {
+        let mut acc = r
+            .gpu_frame_probe(frame, cw, ch, zoom, scale, repeat, &[])
+            .expect("TIMESTAMP_QUERY checked above");
+        let (mut c, mut f) = (acc.compute_us, acc.fragment_us);
+        for _ in 1..reps {
+            let p = r
+                .gpu_frame_probe(frame, cw, ch, zoom, scale, repeat, &[])
+                .expect("TIMESTAMP_QUERY checked above");
+            c = c.min(p.compute_us);
+            f = f.min(p.fragment_us);
+            acc = p;
+        }
+        acc.compute_us = c;
+        acc.fragment_us = f;
+        acc
+    };
+    let run = |w: u32, h: u32, scale: f32, parts: FrameParts, repeat: u32| -> FrameProbe {
+        let frame = probe_frame(
+            &bg_slice,
+            &edges_slice,
+            &node_slices,
+            &node_bounds,
+            w,
+            h,
+            zoom,
+            scale,
+            cam,
+            parts,
+        );
+        let (cw, ch) = ((w as f32 * scale) as u32, (h as f32 * scale) as u32);
+        best(&frame, cw, ch, scale, repeat)
+    };
+
+    let info = &r.adapter_info;
+    println!("\n================ SDF GPU cost report ================");
+    println!(
+        "host: {} [{:?} / {:?}] driver {} {}",
+        info.name, info.backend, info.device_type, info.driver, info.driver_info
+    );
+    println!(
+        "host {host_gflops:.0} GFLOP/s   target {target_gflops:.0} GFLOP/s   \
+         ALU ratio {alu_ratio:.1}x   target bandwidth {target_gbps:.1} GB/s"
+    );
+    println!(
+        "scene: {n_nodes} nodes / {n_edges} edges / grid tiling, zoom {zoom}, \
+         base canvas {base_w}x{base_h}, best of {reps}"
+    );
+
+    let header = || {
+        println!(
+            "{:<16} {:>10} {:>6} {:>8} {:>10} {:>10} {:>9} {:>9} {:>8} {:>7} {:>8} {:>11} {:>10} {:>11} {:>8} {:>8}",
+            "config",
+            "phys px",
+            "draws",
+            "entries",
+            "sum fine",
+            "live tiles",
+            "slot/live",
+            "evals(M)",
+            "fine max",
+            "evict",
+            "idx MiB",
+            "traffic KiB",
+            "compute us",
+            "fragment us",
+            "us/Mpx",
+            "ns/eval",
+        );
+    };
+    let row = |label: &str, p: &FrameProbe| {
+        let reps_f = f64::from(p.repeat);
+        let frag = p.fragment_us / reps_f;
+        let comp = p.compute_us / reps_f;
+        println!(
+            "{:<16} {:>10} {:>6} {:>8} {:>10} {:>10} {:>9.2} {:>9.2} {:>8} {:>7} {:>8.2} {:>11.1} {:>10.1} {:>11.1} {:>8.2} {:>8.2}",
+            label,
+            p.shaded_px,
+            p.draws,
+            p.entries,
+            p.fine_slot_sum,
+            p.fine_live_tiles,
+            // Candidate segments an average pixel in a NON-EMPTY tile must
+            // evaluate: the index's discrimination power. 1.0 would mean the
+            // index resolves the nearest segment exactly; large values mean the
+            // fragment shader is running a min-reduction the index failed to do.
+            p.fine_slot_sum as f64 / f64::from(p.fine_live_tiles.max(1)),
+            p.segment_evals as f64 / 1e6,
+            p.fine_slot_max,
+            p.fine_evicted_tiles,
+            p.index_bytes as f64 / (1024.0 * 1024.0),
+            probe_index_traffic(p) as f64 / 1024.0,
+            comp,
+            frag,
+            frag / (p.shaded_px.max(1) as f64 / 1e6),
+            frag * 1000.0 / p.segment_evals.max(1) as f64,
+        );
+    };
+
+    // --- 1. Resolution sweep: isolates the fragment term. Cost must track
+    // `evals`, not `draws` (the draw count is constant across these rows).
+    println!("\n[1] resolution sweep (scale 1.0, all layers)");
+    header();
+    let mut res_fit: Vec<(f64, f64)> = Vec::new();
+    let mut res_fit_px: Vec<(f64, f64)> = Vec::new();
+    for mul in [0.5_f32, 1.0, 1.5, 2.0] {
+        let (w, h) = ((base_w as f32 * mul) as u32, (base_h as f32 * mul) as u32);
+        let p = run(w, h, 1.0, FrameParts::ALL, 1);
+        row(&format!("{mul}x  {w}x{h}"), &p);
+        let frag = p.fragment_us / f64::from(p.repeat);
+        res_fit.push((p.segment_evals as f64, frag));
+        res_fit_px.push((p.shaded_px as f64, frag));
+    }
+
+    // --- 2. DPI-scale sweep: quantifies what a 125%/150% Windows desktop costs.
+    // Physical pixels - and with them fragment work - go as `scale^2`.
+    println!("\n[2] DPI-scale sweep ({base_w}x{base_h} logical, all layers)");
+    header();
+    let mut dpi: Vec<(f32, f64)> = Vec::new();
+    for scale in [1.0_f32, 1.25, 1.5, 2.0] {
+        let p = run(base_w, base_h, scale, FrameParts::ALL, 1);
+        row(&format!("scale {scale}"), &p);
+        dpi.push((scale, p.fragment_us / f64::from(p.repeat)));
+    }
+    let dpi_base = dpi[0].1.max(1e-9);
+    println!(
+        "    fragment cost vs scale 1.0: {}",
+        dpi.iter()
+            .map(|(s, f)| format!("{s}x -> {:.2}x", f / dpi_base))
+            .collect::<Vec<_>>()
+            .join("   ")
+    );
+
+    // --- 3. Composition sweep: attributes the fragment term to a layer.
+    println!("\n[3] composition sweep ({base_w}x{base_h}, scale 1.0)");
+    header();
+    for parts in [
+        FrameParts {
+            bg: true,
+            edges: false,
+            nodes: false,
+        },
+        FrameParts {
+            bg: false,
+            edges: true,
+            nodes: false,
+        },
+        FrameParts {
+            bg: false,
+            edges: false,
+            nodes: true,
+        },
+        FrameParts {
+            bg: true,
+            edges: true,
+            nodes: false,
+        },
+        FrameParts::ALL,
+    ] {
+        let p = run(base_w, base_h, 1.0, parts, 1);
+        row(&parts.label(), &p);
+    }
+
+    // --- 4. Draw-count sweep at NEGLIGIBLE fragment work. The faithful-vs-lumped
+    // contrast cannot isolate per-draw cost (lumped is SLOWER: with one giant grid
+    // every tile scans all entries). Instead hold fragments near zero - a 1x1
+    // physical-pixel grid and scissor per node draw - and vary only the count.
+    println!("\n[4] draw-count sweep at ~1 fragment per draw ({base_w}x{base_h})");
+    header();
+    let mut draw_fit: Vec<(f64, f64)> = Vec::new();
+    for n in [1usize, 50, 250, 500] {
+        let n = n.min(n_nodes);
+        let tiny: Vec<FrameDraw> = node_slices[..n]
+            .iter()
+            .enumerate()
+            .map(|(i, ns)| {
+                let nb = node_bounds[i];
+                let (cx, cy) = ((nb[0] + nb[2]) * 0.5, (nb[1] + nb[3]) * 0.5);
+                let ncam = [16.0 / zoom - cx, 16.0 / zoom - cy];
+                let (col, row) = ((i / 20) as f32, (i % 20) as f32);
+                let origin = [24.0 + col * 24.0 - 16.0, 20.0 + row * 24.0 - 16.0];
+                (&ns[..], origin, 1u32, 1u32, ncam)
+            })
+            .collect();
+        let p = best(&tiny, base_w, base_h, 1.0, 1);
+        row(&format!("{n} draws x 1px"), &p);
+        draw_fit.push((f64::from(p.draws), p.fragment_us));
+    }
+    let (per_draw_us, draw_intercept, draw_r2) = least_squares(&draw_fit);
+    let per_draw_ns_host = per_draw_us * 1000.0;
+    println!(
+        "    fit: fragment_us = {draw_intercept:.2} + {per_draw_us:.4} * draws   \
+         (R^2 {draw_r2:.3})  ->  per-draw {per_draw_ns_host:.1} ns on this host"
+    );
+    {
+        // Informational only: the historical faithful-vs-lumped pair. LUMPED is
+        // slower because one giant grid makes every tile scan every entry - that
+        // is TILE DENSITY, not draw overhead.
+        let mut lumped: Vec<(&crate::drawable::Drawable, &Style)> =
+            Vec::with_capacity(1 + n_nodes + n_edges);
+        lumped.push((&bg, &dark));
+        for n in &nodes[..n_nodes] {
+            lumped.push((n, &fill_style));
+        }
+        for e in &edges[..n_edges] {
+            lumped.push((e, &edge_style));
+        }
+        let mut lc = f64::INFINITY;
+        let mut lf = f64::INFINITY;
+        for _ in 0..reps {
+            if let Some((c, f)) = r.gpu_pass_times(&lumped, base_w, base_h, zoom, cam) {
+                lc = lc.min(c);
+                lf = lf.min(f);
+            }
+        }
+        let faithful = run(base_w, base_h, 1.0, FrameParts::ALL, 1);
+        println!(
+            "    tile density, not draw overhead: LUMPED (1 draw, {} entries) compute {lc:.1} us \
+             fragment {lf:.1} us   vs FAITHFUL ({} draws) compute {:.1} us fragment {:.1} us",
+            lumped.len(),
+            faithful.draws,
+            faithful.compute_us,
+            faithful.fragment_us,
+        );
+    }
+
+    // --- 5. Amplification: run the same frame N times to push this host into the
+    // target's work regime. `amp_equiv` repetitions of the host frame cost about
+    // what ONE frame costs on the target, if the term is ALU-limited.
+    let amp_equiv = alu_ratio.round().max(1.0) as u32;
+    println!("\n[5] amplification ({base_w}x{base_h}, scale 1.0, all layers)");
+    header();
+    let mut amp_total_ms = 0.0;
+    for repeat in [1u32, 4, 16, amp_equiv] {
+        let p = run(base_w, base_h, 1.0, FrameParts::ALL, repeat);
+        row(&format!("repeat {repeat}"), &p);
+        if repeat == amp_equiv {
+            amp_total_ms = p.fragment_us / 1000.0;
+        }
+    }
+    println!(
+        "    repeat {amp_equiv} total fragment {amp_total_ms:.2} ms \
+         <- ~equivalent single-frame cost on TARGET (ALU-limited estimate)"
+    );
+
+    // --- Derived: price each term at the target configuration.
+    //
+    // The fragment term is priced from the MEASURED host cost of the target
+    // configuration, scaled by the ALU ratio - not from `evals * ns/eval`. The
+    // eval model is reported below as a diagnostic, but it is not load-bearing:
+    // on this scene the fine cap saturates and the opaque early-out retires
+    // fragments before their slot list is walked, so `evals` is a MARGINAL
+    // predictor (its fit has a large negative intercept) rather than an
+    // absolute one. Measuring the real frame at the real resolution folds both
+    // effects in for free.
+    let (slope_us_per_eval, fit_intercept, fit_r2) = least_squares(&res_fit);
+    let (slope_us_per_px, px_intercept, px_r2) = least_squares(&res_fit_px);
+    let ns_per_eval_host = slope_us_per_eval * 1000.0;
+    let ns_per_eval_target = ns_per_eval_host * alu_ratio;
+    let target = run(target_w, target_h, target_scale, FrameParts::ALL, 1);
+    let target_frag_us = target.fragment_us / f64::from(target.repeat);
+
+    let frag_ms_target = target_frag_us * alu_ratio / 1000.0;
+    let frag_ms_evalfit = target.segment_evals as f64 * ns_per_eval_target / 1e6;
+    // Idle-frame upload traffic is NOT zero: the per-frame draw table is
+    // re-pushed every frame (see `idle_frame_uploads_nothing`). Everything else
+    // - geometry, styles, scatter lists - stays resident.
+    let upload_bytes = u64::from(target.draws) * DrawData::SHADER_SIZE.get();
+    let fb_bytes = 2 * target.shaded_px * 4; // framebuffer write + composite read, RGBA8
+    let bw_bytes = probe_index_traffic(&target) + upload_bytes + fb_bytes;
+    let bw_ms_target = bw_bytes as f64 / (target_gbps * 1e9) * 1e3;
+    let fill_ms_target = target.shaded_px as f64 / TARGET_GPIXELS_PER_S * 1e3;
+    let draw_ms_target = f64::from(target.draws) * per_draw_ns_host / 1e6;
+
+    println!("\n[derived] fragment-cost models over sweep 1 (both predictors)");
+    println!(
+        "    fragment_us = {fit_intercept:>9.2} + {slope_us_per_eval:.3e} * evals      (R^2 {fit_r2:.3})"
+    );
+    println!(
+        "    fragment_us = {px_intercept:>9.2} + {slope_us_per_px:.3e} * shaded_px  (R^2 {px_r2:.3})"
+    );
+    println!(
+        "    ns/eval host {ns_per_eval_host:.4}   ns/eval target {ns_per_eval_target:.4} (x{alu_ratio:.1})"
+    );
+    // A fit whose intercept is a large negative share of the observed range
+    // predicts negative time at zero work: the slope is a marginal cost, not an
+    // average one, and `evals * ns/eval` would overstate the total.
+    let mean_frag = res_fit.iter().map(|p| p.1).sum::<f64>() / res_fit.len() as f64;
+    if fit_r2 < 0.9 || fit_intercept < -0.25 * mean_frag {
+        println!(
+            "    NOTE: the eval model is mis-specified here (R^2 {fit_r2:.3}, intercept \
+             {fit_intercept:.1} us vs mean {mean_frag:.1} us) - a slot only costs a full \
+             eval until the opaque early-out retires the pixel, so cost is sublinear in \
+             evals. `evals x ns/eval` would say {frag_ms_evalfit:.1} ms; the \
+             measured-and-scaled figure below is used instead."
+        );
+    }
+    if target.fine_slot_max >= MAX_FINE_SLOTS {
+        println!(
+            "    NOTE: fine tiles are SATURATED at the {MAX_FINE_SLOTS}-slot cap, so \
+             `segment_evals` UNDER-counts true demand; the fragment figure is a lower bound."
+        );
+    }
+    println!(
+        "\n[target] {target_w}x{target_h} @ scale {target_scale} = {} phys px, {} draws, \
+         {:.2} M evals, {} live fine tiles, fine max {}/{}, coarse demand max {}/{}",
+        target.shaded_px,
+        target.draws,
+        target.segment_evals as f64 / 1e6,
+        target.fine_live_tiles,
+        target.fine_slot_max,
+        MAX_FINE_SLOTS,
+        target.coarse_demand_max,
+        MAX_COARSE_SLOTS,
+    );
+    println!(
+        "    fragment {frag_ms_target:>7.2} ms   ({target_frag_us:.0} us measured on this host \
+         at that exact config, x{alu_ratio:.1} ALU ratio)"
+    );
+    println!(
+        "    bandwidth{bw_ms_target:>7.2} ms   ({} KiB index traffic + {} KiB draw table + \
+         {} KiB framebuffer at {target_gbps:.1} GB/s)",
+        probe_index_traffic(&target) / 1024,
+        upload_bytes / 1024,
+        fb_bytes / 1024,
+    );
+    println!("    fill     {fill_ms_target:>7.2} ms   (ROP-limited, 20.8 GPixel/s)");
+    println!(
+        "    per-draw {draw_ms_target:>7.2} ms   (LOWER BOUND: {per_draw_ns_host:.1} ns/draw \
+         measured on this host; per-draw cost is driver/architecture-bound and does NOT scale \
+         with FLOPS)"
+    );
+
+    let terms = [
+        ("fragment shading", frag_ms_target),
+        ("memory bandwidth", bw_ms_target),
+        ("ROP fill", fill_ms_target),
+        ("per-draw overhead", draw_ms_target),
+    ];
+    let (worst, worst_ms) =
+        terms.iter().copied().fold(
+            ("", f64::NEG_INFINITY),
+            |a, b| if b.1 > a.1 { b } else { a },
+        );
+    println!(
+        "\nVERDICT: {worst} dominates at {worst_ms:.1} ms of a 16.7 ms budget \
+         ({:.0}% of one 60 Hz frame)",
+        worst_ms / 16.7 * 100.0
+    );
+    if worst != "fragment shading" {
+        println!(
+            "NOTE: the dominant term is not ALU-limited, so sweep 5's ALU amplification is the \
+             WRONG local reproduction - raise the resolution instead (it scales fill and \
+             bandwidth together with ALU)."
+        );
+    }
+    println!("=====================================================\n");
 }
 
 /// Tile-budget overflow must DEGRADE, not panic. A draw whose tile grid would push
