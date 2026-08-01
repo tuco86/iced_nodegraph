@@ -1396,7 +1396,12 @@ fn cs_sort_fine(
             k++;
         }
 
-        // Pass 1 over the run, at fine resolution.
+        // Pass 1 over the run, at fine resolution. The centre evaluation feeds
+        // ONLY the closed-contour interior test below (`center_signed < 0`), so
+        // an OPEN entry - every stroke and every edge - skips it entirely. That
+        // is one `eval_segment` per (slot, fine tile) saved on exactly the layer
+        // that dominates this pass, and arcs are the expensive case
+        // (~5 sqrt, ~3 atan2, ~4 sin/cos).
         var mu = 1e30;
         var kbound = 1e30;
         var center_signed = 1e30;
@@ -1407,8 +1412,13 @@ fn cs_sort_fine(
             let iv = seg_box_interval(seg, bmin, bmax);
             mu = min(mu, iv.x);
             kbound = min(kbound, iv.y);
-            let rc = eval_segment(lp_center, seg);
-            if abs(rc.dist) < center_abs { center_abs = abs(rc.dist); center_signed = rc.dist; }
+            if is_closed {
+                let rc = eval_segment(lp_center, seg);
+                if abs(rc.dist) < center_abs {
+                    center_abs = abs(rc.dist);
+                    center_signed = rc.dist;
+                }
+            }
         }
         var visible = (mu <= reach);
         if !visible && is_closed && center_signed < 0.0 { visible = true; }
