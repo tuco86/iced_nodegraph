@@ -84,6 +84,10 @@ type FrameDraw<'a> = (
 #[derive(Clone, Copy)]
 struct FrameProbe {
     compute_us: f64,
+    /// Scatter half of `compute_us`: work proportional to PREPARED geometry.
+    scatter_us: f64,
+    /// Sort+fine half of `compute_us`: work proportional to COVERED tiles.
+    sort_us: f64,
     fragment_us: f64,
     repeat: u32,
     draws: u32,
@@ -1081,20 +1085,24 @@ impl TestRenderer {
         });
         let view = texture.create_view(&TextureViewDescriptor::default());
 
+        // Six timestamps: 0/1 scatter, 2/3 sort+fine, 4/5 render. Scatter and
+        // sort are separate passes here for the same reason production splits
+        // them - and so their very different scaling (scatter tracks PREPARED
+        // GEOMETRY, sort tracks COVERED TILES) can be read apart.
         let qs = self.device.create_query_set(&QuerySetDescriptor {
             label: Some("sdf_frame_ts"),
             ty: QueryType::Timestamp,
-            count: 4,
+            count: 6,
         });
         let resolve = self.device.create_buffer(&BufferDescriptor {
             label: None,
-            size: 32,
+            size: 48,
             usage: BufferUsages::QUERY_RESOLVE | BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
         let readback = self.device.create_buffer(&BufferDescriptor {
             label: None,
-            size: 32,
+            size: 48,
             usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -1108,29 +1116,43 @@ impl TestRenderer {
             // clears them the same way, `primitive.rs` run_deferred_compute).
             // `cs_fine_counts` is a plain store and needs no clear.
             enc.clear_buffer(&coarse_counts_buf, 0, None);
-            let mut pass = enc.begin_compute_pass(&ComputePassDescriptor {
-                label: Some("sdf_index"),
-                // wgpu rejects a `timestamp_writes` with neither index set, so
-                // the middle repetitions of an amplified run carry none at all.
-                timestamp_writes: (rep == 0 || rep == repeat - 1).then(|| {
-                    ComputePassTimestampWrites {
-                        query_set: &qs,
-                        beginning_of_pass_write_index: (rep == 0).then_some(0),
-                        end_of_pass_write_index: (rep == repeat - 1).then_some(1),
-                    }
-                }),
-            });
-            pass.set_bind_group(0, &compute_bg0, &[]);
-            // One batch over the frame's live coarse tiles; each workgroup
-            // finds its draw via the coarse_base prefix sums.
-            self.record_cull(
-                &mut pass,
-                &cull_lists,
-                &scatter_open_bg1,
-                &scatter_closed_bg1,
-                &sort_bg1,
-                coarse_base,
-            );
+            {
+                let mut pass = enc.begin_compute_pass(&ComputePassDescriptor {
+                    label: Some("sdf_scatter"),
+                    // wgpu rejects a `timestamp_writes` with neither index set,
+                    // so middle repetitions of an amplified run carry none.
+                    timestamp_writes: (rep == 0 || rep == repeat - 1).then(|| {
+                        ComputePassTimestampWrites {
+                            query_set: &qs,
+                            beginning_of_pass_write_index: (rep == 0).then_some(0),
+                            end_of_pass_write_index: (rep == repeat - 1).then_some(1),
+                        }
+                    }),
+                });
+                pass.set_bind_group(0, &compute_bg0, &[]);
+                self.record_scatter(
+                    &mut pass,
+                    &cull_lists,
+                    &scatter_open_bg1,
+                    &scatter_closed_bg1,
+                );
+            }
+            {
+                let mut pass = enc.begin_compute_pass(&ComputePassDescriptor {
+                    label: Some("sdf_sort_fine"),
+                    timestamp_writes: (rep == 0 || rep == repeat - 1).then(|| {
+                        ComputePassTimestampWrites {
+                            query_set: &qs,
+                            beginning_of_pass_write_index: (rep == 0).then_some(2),
+                            end_of_pass_write_index: (rep == repeat - 1).then_some(3),
+                        }
+                    }),
+                });
+                pass.set_bind_group(0, &compute_bg0, &[]);
+                // One batch over the frame's live coarse tiles; each workgroup
+                // finds its draw via the coarse_base prefix sums.
+                self.record_sort_fine(&mut pass, &sort_bg1, coarse_base);
+            }
         }
         for rep in 0..repeat {
             let mut pass = enc.begin_render_pass(&RenderPassDescriptor {
@@ -1150,8 +1172,8 @@ impl TestRenderer {
                 timestamp_writes: (rep == 0 || rep == repeat - 1).then(|| {
                     RenderPassTimestampWrites {
                         query_set: &qs,
-                        beginning_of_pass_write_index: (rep == 0).then_some(2),
-                        end_of_pass_write_index: (rep == repeat - 1).then_some(3),
+                        beginning_of_pass_write_index: (rep == 0).then_some(4),
+                        end_of_pass_write_index: (rep == repeat - 1).then_some(5),
                     }
                 }),
                 occlusion_query_set: None,
@@ -1207,8 +1229,8 @@ impl TestRenderer {
         let fine_rb = count_rb(fine_bytes);
         enc.copy_buffer_to_buffer(&coarse_counts_buf, 0, &coarse_rb, 0, coarse_bytes);
         enc.copy_buffer_to_buffer(&fine_counts_buf, 0, &fine_rb, 0, fine_bytes);
-        enc.resolve_query_set(&qs, 0..4, &resolve, 0);
-        enc.copy_buffer_to_buffer(&resolve, 0, &readback, 0, 32);
+        enc.resolve_query_set(&qs, 0..6, &resolve, 0);
+        enc.copy_buffer_to_buffer(&resolve, 0, &readback, 0, 48);
         let idx = self.queue.submit(Some(enc.finish()));
 
         let slice = readback.slice(..);
@@ -1220,7 +1242,7 @@ impl TestRenderer {
             })
             .unwrap();
         let data = slice.get_mapped_range();
-        let mut t = [0u64; 4];
+        let mut t = [0u64; 6];
         for (k, slot) in t.iter_mut().enumerate() {
             *slot = u64::from_le_bytes(data[k * 8..k * 8 + 8].try_into().unwrap());
         }
@@ -1268,9 +1290,13 @@ impl TestRenderer {
         fine_rb.unmap();
 
         let period = self.queue.get_timestamp_period() as f64;
+        let scatter_us = t[1].saturating_sub(t[0]) as f64 * period / 1000.0;
+        let sort_us = t[3].saturating_sub(t[2]) as f64 * period / 1000.0;
         Some(FrameProbe {
-            compute_us: t[1].saturating_sub(t[0]) as f64 * period / 1000.0,
-            fragment_us: t[3].saturating_sub(t[2]) as f64 * period / 1000.0,
+            compute_us: scatter_us + sort_us,
+            scatter_us,
+            sort_us,
+            fragment_us: t[5].saturating_sub(t[4]) as f64 * period / 1000.0,
             repeat,
             draws: num_draws,
             entries: gpu_entries.len() as u32,
@@ -2122,6 +2148,11 @@ impl TestRenderer {
     /// group 1 (8-storage-buffers-per-stage limit). Group 0 must already be
     /// set. Freshly created storage buffers are zero-initialized by WebGPU,
     /// so unlike production no coarse-counts clear is needed here.
+    ///
+    /// Both phases in ONE pass. Callers that need them timed apart use
+    /// [`TestRenderer::record_scatter`] and [`TestRenderer::record_sort_fine`]
+    /// in two passes - which is also what production does
+    /// (`primitive.rs` splits them around the demand-readback copy).
     fn record_cull(
         &self,
         pass: &mut ComputePass<'_>,
@@ -2130,6 +2161,20 @@ impl TestRenderer {
         closed_bg1: &BindGroup,
         sort_bg1: &BindGroup,
         total_coarse: u32,
+    ) {
+        self.record_scatter(pass, lists, open_bg1, closed_bg1);
+        self.record_sort_fine(pass, sort_bg1, total_coarse);
+    }
+
+    /// The scatter half: one thread per (draw, entry, segment) triple of open
+    /// entries, one workgroup per closed entry. Work is proportional to
+    /// PREPARED geometry, not to covered pixels.
+    fn record_scatter(
+        &self,
+        pass: &mut ComputePass<'_>,
+        lists: &CullLists,
+        open_bg1: &BindGroup,
+        closed_bg1: &BindGroup,
     ) {
         if lists.pair_triples > 0 {
             let wgs = lists.pair_triples.div_ceil(64);
@@ -2150,9 +2195,18 @@ impl TestRenderer {
             );
             pass.pop_debug_group();
         }
-        // One workgroup per LIVE coarse tile, 1D-flat (x capped at 65535,
-        // y extends); the kernel binary-searches its draw over the
-        // coarse_base prefix sums carried by the cs_launch uniform.
+    }
+
+    /// The sort+fine half: one workgroup per LIVE coarse tile, 1D-flat (x
+    /// capped at 65535, y extends); the kernel binary-searches its draw over
+    /// the coarse_base prefix sums carried by the cs_launch uniform. Work is
+    /// proportional to covered TILES, not to prepared geometry.
+    fn record_sort_fine(
+        &self,
+        pass: &mut ComputePass<'_>,
+        sort_bg1: &BindGroup,
+        total_coarse: u32,
+    ) {
         if total_coarse > 0 {
             pass.push_debug_group("cull_sort_fine");
             pass.set_pipeline(&self.sort_fine_pipeline);
@@ -6430,7 +6484,7 @@ fn gpu_cost_report() {
 
     let header = || {
         println!(
-            "{:<16} {:>10} {:>6} {:>8} {:>10} {:>10} {:>9} {:>9} {:>8} {:>7} {:>8} {:>11} {:>10} {:>11} {:>8} {:>8}",
+            "{:<16} {:>10} {:>6} {:>8} {:>10} {:>10} {:>9} {:>9} {:>8} {:>7} {:>8} {:>11} {:>10} {:>8} {:>11} {:>8} {:>8}",
             "config",
             "phys px",
             "draws",
@@ -6443,7 +6497,8 @@ fn gpu_cost_report() {
             "evict",
             "idx MiB",
             "traffic KiB",
-            "compute us",
+            "scatter us",
+            "sort us",
             "fragment us",
             "us/Mpx",
             "ns/eval",
@@ -6452,9 +6507,10 @@ fn gpu_cost_report() {
     let row = |label: &str, p: &FrameProbe| {
         let reps_f = f64::from(p.repeat);
         let frag = p.fragment_us / reps_f;
-        let comp = p.compute_us / reps_f;
+        let scat = p.scatter_us / reps_f;
+        let sort = p.sort_us / reps_f;
         println!(
-            "{:<16} {:>10} {:>6} {:>8} {:>10} {:>10} {:>9.2} {:>9.2} {:>8} {:>7} {:>8.2} {:>11.1} {:>10.1} {:>11.1} {:>8.2} {:>8.2}",
+            "{:<16} {:>10} {:>6} {:>8} {:>10} {:>10} {:>9.2} {:>9.2} {:>8} {:>7} {:>8.2} {:>11.1} {:>10.1} {:>8.1} {:>11.1} {:>8.2} {:>8.2}",
             label,
             p.shaded_px,
             p.draws,
@@ -6471,7 +6527,8 @@ fn gpu_cost_report() {
             p.fine_evicted_tiles,
             p.index_bytes as f64 / (1024.0 * 1024.0),
             probe_index_traffic(p) as f64 / 1024.0,
-            comp,
+            scat,
+            sort,
             frag,
             frag / (p.shaded_px.max(1) as f64 / 1e6),
             frag * 1000.0 / p.segment_evals.max(1) as f64,
