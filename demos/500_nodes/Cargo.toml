@@ -25,6 +25,8 @@ wasm = [
 
 [dependencies]
 iced_nodegraph.workspace = true
+iced_nodegraph_sdf.workspace = true
+web-time.workspace = true
 iced = { workspace = true, features = ["wgpu", "crisp", "thread-pool", "linux-theme-detection", "x11", "wayland", "canvas"] }
 
 # WASM-specific dependencies

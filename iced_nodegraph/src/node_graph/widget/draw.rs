@@ -1224,6 +1224,16 @@ where
                 ],
                 sdf_entries: sdf.entry_count,
                 sdf_tiles: sdf.tile_count,
+                sdf_upload_bytes: sdf.upload_bytes,
+                sdf_gpu_bytes: sdf.gpu_bytes,
+                sdf_index_bytes: sdf.index_bytes,
+                sdf_draws: sdf.sdf_draws,
+                sdf_shaded_px: sdf.shaded_px,
+                sdf_segment_evals: sdf.segment_evals,
+                sdf_fine_slots_max: sdf.fine_slots_max,
+                sdf_fine_evicted_tiles: sdf.fine_evicted_tiles,
+                sdf_index_traffic_bytes: sdf.index_traffic_bytes,
+                sdf_cull_skipped: sdf.cull_skipped,
             };
             state.last_info.replace(Some(info));
         }

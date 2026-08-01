@@ -233,7 +233,9 @@ pub struct OpTiming {
 /// `nodes`/`pins`/`edges` are [`Counts`]; `timings` is the CPU cost of each draw
 /// operation in stack order (geometry, background, foreground, sdf prepare) and
 /// sums to roughly the per-frame CPU time. `sdf_entries`/`sdf_tiles` are the
-/// SDF pipeline counters. All timings are CPU-side; no GPU profiling is done.
+/// SDF pipeline counters. All timings are CPU-side; no GPU profiling is done -
+/// the `sdf_*` byte and work counters below describe GPU resource use and work
+/// volume, not GPU time.
 ///
 /// Reported one frame behind: the values are measured during `draw` and
 /// delivered on the next redraw, mirroring the controlled `on_pan` pattern.
@@ -251,6 +253,31 @@ pub struct GraphInfo {
     pub sdf_entries: u32,
     /// SDF tiles the index covered this frame.
     pub sdf_tiles: u32,
+    /// Bytes uploaded to the GPU this frame (`SdfStats::upload_bytes`).
+    pub sdf_upload_bytes: u64,
+    /// Live GPU buffer bytes owned by the SDF pipeline (`SdfStats::gpu_bytes`).
+    pub sdf_gpu_bytes: u64,
+    /// Spatial-index share of `sdf_gpu_bytes` (`SdfStats::index_bytes`).
+    pub sdf_index_bytes: u64,
+    /// SDF instance draws issued this frame (`SdfStats::sdf_draws`).
+    pub sdf_draws: u32,
+    /// Physical pixels covered by this frame's SDF draws (`SdfStats::shaded_px`).
+    pub sdf_shaded_px: u64,
+    /// Fragment-shader `eval_segment` calls this frame; 0 unless the index probe
+    /// is enabled (`SdfStats::segment_evals`).
+    pub sdf_segment_evals: u64,
+    /// Highest per-fine-tile slot count against the 128 cap
+    /// (`SdfStats::fine_slots_max`).
+    pub sdf_fine_slots_max: u32,
+    /// Fine index tiles that dropped a candidate segment at the slot cap
+    /// (`SdfStats::fine_evicted_tiles`). Nonzero means some tiles rendered from
+    /// an incomplete segment list.
+    pub sdf_fine_evicted_tiles: u32,
+    /// GPU-side index-build traffic this frame (`SdfStats::index_traffic_bytes`).
+    pub sdf_index_traffic_bytes: u64,
+    /// True when this frame reused the resident spatial index
+    /// (`SdfStats::cull_skipped`).
+    pub sdf_cull_skipped: bool,
 }
 
 /// Identifies what an in-progress drag is moving. Delivered to the

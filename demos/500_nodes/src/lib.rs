@@ -50,9 +50,11 @@ use iced::{
     widget::{canvas, column, container, opaque, row, stack, text, toggler},
 };
 use iced_nodegraph::{
-    Counts, GraphInfo, PinInfo, PinRef, PinStatus, PinStyle, default_pin_style, edge, node,
+    Counts, GraphInfo, GraphStyle, PinInfo, PinRef, PinStatus, PinStyle, default_pin_style, edge,
+    node,
 };
 use nodes::NodeType;
+use web_time::Instant;
 
 /// Colors a node's pins by their data-type marker.
 fn pin_style(
@@ -85,6 +87,22 @@ use std::collections::{HashSet, VecDeque};
 /// How many recent frames the live timing chart keeps.
 const HIST_CAP: usize = 160;
 
+/// How many recent frame intervals the `NG_REPORT` line summarises.
+const INTERVAL_CAP: usize = 120;
+/// Frames between `NG_REPORT` lines.
+const REPORT_EVERY: u32 = 60;
+
+/// Reads an environment knob, `None` when unset or unparseable. Always `None`
+/// on wasm (`std::env` is empty there), so the browser build keeps the defaults.
+fn env_var<T: std::str::FromStr>(key: &str) -> Option<T> {
+    std::env::var(key).ok()?.parse().ok()
+}
+
+/// True when the knob is set to `1`.
+fn env_flag(key: &str) -> bool {
+    env_var::<u32>(key) == Some(1)
+}
+
 pub fn main() -> iced::Result {
     #[cfg(target_arch = "wasm32")]
     let window_settings = iced::window::Settings {
@@ -97,11 +115,16 @@ pub fn main() -> iced::Result {
     #[cfg(not(target_arch = "wasm32"))]
     let window_settings = iced::window::Settings::default();
 
+    // `NG_SCALE` is the fragment-count axis: physical pixels - and with them
+    // the SDF pipeline's fragment work - scale with `scale^2`. iced's own
+    // default is 1.0, so an unset knob leaves behaviour unchanged.
+    let scale: f32 = env_var("NG_SCALE").unwrap_or(1.0);
     iced::application(Application::new, Application::update, Application::view)
         .subscription(Application::subscription)
         .title("500 Node Benchmark - iced_nodegraph")
         .theme(Application::theme)
         .window(window_settings)
+        .scale_factor(move |_| scale)
         .run()
 }
 
@@ -157,11 +180,40 @@ struct Application {
     /// Whether the live stats panel (and with it the `on_info`-driven frame
     /// stream) is active. Off = the demo only redraws on interaction.
     stats_visible: bool,
+    /// `NG_NO_GRID=1`: drop the tiling background, removing one full-canvas
+    /// SDF layer. Set once at startup.
+    no_grid: bool,
+    /// `NG_REPORT=1`: force the index probe on and print a report line every
+    /// [`REPORT_EVERY`] frames.
+    report: bool,
+    /// Wall clock of the previous [`ApplicationMessage::Info`], for intervals.
+    last_frame: Option<Instant>,
+    /// Recent frame intervals in milliseconds, oldest first.
+    intervals: VecDeque<f32>,
+    /// Frames since the last printed report line.
+    since_report: u32,
+    /// Report lines printed so far; 0 prints the header.
+    reports: u32,
 }
 
 impl Default for Application {
     fn default() -> Self {
-        let (nodes, edges) = generate_procedural_graph();
+        let (mut nodes, mut edges) = generate_procedural_graph();
+        // `NG_NODES` truncates rather than reconfiguring the generator (whose
+        // stage sizes are hardcoded loop bounds): keep the first N nodes and
+        // drop every edge that referenced a dropped one.
+        if let Some(n) = env_var::<usize>("NG_NODES") {
+            nodes.truncate(n);
+            edges.retain(|(from, to)| from.node_id < n && to.node_id < n);
+        }
+        if env_flag("NG_NO_EDGES") {
+            edges.clear();
+        }
+        let report = env_flag("NG_REPORT");
+        let stats_visible = true;
+        // The fine-slot readback costs 4 bytes per fine tile per culled frame,
+        // so it is only armed while something is actually reading it.
+        iced_nodegraph_sdf::set_index_probe(stats_visible || report);
         Self {
             edges,
             nodes,
@@ -170,7 +222,13 @@ impl Default for Application {
             camera: (Point::ORIGIN, 1.0),
             latest_info: None,
             history: VecDeque::with_capacity(HIST_CAP),
-            stats_visible: true,
+            stats_visible,
+            no_grid: env_flag("NG_NO_GRID"),
+            report,
+            last_frame: None,
+            intervals: VecDeque::with_capacity(INTERVAL_CAP),
+            since_report: 0,
+            reports: 0,
         }
     }
 }
@@ -205,6 +263,7 @@ impl Application {
             }
             ApplicationMessage::StatsToggled(on) => {
                 self.stats_visible = on;
+                iced_nodegraph_sdf::set_index_probe(on || self.report);
                 if !on {
                     // Drop stale data so a re-enabled panel starts fresh
                     // instead of presenting an old chart as current.
@@ -222,9 +281,75 @@ impl Application {
                     self.history.pop_front();
                 }
                 self.history.push_back(frame);
+                let now = Instant::now();
+                if let Some(prev) = self.last_frame.replace(now) {
+                    if self.intervals.len() == INTERVAL_CAP {
+                        self.intervals.pop_front();
+                    }
+                    self.intervals
+                        .push_back(now.duration_since(prev).as_secs_f32() * 1000.0);
+                }
                 self.latest_info = Some(info);
+                if self.report {
+                    self.since_report += 1;
+                    if self.since_report >= REPORT_EVERY {
+                        self.since_report = 0;
+                        self.print_report();
+                    }
+                }
             }
         }
+    }
+
+    /// Prints one `NG_REPORT` line: the frame-interval summary plus the GPU
+    /// work and memory counters from [`GraphInfo`].
+    ///
+    /// Intervals are VSYNC-CAPPED, so the absolute value is meaningless while
+    /// the renderer keeps up. The signal is the configuration at which the
+    /// interval LEAVES the vsync floor, and how it grows past it.
+    fn print_report(&mut self) {
+        let Some(i) = self.latest_info.as_ref() else {
+            return;
+        };
+        if self.reports == 0 {
+            println!(
+                "NG_REPORT: frame intervals are vsync-capped - read the point at which \
+                 mean/p95 leave the vsync floor, not the absolute value."
+            );
+            println!(
+                "frames  mean ms  p95 ms  draws  shaded Mpx  evals M  fine max  dropped  \
+                 gpu MiB  index MiB  upload KiB  traffic KiB  cull_skipped"
+            );
+        }
+        let mut sorted: Vec<f32> = self.intervals.iter().copied().collect();
+        sorted.sort_by(f32::total_cmp);
+        let n = sorted.len();
+        let mean = if n == 0 {
+            0.0
+        } else {
+            sorted.iter().sum::<f32>() / n as f32
+        };
+        let p95 = sorted
+            .get((n as f32 * 0.95) as usize)
+            .or(sorted.last())
+            .copied()
+            .unwrap_or(0.0);
+        const MIB: f64 = 1024.0 * 1024.0;
+        println!(
+            "{n:>6}  {mean:>7.2}  {p95:>6.2}  {:>5}  {:>10.2}  {:>7.2}  {:>8}  {:>7}  \
+             {:>7.2}  {:>9.2}  {:>10.1}  {:>11.1}  {}",
+            i.sdf_draws,
+            i.sdf_shaded_px as f64 / 1e6,
+            i.sdf_segment_evals as f64 / 1e6,
+            i.sdf_fine_slots_max,
+            i.sdf_fine_evicted_tiles,
+            i.sdf_gpu_bytes as f64 / MIB,
+            i.sdf_index_bytes as f64 / MIB,
+            i.sdf_upload_bytes as f64 / 1024.0,
+            i.sdf_index_traffic_bytes as f64 / 1024.0,
+            i.sdf_cull_skipped,
+        );
+        self.reports += 1;
     }
 
     fn theme(&self) -> Theme {
@@ -245,6 +370,14 @@ impl Application {
         // the panel hidden the demo is fully idle between interactions.
         if self.stats_visible {
             ng = ng.on_info(ApplicationMessage::Info);
+        }
+        // `NG_NO_GRID=1` removes the tiling layer the theme default carries,
+        // dropping one full-canvas SDF draw from every frame.
+        if self.no_grid {
+            ng = ng.graph_style(|theme| GraphStyle {
+                tiling: None,
+                ..GraphStyle::from_theme(theme)
+            });
         }
 
         // Add all nodes
@@ -305,7 +438,8 @@ impl Application {
             .size(12)
         };
 
-        let (nodes_c, pins_c, edges_c, entries, tiles) = match &self.latest_info {
+        let info = self.latest_info.as_ref();
+        let (nodes_c, pins_c, edges_c, entries, tiles) = match info {
             Some(i) => (i.nodes, i.pins, i.edges, i.sdf_entries, i.sdf_tiles),
             None => (
                 Counts::default(),
@@ -353,6 +487,7 @@ impl Application {
             counts_line("Pins", pins_c),
             counts_line("Edges", edges_c),
             text(format!("SDF: {entries} entries · {tiles} tiles")).size(12),
+            gpu_rows(info),
             text(format!(
                 "cam: ({:.1}, {:.1})  zoom: {:.5}",
                 self.camera.0.x, self.camera.0.y, self.camera.1
@@ -371,6 +506,47 @@ impl Application {
         // The widget self-drives redraws while anything animates; no frame clock needed.
         Subscription::none()
     }
+}
+
+/// The GPU work/memory block of the stats panel: the counters that bound SDF
+/// GPU cost. `evals` and `fine max` need the index probe, which the panel arms
+/// while it is visible; `upload` is the RAM->GPU traffic the "shared VRAM
+/// bandwidth" hypothesis predicts, and is 0 on a fully resident idle frame.
+fn gpu_rows(info: Option<&GraphInfo>) -> Element<'_, ApplicationMessage> {
+    let Some(i) = info else {
+        return text("GPU: collecting…").size(12).into();
+    };
+    const MIB: f64 = 1024.0 * 1024.0;
+    let row = |s: String| text(s).size(11).into();
+    column(
+        [
+            format!(
+                "draws {}   shaded {:.2} Mpx",
+                i.sdf_draws,
+                i.sdf_shaded_px as f64 / 1e6
+            ),
+            format!(
+                "evals {:.2} M   fine max {}/128",
+                i.sdf_segment_evals as f64 / 1e6,
+                i.sdf_fine_slots_max
+            ),
+            format!("dropped tiles {}", i.sdf_fine_evicted_tiles),
+            format!(
+                "gpu {:.2} MiB   index {:.2} MiB",
+                i.sdf_gpu_bytes as f64 / MIB,
+                i.sdf_index_bytes as f64 / MIB
+            ),
+            format!(
+                "upload {:.1} KiB   traffic {:.1} KiB",
+                i.sdf_upload_bytes as f64 / 1024.0,
+                i.sdf_index_traffic_bytes as f64 / 1024.0
+            ),
+            format!("cull skipped: {}", i.sdf_cull_skipped),
+        ]
+        .map(row),
+    )
+    .spacing(2)
+    .into()
 }
 
 /// Translucent chip/panel background shared by the stats panel and its toggle.

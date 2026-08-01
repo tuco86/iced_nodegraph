@@ -40,6 +40,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fragment work and ALU amplification, then prices the fragment, bandwidth,
   fill and per-draw terms at a configurable target GPU and names the dominant
   one. Tunable through `SDF_PROBE_*` environment variables.
+- `GraphInfo` mirrors the SDF counters as `sdf_upload_bytes`, `sdf_gpu_bytes`,
+  `sdf_index_bytes`, `sdf_draws`, `sdf_shaded_px`, `sdf_segment_evals`,
+  `sdf_fine_slots_max`, `sdf_fine_evicted_tiles`, `sdf_index_traffic_bytes`
+  and `sdf_cull_skipped`, so an application can report GPU resource use
+  through the existing per-frame diagnostics channel.
+- `demos/500_nodes` reporter knobs `NG_REPORT`, `NG_SCALE`, `NG_NODES`,
+  `NG_NO_EDGES` and `NG_NO_GRID`, plus the new counters in its stats panel and
+  a periodic report line. See "Diagnosing GPU cost" in `demos/README.md`.
 
 ### Changed
 
