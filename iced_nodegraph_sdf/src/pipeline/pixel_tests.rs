@@ -5028,6 +5028,179 @@ fn budget_scene() -> (
     (bg, per_node)
 }
 
+/// Distinct segments that are the per-pixel NEAREST somewhere in a 16px fine
+/// tile, brute-forced on the CPU with [`crate::segment::seg_sdf`] - the twin
+/// the GPU `eval_segment` is contracted to reproduce.
+///
+/// `pixels_per_tile` is sampled at pixel centres, matching what the fragment
+/// shader evaluates. Returns `(distinct_nearest, total_segments)`.
+fn distinct_nearest_in_tile(
+    segs: &[crate::drawable::Segment],
+    tile_origin_world: [f32; 2],
+    world_per_px: f32,
+) -> (usize, usize) {
+    use glam::Vec2;
+    let mut seen = vec![false; segs.len()];
+    for py in 0..16 {
+        for px in 0..16 {
+            let p = Vec2::new(
+                tile_origin_world[0] + (px as f32 + 0.5) * world_per_px,
+                tile_origin_world[1] + (py as f32 + 0.5) * world_per_px,
+            );
+            let mut best = f32::INFINITY;
+            let mut bi = 0usize;
+            for (i, s) in segs.iter().enumerate() {
+                let d = crate::segment::seg_sdf(p, s.start, s.end, s.curvature, s.heading).abs();
+                if d < best {
+                    best = d;
+                    bi = i;
+                }
+            }
+            seen[bi] = true;
+        }
+    }
+    (seen.iter().filter(|b| **b).count(), segs.len())
+}
+
+/// THE PRUNING CEILING (ignored, CPU only). How good could the spatial index
+/// ever get?
+///
+/// `slot/live` in `gpu_cost_report` is what the index REFERENCES per non-empty
+/// fine tile. This computes what it would reference if it were PERFECT: only
+/// segments that are genuinely the nearest for at least one pixel of the tile.
+/// Everything above that floor is evaluated by the fragment's min-reduction and
+/// discarded; everything at or below it is irreducible without changing how
+/// shading works.
+///
+/// The answer bounds every future index change - finer tiles, tighter bounds,
+/// sparse storage, a quadtree. Measured: nodes 5.00 of 18.6 segments, edges
+/// 3.77 of 12.0, against 15.30 / 16.92 referenced. So better pruning is worth
+/// about 3x and no more; an order of magnitude needs the per-pixel cost to stop
+/// depending on segment count at all (one analytic or precomputed field
+/// evaluation per entry, the way `sd_tiling` already achieves slot/live 1.00).
+///
+/// Run with:
+///   cargo test -p iced_nodegraph_sdf --release index_pruning_ceiling -- --ignored --nocapture
+#[test]
+#[ignore]
+fn index_pruning_ceiling() {
+    use crate::shape::Shape;
+    use glam::Vec2;
+
+    let zoom = BUDGET_ZOOM;
+    let world_per_px = 1.0 / zoom;
+
+    // --- Node bodies: the same 25x20 size sweep `bench_scene` builds, each in
+    // the 32px window the probe frame gives it = 2x2 fine tiles.
+    let (mut n_ideal, mut n_segs, mut n_tiles) = (0.0f64, 0.0f64, 0.0f64);
+    let mut n_worst = 0usize;
+    for i in 0..35usize {
+        let nw = 70.0 + (i % 7) as f32 * 6.0;
+        let nh = 60.0 + (i % 5) as f32 * 5.0;
+        let body = Shape::rounded_box([nw, nh], [6.0; 4])
+            - Shape::circle(5.0).translate([-nw * 0.5, 0.0])
+            - Shape::circle(5.0).translate([nw * 0.5, 0.0]);
+        let d = body.evaluate();
+        for ty in 0..2 {
+            for tx in 0..2 {
+                let origin = [
+                    (tx as f32 * 16.0 - 16.0) * world_per_px,
+                    (ty as f32 * 16.0 - 16.0) * world_per_px,
+                ];
+                let (ideal, total) = distinct_nearest_in_tile(&d.segments, origin, world_per_px);
+                n_worst = n_worst.max(ideal);
+                n_ideal += ideal as f64;
+                n_segs += total as f64;
+                n_tiles += 1.0;
+            }
+        }
+    }
+
+    // --- Edges: arc-spline strokes on their own tile lattice.
+    let cam = BUDGET_CAM;
+    let (mut e_ideal, mut e_segs, mut e_tiles) = (0.0f64, 0.0f64, 0.0f64);
+    let mut e_worst = 0usize;
+    for i in 0..64u32 {
+        let a = (i % 32) as f32 * 24.0 + 24.0;
+        let b = (i / 32) as f32 * 24.0 + 20.0;
+        let p0 = [a / zoom - cam[0], b / zoom - cam[1]];
+        let p3 = [(a + 60.0) / zoom - cam[0], (b + 40.0) / zoom - cam[1]];
+        let p1 = [p0[0] + 80.0, p0[1]];
+        let p2 = [p3[0] - 80.0, p3[1]];
+        let d = Shape::bezier(p0, p1, p2, p3).evaluate();
+        let (mut lo, mut hi) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
+        for s in &d.segments {
+            lo = lo.min(s.start.min(s.end));
+            hi = hi.max(s.start.max(s.end));
+        }
+        let t0 = [
+            ((lo.x + cam[0]) * zoom / 16.0).floor() as i32,
+            ((lo.y + cam[1]) * zoom / 16.0).floor() as i32,
+        ];
+        let t1 = [
+            ((hi.x + cam[0]) * zoom / 16.0).ceil() as i32,
+            ((hi.y + cam[1]) * zoom / 16.0).ceil() as i32,
+        ];
+        for ty in t0[1]..=t1[1] {
+            for tx in t0[0]..=t1[0] {
+                let origin = [
+                    (tx as f32 * 16.0) * world_per_px - cam[0],
+                    (ty as f32 * 16.0) * world_per_px - cam[1],
+                ];
+                // Only tiles the 2px stroke plus AA actually reaches.
+                let centre = Vec2::new(
+                    origin[0] + 8.0 * world_per_px,
+                    origin[1] + 8.0 * world_per_px,
+                );
+                let near = d
+                    .segments
+                    .iter()
+                    .map(|s| {
+                        crate::segment::seg_sdf(centre, s.start, s.end, s.curvature, s.heading)
+                            .abs()
+                    })
+                    .fold(f32::INFINITY, f32::min);
+                if near * zoom > 12.0 {
+                    continue;
+                }
+                let (ideal, total) = distinct_nearest_in_tile(&d.segments, origin, world_per_px);
+                e_worst = e_worst.max(ideal);
+                e_ideal += ideal as f64;
+                e_segs += total as f64;
+                e_tiles += 1.0;
+            }
+        }
+    }
+
+    println!("\n--- spatial index pruning ceiling (zoom {zoom}) ---");
+    println!(
+        "nodes: {:.1} segments/shape, {:.2} distinct-nearest per 16px tile (worst {n_worst}), {n_tiles} tiles",
+        n_segs / n_tiles,
+        n_ideal / n_tiles
+    );
+    println!(
+        "edges: {:.1} segments/edge,  {:.2} distinct-nearest per 16px tile (worst {e_worst}), {e_tiles} tiles",
+        e_segs / e_tiles,
+        e_ideal / e_tiles
+    );
+    println!(
+        "gpu_cost_report references 15.30 (nodes) / 16.92 (edges) slots per live tile,\n\
+         so PERFECT pruning is worth ~{:.1}x / ~{:.1}x - and no more. Below that floor the\n\
+         segments really are the nearest somewhere in the tile; only a shading model whose\n\
+         per-pixel cost is independent of segment count goes further.",
+        15.30 / (n_ideal / n_tiles),
+        16.92 / (e_ideal / e_tiles),
+    );
+    assert!(
+        n_ideal / n_tiles >= 1.0,
+        "a live tile has at least one nearest segment"
+    );
+    assert!(
+        e_ideal / e_tiles >= 1.0,
+        "a live tile has at least one nearest segment"
+    );
+}
+
 /// Live GPU bytes the 500-node scene's pipeline may own.
 /// Measured 26_257_780 B (25.04 MiB) on this scene; budget is that x1.25,
 /// rounded up to a readable 32 MiB.
