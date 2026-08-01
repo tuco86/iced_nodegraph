@@ -48,9 +48,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `demos/500_nodes` reporter knobs `NG_REPORT`, `NG_SCALE`, `NG_NODES`,
   `NG_NO_EDGES` and `NG_NO_GRID`, plus the new counters in its stats panel and
   a periodic report line. See "Diagnosing GPU cost" in `demos/README.md`.
+- `SdfStats::gpu_dropped_items`: geometry never uploaded because a buffer hit
+  the device's `max_storage_buffer_binding_size`. Nonzero means part of the
+  scene is absent from the frame.
+- `gpu_cost_report` times the scatter and sort halves of the index build
+  separately (six timestamps instead of four), because they scale on different
+  axes. Measured on the canonical scene: scatter 45.5 us and CONSTANT across
+  0.5x-2x resolution (it tracks geometry), sort 254.2 us and rising with
+  resolution (it tracks tiles) - so the scatter is 15% of index-build time.
+
+### Fixed
+
+- **The geometry arenas could exceed the device's storage-binding limit.** The
+  tile index has always clamped against `max_storage_buffer_binding_size` and
+  degraded to `grid_cols = 0`; `Buffer<T>` grew 1.5x unconditionally until wgpu
+  rejected the allocation - a hard failure with no fallback, and the only
+  unbounded resource in the pipeline. At the wgpu default of 128 MiB that is
+  2_097_152 `GpuSegment`s, with the first overshooting grow at ~1_398_101 live
+  segments. Growth now clamps, and every write path checks capacity BEFORE
+  mutating, so a refusal needs no rollback: the slot never becomes live and
+  consumers bounded by `len()` cannot read it. Refused items are counted in
+  `SdfStats::gpu_dropped_items` instead of being silent.
 
 ### Changed
 
+- `cs_sort_fine` no longer evaluates the segment field at the fine tile centre
+  for OPEN entries. That value feeds exactly one consumer, the closed-contour
+  interior test, so every stroke and edge computed it and threw it away - once
+  per (slot, fine tile) pair, on arcs, which are the expensive segment kind.
+  Sort+fine pass at 1280x768: edges-only 231.7 -> 192.8 us (-17%), all layers
+  254.2 -> 225.6 us (-11%); nodes are closed contours and are unchanged, which
+  is the control. Output stays pixel-identical.
 - The `bench_scene` test fixture generated its 640 bezier edges from
   `(i % 25, i % 20)`, a pair with period `lcm(25, 20) = 100` — so 640 edges
   collapsed onto 100 distinct curves stacked ~6.4 deep. Per-tile entry counts,
