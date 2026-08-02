@@ -59,6 +59,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The widget pixel-oracle harness never started a frame.** `edge_grid_pixel`
+  drew through `graph.draw` + `Renderer::screenshot` without calling
+  `Renderer::reset`, which the iced runtime does per frame and which
+  `screenshot()` - unlike `present()` - does not. Every render therefore piled
+  another copy of the scene onto the previous layers: the Nth screenshot
+  prepared N scenes, so draws, entries and index tiles grew linearly
+  (1001 -> 6006 draws over six renders). `edge_grid_stable_across_frames` was
+  measuring accumulation, not stability, and passed only because the tile total
+  happened to stay under the device-limit fallback within six frames. Edge
+  coverage is now byte-identical across frames (52456 six times, previously
+  drifting 52494 -> 58035 once the fallback engaged). The same missing reset was
+  the real cause behind two tests ignored as "shared-renderer cross-test
+  pollution"; both are un-ignored and pass in the full suite.
 - **The geometry arenas could exceed the device's storage-binding limit.** The
   tile index has always clamped against `max_storage_buffer_binding_size` and
   degraded to `grid_cols = 0`; `Buffer<T>` grew 1.5x unconditionally until wgpu

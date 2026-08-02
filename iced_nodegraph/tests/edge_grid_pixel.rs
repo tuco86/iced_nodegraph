@@ -121,6 +121,17 @@ fn render_edge_grid() -> Option<Vec<[u8; 4]>> {
         &viewport_rect,
     );
 
+    // START A REAL FRAME. `Renderer::reset` clears the layer stack, which the
+    // iced runtime does before drawing each frame and which `screenshot()` -
+    // unlike `present()` - does not do for us. Without it every call here piles
+    // another copy of the scene onto the previous layers, so the Nth render
+    // prepares N scenes: draws, entries and index tiles grow linearly and the
+    // pipeline eventually trips its device-limit fallback. That made
+    // `edge_grid_stable_across_frames` measure accumulation instead of
+    // stability, and it only passed because the tile budget happened not to
+    // overflow within six frames.
+    renderer::Renderer::reset(renderer, viewport_rect);
+
     graph.draw(
         &tree,
         renderer,
@@ -359,10 +370,10 @@ fn render_minimal_edges() -> Option<Vec<[u8; 4]>> {
 /// SDF crate renders these exact edges as clean strokes; the widget renders one as
 /// a filled blob. If the blob appears HERE, the iced_wgpu render path (not the
 /// NodeGraph draw logic) is the cause. Writes a PNG and asserts stroke coverage.
-/// Ignored: passes in isolation, but the shared renderer is polluted by sibling
-/// tests' heavy scenes (the same cross-frame GPU-state issue under investigation).
+/// Was ignored as "polluted by sibling tests"; the real cause was this test
+/// drawing onto whatever layers the previous test left behind, fixed by the
+/// frame reset below.
 #[test]
-#[ignore = "passes in isolation; shared-renderer cross-test pollution in suite"]
 fn iced_direct_edges_render_as_strokes() {
     use iced_nodegraph_sdf::{Pattern, SdfPrimitive, Shape, Style};
     use iced_wgpu::primitive::Renderer as _;
@@ -372,6 +383,12 @@ fn iced_direct_edges_render_as_strokes() {
         return;
     };
     let renderer = &mut *guard;
+    // Start a real frame; see `render_edge_grid`. Without this the primitives
+    // below land on top of the previous test's layers.
+    renderer::Renderer::reset(
+        renderer,
+        Rectangle::new(Point::ORIGIN, Size::new(600.0, 400.0)),
+    );
     let green = Style::stroke(Color::from_rgb(0.0, 1.0, 0.0), Pattern::solid(2.0));
     let clip = Rectangle::new(Point::ORIGIN, Size::new(600.0, 400.0));
     for (p0, c0, c1, p1) in [
@@ -515,9 +532,8 @@ fn iced_direct_edges_with_text_stays_clean() {
 /// here, the trigger is iced_wgpu's multi-`SdfPrimitive` frame management; if it
 /// stays clean, the trigger is the text primitives interleaved by the widget.
 /// (It stays clean - proving TEXT is the trigger; see the module-level findings.)
-/// Ignored: passes in isolation; shared-renderer cross-test pollution in suite.
+/// Was ignored for the same reason as `iced_direct_edges_render_as_strokes`.
 #[test]
-#[ignore = "passes in isolation; shared-renderer cross-test pollution in suite"]
 fn iced_direct_full_sdf_frame_edges_render_as_strokes() {
     use iced::Rectangle as R;
     use iced_nodegraph_sdf::{Pattern, SdfPrimitive, Shape, Style, Tiling};
@@ -527,6 +543,10 @@ fn iced_direct_full_sdf_frame_edges_render_as_strokes() {
         return;
     };
     let renderer = &mut *guard;
+    renderer::Renderer::reset(
+        renderer,
+        Rectangle::new(Point::ORIGIN, Size::new(600.0, 400.0)),
+    );
     let full = R::new(Point::ORIGIN, Size::new(600.0, 400.0));
     let gray = Style::solid(Color::from_rgb(0.30, 0.32, 0.40));
     let dark = Style::solid(Color::from_rgb(0.12, 0.13, 0.16));
