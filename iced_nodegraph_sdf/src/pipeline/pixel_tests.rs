@@ -109,7 +109,7 @@ struct FrameProbe {
     fine_evicted_tiles: u32,
     /// Live bytes of the four spatial-index buffers.
     index_bytes: u64,
-    /// `fine_slot_sum * 256`: the `eval_segment` calls the fragment shader
+    /// `fine_slot_sum * FINE_TILE_PX`: the `eval_segment` calls the fragment
     /// performs, the fragment-work metric this probe fits against.
     segment_evals: u64,
     /// Physical pixels the frame's draws cover, clipped to the canvas.
@@ -1213,7 +1213,7 @@ impl TestRenderer {
         }
         // Work counters: the post-sort per-tile slot counts. `coarse_counts`
         // now holds each tile's CLAMPED render-list length (the sort kernel
-        // overwrites true demand with it), `fine_counts` the per-16px-tile slot
+        // overwrites true demand with it), `fine_counts` the per-fine-tile slot
         // count the fragment shader walks.
         let coarse_bytes = total_coarse as u64 * 4;
         let fine_bytes = total_tiles as u64 * 4;
@@ -1312,7 +1312,7 @@ impl TestRenderer {
                 + coarse_slots_buf.size()
                 + fine_counts_buf.size()
                 + fine_slots_buf.size(),
-            segment_evals: fine_slot_sum * 256,
+            segment_evals: fine_slot_sum * crate::primitive::FINE_TILE_PX,
             shaded_px,
         })
     }
@@ -4034,19 +4034,19 @@ fn c1_cull_conservative_for_all_patterns_at_swept_angles() {
     }
 }
 
-/// C2 correctness guard (Phase C): when a 16px tile overflows its 32-slot budget,
+/// C2 correctness guard (Phase C): when a fine tile overflows `MAX_FINE_SLOTS`,
 /// the result degrades DETERMINISTICALLY and never flickers. The cull keeps the
 /// NEAREST segments by distance-to-tile-centre (not insertion order), so even
 /// though the regional candidate gather uses nondeterministic atomics, the kept
 /// set - and thus the rendered output - is identical every frame. Renders a
-/// segment-dense overlapping stack (far exceeding 32 slots in central tiles)
+/// segment-dense overlapping stack (far exceeding the cap in central tiles)
 /// many times and asserts byte-identical output across all frames.
 #[test]
 fn c2_overflow_is_deterministic_no_flicker() {
     let r = shared_renderer();
     let (w, h, zoom) = (256u32, 256u32, 1.0f32);
     // ~40 overlapping circles crowded into the centre: each is several segments,
-    // so the central 16px tiles hold far more than the 32-slot budget.
+    // so the central fine tiles hold far more than `MAX_FINE_SLOTS`.
     let mut drawables = Vec::new();
     for i in 0..40u32 {
         let a = i as f32 * 0.41;
@@ -5028,7 +5028,7 @@ fn budget_scene() -> (
     (bg, per_node)
 }
 
-/// Distinct segments that are the per-pixel NEAREST somewhere in a 16px fine
+/// Distinct segments that are the per-pixel NEAREST somewhere in one fine
 /// tile, brute-forced on the CPU with [`crate::segment::seg_sdf`] - the twin
 /// the GPU `eval_segment` is contracted to reproduce.
 ///
@@ -5041,8 +5041,9 @@ fn distinct_nearest_in_tile(
 ) -> (usize, usize) {
     use glam::Vec2;
     let mut seen = vec![false; segs.len()];
-    for py in 0..16 {
-        for px in 0..16 {
+    let n = crate::primitive::TILE_SIZE as u32;
+    for py in 0..n {
+        for px in 0..n {
             let p = Vec2::new(
                 tile_origin_world[0] + (px as f32 + 0.5) * world_per_px,
                 tile_origin_world[1] + (py as f32 + 0.5) * world_per_px,
@@ -5073,11 +5074,17 @@ fn distinct_nearest_in_tile(
 /// shading works.
 ///
 /// The answer bounds every future index change - finer tiles, tighter bounds,
-/// sparse storage, a quadtree. Measured: nodes 5.00 of 18.6 segments, edges
-/// 3.77 of 12.0, against 15.30 / 16.92 referenced. So better pruning is worth
-/// about 3x and no more; an order of magnitude needs the per-pixel cost to stop
-/// depending on segment count at all (one analytic or precomputed field
-/// evaluation per entry, the way `sd_tiling` already achieves slot/live 1.00).
+/// sparse storage, a quadtree. Measured at the 8px fine tile: nodes 2.38 of
+/// 18.6 segments, edges 1.86 of 8.0, against 8.25 / 4.72 referenced. So better
+/// pruning is worth about 3x and no more; an order of magnitude needs the
+/// per-pixel cost to stop depending on segment count at all (one analytic or
+/// precomputed field evaluation per entry, the way `sd_tiling` already
+/// achieves slot/live 1.00).
+///
+/// Note what halving the tile did and did not do. Absolute work fell hard
+/// (referenced 15.30 -> 8.25 for nodes), but the RATIO to perfect barely moved
+/// (3.06x -> 3.47x): smaller tiles do not make the bound smarter, they leave it
+/// less room to be wrong in. The ceiling is a property of the shading model.
 ///
 /// Run with:
 ///   cargo test -p iced_nodegraph_sdf --release index_pruning_ceiling -- --ignored --nocapture
@@ -5091,7 +5098,7 @@ fn index_pruning_ceiling() {
     let world_per_px = 1.0 / zoom;
 
     // --- Node bodies: the same 25x20 size sweep `bench_scene` builds, each in
-    // the 32px window the probe frame gives it = 2x2 fine tiles.
+    // the 32px window the probe frame gives it.
     let (mut n_ideal, mut n_segs, mut n_tiles) = (0.0f64, 0.0f64, 0.0f64);
     let mut n_worst = 0usize;
     for i in 0..35usize {
@@ -5101,11 +5108,12 @@ fn index_pruning_ceiling() {
             - Shape::circle(5.0).translate([-nw * 0.5, 0.0])
             - Shape::circle(5.0).translate([nw * 0.5, 0.0]);
         let d = body.evaluate();
-        for ty in 0..2 {
-            for tx in 0..2 {
+        let per_axis = (32.0 / crate::primitive::TILE_SIZE) as u32;
+        for ty in 0..per_axis {
+            for tx in 0..per_axis {
                 let origin = [
-                    (tx as f32 * 16.0 - 16.0) * world_per_px,
-                    (ty as f32 * 16.0 - 16.0) * world_per_px,
+                    (tx as f32 * crate::primitive::TILE_SIZE - 16.0) * world_per_px,
+                    (ty as f32 * crate::primitive::TILE_SIZE - 16.0) * world_per_px,
                 ];
                 let (ideal, total) = distinct_nearest_in_tile(&d.segments, origin, world_per_px);
                 n_worst = n_worst.max(ideal);
@@ -5134,23 +5142,23 @@ fn index_pruning_ceiling() {
             hi = hi.max(s.start.max(s.end));
         }
         let t0 = [
-            ((lo.x + cam[0]) * zoom / 16.0).floor() as i32,
-            ((lo.y + cam[1]) * zoom / 16.0).floor() as i32,
+            ((lo.x + cam[0]) * zoom / crate::primitive::TILE_SIZE).floor() as i32,
+            ((lo.y + cam[1]) * zoom / crate::primitive::TILE_SIZE).floor() as i32,
         ];
         let t1 = [
-            ((hi.x + cam[0]) * zoom / 16.0).ceil() as i32,
-            ((hi.y + cam[1]) * zoom / 16.0).ceil() as i32,
+            ((hi.x + cam[0]) * zoom / crate::primitive::TILE_SIZE).ceil() as i32,
+            ((hi.y + cam[1]) * zoom / crate::primitive::TILE_SIZE).ceil() as i32,
         ];
         for ty in t0[1]..=t1[1] {
             for tx in t0[0]..=t1[0] {
                 let origin = [
-                    (tx as f32 * 16.0) * world_per_px - cam[0],
-                    (ty as f32 * 16.0) * world_per_px - cam[1],
+                    (tx as f32 * crate::primitive::TILE_SIZE) * world_per_px - cam[0],
+                    (ty as f32 * crate::primitive::TILE_SIZE) * world_per_px - cam[1],
                 ];
                 // Only tiles the 2px stroke plus AA actually reaches.
                 let centre = Vec2::new(
-                    origin[0] + 8.0 * world_per_px,
-                    origin[1] + 8.0 * world_per_px,
+                    origin[0] + crate::primitive::TILE_SIZE * 0.5 * world_per_px,
+                    origin[1] + crate::primitive::TILE_SIZE * 0.5 * world_per_px,
                 );
                 let near = d
                     .segments
@@ -5173,23 +5181,28 @@ fn index_pruning_ceiling() {
     }
 
     println!("\n--- spatial index pruning ceiling (zoom {zoom}) ---");
+    let tile_px = crate::primitive::TILE_SIZE;
     println!(
-        "nodes: {:.1} segments/shape, {:.2} distinct-nearest per 16px tile (worst {n_worst}), {n_tiles} tiles",
+        "nodes: {:.1} segments/shape, {:.2} distinct-nearest per {tile_px}px tile (worst {n_worst}), {n_tiles} tiles",
         n_segs / n_tiles,
         n_ideal / n_tiles
     );
     println!(
-        "edges: {:.1} segments/edge,  {:.2} distinct-nearest per 16px tile (worst {e_worst}), {e_tiles} tiles",
+        "edges: {:.1} segments/edge,  {:.2} distinct-nearest per {tile_px}px tile (worst {e_worst}), {e_tiles} tiles",
         e_segs / e_tiles,
         e_ideal / e_tiles
     );
+    // Keep these in step with `gpu_cost_report`'s composition sweep; they are
+    // the measured `slot/live` of the node and edge rows.
+    const REFERENCED_NODES: f64 = 8.25;
+    const REFERENCED_EDGES: f64 = 4.72;
     println!(
-        "gpu_cost_report references 15.30 (nodes) / 16.92 (edges) slots per live tile,\n\
+        "gpu_cost_report references {REFERENCED_NODES:.2} (nodes) / {REFERENCED_EDGES:.2} (edges) slots per live tile,\n\
          so PERFECT pruning is worth ~{:.1}x / ~{:.1}x - and no more. Below that floor the\n\
          segments really are the nearest somewhere in the tile; only a shading model whose\n\
          per-pixel cost is independent of segment count goes further.",
-        15.30 / (n_ideal / n_tiles),
-        16.92 / (e_ideal / e_tiles),
+        REFERENCED_NODES / (n_ideal / n_tiles),
+        REFERENCED_EDGES / (e_ideal / e_tiles),
     );
     assert!(
         n_ideal / n_tiles >= 1.0,
@@ -5291,23 +5304,28 @@ fn bezier_tessellation_matches_a_finer_reference() {
 }
 
 /// Live GPU bytes the 500-node scene's pipeline may own.
-/// Measured 26_257_780 B (25.04 MiB) on this scene; budget is that x1.25,
-/// rounded up to a readable 32 MiB.
-const GPU_BYTES_BUDGET: u64 = 32 * 1024 * 1024;
-/// Spatial-index share of the above - 99.3% of it, because 4 KiB per coarse
-/// tile plus 256 B per fine tile of capacity dwarfs the geometry arenas.
-/// Measured 26_078_900 B (24.87 MiB); budget is that x1.25, rounded to 32 MiB.
-const INDEX_BYTES_BUDGET: u64 = 32 * 1024 * 1024;
+/// Measured 39_797_140 B (37.95 MiB) on this scene; budget is that x1.25,
+/// rounded up to a readable 48 MiB.
+const GPU_BYTES_BUDGET: u64 = 48 * 1024 * 1024;
+/// Spatial-index share of the above - 99.6% of it, because 4 KiB per coarse
+/// tile plus 128 B per fine tile of capacity dwarfs the geometry arenas.
+/// Measured 39_618_260 B (37.78 MiB); budget is that x1.25, rounded to 48 MiB.
+const INDEX_BYTES_BUDGET: u64 = 48 * 1024 * 1024;
 /// `eval_segment` calls the fragment shader performs on that scene.
-/// Measured 10_623_488 (10.62 M, mean 8.60 slots/pixel); budget is that x1.25,
+/// Measured 4_383_488 (4.38 M, mean 3.55 slots/pixel); budget is that x1.25,
 /// rounded up.
-const SEGMENT_EVALS_BUDGET: u64 = 14_000_000;
+const SEGMENT_EVALS_BUDGET: u64 = 5_500_000;
 
 /// GPU MEMORY LIMIT for the canonical 500-node frame. The two-level spatial
-/// index costs 4 KiB per 64px coarse tile plus 256 B per 16px fine tile of
+/// index costs 4 KiB per 64px coarse tile plus 128 B per 8px fine tile of
 /// CAPACITY, grows 1.5x and never shrinks - it is the term that can silently
 /// explode on a shared-VRAM iGPU, so it carries its own budget on top of the
 /// pipeline total.
+///
+/// The 8px fine tile bought a 59% cut in fragment work for a 51% rise in this
+/// figure (25.04 -> 37.78 MiB): 4x the fine tiles at a quarter of the old slot
+/// capacity each is 2x the fine storage, and the coarse level - now half the
+/// index - did not change at all. That is the trade this budget records.
 #[test]
 fn gpu_memory_budget_500_nodes() {
     use iced_wgpu::primitive::Pipeline;
@@ -5415,7 +5433,7 @@ fn idle_frame_uploads_nothing() {
 }
 
 /// FRAGMENT-WORK LIMIT for the canonical 500-node frame. `segment_evals` is
-/// `sum(fine slot count) * 256`: the number of `eval_segment` calls the
+/// `sum(fine slot count) * FINE_TILE_PX`: the number of `eval_segment` calls the
 /// fragment shader performs, hardware-independent and the term that decides
 /// whether an ALU-poor iGPU can keep up.
 ///

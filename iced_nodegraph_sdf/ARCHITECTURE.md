@@ -179,7 +179,7 @@ nothing; a pan reculls only when it crosses a 64px coarse-tile boundary
 Three kernels (see `plan/scatter-binning.md`) build a two-level index, both
 levels persisted to storage buffers:
 
-- **Coarse** 64x64-pixel tiles (`COARSE_FACTOR = 4` fine tiles per axis). Each
+- **Coarse** 64x64-pixel tiles (`COARSE_FACTOR = 8` fine tiles per axis). Each
   holds up to `MAX_COARSE_SLOTS = 512` `(segment_idx, entry_idx)` results (two u32
   each), sorted by entry so the fragment shader walks one shape at a time in
   z-order. Tilings are marked by `TILING_BIT` on the segment field, as before.
@@ -187,15 +187,15 @@ levels persisted to storage buffers:
   an async readback taken between the scatter and the sort surfaces the true
   per-tile demand as `SdfStats::coarse_demand_max` / `coarse_overflow_tiles`
   (one frame delayed, non-blocking - see plan/exact-slot-allocation.md).
-- **Fine** 16x16-pixel tiles. Each holds up to `MAX_FINE_SLOTS = 128` **16-bit**
+- **Fine** 8x8-pixel tiles. Each holds up to `MAX_FINE_SLOTS = 64` **16-bit**
   indices into its parent coarse tile's result, packed 2 per u32
-  (`FINE_STRIDE = 64`). The fragment dereferences a fine index through the coarse
+  (`FINE_STRIDE = 32`). The fragment dereferences a fine index through the coarse
   tile to recover the `(segment, entry)`. Past the cap `fine_push` drops one
   candidate per call - it evicts the resident slot furthest from the tile
   centre, or rejects the newcomer. A second, OPT-IN async readback
   (`crate::set_index_probe`) reports both halves of the packed `fine_counts`
   word: the low 16 bits are the live slot count, the high 16 bits the dropped
-  count. `Sum(counts) * 256` is the `eval_segment` call count the fragment
+  count. `Sum(counts) * 64` (pixels per fine tile) is the `eval_segment` count
   shader performs per frame (`SdfStats::segment_evals` / `fine_slots_max` /
   `fine_live_tiles`), and `fine_evicted_tiles` / `fine_evicted_slots` flag tiles
   whose slot list is INCOMPLETE - a dropped segment that would have been the
@@ -231,8 +231,8 @@ The scatter build's work is proportional to actual segment-tile overlaps:
    Loads the scattered slots, appends the draw's tilings,
    bitonic-sorts by (entry, seg) - a unique total order, so the frame is
    DETERMINISTIC regardless of atomic append order - writes the sorted list
-   back, then threads 0..15 re-cull one 16px fine tile each and write the
-   16-bit references (keep-nearest at the 128 cap).
+   back, then all 64 threads re-cull one 8px fine tile each and write the
+   16-bit references (keep-nearest at the 64 cap).
 
 Coarse overflow past 512 drops slots first-come (the old single-threaded
 keep-nearest ranking is not expressible with atomic appends); the doubled cap

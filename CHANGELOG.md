@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timings: `iced_wgpu` 0.14 hardcodes `Features::empty()`, so a shipped iced
   app cannot use `TIMESTAMP_QUERY`.
 - `iced_nodegraph_sdf::set_index_probe` / `index_probe_enabled` arm a second,
-  opt-in async readback of the per-fine-tile slot counts. `Sum(fine_counts) * 256`
+  opt-in async readback of the per-fine-tile slot counts. `Sum(fine_counts) * 64`
   is the `eval_segment` call count the fragment shader performs per frame - the
   hardware-independent fragment-cost metric. Off by default: it copies 4 bytes
   per fine tile per culled frame (~480 KiB on a 500-node 1280x768 frame).
@@ -94,6 +94,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Fine tiles are 8x8 pixels instead of 16x16** (`TILE_SIZE 16 -> 8`,
+  `COARSE_FACTOR 4 -> 8`; coarse tiles stay 64px), and `MAX_FINE_SLOTS` drops
+  128 -> 64. The index keeps a segment when its lower distance bound to the tile
+  is below `kbound`, the smallest upper bound any segment achieves over that
+  tile - a ceiling that scales with the TILE DIAGONAL, not with the geometry.
+  Halving the tile halves the ceiling, so on the canonical 1280x768 scene:
+  node `slot/live` 15.30 -> 8.25, edge `slot/live` 12.34 -> 4.72,
+  `segment_evals` 10.62 M -> 4.38 M (mean 8.60 -> 3.55 slots/pixel), fragment
+  365.2 -> 224.1 us and index sort 172.3 -> 125.2 us. The whole GPU frame goes
+  583 -> 393 us, and the 1080p iGPU verdict 11.0 -> 7.2 ms of a 16.7 ms budget
+  (66% -> 43% of one 60 Hz frame).
+  The sort got FASTER rather than paying for the extra tiles: `cs_sort_fine`
+  gave its fine phase `lindex >= 16u` of a 64-thread workgroup, so 48 threads
+  idled there; at `COARSE_FACTOR = 8` the 64 fine tiles per coarse tile use all
+  64. Cost is index memory, 25.04 -> 37.78 MiB on the budget scene: 4x the fine
+  tiles at a quarter the slot capacity each is 2x the fine storage, while the
+  coarse level - now half the index - is untouched. The budgets are re-baselined
+  accordingly. `MAX_FINE_SLOTS = 64` keeps ~3.4x headroom over the deepest tile
+  measured (19, live demo 18) with `fine_evicted_tiles == 0` everywhere; 32
+  would have been memory-neutral but leaves too little margin on a cap whose
+  overflow silently renders wrong distances.
+- `SdfStats::segment_evals` now multiplies the fine-slot sum by `FINE_TILE_PX`
+  (`TILE_SIZE^2`) instead of a hardcoded 256, so the fragment-work figure no
+  longer silently rescales by 4x with the tile geometry. `index_pruning_ceiling`
+  is likewise driven off `TILE_SIZE` rather than a literal 16.
 - Bezier arc-spline tolerance `CUBIC_ARC_TOL` raised from 0.05 to 0.1 world
   units. Screen error is `tol * zoom`, so this is <= 1.0 px at the widget's
   maximum zoom of 10 and invisible everywhere below it - at overview zoom it is

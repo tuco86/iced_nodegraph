@@ -83,17 +83,23 @@ pub fn sdf_stats() -> types::SdfStats {
 }
 
 // Must match WGSL constants
-pub(crate) const TILE_SIZE: f32 = 16.0;
-// Two-level index: 64px coarse tiles (4x4 fine tiles) hold the (segment, entry)
-// results; 16px fine tiles hold 16-bit indices into them.
-pub(crate) const COARSE_FACTOR: u32 = 4;
+pub(crate) const TILE_SIZE: f32 = 8.0;
+// Two-level index: 64px coarse tiles (8x8 fine tiles) hold the (segment, entry)
+// results; 8px fine tiles hold 16-bit indices into them.
+pub(crate) const COARSE_FACTOR: u32 = 8;
 // Coarse: 512 (segment_idx, entry_idx) pairs per tile (scatter appends
 // first-come; the sort kernel clamps, reserving slots for tilings).
 pub(crate) const MAX_COARSE_SLOTS: u32 = 512;
 pub(crate) const COARSE_STRIDE: u32 = MAX_COARSE_SLOTS * 2;
-// Fine: 128 16-bit indices per tile, packed 2 per u32.
-pub(crate) const MAX_FINE_SLOTS: u32 = 128;
+// Fine: 64 16-bit indices per tile, packed 2 per u32. The 8px tile made the cap
+// cheap - the deepest tile on the 500-node scene references 19.
+pub(crate) const MAX_FINE_SLOTS: u32 = 64;
 pub(crate) const FINE_STRIDE: u32 = MAX_FINE_SLOTS / 2;
+/// Pixels in one fine tile. The fragment walks its tile's whole slot list once
+/// per pixel, so this is the multiplier from referenced slots to `eval_segment`
+/// calls - it MUST track `TILE_SIZE`, or every work figure silently rescales
+/// with the tile geometry.
+pub(crate) const FINE_TILE_PX: u64 = (TILE_SIZE as u64) * (TILE_SIZE as u64);
 // Per-draw tiling slots in the scatter lists; sentinel-padded.
 pub(crate) const TILING_RESERVE: u32 = 4;
 pub(crate) const CULL_SENTINEL: u32 = u32::MAX;
@@ -947,7 +953,7 @@ impl Pipeline for SdfPipeline {
         }
         self.frame_stats.coarse_demand_max = self.coarse_demand.0;
         self.frame_stats.coarse_overflow_tiles = self.coarse_demand.1;
-        self.frame_stats.segment_evals = self.fine_report.slot_sum * 256;
+        self.frame_stats.segment_evals = self.fine_report.slot_sum * FINE_TILE_PX;
         self.frame_stats.fine_slots_max = self.fine_report.slot_max;
         self.frame_stats.fine_live_tiles = self.fine_report.live_tiles;
         self.frame_stats.fine_evicted_tiles = self.fine_report.evicted_tiles;

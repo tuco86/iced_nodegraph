@@ -346,7 +346,7 @@ pub struct SdfStats {
     /// this is a high-water figure.
     pub gpu_bytes: u64,
     /// The two-level spatial index's share of `gpu_bytes` (4 KiB per 64px coarse
-    /// tile plus 256 B per 16px fine tile of capacity).
+    /// tile plus 128 B per 8px fine tile of capacity).
     pub index_bytes: u64,
     /// SDF instance draws recorded into iced's render pass this frame (one per
     /// primitive iced actually drew, not per prepared primitive).
@@ -355,12 +355,12 @@ pub struct SdfStats {
     /// to the viewport: the fragment-shader invocation count before early-out.
     pub shaded_px: u64,
     /// `eval_segment` calls the fragment shader performs per frame, upper-bounded
-    /// as `sum(fine slot count) * 256`; the apron tiles lie partly outside the
-    /// scissor, so the true count is slightly lower. Requires
+    /// as `sum(fine slot count) * 64` (pixels per fine tile); the apron tiles lie
+    /// partly outside the scissor, so the true count is slightly lower. Requires
     /// [`crate::set_index_probe`]; 0 while the probe is off.
     pub segment_evals: u64,
     /// Highest per-fine-tile slot count of the last completed index readback,
-    /// against the 128-slot cap. Requires [`crate::set_index_probe`].
+    /// against the 64-slot cap. Requires [`crate::set_index_probe`].
     pub fine_slots_max: u32,
     /// Fine tiles holding at least one slot in the last completed readback.
     /// Requires [`crate::set_index_probe`].

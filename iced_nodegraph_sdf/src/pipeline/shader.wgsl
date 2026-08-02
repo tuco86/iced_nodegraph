@@ -1,25 +1,27 @@
 // Segment-based SDF renderer with a scatter-built two-level tile index.
 // Coarse 64px tiles store (segment_idx_or_tiling, entry_idx) pairs as 2x u32,
-// sorted by entry; 16px fine tiles store 16-bit indices into their parent
+// sorted by entry; 8px fine tiles store 16-bit indices into their parent
 // coarse list. The fragment walks its fine tile's references per pixel.
 
 // --- Constants ---
 
-const TILE_SIZE: f32 = 16.0;
-// Two-level spatial index. COARSE tiles are 4x4 fine tiles (64x64 px). The coarse
+const TILE_SIZE: f32 = 8.0;
+// Two-level spatial index. COARSE tiles are 8x8 fine tiles (64x64 px). The coarse
 // level materializes the (segment, entry) cull result once per 64px tile (few
-// tiles, fat slots); each 16px FINE tile then stores only compact 16-bit indices
+// tiles, fat slots); each 8px FINE tile then stores only compact 16-bit indices
 // into its parent coarse tile's result, paying one indirection for a much smaller
-// fine buffer (16x more fine tiles).
-const COARSE_FACTOR: u32 = 4u;        // fine tiles per coarse tile, per axis
+// fine buffer (64x more fine tiles).
+const COARSE_FACTOR: u32 = 8u;        // fine tiles per coarse tile, per axis
 // Coarse: up to 512 (segment_idx, entry_idx) results per 64px tile. Scatter
 // appends first-come; K3 clamps, reserving 4 slots for tilings (see plan doc).
 const MAX_COARSE_SLOTS: u32 = 512u;
 const COARSE_STRIDE: u32 = 1024u;     // MAX_COARSE_SLOTS * 2 u32 per coarse tile
-// Fine: up to 128 16-bit indices into the parent coarse list, packed 2 per u32
-// (16 bit because the coarse list is 512 deep, past a u8).
-const MAX_FINE_SLOTS: u32 = 128u;
-const FINE_STRIDE: u32 = 64u;         // MAX_FINE_SLOTS / 2 (u16 packed 2 per u32)
+// Fine: up to 64 16-bit indices into the parent coarse list, packed 2 per u32
+// (16 bit because the coarse list is 512 deep, past a u8). The 8px tile made
+// this cap cheap: the deepest tile on the 500-node scene references 19 slots,
+// so 64 is ~3.4x headroom while costing a quarter of what 128 cost at 16px.
+const MAX_FINE_SLOTS: u32 = 64u;
+const FINE_STRIDE: u32 = 32u;         // MAX_FINE_SLOTS / 2 (u16 packed 2 per u32)
 // `fine_counts[t]` packs TWO fields: the low 16 bits are the live slot count
 // (<= MAX_FINE_SLOTS), the high 16 bits count candidates DROPPED because the
 // tile was already full (saturating). A nonzero high half means the tile's slot
@@ -180,7 +182,7 @@ struct SdfResult {
 @group(0) @binding(1) var<storage, read> draw_entries: array<GpuDrawEntry>;
 @group(0) @binding(2) var<storage, read> segments: array<GpuSegment>;
 @group(0) @binding(3) var<storage, read> styles: array<GpuStyle>;
-// Fine level: per 16px tile, a count and a run of 16-bit indices (packed 2/u32)
+// Fine level: per 8px tile, a count and a run of 16-bit indices (packed 2/u32)
 // into the parent coarse tile's result list.
 @group(0) @binding(4) var<storage, read> fine_counts: array<u32>;
 @group(0) @binding(5) var<storage, read> fine_slots: array<u32>;
@@ -1232,7 +1234,7 @@ fn cs_scatter_closed(
 // Loads the scattered slots (clamped, TILING_RESERVE spare), appends the
 // draw's tilings, bitonic-sorts by (entry, seg) - a UNIQUE total order, so
 // the frame is deterministic regardless of atomic append order - writes the
-// sorted list back, then threads 0..15 run the fine re-cull (unchanged 16px
+// sorted list back, then all 64 threads run the fine re-cull (one 8px tile
 // logic, keep-nearest, 16-bit refs).
 @compute @workgroup_size(64, 1, 1)
 fn cs_sort_fine(
@@ -1348,9 +1350,9 @@ fn cs_sort_fine(
         atomicStore(&cs_coarse_counts[coarse_global], ccount);
     }
 
-    // --- Fine phase: threads 0..15, one 16px tile each (unchanged logic) ---
+    // --- Fine phase: one 8px tile per thread, COARSE_FACTOR^2 = 64 of them ---
     // Per-thread (non-uniform) returns; no barrier follows, so they are allowed.
-    if lindex >= 16u { return; }
+    if lindex >= COARSE_FACTOR * COARSE_FACTOR { return; }
     let fine_col = ccol * COARSE_FACTOR + (lindex % COARSE_FACTOR);
     let fine_row = crow * COARSE_FACTOR + (lindex / COARSE_FACTOR);
     if fine_col >= draw.grid_cols || fine_row >= draw.grid_rows { return; }
