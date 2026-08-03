@@ -517,7 +517,7 @@ impl App {
 
         // Add edges
         for (from, to) in &self.edges {
-            ng.push_edge(edge(*from, *to));
+            ng.push_edge(edge!(*from, *to));
         }
 
         // Toolbar

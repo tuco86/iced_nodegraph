@@ -49,7 +49,7 @@ the renderer. Regenerate with `cargo doc --workspace --no-deps --open`.
   drag, selection, z-order, touch) survives, and it is keyed by *node index* -
   a transient per-frame identity derived from the host's push order, not by the
   user's node id. `node_lookup` is the single id-to-index map, and the identity
-  boundary is the public API: outside it, ids (`N`, `P`, `PinRef`);
+  boundary is the public API: outside it, ids (`N`, `P`, `E`, `PinRef`);
   inside it, indices.
 - **Screen and world coordinates are distinct types.** `ScreenPoint` and
   `WorldPoint` are separate euclid spaces; convert only through `Camera2D`

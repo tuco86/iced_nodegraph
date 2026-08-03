@@ -43,10 +43,11 @@ struct UpdateCtx<'a, 'b, 'm, Message> {
     shell: &'a mut Shell<'m, Message>,
 }
 
-impl<N, P, UI, Message, Renderer> NodeGraph<'_, N, P, UI, Message, Theme, Renderer>
+impl<N, P, UI, Message, Renderer, E> NodeGraph<'_, N, P, UI, Message, Theme, Renderer, E>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
+    E: EdgeId + 'static,
     UI: Clone + 'static,
     Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
@@ -642,13 +643,19 @@ where
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 // Delete all pending edges on release
                 if let Dragging::EdgeCutting { pending_cuts, .. } = &state.dragging {
+                    let mut cut_ids = Vec::new();
                     for &edge_idx in pending_cuts.iter() {
-                        if let Some(Edge { from, to, .. }) = self.edges.get(edge_idx) {
-                            // Edges already store user IDs (PinRef<N, P>)
+                        if let Some(Edge { id, from, to, .. }) = self.edges.get(edge_idx) {
                             if let Some(handler) = self.on_disconnect.as_ref() {
                                 shell.publish(handler(from.clone(), to.clone()));
                             }
+                            cut_ids.push(id.clone());
                         }
+                    }
+                    if let Some(handler) = self.on_edge_delete.as_ref()
+                        && !cut_ids.is_empty()
+                    {
+                        shell.publish(handler(cut_ids));
                     }
                 }
                 state.dragging = Dragging::None;
@@ -1113,6 +1120,7 @@ where
             EDGE_CUT_THRESHOLD / tree.state.downcast_ref::<NodeGraphState>().camera.zoom();
         // Check if click is near any edge
         for Edge {
+            id: edge_id,
             from: from_ref,
             to: to_ref,
             ..
@@ -1161,9 +1169,11 @@ where
                 let p2 = Point::new(to_pos.x + dir_to[0] * l, to_pos.y + dir_to[1] * l);
                 let distance = point_to_bezier_distance(cursor_position, from_pos, p1, p2, to_pos);
                 if distance < cut_threshold {
-                    // Edges already store user IDs
                     if let Some(handler) = self.on_disconnect.as_ref() {
                         shell.publish(handler(from_ref.clone(), to_ref.clone()));
+                    }
+                    if let Some(handler) = self.on_edge_delete.as_ref() {
+                        shell.publish(handler(vec![edge_id.clone()]));
                     }
                     shell.capture_event();
                     shell.request_redraw();
@@ -1480,7 +1490,8 @@ where
             // Emit drag start event for box select
             if let Some(handler) = self.on_drag_start.as_ref() {
                 shell.publish(handler(DragInfo::BoxSelect {
-                    start: cursor_position.into_iced(),
+                    start_x: cursor_position.x,
+                    start_y: cursor_position.y,
                 }));
             }
             shell.capture_event();
@@ -1530,8 +1541,8 @@ where
 /// `excluded_edge` is the edge currently being re-routed (its endpoints), left out
 /// of the occupancy check so it can be dropped back onto its own input. Pass `None`
 /// when starting a fresh edge.
-fn compute_valid_targets<N, P, UI, Message, Renderer>(
-    graph: &NodeGraph<'_, N, P, UI, Message, Theme, Renderer>,
+fn compute_valid_targets<N, P, UI, Message, Renderer, E>(
+    graph: &NodeGraph<'_, N, P, UI, Message, Theme, Renderer, E>,
     tree: &Tree,
     layout: Layout<'_>,
     from_node: usize,
@@ -1541,6 +1552,7 @@ fn compute_valid_targets<N, P, UI, Message, Renderer>(
 where
     N: NodeId + 'static,
     P: PinId + 'static,
+    E: EdgeId + 'static,
     UI: Clone + 'static,
     Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {

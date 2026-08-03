@@ -181,6 +181,44 @@ impl Default for GraphStyle {
 }
 
 impl GraphStyle {
+    /// The default graph style.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// A dark graph style. Same as [`GraphStyle::default`]; named for symmetry
+    /// with the light variant and with iced's own widget styles.
+    pub fn dark() -> Self {
+        Self::default()
+    }
+
+    /// A light graph style: a pale canvas with no tiling.
+    pub fn light() -> Self {
+        Self {
+            background_color: Color::from_rgb(0.95, 0.95, 0.96),
+            tiling: None,
+            selection_style: SelectionStyle::default(),
+        }
+    }
+
+    /// Sets the canvas background color.
+    pub fn background_color(mut self, color: Color) -> Self {
+        self.background_color = color;
+        self
+    }
+
+    /// Sets a tiling background (grid, dots, ...) drawn over `background_color`.
+    pub fn tiling(mut self, tiling: TilingBackground) -> Self {
+        self.tiling = Some(tiling);
+        self
+    }
+
+    /// Sets the selection and selection-drag chrome.
+    pub fn selection_style(mut self, style: SelectionStyle) -> Self {
+        self.selection_style = style;
+        self
+    }
+
     /// The graph chrome derived from an iced theme: the canvas takes the theme's
     /// window background, so elevation comes from the palette ramp (nodes ride
     /// above on `background.weak`) rather than hand-darkening, and a faint
@@ -232,6 +270,41 @@ impl Default for SelectionStyle {
 }
 
 impl SelectionStyle {
+    /// The default selection style.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the border color of a selected node.
+    pub fn selected_border_color(mut self, color: Color) -> Self {
+        self.selected_border_color = color;
+        self
+    }
+
+    /// Sets the border width of a selected node.
+    pub fn selected_border_width(mut self, width: f32) -> Self {
+        self.selected_border_width = width;
+        self
+    }
+
+    /// Sets the fill of the box-selection rectangle.
+    pub fn box_select_fill(mut self, color: Color) -> Self {
+        self.box_select_fill = color;
+        self
+    }
+
+    /// Sets the border of the box-selection rectangle.
+    pub fn box_select_border(mut self, color: Color) -> Self {
+        self.box_select_border = color;
+        self
+    }
+
+    /// Sets the color of the edge-cutting trail.
+    pub fn edge_cutting_color(mut self, color: Color) -> Self {
+        self.edge_cutting_color = color;
+        self
+    }
+
     /// The selection chrome derived from an iced theme: the accent color for
     /// highlights, and `danger` for the edge-cutting trail, since a cut is
     /// destructive.

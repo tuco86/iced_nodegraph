@@ -275,10 +275,11 @@ fn pin_cutout_params<P: PinId + 'static, UI>(
     cuts
 }
 
-impl<N, P, UI, Message, Renderer> NodeGraph<'_, N, P, UI, Message, Theme, Renderer>
+impl<N, P, UI, Message, Renderer, E> NodeGraph<'_, N, P, UI, Message, Theme, Renderer, E>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
+    E: EdgeId + 'static,
     UI: Clone + 'static,
     Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {

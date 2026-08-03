@@ -360,7 +360,7 @@ fn in_anchor() -> Point {
     Point::new(IN_POS.x, IN_POS.y + NODE_H / 2.0)
 }
 
-fn pin_body() -> iced::widget::Container<'static, Msg, Theme, Renderer> {
+fn pin_body<M: 'static>() -> iced::widget::Container<'static, M, Theme, Renderer> {
     container(text("p"))
         .width(Length::Fixed(NODE_W))
         .height(Length::Fixed(NODE_H))
@@ -378,11 +378,15 @@ fn pin_graph(connect_ok: bool, seed_edge: bool) -> Element<'static, Msg, Theme, 
     ng.push_node(node(
         0usize,
         OUT_POS,
-        pin!(Right, 0usize, pin_body(), Output),
+        pin!(Right, 0usize, pin_body::<_>(), Output),
     ));
-    ng.push_node(node(1usize, IN_POS, pin!(Left, 0usize, pin_body(), Input)));
+    ng.push_node(node(
+        1usize,
+        IN_POS,
+        pin!(Left, 0usize, pin_body::<_>(), Input),
+    ));
     if seed_edge {
-        ng.push_edge(edge(PinRef::new(0, 0), PinRef::new(1, 0)));
+        ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)));
     }
     ng.into()
 }
@@ -437,9 +441,9 @@ fn can_connect_false_blocks_connection() {
     );
 }
 
+/// Ctrl+click on the edge line cuts it.
 #[test]
 fn ctrl_click_on_edge_disconnects() {
-    // Ctrl+click on the edge line (Fruit Ninja cut) disconnects it.
     let mut ui = Simulator::new(pin_graph(true, true));
     let mid = Point::new((out_anchor().x + in_anchor().x) / 2.0, out_anchor().y);
     ui.point_at(mid);
@@ -455,6 +459,51 @@ fn ctrl_click_on_edge_disconnects() {
     assert!(
         msgs.contains(&Msg::Disconnect(PinRef::new(0, 0), PinRef::new(1, 0))),
         "ctrl+click on an edge must disconnect it: {msgs:?}",
+    );
+}
+
+/// A cut edge is reported by the host's own edge id, so a host keyed by id needs
+/// no endpoint search. `on_disconnect` cannot serve this: it also fires while a
+/// drag leaves a snapped pin, where no host edge exists.
+#[test]
+fn cutting_an_edge_reports_its_host_id() {
+    #[derive(Debug, Clone, PartialEq)]
+    enum M {
+        Disconnect(Pin, Pin),
+        Cut(Vec<&'static str>),
+    }
+
+    let mut ng: NodeGraph<'_, usize, usize, (), M, Theme, Renderer, &'static str> =
+        NodeGraph::default()
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .on_disconnect(M::Disconnect)
+            .on_edge_delete(M::Cut);
+    ng.push_node(node(
+        0usize,
+        OUT_POS,
+        pin!(Right, 0usize, pin_body::<_>(), Output),
+    ));
+    ng.push_node(node(
+        1usize,
+        IN_POS,
+        pin!(Left, 0usize, pin_body::<_>(), Input),
+    ));
+    ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0), "wire-7"));
+
+    let mut ui = Simulator::new(Element::from(ng));
+    let mid = Point::new((out_anchor().x + in_anchor().x) / 2.0, out_anchor().y);
+    ui.point_at(mid);
+    ui.simulate([
+        iced::Event::Keyboard(keyboard::Event::ModifiersChanged(cmd())),
+        moved(mid),
+    ]);
+    ui.simulate([press(), release()]);
+
+    let msgs: Vec<M> = ui.into_messages().collect();
+    assert!(
+        msgs.contains(&M::Cut(vec!["wire-7"])),
+        "a cut must name the edge id the host supplied: {msgs:?}",
     );
 }
 
@@ -598,15 +647,19 @@ fn rewire_graph() -> Element<'static, Msg, Theme, Renderer> {
     ng.push_node(node(
         0usize,
         OUT_POS,
-        pin!(Right, 0usize, pin_body(), Output),
+        pin!(Right, 0usize, pin_body::<_>(), Output),
     ));
-    ng.push_node(node(1usize, IN_POS, pin!(Left, 0usize, pin_body(), Input)));
+    ng.push_node(node(
+        1usize,
+        IN_POS,
+        pin!(Left, 0usize, pin_body::<_>(), Input),
+    ));
     ng.push_node(node(
         2usize,
         Point::new(IN_POS.x, 300.0),
-        pin!(Left, 0usize, pin_body(), Input),
+        pin!(Left, 0usize, pin_body::<_>(), Input),
     ));
-    ng.push_edge(edge(PinRef::new(0, 0), PinRef::new(1, 0)));
+    ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)));
     ng.into()
 }
 
@@ -680,15 +733,19 @@ fn default_rejects_second_edge_to_occupied_input() {
     ng.push_node(node(
         0usize,
         OUT_POS,
-        pin!(Right, 0usize, pin_body(), Output),
+        pin!(Right, 0usize, pin_body::<_>(), Output),
     ));
-    ng.push_node(node(1usize, IN_POS, pin!(Left, 0usize, pin_body(), Input)));
+    ng.push_node(node(
+        1usize,
+        IN_POS,
+        pin!(Left, 0usize, pin_body::<_>(), Input),
+    ));
     ng.push_node(node(
         2usize,
         Point::new(OUT_POS.x, 300.0),
-        pin!(Right, 0usize, pin_body(), Output),
+        pin!(Right, 0usize, pin_body::<_>(), Output),
     ));
-    ng.push_edge(edge(PinRef::new(0, 0), PinRef::new(1, 0)));
+    ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)));
     let mut ui = Simulator::new(Element::from(ng));
 
     let from = Point::new(OUT_POS.x + NODE_W, 300.0 + NODE_H / 2.0); // node 2 right pin
@@ -721,9 +778,13 @@ fn occlusion_graph() -> Element<'static, Msg, Theme, Renderer> {
     ng.push_node(node(
         0usize,
         OUT_POS,
-        pin!(Right, 0usize, pin_body(), Output),
+        pin!(Right, 0usize, pin_body::<_>(), Output),
     ));
-    ng.push_node(node(1usize, IN_POS, pin!(Left, 0usize, pin_body(), Input)));
+    ng.push_node(node(
+        1usize,
+        IN_POS,
+        pin!(Left, 0usize, pin_body::<_>(), Input),
+    ));
     // Cover node 1 input anchor (IN_POS.x, IN_POS.y + H/2) with a plain body.
     ng.push_node(node(
         2usize,
@@ -921,10 +982,14 @@ fn output_to_output_does_not_connect() {
     ng.push_node(node(
         0usize,
         OUT_POS,
-        pin!(Right, 0usize, pin_body(), Output),
+        pin!(Right, 0usize, pin_body::<_>(), Output),
     ));
     // Second output pin, anchored at IN_POS left edge for an easy drag target.
-    ng.push_node(node(1usize, IN_POS, pin!(Left, 0usize, pin_body(), Output)));
+    ng.push_node(node(
+        1usize,
+        IN_POS,
+        pin!(Left, 0usize, pin_body::<_>(), Output),
+    ));
     let mut ui = Simulator::new(Element::from(ng));
 
     drag(&mut ui, out_anchor(), in_anchor());
@@ -947,7 +1012,7 @@ fn cannot_connect_pin_to_itself() {
     ng.push_node(node(
         0usize,
         OUT_POS,
-        pin!(Right, 0usize, pin_body(), Output),
+        pin!(Right, 0usize, pin_body::<_>(), Output),
     ));
     let mut ui = Simulator::new(Element::from(ng));
 
@@ -1027,11 +1092,15 @@ fn zoomed_pin_graph(seed_edge: bool) -> Element<'static, Msg, Theme, Renderer> {
     ng.push_node(node(
         0usize,
         OUT_POS,
-        pin!(Right, 0usize, pin_body(), Output),
+        pin!(Right, 0usize, pin_body::<_>(), Output),
     ));
-    ng.push_node(node(1usize, IN_POS, pin!(Left, 0usize, pin_body(), Input)));
+    ng.push_node(node(
+        1usize,
+        IN_POS,
+        pin!(Left, 0usize, pin_body::<_>(), Input),
+    ));
     if seed_edge {
-        ng.push_edge(edge(PinRef::new(0, 0), PinRef::new(1, 0)));
+        ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)));
     }
     ng.into()
 }
@@ -1187,7 +1256,10 @@ fn box_select_drag_reports_its_anchor() {
     let msgs = messages(ui);
     assert_eq!(
         drag_infos(&msgs),
-        vec![DragInfo::BoxSelect { start: anchor }],
+        vec![DragInfo::BoxSelect {
+            start_x: anchor.x,
+            start_y: anchor.y,
+        }],
         "a drag on empty canvas must report the box-select anchor: {msgs:?}",
     );
 }
@@ -1294,9 +1366,13 @@ fn pin_press_without_on_connect_falls_through_to_selection() {
     ng.push_node(node(
         0usize,
         OUT_POS,
-        pin!(Right, 0usize, pin_body(), Output),
+        pin!(Right, 0usize, pin_body::<_>(), Output),
     ));
-    ng.push_node(node(1usize, IN_POS, pin!(Left, 0usize, pin_body(), Input)));
+    ng.push_node(node(
+        1usize,
+        IN_POS,
+        pin!(Left, 0usize, pin_body::<_>(), Input),
+    ));
     let mut ui = Simulator::new(Element::from(ng));
 
     // Just inside node 0's right edge: within PIN_CLICK_THRESHOLD of the pin, yet

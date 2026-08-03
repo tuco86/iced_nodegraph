@@ -14,7 +14,7 @@
 //!     .on_move(|delta, node_ids| Message::NodesMoved { delta, node_ids });
 //!
 //! ng.push_node(node(0, Point::new(100.0, 100.0), my_node_content));
-//! ng.push_edge(edge(PinRef::new(0, 0), PinRef::new(1, 0)));
+//! ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)));
 //! ```
 //!
 //! # Reporting
@@ -40,7 +40,7 @@ use std::time::Duration;
 
 use iced_widget::core::{Element, Length, Point, Size, Vector};
 
-use crate::ids::{NodeId, PinId};
+use crate::ids::{EdgeId, NodeId, PinId};
 use crate::node_pin::{PinEnd, PinInfo};
 use crate::style::{EdgeStatus, EdgeStyle, GraphStyle, NodeStatus, NodeStyle, PinStatus, PinStyle};
 
@@ -125,38 +125,54 @@ impl<'a, N, P, UI, Message, Theme, Renderer> Node<'a, N, P, UI, Message, Theme, 
     }
 }
 
-/// An edge to push onto the graph: the two pins it connects plus an optional
-/// per-edge status-driven style closure. Build with [`edge`] + [`Edge::style`],
-/// then add via [`NodeGraph::push_edge`].
-///
-/// An edge is identified by the pins it joins, so it carries no id of its own -
-/// unlike a [`Node`], which needs one to be moved, cloned and deleted by id.
-pub struct Edge<'a, N, P, UI, Theme> {
+/// An edge to push onto the graph: a user id, endpoint pin references, and an
+/// optional per-edge status-driven style closure. Build with [`edge`] +
+/// [`Edge::style`], then add via [`NodeGraph::push_edge`]. The id is the user's
+/// own (e.g. a database key); it travels with the edge, symmetric to [`node`].
+pub struct Edge<'a, N, P, E, UI, Theme> {
+    pub(super) id: E,
     pub(super) from: PinRef<N, P>,
     pub(super) to: PinRef<N, P>,
     pub(super) style: Option<EdgeStyleFn<'a, P, UI, Theme>>,
 }
 
-/// Creates an [`Edge`] with default (theme) styling.
+/// Creates an [`Edge`] with the given id and default (theme) styling.
 ///
-/// ```rust
-/// use iced_nodegraph::{Edge, PinRef, edge};
-///
-/// let e: Edge<'_, u32, u32, (), iced::Theme> =
-///     edge(PinRef::new(0, 0), PinRef::new(1, 0));
-/// ```
-pub fn edge<'a, N, P, UI, Theme>(
+/// The id comes last so the common no-id case reads cleanly via the `edge!`
+/// macro: `edge!(from, to)` expands to `edge(from, to, ())`.
+pub fn edge<'a, N, P, E, UI, Theme>(
     from: PinRef<N, P>,
     to: PinRef<N, P>,
-) -> Edge<'a, N, P, UI, Theme> {
+    id: E,
+) -> Edge<'a, N, P, E, UI, Theme> {
     Edge {
+        id,
         from,
         to,
         style: None,
     }
 }
 
-impl<'a, N, P, UI, Theme> Edge<'a, N, P, UI, Theme> {
+/// Builds an [`Edge`], defaulting the id to `()` when omitted.
+///
+/// ```rust
+/// use iced_nodegraph::{Edge, PinRef, edge};
+///
+/// # type E<'a, Id> = Edge<'a, u32, u32, Id, (), iced::Theme>;
+/// let default_id: E<'_, ()> = edge!(PinRef::new(0, 0), PinRef::new(1, 0));
+/// let explicit_id: E<'_, u8> = edge!(PinRef::new(0, 0), PinRef::new(1, 0), 7);
+/// ```
+#[macro_export]
+macro_rules! edge {
+    ($from:expr, $to:expr $(,)?) => {
+        $crate::edge($from, $to, ())
+    };
+    ($from:expr, $to:expr, $id:expr $(,)?) => {
+        $crate::edge($from, $to, $id)
+    };
+}
+
+impl<'a, N, P, E, UI, Theme> Edge<'a, N, P, E, UI, Theme> {
     /// Sets the per-edge style closure: theme, [`EdgeStatus`], and both endpoint
     /// [`PinInfo`]s in draw order (start = output side, end = input side) ->
     /// resolved style.
@@ -275,7 +291,7 @@ pub enum DragInfo<N = usize, P = usize> {
     /// Dragging an edge from a pin (the source node and pin).
     Edge { from_node: N, from_pin: P },
     /// Box selection drag, anchored at this world-space corner.
-    BoxSelect { start: Point },
+    BoxSelect { start_x: f32, start_y: f32 },
 }
 
 /// Type-safe reference to a pin: a `node_id` paired with a `pin_id`, generic over
@@ -312,8 +328,9 @@ impl<N: Clone, P: Clone> PinRef<N, P> {
 /// - `Message`: application message type
 /// - `Theme`: iced theme type
 /// - `Renderer`: iced renderer type
+/// - `E`: edge id type (defaults to `()`, "this edge has no id")
 ///
-/// Bring your own id types by implementing [`NodeId`] and [`PinId`].
+/// Bring your own id types by implementing [`NodeId`], [`PinId`] and [`EdgeId`].
 #[allow(missing_debug_implementations)]
 pub struct NodeGraph<
     'a,
@@ -323,9 +340,11 @@ pub struct NodeGraph<
     Message = (),
     Theme = iced_widget::core::Theme,
     Renderer = iced_widget::renderer::Renderer,
+    E = (),
 > where
     N: NodeId,
     P: PinId,
+    E: EdgeId,
 {
     pub(super) size: Size<Length>,
     /// Nodes in push order, which is also their initial z-order.
@@ -335,7 +354,7 @@ pub struct NodeGraph<
     pub(super) node_lookup: HashMap<N, usize>,
     /// Edges in push order. Endpoint pin ids are resolved to positional pin
     /// indices at draw time, since only the laid-out widget tree knows them.
-    pub(super) edges: Vec<Edge<'a, N, P, UI, Theme>>,
+    pub(super) edges: Vec<Edge<'a, N, P, E, UI, Theme>>,
     pub(super) graph_style: Option<Box<dyn Fn(&Theme) -> GraphStyle + 'a>>,
     pub(super) on_connect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>>,
     pub(super) on_disconnect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>>,
@@ -343,6 +362,10 @@ pub struct NodeGraph<
     pub(super) on_select: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
     pub(super) on_clone: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
     pub(super) on_delete: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
+    /// Edges destroyed by the cutting tool, named by their user ids. The
+    /// id-carrying counterpart to `on_disconnect` for the two paths where the
+    /// widget holds a host-supplied edge.
+    pub(super) on_edge_delete: Option<Box<dyn Fn(Vec<E>) -> Message + 'a>>,
     /// Host-controlled selection, translated to node indices by
     /// [`selection`](Self::selection).
     pub(super) external_selection: Option<HashSet<usize>>,
@@ -374,11 +397,12 @@ pub struct NodeGraph<
     pub(super) keymap: input::Keymap,
 }
 
-impl<N, P, UI, Message, Theme, Renderer> Default
-    for NodeGraph<'_, N, P, UI, Message, Theme, Renderer>
+impl<N, P, UI, Message, Theme, Renderer, E> Default
+    for NodeGraph<'_, N, P, UI, Message, Theme, Renderer, E>
 where
     N: NodeId,
     P: PinId,
+    E: EdgeId,
 {
     fn default() -> Self {
         Self {
@@ -393,6 +417,7 @@ where
             on_select: None,
             on_clone: None,
             on_delete: None,
+            on_edge_delete: None,
             external_selection: None,
             on_drag_start: None,
             on_drag_update: None,
@@ -407,10 +432,11 @@ where
     }
 }
 
-impl<'a, N, P, UI, Message, Theme, Renderer> NodeGraph<'a, N, P, UI, Message, Theme, Renderer>
+impl<'a, N, P, UI, Message, Theme, Renderer, E> NodeGraph<'a, N, P, UI, Message, Theme, Renderer, E>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
+    E: EdgeId + 'static,
 {
     /// Sets the host-controlled camera (world position + zoom).
     ///
@@ -453,7 +479,7 @@ where
     /// The widget normalizes orientation when drawing and reporting, so the
     /// output pin is always the edge start (output -> input) regardless of the
     /// order given here.
-    pub fn push_edge(&mut self, edge: Edge<'a, N, P, UI, Theme>) {
+    pub fn push_edge(&mut self, edge: Edge<'a, N, P, E, UI, Theme>) {
         self.edges.push(edge);
     }
 
@@ -620,6 +646,22 @@ where
     /// The application is responsible for removing the nodes from its data model.
     pub fn on_delete(mut self, f: impl Fn(Vec<N>) -> Message + 'a) -> Self {
         self.on_delete = Some(Box::new(f));
+        self
+    }
+
+    /// Sets a callback for edges destroyed by the cutting tool, named by the
+    /// edge ids the host supplied to [`edge`].
+    ///
+    /// This is the only place the widget can name an edge: the cut paths hold a
+    /// host-supplied [`Edge`], whereas [`on_disconnect`](Self::on_disconnect)
+    /// also fires while a drag leaves a snapped pin, where no host edge exists
+    /// yet. A cut is reported through *both* callbacks - wire this one when your
+    /// edges carry ids, and read `on_disconnect` as live drag feedback.
+    ///
+    /// Mirrors [`on_delete`](Self::on_delete) for nodes: one batched call per cut
+    /// gesture.
+    pub fn on_edge_delete(mut self, f: impl Fn(Vec<E>) -> Message + 'a) -> Self {
+        self.on_edge_delete = Some(Box::new(f));
         self
     }
 

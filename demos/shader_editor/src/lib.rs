@@ -395,7 +395,7 @@ impl Application {
 
         // Add all edges
         for (from, to) in &self.visual_edges {
-            graph.push_edge(ng_edge(*from, *to));
+            graph.push_edge(ng_edge(*from, *to, ()));
         }
 
         let graph_element: Element<Message> = graph.into();

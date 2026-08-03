@@ -143,6 +143,8 @@ enum ApplicationMessage {
         from: PinRef<NodeId, PinLabel>,
         to: PinRef<NodeId, PinLabel>,
     },
+    /// Edges the cutting tool destroyed, named by their own ids.
+    EdgesCut(Vec<EdgeId>),
     ToggleCommandPalette,
     CommandPaletteInput(String),
     CommandPaletteNavigateUp,
@@ -1206,8 +1208,19 @@ impl Application {
                 self.save_state();
                 Task::none()
             }
+            ApplicationMessage::EdgesCut(ids) => {
+                // The widget names the edges it cut, so no endpoint search is needed.
+                for id in &ids {
+                    self.edges.remove(id);
+                }
+                self.edge_order.retain(|id| !ids.contains(id));
+                self.propagate_values();
+                self.save_state();
+                Task::none()
+            }
             ApplicationMessage::EdgeDisconnected { from, to } => {
-                // Find and remove the edge by matching from/to
+                // Unsnap during a drag: no host edge exists to name, so match the
+                // endpoint pair. Cuts arrive through `EdgesCut` instead.
                 let edge_to_remove: Option<EdgeId> = self
                     .edges
                     .iter()
@@ -1797,6 +1810,7 @@ impl Application {
             ApplicationMessage,
             Theme,
             iced::Renderer,
+            EdgeId,
         > = NodeGraph::default();
 
         ng = ng
@@ -1810,6 +1824,7 @@ impl Application {
                     ApplicationMessage::EdgeDisconnected { from, to }
                 },
             )
+            .on_edge_delete(ApplicationMessage::EdgesCut)
             .on_move(|delta, node_ids| ApplicationMessage::NodesMoved { delta, node_ids })
             .on_select(ApplicationMessage::SelectionChanged)
             .on_clone(ApplicationMessage::CloneNodes)
@@ -1822,7 +1837,7 @@ impl Application {
             // both a picker and the ColorQuad builder; Vec2 only matches Vec2.
             .can_connect(|from, to| from.direction() != to.direction() && from.info() == to.info())
             // Per-node and per-edge styling flows through the `.style()`
-            // closures on the `node(..)` / `edge(..)` builders; only graph-wide
+            // closures on the `node(..)` / `edge!(..)` builders; only graph-wide
             // chrome is configured here, via `graph_style` below.
             .dragging_edge_style(move |theme, source| {
                 // The loose edge takes the held pin's data-type color on both ends.
@@ -2046,18 +2061,20 @@ impl Application {
                 let from = PinRef::new(edge_data.from_node.clone(), edge_data.from_pin);
                 let to = PinRef::new(edge_data.to_node.clone(), edge_data.to_pin);
                 let overlay = edge_overlay.clone();
-                ng.push_edge(ng_edge(from, to).style(move |theme, status, start, end| {
-                    // Edges follow their connected pins' data-type colors; the
-                    // Edge Config overlay (if set) overrides the inherited stroke.
-                    let base = EdgeStyle {
-                        stroke_color: ColorQuad::arc(
-                            pin_color_for(*start.info()),
-                            pin_color_for(*end.info()),
-                        ),
-                        ..default_edge_style(theme, status)
-                    };
-                    overlay.resolve_over(base)
-                }));
+                ng.push_edge(ng_edge(from, to, edge_id.clone()).style(
+                    move |theme, status, start, end| {
+                        // Edges follow their connected pins' data-type colors; the
+                        // Edge Config overlay (if set) overrides the inherited stroke.
+                        let base = EdgeStyle {
+                            stroke_color: ColorQuad::arc(
+                                pin_color_for(*start.info()),
+                                pin_color_for(*end.info()),
+                            ),
+                            ..default_edge_style(theme, status)
+                        };
+                        overlay.resolve_over(base)
+                    },
+                ));
             }
         }
 

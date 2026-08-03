@@ -387,7 +387,7 @@ impl Application {
 
         // Add all edges
         for (from, to) in &self.edges {
-            ng.push_edge(edge(*from, *to));
+            ng.push_edge(edge!(*from, *to));
         }
 
         // Top-right overlay: the toggle chip, plus the stats panel while shown.

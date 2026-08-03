@@ -31,7 +31,7 @@ use super::{
 use super::{EdgeStyleFn, NodeStyleFn, PinStyleFn};
 use crate::{
     PinDirection, PinRef, PinSide,
-    ids::{NodeId, PinId},
+    ids::{EdgeId, NodeId, PinId},
     node_graph::euclid::{IntoEuclid, ScreenPoint, WorldPoint},
     node_pin::{NodePinState, PinEnd, PinInfo},
     style::{
@@ -77,11 +77,12 @@ fn pin_side_direction(side: u32) -> [f32; 2] {
     }
 }
 
-impl<N, P, UI, Message, Renderer> iced_wgpu::core::Widget<Message, Theme, Renderer>
-    for NodeGraph<'_, N, P, UI, Message, Theme, Renderer>
+impl<N, P, UI, Message, Renderer, E> iced_wgpu::core::Widget<Message, Theme, Renderer>
+    for NodeGraph<'_, N, P, UI, Message, Theme, Renderer, E>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
+    E: EdgeId + 'static,
     UI: Clone + 'static,
     Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
@@ -253,16 +254,17 @@ where
     }
 }
 
-impl<'a, N, P, UI, Message, Renderer> From<NodeGraph<'a, N, P, UI, Message, Theme, Renderer>>
+impl<'a, N, P, UI, Message, Renderer, E> From<NodeGraph<'a, N, P, UI, Message, Theme, Renderer, E>>
     for Element<'a, Message, Theme, Renderer>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
+    E: EdgeId + 'static,
     UI: Clone + 'static,
     Renderer: iced_wgpu::core::renderer::Renderer + 'a + iced_wgpu::primitive::Renderer,
     Message: 'static,
 {
-    fn from(graph: NodeGraph<'a, N, P, UI, Message, Theme, Renderer>) -> Self {
+    fn from(graph: NodeGraph<'a, N, P, UI, Message, Theme, Renderer, E>) -> Self {
         Element::new(graph)
     }
 }

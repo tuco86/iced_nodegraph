@@ -87,7 +87,7 @@ fn render_edge_grid() -> Option<Vec<[u8; 4]>> {
             continue;
         }
         graph.push_edge(
-            edge(PinRef::new(from, 0usize), PinRef::new(to, 1usize)).style(
+            edge!(PinRef::new(from, 0usize), PinRef::new(to, 1usize)).style(
                 |theme, status, _from, _to| EdgeStyle {
                     stroke_color: ColorQuad::solid(Color::from_rgb(0.0, 1.0, 0.0)),
                     ..default_edge_style(theme, status)
@@ -310,7 +310,7 @@ fn render_minimal_edges() -> Option<Vec<[u8; 4]>> {
     }
     // node0 -> node1 (horizontal), node0 -> node3 (diagonal long), node2 -> node1 (diagonal).
     for &(f, t) in &[(0usize, 1usize), (0, 3), (2, 1)] {
-        graph.push_edge(edge(PinRef::new(f, 0usize), PinRef::new(t, 1usize)).style(
+        graph.push_edge(edge!(PinRef::new(f, 0usize), PinRef::new(t, 1usize)).style(
             |theme, status, _from, _to| EdgeStyle {
                 stroke_color: ColorQuad::solid(Color::from_rgb(0.0, 1.0, 0.0)),
                 ..default_edge_style(theme, status)

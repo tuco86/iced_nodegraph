@@ -49,13 +49,13 @@ fn view(&self) -> Element<Message> {
     ng.push_node(node(1, Point::new(525.0, 175.0), another_node()));
 
     // An edge connects two pins, addressed as (node id, pin id).
-    ng.push_edge(edge(PinRef::new(0, 0), PinRef::new(1, 0)));
+    ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)));
 
     ng.into()
 }
 ```
 
-`node(..)` and `edge(..)` are builders: chain `.style(..)` for per-node and
+`node(..)` and `edge!(..)` are builders: chain `.style(..)` for per-node and
 per-edge looks, starting from presets like `NodeStyle::input()` or
 `EdgeStyle::error()`. The [crate docs](https://docs.rs/iced_nodegraph) cover
 styling, connection validation, and the callback contract in detail.

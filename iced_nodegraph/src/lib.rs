@@ -38,7 +38,7 @@
 //!     ng.push_node(node(1, Point::new(300.0, 100.0), text("Node B")));
 //!
 //!     for (from, to) in edges {
-//!         ng.push_edge(edge(*from, *to));
+//!         ng.push_edge(edge!(*from, *to));
 //!     }
 //!
 //!     ng.into()
@@ -164,7 +164,7 @@
 //! recommended on the web.
 pub use connection::{default_can_connect, direction_ok, input_not_occupied, not_same_node};
 pub use content::{EdgeRadii, node_footer, node_header};
-pub use ids::{NodeId, PinId};
+pub use ids::{EdgeId, NodeId, PinId};
 pub use node_graph::{
     Counts, DragInfo, Edge, GraphInfo, Node, NodeGraph, OpTiming, PinRef,
     camera::Camera2D,
