@@ -20,6 +20,12 @@
 
 $ErrorActionPreference = "Stop"
 
+# getrandom 0.3 (nanoid -> rand 0.9) has no implicit browser backend:
+# wasm32-unknown-unknown needs this cfg plus the `wasm_js` crate feature
+# (see demos/hello_world/Cargo.toml). Scoped to the wasm target so the
+# native `cargo doc` build below is unaffected.
+$env:CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS = '--cfg getrandom_backend="wasm_js"'
+
 # Step 1: Build rustdoc documentation
 Write-Host "Building workspace documentation..." -ForegroundColor Cyan
 Write-Host ""

@@ -14,26 +14,21 @@ name = "500_nodes"
 path = "src/main.rs"
 doc = false
 
+# `wasm-pack build --features wasm` (build_docs.sh) is the only consumer: it
+# turns on the browser entry points and embeds a font, since a browser has no
+# system fonts to detect.
 [features]
 default = []
-wasm = [
-    "wasm-bindgen",
-    "web-sys",
-    "console_error_panic_hook",
-    "iced/fira-sans",
-]
+wasm = ["console_error_panic_hook", "iced/fira-sans", "wasm-bindgen"]
 
 [dependencies]
-iced_nodegraph.workspace = true
-iced_nodegraph_sdf.workspace = true
-web-time.workspace = true
+# `canvas` draws the per-op timing chart in the stats panel.
 iced = { workspace = true, features = ["wgpu", "crisp", "thread-pool", "linux-theme-detection", "x11", "wayland", "canvas"] }
+iced_nodegraph.workspace = true
+# `set_index_probe` for the SDF counters in the stats panel.
+iced_nodegraph_sdf.workspace = true
+# `Instant` that also works in the browser.
+web-time.workspace = true
 
-# WASM-specific dependencies
-wasm-bindgen = { workspace = true, optional = true }
-web-sys = { workspace = true, features = ["Window", "Document"], optional = true }
 console_error_panic_hook = { workspace = true, optional = true }
-
-# WASM: Embed Fira Sans font (system fonts not available in browser)
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-iced = { workspace = true, features = ["wgpu", "crisp", "thread-pool", "linux-theme-detection", "x11", "wayland", "fira-sans", "canvas"] }
+wasm-bindgen = { workspace = true, optional = true }

@@ -1,6 +1,7 @@
 #!/bin/bash
-# Post-subagent validation script
-# Only outputs on errors to avoid filling context
+# Stop-hook validation: fmt check, native check, wasm check, tests.
+# Only outputs on errors to avoid filling context.
+# Keep in sync with the PowerShell twin, .claude/hooks/validate.ps1.
 
 cd "$CLAUDE_PROJECT_DIR" || exit 0
 
