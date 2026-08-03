@@ -107,27 +107,42 @@ impl Curve {
             .close()
     }
 
-    /// Closed rounded rectangle.
+    /// Closed rounded rectangle with one radius on every corner.
     pub fn rounded_rect(
         center: impl Into<[f32; 2]>,
         half_size: impl Into<[f32; 2]>,
         radius: f32,
     ) -> Drawable {
+        Curve::rounded_rect_with_radii(center, half_size, [radius; 4])
+    }
+
+    /// Closed rounded rectangle with four independent corner radii, ordered
+    /// `[top_left, top_right, bottom_right, bottom_left]`. The contour walks
+    /// clockwise from just past the top-left corner, one arc per corner.
+    ///
+    /// Each radius is clamped to the shorter half-extent, which also bounds any
+    /// two radii on one side to that side's length, so the straight runs never
+    /// go negative.
+    pub(crate) fn rounded_rect_with_radii(
+        center: impl Into<[f32; 2]>,
+        half_size: impl Into<[f32; 2]>,
+        radii: [f32; 4],
+    ) -> Drawable {
         let c = Vec2::from(center.into());
         let h = Vec2::from(half_size.into());
-        let r = radius.min(h.x).min(h.y);
-        let w = h.x * 2.0 - r * 2.0;
-        let hh = h.y * 2.0 - r * 2.0;
-        // Start after top-left corner, heading RIGHT (PI/2)
-        Curve::shape([c.x - h.x + r, c.y - h.y], FRAC_PI_2)
-            .line(w)
-            .arc(r, FRAC_PI_2)
-            .line(hh)
-            .arc(r, FRAC_PI_2)
-            .line(w)
-            .arc(r, FRAC_PI_2)
-            .line(hh)
-            .arc(r, FRAC_PI_2)
+        let rmax = h.x.min(h.y);
+        let [tl, tr, br, bl] = radii.map(|r| r.clamp(0.0, rmax));
+        let (w, hh) = (h.x * 2.0, h.y * 2.0);
+        // Start after the top-left corner, heading RIGHT (PI/2)
+        Curve::shape([c.x - h.x + tl, c.y - h.y], FRAC_PI_2)
+            .line((w - tl - tr).max(0.0))
+            .arc(tr, FRAC_PI_2)
+            .line((hh - tr - br).max(0.0))
+            .arc(br, FRAC_PI_2)
+            .line((w - br - bl).max(0.0))
+            .arc(bl, FRAC_PI_2)
+            .line((hh - bl - tl).max(0.0))
+            .arc(tl, FRAC_PI_2)
             .close()
     }
 

@@ -551,13 +551,13 @@ pub struct SdfPipeline {
     total_fine_tiles: u32,
     total_coarse_tiles: u32,
     // Deferred cull-compute: each prepare only RECORDS that a cull is pending;
-    // the FIRST draw runs ALL culls in one encoder + one `queue.submit` (was one
-    // submit per primitive - ~70us each, the dominant prepare cost). Because the
-    // dispatch is deferred to the end, the tile buffer can grow freely during
-    // prepares with NO copy (nothing is computed until the end). AtomicBool
-    // (not Cell) because the Pipeline must be Sync per iced's `Primitive`
-    // bound. `frame_device`/`frame_queue` are cloned in prepare so the
-    // immutable `draw` can build + submit the batched compute.
+    // the FIRST draw runs ALL culls in one encoder + one `queue.submit`. One
+    // submit per primitive costs ~70us and dominates prepare, so the batch is
+    // what makes prepare cheap; deferring to the end additionally lets the tile
+    // buffer grow freely during prepares with NO copy (nothing is computed
+    // until then). AtomicBool (not Cell) because the Pipeline must be Sync per
+    // iced's `Primitive` bound. `frame_device`/`frame_queue` are cloned in
+    // prepare so the immutable `draw` can build + submit the batched compute.
     cull_pending: std::sync::atomic::AtomicBool,
     compute_submitted: std::sync::atomic::AtomicBool,
     frame_device: Option<Device>,
@@ -1147,9 +1147,8 @@ impl SdfPipeline {
     }
 
     /// Runs every cull dispatch recorded this frame in ONE encoder + ONE submit.
-    /// Called once, from the first `draw` (all prepares are complete, so the buffers
-    /// are final). Replaces the former one-submit-per-primitive path, whose
-    /// `queue.submit` overhead was the dominant `prepare` cost.
+    /// Called once, from the first `draw` (all prepares are complete, so the
+    /// buffers are final).
     fn run_deferred_compute(&self) {
         let (Some(device), Some(queue)) = (self.frame_device.as_ref(), self.frame_queue.as_ref())
         else {

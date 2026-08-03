@@ -1,7 +1,5 @@
 //! GPU buffer wrapper with dynamic resizing.
 
-#![allow(dead_code)]
-
 use encase::{ShaderSize, ShaderType, internal::WriteInto};
 use iced_wgpu::wgpu::{self, BindingResource};
 
@@ -36,14 +34,8 @@ pub(crate) struct Buffer<T> {
     written_bytes: u64,
     /// Hard ceiling for this binding, from the device's
     /// `max_storage_buffer_binding_size`, rounded down to a 4-byte multiple.
-    ///
-    /// The two-level tile index has always clamped against this limit and
-    /// degraded to `grid_cols = 0` (see `SdfPipeline::max_fine_tiles`); the
-    /// geometry arenas did not, so they grew until wgpu rejected the
-    /// allocation - a hard failure with no fallback at roughly
-    /// `max_bytes / size_of::<T>()` items (2.1 M `GpuSegment`s at the 128 MiB
-    /// wgpu default). Now growth clamps here and a write that cannot fit is
-    /// SKIPPED and counted in `dropped_items` instead.
+    /// Growth clamps here (see [`grown_size`]); a write that would exceed it is
+    /// SKIPPED and counted in `dropped_items`.
     max_bytes: u64,
     /// Items never uploaded because the binding ceiling was reached. Nonzero
     /// means the scene exceeds what this device can bind: the excess geometry
@@ -98,12 +90,10 @@ impl<T: ShaderSize> Buffer<T> {
         self.live_len
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.live_len == 0
-    }
-
     /// Items this binding can ever hold, from the device's storage-binding
     /// limit. Pushing past it drops the item (see [`Buffer::dropped_items`]).
+    // Read only by the arena-ceiling test; not `cfg(test)` so the doc link above resolves.
+    #[allow(dead_code)]
     pub fn capacity_items(&self) -> usize {
         (self.max_bytes / T::SHADER_SIZE.get()) as usize
     }
@@ -350,9 +340,10 @@ fn create_wgpu_buffer(
 /// `BUFFER_MIN_ITEMS`, never past `max_bytes`. Callers must have already
 /// established `required <= max_bytes`.
 ///
-/// Free function so the sizing decision - the one that used to hand wgpu an
-/// allocation past `max_storage_buffer_binding_size` - is testable without a
-/// device.
+/// Invariant: capacity is clamped to the device storage-binding limit, so a
+/// request past the limit yields the largest legal size instead of an
+/// allocation wgpu rejects. A free function so that decision is testable
+/// without a device.
 fn grown_size(required: u64, item_size: u64, max_bytes: u64) -> u64 {
     let want = (((required as f32 * BUFFER_GROWTH_FACTOR) as u64)
         .max(BUFFER_MIN_ITEMS as u64 * item_size)
@@ -368,9 +359,8 @@ mod tests {
     const ITEM: u64 = 64; // GpuSegment
     const MAX: u64 = 64 * ITEM; // a deliberately tiny ceiling
 
-    /// The guard that was missing: growth must never request more than the
-    /// device's storage-binding limit. That allocation is what wgpu rejects,
-    /// and the geometry arenas had no clamp (the tile index always had one).
+    /// The clamp in [`grown_size`]: growth must never request more than the
+    /// device's storage-binding limit, and must still cover `required`.
     #[test]
     fn growth_never_exceeds_the_binding_ceiling() {
         for n in 1..=64u64 {

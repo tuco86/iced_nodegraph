@@ -2,8 +2,6 @@
 //!
 //! Layout must match the corresponding WGSL structs in shader.wgsl.
 
-#![allow(dead_code)]
-
 use encase::ShaderType;
 
 /// WGSL `vec2<f32>`.

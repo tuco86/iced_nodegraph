@@ -27,9 +27,9 @@ use crate::primitive::{
     COARSE_FACTOR, COARSE_STRIDE, FINE_STRIDE, MAX_COARSE_SLOTS, MAX_FINE_SLOTS, TILE_SIZE,
 };
 
-/// The WGSL constants must mirror the Rust-side layout constants; the two
-/// definition sites historically had no drift guard. Parses the shader source
-/// (the exact string the pipelines compile) and compares every shared value.
+/// The WGSL constants must mirror their Rust-side counterparts. Parses the
+/// shader source (the exact string the pipelines compile) and compares every
+/// shared value. Pure string work: no GPU adapter needed.
 #[test]
 fn wgsl_constants_match_rust() {
     let src = include_str!("shader.wgsl");
@@ -58,11 +58,15 @@ fn wgsl_constants_match_rust() {
     assert_eq!(get_u32("CULL_SENTINEL"), crate::primitive::CULL_SENTINEL);
     assert_eq!(get_u32("FLAG_CLOSED"), crate::compile::FLAG_CLOSED);
     assert_eq!(get_u32("ENTRY_TILING"), crate::compile::ENTRY_TILING);
-    // TILE_SIZE is an f32 on both sides.
-    assert!(
-        src.contains(&format!("const TILE_SIZE: f32 = {TILE_SIZE:?};")),
-        "TILE_SIZE mismatch: Rust has {TILE_SIZE:?}"
-    );
+    // f32 constants are compared as source text: the WGSL literal is written in
+    // Rust's shortest round-trip form.
+    let assert_f32 = |name: &str, value: f32| {
+        let decl = format!("const {name}: f32 = {value:?};");
+        assert!(src.contains(&decl), "`{name}` mismatch: Rust has {value:?}");
+    };
+    assert_f32("TILE_SIZE", TILE_SIZE);
+    assert_f32("LINE_EPS", crate::segment::LINE_EPS);
+    assert_f32("POINT_EPS", crate::segment::POINT_EPS);
 }
 
 /// One draw for the batched `gpu_frame_times` bench:
@@ -4037,10 +4041,11 @@ fn c1_cull_conservative_for_all_patterns_at_swept_angles() {
 /// C2 correctness guard (Phase C): when a fine tile overflows `MAX_FINE_SLOTS`,
 /// the result degrades DETERMINISTICALLY and never flickers. The cull keeps the
 /// NEAREST segments by distance-to-tile-centre (not insertion order), so even
-/// though the regional candidate gather uses nondeterministic atomics, the kept
-/// set - and thus the rendered output - is identical every frame. Renders a
-/// segment-dense overlapping stack (far exceeding the cap in central tiles)
-/// many times and asserts byte-identical output across all frames.
+/// though the coarse candidate lists are appended in nondeterministic atomic
+/// order, the kept set - and thus the rendered output - is identical every
+/// frame. Renders a segment-dense overlapping stack (far exceeding the cap in
+/// central tiles) many times and asserts byte-identical output across all
+/// frames.
 #[test]
 fn c2_overflow_is_deterministic_no_flicker() {
     let r = shared_renderer();
@@ -4191,9 +4196,9 @@ fn crowded_region_over_256_entries_no_dropped_shapes() {
 
 /// Zoomed-OUT variant of the crowded-region regression: many entries spread over
 /// a wide world area, rendered zoomed out so each screen-space region covers many
-/// of them - the exact condition (per the 500-node sign-off) where the region
-/// cull used to overflow and drop edges. Per-tile density stays low, so this
-/// isolates the region-overflow fallback, not the per-tile slot cap.
+/// of them - the condition that drives the region cull toward overflow. Per-tile
+/// density stays low, so this isolates the region-overflow fallback rather than
+/// the per-tile slot cap.
 #[test]
 fn zoomed_out_many_entries_no_dropped_shapes() {
     let r = shared_renderer();
@@ -7076,14 +7081,9 @@ fn gpu_cost_report() {
 }
 
 /// Geometry-arena overflow must DEGRADE, not panic - the sibling contract to
-/// `oversized_tile_budget_falls_back_no_panic`, which the tile index has always
-/// honoured and the geometry arenas did not.
-///
-/// Past the device's `max_storage_buffer_binding_size` the arenas used to keep
-/// growing 1.5x until wgpu rejected the allocation: a hard failure with no
-/// fallback at ~2.1 M `GpuSegment`s on the 128 MiB wgpu default. Now the write
-/// is refused, counted, and `live_len` never advances over it, so the excess is
-/// simply absent from the frame instead of killing the app.
+/// `oversized_tile_budget_falls_back_no_panic`. Past the binding ceiling a
+/// write is refused and counted, and `live_len` never advances over it, so the
+/// excess is simply absent from the frame.
 ///
 /// The real ceiling is 128 MiB, far too large to fill in a test, so the ceiling
 /// is lowered instead - the drop path is identical either way.

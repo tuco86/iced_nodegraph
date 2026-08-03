@@ -25,7 +25,6 @@
 //! a tree walk.
 
 use std::collections::HashMap;
-use std::f32::consts::FRAC_PI_2;
 
 use crate::boolean;
 use crate::curve::Curve;
@@ -370,7 +369,9 @@ impl Shape {
     /// `difference_many` for a single clean re-stitch.
     pub fn evaluate(&self) -> Drawable {
         match self.expr() {
-            ShapeExpr::RoundedBox { size, radii } => eval_rounded_box(*size, *radii),
+            ShapeExpr::RoundedBox { size, radii } => {
+                Curve::rounded_rect_with_radii([0.0, 0.0], [size[0] * 0.5, size[1] * 0.5], *radii)
+            }
             ShapeExpr::Circle { radius } => Curve::circle([0.0, 0.0], *radius),
             ShapeExpr::Line { a, b } => Curve::line(*a, *b),
             ShapeExpr::Bezier { p0, p1, p2, p3 } => Curve::bezier(*p0, *p1, *p2, *p3),
@@ -401,29 +402,6 @@ impl Shape {
             ShapeExpr::Intersection(a, b) => boolean::intersection(&a.evaluate(), &b.evaluate()),
         }
     }
-}
-
-/// Build a rounded box with per-corner radii, CENTRED on the local origin
-/// (spanning `-size/2 .. size/2`). The contour walks clockwise from just past the
-/// top-left corner, one arc per corner - mirroring `Curve::rounded_rect` but with
-/// four independent radii. Each radius is clamped to half the shorter side.
-fn eval_rounded_box(size: [f32; 2], radii: [f32; 4]) -> Drawable {
-    let [w, h] = size;
-    let rmax = (w.min(h)) * 0.5;
-    let tl = radii[0].clamp(0.0, rmax);
-    let tr = radii[1].clamp(0.0, rmax);
-    let br = radii[2].clamp(0.0, rmax);
-    let bl = radii[3].clamp(0.0, rmax);
-    Curve::shape([-w * 0.5 + tl, -h * 0.5], FRAC_PI_2)
-        .line((w - tl - tr).max(0.0))
-        .arc(tr, FRAC_PI_2)
-        .line((h - tr - br).max(0.0))
-        .arc(br, FRAC_PI_2)
-        .line((w - br - bl).max(0.0))
-        .arc(bl, FRAC_PI_2)
-        .line((h - bl - tl).max(0.0))
-        .arc(tl, FRAC_PI_2)
-        .close()
 }
 
 /// One cached, evaluated shape: the expensive local-frame arcs, plus the frame
@@ -527,6 +505,7 @@ impl ShapeCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::f32::consts::FRAC_PI_2;
 
     fn node_body() -> Shape {
         // `box - pin0 - pin1`, pins at LOCAL offsets relative to the body centre.

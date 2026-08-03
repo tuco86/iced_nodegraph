@@ -319,11 +319,11 @@ impl Drawable {
 
     /// Dense-polyline reference of a cubic - the arc-spline test oracle.
     ///
-    /// v3 deleted the true-cubic GPU SDF, so the golden gates can no longer
-    /// render an analytic cubic to compare against. Sampling the cubic into `n`
-    /// exact line segments gives an INDEPENDENT faithful reference (it does not
-    /// touch the biarc fitter), so a structural arc-spline error - a giant arc
-    /// or full circle - still diverges from it and fails the gate.
+    /// The GPU evaluates only arcs, so there is no analytic cubic field to
+    /// compare a fitted arc spline against. Sampling the cubic into `n` exact
+    /// line segments gives an INDEPENDENT faithful reference (it does not touch
+    /// the biarc fitter), so a structural arc-spline error - a giant arc or a
+    /// full circle - still diverges from it and fails the gate.
     #[cfg(test)]
     pub(crate) fn bezier_polyline(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, n: u32) -> Self {
         let pt = |t: f32| -> Vec2 {

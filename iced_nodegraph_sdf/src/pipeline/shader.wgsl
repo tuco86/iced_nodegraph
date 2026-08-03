@@ -1088,13 +1088,11 @@ fn tiling_box_dist(tt: u32, params: vec4<f32>, cc: vec2<f32>, ch: vec2<f32>) -> 
 // ============================================================================
 // Scatter cull (see ARCHITECTURE.md, Stage 2)
 //
-// The gather build scanned EVERY entry x segment from EVERY coarse tile -
-// O(tiles x segments) regardless of visibility. The scatter flips the
-// iteration: each (entry, segment) pair visits only the coarse tiles inside
-// its reach-inflated bbox and appends itself where the EXACT interval test
-// passes. Work is proportional to actual segment-tile overlaps. The cull TEST
-// is unchanged (`seg_box_interval` interval vs the style reach band), so the
-// conservative-over-approximation contract holds as before.
+// Each (entry, segment) pair visits only the coarse tiles inside its
+// reach-inflated bbox and appends itself where the EXACT interval test passes,
+// so work is proportional to actual segment-tile overlaps. The test
+// (`seg_box_interval` interval vs the style reach band) is conservative: a tile
+// is kept whenever any pixel in it could have this segment as its nearest.
 //
 // cs_scatter_open   - one thread per (draw, entry, segment) triple (open entries)
 // cs_scatter_closed - one workgroup per closed entry (interior-aware)
@@ -1151,7 +1149,7 @@ fn cs_scatter_open(
 // One 64-thread workgroup per CLOSED entry. Thread 0 folds the contour bbox
 // (the interior is inside it, so bbox iteration cannot miss interior-only
 // tiles); the reach-inflated, grid-clipped tile range is strided across the
-// threads, each running the exact per-entry gather test per tile: keep the
+// threads, each running the per-entry visibility test on its own tiles: keep the
 // tile when the contour band reaches it (`mu <= reach`) OR the tile centre is
 // inside the fill (`center_signed < 0`), then push every segment that can be
 // the per-pixel nearest anywhere in the tile (`iv.x <= kbound`).

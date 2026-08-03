@@ -89,7 +89,7 @@ renders as a giant arc / full circle" artifacts. Endpoints degenerate to a line
 which avoids the precision loss a far-from-origin center form suffers. The full
 center/radius/sweep is reconstructed on demand, on both CPU and GPU, from
 endpoints + curvature — and a regression test proves the reconstructed field
-matches the legacy center-form field to within `1e-2` everywhere.
+matches the polar center-form field to within `1e-2` everywhere.
 
 **One discipline keeps it unambiguous:** every stored arc is a *minor* arc
 (`|sweep| < pi`). A wider arc — a full-circle pin is `2*pi` — is split into minor

@@ -27,8 +27,8 @@ pub(crate) const LINE_EPS: f32 = 1e-6;
 /// `|end - start|` at or below this is treated as a point.
 pub(crate) const POINT_EPS: f32 = 1e-5;
 
-/// Convert a legacy center/radius/start-angle/sweep arc to the endpoint +
-/// signed-curvature form. The sweep must already be below `PI` in magnitude
+/// Converts an arc in polar form (center, radius, start angle, sweep) to the
+/// endpoint + signed-curvature form the GPU consumes. The sweep must already be below `PI` in magnitude
 /// (callers split wider arcs first); the sign of the returned curvature encodes
 /// which side of the chord the center sits on, which is what lets [`seg_sdf`]
 /// reconstruct the exact same minor arc.
@@ -68,11 +68,10 @@ pub(crate) fn from_center_arc(
 
 /// Signed distance from `p` to the unified segment (negative = interior side).
 ///
-/// Reproduces the legacy `sd_line` / `sd_arc_segment` / `sd_point` fields exactly
-/// for the round-tripped encoding - this equivalence is the regression oracle in
-/// the tests, and the contract the GPU `eval_segment` port must keep. Kept as the
-/// canonical reference field even though production reads it only through the GPU
-/// shader twin; the tests below are its consumers.
+/// The CPU twin of the GPU `eval_segment`, and the oracle the tests measure it
+/// against: it must agree with the shader's `sd_line` / `sd_arc_segment` /
+/// `sd_point` for every round-tripped encoding. Production shades through the
+/// shader, so the tests below are this function's only callers.
 #[allow(dead_code)]
 pub(crate) fn seg_sdf(p: Vec2, start: Vec2, end: Vec2, curvature: f32, heading: f32) -> f32 {
     let d = end - start;
@@ -99,7 +98,7 @@ pub(crate) fn seg_sdf(p: Vec2, start: Vec2, end: Vec2, curvature: f32, heading: 
     }
 
     // Arc: reconstruct center + minor sweep from endpoints + signed curvature,
-    // then evaluate the legacy arc field.
+    // then evaluate the polar-form arc field.
     let r = 1.0 / curvature.abs();
     let center = arc_center(start, end, curvature).unwrap_or((start + end) * 0.5);
     let a_start = (start - center).y.atan2((start - center).x);
@@ -209,7 +208,7 @@ pub(crate) fn seg_aabb(start: Vec2, end: Vec2, curvature: f32) -> (Vec2, Vec2) {
 mod tests {
     use super::*;
 
-    // --- Legacy reference fields (mirror boolean.rs cpu_sd_* / the shader) ---
+    // --- Independent reference fields (mirror boolean.rs cpu_sd_* / the shader) ---
 
     fn ref_line(p: Vec2, a: Vec2, b: Vec2) -> f32 {
         let ba = b - a;
@@ -273,12 +272,13 @@ mod tests {
         }
     }
 
-    /// The endpoint+curvature arc field equals the legacy center/radius/sweep
-    /// field everywhere, for every radius / orientation / sweep direction the
-    /// renderer produces (all minor arcs, |sweep| < PI). This is the proof the
-    /// new encoding is lossless - the spine of the arc-only migration.
+    /// The endpoint+curvature arc field equals the polar-form
+    /// (center/radius/sweep) field everywhere, for every radius / orientation /
+    /// sweep direction the renderer produces (all minor arcs, |sweep| < PI).
+    /// This is what makes the endpoint encoding lossless, and every shape in the
+    /// crate rests on it.
     #[test]
-    fn endpoint_arc_field_matches_legacy_center_arc() {
+    fn endpoint_arc_field_matches_polar_form() {
         let mut worst = 0.0_f32;
         for &radius in &[5.0_f32, 20.0, 100.0] {
             for si in 0..8 {
@@ -303,7 +303,7 @@ mod tests {
         }
         assert!(
             worst < 1e-2,
-            "endpoint arc field deviates from legacy by {worst}"
+            "endpoint arc field deviates from the polar form by {worst}"
         );
     }
 
