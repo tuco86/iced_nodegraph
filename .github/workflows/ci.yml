@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: true
 
 # Native-only. The wasm32-unknown-unknown target check stays in the local
-# pre-push checklist (see CLAUDE.md).
+# pre-push checklist (see AGENTS.md).
 env:
   CARGO_TERM_COLOR: always
   # Drop debuginfo in CI: the workspace dev profile is opt-level=1, and

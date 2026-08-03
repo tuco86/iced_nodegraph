@@ -623,24 +623,31 @@ where
         self
     }
 
-    /// Sets a callback for when a drag operation starts.
-    /// Used for real-time collaboration to broadcast drag state to other users.
+    /// Reports the start of a drag, naming what it moves.
+    ///
+    /// This and [`on_drag_update`](Self::on_drag_update) /
+    /// [`on_drag_end`](Self::on_drag_end) bracket every drag exactly once, and
+    /// fire in addition to the commit-on-release callbacks. They exist for hosts
+    /// that mirror an in-progress drag somewhere else - a collaborative session,
+    /// an inspector - and nothing is gated on them: omitting all three changes no
+    /// behaviour.
     pub fn on_drag_start(mut self, f: impl Fn(DragInfo<N, P>) -> Message + 'a) -> Self {
         self.on_drag_start = Some(Box::new(f));
         self
     }
 
-    /// Sets a callback for drag position updates.
+    /// Reports the cursor in world coordinates while a drag is in progress.
     ///
-    /// Called frequently during a drag with the current cursor position in world
-    /// coordinates as a [`Point`] (a semantic type, matching `on_move`'s
-    /// `Vector`, rather than a bare `(f32, f32)` tuple).
+    /// Fires on every cursor move during the drag, so treat it as a stream.
     pub fn on_drag_update(mut self, f: impl Fn(Point) -> Message + 'a) -> Self {
         self.on_drag_update = Some(Box::new(f));
         self
     }
 
-    /// Sets a callback for when a drag operation ends.
+    /// Reports that the drag ended, whether it committed or was discarded.
+    ///
+    /// Also fires when a drag is cancelled (a second touch contact, say), so it
+    /// is the reliable place to clear whatever `on_drag_start` set up.
     pub fn on_drag_end(mut self, f: impl Fn() -> Message + 'a) -> Self {
         self.on_drag_end = Some(Box::new(f));
         self

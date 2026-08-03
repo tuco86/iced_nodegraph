@@ -1,9 +1,13 @@
-# Claude Code Instructions for iced_nodegraph
+# Agent instructions for iced_nodegraph
 
-Context for agents working in this repository. It covers workflow, gates, and
+Context for any coding agent working in this repository: workflow, gates, and
 conventions. It deliberately does not restate the public API or the control
-bindings: those live in rustdoc and the root [`README.md`](README.md), and a
+bindings - those live in rustdoc and the root [`README.md`](README.md), and a
 second copy would rot.
+
+This file is the single place for those conventions. Agent tooling discovers it
+automatically (`AGENTS.md` is the shared convention across coding agents), so
+there is no tool-specific copy to keep in sync.
 
 ## Project Status
 
@@ -116,22 +120,10 @@ version is bumped to match.
 gates, tag, publish order, next dev cycle) lives in
 [`RELEASING.md`](RELEASING.md). Follow it for every release.
 
-## Automatic Validation
-
-`.claude/settings.json` registers a `Stop` hook that picks
-`.claude/hooks/validate.ps1` on Windows shells and `.claude/hooks/validate.sh`
-everywhere else. Both run the same list and must stay in sync:
-
-- `cargo fmt --all --check`
-- `cargo check -p iced_nodegraph`
-- `cargo check -p iced_nodegraph --target wasm32-unknown-unknown`
-- `cargo test -p iced_nodegraph`
-
-They print only on failure, and always exit 0: a non-zero exit would block the
-Stop event and re-invoke the agent in a loop.
-
-Clippy and the SDF test suite are not in the hook - run them yourself before
-pushing.
+There is no agent-side auto-validation hook. The git hooks above are the only
+automated gate, deliberately: a second copy of the command list is a second
+thing that drifts. Run the pre-push list yourself before you claim a task is
+done - the hook will run it again at push time either way.
 
 ## Testing
 
@@ -174,8 +166,10 @@ documentation - it goes stale on the next commit.
 - `refactor: separate library from demo dependencies`
 - `docs: clarify coordinate system formulas`
 
-**Note**: Claude Code automatically adds co-author attribution when creating
-commits.
+Group a large change into commits that each build and each carry one concern.
+Where the concerns genuinely cannot be separated - an API removal and the
+callers it breaks - one atomic commit is correct; say so rather than shipping a
+broken intermediate.
 
 ## Documentation Standards
 
@@ -257,21 +251,37 @@ MUST NOT:
 
 ## Code Intelligence
 
-For Rust code navigation, prefer a language server over text search: it
-resolves through re-exports, generics, and trait impls, which grep cannot.
-Whatever symbol-aware tooling is available to you, use these operations:
+For Rust navigation, prefer a language server over text search: it resolves
+through re-exports, generics and trait impls, which grep cannot.
 
-- **Go to definition** to find where a type or function is declared.
-- **Find references** before changing any public item - this workspace has
-  five demo crates plus doctests calling into the library, and the compiler
-  will not tell you about the doc examples until you run them.
-- **Rename symbol** for renames, rather than a find-and-replace pass.
-- **Diagnostics** for a fast error/warning read on a file mid-edit, instead of
-  a full `cargo check` cycle.
+`rust-analyzer` needs no configuration here - a language server is picked up
+from `Cargo.toml` automatically. It does need to actually be installed, and the
+`~/.cargo/bin/rust-analyzer` shim exists even when the component does not:
 
-Text search (`grep` / `glob`) is still the right tool for string literals,
-comments, non-Rust files (`.toml`, `.md`, `.wgsl`), regex patterns, and when no
-language server is running.
+```
+rustup component add rust-analyzer
+```
+
+Without it every lookup silently degrades to grep. Verify with a `hover` or
+`references` call before trusting a "no callers" conclusion.
+
+Use it for:
+
+- **definition** to find where a type or function is declared.
+- **references** before changing any public item - this workspace has five demo
+  crates plus doctests calling into the library, and the compiler will not tell
+  you about the doc examples until you run them.
+- **rename** for renames, rather than a find-and-replace pass.
+- **diagnostics** for a fast error read on a file mid-edit, instead of a full
+  `cargo check` cycle.
+
+Text search stays right for string literals, comments, non-Rust files
+(`.toml`, `.md`, `.wgsl`), regex patterns, and when no server is running.
+
+One caveat this repository has hit: the compiler is the stronger oracle for
+*dead* code. A field read nowhere, a variant never constructed, a generic never
+used - those surface as warnings once the type is shaped so rustc can see them,
+and a `references` count of zero is weaker evidence than a `dead_code` warning.
 
 ## Interaction
 

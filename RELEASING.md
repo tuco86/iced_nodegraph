@@ -53,7 +53,7 @@ Optionally refresh transitive dependencies in the same release
 
 ## 4. Run every gate (all must pass)
 
-Mirrors `.github/workflows/ci.yml` plus the wasm check from CLAUDE.md's
+Mirrors `.github/workflows/ci.yml` plus the wasm check from AGENTS.md's
 pre-push checklist:
 
 ```bash

@@ -12,17 +12,13 @@
 /pkg
 /target/wasm-build
 
-/.claude/settings.local.json
-/.claude/worktrees/
-
 # Local cargo config with path patches (not for CI)
 /.cargo/config.toml
 
 # cargo-mutants output (transient audit artifact)
 /mutants.out
 
-# Claude Code temp files
-tmpclaude-*
+# Agent scratch files
 nul
 
 # Local render debug artifacts (checked-in doc images live in assets/)

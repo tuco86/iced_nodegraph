@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Full gate: mirror the CI `test` job plus the CLAUDE.md wasm check, so a push
+# Full gate: mirror the CI `test` job plus the AGENTS.md wasm check, so a push
 # that would go red on CI fails locally first. Slow by design (clippy + tests).
 set -euo pipefail
 
