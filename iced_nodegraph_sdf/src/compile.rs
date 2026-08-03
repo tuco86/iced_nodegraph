@@ -14,7 +14,7 @@ const STYLE_FLAG_HAS_PATTERN: u32 = 1;
 /// The style-independent per-shape metadata an entry needs beyond the segment
 /// range: everything [`entry_from_meta`] reads that would otherwise require the
 /// evaluated [`Drawable`]. The pipeline stores this alongside a resident
-/// segment range (plan/arena-residency.md), so an instance of an
+/// segment range (ARCHITECTURE.md, Stage 1), so an instance of an
 /// already-resident shape builds its entry WITHOUT re-evaluating the shape -
 /// for a non-cacheable stroke (an edge) that skips the whole biarc fit.
 #[derive(Clone, Copy, Debug)]

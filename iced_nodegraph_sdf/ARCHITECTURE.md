@@ -144,7 +144,17 @@ cross-frame: the segment/entry/style buffers are persistent arenas
 - *Content-keyed residency*: a primitive whose compiled bytes (shapes,
   placements, styles) hash-match a resident block reuses it WHEREVER it sits in
   the prepare order - no evaluate, no upload; a reorder or an earlier rebuild
-  invalidates nothing. Blocks unused for `RESIDENT_MAX_AGE` (8) frames return
+  invalidates nothing.
+  The "WHEREVER" is the whole point: reuse used to be positional AND
+  cursor-coupled - the buffers were packed front-to-back each frame, so a
+  primitive kept its data only if every primitive BEFORE it was byte-identical
+  too. Any reorder (a selection z-resort, a node add or remove) re-evaluated
+  and re-uploaded every shifted primitive, a ~2-3 ms hitch on 500 nodes. Pure
+  content keying could not fix that alone, because entries reference the
+  segments and styles of OTHER primitives by absolute index, so relocated
+  bytes would need reference fix-ups; the arenas exist so nothing relocates.
+  A reorder frame is now 0 rebuilds and 100% resident hits.
+  Blocks unused for `RESIDENT_MAX_AGE` (8) frames return
   their ranges to the arenas; when an arena's high-water mark runs far ahead of
   its live count, the residency state is dropped and the next frame rebuilds
   tightly packed (`SdfStats::arena_compactions`).
@@ -174,19 +184,80 @@ index reused — idle redraws, time-only animation frames AND **sub-tile pans** 
 nothing; a pan reculls only when it crosses a 64px coarse-tile boundary
 (`SdfStats::cull_skipped`). Output stays pixel-identical across the reuse.
 
+### The world-anchored tile lattice
+
+Scatter and fragment must map a point to a coarse tile through the SAME
+formula, and that formula must not depend on the continuous camera pan - or the
+resident index could not survive one.
+
+Decompose the pan `pan_px = camera_position * cs` per axis into whole coarse
+tiles plus a remainder:
+
+```
+N   = floor(-pan_px / coarse_px)         // window base, in whole tiles
+off = (-pan_px).rem_euclid(coarse_px)    // remainder, in [0, coarse_px)
+```
+
+and map with `coarse_col = floor((local_px + off) / coarse_px)`. Substituting
+`local_px = world_p * cs + pan_px` and the `rem_euclid` identity collapses the
+pan out of the expression entirely:
+
+```
+local_px + off = world_p * cs - N * coarse_px
+coarse_col     = floor(world_p * cs / coarse_px) - N
+```
+
+The right side depends only on world position, zoom and `N` - never on
+`camera_position`. The index is a window `[N, N + coarse_cols)` over a world
+lattice. A segment at world `s` and a pixel at world `w` with `s ~ w` therefore
+resolve to the same tile, because both sides evaluate the same expression.
+
+`N` is computed on the CPU in f64 - the large `pan_px - N * coarse_px`
+subtraction happens once, precisely - and feeds only `cull_key`. `off` reaches
+the GPU as `DrawData.grid_offset`, uploaded every frame like `time`. Since `N`
+changes only when the pan crosses a 64px boundary, a sub-tile pan keeps
+`cull_key` and reuses the index; frame B reads `worldcell(w) - N_B` with
+`N_B == N_A`, which is the tile index frame A wrote, so the reuse is
+pixel-identical rather than merely dispatch-skipped.
+
+The window spans `ceil(viewport / coarse_px) + 1` cells. World anchoring means
+the viewport is never cell-aligned, so it always clips one extra cell; that
+apron is the minimal price of the anchoring (`local_px` in `[0, viewport)` and
+`off` in `[0, coarse_px)` bound the argument below `viewport + coarse_px`). The
+fragment clamps to `grid_cols - 1` rather than discarding, against float edge
+cases. At `off = 0` the formula reduces exactly to the screen-anchored one it
+replaced, which is what makes the origin-centred tests a regression guard.
+
 ### Stage 2: Compute shader (GPU) — scatter-built two-level tile index
 
-Three kernels (see `plan/scatter-binning.md`) build a two-level index, both
-levels persisted to storage buffers:
+Three kernels build a two-level index, both levels persisted to storage
+buffers. They replaced a GATHER cull that scanned every entry x segment from
+every coarse tile - `O(tiles x entries x segments)` regardless of visibility,
+a 1.2-1.6 ms zoom-independent floor on the 500-node scene. Only the iteration
+direction flipped; the cull TEST (`seg_box_interval` against the style reach
+band) is unchanged and still exact. Measured on that scene, the lumped index
+build went 4260.9 -> 958.5 us (4.4x) at pixel-identical output.
 
 - **Coarse** 64x64-pixel tiles (`COARSE_FACTOR = 8` fine tiles per axis). Each
   holds up to `MAX_COARSE_SLOTS = 512` `(segment_idx, entry_idx)` results (two u32
   each), sorted by entry so the fragment shader walks one shape at a time in
   z-order. Tilings are marked by `TILING_BIT` on the segment field, as before.
-  Past the cap, pairs drop first-come; the demand counters keep counting, and
-  an async readback taken between the scatter and the sort surfaces the true
-  per-tile demand as `SdfStats::coarse_demand_max` / `coarse_overflow_tiles`
-  (one frame delayed, non-blocking - see plan/exact-slot-allocation.md).
+  Past the cap, pairs drop FIRST-COME: which pairs survive depends on the atomic
+  interleave, so the surviving SET is nondeterministic even though the per-tile
+  sort makes the surviving ORDER deterministic. The gather kernel used to rank
+  drops keep-nearest, a policy no atomic append can express. Rather than pay for
+  exact allocation speculatively, the cap carries telemetry: the demand counters
+  keep counting past it, and an async readback taken between the scatter and the
+  sort surfaces true per-tile demand as `SdfStats::coarse_demand_max` /
+  `coarse_overflow_tiles` (one frame delayed, non-blocking). The 500-node
+  overview measures ~165 slots in the busiest tile against the 512 cap and no
+  tested configuration has ever overflowed - only hundreds of shapes stacked
+  into one 64px tile can. Should the counter ever fire in real use, the
+  escalation is exact allocation (Vello-style count + prefix scan + write, no
+  cap at all); it costs roughly 2x scatter ALU, a scan dispatch, a slot buffer
+  sized GPU-side behind a grow-and-recull loop, and a sort that handles
+  unbounded per-tile lists past the ~2k-slot workgroup-memory limit. That price
+  is deliberately unpaid until evidence demands it.
 - **Fine** 8x8-pixel tiles. Each holds up to `MAX_FINE_SLOTS = 64` **16-bit**
   indices into its parent coarse tile's result, packed 2 per u32
   (`FINE_STRIDE = 32`). The fragment dereferences a fine index through the coarse
@@ -322,6 +393,28 @@ flow (which produced a 1px tile-boundary seam on some GPUs).
 - No `min`/`max` field compositing for compound shapes: booleans re-stitch one
   contour.
 - No antialiasing beyond the analytic `smoothstep` band: no MSAA, no temporal AA.
+- No zoom-quantized tile bands: the lattice is anchored in PAN only, so any
+  zoom change reculls.
+- No LOD tile hierarchy and no sparse GPU hash: the index is a single dense
+  window over one world lattice.
+
+The last two are deliberate, and the reason is worth writing down because it is
+not "we never planned it". Pan anchoring is PROVABLY pixel-identical (the
+substitution above). Tile SIZE is not, because both slot caps are calibrated to
+it. Coarser tiles crowd more segments into a tile, pushing the coarse level
+toward its first-come drop; and they weaken the fine level's keep-nearest
+ranking, which ranks by distance at the tile CENTRE - a heuristic that holds
+only while the tile is small, and whose failure punches a hole for a
+centre-distant pixel without ever hitting the cap. A zoom band can therefore
+only be cleared by MEASUREMENT: sweep `demos/500_nodes` across the zoom range
+and log `coarse_demand_max` / `coarse_overflow_tiles` at the top of each band;
+a band may land only if overflow stays 0 with headroom under the cap. Note that
+HALVING the fine tile moves the safe way on both counts, which is why that
+change needed no such gate - only the memory budget moved. A real LOD hierarchy
+is a larger step again: it replaces the dense arena with an atomic-insert hash
+whose collision handling must re-prove the frame determinism the bitonic sort
+gives today, and it is only worth it once zoomed-out overview has to stop
+falling back to `grid_cols = 0` (iterate all entries).
 
 ## File map
 

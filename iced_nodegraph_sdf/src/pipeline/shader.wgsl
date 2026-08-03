@@ -885,7 +885,7 @@ fn coarse_tile_box(draw: DrawData, tx: u32, ty: u32) -> vec4<f32> {
 // rising past the cap, so between the scatter and the sort it holds TRUE
 // demand - the overflow telemetry snapshots it in that window (the sort then
 // overwrites it with the clamped render list length). See
-// plan/scatter-binning.md and plan/exact-slot-allocation.md.
+// ARCHITECTURE.md, Stage 2.
 fn coarse_append(coarse_global: u32, seg_field: u32, entry_idx: u32) {
     let idx = atomicAdd(&cs_coarse_counts[coarse_global], 1u);
     if idx < MAX_COARSE_SLOTS {
@@ -1086,7 +1086,7 @@ fn tiling_box_dist(tt: u32, params: vec4<f32>, cc: vec2<f32>, ch: vec2<f32>) -> 
 }
 
 // ============================================================================
-// Scatter cull (see plan/scatter-binning.md)
+// Scatter cull (see ARCHITECTURE.md, Stage 2)
 //
 // The gather build scanned EVERY entry x segment from EVERY coarse tile -
 // O(tiles x segments) regardless of visibility. The scatter flips the

@@ -155,7 +155,7 @@ struct TestRenderer {
 }
 
 /// Scatter-cull inputs mirroring production `prepare` (see
-/// plan/scatter-binning.md): the flat work lists plus the live-count meta
+/// ARCHITECTURE.md, Stage 2): the flat work lists plus the live-count meta
 /// buffer the kernels read (`arrayLength` reports capacity, not live length).
 struct CullLists {
     pairs: Buffer,
@@ -4731,7 +4731,7 @@ fn zoomed_out_per_node_fills_all_render() {
 /// The spatial-index cull dispatch is skipped exactly while the resident index
 /// is valid (`SdfStats::cull_skipped`, published by `trim`): an unchanged
 /// frame, a TIME-ONLY (animation) frame, and a SUB-TILE pan (world-anchored
-/// grid, plan/world-space-cull.md §4) keep last frame's index; a
+/// grid, see ARCHITECTURE.md) keep last frame's index; a
 /// TILE-CROSSING pan, a zoom change, or a geometry change (placement)
 /// invalidate it; the first frame after an invalidation is skipped again.
 /// Full-pipeline frame (prepare -> deferred compute -> draw -> readback -> trim)
@@ -5621,7 +5621,7 @@ fn empty_frame_invalidates_scatter_record() {
     );
     assert!(pb[1] > 200, "B must stay a green rect, got {pb:?}");
 }
-/// Arena-residency acceptance (plan/arena-residency.md): reordering the
+/// Arena-residency acceptance (ARCHITECTURE.md, Stage 1): reordering the
 /// prepare order - the selection-driven z-resort - must NOT re-evaluate or
 /// re-upload any unmoved primitive. Geometry reuse is content-keyed, so a pure
 /// reorder is 100% resident hits; only the scatter lists re-pack. Pixel
@@ -5805,7 +5805,7 @@ fn cull_dispatch_skipped_while_index_valid() {
     );
     // Frame 3: sub-tile pan, `cam = [50, 10]` - `grid_base.x =
     // floor(-50/64) = -1`, the SAME tile-quantized window as the base
-    // (plan/world-space-cull.md §3.3): the world-anchored index is reused.
+    // (the world-anchored tile lattice in ARCHITECTURE.md): the world-anchored index is reused.
     assert!(
         frame(&mut pipeline, base.0, [50.0, 10.0], base.2, 0.5),
         "sub-tile pan must skip"
@@ -5829,7 +5829,7 @@ fn cull_dispatch_skipped_while_index_valid() {
 }
 
 /// The load-bearing invariant of the world-anchored cull grid
-/// (plan/world-space-cull.md §3.3): a SUB-TILE pan (same `grid_base`) reuses
+/// (the world-anchored tile lattice in ARCHITECTURE.md): a SUB-TILE pan (same `grid_base`) reuses
 /// the resident spatial index (`cull_skipped == true`) AND renders the exact
 /// same scene shifted by exactly the pan, in pixels - proving index reuse
 /// across a pan is pixel-correct, not merely dispatch-skipped by luck. A
@@ -5931,7 +5931,7 @@ fn pan_across_tile_boundary_recull_pixel_identical() {
     assert!(visible, "the shape must actually render somewhere");
 }
 
-/// Coarse-slot overflow telemetry (plan/exact-slot-allocation.md, option 3):
+/// Coarse-slot overflow telemetry (the coarse-slot overflow decision in ARCHITECTURE.md):
 /// `SdfStats` reports the TRUE per-tile pair demand of the latest completed
 /// cull readback. A healthy scene reports its demand with zero overflowing
 /// tiles; a pathological scene (hundreds of shapes stacked into ONE 64px

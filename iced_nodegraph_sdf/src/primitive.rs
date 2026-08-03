@@ -271,17 +271,18 @@ impl KeyHasher {
 }
 
 /// Folds every [`types::DrawData`] field EXCEPT `time` into a key, PLUS
-/// `grid_base` (the tile-quantized window base, plan/world-space-cull.md
-/// §3.2-§3.3, NOT itself a `DrawData` field). The spatial index depends on
-/// the world-anchored grid window, viewport, grid geometry and entry ranges -
-/// but never on the animation clock (reach bands and tile boxes are
-/// time-independent; time only animates style evaluation in the fragment
-/// shader) and never on the continuous `camera_position`/`bounds_origin`
-/// directly: only `grid_base` (the quantized window) matters, so a sub-tile
-/// pan compares EQUAL and the resident index is kept. Bonus: `bounds_origin`
-/// is not hashed at all, so moving the widget on-screen (same camera/zoom/
-/// size, e.g. a panel resize elsewhere) also keeps the index valid - tile
-/// membership is world-anchored, independent of the widget's screen position.
+/// `grid_base` (the tile-quantized window base - see the world-anchored tile
+/// lattice in ARCHITECTURE.md - NOT itself a `DrawData` field). The spatial
+/// index depends on the world-anchored grid window, viewport, grid geometry
+/// and entry ranges, but never on the animation clock (reach bands and tile
+/// boxes are time-independent; time only animates style evaluation in the
+/// fragment shader) and never on the continuous
+/// `camera_position`/`bounds_origin` directly: only `grid_base` (the quantized
+/// window) matters, so a sub-tile pan compares EQUAL and the resident index is
+/// kept. Bonus: `bounds_origin` is not hashed at all, so moving the widget
+/// on-screen (same camera/zoom/size, e.g. a panel resize elsewhere) also keeps
+/// the index valid - tile membership is world-anchored, independent of the
+/// widget's screen position.
 fn cull_key(d: &types::DrawData, grid_base: [i64; 2]) -> u64 {
     let mut h = KeyHasher::new();
     h.u64(grid_base[0] as u64);
@@ -411,7 +412,7 @@ impl Default for SdfPrimitive {
 
 // --- Pipeline ---
 
-// --- Arena residency (plan/arena-residency.md) ---
+// --- Arena residency (ARCHITECTURE.md, Stage 1) ---
 //
 // The segment/entry/style buffers are persistent arenas: a primitive's
 // compiled output is allocated once, NEVER moves while resident, and is keyed
@@ -510,7 +511,7 @@ pub struct SdfPipeline {
     coarse_slots_buffer: wgpu::Buffer,
     fine_counts_buffer: wgpu::Buffer,
     fine_slots_buffer: wgpu::Buffer,
-    /// Scatter work lists (see plan/scatter-binning.md): flat u32 lists with
+    /// Scatter work lists (see ARCHITECTURE.md, Stage 2): flat u32 lists with
     /// the same clear/skip/push_bulk slot-reuse lifecycle as the geometry
     /// buffers. `cull_pairs` holds (draw, entry, segment) triples of open
     /// entries; `cull_closed` holds (draw, entry) pairs of closed entries.
@@ -1424,7 +1425,7 @@ fn compile_block(
         style_refs.push(hash);
     }
 
-    // Scatter classification (see plan/scatter-binning.md), draw-slot-free:
+    // Scatter classification (see ARCHITECTURE.md, Stage 2), draw-slot-free:
     // tilings ride per-draw, closed entries go to the interior-aware kernel,
     // open entries expand to per-segment index pairs. Indices are ABSOLUTE,
     // so instanced entries reference the shared resident range.
@@ -1498,7 +1499,7 @@ impl Primitive for SdfPrimitive {
         let closed_start = pipeline.cull_closed_buffer.len() as u32;
         let draw_slot = pipeline.draw_data_buffer.len();
 
-        // Geometry residency (plan/arena-residency.md): a primitive whose
+        // Geometry residency (ARCHITECTURE.md, Stage 1): a primitive whose
         // compiled bytes are identical to a resident block's (hash over every
         // entry's shape, placement and style) reuses that block WHEREVER it
         // sits in the prepare order - no eval, no upload. A miss compiles into
@@ -1540,7 +1541,7 @@ impl Primitive for SdfPrimitive {
             }
         };
 
-        // Scatter work lists (plan/scatter-binning.md): still per-frame packed
+        // Scatter work lists (ARCHITECTURE.md, Stage 2): still per-frame packed
         // - they embed the draw slot - with the same skip-or-push lifecycle.
         // Same block at the same cursors means the resident list bytes are
         // valid; anything else re-pushes the block's draw-slot-free index
@@ -1614,7 +1615,7 @@ impl Primitive for SdfPrimitive {
             .max(0.0);
         pipeline.frame_stats.shaded_px += (vw as u64) * (vh as u64);
 
-        // World-anchored cull grid (plan/world-space-cull.md §4.3): decompose the
+        // World-anchored cull grid (the world-anchored tile lattice in ARCHITECTURE.md): decompose the
         // pan into whole coarse tiles (`grid_base`, hashed by `cull_key`) plus a
         // sub-tile remainder (`grid_offset`, uploaded every frame like `camera_pos`)
         // so the tile index depends only on the world window, not on continuous

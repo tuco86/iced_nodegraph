@@ -2,7 +2,7 @@
 # (suppresses the intentional duplicate-version warnings); run plain
 # `cargo deny check` locally to see them.
 #
-# Pre-publish supply-chain gate (see plan/dependency-audit): screens the full
+# Pre-publish supply-chain gate: screens the full
 # dependency tree for security advisories, license surprises, and unexpected
 # sources before the first crates.io release.
 

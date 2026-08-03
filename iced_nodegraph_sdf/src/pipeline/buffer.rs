@@ -241,7 +241,7 @@ impl<T: ShaderSize> Buffer<T> {
     }
     /// Writes `items` at element index `offset`, extending the live length to
     /// cover the range if it ends past it. This is the ARENA write path
-    /// (plan/arena-residency.md): ranges are placed by an external allocator
+    /// (ARCHITECTURE.md, Stage 1): ranges are placed by an external allocator
     /// and stay resident across frames, so there is no per-frame cursor -
     /// `clear`/`skip` are never called on an arena buffer and `live_len` is its
     /// high-water mark. Growth recreates the GPU buffer and rewrites the whole

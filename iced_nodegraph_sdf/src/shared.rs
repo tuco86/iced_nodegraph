@@ -48,7 +48,7 @@ pub(crate) struct SharedSdfResources {
     _scatter_pipeline_layout: PipelineLayout,
     _sort_pipeline_layout: PipelineLayout,
     pub render_pipeline: RenderPipeline,
-    /// Scatter cull kernels (see plan/scatter-binning.md): per-open-segment
+    /// Scatter cull kernels (see ARCHITECTURE.md, Stage 2): per-open-segment
     /// scatter, per-closed-entry scatter, then per-coarse-tile sort + fine.
     pub scatter_open_pipeline: ComputePipeline,
     pub scatter_closed_pipeline: ComputePipeline,

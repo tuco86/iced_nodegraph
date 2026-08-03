@@ -1,5 +1,5 @@
 //! CPU-side range allocator for the persistent geometry arenas
-//! (plan/arena-residency.md).
+//! (ARCHITECTURE.md, Stage 1).
 //!
 //! Each of the segment/entry/style buffers is managed as an arena: a block is
 //! allocated once, NEVER moves while live, and is returned to a free list on

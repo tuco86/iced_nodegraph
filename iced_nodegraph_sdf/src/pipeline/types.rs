@@ -317,7 +317,7 @@ pub struct SdfStats {
     pub cull_skipped: bool,
     /// Primitives served this frame from a resident arena block: geometry
     /// byte-identical to an earlier frame, reused in place regardless of draw
-    /// order - no shape evaluation, no upload (plan/arena-residency.md).
+    /// order - no shape evaluation, no upload (ARCHITECTURE.md, Stage 1).
     pub resident_hits: u32,
     /// Primitives that compiled and uploaded geometry this frame (an arena
     /// residency miss). On a reorder-only frame (selection z-resort) this stays
@@ -331,7 +331,7 @@ pub struct SdfStats {
     /// cull readback (async, at least one frame behind; sticky across frames
     /// without a cull). The scatter's demand counters keep counting past the
     /// slot cap, so this is TRUE demand - headroom against the coarse cap is
-    /// directly visible (plan/exact-slot-allocation.md, option 3).
+    /// directly visible (the coarse-slot overflow decision in ARCHITECTURE.md).
     pub coarse_demand_max: u32,
     /// Coarse tiles whose demand exceeded the usable slot cap in that
     /// readback: tiles that DROPPED pairs first-come (the one nondeterminism

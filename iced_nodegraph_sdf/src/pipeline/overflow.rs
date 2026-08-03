@@ -1,4 +1,4 @@
-//! Coarse-slot overflow telemetry (plan/exact-slot-allocation.md, option 3).
+//! Coarse-slot overflow telemetry (the coarse-slot overflow decision in ARCHITECTURE.md).
 //!
 //! The scatter cull appends (segment, entry) pairs into fixed-capacity coarse
 //! tiles; past the usable cap the sort kernel drops pairs FIRST-COME, which is
