@@ -19,7 +19,7 @@ calendar) wired together, or restores the last saved session on native targets.
     edge pattern type.
   - Math nodes: Add, Subtract, Multiply, Divide. Math nodes can be chained;
     results propagate iteratively through the graph.
-  - Config nodes: Node Config, Edge Config, Shadow Config, Pin Config, plus
+  - Config nodes: Node Config, Edge Config, Pin Config, Graph Config, plus
     Apply to Graph and Apply to Node.
 - Live style configuration: connect input nodes (sliders, color pickers) to
   config nodes, then route those into an Apply node to drive the graph's
@@ -45,9 +45,13 @@ calendar) wired together, or restores the last saved session on native targets.
 - Escape - Cancel the palette (reverts any theme preview).
 - Drag a node - Move it; group selections move together.
 - Drag from a pin - Create a connection to a compatible pin.
-- Click an edge - Cut the connection.
+- Ctrl/Cmd+click an edge, or Ctrl/Cmd+drag across edges - Cut connections.
+- Left-drag on empty canvas - Box select.
 - Scroll - Zoom in or out at the cursor.
-- Middle-drag - Pan the canvas.
+- Right-drag - Pan the canvas.
+
+These are the widget defaults; the root [README](../../README.md#controls) has
+the full table, including the touch and web variants.
 
 ## Running
 

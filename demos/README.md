@@ -31,8 +31,9 @@ rejection; and live snap feedback via `can_connect`.
 ### [500_nodes](./500_nodes/)
 
 Performance benchmark with a procedurally generated graph of 500+ nodes.
-Selection and group move are supported, with per-layer SDF debug toggles and a
-runtime stats overlay.
+Selection and group move are supported. A toggleable stats overlay reports
+per-frame op timings and node/pin/edge counts with cull rates, and the
+environment knobs below isolate individual SDF layers.
 
 **Run:** `cargo run -p demo_500_nodes`
 

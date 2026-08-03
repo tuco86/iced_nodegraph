@@ -188,10 +188,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- The doc examples for the `pin!` and `edge!` macros and for the `node_pin`
-  module were `ignore`d pseudo-code fragments that did not compile (macro calls
-  in item position, undeclared types). They are now real, compile-checked
-  examples, so `cargo test --doc` covers the macro surface.
+- The doc examples for the `pin!` macro and for the `node_pin` module were
+  `ignore`d pseudo-code fragments that did not compile (macro calls in item
+  position, undeclared types). They are now real, compile-checked examples, so
+  `cargo test --doc` covers the macro surface.
+
+### Removed
+
+**BREAKING.** A consolidation pass removed API that carried no behaviour. Each
+entry names its replacement.
+
+- **The edge id generic `E` and the `EdgeId` trait.** `NodeGraph` loses its
+  seventh type parameter, `Edge` loses its `id` field, and `edge(from, to)`
+  takes two arguments. The id was stored and never read: an edge is identified
+  by the pins it joins, and `on_connect`/`on_disconnect` have always reported
+  endpoints. Nodes still carry an id, because they are moved, cloned and
+  deleted by id. Callers that passed an id drop that argument; callers that
+  named `E` explicitly drop it from the parameter list.
+- **The `edge!` macro.** With no id to default, it expanded to a function call
+  with identical arguments. Use `edge(from, to)`.
+- **`NodeGraph::box_select_style` and `NodeGraph::cutting_tool_style`.** Both
+  shadowed values that `GraphStyle::selection_style` already held, so the same
+  three colors had two sources of truth and the closures silently won. Set them
+  where they live:
+  ```rust
+  ng.graph_style(|theme| GraphStyle {
+      selection_style: SelectionStyle {
+          box_select_fill: my_fill,
+          box_select_border: my_border,
+          edge_cutting_color: my_cut,
+          ..SelectionStyle::from_theme(theme)
+      },
+      ..GraphStyle::from_theme(theme)
+  })
+  ```
+  Untyped `(Color, Color)` tuples are gone with them.
+- **The builder methods on `GraphStyle` and `SelectionStyle`**
+  (`new`, `dark`, `light`, `background_color`, `selection_style`, `tiling`,
+  `selected_border_color`, `selected_border_width`, `box_select_fill`,
+  `box_select_border`). They contradicted the crate's one documented override
+  convention - struct-update over a theme-derived default - and had no users;
+  `GraphStyle::dark()` was `Default::default()`. `Default` and `from_theme`
+  remain, and `TilingBackground`'s constructors are unaffected:
+  `GraphStyle { tiling: Some(TilingBackground::grid(40.0, 1.0, line)), ..GraphStyle::from_theme(theme) }`.
+
+### Changed (API)
+
+**BREAKING.** `DragInfo::BoxSelect` carries `start: Point` instead of
+`start_x: f32, start_y: f32`, matching `on_drag_update`'s `Point` and
+`on_move`'s `Vector`. `DragInfo` also derives `PartialEq` now, like every other
+public diagnostic type.
+
+### Internal
+
+- `NodeGraph` stores `Node` and `Edge` values directly instead of decomposing
+  them into anonymous tuples on push, so the builders are the single
+  representation of a node and an edge.
+- The recording-renderer widget tests moved from `src/{clipping,coordinate,
+  overlay}_tests.rs` into `tests/{clipping,coordinates,overlay}.rs` and now
+  share one fake renderer in `tests/common/record.rs`, replacing three
+  near-identical copies. The crate has no `#[cfg(test)]` modules at its root.
+- `demos/hello_world`'s box-select and edge-cutting colors now follow the
+  active theme (accent and danger) instead of a hardcoded blue and red, so they
+  track the demo's theme switcher.
+- `demos/shader_editor` reports compilation failures through `Display` on
+  `CompileError`/`ValidationError` rather than a `{:?}` dump, and refuses to
+  generate WGSL for an unhandled node type instead of emitting a stub function
+  with a `TODO` comment.
 
 ## [0.4.2] - 2026-07-23
 

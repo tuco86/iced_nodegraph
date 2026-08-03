@@ -32,7 +32,7 @@ entry point both call into it).
 |------|------|
 | 0 Number Generator | Integer out, Float out |
 | 1 Math Operations | Float in A (single), Float in B (single), Float out |
-| 2 Type Converter | Any in, Integer out, Float out, String out |
+| 2 Type Converter | Any in, Integer out, Float out, String out, Boolean out |
 | 3 Display | Any in, String in |
 | 4 Bidirectional Hub | Float, Integer, Any, String (all bidirectional) |
 
@@ -40,9 +40,13 @@ entry point both call into it).
 
 - **Drag from a pin** to a compatible pin to create a connection.
 - **Drag a node** (or a selection) to move it.
-- **Scroll** to zoom, **middle-drag** to pan.
+- **Scroll** to zoom, **right-drag** to pan.
+- **Ctrl/Cmd+L** selects all: the demo rebinds `select_all` off the default
+  Ctrl/Cmd+A through `NodeGraph::keymap`.
 - **Clear All** removes every connection; **Reset** restores the initial graph;
   **Show Rules** toggles the rules reference.
+
+The root [README](../../README.md#controls) has the full default control table.
 
 ## Connection Rules
 
@@ -56,6 +60,13 @@ entry point both call into it).
 
 ```bash
 cargo run -p demo_interaction
+```
+
+This demo is the one that wires `demo_common`'s `ScreenshotHelper`, so it also
+accepts the documentation-capture flag:
+
+```bash
+cargo run -p demo_interaction --bin interaction -- --screenshot shot.png
 ```
 
 ## Implementation Notes

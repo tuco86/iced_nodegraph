@@ -32,9 +32,13 @@ Output) that compiles successfully on launch.
 - Escape - Cancel the palette.
 - Drag a node - Move it; group selections move together.
 - Drag from a pin - Connect to a compatible (same-type) pin.
-- Click an edge - Disconnect it.
+- Click a connected pin - Unplug that connection.
+- Ctrl/Cmd+click an edge - Cut it.
 - Scroll - Zoom in or out at the cursor.
-- Middle-drag - Pan the canvas.
+- Right-drag - Pan the canvas.
+
+These are the widget defaults; the root [README](../../README.md#controls) has
+the full table.
 
 ## Code Structure
 
@@ -63,10 +67,12 @@ authoring tool. Current behavior:
   the generated shader string and its compile status.
 - Code generation covers a subset of the listed node types: the math and vector
   operators, the Circle and Box SDF primitives, and the Union, Subtraction,
-  Intersection, and smooth-boolean SDF operations. Many enumerated nodes
-  (most SDF primitives, color operations, and logic nodes) appear in the
-  palette but currently emit a placeholder function, and several have no
-  defined sockets yet.
+  Intersection, and smooth-boolean SDF operations. The remaining enumerated
+  nodes (most SDF primitives, color operations, and logic nodes) appear in the
+  palette, but a graph containing one fails to compile with
+  `CompileError::CodeGeneration` rather than emitting a body that silently
+  returns zero. Several also have no defined sockets yet. The starter graph
+  uses only handled types, so it still compiles on launch.
 - Only the edge fragment shader entry point is generated. The other output
   node types are recognized for validation but do not yet drive separate
   shader passes.

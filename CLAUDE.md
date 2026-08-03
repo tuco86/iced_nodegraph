@@ -1,6 +1,75 @@
 # Claude Code Instructions for iced_nodegraph
 
-This document provides essential context for Claude Code when working on the iced_nodegraph project.
+Context for agents working in this repository. It covers workflow, gates, and
+conventions. It deliberately does not restate the public API or the control
+bindings: those live in rustdoc and the root [`README.md`](README.md), and a
+second copy would rot.
+
+## Project Status
+
+Published on crates.io through `v0.4.2`; the working tree is `0.5.0-dev`
+(`[workspace.package] version` in the root `Cargo.toml`). Still pre-1.0, so
+breaking changes are allowed when justified - but they are no longer free.
+Prefer additive, backwards-compatible changes; when a break is genuinely
+warranted, make it deliberately, record it in `CHANGELOG.md`, and bump the
+version accordingly (under Cargo's 0.x rules a break needs a minor bump).
+
+## Orientation
+
+Two published libraries plus demos, with a strictly one-way dependency
+direction: `demos/* -> iced_nodegraph -> iced_nodegraph_sdf`.
+
+- **`iced_nodegraph_sdf`** - the renderer. Shape authoring (`Curve`,
+  `ShapeBuilder`, `Shape`, `Tiling`) lowers to `Drawable` segments, which
+  `compile.rs` turns into GPU records for `SdfPipeline` and `shader.wgsl`.
+  There is one GPU primitive: the circular arc.
+- **`iced_nodegraph`** - the widget. `node_graph/mod.rs` holds the builder DSL
+  and value types, `node_graph/state.rs` the only state that survives a frame,
+  `node_graph/widget.rs` (plus `widget/draw.rs` and `widget/update.rs`) the
+  iced `Widget` impl, and `style/*` the flat style structs.
+- **`demos/*`** - hello_world, styling, interaction, 500_nodes, shader_editor,
+  and the shared `demo_common` crate.
+
+The authority on types and behaviour is the rustdoc: read
+`iced_nodegraph/src/lib.rs`'s crate docs and the module docs, and
+[`iced_nodegraph_sdf/ARCHITECTURE.md`](iced_nodegraph_sdf/ARCHITECTURE.md) for
+the renderer. Regenerate with `cargo doc --workspace --no-deps --open`.
+
+### Invariants not to break
+
+- **The host owns the graph.** The widget never mutates the caller's model. It
+  renders the nodes and edges passed to `view` and reports intent through
+  `Fn -> Message` callbacks; the application applies the change and feeds the
+  result back next frame.
+- **The widget is stateless between frames.** Only `NodeGraphState` (camera,
+  drag, selection, z-order, touch) survives, and it is keyed by *node index* -
+  a transient per-frame identity derived from the host's push order, not by the
+  user's node id. `node_lookup` is the single id-to-index map, and the identity
+  boundary is the public API: outside it, ids (`N`, `P`, `PinRef`);
+  inside it, indices.
+- **Screen and world coordinates are distinct types.** `ScreenPoint` and
+  `WorldPoint` are separate euclid spaces; convert only through `Camera2D`
+  (`screen_to_world` / `world_to_screen`) and the `IntoIced` / `IntoEuclid`
+  traits in `node_graph/euclid.rs`. Never coerce one into the other with a raw
+  `Point`.
+- **The renderer never fails a frame.** When SDF work does not fit, it is
+  dropped and counted in `SdfStats` rather than erroring.
+
+### Styling convention
+
+One override convention, everywhere: struct-update over a theme-derived
+default.
+
+```rust
+node(0, pos, body).style(|theme, status| NodeStyle {
+    fill_color: my_color.into(),
+    ..default_node_style(theme, status)
+});
+```
+
+Styles are concrete flat structs - no `Option`/merge config layer, no builder
+chains. `Pattern` (re-exported from `iced_nodegraph_sdf`) controls every
+stroke.
 
 ## Development Workflow
 
@@ -11,14 +80,17 @@ This document provides essential context for Claude Code when working on the ice
 4. **Commit** - Once code is clean, create a commit
 5. **Push** - Only after all checks pass
 
-**Pre-Push Checklist (all must pass):**
-- `cargo test -p iced_nodegraph` - unit tests
-- `cargo check -p iced_nodegraph` - native compilation
-- `cargo check -p iced_nodegraph --target wasm32-unknown-unknown` - WASM compilation
-- `cargo clippy -p iced_nodegraph -- -D warnings` - lints
-- `cargo build -p iced_nodegraph` - full build
+**Pre-Push Checklist (all must pass):** these mirror the CI `test` job plus the
+wasm check CI does not run.
 
-A task is only complete when all checks pass and code is pushed.
+- `cargo fmt --all -- --check`
+- `cargo clippy -p iced_nodegraph -p iced_nodegraph_sdf -- -D warnings`
+- `cargo test -p iced_nodegraph`
+- `cargo test -p iced_nodegraph_sdf -- --test-threads=1` (the pixel tests each
+  spin up a wgpu device; parallel runs oversubscribe the GPU)
+- `cargo check -p iced_nodegraph --target wasm32-unknown-unknown`
+
+A task is only complete when all checks pass and the code is pushed.
 
 **Git hooks (enforce the above automatically):** versioned hooks live in
 `.githooks/`. Enable them once per clone with:
@@ -28,36 +100,60 @@ git config core.hooksPath .githooks
 ```
 
 - `pre-commit` runs `cargo fmt --all -- --check` (mirrors the CI format gate).
-- `pre-push` runs the full CI-equivalent gate: fmt check, clippy `-D warnings`
-  on both crates, both test suites (SDF serialized), and the wasm check.
+- `pre-push` runs the full list above, skipping the wasm check when the
+  `wasm32-unknown-unknown` target is not installed.
 
-**Pre-Publish Requirement (before any `cargo publish`):**
-- The CI semver gate (`.github/workflows/ci.yml`) runs `cargo semver-checks` for
-  `iced_nodegraph` and `iced_nodegraph_sdf` against the most recent release tag
-  (`v*`). The first release (`v0.1.0`) is tagged, so the gate is now ACTIVE: any
-  public-API break since the last release fails the build until the version is
-  bumped to match. Under Cargo's 0.x semver rules a breaking change requires a
-  minor bump (`0.1.x` -> `0.2.0`); additive, non-breaking changes are a patch
-  bump (`0.1.0` -> `0.1.1`). Do not break the public API casually anymore -
-  prefer additive changes, and when a break is genuinely warranted, make it
-  deliberately and bump the minor version in the same change.
+CI (`.github/workflows/ci.yml`) additionally runs `cargo deny check` and the
+semver gate below. It is native-only: the wasm check is local.
 
-**Release process:** the full step-by-step release checklist (version bump in
-all three `Cargo.toml` fields, CHANGELOG, gates, tag, publish order, next dev
-cycle) lives in [`RELEASING.md`](RELEASING.md). Follow it for every release.
+**Pre-Publish Requirement (before any `cargo publish`):** the CI semver job
+runs `cargo semver-checks` for `iced_nodegraph` and `iced_nodegraph_sdf` with
+the most recent release tag (`v*`) as the baseline. Tags exist, so the gate is
+ACTIVE: any public-API break since the last release fails the build until the
+version is bumped to match.
+
+**Release process:** the full step-by-step checklist (version bump, CHANGELOG,
+gates, tag, publish order, next dev cycle) lives in
+[`RELEASING.md`](RELEASING.md). Follow it for every release.
 
 ## Automatic Validation
 
-**Via SubagentStop hook:**
-When a subagent/task completes, `.claude/hooks/validate.ps1` runs:
-- `cargo check -p iced_nodegraph` - reports native compile errors
-- `cargo test -p iced_nodegraph` - reports test failures
+`.claude/settings.json` registers a `Stop` hook that picks
+`.claude/hooks/validate.ps1` on Windows shells and `.claude/hooks/validate.sh`
+everywhere else. Both run the same list and must stay in sync:
 
-The script only outputs on errors to avoid filling context.
+- `cargo fmt --all --check`
+- `cargo check -p iced_nodegraph`
+- `cargo check -p iced_nodegraph --target wasm32-unknown-unknown`
+- `cargo test -p iced_nodegraph`
 
-**Note:** Run `cargo fmt --all` manually before committing if desired.
+They print only on failure, and always exit 0: a non-zero exit would block the
+Stop event and re-invoke the agent in a loop.
 
-Use the `code-reviewer` agent for reviewing significant code changes before committing.
+Clippy and the SDF test suite are not in the hook - run them yourself before
+pushing.
+
+## Testing
+
+Unit tests live next to the code they cover (`camera.rs`, `input.rs`,
+`state.rs`, `widget.rs`, `content.rs`, `connection.rs`, `style/*`). Everything
+that drives the widget through its public API lives in `iced_nodegraph/tests/`:
+`clipping.rs`, `coordinates.rs` and `overlay.rs` assert on the arguments the
+widget hands its children using the shared recording renderer in
+`tests/common/record.rs`; `simulator.rs` drives real events through
+`iced_test::Simulator`; `widget_pixel.rs` and `edge_grid_pixel.rs` are pixel
+oracles against the headless GPU harness in `tests/common/mod.rs`.
+`benches/frame_prep.rs` measures frame-preparation cost. The SDF crate's pixel
+tests in `iced_nodegraph_sdf/src/pipeline/pixel_tests.rs` need a real GPU
+adapter and serialized execution.
+
+There are no `#[cfg(test)]` modules at the crate root: a test that only touches
+the public API belongs in `tests/`, where it also proves the API is reachable
+from outside.
+
+Coordinate math, the interaction state machine, style-to-SDF translation, and
+the rendered output are all covered. Do not quote a test count in
+documentation - it goes stale on the next commit.
 
 ## Git Commit Message Rules
 
@@ -78,18 +174,8 @@ Use the `code-reviewer` agent for reviewing significant code changes before comm
 - `refactor: separate library from demo dependencies`
 - `docs: clarify coordinate system formulas`
 
-**Note**: Claude Code automatically adds co-author attribution when creating commits.
-
-## Project Status
-
-**Released, pre-1.0 (`v0.1.0`)**: The project is published to crates.io. It is
-still pre-1.0 (beta), so the API is not frozen and breaking changes are allowed
-when justified - but they are no longer free. Treat the public API as
-stabilizing: prefer additive, backwards-compatible changes; reserve breaks for
-cases that genuinely warrant them. Every public-API break must be intentional
-and paired with the appropriate version bump (a minor bump under 0.x semver, see
-the Pre-Publish Requirement above). The semver gate enforces this against the
-last release tag.
+**Note**: Claude Code automatically adds co-author attribution when creating
+commits.
 
 ## Documentation Standards
 
@@ -113,6 +199,9 @@ earn its place; if it would only repeat the signature, leave it off.
 - NO EMOJIS in code comments, documentation, or console output.
 - Clear, technical language. No informal expressions, no marketing.
 - Status indicators in prose: "VERIFIED", "TESTED", "INCOMPLETE" (not symbols).
+- Describe what the code IS, not what it used to be. No migration breadcrumbs
+  ("X no longer exists", "this replaces Y") and no history narration in a doc
+  comment - that is what `CHANGELOG.md` and the git log are for.
 
 ### When you do document a public item
 
@@ -166,267 +255,57 @@ MUST NOT:
 - Each module gets a short overview: purpose, main capabilities, and one
   code-oriented quick-start, so both concept-first and code-first readers land.
 
-## Tool Usage Preferences
+## Code Intelligence
 
-**ALWAYS use LSP (cclsp MCP) for Rust code navigation - it's faster and more accurate than grep:**
+For Rust code navigation, prefer a language server over text search: it
+resolves through re-exports, generics, and trait impls, which grep cannot.
+Whatever symbol-aware tooling is available to you, use these operations:
 
-| Task | Tool | Example |
-|------|------|---------|
-| Find definition | `mcp__cclsp__find_definition` | `symbol_name: "NodeGraph"` |
-| Find all usages | `mcp__cclsp__find_references` | `symbol_name: "push_edge"` |
-| Rename symbol | `mcp__cclsp__rename_symbol` | `symbol_name: "old", new_name: "new"` |
-| Get diagnostics | `mcp__cclsp__get_diagnostics` | `file_path: "src/lib.rs"` |
+- **Go to definition** to find where a type or function is declared.
+- **Find references** before changing any public item - this workspace has
+  five demo crates plus doctests calling into the library, and the compiler
+  will not tell you about the doc examples until you run them.
+- **Rename symbol** for renames, rather than a find-and-replace pass.
+- **Diagnostics** for a fast error/warning read on a file mid-edit, instead of
+  a full `cargo check` cycle.
 
-**Parameters:**
-- `file_path`: File where symbol is defined (for context)
-- `symbol_name`: Name of the symbol to find
-- `symbol_kind`: Optional - "function", "struct", "method", "field", etc.
+Text search (`grep` / `glob`) is still the right tool for string literals,
+comments, non-Rust files (`.toml`, `.md`, `.wgsl`), regex patterns, and when no
+language server is running.
 
-**When to use Grep/Glob instead:**
-- Searching in string literals or comments
-- Non-Rust files (toml, md, wgsl)
-- Regex pattern searches
-- LSP server unavailable
+## Interaction
 
-**Common patterns to follow:**
-- When adding a new style field, use `find_references` on `default_node_style` to see the pattern
-- When modifying NodeGraph API, check usages in demos with `find_references`
+The root [`README.md`](README.md#controls) owns the control table (mouse,
+keyboard, and touch bindings, plus the web-specific variants). Every binding is
+host-rebindable through `NodeGraph::keymap`; see the `Keymap` type.
 
-## Architecture Overview
+Two behaviours worth knowing before touching `widget/update.rs`:
 
-This workspace contains a node graph editor built on Iced 0.14:
+- **Plug behaviour.** An edge drag snaps to a compatible pin and fires
+  `on_connect` immediately, not on release; moving away fires `on_disconnect`.
+  Releasing while snapped keeps the connection, releasing while unsnapped
+  discards the drag. So one drag can report several connections.
+- **Hit thresholds.** `PIN_CLICK_THRESHOLD` (8.0) and `EDGE_CUT_THRESHOLD`
+  (10.0) in `widget/update.rs` are screen pixels, divided by `camera.zoom()` at
+  the comparison sites so the on-screen hit target stays constant at any zoom.
 
-- **`iced_nodegraph`** - Custom node graph widget built on Iced GUI framework *(main project)*
-- **`iced_nodegraph_sdf`** - Segment-based SDF renderer providing exact distance fields for nodes, edges, pins, and pin cutouts
-- **`demos/*`** - hello_world, styling, interaction, 500_nodes, shader_editor, plus a shared `common` crate
+## Platform Notes
 
-`ngwa-rs` (a SpacetimeDB backend module) is an optional, separate sibling workspace at `../ngwa-rs`. It is NOT a member of this workspace's `Cargo.toml` and is not required to build or run the widget or demos.
+The libraries build on `iced_widget` / `iced_wgpu` 0.14, never on the `iced`
+umbrella crate: Cargo unifies features additively, so an umbrella dependency
+would force iced's defaults on every downstream application. `iced` is a
+dependency of the demo binaries and of tests/doctests only. See the comment in
+the workspace `Cargo.toml`.
 
-**Dependencies**: The published libraries build on `iced_widget` / `iced_wgpu` 0.14 (plus the in-tree `iced_nodegraph_sdf` crate for SDF-based rendering), never on the `iced` umbrella crate - see the comment in the workspace `Cargo.toml`. `iced` itself is a dependency of the demo binaries and of tests/doctests only, and is declared `default-features = false` so each member opts in explicitly.
+### WASM browser compatibility
 
-**Current Status**: Core functionality is complete - node/pin interaction, edge connections, and coordinate transformations are fully functional with type-safe API.
+WebGPU only - there is no WebGL fallback.
 
-### WASM Browser Compatibility
-- **Chrome/Chromium**: Full WebGPU support, recommended browser
-- **Firefox**: WebGPU has known buffer-mapping issues (async timing bugs), may crash
-- **Safari**: Untested
+- **Chrome/Chromium**: full WebGPU support, the recommended browser.
+- **Firefox**: WebGPU has known buffer-mapping issues (async timing bugs), may
+  crash.
+- **Safari**: untested.
 
-For WASM demos, Chrome or Chromium-based browsers are recommended.
-
-## Core Architecture Patterns
-
-### Coordinate System Abstraction - VERIFIED & TESTED
-The project uses **euclid** crate for type-safe coordinate transformations:
-- `WorldPoint`/`ScreenPoint` distinguish coordinate spaces with compile-time type safety
-- `Camera2D` handles zoom/pan transformations in `src/node_graph/camera.rs`
-- Convert between coordinate systems using `IntoIced`/`IntoEuclid` traits in `src/node_graph/euclid.rs`
-
-**Critical Transformation Formulas** (mathematically verified):
-- **Screen → World**: `world = screen / zoom - position`
-  - Implementation: `Transform2D::scale(1/zoom).then_translate(-position)`
-- **World → Screen**: `screen = (world + position) * zoom`
-  - Applied in rendering pipeline via `draw_with()`
-- **Zoom at Cursor**: `new_pos = old_pos + cursor_screen * (1/new_zoom - 1/old_zoom)`
-  - Maintains visual stability when zooming
-
-**Test Coverage**: 44 unit tests across camera, state, interaction, and API modules validate all core functionality.
-
-**See `src/node_graph/camera.rs` module documentation for complete mathematical derivations and usage patterns.**
-
-### Widget Architecture
-- **NodeGraph** (`src/node_graph/mod.rs`) - Main container widget managing nodes and edges
-- **NodePin** (`src/node_pin/mod.rs`) - Connection points with `PinSide` enum (Left/Right/Top/Bottom/Row)
-- **PinRef** (`src/node_graph/mod.rs`) - Type-safe identifier for pin connections (`node_id`, `pin_id`), generic over `N`/`P`
-- **PinEnd** (`src/node_pin/mod.rs`) - Endpoint view passed to `can_connect` (ids, direction, user info)
-- **Callbacks** (`src/node_graph/mod.rs`) - `Fn -> Message` handlers (`on_connect`, `on_move`, ...) instead of an event enum
-- **State Management** (`src/node_graph/state.rs`) - Handles dragging states and camera state
-
-### SDF-Based Rendering
-Uses **iced_nodegraph_sdf** for high-performance node graph rendering:
-- Nodes, edges, pins, and overlays rendered via SDF `Layer` + `Pattern` API
-- `Pattern` controls stroke appearance (solid, dashed, dotted, arrowed, etc.)
-- `Layer` composites fill, gradient, outline, blur, and expand effects
-- Background is theme-driven via `GraphStyle`, with optional `TilingBackground` (`TilingKind`: grid/dots/triangle/hex)
-
-**Edge System**: Fully functional with type-safe API:
-- `push_edge(edge!(from, to))` adds connections between pins (endpoints are `PinRef`)
-- Edge dragging and static edge rendering both work
-- SDF renders edges with bezier curves and configurable patterns
-
-**Plug Behavior**: Edge connections behave like physical plugs:
-- `EdgeConnected` fires immediately when dragging edge snaps to a compatible pin
-- `EdgeDisconnected` fires when moving away from a snapped pin
-- Mouse release while snapped keeps the connection; release while not snapped discards the drag
-- This provides immediate tactile feedback rather than waiting for mouse release
-
-## Development Workflows
-
-### Building & Testing
-```bash
-# Build node graph widget
-cargo build -p iced_nodegraph
-
-# Run demos
-cargo run -p demo_hello_world
-cargo run -p demo_styling
-cargo run -p demo_500_nodes
-cargo run -p demo_shader_editor
-
-# Run tests
-cargo test -p iced_nodegraph
-```
-
-### SpacetimeDB Integration
-```bash
-# Install SpacetimeDB CLI first
-cd ngwa-rs
-spacetime publish  # Deploy backend module
-```
-
-## Project-Specific Conventions
-
-### Widget Implementation Pattern
-All custom widgets follow Iced's advanced widget pattern:
-1. Implement `iced::advanced::Widget` trait
-2. Define state type and use `tree::Tag::of::<StateType>()`
-3. Handle layout, drawing, and events in separate methods
-4. Use `tree::State` for persistent widget state
-
-### Coordinate Transform Pattern
-Always use typed coordinates and proper transformation order:
-```rust
-// Mouse input: Screen → World
-let cursor_position: ScreenPoint = cursor.position().into_euclid();
-let world_cursor: WorldPoint = camera.screen_to_world().transform_point(cursor_position);
-
-// CRITICAL: Order matters!
-// ✅ CORRECT: Transform2D::scale(1/zoom).then_translate(-position)
-//    Result: world = screen / zoom - position
-// ❌ WRONG: Transform2D::translation(-position).pre_scale(zoom)
-//    Result: world = screen * zoom - position (incorrect inverse)
-```
-
-**Click Detection Thresholds**:
-- `PIN_CLICK_THRESHOLD = 8.0` screen px (divided by `camera.zoom()` at the
-  comparison sites, so the on-screen hit target is constant at any zoom)
-- `EDGE_CUT_THRESHOLD = 10.0` screen px (same 1/zoom scaling)
-
-### Style System Pattern
-Styles are concrete, flat structs (no `Option`/`merge` config layer):
-- `NodeStyle` has flat `fill_color`, `border_color`, `border_pattern: Pattern`,
-  `border_outline_*`, and `shadow_*` fields (colors are `ColorQuad`)
-- `EdgeStyle` has `pattern: Pattern` for the stroke plus flat `border_*` and
-  `shadow_*` fields; `PinStyle` mirrors the same shape
-- Override via struct-update over the theme default inside a `.style()` closure:
-  `NodeStyle { fill_color, ..default_node_style(theme, status) }`
-- `Pattern::solid(width)`, `Pattern::dashed(w, dash, gap)`, etc. for stroke patterns
-
-## Key Integration Points
-
-### Iced Framework
-- Uses **iced 0.14** from crates.io (upstream)
-- Uses advanced renderer features via `iced_nodegraph_sdf`
-- Requires `features = ["advanced", "wgpu", "tokio"]`
-
-### Cross-Project Dependencies
-- SpacetimeDB module (`ngwa-rs`) is independent backend component
-
-## Module Architecture
-
-### Library Entry Point
-- `iced_nodegraph/src/lib.rs` - Public API exports, re-exports all public types
-
-### Core Modules (iced_nodegraph/src/)
-
-| Module | Purpose | Key Types |
-|--------|---------|-----------|
-| `node_graph/mod.rs` | Main widget, builders | `NodeGraph`, `Node`, `Edge`, `PinRef`, `DragInfo` |
-| `node_graph/widget.rs` | Widget trait impl (trunk) | `node_graph()` constructor |
-| `node_graph/widget/draw.rs` | Render path | `draw_impl`, SDF layer batching |
-| `node_graph/widget/update.rs` | Event path | `update_impl`, `Dragging` state machine |
-| `node_graph/widget/camera_overlay.rs` | Pop-out overlay wrapper | `CameraOverlay` |
-| `node_graph/camera.rs` | Zoom/pan transforms | `Camera2D`, coordinate math |
-| `node_graph/input.rs` | Rebindable keymap | `Keymap`, `KeyCombo`, `KeyAction` |
-| `node_graph/euclid.rs` | Type-safe coords | `WorldPoint`, `ScreenPoint`, `IntoIced` |
-| `node_graph/state.rs` | Interaction state | `State`, `DragState` |
-| `node_pin/mod.rs` | Connection points | `NodePin`, `PinEnd`, `PinInfo`, `PinSide` |
-| `style/{node,edge,pin}.rs` | Theming | `NodeStyle`, `EdgeStyle`, `PinStyle`, `GraphStyle` |
-| `style/defaults.rs` | Theme defaults | `default_node_style()`, `default_edge_style()`, `default_pin_style()` |
-| `content.rs` | Layout helpers | `node_header()`, `node_footer()` |
-
-### Demo Applications (demos/)
-
-| Demo | Purpose | Key Patterns |
-|------|---------|--------------|
-| `hello_world/` | Basic usage | Node creation, connections |
-| `styling/` | Customization | `.style()` closures, `NodeStyle`/`EdgeStyle` |
-| `500_nodes/` | Performance | Procedural generation |
-| `shader_editor/` | Complex app | Compiler, live preview |
-
-### Dependency Flow
-```
-lib.rs (public API)
-  ├── node_graph/ (widget)
-  │     ├── widget.rs (iced Widget trait; draw/update/camera_overlay submodules)
-  │     ├── state.rs (interaction)
-  │     └── camera.rs (transforms)
-  ├── node_pin/ (pin widget)
-  ├── style/ (theming)
-  └── content.rs (layout helpers)
-```
-
-## Public API Reference
-
-### Core Types
-```rust
-// Type-safe pin reference, generic over node id N and pin id P.
-// PinReference (the old usize/usize struct) no longer exists - use PinRef.
-pub struct PinRef<N = usize, P = usize> {
-    pub node_id: N,
-    pub pin_id: P,
-}
-```
-
-There is no `NodeGraphEvent` enum. The widget reports through `Fn -> Message`
-callbacks (`on_connect`, `on_move`, ...); the host defines its own `Message`
-enum and maps each callback to one of its variants.
-
-### NodeGraph Methods
-The widget is generic over node id `N` and pin id `P` (both default to `usize`).
-A connection endpoint is a `PinRef<N, P> { node_id, pin_id }`. Nodes and edges
-are built with the `node(...)` / `edge!(...)` constructors and pushed as whole
-builder values; styling is attached to the builder via a `.style()` closure
-(there is no `push_node_styled` / `push_edge_styled`, and no `NodeConfig` /
-`EdgeConfig`).
-```rust
-// Adding content: build with node()/edge!, then push the builder
-ng.push_node(node(node_id, position, element));
-ng.push_node(node(node_id, position, element)
-    .style(|theme, status| NodeStyle { ..default_node_style(theme, status) })
-    .pin_style(|theme, status, info| PinStyle { ..default_pin_style(theme, status) }));
-ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)));
-ng.push_edge(edge!(from, to)
-    .style(|theme, status, from_pin, to_pin| EdgeStyle { ..default_edge_style(theme, status) }));
-
-// Event handlers (callbacks return the host's own Message)
-ng.on_connect(|from, to| Message)        // from, to: PinRef<N, P>
-ng.on_disconnect(|from, to| Message)
-ng.on_move(|delta, node_ids| Message)    // delta: Vector, node_ids: Vec<N> (single or group)
-ng.on_select(|selected_ids| Message)     // selected_ids: Vec<N>
-ng.on_clone(|node_ids| Message)
-ng.on_delete(|node_ids| Message)
-ng.on_pan(|pos, zoom| Message)           // commit-on-release for pan AND zoom
-ng.on_info(|info| Message)               // per-frame GraphInfo metrics
-ng.on_drag_start(|drag| Message)         // low-level drag hooks (DragInfo<N, P>)
-ng.on_drag_update(|pos| Message)
-ng.on_drag_end(|| Message)
-ng.can_connect(|from, to| bool)          // from, to: PinEnd<'_, N, P, UI> (not PinRef)
-ng.selection(&selected_set)              // highlight + z-order selected nodes
-ng.view(pos, zoom)                        // controlled camera; host owns pos/zoom (pairs with on_pan)
-```
-
-The camera is a controlled value just like selection: the host keeps `pos`/`zoom`
-in its model, feeds them via `view()`, and updates them from `on_pan`. Pushing a
-new `view()` (e.g. resetting to origin) snaps the widget camera there.
-
-When adding features, maintain the coordinate system abstractions and use `iced_nodegraph_sdf` Layer/Pattern API for custom rendering.
+Build the browser demos with `./build_docs.sh` (or `build_docs.ps1`): it
+generates rustdoc, then `wasm-pack`s each demo into
+`target/doc/<demo>/pkg/` alongside the shared static assets.
