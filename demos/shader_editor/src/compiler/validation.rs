@@ -2,12 +2,23 @@ use crate::shader_graph::ShaderGraph;
 use std::collections::{HashMap, VecDeque};
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum ValidationError {
     CyclicDependency,
     TypeMismatch,
     InvalidConnection,
     MissingOutputNode,
+}
+
+impl std::fmt::Display for ValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let reason = match self {
+            Self::CyclicDependency => "the graph contains a cycle",
+            Self::TypeMismatch => "a connection joins two different socket types",
+            Self::InvalidConnection => "a connection references a node that is not in the graph",
+            Self::MissingOutputNode => "the graph has no Output node",
+        };
+        f.write_str(reason)
+    }
 }
 
 pub struct Validator;

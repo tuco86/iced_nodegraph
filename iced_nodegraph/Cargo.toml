@@ -29,7 +29,7 @@ web-time.workspace = true
 [dev-dependencies]
 # The umbrella crate stays a dev-dependency: doctests are written the way users
 # write code (`use iced::widget::text;`), and the widget-trait test harnesses
-# (coordinate_tests, clipping_tests, overlay_tests) reach Tree/Widget/Layout via
+# (coordinates, clipping, overlay) reach Tree/Widget/Layout via
 # `iced::advanced`. Building the umbrella crate at all also requires an executor
 # and a winit backend, hence thread-pool/x11/wayland.
 iced = { workspace = true, features = [

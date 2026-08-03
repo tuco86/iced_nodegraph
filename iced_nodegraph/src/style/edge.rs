@@ -2,8 +2,8 @@
 //!
 //! A flat, concrete struct the renderer consumes directly. See [`super::node`]
 //! for the override-via-struct-update pattern over [`default_edge_style`](crate::default_edge_style).
-//! The legacy `EdgeBorder`/`EdgeShadow` nested structs are flattened into
-//! grouped fields here.
+//! Stroke, border ring and shadow are flat field groups rather than nested
+//! structs, so a single struct-update expression can reach any one of them.
 //!
 //! Color fields are [`ColorQuad`]s. The stroke `color` is an arc-length gradient
 //! start -> end. To make an edge follow its connected pins' colors, derive the

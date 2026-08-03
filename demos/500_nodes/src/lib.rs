@@ -35,10 +35,10 @@
 mod graph;
 mod nodes;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(feature = "wasm")]
 use wasm_bindgen::prelude::*;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(feature = "wasm")]
 #[wasm_bindgen(start)]
 pub fn wasm_init() {
     console_error_panic_hook::set_once();
@@ -128,16 +128,14 @@ pub fn main() -> iced::Result {
         .run()
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(feature = "wasm")]
 #[wasm_bindgen]
 pub fn run_demo() {
     let _ = main();
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 enum ApplicationMessage {
-    Noop,
     EdgeConnected {
         from: PinRef<usize, usize>,
         to: PinRef<usize, usize>,
@@ -240,7 +238,6 @@ impl Application {
 
     fn update(&mut self, message: ApplicationMessage) {
         match message {
-            ApplicationMessage::Noop => (),
             ApplicationMessage::EdgeConnected { from, to } => {
                 self.edges.push((from, to));
             }
@@ -390,7 +387,7 @@ impl Application {
 
         // Add all edges
         for (from, to) in &self.edges {
-            ng.push_edge(edge!(*from, *to));
+            ng.push_edge(edge(*from, *to));
         }
 
         // Top-right overlay: the toggle chip, plus the stats panel while shown.

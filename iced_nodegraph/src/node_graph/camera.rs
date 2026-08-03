@@ -869,11 +869,9 @@ mod tests {
         );
     }
 
-    // === Viewport-origin layout transforms ===
-    // These three functions map into the widget's layout-absolute space
-    // (viewport_origin + world) and were previously only exercised indirectly.
-    // The cases below use a non-1 zoom and non-zero origin so every term of
-    // each formula is load-bearing (mutation-audit regressions).
+    // Layout-absolute transforms (viewport_origin + world). Every case uses a
+    // non-1 zoom and a non-zero origin so each term of the formula is
+    // load-bearing: dropping any one of them fails a test.
 
     #[test]
     fn test_layer_transformation_matches_world_to_screen() {

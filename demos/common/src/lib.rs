@@ -1,6 +1,5 @@
-//! Shared utilities for iced_nodegraph demos.
-//!
-//! Provides screenshot capture and other common functionality.
+//! Shared utilities for iced_nodegraph demos: themed node content (title bar
+//! plus body) and `--screenshot` capture.
 
 mod content;
 mod screenshot;

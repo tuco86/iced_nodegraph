@@ -8,10 +8,18 @@ use validation::{ValidationError, Validator};
 pub struct ShaderCompiler;
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum CompileError {
     Validation(ValidationError),
     CodeGeneration(String),
+}
+
+impl std::fmt::Display for CompileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Validation(err) => write!(f, "invalid graph: {err}"),
+            Self::CodeGeneration(reason) => write!(f, "cannot generate WGSL: {reason}"),
+        }
+    }
 }
 
 impl From<ValidationError> for CompileError {
@@ -37,7 +45,7 @@ impl ShaderCompiler {
         // Generate node functions in dependency order
         for node_id in &order {
             if let Some(node) = graph.get_node(*node_id) {
-                let func_code = CodeGenerator::generate_node_function(graph, node);
+                let func_code = CodeGenerator::generate_node_function(graph, node)?;
                 if !func_code.is_empty() {
                     wgsl.push_str(&func_code);
                 }

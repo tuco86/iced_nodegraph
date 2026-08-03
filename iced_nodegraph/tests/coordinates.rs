@@ -20,123 +20,14 @@ use iced::advanced::widget::{Tree, Widget};
 use iced::advanced::{Layout, layout, mouse, renderer};
 use iced::keyboard;
 use iced::touch;
-use iced::{
-    Background, Color, Element, Length, Pixels, Point, Rectangle, Size, Theme, Transformation,
-    Vector,
-};
+use iced::{Background, Color, Element, Length, Point, Rectangle, Size, Theme, Vector};
 use iced_wgpu::core::clipboard;
-use iced_wgpu::core::image;
-use iced_wgpu::core::text;
 
-use crate::{NodeGraph, node};
+use iced_nodegraph::{NodeGraph, node};
 
-// ---------------------------------------------------------------------------
-// Recording renderer: tracks the transformation stack (composed like
-// iced_graphics: child = current * transformation) so we can map drawn
-// positions back to absolute screen pixels, and records primitive clip bounds.
-// ---------------------------------------------------------------------------
-#[derive(Debug, Default, Clone)]
-struct Recorded {
-    /// Absolute screen rects of `fill_quad` calls (transformation applied).
-    quads: Vec<Rectangle>,
-    /// Bounds handed to `draw_primitive` (SDF layers), in order.
-    primitives: Vec<Rectangle>,
-    /// Unified draw-call stream in call order, across both `fill_quad`
-    /// (hosted content) and `draw_primitive` (SDF layers). Lets a test assert
-    /// the per-node SDF/content/SDF sandwich order the host integration relies
-    /// on, which the two separate vecs above lose.
-    events: Vec<DrawEvent>,
-}
+mod common;
 
-/// One ordered draw call captured by [`Rec`], tagged by source.
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum DrawEvent {
-    /// A hosted-content quad (`fill_quad`) at this absolute rect.
-    Content(Rectangle),
-    /// An SDF layer (`draw_primitive`) at this absolute clip rect.
-    Sdf(Rectangle),
-}
-
-struct Rec {
-    stack: Vec<Transformation>,
-    out: Rc<RefCell<Recorded>>,
-}
-
-impl Rec {
-    fn new(out: Rc<RefCell<Recorded>>) -> Self {
-        Self {
-            stack: vec![Transformation::IDENTITY],
-            out,
-        }
-    }
-    fn cur(&self) -> Transformation {
-        *self.stack.last().unwrap()
-    }
-}
-
-impl renderer::Renderer for Rec {
-    fn start_layer(&mut self, _bounds: Rectangle) {}
-    fn end_layer(&mut self) {}
-    fn start_transformation(&mut self, t: Transformation) {
-        // iced_graphics composes the new transformation onto the current one.
-        self.stack.push(self.cur() * t);
-    }
-    fn end_transformation(&mut self) {
-        self.stack.pop();
-        if self.stack.is_empty() {
-            self.stack.push(Transformation::IDENTITY);
-        }
-    }
-    fn reset(&mut self, _new_bounds: Rectangle) {}
-    fn fill_quad(&mut self, quad: renderer::Quad, _background: impl Into<Background>) {
-        let abs = quad.bounds * self.cur();
-        let mut out = self.out.borrow_mut();
-        out.quads.push(abs);
-        out.events.push(DrawEvent::Content(abs));
-    }
-    fn allocate_image(
-        &mut self,
-        _handle: &image::Handle,
-        _callback: impl FnOnce(Result<image::Allocation, image::Error>) + Send + 'static,
-    ) {
-    }
-}
-
-impl text::Renderer for Rec {
-    type Font = iced::Font;
-    // Real (GPU-free) types: iced_core's `()` impls are debug_assertions-gated
-    // and break release test builds; these tests never lay out text.
-    type Paragraph = iced_wgpu::graphics::text::Paragraph;
-    type Editor = iced_wgpu::graphics::text::Editor;
-
-    const ICON_FONT: iced::Font = iced::Font::DEFAULT;
-    const CHECKMARK_ICON: char = '0';
-    const ARROW_DOWN_ICON: char = '0';
-    const SCROLL_UP_ICON: char = '0';
-    const SCROLL_DOWN_ICON: char = '0';
-    const SCROLL_LEFT_ICON: char = '0';
-    const SCROLL_RIGHT_ICON: char = '0';
-    const ICED_LOGO: char = '0';
-
-    fn default_font(&self) -> Self::Font {
-        iced::Font::default()
-    }
-    fn default_size(&self) -> Pixels {
-        Pixels(16.0)
-    }
-    fn fill_paragraph(&mut self, _: &Self::Paragraph, _: Point, _: Color, _: Rectangle) {}
-    fn fill_editor(&mut self, _: &Self::Editor, _: Point, _: Color, _: Rectangle) {}
-    fn fill_text(&mut self, _: text::Text, _: Point, _: Color, _: Rectangle) {}
-}
-
-impl iced_wgpu::primitive::Renderer for Rec {
-    fn draw_primitive(&mut self, bounds: Rectangle, _primitive: impl iced_wgpu::Primitive) {
-        let abs = bounds * self.cur();
-        let mut out = self.out.borrow_mut();
-        out.primitives.push(abs);
-        out.events.push(DrawEvent::Sdf(abs));
-    }
-}
+use common::record::{DrawEvent, Recorded, Recorder};
 
 // ---------------------------------------------------------------------------
 // A leaf node-content widget that paints one fill_quad covering its bounds, so
@@ -144,17 +35,17 @@ impl iced_wgpu::primitive::Renderer for Rec {
 // ---------------------------------------------------------------------------
 struct ContentProbe;
 
-impl<Message> Widget<Message, Theme, Rec> for ContentProbe {
+impl<Message> Widget<Message, Theme, Recorder> for ContentProbe {
     fn size(&self) -> Size<Length> {
         Size::new(Length::Fixed(40.0), Length::Fixed(20.0))
     }
-    fn layout(&mut self, _: &mut Tree, _: &Rec, limits: &layout::Limits) -> layout::Node {
+    fn layout(&mut self, _: &mut Tree, _: &Recorder, limits: &layout::Limits) -> layout::Node {
         layout::Node::new(limits.resolve(Length::Fixed(40.0), Length::Fixed(20.0), Size::ZERO))
     }
     fn draw(
         &self,
         _: &Tree,
-        renderer: &mut Rec,
+        renderer: &mut Recorder,
         _: &Theme,
         _: &renderer::Style,
         layout: Layout<'_>,
@@ -173,7 +64,7 @@ impl<Message> Widget<Message, Theme, Rec> for ContentProbe {
     }
 }
 
-impl<'a, Message: 'a> From<ContentProbe> for Element<'a, Message, Theme, Rec> {
+impl<'a, Message: 'a> From<ContentProbe> for Element<'a, Message, Theme, Recorder> {
     fn from(w: ContentProbe) -> Self {
         Element::new(w)
     }
@@ -188,15 +79,15 @@ fn draw_at_origin(
     camera_pos: Point,
     camera_zoom: f32,
 ) -> Recorded {
-    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Rec> = NodeGraph::default()
+    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Recorder> = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
         .view(camera_pos, camera_zoom);
     graph.push_node(node(0_usize, node_world, Element::from(ContentProbe)));
 
-    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Rec>);
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Recorder>);
     let out = Rc::new(RefCell::new(Recorded::default()));
-    let mut renderer = Rec::new(out.clone());
+    let mut renderer = Recorder::new(out.clone());
 
     let layout_node = graph.layout(
         &mut tree,
@@ -283,7 +174,7 @@ fn click_select(
     let selected: Rc<RefCell<Option<Vec<usize>>>> = Rc::new(RefCell::new(None));
     let sel = selected.clone();
 
-    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Rec> = NodeGraph::default()
+    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Recorder> = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
         .view(camera_pos, camera_zoom)
@@ -292,9 +183,9 @@ fn click_select(
         });
     graph.push_node(node(0_usize, node_world, Element::from(ContentProbe)));
 
-    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Rec>);
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Recorder>);
     let out = Rc::new(RefCell::new(Recorded::default()));
-    let renderer = Rec::new(out);
+    let renderer = Recorder::new(out);
     let layout_node = graph.layout(
         &mut tree,
         &renderer,
@@ -450,7 +341,7 @@ fn box_select_primitives(
     p1: Point,
     p2: Point,
 ) -> Vec<Rectangle> {
-    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Rec> = NodeGraph::default()
+    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Recorder> = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
         .view(Point::ORIGIN, camera_zoom)
@@ -462,9 +353,9 @@ fn box_select_primitives(
         Element::from(ContentProbe),
     ));
 
-    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Rec>);
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Recorder>);
     let out = Rc::new(RefCell::new(Recorded::default()));
-    let mut renderer = Rec::new(out.clone());
+    let mut renderer = Recorder::new(out.clone());
     let layout_node = graph.layout(
         &mut tree,
         &renderer,
@@ -476,11 +367,11 @@ fn box_select_primitives(
     let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
     let mut clipboard = clipboard::Null;
 
-    let send = |graph: &mut NodeGraph<'static, usize, usize, (), (), Theme, Rec>,
+    let send = |graph: &mut NodeGraph<'static, usize, usize, (), (), Theme, Recorder>,
                 tree: &mut Tree,
                 shell: &mut iced_wgpu::core::Shell<'_, ()>,
                 clipboard: &mut clipboard::Null,
-                renderer: &Rec,
+                renderer: &Recorder,
                 event: iced::Event,
                 at: Point| {
         graph.update(
@@ -718,7 +609,7 @@ fn geometry_fingerprint(rec: &Recorded) -> Vec<u32> {
 #[test]
 fn recipe_hash_is_stable_across_120_frames() {
     // A static three-node graph (no edges, so only node geometry is under test).
-    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Rec> = NodeGraph::default()
+    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Recorder> = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
         .view(Point::ORIGIN, 1.0);
@@ -729,10 +620,10 @@ fn recipe_hash_is_stable_across_120_frames() {
         graph.push_node(node(i, Point::new(p.0, p.1), Element::from(ContentProbe)));
     }
 
-    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Rec>);
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Recorder>);
     let layout_node = graph.layout(
         &mut tree,
-        &Rec::new(Rc::new(RefCell::new(Recorded::default()))),
+        &Recorder::new(Rc::new(RefCell::new(Recorded::default()))),
         &layout::Limits::new(Size::ZERO, Size::new(1024.0, 768.0)),
     );
     let layout = Layout::with_offset(Vector::ZERO, &layout_node);
@@ -741,7 +632,7 @@ fn recipe_hash_is_stable_across_120_frames() {
     let mut reference: Option<Vec<u32>> = None;
     for frame in 0..120 {
         let out = Rc::new(RefCell::new(Recorded::default()));
-        let mut renderer = Rec::new(out.clone());
+        let mut renderer = Recorder::new(out.clone());
 
         // A no-op cursor move per frame both syncs `view()` and lets the widget
         // advance its wall-clock animation time, so `time` genuinely varies
@@ -816,7 +707,7 @@ fn content_event_indices(events: &[DrawEvent]) -> Vec<usize> {
 #[test]
 fn hosted_content_sandwiched_between_sdf_layers() {
     // Two nodes, both well on-screen so neither fill nor foreground is culled.
-    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Rec> = NodeGraph::default()
+    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Recorder> = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
         .view(Point::ORIGIN, 1.0);
@@ -831,9 +722,9 @@ fn hosted_content_sandwiched_between_sdf_layers() {
         Element::from(ContentProbe),
     ));
 
-    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Rec>);
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Recorder>);
     let out = Rc::new(RefCell::new(Recorded::default()));
-    let mut renderer = Rec::new(out.clone());
+    let mut renderer = Recorder::new(out.clone());
     let layout_node = graph.layout(
         &mut tree,
         &renderer,
@@ -905,7 +796,7 @@ fn hosted_content_sandwiched_between_sdf_layers() {
 // Keymap wiring: the widget resolves keyboard shortcuts and the pan button
 // through `NodeGraph::keymap` (host-rebindable). Resolver-only coverage lives
 // in `node_graph::input`; these tests prove the widget event path honors a
-// rebound or disabled binding end to end, reusing this file's mock renderer.
+// rebound or disabled binding end to end through the recording renderer.
 // ---------------------------------------------------------------------------
 
 fn key_press(c: char, code: keyboard::key::Code, modifiers: keyboard::Modifiers) -> iced::Event {
@@ -924,7 +815,7 @@ fn key_press(c: char, code: keyboard::key::Code, modifiers: keyboard::Modifiers)
 /// Builds a two-node graph, feeds it `events` (each with its cursor), and
 /// returns every message the widget published.
 fn run_events<Msg: 'static>(
-    mut graph: NodeGraph<'static, usize, usize, (), Msg, Theme, Rec>,
+    mut graph: NodeGraph<'static, usize, usize, (), Msg, Theme, Recorder>,
     events: &[(iced::Event, mouse::Cursor)],
 ) -> Vec<Msg> {
     graph.push_node(node(
@@ -938,8 +829,8 @@ fn run_events<Msg: 'static>(
         Element::from(ContentProbe),
     ));
 
-    let mut tree = Tree::new(&graph as &dyn Widget<Msg, Theme, Rec>);
-    let renderer = Rec::new(Rc::new(RefCell::new(Recorded::default())));
+    let mut tree = Tree::new(&graph as &dyn Widget<Msg, Theme, Recorder>);
+    let renderer = Recorder::new(Rc::new(RefCell::new(Recorded::default())));
     let layout_node = graph.layout(
         &mut tree,
         &renderer,
@@ -968,10 +859,11 @@ fn run_events<Msg: 'static>(
 
 #[test]
 fn default_keymap_select_all_publishes_selection() {
-    let graph: NodeGraph<'static, usize, usize, (), Vec<usize>, Theme, Rec> = NodeGraph::default()
-        .width(Length::Fixed(400.0))
-        .height(Length::Fixed(400.0))
-        .on_select(|ids| ids);
+    let graph: NodeGraph<'static, usize, usize, (), Vec<usize>, Theme, Recorder> =
+        NodeGraph::default()
+            .width(Length::Fixed(400.0))
+            .height(Length::Fixed(400.0))
+            .on_select(|ids| ids);
 
     let msgs = run_events(
         graph,
@@ -990,15 +882,16 @@ fn default_keymap_select_all_publishes_selection() {
 
 #[test]
 fn rebound_select_all_moves_to_the_new_combo() {
-    let keymap = crate::Keymap {
-        select_all: Some(crate::KeyCombo::command('l')),
-        ..crate::Keymap::default()
+    let keymap = iced_nodegraph::Keymap {
+        select_all: Some(iced_nodegraph::KeyCombo::command('l')),
+        ..iced_nodegraph::Keymap::default()
     };
-    let graph: NodeGraph<'static, usize, usize, (), Vec<usize>, Theme, Rec> = NodeGraph::default()
-        .width(Length::Fixed(400.0))
-        .height(Length::Fixed(400.0))
-        .keymap(keymap)
-        .on_select(|ids| ids);
+    let graph: NodeGraph<'static, usize, usize, (), Vec<usize>, Theme, Recorder> =
+        NodeGraph::default()
+            .width(Length::Fixed(400.0))
+            .height(Length::Fixed(400.0))
+            .keymap(keymap)
+            .on_select(|ids| ids);
 
     let msgs = run_events(
         graph,
@@ -1022,11 +915,12 @@ fn rebound_select_all_moves_to_the_new_combo() {
 
 #[test]
 fn keymap_none_disables_all_shortcuts() {
-    let graph: NodeGraph<'static, usize, usize, (), Vec<usize>, Theme, Rec> = NodeGraph::default()
-        .width(Length::Fixed(400.0))
-        .height(Length::Fixed(400.0))
-        .keymap(crate::Keymap::none())
-        .on_select(|ids| ids);
+    let graph: NodeGraph<'static, usize, usize, (), Vec<usize>, Theme, Recorder> =
+        NodeGraph::default()
+            .width(Length::Fixed(400.0))
+            .height(Length::Fixed(400.0))
+            .keymap(iced_nodegraph::Keymap::none())
+            .on_select(|ids| ids);
 
     let msgs = run_events(
         graph,
@@ -1055,7 +949,7 @@ fn rebound_pan_button_commits_a_pan() {
     };
 
     // Default keymap: middle button is unbound, no pan is committed.
-    let default_graph: NodeGraph<'static, usize, usize, (), (Point, f32), Theme, Rec> =
+    let default_graph: NodeGraph<'static, usize, usize, (), (Point, f32), Theme, Recorder> =
         NodeGraph::default()
             .width(Length::Fixed(400.0))
             .height(Length::Fixed(400.0))
@@ -1067,11 +961,11 @@ fn rebound_pan_button_commits_a_pan() {
     );
 
     // Rebound to middle: the same press/release pair commits a pan.
-    let keymap = crate::Keymap {
+    let keymap = iced_nodegraph::Keymap {
         pan_button: mouse::Button::Middle,
-        ..crate::Keymap::default()
+        ..iced_nodegraph::Keymap::default()
     };
-    let rebound_graph: NodeGraph<'static, usize, usize, (), (Point, f32), Theme, Rec> =
+    let rebound_graph: NodeGraph<'static, usize, usize, (), (Point, f32), Theme, Recorder> =
         NodeGraph::default()
             .width(Length::Fixed(400.0))
             .height(Length::Fixed(400.0))
@@ -1123,7 +1017,7 @@ fn finger_lift(id: u64, position: Point) -> (iced::Event, mouse::Cursor) {
 
 #[test]
 fn touch_drag_on_empty_space_pans_the_graph() {
-    let graph: NodeGraph<'static, usize, usize, (), (Point, f32), Theme, Rec> =
+    let graph: NodeGraph<'static, usize, usize, (), (Point, f32), Theme, Recorder> =
         NodeGraph::default()
             .width(Length::Fixed(400.0))
             .height(Length::Fixed(400.0))
@@ -1152,10 +1046,11 @@ fn touch_drag_on_empty_space_pans_the_graph() {
 
 #[test]
 fn touch_tap_selects_a_node_and_empty_tap_clears() {
-    let graph: NodeGraph<'static, usize, usize, (), Vec<usize>, Theme, Rec> = NodeGraph::default()
-        .width(Length::Fixed(400.0))
-        .height(Length::Fixed(400.0))
-        .on_select(|ids| ids);
+    let graph: NodeGraph<'static, usize, usize, (), Vec<usize>, Theme, Recorder> =
+        NodeGraph::default()
+            .width(Length::Fixed(400.0))
+            .height(Length::Fixed(400.0))
+            .on_select(|ids| ids);
 
     let msgs = run_events(
         graph,
@@ -1177,7 +1072,7 @@ fn touch_tap_selects_a_node_and_empty_tap_clears() {
 
 #[test]
 fn two_finger_pinch_zooms_the_camera() {
-    let graph: NodeGraph<'static, usize, usize, (), (Point, f32), Theme, Rec> =
+    let graph: NodeGraph<'static, usize, usize, (), (Point, f32), Theme, Recorder> =
         NodeGraph::default()
             .width(Length::Fixed(400.0))
             .height(Length::Fixed(400.0))
@@ -1201,7 +1096,7 @@ fn two_finger_pinch_zooms_the_camera() {
 
 #[test]
 fn second_finger_cancels_a_touch_node_drag() {
-    let graph: NodeGraph<'static, usize, usize, (), &'static str, Theme, Rec> =
+    let graph: NodeGraph<'static, usize, usize, (), &'static str, Theme, Recorder> =
         NodeGraph::default()
             .width(Length::Fixed(400.0))
             .height(Length::Fixed(400.0))

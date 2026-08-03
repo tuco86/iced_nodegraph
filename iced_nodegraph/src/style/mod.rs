@@ -46,10 +46,6 @@ pub enum PinShape {
     Triangle = 3,
 }
 
-// ============================================================================
-// Status Enums for Widget-Side Styling
-// ============================================================================
-
 /// Node status for styling purposes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum NodeStatus {
@@ -80,10 +76,6 @@ pub enum EdgeStatus {
     PendingCut,
 }
 
-// ============================================================================
-// Edge Curve Types
-// ============================================================================
-
 /// Edge path curve type determining the shape of the connection.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum EdgeCurve {
@@ -93,10 +85,6 @@ pub enum EdgeCurve {
     /// Direct straight line between pins
     Line,
 }
-
-// ============================================================================
-// Graph Style
-// ============================================================================
 
 /// The repeating pattern of a [`TilingBackground`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -170,7 +158,8 @@ impl TilingBackground {
     }
 }
 
-/// Complete graph style configuration.
+/// The graph's own chrome: canvas background, optional tiling, and the
+/// selection overlays. Not a per-element style.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GraphStyle {
     /// Background color for the canvas.
@@ -192,69 +181,30 @@ impl Default for GraphStyle {
 }
 
 impl GraphStyle {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn background_color(mut self, color: Color) -> Self {
-        self.background_color = color;
-        self
-    }
-
-    pub fn selection_style(mut self, style: SelectionStyle) -> Self {
-        self.selection_style = style;
-        self
-    }
-
-    /// Sets a tiling background (grid, dots, ...) drawn over `background_color`.
-    pub fn tiling(mut self, tiling: TilingBackground) -> Self {
-        self.tiling = Some(tiling);
-        self
-    }
-
-    /// Creates a dark theme graph style.
-    pub fn dark() -> Self {
-        Self::default()
-    }
-
-    /// Creates a light theme graph style.
-    pub fn light() -> Self {
-        Self {
-            background_color: Color::from_rgb(0.95, 0.95, 0.96),
-            tiling: None,
-            selection_style: SelectionStyle::default(),
-        }
-    }
-
-    /// Creates a graph style derived from an iced Theme.
+    /// The graph chrome derived from an iced theme: the canvas takes the theme's
+    /// window background, so elevation comes from the palette ramp (nodes ride
+    /// above on `background.weak`) rather than hand-darkening, and a faint
+    /// `background.strong` grid sits on top.
     pub fn from_theme(theme: &Theme) -> Self {
         let palette = theme.extended_palette();
 
-        // The canvas is the theme's true window background; nodes ride above it
-        // on `background.weak`, so elevation comes from the palette ramp rather
-        // than hand-darkening. A faint `background.strong` grid sits on top.
-        let grid = TilingBackground::grid(
-            40.0,
-            1.0,
-            Color {
-                a: 0.35,
-                ..palette.background.strong.color
-            },
-        );
-
         Self {
             background_color: palette.background.base.color,
-            tiling: Some(grid),
+            tiling: Some(TilingBackground::grid(
+                40.0,
+                1.0,
+                Color {
+                    a: 0.35,
+                    ..palette.background.strong.color
+                },
+            )),
             selection_style: SelectionStyle::from_theme(theme),
         }
     }
 }
 
-// ============================================================================
-// Selection Style
-// ============================================================================
-
-/// Style configuration for node selection and hover highlighting.
+/// Style for node selection highlighting and the two selection-drag overlays
+/// (box select, edge cutting). Held by [`GraphStyle::selection_style`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelectionStyle {
     /// Border color for selected nodes
@@ -282,31 +232,9 @@ impl Default for SelectionStyle {
 }
 
 impl SelectionStyle {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn selected_border_color(mut self, color: Color) -> Self {
-        self.selected_border_color = color;
-        self
-    }
-
-    pub fn selected_border_width(mut self, width: f32) -> Self {
-        self.selected_border_width = width;
-        self
-    }
-
-    pub fn box_select_fill(mut self, color: Color) -> Self {
-        self.box_select_fill = color;
-        self
-    }
-
-    pub fn box_select_border(mut self, color: Color) -> Self {
-        self.box_select_border = color;
-        self
-    }
-
-    /// Creates a selection style derived from an iced Theme.
+    /// The selection chrome derived from an iced theme: the accent color for
+    /// highlights, and `danger` for the edge-cutting trail, since a cut is
+    /// destructive.
     pub fn from_theme(theme: &Theme) -> Self {
         let palette = theme.extended_palette();
         let primary = palette.primary.base.color;
@@ -317,7 +245,6 @@ impl SelectionStyle {
             // Translucent overlays must stay alpha-based; the hue is the accent.
             box_select_fill: Color { a: 0.15, ..primary },
             box_select_border: Color { a: 0.6, ..primary },
-            // A cut is destructive: danger, theme-driven instead of hardcoded red.
             edge_cutting_color: palette.danger.base.color,
         }
     }

@@ -1,7 +1,7 @@
 //! High-level interaction tests driving NodeGraph through `iced_test::Simulator`.
 //!
-//! Unlike the recording-renderer tests in `src/coordinate_tests.rs` and
-//! `src/clipping_tests.rs` (which assert on render geometry via a fake
+//! Unlike the recording-renderer tests in `tests/coordinates.rs` and
+//! `tests/clipping.rs` (which assert on render geometry via a fake
 //! renderer), these tests exercise the widget end-to-end through the real iced
 //! event pipeline: layout -> update -> message emission. These tests validate
 //! interaction logic and the Messages the event callbacks publish; the one
@@ -15,7 +15,7 @@
 use iced::widget::{container, text};
 use iced::{Element, Length, Point, Theme, Vector};
 use iced::{keyboard, mouse};
-use iced_nodegraph::{NodeGraph, PinRef, edge, node, pin};
+use iced_nodegraph::{DragInfo, NodeGraph, PinRef, edge, node, pin};
 use iced_test::Simulator;
 
 type Renderer = iced::Renderer;
@@ -32,6 +32,9 @@ enum Msg {
     Connect(Pin, Pin),
     Disconnect(Pin, Pin),
     Camera(Point, f32),
+    DragStart(DragInfo<usize, usize>),
+    DragUpdate(Point),
+    DragEnd,
     Button,
     Input(String),
 }
@@ -48,7 +51,10 @@ fn graph_with(nodes: &[(usize, Point)]) -> Element<'static, Msg, Theme, Renderer
         .on_select(Msg::Select)
         .on_move(Msg::Move)
         .on_clone(Msg::Clone)
-        .on_delete(Msg::Delete);
+        .on_delete(Msg::Delete)
+        .on_drag_start(Msg::DragStart)
+        .on_drag_update(Msg::DragUpdate)
+        .on_drag_end(|| Msg::DragEnd);
     for &(id, pos) in nodes {
         let body = container(iced::widget::text("n"))
             .width(Length::Fixed(NODE_W))
@@ -376,7 +382,7 @@ fn pin_graph(connect_ok: bool, seed_edge: bool) -> Element<'static, Msg, Theme, 
     ));
     ng.push_node(node(1usize, IN_POS, pin!(Left, 0usize, pin_body(), Input)));
     if seed_edge {
-        ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)));
+        ng.push_edge(edge(PinRef::new(0, 0), PinRef::new(1, 0)));
     }
     ng.into()
 }
@@ -600,7 +606,7 @@ fn rewire_graph() -> Element<'static, Msg, Theme, Renderer> {
         Point::new(IN_POS.x, 300.0),
         pin!(Left, 0usize, pin_body(), Input),
     ));
-    ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)));
+    ng.push_edge(edge(PinRef::new(0, 0), PinRef::new(1, 0)));
     ng.into()
 }
 
@@ -682,7 +688,7 @@ fn default_rejects_second_edge_to_occupied_input() {
         Point::new(OUT_POS.x, 300.0),
         pin!(Right, 0usize, pin_body(), Output),
     ));
-    ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)));
+    ng.push_edge(edge(PinRef::new(0, 0), PinRef::new(1, 0)));
     let mut ui = Simulator::new(Element::from(ng));
 
     let from = Point::new(OUT_POS.x + NODE_W, 300.0 + NODE_H / 2.0); // node 2 right pin
@@ -880,9 +886,9 @@ fn backspace_in_focused_text_input_does_not_delete_node() {
 }
 
 // ---------------------------------------------------------------------------
-// Duplicate node id: debug-build guard (node_index resolves to the first match,
-// so a duplicate id renders/behaves undefined). Edge ids are intentionally NOT
-// guarded - `edge!` defaults them to `()` and edges are addressed by index.
+// Duplicate node id: debug-build guard. `node_index` resolves to the first
+// match, so a duplicate renders one node twice and behaves undefined. Edges
+// need no such guard: they carry no id and are addressed by index.
 // ---------------------------------------------------------------------------
 
 #[cfg(debug_assertions)]
@@ -1025,7 +1031,7 @@ fn zoomed_pin_graph(seed_edge: bool) -> Element<'static, Msg, Theme, Renderer> {
     ));
     ng.push_node(node(1usize, IN_POS, pin!(Left, 0usize, pin_body(), Input)));
     if seed_edge {
-        ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)));
+        ng.push_edge(edge(PinRef::new(0, 0), PinRef::new(1, 0)));
     }
     ng.into()
 }
@@ -1088,6 +1094,102 @@ fn shift_click_deselects_already_selected_node() {
     ui.simulate([moved(c), press(), release()]); // shift-click again -> toggle off
 
     assert_eq!(last_selection(&messages(ui)), Some(vec![]));
+}
+
+// ---------------------------------------------------------------------------
+// Live drag hooks
+//
+// `on_drag_start` / `on_drag_update` / `on_drag_end` report a drag while it
+// happens, for hosts that mirror it elsewhere (a collaborative session, an
+// inspector). They are observers: unlike `on_move`, nothing is gated on them,
+// and they must bracket every drag exactly once.
+// ---------------------------------------------------------------------------
+
+fn drag_infos(msgs: &[Msg]) -> Vec<DragInfo<usize, usize>> {
+    msgs.iter()
+        .filter_map(|m| match m {
+            Msg::DragStart(info) => Some(info.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn node_drag_is_bracketed_by_start_and_end() {
+    let pos = Point::new(100.0, 100.0);
+    let mut ui = Simulator::new(graph_with(&[(0, pos)]));
+    drag(&mut ui, center(pos), Point::new(300.0, 260.0));
+
+    let msgs = messages(ui);
+    assert_eq!(
+        drag_infos(&msgs),
+        vec![DragInfo::Node { node_id: 0 }],
+        "one node drag must report exactly one start, naming the node's user id: {msgs:?}",
+    );
+    assert_eq!(
+        msgs.iter().filter(|m| **m == Msg::DragEnd).count(),
+        1,
+        "the drag must end exactly once: {msgs:?}",
+    );
+}
+
+#[test]
+fn drag_update_reports_the_world_cursor() {
+    let pos = Point::new(100.0, 100.0);
+    let target = Point::new(400.0, 300.0);
+    let mut ui = Simulator::new(graph_with(&[(0, pos)]));
+    drag(&mut ui, center(pos), target);
+
+    // Default camera: zoom 1, no pan, so world coordinates equal screen pixels.
+    let updates: Vec<Point> = messages(ui)
+        .into_iter()
+        .filter_map(|m| match m {
+            Msg::DragUpdate(p) => Some(p),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(updates.last(), Some(&target));
+}
+
+#[test]
+fn dragging_a_multi_selection_reports_the_whole_group() {
+    let (a, b) = (Point::new(100.0, 100.0), Point::new(400.0, 100.0));
+    let mut ui = Simulator::new(graph_with(&[(0, a), (1, b)]));
+    click(&mut ui, center(a));
+
+    ui.point_at(center(b));
+    ui.simulate([iced::Event::Keyboard(keyboard::Event::ModifiersChanged(
+        keyboard::Modifiers::SHIFT,
+    ))]);
+    ui.simulate([moved(center(b)), press(), release()]);
+    ui.simulate([iced::Event::Keyboard(keyboard::Event::ModifiersChanged(
+        keyboard::Modifiers::empty(),
+    ))]);
+    drag(&mut ui, center(b), Point::new(600.0, 300.0));
+
+    let msgs = messages(ui);
+    let group = drag_infos(&msgs)
+        .into_iter()
+        .find_map(|info| match info {
+            DragInfo::Group { node_ids } => Some(sorted(node_ids)),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("dragging a selected node must report a group: {msgs:?}"));
+    assert_eq!(group, vec![0, 1]);
+}
+
+#[test]
+fn box_select_drag_reports_its_anchor() {
+    let mut ui = Simulator::new(graph_with(&[(0, Point::new(400.0, 400.0))]));
+    let anchor = Point::new(50.0, 60.0);
+    drag(&mut ui, anchor, Point::new(500.0, 500.0));
+
+    let msgs = messages(ui);
+    assert_eq!(
+        drag_infos(&msgs),
+        vec![DragInfo::BoxSelect { start: anchor }],
+        "a drag on empty canvas must report the box-select anchor: {msgs:?}",
+    );
 }
 
 // ---------------------------------------------------------------------------

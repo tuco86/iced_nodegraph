@@ -33,7 +33,6 @@ pub struct ShaderGraph {
     next_id: usize,
 }
 
-#[allow(dead_code)]
 impl ShaderGraph {
     pub fn new() -> Self {
         Self::default()
@@ -50,22 +49,8 @@ impl ShaderGraph {
         self.connections.push(connection);
     }
 
-    pub fn remove_node(&mut self, id: usize) {
-        self.nodes.retain(|n| n.id != id);
-        self.connections
-            .retain(|c| c.from_node != id && c.to_node != id);
-    }
-
     pub fn get_node(&self, id: usize) -> Option<&ShaderNode> {
         self.nodes.iter().find(|n| n.id == id)
-    }
-
-    pub fn get_node_mut(&mut self, id: usize) -> Option<&mut ShaderNode> {
-        self.nodes.iter_mut().find(|n| n.id == id)
-    }
-
-    pub fn get_node_by_index(&self, index: usize) -> Option<&ShaderNode> {
-        self.nodes.get(index)
     }
 
     pub fn get_node_by_index_mut(&mut self, index: usize) -> Option<&mut ShaderNode> {
@@ -81,12 +66,5 @@ impl ShaderGraph {
             .iter()
             .find(|c| c.to_node == node_id && c.to_socket == socket_index)
             .map(|c| (c.from_node, c.from_socket))
-    }
-
-    pub fn get_connections_from(&self, node_id: usize, socket_index: usize) -> Vec<&Connection> {
-        self.connections
-            .iter()
-            .filter(|c| c.from_node == node_id && c.from_socket == socket_index)
-            .collect()
     }
 }

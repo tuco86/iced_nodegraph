@@ -1,11 +1,10 @@
-//! Internal state management for the node graph widget.
+//! State that survives between frames, owned by the widget's `tree::State`.
 //!
-//! This module contains the persistent state that lives between frames:
-//! - Camera position and zoom
-//! - Current drag operation (node, edge, selection box, etc.)
-//! - Animation timing
-//! - Selection state
-//! - Keyboard modifier tracking
+//! Everything here is keyed by *node index* - the node's position in the
+//! `NodeGraph::nodes` vector for the current frame - not by the host's node id.
+//! An index is a per-frame identity: the host owns node order, so a reorder
+//! re-maps every index. Selection is re-synced from the host whenever it pushes
+//! a new `selection()`; z-order is not, so it follows index, not identity.
 
 use super::GraphInfo;
 use super::camera::Camera2D;
@@ -15,17 +14,36 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use web_time::Instant;
 
+/// What the pointer is currently dragging. `WorldPoint`s are the drag's world
+/// anchor, captured at press.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) enum Dragging {
     #[default]
     None,
-    Graph(WorldPoint),                    // cursor origin (right mouse button pan)
-    Node(usize, WorldPoint),              // node id and cursor origin
-    Edge(usize, usize, WorldPoint),       // from_node and from_pin and cursor origin
-    EdgeOver(usize, usize, usize, usize), // from_node, from_pin, to_node and to_pin
-    BoxSelect(WorldPoint, WorldPoint),    // start point, current point (left mouse on empty space)
-    GroupMove(WorldPoint),                // origin point (when dragging a selected node, all move)
-    /// Fruit Ninja edge cutting: trail of cursor positions and pending edges to cut
+    /// Panning the canvas (right mouse button).
+    Graph(WorldPoint),
+    /// Moving one unselected node.
+    Node { node: usize, origin: WorldPoint },
+    /// Moving every selected node together.
+    GroupMove(WorldPoint),
+    /// A loose edge held at the cursor, anchored at its source pin.
+    Edge {
+        from_node: usize,
+        from_pin: usize,
+        origin: WorldPoint,
+    },
+    /// A dragged edge snapped onto a compatible target pin. Releasing here keeps
+    /// the connection.
+    EdgeOver {
+        from_node: usize,
+        from_pin: usize,
+        to_node: usize,
+        to_pin: usize,
+    },
+    /// Rubber-band selection: the press corner and the live corner.
+    BoxSelect(WorldPoint, WorldPoint),
+    /// Slicing across edges: the cursor trail and the edge indices it has
+    /// crossed so far, cut on release.
     EdgeCutting {
         trail: Vec<WorldPoint>,
         pending_cuts: HashSet<usize>,
@@ -157,8 +175,15 @@ mod tests {
         let origin = Point2D::new(10.0, 20.0);
 
         assert_ne!(Dragging::None, Dragging::Graph(origin));
-        assert_ne!(Dragging::Graph(origin), Dragging::Node(0, origin));
-        assert_ne!(Dragging::Node(0, origin), Dragging::Edge(0, 0, origin));
+        assert_ne!(Dragging::Graph(origin), Dragging::Node { node: 0, origin });
+        assert_ne!(
+            Dragging::Node { node: 0, origin },
+            Dragging::Edge {
+                from_node: 0,
+                from_pin: 0,
+                origin
+            }
+        );
     }
 
     #[test]
@@ -177,9 +202,13 @@ mod tests {
     #[test]
     fn test_dragging_node_stores_index_and_origin() {
         let origin = Point2D::new(50.0, 75.0);
-        let dragging = Dragging::Node(5, origin);
+        let dragging = Dragging::Node { node: 5, origin };
 
-        if let Dragging::Node(idx, stored) = dragging {
+        if let Dragging::Node {
+            node: idx,
+            origin: stored,
+        } = dragging
+        {
             assert_eq!(idx, 5);
             assert_eq!(stored.x, 50.0);
             assert_eq!(stored.y, 75.0);
@@ -191,9 +220,18 @@ mod tests {
     #[test]
     fn test_dragging_edge_stores_node_pin_and_cursor() {
         let cursor = Point2D::new(300.0, 400.0);
-        let dragging = Dragging::Edge(2, 1, cursor);
+        let dragging = Dragging::Edge {
+            from_node: 2,
+            from_pin: 1,
+            origin: cursor,
+        };
 
-        if let Dragging::Edge(node, pin, stored) = dragging {
+        if let Dragging::Edge {
+            from_node: node,
+            from_pin: pin,
+            origin: stored,
+        } = dragging
+        {
             assert_eq!(node, 2);
             assert_eq!(pin, 1);
             assert_eq!(stored.x, 300.0);

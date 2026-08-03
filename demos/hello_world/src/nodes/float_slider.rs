@@ -21,11 +21,8 @@ pub struct FloatSliderConfig {
     pub step: f32,
     pub label: String,
     // Temporary edit buffers for text inputs (only used during editing)
-    #[allow(dead_code)]
     pub min_edit: Option<String>,
-    #[allow(dead_code)]
     pub max_edit: Option<String>,
-    #[allow(dead_code)]
     pub step_edit: Option<String>,
 }
 
@@ -43,110 +40,14 @@ impl Default for FloatSliderConfig {
     }
 }
 
-#[allow(dead_code)]
 impl FloatSliderConfig {
-    /// Creates a config with the given label
-    pub fn new(label: impl Into<String>) -> Self {
-        Self {
-            label: label.into(),
-            ..Default::default()
-        }
-    }
-
-    /// Sets the range
-    pub fn range(mut self, min: f32, max: f32) -> Self {
-        self.min = min;
-        self.max = max;
-        self
-    }
-
-    /// Named constructor for corner radius config
-    pub fn corner_radius() -> Self {
-        Self::new("Corner Radius").range(0.0, 30.0)
-    }
-
-    /// Named constructor for opacity config
-    pub fn opacity() -> Self {
-        Self {
-            min: 0.0,
-            max: 1.0,
-            step: 0.01,
-            label: "Opacity".to_string(),
-            ..Default::default()
-        }
-    }
-
-    /// Named constructor for border width config
-    pub fn border_width() -> Self {
-        Self::new("Border Width").range(0.0, 10.0)
-    }
-
-    /// Named constructor for blur radius config
-    pub fn blur_radius() -> Self {
-        Self::new("Blur Radius").range(0.0, 50.0)
-    }
-
-    /// Named constructor for offset X config (supports negative)
-    pub fn offset_x() -> Self {
-        Self {
-            min: -50.0,
-            max: 50.0,
-            step: 1.0,
-            label: "Offset X".to_string(),
-            ..Default::default()
-        }
-    }
-
-    /// Named constructor for offset Y config (supports negative)
-    pub fn offset_y() -> Self {
-        Self {
-            min: -50.0,
-            max: 50.0,
-            step: 1.0,
-            label: "Offset Y".to_string(),
-            ..Default::default()
-        }
-    }
-
-    /// Named constructor for pattern angle config (degrees)
+    /// Angle range in degrees; the consuming config pin converts to radians.
     pub fn pattern_angle() -> Self {
         Self {
             min: -90.0,
             max: 90.0,
             step: 5.0,
             label: "Pattern Angle".to_string(),
-            ..Default::default()
-        }
-    }
-
-    /// Named constructor for thickness config
-    pub fn thickness() -> Self {
-        Self::new("Thickness").range(0.5, 10.0)
-    }
-
-    /// Named constructor for pin radius config
-    pub fn pin_radius() -> Self {
-        Self::new("Pin Radius").range(2.0, 20.0)
-    }
-
-    /// Named constructor for dash length
-    pub fn dash_length() -> Self {
-        Self {
-            min: 1.0,
-            max: 50.0,
-            step: 1.0,
-            label: "Dash".to_string(),
-            ..Default::default()
-        }
-    }
-
-    /// Named constructor for gap length
-    pub fn gap_length() -> Self {
-        Self {
-            min: 1.0,
-            max: 50.0,
-            step: 1.0,
-            label: "Gap".to_string(),
             ..Default::default()
         }
     }

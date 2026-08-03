@@ -18,99 +18,14 @@ use std::rc::Rc;
 use iced::advanced::renderer::Renderer as _;
 use iced::advanced::widget::{Tree, Widget};
 use iced::advanced::{Layout, layout, mouse, overlay, renderer};
-use iced::{
-    Background, Color, Element, Length, Pixels, Point, Rectangle, Size, Theme, Transformation,
-    Vector,
-};
+use iced::{Background, Color, Element, Length, Point, Rectangle, Size, Theme, Vector};
 use iced_wgpu::core::clipboard;
-use iced_wgpu::core::image;
-use iced_wgpu::core::text;
 
-use crate::{NodeGraph, node};
+use iced_nodegraph::{NodeGraph, node};
 
-// ---------------------------------------------------------------------------
-// Recording renderer: tracks the transformation stack (composed like
-// iced_graphics: child = current * transformation) so a drawn rect maps back to
-// absolute screen pixels.
-// ---------------------------------------------------------------------------
-#[derive(Default, Clone)]
-struct Recorded {
-    quads: Vec<Rectangle>,
-}
+mod common;
 
-struct Rec {
-    stack: Vec<Transformation>,
-    out: Rc<RefCell<Recorded>>,
-}
-
-impl Rec {
-    fn new(out: Rc<RefCell<Recorded>>) -> Self {
-        Self {
-            stack: vec![Transformation::IDENTITY],
-            out,
-        }
-    }
-    fn cur(&self) -> Transformation {
-        *self.stack.last().unwrap()
-    }
-}
-
-impl renderer::Renderer for Rec {
-    fn start_layer(&mut self, _bounds: Rectangle) {}
-    fn end_layer(&mut self) {}
-    fn start_transformation(&mut self, t: Transformation) {
-        self.stack.push(self.cur() * t);
-    }
-    fn end_transformation(&mut self) {
-        self.stack.pop();
-        if self.stack.is_empty() {
-            self.stack.push(Transformation::IDENTITY);
-        }
-    }
-    fn reset(&mut self, _new_bounds: Rectangle) {}
-    fn fill_quad(&mut self, quad: renderer::Quad, _background: impl Into<Background>) {
-        let abs = quad.bounds * self.cur();
-        self.out.borrow_mut().quads.push(abs);
-    }
-    fn allocate_image(
-        &mut self,
-        _handle: &image::Handle,
-        _callback: impl FnOnce(Result<image::Allocation, image::Error>) + Send + 'static,
-    ) {
-    }
-}
-
-impl text::Renderer for Rec {
-    type Font = iced::Font;
-    // Real (GPU-free) paragraph/editor types: the `()` impls in iced_core are
-    // debug_assertions-gated, which broke `cargo test --release`. These tests
-    // never lay out text; the types are only trait plumbing.
-    type Paragraph = iced_wgpu::graphics::text::Paragraph;
-    type Editor = iced_wgpu::graphics::text::Editor;
-
-    const ICON_FONT: iced::Font = iced::Font::DEFAULT;
-    const CHECKMARK_ICON: char = '0';
-    const ARROW_DOWN_ICON: char = '0';
-    const SCROLL_UP_ICON: char = '0';
-    const SCROLL_DOWN_ICON: char = '0';
-    const SCROLL_LEFT_ICON: char = '0';
-    const SCROLL_RIGHT_ICON: char = '0';
-    const ICED_LOGO: char = '0';
-
-    fn default_font(&self) -> Self::Font {
-        iced::Font::default()
-    }
-    fn default_size(&self) -> Pixels {
-        Pixels(16.0)
-    }
-    fn fill_paragraph(&mut self, _: &Self::Paragraph, _: Point, _: Color, _: Rectangle) {}
-    fn fill_editor(&mut self, _: &Self::Editor, _: Point, _: Color, _: Rectangle) {}
-    fn fill_text(&mut self, _: text::Text, _: Point, _: Color, _: Rectangle) {}
-}
-
-impl iced_wgpu::primitive::Renderer for Rec {
-    fn draw_primitive(&mut self, _bounds: Rectangle, _primitive: impl iced_wgpu::Primitive) {}
-}
+use common::record::{Recorded, Recorder};
 
 // ---------------------------------------------------------------------------
 // An overlay that paints a 10x10 quad at a fixed anchor and records the cursor
@@ -122,13 +37,13 @@ struct ProbeOverlay {
     cursor_seen: Rc<Cell<Option<Point>>>,
 }
 
-impl overlay::Overlay<(), Theme, Rec> for ProbeOverlay {
-    fn layout(&mut self, _renderer: &Rec, _bounds: Size) -> layout::Node {
+impl overlay::Overlay<(), Theme, Recorder> for ProbeOverlay {
+    fn layout(&mut self, _renderer: &Recorder, _bounds: Size) -> layout::Node {
         layout::Node::new(Size::new(10.0, 10.0)).move_to(self.anchor)
     }
     fn draw(
         &self,
-        renderer: &mut Rec,
+        renderer: &mut Recorder,
         _theme: &Theme,
         _style: &renderer::Style,
         layout: Layout<'_>,
@@ -149,7 +64,7 @@ impl overlay::Overlay<(), Theme, Rec> for ProbeOverlay {
         _event: &iced::Event,
         _layout: Layout<'_>,
         cursor: mouse::Cursor,
-        _renderer: &Rec,
+        _renderer: &Recorder,
         _clipboard: &mut dyn clipboard::Clipboard,
         _shell: &mut iced_wgpu::core::Shell<'_, ()>,
     ) {
@@ -166,17 +81,17 @@ struct OverlayProbe {
     cursor_seen: Rc<Cell<Option<Point>>>,
 }
 
-impl Widget<(), Theme, Rec> for OverlayProbe {
+impl Widget<(), Theme, Recorder> for OverlayProbe {
     fn size(&self) -> Size<Length> {
         Size::new(Length::Fixed(40.0), Length::Fixed(20.0))
     }
-    fn layout(&mut self, _: &mut Tree, _: &Rec, limits: &layout::Limits) -> layout::Node {
+    fn layout(&mut self, _: &mut Tree, _: &Recorder, limits: &layout::Limits) -> layout::Node {
         layout::Node::new(limits.resolve(Length::Fixed(40.0), Length::Fixed(20.0), Size::ZERO))
     }
     fn draw(
         &self,
         _: &Tree,
-        _: &mut Rec,
+        _: &mut Recorder,
         _: &Theme,
         _: &renderer::Style,
         _: Layout<'_>,
@@ -188,10 +103,10 @@ impl Widget<(), Theme, Rec> for OverlayProbe {
         &'a mut self,
         _tree: &'a mut Tree,
         layout: Layout<'a>,
-        _renderer: &Rec,
+        _renderer: &Recorder,
         _viewport: &Rectangle,
         translation: Vector,
-    ) -> Option<overlay::Element<'a, (), Theme, Rec>> {
+    ) -> Option<overlay::Element<'a, (), Theme, Recorder>> {
         let anchor = layout.position() + translation;
         Some(overlay::Element::new(Box::new(ProbeOverlay {
             anchor,
@@ -200,7 +115,7 @@ impl Widget<(), Theme, Rec> for OverlayProbe {
     }
 }
 
-impl<'a> From<OverlayProbe> for Element<'a, (), Theme, Rec> {
+impl<'a> From<OverlayProbe> for Element<'a, (), Theme, Recorder> {
     fn from(w: OverlayProbe) -> Self {
         Element::new(w)
     }
@@ -208,17 +123,17 @@ impl<'a> From<OverlayProbe> for Element<'a, (), Theme, Rec> {
 
 // A leaf with no overlay (the trait default returns `None`).
 struct PlainLeaf;
-impl Widget<(), Theme, Rec> for PlainLeaf {
+impl Widget<(), Theme, Recorder> for PlainLeaf {
     fn size(&self) -> Size<Length> {
         Size::new(Length::Fixed(40.0), Length::Fixed(20.0))
     }
-    fn layout(&mut self, _: &mut Tree, _: &Rec, limits: &layout::Limits) -> layout::Node {
+    fn layout(&mut self, _: &mut Tree, _: &Recorder, limits: &layout::Limits) -> layout::Node {
         layout::Node::new(limits.resolve(Length::Fixed(40.0), Length::Fixed(20.0), Size::ZERO))
     }
     fn draw(
         &self,
         _: &Tree,
-        _: &mut Rec,
+        _: &mut Recorder,
         _: &Theme,
         _: &renderer::Style,
         _: Layout<'_>,
@@ -227,7 +142,7 @@ impl Widget<(), Theme, Rec> for PlainLeaf {
     ) {
     }
 }
-impl<'a> From<PlainLeaf> for Element<'a, (), Theme, Rec> {
+impl<'a> From<PlainLeaf> for Element<'a, (), Theme, Recorder> {
     fn from(w: PlainLeaf) -> Self {
         Element::new(w)
     }
@@ -243,20 +158,20 @@ fn graph_with_node(
     node_world: Point,
     camera_pos: Point,
     camera_zoom: f32,
-    element: Element<'static, (), Theme, Rec>,
-    renderer: &Rec,
+    element: Element<'static, (), Theme, Recorder>,
+    renderer: &Recorder,
 ) -> (
-    NodeGraph<'static, usize, usize, (), (), Theme, Rec>,
+    NodeGraph<'static, usize, usize, (), (), Theme, Recorder>,
     Tree,
     layout::Node,
 ) {
-    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Rec> = NodeGraph::default()
+    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Recorder> = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
         .view(camera_pos, camera_zoom);
     graph.push_node(node(0usize, node_world, element));
 
-    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Rec>);
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Recorder>);
     let layout_node = graph.layout(
         &mut tree,
         renderer,
@@ -289,7 +204,7 @@ fn graph_with_node(
 
 #[test]
 fn overlay_forwarded_when_child_has_one() {
-    let renderer = Rec::new(Rc::new(RefCell::new(Recorded::default())));
+    let renderer = Recorder::new(Rc::new(RefCell::new(Recorded::default())));
     let (mut graph, mut tree, layout_node) = graph_with_node(
         Vector::ZERO,
         Point::new(50.0, 50.0),
@@ -312,7 +227,7 @@ fn overlay_forwarded_when_child_has_one() {
 
 #[test]
 fn no_overlay_when_no_child_has_one() {
-    let renderer = Rec::new(Rc::new(RefCell::new(Recorded::default())));
+    let renderer = Recorder::new(Rc::new(RefCell::new(Recorded::default())));
     let (mut graph, mut tree, layout_node) = graph_with_node(
         Vector::ZERO,
         Point::new(50.0, 50.0),
@@ -342,7 +257,7 @@ fn overlay_draws_through_camera_transform() {
     let zoom = 2.0;
 
     let out = Rc::new(RefCell::new(Recorded::default()));
-    let mut renderer = Rec::new(out.clone());
+    let mut renderer = Recorder::new(out.clone());
     let (mut graph, mut tree, layout_node) = graph_with_node(
         origin,
         world,
@@ -405,7 +320,7 @@ fn overlay_maps_cursor_into_layout_space() {
     let zoom = 2.0;
 
     let cursor_seen = Rc::new(Cell::new(None));
-    let renderer = Rec::new(Rc::new(RefCell::new(Recorded::default())));
+    let renderer = Recorder::new(Rc::new(RefCell::new(Recorded::default())));
     let (mut graph, mut tree, layout_node) = graph_with_node(
         origin,
         world,

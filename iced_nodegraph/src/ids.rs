@@ -1,8 +1,13 @@
-//! Generic ID types for user-defined node, pin, and edge identification.
+//! Id traits for user-defined node and pin identification.
 //!
-//! Nodes, pins, and edges carry the user's own id type directly; the library
-//! never keeps a separate id-to-index map. These traits just collect the bounds
-//! the widget needs on those id types.
+//! Nodes and pins carry the user's own id type directly. These traits collect
+//! the bounds the widget needs on those types: `Clone + Eq + Hash` to look them
+//! up and compare them, `Debug` for the duplicate-id assertion, and
+//! `Send + Sync` because an id travels in a `Message`.
+//!
+//! Blanket impls cover the integer, `String` and `&'static str` cases. For any
+//! other type - a newtype, an enum, a `uuid::Uuid` - write the one-line impl
+//! yourself.
 
 use std::fmt::Debug;
 use std::hash::Hash;
@@ -42,44 +47,17 @@ pub trait NodeId: Clone + Eq + Hash + Debug + Send + Sync {}
 /// ```
 pub trait PinId: Clone + Eq + Hash + Debug + Send + Sync {}
 
-/// Trait for user-defined edge identifiers.
-///
-/// Edges carry their own id (e.g. a database key), symmetric to nodes:
-/// ```rust
-/// use iced_nodegraph::EdgeId;
-///
-/// #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-/// struct MyEdgeId(u64);
-///
-/// impl EdgeId for MyEdgeId {}
-/// ```
-pub trait EdgeId: Clone + Eq + Hash + Debug + Send + Sync {}
-
-// Blanket implementations for common types
-
 impl NodeId for usize {}
 impl PinId for usize {}
-impl EdgeId for usize {}
 
 impl NodeId for u32 {}
 impl PinId for u32 {}
-impl EdgeId for u32 {}
 
 impl NodeId for u64 {}
 impl PinId for u64 {}
-impl EdgeId for u64 {}
 
 impl NodeId for String {}
 impl PinId for String {}
-impl EdgeId for String {}
 
 impl NodeId for &'static str {}
 impl PinId for &'static str {}
-impl EdgeId for &'static str {}
-
-// `()` is the default edge id: "this edge has no id". Nodes and pins always need
-// a real id, so `()` implements only `EdgeId`.
-impl EdgeId for () {}
-
-// UUID support would require the uuid crate as a dependency
-// Users can implement the traits for uuid::Uuid in their own code

@@ -1,4 +1,6 @@
-//! Shared headless GPU harness for the pixel-oracle test binaries.
+//! Shared harnesses for the test binaries: [`record`] is a fake renderer for
+//! assertions on the arguments a widget hands its renderer, while [`shared`]
+//! below is the headless GPU renderer the pixel oracles rasterize with.
 //!
 //! Each `tests/*.rs` file is its OWN test binary, so this module is compiled
 //! once PER binary: every binary gets its own `shared()` renderer and thus an
@@ -10,6 +12,8 @@
 //! renders the SAME scene, so the shared pipeline stays consistent.
 
 #![allow(dead_code)]
+
+pub mod record;
 
 use std::sync::{Mutex, MutexGuard, OnceLock};
 

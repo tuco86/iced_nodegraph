@@ -1,50 +1,46 @@
-//! Node graph widget and core types.
+//! The [`NodeGraph`] widget and the value types its API is built from.
 //!
-//! This module provides the main [`NodeGraph`] widget for building interactive
-//! node-based editors. It handles rendering, user interaction, and event dispatch.
+//! # Ownership
 //!
-//! ## Quick Start
+//! The host owns the graph. `NodeGraph` is rebuilt every `view` from the host's
+//! model and holds no graph state between frames; it reports intent through
+//! callbacks and the host applies it. The only state that survives a frame is
+//! interaction state (camera, drag, selection, z-order) in
+//! [`state`](self::state), keyed by node index rather than node id.
 //!
 //! ```ignore
-//! use iced_nodegraph::{node_graph, PinRef};
-//!
 //! let mut ng = node_graph()
 //!     .on_connect(|from, to| Message::Connected { from, to })
 //!     .on_move(|delta, node_ids| Message::NodesMoved { delta, node_ids });
 //!
 //! ng.push_node(node(0, Point::new(100.0, 100.0), my_node_content));
-//! ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)));
+//! ng.push_edge(edge(PinRef::new(0, 0), PinRef::new(1, 0)));
 //! ```
 //!
-//! ## Architecture
+//! # Reporting
 //!
-//! - [`NodeGraph`] - The main widget container
-//! - [`PinRef`] - Type-safe reference to a pin (generic over ID types)
-//! - [`Camera2D`](camera::Camera2D) - Zoom and pan state management
+//! There is no event enum: each interaction has its own `Fn -> Message` setter
+//! (`on_connect`, `on_move`, `on_select`, `on_clone`, `on_delete`, `on_pan`,
+//! `on_info`). Selection and camera are additionally *controllable*: feed the
+//! reported value back through [`NodeGraph::selection`] / [`NodeGraph::view`] to
+//! make the host the source of truth. `on_drag_start`/`on_drag_update`/
+//! `on_drag_end` expose a drag while it happens, for hosts that mirror it
+//! elsewhere.
 //!
-//! ## Event Handling
+//! # Styling
 //!
-//! Interaction is reported through individual callbacks: `on_connect()`,
-//! `on_move()`, `on_select()`, `on_clone()`, `on_delete()`.
-//! Move and select work without the app keeping its own model; the app receives
-//! data on commit. Live drag callbacks (`on_drag_start/update/end`) additionally
-//! report an in-progress drag so it can be observed as it happens.
-//!
-//! ## Styling
-//!
-//! Visual appearance is controlled per element through status-driven closures:
-//! - [`Node::style`] - per-node body style; [`Node::pin_style`] - the node's pins
-//! - [`Edge::style`] - per-edge style
-//! - [`NodeGraph::graph_style`] / [`NodeGraph::dragging_edge_style`] - graph chrome
+//! Every style entry point is a status-driven closure over a theme:
+//! [`Node::style`] and [`Node::pin_style`] for a node and its pins,
+//! [`Edge::style`] for an edge, [`NodeGraph::graph_style`] for the canvas and
+//! selection chrome, and [`NodeGraph::dragging_edge_style`] for the loose edge
+//! during a connect drag.
 
 use std::collections::{HashMap, HashSet};
-use std::fmt::Debug;
-use std::hash::Hash;
 use std::time::Duration;
 
-use iced_widget::core::{Color, Element, Length, Point, Size, Vector};
+use iced_widget::core::{Element, Length, Point, Size, Vector};
 
-use crate::ids::{EdgeId, NodeId, PinId};
+use crate::ids::{NodeId, PinId};
 use crate::node_pin::{PinEnd, PinInfo};
 use crate::style::{EdgeStatus, EdgeStyle, GraphStyle, NodeStatus, NodeStyle, PinStatus, PinStyle};
 
@@ -73,11 +69,11 @@ pub(crate) type DragEdgeStyleFn<'a, P, UI, Theme> =
 /// [`NodeGraph::push_node`]. Looks like its own widget even though the body and
 /// pins are drawn by the graph.
 pub struct Node<'a, N, P, UI, Message, Theme, Renderer> {
-    id: N,
-    position: Point,
-    element: Element<'a, Message, Theme, Renderer>,
-    style_fn: Option<NodeStyleFn<'a, Theme>>,
-    pin_style_fn: Option<PinStyleFn<'a, P, UI, Theme>>,
+    pub(super) id: N,
+    pub(super) position: Point,
+    pub(super) element: Element<'a, Message, Theme, Renderer>,
+    pub(super) style: Option<NodeStyleFn<'a, Theme>>,
+    pub(super) pin_style: Option<PinStyleFn<'a, P, UI, Theme>>,
 }
 
 /// Creates a [`Node`] with default (theme) styling.
@@ -90,8 +86,8 @@ pub fn node<'a, N, P, UI, Message, Theme, Renderer>(
         id,
         position,
         element: element.into(),
-        style_fn: None,
-        pin_style_fn: None,
+        style: None,
+        pin_style: None,
     }
 }
 
@@ -106,7 +102,7 @@ impl<'a, N, P, UI, Message, Theme, Renderer> Node<'a, N, P, UI, Message, Theme, 
     /// })
     /// ```
     pub fn style(mut self, f: impl Fn(&Theme, NodeStatus) -> NodeStyle + 'a) -> Self {
-        self.style_fn = Some(Box::new(f));
+        self.style = Some(Box::new(f));
         self
     }
 
@@ -124,59 +120,43 @@ impl<'a, N, P, UI, Message, Theme, Renderer> Node<'a, N, P, UI, Message, Theme, 
         mut self,
         f: impl Fn(&Theme, &PinInfo<'_, P, UI>, Option<&PinInfo<'_, P, UI>>, PinStatus) -> PinStyle + 'a,
     ) -> Self {
-        self.pin_style_fn = Some(Box::new(f));
+        self.pin_style = Some(Box::new(f));
         self
     }
 }
 
-/// An edge to push onto the graph: a user id, endpoint pin references, and an
-/// optional per-edge status-driven style closure. Build with [`edge`] +
-/// [`Edge::style`], then add via [`NodeGraph::push_edge`]. The id is the user's
-/// own (e.g. a DB key); it travels with the edge, symmetric to [`node`].
-pub struct Edge<'a, N, P, E, UI, Theme> {
-    id: E,
-    from: PinRef<N, P>,
-    to: PinRef<N, P>,
-    style_fn: Option<EdgeStyleFn<'a, P, UI, Theme>>,
-}
-
-/// Creates an [`Edge`] with the given id and default (theme) styling.
+/// An edge to push onto the graph: the two pins it connects plus an optional
+/// per-edge status-driven style closure. Build with [`edge`] + [`Edge::style`],
+/// then add via [`NodeGraph::push_edge`].
 ///
-/// The id comes last so the common no-id case reads cleanly via the `edge!`
-/// macro: `edge!(from, to)` expands to `edge(from, to, ())`.
-pub fn edge<'a, N, P, E, UI, Theme>(
-    from: PinRef<N, P>,
-    to: PinRef<N, P>,
-    id: E,
-) -> Edge<'a, N, P, E, UI, Theme> {
-    Edge {
-        id,
-        from,
-        to,
-        style_fn: None,
-    }
+/// An edge is identified by the pins it joins, so it carries no id of its own -
+/// unlike a [`Node`], which needs one to be moved, cloned and deleted by id.
+pub struct Edge<'a, N, P, UI, Theme> {
+    pub(super) from: PinRef<N, P>,
+    pub(super) to: PinRef<N, P>,
+    pub(super) style: Option<EdgeStyleFn<'a, P, UI, Theme>>,
 }
 
-/// Builds an [`Edge`], defaulting the id to `()` when omitted.
+/// Creates an [`Edge`] with default (theme) styling.
 ///
 /// ```rust
 /// use iced_nodegraph::{Edge, PinRef, edge};
 ///
-/// # type E<'a, Id> = Edge<'a, u32, u32, Id, (), iced::Theme>;
-/// let default_id: E<'_, ()> = edge!(PinRef::new(0, 0), PinRef::new(1, 0));
-/// let explicit_id: E<'_, u8> = edge!(PinRef::new(0, 0), PinRef::new(1, 0), 7);
+/// let e: Edge<'_, u32, u32, (), iced::Theme> =
+///     edge(PinRef::new(0, 0), PinRef::new(1, 0));
 /// ```
-#[macro_export]
-macro_rules! edge {
-    ($from:expr, $to:expr $(,)?) => {
-        $crate::edge($from, $to, ())
-    };
-    ($from:expr, $to:expr, $id:expr $(,)?) => {
-        $crate::edge($from, $to, $id)
-    };
+pub fn edge<'a, N, P, UI, Theme>(
+    from: PinRef<N, P>,
+    to: PinRef<N, P>,
+) -> Edge<'a, N, P, UI, Theme> {
+    Edge {
+        from,
+        to,
+        style: None,
+    }
 }
 
-impl<'a, N, P, E, UI, Theme> Edge<'a, N, P, E, UI, Theme> {
+impl<'a, N, P, UI, Theme> Edge<'a, N, P, UI, Theme> {
     /// Sets the per-edge style closure: theme, [`EdgeStatus`], and both endpoint
     /// [`PinInfo`]s in draw order (start = output side, end = input side) ->
     /// resolved style.
@@ -184,7 +164,7 @@ impl<'a, N, P, E, UI, Theme> Edge<'a, N, P, E, UI, Theme> {
         mut self,
         f: impl Fn(&Theme, EdgeStatus, PinInfo<'_, P, UI>, PinInfo<'_, P, UI>) -> EdgeStyle + 'a,
     ) -> Self {
-        self.style_fn = Some(Box::new(f));
+        self.style = Some(Box::new(f));
         self
     }
 }
@@ -286,7 +266,7 @@ pub struct GraphInfo {
 ///
 /// Ids are the user's own node/pin id types (`N`/`P`), matching the rest of the
 /// callback API (e.g. [`PinRef`]); both default to `usize`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum DragInfo<N = usize, P = usize> {
     /// Dragging a single node.
     Node { node_id: N },
@@ -295,7 +275,7 @@ pub enum DragInfo<N = usize, P = usize> {
     /// Dragging an edge from a pin (the source node and pin).
     Edge { from_node: N, from_pin: P },
     /// Box selection drag, anchored at this world-space corner.
-    BoxSelect { start_x: f32, start_y: f32 },
+    BoxSelect { start: Point },
 }
 
 /// Type-safe reference to a pin: a `node_id` paired with a `pin_id`, generic over
@@ -321,17 +301,19 @@ impl<N: Clone, P: Clone> PinRef<N, P> {
     }
 }
 
-/// Node graph widget with generic ID types.
+/// Node graph widget: a frame-scoped collection of [`Node`]s and [`Edge`]s plus
+/// the callbacks and styles that apply to them.
 ///
 /// # Type Parameters
-/// - `N`: Node ID type (defaults to `usize`)
-/// - `P`: Pin ID type (defaults to `usize`)
-/// - `Message`: Application message type
-/// - `Theme`: Iced theme type (defaults to `iced::Theme`)
-/// - `Renderer`: Iced renderer type (defaults to `iced::Renderer`)
+/// - `N`: node id type (defaults to `usize`)
+/// - `P`: pin id type (defaults to `usize`)
+/// - `UI`: per-pin user payload surfaced to `pin_style`/`can_connect`
+///   (defaults to `()`)
+/// - `Message`: application message type
+/// - `Theme`: iced theme type
+/// - `Renderer`: iced renderer type
 ///
-/// Users can provide their own ID types by implementing [`NodeId`], [`PinId`]
-/// and [`EdgeId`].
+/// Bring your own id types by implementing [`NodeId`] and [`PinId`].
 #[allow(missing_debug_implementations)]
 pub struct NodeGraph<
     'a,
@@ -341,76 +323,50 @@ pub struct NodeGraph<
     Message = (),
     Theme = iced_widget::core::Theme,
     Renderer = iced_widget::renderer::Renderer,
-    E = (),
 > where
     N: NodeId,
     P: PinId,
-    E: EdgeId,
 {
     pub(super) size: Size<Length>,
-    /// Nodes with position, element, and config overrides.
-    /// Config fields set to Some() override theme defaults.
-    /// None fields use `default_node_style()` values at render time.
-    pub(super) nodes: Vec<(
-        N,
-        Point,
-        Element<'a, Message, Theme, Renderer>,
-        Option<NodeStyleFn<'a, Theme>>,
-        Option<PinStyleFn<'a, P, UI, Theme>>,
-    )>,
-    /// Id -> index map backing `node_index`: O(1) lookups and deterministic
-    /// duplicate detection in `push_node` (first push wins).
-    node_lookup: HashMap<N, usize>,
-    /// Edges with user-defined pin references and config overrides.
-    /// Pin IDs are resolved to local indices at render time.
-    /// Config fields set to Some() override theme defaults.
-    /// None fields use `default_edge_style()` values at render time.
-    pub(super) edges: Vec<(
-        E,
-        PinRef<N, P>,
-        PinRef<N, P>,
-        Option<EdgeStyleFn<'a, P, UI, Theme>>,
-    )>,
-    graph_style: Option<Box<dyn Fn(&Theme) -> GraphStyle + 'a>>,
-    on_connect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>>,
-    on_disconnect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>>,
-    on_move: Option<Box<dyn Fn(Vector, Vec<N>) -> Message + 'a>>,
-    on_select: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
-    on_clone: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
-    on_delete: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
-    /// External selection using internal indices.
-    /// Populated by `selection()` method which converts user IDs to indices.
-    external_selection: Option<HashSet<usize>>,
-    // Live drag callbacks: fire continuously during a drag (start/update/end),
-    // in addition to the commit-on-drop on_move. They make live
-    // observation of an in-progress drag possible (e.g. collaborative broadcast),
-    // which is the app's concern, not the widget's.
-    on_drag_start: Option<Box<dyn Fn(DragInfo<N, P>) -> Message + 'a>>,
-    on_drag_update: Option<Box<dyn Fn(Point) -> Message + 'a>>,
-    on_drag_end: Option<Box<dyn Fn() -> Message + 'a>>,
-    /// Commit callback for pan/zoom: fires with the new camera (position, zoom)
-    /// when the user finishes a pan drag or zooms. The host stores it and feeds
-    /// it back via `view()`, mirroring `on_move` / `selection`.
-    on_pan: Option<Box<dyn Fn(Point, f32) -> Message + 'a>>,
-    /// Per-frame diagnostics callback (element counts + CPU op timings).
-    on_info: Option<Box<dyn Fn(GraphInfo) -> Message + 'a>>,
-    /// Style callback for box selection overlay.
-    /// Returns (fill_color, border_color).
-    pub(super) box_select_style_fn: Option<Box<dyn Fn(&Theme) -> (Color, Color) + 'a>>,
-    /// Style callback for edge cutting tool overlay.
-    /// Returns the line color.
-    pub(super) cutting_tool_style_fn: Option<Box<dyn Fn(&Theme) -> Color + 'a>>,
+    /// Nodes in push order, which is also their initial z-order.
+    pub(super) nodes: Vec<Node<'a, N, P, UI, Message, Theme, Renderer>>,
+    /// Id -> index map: O(1) `node_index` lookups and deterministic duplicate
+    /// detection in `push_node` (first push wins).
+    pub(super) node_lookup: HashMap<N, usize>,
+    /// Edges in push order. Endpoint pin ids are resolved to positional pin
+    /// indices at draw time, since only the laid-out widget tree knows them.
+    pub(super) edges: Vec<Edge<'a, N, P, UI, Theme>>,
+    pub(super) graph_style: Option<Box<dyn Fn(&Theme) -> GraphStyle + 'a>>,
+    pub(super) on_connect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>>,
+    pub(super) on_disconnect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>>,
+    pub(super) on_move: Option<Box<dyn Fn(Vector, Vec<N>) -> Message + 'a>>,
+    pub(super) on_select: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
+    pub(super) on_clone: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
+    pub(super) on_delete: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
+    /// Host-controlled selection, translated to node indices by
+    /// [`selection`](Self::selection).
+    pub(super) external_selection: Option<HashSet<usize>>,
+    /// Live drag callbacks: fire continuously during a drag, alongside the
+    /// commit-on-drop `on_move`. Observing a drag as it happens (to broadcast
+    /// it, say) is the app's concern, so the widget only reports it.
+    pub(super) on_drag_start: Option<Box<dyn Fn(DragInfo<N, P>) -> Message + 'a>>,
+    pub(super) on_drag_update: Option<Box<dyn Fn(Point) -> Message + 'a>>,
+    pub(super) on_drag_end: Option<Box<dyn Fn() -> Message + 'a>>,
+    /// Commit callback for pan/zoom, the counterpart to [`view`](Self::view).
+    pub(super) on_pan: Option<Box<dyn Fn(Point, f32) -> Message + 'a>>,
+    /// Per-frame diagnostics callback.
+    pub(super) on_info: Option<Box<dyn Fn(GraphInfo) -> Message + 'a>>,
     /// Style for the edge being dragged (theme -> resolved style). The graph
     /// injects the source pin's color for inheriting (TRANSPARENT) stroke ends.
-    pub(super) dragging_edge_style_fn: Option<DragEdgeStyleFn<'a, P, UI, Theme>>,
+    pub(super) dragging_edge_style: Option<DragEdgeStyleFn<'a, P, UI, Theme>>,
     /// Host-controlled camera (world position + zoom). The widget syncs its
     /// internal camera to this whenever the host changes it, while still running
     /// pan/zoom interaction internally and committing via `on_pan`. Mirrors the
     /// `selection()` / `on_select` controlled pattern.
     pub(super) view: Option<(Point, f32)>,
-    /// Custom validation callback for pin connection compatibility.
-    /// When set, it is authoritative in `compute_valid_targets` (the built-in
-    /// direction check only applies as the default when this is unset).
+    /// Connection validation. When set it is authoritative in
+    /// `compute_valid_targets`; otherwise
+    /// [`default_can_connect`](crate::connection::default_can_connect) applies.
     pub(super) can_connect:
         Option<Box<dyn Fn(PinEnd<'_, N, P, UI>, PinEnd<'_, N, P, UI>) -> bool + 'a>>,
     /// Key and pointer bindings; platform defaults unless overridden via
@@ -418,13 +374,11 @@ pub struct NodeGraph<
     pub(super) keymap: input::Keymap,
 }
 
-impl<N, P, E, UI, Message, Theme, Renderer> Default
-    for NodeGraph<'_, N, P, UI, Message, Theme, Renderer, E>
+impl<N, P, UI, Message, Theme, Renderer> Default
+    for NodeGraph<'_, N, P, UI, Message, Theme, Renderer>
 where
     N: NodeId,
     P: PinId,
-    E: EdgeId,
-    Renderer: iced_wgpu::core::renderer::Renderer,
 {
     fn default() -> Self {
         Self {
@@ -445,9 +399,7 @@ where
             on_drag_end: None,
             on_pan: None,
             on_info: None,
-            box_select_style_fn: None,
-            cutting_tool_style_fn: None,
-            dragging_edge_style_fn: None,
+            dragging_edge_style: None,
             view: None,
             can_connect: None,
             keymap: input::Keymap::default(),
@@ -455,12 +407,10 @@ where
     }
 }
 
-impl<'a, N, P, E, UI, Message, Theme, Renderer> NodeGraph<'a, N, P, UI, Message, Theme, Renderer, E>
+impl<'a, N, P, UI, Message, Theme, Renderer> NodeGraph<'a, N, P, UI, Message, Theme, Renderer>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
-    E: EdgeId + 'static,
-    Renderer: iced_wgpu::core::renderer::Renderer,
 {
     /// Sets the host-controlled camera (world position + zoom).
     ///
@@ -475,14 +425,12 @@ where
         self
     }
 
-    /// Adds a node with the given ID and default styling.
+    /// Adds a node, styled by the theme unless the builder overrides it.
     ///
-    /// The node will use theme defaults from `default_node_style()`.
-    ///
-    /// Node IDs must be unique: a duplicate push is ignored (the first node
-    /// with the id wins), and debug builds assert on it. Prefer a stable id
-    /// from your data (a DB key, `uuid::Uuid`, a typed newtype) over a
-    /// hand-managed counter.
+    /// Node ids must be unique: a duplicate push is ignored (the first node with
+    /// the id wins) and debug builds assert on it. Prefer a stable id from your
+    /// data (a DB key, `uuid::Uuid`, a typed newtype) over a hand-managed
+    /// counter.
     pub fn push_node(&mut self, node: Node<'a, N, P, UI, Message, Theme, Renderer>) {
         match self.node_lookup.entry(node.id.clone()) {
             std::collections::hash_map::Entry::Occupied(_) => {
@@ -495,67 +443,46 @@ where
             }
             std::collections::hash_map::Entry::Vacant(entry) => {
                 entry.insert(self.nodes.len());
-                self.nodes.push((
-                    node.id,
-                    node.position,
-                    node.element,
-                    node.style_fn,
-                    node.pin_style_fn,
-                ));
+                self.nodes.push(node);
             }
         }
     }
 
-    /// Adds an edge to the graph.
+    /// Adds an edge, styled by the theme unless the builder overrides it.
     ///
-    /// Pin IDs are resolved to local indices at render time; the widget
-    /// normalizes orientation so the output pin is the edge start (output ->
-    /// input).
-    pub fn push_edge(&mut self, edge: Edge<'a, N, P, E, UI, Theme>) {
-        self.edges
-            .push((edge.id, edge.from, edge.to, edge.style_fn));
+    /// The widget normalizes orientation when drawing and reporting, so the
+    /// output pin is always the edge start (output -> input) regardless of the
+    /// order given here.
+    pub fn push_edge(&mut self, edge: Edge<'a, N, P, UI, Theme>) {
+        self.edges.push(edge);
     }
 
-    /// The user node id stored at an internal index.
+    /// The user node id at a node index.
     pub(super) fn node_id_at(&self, index: usize) -> Option<&N> {
-        self.nodes.get(index).map(|(id, ..)| id)
+        self.nodes.get(index).map(|node| &node.id)
     }
 
-    /// Clones the user node id stored at an internal index.
-    pub(super) fn index_to_node_id(&self, index: usize) -> Option<N> {
-        self.node_id_at(index).cloned()
-    }
-
-    /// The internal index of a node by its user id. Linear scan: the node Vec is
-    /// the single source of truth, the index is a transient render-time detail.
+    /// The node index of a user node id.
     pub(super) fn node_index(&self, id: &N) -> Option<usize> {
         self.node_lookup.get(id).copied()
     }
 
-    /// Sets the graph chrome style (background, etc.) as a theme-derived closure.
-    ///
-    /// Mirrors the other style setters (`box_select_style`, `dragging_edge_style`,
-    /// `cutting_tool_style`) and the per-node/edge/pin `.style()` closures: every
-    /// style entry point on the widget is a `Fn(&Theme) -> _`. For a static style,
-    /// ignore the theme argument: `.graph_style(|_| GraphStyle { ..base })`.
-    pub fn graph_style(mut self, f: impl Fn(&Theme) -> GraphStyle + 'a) -> Self {
-        self.graph_style = Some(Box::new(f));
-        self
+    /// The user node ids at the given node indices, skipping unknown indices.
+    pub(super) fn node_ids_at(&self, indices: &[usize]) -> Vec<N> {
+        indices
+            .iter()
+            .filter_map(|&index| self.node_id_at(index).cloned())
+            .collect()
     }
 
-    /// Sets a style callback for the box selection overlay.
+    /// Sets the graph chrome style (canvas background, tiling, selection
+    /// overlay) as a theme-derived closure.
     ///
-    /// The callback receives the theme and returns (fill_color, border_color).
-    ///
-    /// # Example
-    /// ```ignore
-    /// node_graph()
-    ///     .box_select_style(|theme| {
-    ///         (Color::from_rgba(0.3, 0.6, 1.0, 0.2), Color::from_rgb(0.3, 0.6, 1.0))
-    ///     })
-    /// ```
-    pub fn box_select_style(mut self, f: impl Fn(&Theme) -> (Color, Color) + 'a) -> Self {
-        self.box_select_style_fn = Some(Box::new(f));
+    /// Every style entry point on the widget is a `Fn(&Theme) -> _`. For a
+    /// static style, ignore the theme argument:
+    /// `.graph_style(|_| GraphStyle { ..base })`.
+    pub fn graph_style(mut self, f: impl Fn(&Theme) -> GraphStyle + 'a) -> Self {
+        self.graph_style = Some(Box::new(f));
         self
     }
 
@@ -566,21 +493,7 @@ where
         mut self,
         f: impl Fn(&Theme, PinInfo<'_, P, UI>) -> EdgeStyle + 'a,
     ) -> Self {
-        self.dragging_edge_style_fn = Some(Box::new(f));
-        self
-    }
-
-    /// Sets a style callback for the edge cutting tool overlay.
-    ///
-    /// The callback receives the theme and returns the line color.
-    ///
-    /// # Example
-    /// ```ignore
-    /// node_graph()
-    ///     .cutting_tool_style(|theme| Color::from_rgb(1.0, 0.3, 0.3))
-    /// ```
-    pub fn cutting_tool_style(mut self, f: impl Fn(&Theme) -> Color + 'a) -> Self {
-        self.cutting_tool_style_fn = Some(Box::new(f));
+        self.dragging_edge_style = Some(Box::new(f));
         self
     }
 
@@ -790,71 +703,19 @@ where
         self
     }
 
+    /// The nodes' world positions paired with their content elements, in push
+    /// order. Keeps the `Widget` impl's tree walks independent of `Node`'s shape.
     pub(super) fn elements_iter(
         &self,
     ) -> impl Iterator<Item = (Point, &Element<'a, Message, Theme, Renderer>)> {
-        self.nodes.iter().map(|(_, p, e, _, _)| (*p, e))
+        self.nodes.iter().map(|node| (node.position, &node.element))
     }
 
     pub(super) fn elements_iter_mut(
         &mut self,
     ) -> impl Iterator<Item = (Point, &mut Element<'a, Message, Theme, Renderer>)> {
-        self.nodes.iter_mut().map(|(_, p, e, _, _)| (*p, e))
-    }
-
-    pub(super) fn on_connect_handler(
-        &self,
-    ) -> Option<&Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>> {
-        self.on_connect.as_ref()
-    }
-    pub(super) fn on_disconnect_handler(
-        &self,
-    ) -> Option<&Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>> {
-        self.on_disconnect.as_ref()
-    }
-    pub(super) fn on_move_handler(&self) -> Option<&Box<dyn Fn(Vector, Vec<N>) -> Message + 'a>> {
-        self.on_move.as_ref()
-    }
-    pub(super) fn on_select_handler(&self) -> Option<&Box<dyn Fn(Vec<N>) -> Message + 'a>> {
-        self.on_select.as_ref()
-    }
-    pub(super) fn on_clone_handler(&self) -> Option<&Box<dyn Fn(Vec<N>) -> Message + 'a>> {
-        self.on_clone.as_ref()
-    }
-    pub(super) fn on_delete_handler(&self) -> Option<&Box<dyn Fn(Vec<N>) -> Message + 'a>> {
-        self.on_delete.as_ref()
-    }
-    pub(super) fn on_drag_start_handler(
-        &self,
-    ) -> Option<&Box<dyn Fn(DragInfo<N, P>) -> Message + 'a>> {
-        self.on_drag_start.as_ref()
-    }
-    pub(super) fn on_drag_update_handler(&self) -> Option<&Box<dyn Fn(Point) -> Message + 'a>> {
-        self.on_drag_update.as_ref()
-    }
-    pub(super) fn on_drag_end_handler(&self) -> Option<&Box<dyn Fn() -> Message + 'a>> {
-        self.on_drag_end.as_ref()
-    }
-    pub(super) fn get_external_selection(&self) -> Option<&HashSet<usize>> {
-        self.external_selection.as_ref()
-    }
-
-    pub(super) fn on_pan_handler(&self) -> Option<&Box<dyn Fn(Point, f32) -> Message + 'a>> {
-        self.on_pan.as_ref()
-    }
-    pub(super) fn on_info_handler(&self) -> Option<&Box<dyn Fn(GraphInfo) -> Message + 'a>> {
-        self.on_info.as_ref()
-    }
-    pub(super) fn view_value(&self) -> Option<(Point, f32)> {
-        self.view
-    }
-
-    /// Translates a list of internal node indices to user IDs.
-    /// Returns empty vec if any translation fails.
-    pub(super) fn translate_node_ids(&self, indices: &[usize]) -> Vec<N> {
-        indices
-            .iter()
-            .filter_map(|&idx| self.index_to_node_id(idx))
-            .collect()
+        self.nodes
+            .iter_mut()
+            .map(|node| (node.position, &mut node.element))
     }
 }

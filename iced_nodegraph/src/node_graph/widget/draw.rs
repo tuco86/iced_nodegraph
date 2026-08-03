@@ -1,7 +1,9 @@
-//! The `draw` render path of [`NodeGraph`] and its draw-exclusive helpers.
+//! The `draw` render path of [`NodeGraph`]: turning resolved styles and pin
+//! geometry into SDF layers, in the order they composite.
 //!
-//! Split out of `widget.rs` mechanically; see the module docs there for the
-//! rendering-layer overview.
+//! The layer stack this builds is documented on the parent `widget` module.
+//! Appearance decisions (which layers a style expands into) live in
+//! [`crate::style`]; this module owns placement, culling and batching.
 
 use super::*;
 use iced_widget::core::{Border, Shadow};
@@ -9,12 +11,9 @@ use iced_widget::core::{Border, Shadow};
 /// Line width for the edge cutting overlay (in world-space pixels).
 const EDGE_CUT_LINE_WIDTH: f32 = 3.0;
 
-/// Convert a world-space bounding box to screen-space bounds for SdfPrimitive.
+/// Intersects a shape's screen bounds with the widget's layout rectangle.
 ///
-/// Formula: screen = (world + camera_position) * zoom
-/// Returns [x, y, width, height] in screen pixels.
-/// Clip shape screen bounds to a layout rectangle.
-/// Returns `None` if the shape is entirely off-screen (no intersection).
+/// `None` means the shape is entirely off-screen, so the caller can skip it.
 fn clipped_shape_bounds(b: [f32; 4], clip: Rectangle) -> Option<Rectangle> {
     let x0 = b[0].max(clip.x);
     let y0 = b[1].max(clip.y);
@@ -68,6 +67,11 @@ fn draw_sdf<Renderer>(
     renderer.draw_primitive(clip, primitive);
 }
 
+/// A world-space bounding box as SDF screen bounds `[x, y, width, height]`,
+/// grown by `padding` world units on every side.
+///
+/// Applies `screen = (world + camera_position) * zoom` and the widget's own
+/// screen offset.
 fn world_bbox_to_screen_bounds(
     x0: f32,
     y0: f32,
@@ -234,7 +238,7 @@ fn resolve_pin_style<P: PinId + 'static, UI>(
 /// recipe cuts (`ShapeExpr::Circle` at local offsets) that punch the pin holes,
 /// so the body and its shadow punch identical holes.
 fn pin_cutout_params<P: PinId + 'static, UI>(
-    pins: &[(usize, &NodePinState<P, UI>, (Point, Point))],
+    pins: &[PinLayout<'_, P, UI>],
     pin_style_fn: Option<&PinStyleFn<'_, P, UI, Theme>>,
     other: Option<&NodePinState<P, UI>>,
     theme: &Theme,
@@ -271,11 +275,10 @@ fn pin_cutout_params<P: PinId + 'static, UI>(
     cuts
 }
 
-impl<N, P, E, UI, Message, Renderer> NodeGraph<'_, N, P, UI, Message, Theme, Renderer, E>
+impl<N, P, UI, Message, Renderer> NodeGraph<'_, N, P, UI, Message, Theme, Renderer>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
-    E: EdgeId + 'static,
     UI: Clone + 'static,
     Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
@@ -348,14 +351,23 @@ where
         // Check if we're edge dragging
         let is_edge_dragging = matches!(
             state.dragging,
-            Dragging::Edge(_, _, _) | Dragging::EdgeOver(_, _, _, _)
+            Dragging::Edge {
+                from_node: _,
+                from_pin: _,
+                origin: _
+            } | Dragging::EdgeOver {
+                from_node: _,
+                from_pin: _,
+                to_node: _,
+                to_pin: _
+            }
         );
 
         // Per-frame pin table, built ONCE per node: `find_pins` is a
         // Vec-allocating tree walk, and the drag preview, node geometry,
         // edge loop, foreground and info passes all need pin positions.
         // Indexed by node index; padded so lookups never go out of bounds.
-        let mut node_pins: Vec<Vec<(usize, &NodePinState<P, UI>, (Point, Point))>> = layout
+        let mut node_pins: Vec<Vec<PinLayout<'_, P, UI>>> = layout
             .children()
             .zip(&tree.children)
             .map(|(node_layout, node_tree)| find_pins::<P, UI>(node_tree, node_layout))
@@ -365,8 +377,17 @@ where
         // The pin an edge drag started from, surfaced as `other` to pin_style so
         // candidate pins can react to what is being dragged toward them.
         let drag_source: Option<NodePinState<P, UI>> = match state.dragging {
-            Dragging::Edge(from_node, from_pin, _)
-            | Dragging::EdgeOver(from_node, from_pin, _, _) => node_pins
+            Dragging::Edge {
+                from_node,
+                from_pin,
+                origin: _,
+            }
+            | Dragging::EdgeOver {
+                from_node,
+                from_pin,
+                to_node: _,
+                to_pin: _,
+            } => node_pins
                 .get(from_node)
                 .and_then(|pins| pins.get(from_pin))
                 .map(|(_, s, _)| (*s).clone()),
@@ -411,8 +432,13 @@ where
             let is_selected = state.selected_nodes.contains(&node_idx);
 
             // Single node drag
-            if let (Dragging::Node(drag_idx, origin), Some(cursor_pos)) =
-                (&state.dragging, cursor.position())
+            if let (
+                Dragging::Node {
+                    node: drag_idx,
+                    origin,
+                },
+                Some(cursor_pos),
+            ) = (&state.dragging, cursor.position())
                 && *drag_idx == node_idx
             {
                 offset = cursor_layout(cursor_pos) - *origin;
@@ -467,8 +493,7 @@ where
         let t_geom_start = Instant::now();
         let node_geoms: Vec<Option<NodeGeom>> = (0..self.nodes.len())
             .map(|node_index| {
-                let (_id, _position, _element, node_style, node_pin_style) =
-                    &self.nodes[node_index];
+                let node = &self.nodes[node_index];
                 let node_layout = layout.children().nth(node_index)?;
                 // Gate only: a node without a tree child gets no geometry
                 // (its pins are already absent from `node_pins`).
@@ -478,7 +503,7 @@ where
                 } else {
                     NodeStatus::Idle
                 };
-                let resolved = resolve_node_style(node_style.as_ref(), theme, status);
+                let resolved = resolve_node_style(node.style.as_ref(), theme, status);
                 let offset = compute_node_offset(node_index);
                 let position: WorldPoint =
                     (node_layout.bounds().position().into_euclid().to_vector() + offset).to_point();
@@ -490,7 +515,7 @@ where
                 ];
                 let cut_params = pin_cutout_params(
                     pins,
-                    node_pin_style.as_ref(),
+                    node.pin_style.as_ref(),
                     drag_source.as_ref(),
                     theme,
                     offset,
@@ -556,7 +581,13 @@ where
             let mut edge_strokes: Vec<(Shape, Style)> = Vec::with_capacity(self.edges.len() * 2);
             let mut edge_shadows: Vec<(Shape, Style)> = Vec::with_capacity(self.edges.len());
 
-            for (edge_idx, (_edge_id, from, to, edge_style_fn)) in self.edges.iter().enumerate() {
+            for (edge_idx, edge) in self.edges.iter().enumerate() {
+                let Edge {
+                    from,
+                    to,
+                    style: edge_style_fn,
+                    ..
+                } = edge;
                 let Some(from_node_idx) = self.node_index(&from.node_id) else {
                     continue;
                 };
@@ -707,7 +738,11 @@ where
         // Dragging edge (single primitive, only during interaction). Kept as its
         // own draw above the background but below the nodes, matching its prior
         // z-position; it is never folded into the background batch.
-        if let Dragging::Edge(from_node_idx, from_pin_idx, _) = &state.dragging
+        if let Dragging::Edge {
+            from_node: from_node_idx,
+            from_pin: from_pin_idx,
+            origin: _,
+        } = &state.dragging
             && let Some(cursor_pos) = cursor.position()
         {
             let from_pins = &node_pins[*from_node_idx];
@@ -720,7 +755,7 @@ where
                 let end_pos: WorldPoint = cursor_layout(cursor_pos);
 
                 let drag_edge_style = match (
-                    self.dragging_edge_style_fn.as_ref(),
+                    self.dragging_edge_style.as_ref(),
                     pin_info::<P, UI>(from_pin_state),
                 ) {
                     (Some(f), Some(info)) => f(theme, info),
@@ -778,7 +813,7 @@ where
         // For each node: Fill → Widgets → Foreground (border + pins batched)
         // ========================================
         for &node_index in &z_indices {
-            let (_id, _position, element, _node_style, node_pin_style) = &self.nodes[node_index];
+            let node = &self.nodes[node_index];
             let Some(node_tree) = tree.children.get(node_index) else {
                 continue;
             };
@@ -889,7 +924,7 @@ where
 
                         renderer.with_layer(clip_bounds, |renderer| {
                             renderer.with_translation(screen_offset, |renderer| {
-                                element.as_widget().draw(
+                                node.element.as_widget().draw(
                                     node_tree,
                                     renderer,
                                     theme,
@@ -955,7 +990,7 @@ where
                         PinStatus::Idle
                     };
                     let pin_style = resolve_pin_style(
-                        node_pin_style.as_ref(),
+                        node.pin_style.as_ref(),
                         pin_state,
                         drag_source.as_ref(),
                         theme,
@@ -1037,15 +1072,11 @@ where
             // cursor), so the live corner must match that space.
             let cursor_world = cursor.position().map(cursor_layout).unwrap_or(*start);
 
-            // Resolve box select colors: use callback if provided, otherwise use selection_style
-            let (fill_color, border_color) = if let Some(ref style_fn) = self.box_select_style_fn {
-                style_fn(theme)
-            } else {
-                (
-                    resolved_graph.selection_style.box_select_fill,
-                    resolved_graph.selection_style.box_select_border,
-                )
-            };
+            let SelectionStyle {
+                box_select_fill: fill_color,
+                box_select_border: border_color,
+                ..
+            } = resolved_graph.selection_style;
 
             let center = [
                 (start.x + cursor_world.x) * 0.5,
@@ -1105,12 +1136,7 @@ where
             // cursor), so the live corner must match that space.
             let cursor_world = cursor.position().map(cursor_layout).unwrap_or(*start);
 
-            // Resolve cutting tool color: use callback if provided, otherwise use selection_style
-            let cutting_color = if let Some(ref style_fn) = self.cutting_tool_style_fn {
-                style_fn(theme)
-            } else {
-                resolved_graph.selection_style.edge_cutting_color
-            };
+            let cutting_color = resolved_graph.selection_style.edge_cutting_color;
 
             let cutting_bounds = world_bbox_to_screen_bounds(
                 start.x,
@@ -1188,9 +1214,9 @@ where
             let edges_in = self
                 .edges
                 .iter()
-                .filter(|(_, from, to, _)| {
+                .filter(|edge| {
                     let visible = |id| self.node_index(id).is_some_and(|idx| node_in_view[idx]);
-                    visible(&from.node_id) || visible(&to.node_id)
+                    visible(&edge.from.node_id) || visible(&edge.to.node_id)
                 })
                 .count();
 

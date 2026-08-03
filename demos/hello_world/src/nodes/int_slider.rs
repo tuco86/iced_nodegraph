@@ -31,18 +31,6 @@ impl Default for IntSliderConfig {
     }
 }
 
-impl IntSliderConfig {
-    /// Creates a config for node index selection (0-99)
-    #[allow(dead_code)]
-    pub fn node_index() -> Self {
-        Self {
-            min: 0,
-            max: 99,
-            label: "Node Index".to_string(),
-        }
-    }
-}
-
 /// Creates an integer slider node with interactive slider widget and optional expanded options
 pub fn int_slider_node<'a, Message>(
     theme: &'a iced::Theme,

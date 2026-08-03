@@ -1,42 +1,12 @@
-use iced::Color;
-
-use crate::colors;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[allow(dead_code)]
 pub enum SocketType {
     Float,
     Vec2,
     Vec3,
     Vec4,
-    Bool,
-    Int,
 }
 
-#[allow(dead_code)]
 impl SocketType {
-    pub fn wgsl_type(&self) -> &'static str {
-        match self {
-            SocketType::Float => "f32",
-            SocketType::Vec2 => "vec2<f32>",
-            SocketType::Vec3 => "vec3<f32>",
-            SocketType::Vec4 => "vec4<f32>",
-            SocketType::Bool => "bool",
-            SocketType::Int => "i32",
-        }
-    }
-
-    pub fn color(&self) -> Color {
-        match self {
-            SocketType::Float => colors::SOCKET_FLOAT,
-            SocketType::Vec2 => colors::SOCKET_VEC2,
-            SocketType::Vec3 => colors::SOCKET_VEC3,
-            SocketType::Vec4 => colors::SOCKET_VEC4,
-            SocketType::Bool => colors::SOCKET_BOOL,
-            SocketType::Int => colors::SOCKET_INT,
-        }
-    }
-
     pub fn can_connect_to(&self, other: &SocketType) -> bool {
         self == other
     }

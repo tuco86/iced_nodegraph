@@ -30,7 +30,7 @@
 //!
 //! - Output pins connect to Input pins (directional)
 //! - Bidirectional pins connect to any direction
-//! - Type-compatible pins only (Integer, Float, String, Any)
+//! - Type-compatible pins only (Integer, Float, String, Boolean, Any)
 //! - Integer implicitly converts to Float
 //! - Single-connection pins reject additional connections
 
@@ -61,6 +61,7 @@ pub fn wasm_init() {
 struct Integer;
 struct Float;
 struct StringType;
+struct Boolean;
 struct AnyType;
 
 // -- Pin metadata for validation --
@@ -70,7 +71,6 @@ enum PinType {
     Integer,
     Float,
     String,
-    #[allow(dead_code)]
     Boolean,
     Any,
 }
@@ -137,6 +137,8 @@ fn pin_style(
         PinType::Float.color()
     } else if ty == TypeId::of::<StringType>() {
         PinType::String.color()
+    } else if ty == TypeId::of::<Boolean>() {
+        PinType::Boolean.color()
     } else {
         PinType::Any.color()
     };
@@ -237,6 +239,7 @@ impl App {
         self.register(2, 1, PinType::Integer, PinDir::Output, false, "Int");
         self.register(2, 2, PinType::Float, PinDir::Output, false, "Float");
         self.register(2, 3, PinType::String, PinDir::Output, false, "String");
+        self.register(2, 4, PinType::Boolean, PinDir::Output, false, "Bool");
 
         // Node 3: Display
         self.register(3, 0, PinType::Any, PinDir::Input, false, "Value");
@@ -514,7 +517,7 @@ impl App {
 
         // Add edges
         for (from, to) in &self.edges {
-            ng.push_edge(edge!(*from, *to));
+            ng.push_edge(edge(*from, *to));
         }
 
         // Toolbar
@@ -674,6 +677,13 @@ impl App {
                     text("String").size(12),
                     Output,
                     ::std::any::TypeId::of::<StringType>()
+                )),
+                right_pin(pin!(
+                    Right,
+                    4usize,
+                    text("Bool").size(12),
+                    Output,
+                    ::std::any::TypeId::of::<Boolean>()
                 )),
             ]
             .spacing(4),

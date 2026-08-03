@@ -1,3 +1,5 @@
+// `ConfigNodeType`'s config variants each carry a full set of optional style
+// fields, dwarfing the apply variants next to them.
 #![allow(clippy::large_enum_variant)]
 
 mod bool_toggle;
@@ -43,8 +45,6 @@ use iced::{
     widget::{Container, Row, container, row, text},
 };
 use iced_nodegraph::{ColorQuad, EdgeCurve, PinShape, TilingKind, node_header};
-
-use crate::style_overlay::{EdgeOverlay, NodeOverlay, PinOverlay};
 
 /// Semantic pin colors for consistent visual language across nodes.
 /// Based on "Industrial Precision" design system.
@@ -92,13 +92,19 @@ pub mod colors {
     pub const TEXT_MUTED: Color = Color::from_rgb(0.631, 0.631, 0.667);
 }
 
-/// Node value types for data flow between nodes
+/// The closed value vocabulary carried between the demo's pins.
+///
+/// One variant per input node's output type, and one `as_*` accessor per
+/// variant: a config node reads the accessor matching its field's type, so a
+/// mismatched connection yields `None` rather than a wrong value.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum NodeValue {
     Float(f32),
     Int(i32),
     Color(Color),
+    /// Produced by the Bool Toggle node. No style field is a bool, so no config
+    /// node reads it yet; the variant keeps `InputNodeType::output_value` total.
+    #[allow(dead_code)]
     Bool(bool),
     EdgeCurve(EdgeCurve),
     PinShape(PinShape),
@@ -109,14 +115,8 @@ pub enum NodeValue {
     ColorQuad(ColorQuad),
     /// 2D vector (e.g. shadow offset).
     Vec2(f32, f32),
-    // Style overlays for config-node chains (partial overlays layered over the
-    // theme base at draw time).
-    NodeConfig(NodeOverlay),
-    EdgeConfig(EdgeOverlay),
-    PinConfig(PinOverlay),
 }
 
-#[allow(dead_code)]
 impl NodeValue {
     pub fn as_float(&self) -> Option<f32> {
         match self {
@@ -135,13 +135,6 @@ impl NodeValue {
     pub fn as_color(&self) -> Option<Color> {
         match self {
             NodeValue::Color(c) => Some(*c),
-            _ => None,
-        }
-    }
-
-    pub fn as_bool(&self) -> Option<bool> {
-        match self {
-            NodeValue::Bool(b) => Some(*b),
             _ => None,
         }
     }
@@ -187,27 +180,6 @@ impl NodeValue {
     pub fn as_vec2(&self) -> Option<(f32, f32)> {
         match self {
             NodeValue::Vec2(x, y) => Some((*x, *y)),
-            _ => None,
-        }
-    }
-
-    pub fn as_node_config(&self) -> Option<&NodeOverlay> {
-        match self {
-            NodeValue::NodeConfig(c) => Some(c),
-            _ => None,
-        }
-    }
-
-    pub fn as_edge_config(&self) -> Option<&EdgeOverlay> {
-        match self {
-            NodeValue::EdgeConfig(c) => Some(c),
-            _ => None,
-        }
-    }
-
-    pub fn as_pin_config(&self) -> Option<&PinOverlay> {
-        match self {
-            NodeValue::PinConfig(c) => Some(c),
             _ => None,
         }
     }
@@ -379,7 +351,6 @@ pub enum InputNodeType {
     },
 }
 
-#[allow(dead_code)]
 impl InputNodeType {
     /// Returns the output value for this input node
     pub fn output_value(&self) -> NodeValue {
@@ -392,20 +363,6 @@ impl InputNodeType {
             Self::PatternTypeSelector { value } => NodeValue::PatternType(*value),
             Self::TilingKindSelector { value } => NodeValue::TilingKind(*value),
             Self::ColorPicker { color } | Self::ColorPreset { color } => NodeValue::Color(*color),
-        }
-    }
-
-    /// Returns the output pin type
-    pub fn output_type(&self) -> &'static str {
-        match self {
-            Self::FloatSlider { .. } => "float",
-            Self::IntSlider { .. } => "int",
-            Self::BoolToggle { .. } => "bool",
-            Self::EdgeCurveSelector { .. } => "edge_curve",
-            Self::PinShapeSelector { .. } => "pin_shape",
-            Self::PatternTypeSelector { .. } => "pattern_type",
-            Self::TilingKindSelector { .. } => "tiling_kind",
-            Self::ColorPicker { .. } | Self::ColorPreset { .. } => "color",
         }
     }
 }
@@ -431,38 +388,7 @@ pub enum NodeType {
     ThemeExtended,
 }
 
-#[allow(dead_code)]
 impl NodeType {
-    pub fn name(&self) -> &str {
-        match self {
-            Self::Workflow(name) => name.as_str(),
-            Self::Input(input) => match input {
-                InputNodeType::FloatSlider { config, .. } => config.label.as_str(),
-                InputNodeType::IntSlider { config, .. } => config.label.as_str(),
-                InputNodeType::BoolToggle { config, .. } => config.label.as_str(),
-                InputNodeType::EdgeCurveSelector { .. } => "Edge Curve",
-                InputNodeType::PinShapeSelector { .. } => "Pin Shape",
-                InputNodeType::PatternTypeSelector { .. } => "Pattern Type",
-                InputNodeType::TilingKindSelector { .. } => "Tiling Kind",
-                InputNodeType::ColorPicker { .. } => "Color Picker",
-                InputNodeType::ColorPreset { .. } => "Color Preset",
-            },
-            Self::Config(config) => match config {
-                ConfigNodeType::NodeConfig(_) => "Node Config",
-                ConfigNodeType::EdgeConfig(_) => "Edge Config",
-                ConfigNodeType::PinConfig(_) => "Pin Config",
-                ConfigNodeType::GraphConfig(_) => "Graph Config",
-                ConfigNodeType::ApplyToGraph { .. } => "Apply to Graph",
-                ConfigNodeType::ApplyToNode { .. } => "Apply to Node",
-            },
-            Self::Math(state) => state.operation.name(),
-            Self::ColorQuad(_) => "Color Quad",
-            Self::Vec2(_) => "Vec2",
-            Self::Theme => "Theme",
-            Self::ThemeExtended => "Theme Extended",
-        }
-    }
-
     /// Returns the output value for this node, if it produces one
     pub fn output_value(&self) -> Option<NodeValue> {
         match self {
@@ -480,7 +406,8 @@ impl NodeType {
     }
 }
 
-/// Creates a node element based on the node type name (legacy support).
+/// Dispatches on a [`NodeType::Workflow`] name; an unknown name renders the
+/// email trigger node.
 pub fn node<'a, Message>(node_type: &str, theme: &'a Theme) -> iced::Element<'a, Message>
 where
     Message: Clone + 'a,

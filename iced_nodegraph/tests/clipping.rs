@@ -9,107 +9,19 @@
 //! but we do not need a real renderer: the bug is observable in a single
 //! argument value, not in pixel output.
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::rc::Rc;
 
 use iced::advanced::widget::{Tree, Widget};
 use iced::advanced::{Layout, layout, mouse, renderer};
-use iced::{
-    Background, Color, Element, Length, Pixels, Point, Rectangle, Size, Theme, Transformation,
-    Vector,
-};
+use iced::{Color, Element, Length, Point, Rectangle, Size, Theme, Vector};
 use iced_wgpu::core::clipboard;
-use iced_wgpu::core::image;
-use iced_wgpu::core::text;
 
-use crate::{NodeGraph, node};
+use iced_nodegraph::{NodeGraph, node};
 
-// ---------------------------------------------------------------------------
-// Stub renderer: no-op implementations of every trait NodeGraph requires.
-// The test never inspects pixel output, so all methods are empty.
-// ---------------------------------------------------------------------------
-struct Stub;
+mod common;
 
-thread_local! {
-    // Records active clip layers so a child can inspect the innermost clip it
-    // is drawn under (push_clip in iced replaces, not intersects, parent clips).
-    static LAYER_STACK: RefCell<Vec<Rectangle>> = const { RefCell::new(Vec::new()) };
-    // Snapshot of the innermost clip at the moment the recorder child is drawn.
-    static CHILD_CLIP: Cell<Option<Rectangle>> = const { Cell::new(None) };
-}
-
-impl renderer::Renderer for Stub {
-    fn start_layer(&mut self, bounds: Rectangle) {
-        LAYER_STACK.with(|s| s.borrow_mut().push(bounds));
-    }
-    fn end_layer(&mut self) {
-        LAYER_STACK.with(|s| {
-            s.borrow_mut().pop();
-        });
-    }
-    fn start_transformation(&mut self, _t: Transformation) {}
-    fn end_transformation(&mut self) {}
-    fn reset(&mut self, _new_bounds: Rectangle) {}
-    fn fill_quad(&mut self, _quad: renderer::Quad, _background: impl Into<Background>) {}
-    fn allocate_image(
-        &mut self,
-        _handle: &image::Handle,
-        _callback: impl FnOnce(Result<image::Allocation, image::Error>) + Send + 'static,
-    ) {
-    }
-}
-
-impl text::Renderer for Stub {
-    type Font = iced::Font;
-    // Real (GPU-free) types: iced_core's `()` impls are debug_assertions-gated
-    // and break release test builds; these tests never lay out text.
-    type Paragraph = iced_wgpu::graphics::text::Paragraph;
-    type Editor = iced_wgpu::graphics::text::Editor;
-
-    const ICON_FONT: iced::Font = iced::Font::DEFAULT;
-    const CHECKMARK_ICON: char = '0';
-    const ARROW_DOWN_ICON: char = '0';
-    const SCROLL_UP_ICON: char = '0';
-    const SCROLL_DOWN_ICON: char = '0';
-    const SCROLL_LEFT_ICON: char = '0';
-    const SCROLL_RIGHT_ICON: char = '0';
-    const ICED_LOGO: char = '0';
-
-    fn default_font(&self) -> Self::Font {
-        iced::Font::default()
-    }
-    fn default_size(&self) -> Pixels {
-        Pixels(16.0)
-    }
-    fn fill_paragraph(
-        &mut self,
-        _paragraph: &Self::Paragraph,
-        _position: Point,
-        _color: Color,
-        _clip_bounds: Rectangle,
-    ) {
-    }
-    fn fill_editor(
-        &mut self,
-        _editor: &Self::Editor,
-        _position: Point,
-        _color: Color,
-        _clip_bounds: Rectangle,
-    ) {
-    }
-    fn fill_text(
-        &mut self,
-        _text: text::Text,
-        _position: Point,
-        _color: Color,
-        _clip_bounds: Rectangle,
-    ) {
-    }
-}
-
-impl iced_wgpu::primitive::Renderer for Stub {
-    fn draw_primitive(&mut self, _bounds: Rectangle, _primitive: impl iced_wgpu::Primitive) {}
-}
+use common::record::Recorder;
 
 // ---------------------------------------------------------------------------
 // Leaf child widget that records the viewport it was last drawn / updated with.
@@ -120,16 +32,17 @@ struct Capture(Rc<Cell<Option<Rectangle>>>);
 struct ViewportRecorder {
     on_draw: Capture,
     on_update: Capture,
+    on_clip: Capture,
 }
 
-impl<Message> Widget<Message, Theme, Stub> for ViewportRecorder {
+impl<Message> Widget<Message, Theme, Recorder> for ViewportRecorder {
     fn size(&self) -> Size<Length> {
         Size::new(Length::Fixed(40.0), Length::Fixed(20.0))
     }
     fn layout(
         &mut self,
         _tree: &mut Tree,
-        _renderer: &Stub,
+        _renderer: &Recorder,
         limits: &layout::Limits,
     ) -> layout::Node {
         layout::Node::new(limits.resolve(Length::Fixed(40.0), Length::Fixed(20.0), Size::ZERO))
@@ -137,7 +50,7 @@ impl<Message> Widget<Message, Theme, Stub> for ViewportRecorder {
     fn draw(
         &self,
         _tree: &Tree,
-        _renderer: &mut Stub,
+        renderer: &mut Recorder,
         _theme: &Theme,
         _style: &renderer::Style,
         _layout: Layout<'_>,
@@ -145,7 +58,7 @@ impl<Message> Widget<Message, Theme, Stub> for ViewportRecorder {
         viewport: &Rectangle,
     ) {
         self.on_draw.0.set(Some(*viewport));
-        CHILD_CLIP.with(|c| c.set(LAYER_STACK.with(|s| s.borrow().last().copied())));
+        self.on_clip.0.set(renderer.clip());
     }
     fn update(
         &mut self,
@@ -153,7 +66,7 @@ impl<Message> Widget<Message, Theme, Stub> for ViewportRecorder {
         _event: &iced::Event,
         _layout: Layout<'_>,
         _cursor: mouse::Cursor,
-        _renderer: &Stub,
+        _renderer: &Recorder,
         _clipboard: &mut dyn clipboard::Clipboard,
         _shell: &mut iced_wgpu::core::Shell<'_, Message>,
         viewport: &Rectangle,
@@ -162,7 +75,7 @@ impl<Message> Widget<Message, Theme, Stub> for ViewportRecorder {
     }
 }
 
-impl<'a, Message: 'a> From<ViewportRecorder> for Element<'a, Message, Theme, Stub> {
+impl<'a, Message: 'a> From<ViewportRecorder> for Element<'a, Message, Theme, Recorder> {
     fn from(value: ViewportRecorder) -> Self {
         Element::new(value)
     }
@@ -172,26 +85,32 @@ impl<'a, Message: 'a> From<ViewportRecorder> for Element<'a, Message, Theme, Stu
 // The actual regression test.
 // ---------------------------------------------------------------------------
 
+/// The graph these tests drive: one recorder node, no host state, fake renderer.
+type Graph = NodeGraph<'static, usize, usize, (), (), Theme, Recorder>;
+
 fn build_graph_with_recorder(
     graph_w: f32,
     graph_h: f32,
     node_world_pos: Point,
 ) -> (
-    NodeGraph<'static, usize, usize, (), (), Theme, Stub>,
+    Graph,
     Capture, // on_draw
     Capture, // on_update
+    Capture, // innermost clip at the moment the child was drawn
 ) {
     let on_draw = Capture(Rc::new(Cell::new(None)));
     let on_update = Capture(Rc::new(Cell::new(None)));
+    let on_clip = Capture(Rc::new(Cell::new(None)));
     let recorder = ViewportRecorder {
         on_draw: on_draw.clone(),
         on_update: on_update.clone(),
+        on_clip: on_clip.clone(),
     };
-    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Stub> = NodeGraph::default()
+    let mut graph: Graph = NodeGraph::default()
         .width(Length::Fixed(graph_w))
         .height(Length::Fixed(graph_h));
     graph.push_node(node(0_usize, node_world_pos, Element::from(recorder)));
-    (graph, on_draw, on_update)
+    (graph, on_draw, on_update, on_clip)
 }
 
 #[test]
@@ -200,11 +119,11 @@ fn draw_clips_child_viewport_to_graph_bounds() {
     // sits at world (500, 500), outside the graph's screen bounds. We expect
     // the viewport the child sees to be bounded by the graph, not by the
     // outer window.
-    let (mut graph, on_draw, _on_update) =
+    let (mut graph, on_draw, _on_update, _on_clip) =
         build_graph_with_recorder(200.0, 200.0, Point::new(500.0, 500.0));
 
-    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Stub>);
-    let mut renderer = Stub;
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Recorder>);
+    let mut renderer = Recorder::detached();
     let layout_node = graph.layout(
         &mut tree,
         &renderer,
@@ -247,12 +166,11 @@ fn draw_clips_node_content_layer_to_graph_bounds() {
     // the parent clip, so the node-content clip has to be intersected with the
     // graph viewport explicitly. The recorder is 40 wide; placed at world
     // x=180 it spans [180, 220], 20px past the 200px graph edge.
-    CHILD_CLIP.with(|c| c.set(None));
-    let (mut graph, _on_draw, _on_update) =
+    let (mut graph, _on_draw, _on_update, on_clip) =
         build_graph_with_recorder(200.0, 200.0, Point::new(180.0, 50.0));
 
-    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Stub>);
-    let mut renderer = Stub;
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Recorder>);
+    let mut renderer = Recorder::detached();
     let layout_node = graph.layout(
         &mut tree,
         &renderer,
@@ -273,8 +191,9 @@ fn draw_clips_node_content_layer_to_graph_bounds() {
         &outer_viewport,
     );
 
-    let clip = CHILD_CLIP
-        .with(|c| c.get())
+    let clip = on_clip
+        .0
+        .get()
         .expect("node content was never drawn under a clip layer");
 
     // Default camera (zoom 1, no pan, graph at origin): layout space == screen
@@ -299,10 +218,9 @@ fn wheel_event() -> iced::Event {
 }
 
 fn run_update_with_cursor(graph_w: f32, graph_h: f32, cursor: mouse::Cursor) -> Rc<Cell<bool>> {
-    let mut base_graph: NodeGraph<'static, usize, usize, (), (), Theme, Stub> =
-        NodeGraph::default()
-            .width(Length::Fixed(graph_w))
-            .height(Length::Fixed(graph_h));
+    let mut base_graph: Graph = NodeGraph::default()
+        .width(Length::Fixed(graph_w))
+        .height(Length::Fixed(graph_h));
     base_graph.push_node(node(
         0_usize,
         Point::new(0.0, 0.0),
@@ -313,8 +231,8 @@ fn run_update_with_cursor(graph_w: f32, graph_h: f32, cursor: mouse::Cursor) -> 
     let cc = camera_changed.clone();
     let mut graph = base_graph.on_pan(move |_pos, _zoom| cc.set(true));
 
-    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Stub>);
-    let renderer = Stub;
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Recorder>);
+    let renderer = Recorder::detached();
     let layout_node = graph.layout(
         &mut tree,
         &renderer,
@@ -343,17 +261,17 @@ fn run_update_with_cursor(graph_w: f32, graph_h: f32, cursor: mouse::Cursor) -> 
 
 // Minimal no-op leaf (we only need a node to exist so push_node doesn't panic).
 struct EmptyLeaf;
-impl<Message> Widget<Message, Theme, Stub> for EmptyLeaf {
+impl<Message> Widget<Message, Theme, Recorder> for EmptyLeaf {
     fn size(&self) -> Size<Length> {
         Size::new(Length::Fixed(10.0), Length::Fixed(10.0))
     }
-    fn layout(&mut self, _: &mut Tree, _: &Stub, limits: &layout::Limits) -> layout::Node {
+    fn layout(&mut self, _: &mut Tree, _: &Recorder, limits: &layout::Limits) -> layout::Node {
         layout::Node::new(limits.resolve(Length::Fixed(10.0), Length::Fixed(10.0), Size::ZERO))
     }
     fn draw(
         &self,
         _: &Tree,
-        _: &mut Stub,
+        _: &mut Recorder,
         _: &Theme,
         _: &renderer::Style,
         _: Layout<'_>,
@@ -362,7 +280,7 @@ impl<Message> Widget<Message, Theme, Stub> for EmptyLeaf {
     ) {
     }
 }
-impl<'a, Message: 'a> From<EmptyLeaf> for Element<'a, Message, Theme, Stub> {
+impl<'a, Message: 'a> From<EmptyLeaf> for Element<'a, Message, Theme, Recorder> {
     fn from(w: EmptyLeaf) -> Self {
         Element::new(w)
     }
@@ -414,11 +332,11 @@ fn wheel_scroll_inside_graph_bounds_zooms() {
 
 #[test]
 fn update_clips_child_viewport_to_graph_bounds() {
-    let (mut graph, _on_draw, on_update) =
+    let (mut graph, _on_draw, on_update, _on_clip) =
         build_graph_with_recorder(200.0, 200.0, Point::new(500.0, 500.0));
 
-    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Stub>);
-    let renderer = Stub;
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Recorder>);
+    let renderer = Recorder::detached();
     let layout_node = graph.layout(
         &mut tree,
         &renderer,
@@ -467,11 +385,11 @@ fn update_clips_child_viewport_to_graph_bounds() {
 /// `node_world`, and returns the innermost clip the node content was drawn
 /// under. `None` means the content layer was never reached.
 fn content_clip_at(widget_origin: Vector, node_world: Point) -> Option<Rectangle> {
-    CHILD_CLIP.with(|c| c.set(None));
-    let (mut graph, _on_draw, _on_update) = build_graph_with_recorder(200.0, 200.0, node_world);
+    let (mut graph, _on_draw, _on_update, on_clip) =
+        build_graph_with_recorder(200.0, 200.0, node_world);
 
-    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Stub>);
-    let mut renderer = Stub;
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Recorder>);
+    let mut renderer = Recorder::detached();
     let layout_node = graph.layout(
         &mut tree,
         &renderer,
@@ -490,7 +408,7 @@ fn content_clip_at(widget_origin: Vector, node_world: Point) -> Option<Rectangle
         mouse::Cursor::Unavailable,
         &outer,
     );
-    CHILD_CLIP.with(|c| c.get())
+    on_clip.0.get()
 }
 
 #[test]

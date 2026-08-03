@@ -1,7 +1,10 @@
-//! The `update` event path of [`NodeGraph`]: the `Dragging` state machine
-//! and its update-exclusive hit-test helpers.
+//! The `update` event path of [`NodeGraph`]: the [`Dragging`] state machine and
+//! the hit tests that drive its transitions.
 //!
-//! Split out of `widget.rs` mechanically.
+//! Every interaction the widget supports is a transition of that one enum, so a
+//! new gesture is a new variant plus its entry and exit edges - never a flag
+//! alongside it. Thresholds are declared in screen pixels and divided by zoom at
+//! each comparison, so the on-screen hit target is constant at any zoom.
 
 use super::*;
 use crate::node_graph::input::KeyAction;
@@ -40,11 +43,10 @@ struct UpdateCtx<'a, 'b, 'm, Message> {
     shell: &'a mut Shell<'m, Message>,
 }
 
-impl<N, P, E, UI, Message, Renderer> NodeGraph<'_, N, P, UI, Message, Theme, Renderer, E>
+impl<N, P, UI, Message, Renderer> NodeGraph<'_, N, P, UI, Message, Theme, Renderer>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
-    E: EdgeId + 'static,
     UI: Clone + 'static,
     Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
@@ -68,7 +70,7 @@ where
         // camera would also fire while the user is mid pan/zoom (before the
         // matching `on_pan` round-trips back into `view`), clobbering the
         // interaction with a stale value. Same race-avoidance as selection.
-        if let Some(view) = self.view_value()
+        if let Some(view) = self.view
             && state.last_synced_view != Some(view)
         {
             let (position, zoom) = view;
@@ -100,7 +102,7 @@ where
         // through the host into a refreshed `external_selection` — that race
         // would clobber the new state with a stale external value, breaking
         // any host that uses `.selection()`.
-        if let Some(external) = self.get_external_selection()
+        if let Some(external) = self.external_selection.as_ref()
             && state.last_synced_external.as_ref() != Some(external)
         {
             state.selected_nodes = external.clone();
@@ -128,7 +130,7 @@ where
             // Publish the stashed GraphInfo (set during draw) one frame behind,
             // mirroring the controlled on_pan pattern. A host showing live
             // diagnostics needs a steady frame stream, so keep redraws flowing.
-            if let Some(handler) = self.on_info_handler() {
+            if let Some(handler) = self.on_info.as_ref() {
                 if let Some(info) = state.last_info.borrow_mut().take() {
                     shell.publish(handler(info));
                 }
@@ -156,11 +158,11 @@ where
                 // persisted, so leave the shortcut unhandled and let the key
                 // fall through instead of silently swallowing it.
                 Some(KeyAction::CloneSelection)
-                    if !state.selected_nodes.is_empty() && self.on_clone_handler().is_some() =>
+                    if !state.selected_nodes.is_empty() && self.on_clone.as_ref().is_some() =>
                 {
                     let indices: Vec<usize> = state.selected_nodes.iter().copied().collect();
-                    let node_ids = self.translate_node_ids(&indices);
-                    if let Some(handler) = self.on_clone_handler() {
+                    let node_ids = self.node_ids_at(&indices);
+                    if let Some(handler) = self.on_clone.as_ref() {
                         shell.publish(handler(node_ids));
                     }
                     shell.capture_event();
@@ -169,8 +171,8 @@ where
                     let count = self.nodes.len();
                     state.selected_nodes = (0..count).collect();
                     let indices: Vec<usize> = state.selected_nodes.iter().copied().collect();
-                    let selected = self.translate_node_ids(&indices);
-                    if let Some(handler) = self.on_select_handler() {
+                    let selected = self.node_ids_at(&indices);
+                    if let Some(handler) = self.on_select.as_ref() {
                         shell.publish(handler(selected));
                     }
                     shell.capture_event();
@@ -178,7 +180,7 @@ where
                 }
                 Some(KeyAction::ClearSelection) if !state.selected_nodes.is_empty() => {
                     state.selected_nodes.clear();
-                    if let Some(handler) = self.on_select_handler() {
+                    if let Some(handler) = self.on_select.as_ref() {
                         shell.publish(handler(vec![]));
                     }
                     shell.capture_event();
@@ -211,7 +213,7 @@ where
             state.camera = state.camera.zoom_at(cursor_pos, zoom_delta);
 
             // Commit the new camera (zoom shifts position too).
-            if let Some(handler) = self.on_pan_handler() {
+            if let Some(handler) = self.on_pan.as_ref() {
                 let pos = state.camera.position();
                 shell.publish(handler(Point::new(pos.x, pos.y), state.camera.zoom()));
             }
@@ -275,7 +277,7 @@ where
                     {
                         // Emit drag update event with current cursor position
                         if let Some(cursor_position) = world_cursor.position()
-                            && let Some(handler) = self.on_drag_update_handler()
+                            && let Some(handler) = self.on_drag_update.as_ref()
                         {
                             ctx.shell.publish(handler(cursor_position));
                         }
@@ -292,15 +294,21 @@ where
                         Dragging::None => {}
                         Dragging::EdgeCutting { .. } => self.handle_edge_cutting(&mut ctx),
                         Dragging::Graph(origin) => self.handle_graph_pan(&mut ctx, origin),
-                        Dragging::Node(node_index, origin) => {
-                            self.handle_node_drag(&mut ctx, node_index, origin)
-                        }
-                        Dragging::Edge(from_node, from_pin, _) => {
-                            self.handle_edge_drag(&mut ctx, from_node, from_pin)
-                        }
-                        Dragging::EdgeOver(from_node, from_pin, to_node, to_pin) => {
-                            self.handle_edge_over(&mut ctx, from_node, from_pin, to_node, to_pin)
-                        }
+                        Dragging::Node {
+                            node: node_index,
+                            origin,
+                        } => self.handle_node_drag(&mut ctx, node_index, origin),
+                        Dragging::Edge {
+                            from_node,
+                            from_pin,
+                            origin: _,
+                        } => self.handle_edge_drag(&mut ctx, from_node, from_pin),
+                        Dragging::EdgeOver {
+                            from_node,
+                            from_pin,
+                            to_node,
+                            to_pin,
+                        } => self.handle_edge_over(&mut ctx, from_node, from_pin, to_node, to_pin),
                         Dragging::BoxSelect(start, _current) => {
                             self.handle_box_select(&mut ctx, start)
                         }
@@ -320,10 +328,10 @@ where
                     // children itself takes the event.
                     let pre_captured = ctx.shell.is_event_captured();
                     for &node_index in z_indices.iter().rev() {
-                        let Some((_id, _pos, element, _style, _)) = self.nodes.get_mut(node_index)
-                        else {
+                        let Some(node) = self.nodes.get_mut(node_index) else {
                             continue;
                         };
+                        let element = &mut node.element;
                         let Some(child_tree) = ctx.tree.children.get_mut(node_index) else {
                             continue;
                         };
@@ -363,11 +371,11 @@ where
                         && self.keymap.key_action(key, *physical_key, *modifiers)
                             == Some(KeyAction::DeleteSelection)
                         && !state.selected_nodes.is_empty()
-                        && self.on_delete_handler().is_some()
+                        && self.on_delete.as_ref().is_some()
                     {
                         let indices: Vec<usize> = state.selected_nodes.iter().copied().collect();
-                        let node_ids = self.translate_node_ids(&indices);
-                        if let Some(handler) = self.on_delete_handler() {
+                        let node_ids = self.node_ids_at(&indices);
+                        if let Some(handler) = self.on_delete.as_ref() {
                             ctx.shell.publish(handler(node_ids));
                         }
                         state.selected_nodes.clear();
@@ -433,7 +441,7 @@ where
                         state.touch_tap = None;
                         if state.dragging != Dragging::None {
                             state.dragging = Dragging::None;
-                            if let Some(handler) = self.on_drag_end_handler() {
+                            if let Some(handler) = self.on_drag_end.as_ref() {
                                 shell.publish(handler());
                             }
                             shell.request_redraw();
@@ -484,7 +492,7 @@ where
                     state.camera = state.camera.move_by(pan);
 
                     // Commit continuously, mirroring wheel zoom.
-                    if let Some(handler) = self.on_pan_handler() {
+                    if let Some(handler) = self.on_pan.as_ref() {
                         let pos = state.camera.position();
                         shell.publish(handler(Point::new(pos.x, pos.y), state.camera.zoom()));
                     }
@@ -513,7 +521,7 @@ where
                     && !state.selected_nodes.is_empty()
                 {
                     state.selected_nodes.clear();
-                    if let Some(handler) = self.on_select_handler() {
+                    if let Some(handler) = self.on_select.as_ref() {
                         shell.publish(handler(vec![]));
                     }
                     shell.request_redraw();
@@ -567,9 +575,8 @@ where
                         pending_cuts.clear();
 
                         // Check each edge for intersection with the cutting line
-                        for (edge_idx, (_id, from_ref, to_ref, _style)) in
-                            self.edges.iter().enumerate()
-                        {
+                        for (edge_idx, edge) in self.edges.iter().enumerate() {
+                            let (from_ref, to_ref) = (&edge.from, &edge.to);
                             // Resolve user IDs to indices
                             let from_node_idx = match self.node_index(&from_ref.node_id) {
                                 Some(idx) => idx,
@@ -636,10 +643,10 @@ where
                 // Delete all pending edges on release
                 if let Dragging::EdgeCutting { pending_cuts, .. } = &state.dragging {
                     for &edge_idx in pending_cuts.iter() {
-                        if let Some((_id, from_ref, to_ref, _)) = self.edges.get(edge_idx) {
+                        if let Some(Edge { from, to, .. }) = self.edges.get(edge_idx) {
                             // Edges already store user IDs (PinRef<N, P>)
-                            if let Some(handler) = self.on_disconnect_handler() {
-                                shell.publish(handler(from_ref.clone(), to_ref.clone()));
+                            if let Some(handler) = self.on_disconnect.as_ref() {
+                                shell.publish(handler(from.clone(), to.clone()));
                             }
                         }
                     }
@@ -674,7 +681,7 @@ where
                 state.camera = state.camera.move_by(offset);
 
                 // Commit the new camera position on pan release.
-                if let Some(handler) = self.on_pan_handler() {
+                if let Some(handler) = self.on_pan.as_ref() {
                     let pos = state.camera.position();
                     shell.publish(handler(Point::new(pos.x, pos.y), state.camera.zoom()));
                 }
@@ -713,11 +720,11 @@ where
                 let moved = offset.x.abs() > f32::EPSILON || offset.y.abs() > f32::EPSILON;
 
                 // Translate internal index to user ID
-                if let Some(node_id) = self.index_to_node_id(node_index)
+                if let Some(node_id) = self.node_id_at(node_index).cloned()
                     && moved
                 {
                     // Call on_move handler if set
-                    if let Some(handler) = self.on_move_handler() {
+                    if let Some(handler) = self.on_move.as_ref() {
                         shell.publish(handler(offset.into_iced(), vec![node_id]));
                     }
                 }
@@ -726,7 +733,7 @@ where
             state.promote_z(node_index);
             state.dragging = Dragging::None;
             // Emit drag end event
-            if let Some(handler) = self.on_drag_end_handler() {
+            if let Some(handler) = self.on_drag_end.as_ref() {
                 shell.publish(handler());
             }
             shell.capture_event();
@@ -800,8 +807,8 @@ where
 
                     if let Some((to_node, to_pin, to_pin_id, to_dir)) = target_info {
                         // Fire EdgeConnected event immediately on snap (plug behavior)
-                        let from_node_id = self.index_to_node_id(from_node);
-                        let to_node_id = self.index_to_node_id(to_node);
+                        let from_node_id = self.node_id_at(from_node).cloned();
+                        let to_node_id = self.node_id_at(to_node).cloned();
 
                         if let (Some(from_nid), Some(to_nid), Some(from_pid)) =
                             (from_node_id, to_node_id, from_pin_id)
@@ -816,12 +823,17 @@ where
                                 PinRef::new(to_nid.clone(), to_pin_id),
                             );
 
-                            if let Some(handler) = self.on_connect_handler() {
+                            if let Some(handler) = self.on_connect.as_ref() {
                                 shell.publish(handler(from_ref, to_ref));
                             }
                         }
 
-                        state.dragging = Dragging::EdgeOver(from_node, from_pin, to_node, to_pin);
+                        state.dragging = Dragging::EdgeOver {
+                            from_node,
+                            from_pin,
+                            to_node,
+                            to_pin,
+                        };
                     }
                 }
                 shell.request_redraw();
@@ -829,7 +841,7 @@ where
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 state.dragging = Dragging::None;
                 // Emit drag end event
-                if let Some(handler) = self.on_drag_end_handler() {
+                if let Some(handler) = self.on_drag_end.as_ref() {
                     shell.publish(handler());
                 }
                 shell.capture_event();
@@ -895,8 +907,8 @@ where
 
                     if !still_over_pin {
                         // Fire EdgeDisconnected event when leaving snap (plug behavior)
-                        let from_node_id = self.index_to_node_id(from_node);
-                        let to_node_id = self.index_to_node_id(to_node);
+                        let from_node_id = self.node_id_at(from_node).cloned();
+                        let to_node_id = self.node_id_at(to_node).cloned();
 
                         if let (Some(from_nid), Some(to_nid), Some(from_pid), Some(to_pid)) =
                             (from_node_id, to_node_id, from_pin_id, to_pin_id)
@@ -911,14 +923,17 @@ where
                                 PinRef::new(to_nid.clone(), to_pid),
                             );
 
-                            if let Some(handler) = self.on_disconnect_handler() {
+                            if let Some(handler) = self.on_disconnect.as_ref() {
                                 shell.publish(handler(from_ref, to_ref));
                             }
                         }
 
                         // Moved away from pin, go back to dragging
-                        state.dragging =
-                            Dragging::Edge(from_node, from_pin, cursor_position.into_euclid());
+                        state.dragging = Dragging::Edge {
+                            from_node,
+                            from_pin,
+                            origin: cursor_position.into_euclid(),
+                        };
                     }
                 }
                 shell.request_redraw();
@@ -927,7 +942,7 @@ where
                 // Edge already connected via snap event - just end the drag
                 state.dragging = Dragging::None;
                 // Emit drag end event
-                if let Some(handler) = self.on_drag_end_handler() {
+                if let Some(handler) = self.on_drag_end.as_ref() {
                     shell.publish(handler());
                 }
                 shell.capture_event();
@@ -978,14 +993,14 @@ where
 
                     // Notify selection change
                     let indices: Vec<usize> = state.selected_nodes.iter().copied().collect();
-                    let selected = self.translate_node_ids(&indices);
-                    if let Some(handler) = self.on_select_handler() {
+                    let selected = self.node_ids_at(&indices);
+                    if let Some(handler) = self.on_select.as_ref() {
                         shell.publish(handler(selected));
                     }
                 }
                 state.dragging = Dragging::None;
                 // Emit drag end event
-                if let Some(handler) = self.on_drag_end_handler() {
+                if let Some(handler) = self.on_drag_end.as_ref() {
                     shell.publish(handler());
                 }
                 shell.capture_event();
@@ -1018,9 +1033,9 @@ where
                     let offset = cursor_position - origin;
 
                     // Translate internal indices to user IDs
-                    let node_ids = self.translate_node_ids(&indices);
+                    let node_ids = self.node_ids_at(&indices);
                     let delta = offset.into_iced();
-                    if let Some(handler) = self.on_move_handler() {
+                    if let Some(handler) = self.on_move.as_ref() {
                         shell.publish(handler(delta, node_ids));
                     }
                 }
@@ -1028,7 +1043,7 @@ where
                 state.promote_z_many(&indices);
                 state.dragging = Dragging::None;
                 // Emit drag end event
-                if let Some(handler) = self.on_drag_end_handler() {
+                if let Some(handler) = self.on_drag_end.as_ref() {
                     shell.publish(handler());
                 }
                 shell.capture_event();
@@ -1097,7 +1112,12 @@ where
         let cut_threshold =
             EDGE_CUT_THRESHOLD / tree.state.downcast_ref::<NodeGraphState>().camera.zoom();
         // Check if click is near any edge
-        for (_id, from_ref, to_ref, _style) in &self.edges {
+        for Edge {
+            from: from_ref,
+            to: to_ref,
+            ..
+        } in &self.edges
+        {
             // Resolve user IDs to indices
             let from_node_idx = match self.node_index(&from_ref.node_id) {
                 Some(idx) => idx,
@@ -1142,7 +1162,7 @@ where
                 let distance = point_to_bezier_distance(cursor_position, from_pos, p1, p2, to_pos);
                 if distance < cut_threshold {
                     // Edges already store user IDs
-                    if let Some(handler) = self.on_disconnect_handler() {
+                    if let Some(handler) = self.on_disconnect.as_ref() {
                         shell.publish(handler(from_ref.clone(), to_ref.clone()));
                     }
                     shell.capture_event();
@@ -1181,7 +1201,7 @@ where
                 .into_iter()
                 .map(|(i, s, pos)| (i, s.pin_id.clone(), s.interactions_disabled, pos))
                 .collect();
-        let Some(current_node_id) = self.index_to_node_id(node_index) else {
+        let Some(current_node_id) = self.node_id_at(node_index).cloned() else {
             return false;
         };
 
@@ -1205,7 +1225,12 @@ where
                 // fall through to start a fresh edge, leaving existing
                 // connections intact.
                 if !multi_select_held {
-                    for (_id, from_ref, to_ref, _style) in &self.edges {
+                    for Edge {
+                        from: from_ref,
+                        to: to_ref,
+                        ..
+                    } in &self.edges
+                    {
                         // Unplug the clicked end, staying anchored at the
                         // other one: grabbing "from" anchors at TO and vice
                         // versa.
@@ -1290,7 +1315,12 @@ where
         state.valid_drop_targets = valid_targets;
         // Anchor at the kept end, hold the grabbed pin snapped (still
         // connected).
-        state.dragging = Dragging::EdgeOver(anchor_node_idx, anchor_pin_idx, grabbed.0, grabbed.1);
+        state.dragging = Dragging::EdgeOver {
+            from_node: anchor_node_idx,
+            from_pin: anchor_pin_idx,
+            to_node: grabbed.0,
+            to_pin: grabbed.1,
+        };
         ctx.shell.capture_event();
         true
     }
@@ -1306,7 +1336,7 @@ where
         node_id: &N,
         cursor_position: Point,
     ) -> bool {
-        if self.on_connect_handler().is_none() {
+        if self.on_connect.as_ref().is_none() {
             return false;
         }
         // Compute valid targets ONCE at drag-start.
@@ -1314,8 +1344,12 @@ where
             compute_valid_targets(self, ctx.tree, ctx.layout, node_index, pin_index, None);
         let state = ctx.tree.state.downcast_mut::<NodeGraphState>();
         state.valid_drop_targets = valid_targets;
-        state.dragging = Dragging::Edge(node_index, pin_index, cursor_position.into_euclid());
-        if let Some(handler) = self.on_drag_start_handler() {
+        state.dragging = Dragging::Edge {
+            from_node: node_index,
+            from_pin: pin_index,
+            origin: cursor_position.into_euclid(),
+        };
+        if let Some(handler) = self.on_drag_start.as_ref() {
             ctx.shell.publish(handler(DragInfo::Edge {
                 from_node: node_id.clone(),
                 from_pin: pin_id.clone(),
@@ -1367,23 +1401,26 @@ where
         // from the host, so without on_move a drag would move
         // the node visually then snap back on the next frame;
         // gate it off (selection below still fires).
-        if self.on_move_handler().is_some() {
+        if self.on_move.as_ref().is_some() {
             if state.selected_nodes.len() > 1 && state.selected_nodes.contains(&node_index) {
                 // Multiple nodes selected, start group move
                 let selected: Vec<usize> = state.selected_nodes.iter().copied().collect();
                 state.dragging = Dragging::GroupMove(cursor_position.into_euclid());
                 // Emit drag start event for group
-                if let Some(handler) = self.on_drag_start_handler() {
+                if let Some(handler) = self.on_drag_start.as_ref() {
                     shell.publish(handler(DragInfo::Group {
-                        node_ids: self.translate_node_ids(&selected),
+                        node_ids: self.node_ids_at(&selected),
                     }));
                 }
             } else {
                 // Single node drag
-                state.dragging = Dragging::Node(node_index, cursor_position.into_euclid());
+                state.dragging = Dragging::Node {
+                    node: node_index,
+                    origin: cursor_position.into_euclid(),
+                };
                 // Emit drag start event for single node
-                if let Some(handler) = self.on_drag_start_handler()
-                    && let Some(node_id) = self.index_to_node_id(node_index)
+                if let Some(handler) = self.on_drag_start.as_ref()
+                    && let Some(node_id) = self.node_id_at(node_index).cloned()
                 {
                     shell.publish(handler(DragInfo::Node { node_id }));
                 }
@@ -1392,8 +1429,8 @@ where
 
         // Notify selection change
         if selection_changed {
-            let selected = self.translate_node_ids(&new_selection);
-            if let Some(handler) = self.on_select_handler() {
+            let selected = self.node_ids_at(&new_selection);
+            if let Some(handler) = self.on_select.as_ref() {
                 shell.publish(handler(selected));
             }
         }
@@ -1441,10 +1478,9 @@ where
 
             state.dragging = Dragging::BoxSelect(cursor_position, cursor_position);
             // Emit drag start event for box select
-            if let Some(handler) = self.on_drag_start_handler() {
+            if let Some(handler) = self.on_drag_start.as_ref() {
                 shell.publish(handler(DragInfo::BoxSelect {
-                    start_x: cursor_position.x,
-                    start_y: cursor_position.y,
+                    start: cursor_position.into_iced(),
                 }));
             }
             shell.capture_event();
@@ -1494,8 +1530,8 @@ where
 /// `excluded_edge` is the edge currently being re-routed (its endpoints), left out
 /// of the occupancy check so it can be dropped back onto its own input. Pass `None`
 /// when starting a fresh edge.
-fn compute_valid_targets<N, P, E, UI, Message, Renderer>(
-    graph: &NodeGraph<'_, N, P, UI, Message, Theme, Renderer, E>,
+fn compute_valid_targets<N, P, UI, Message, Renderer>(
+    graph: &NodeGraph<'_, N, P, UI, Message, Theme, Renderer>,
     tree: &Tree,
     layout: Layout<'_>,
     from_node: usize,
@@ -1505,7 +1541,6 @@ fn compute_valid_targets<N, P, E, UI, Message, Renderer>(
 where
     N: NodeId + 'static,
     P: PinId + 'static,
-    E: EdgeId + 'static,
     UI: Clone + 'static,
     Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
@@ -1533,8 +1568,13 @@ where
     let occupied: std::collections::HashSet<(&N, &P)> = graph
         .edges
         .iter()
-        .filter(|(_, from, to, _)| excluded_edge != Some((from, to)))
-        .flat_map(|(_, from, to, _)| [(&from.node_id, &from.pin_id), (&to.node_id, &to.pin_id)])
+        .filter(|edge| excluded_edge != Some((&edge.from, &edge.to)))
+        .flat_map(|edge| {
+            [
+                (&edge.from.node_id, &edge.from.pin_id),
+                (&edge.to.node_id, &edge.to.pin_id),
+            ]
+        })
         .collect();
     let is_occupied = |node_id: &N, pin_id: &P| occupied.contains(&(node_id, pin_id));
 

@@ -4,7 +4,8 @@ use iced::Point;
 pub fn create_default_graph() -> ShaderGraph {
     let mut graph = ShaderGraph::new();
 
-    // Simple default: Animated pulsing circular edges
+    // Time -> Sin -> Mul -> Add drives the radius of a circle SDF, which is
+    // smoothstepped into the alpha of the edge output.
 
     // UV Input at (100, 100)
     let uv_node = graph.add_node(ShaderNodeType::UV, Point::new(100.0, 100.0));
@@ -21,7 +22,7 @@ pub fn create_default_graph() -> ShaderGraph {
         to_socket: 0,
     });
 
-    // Multiply Sin * 0.5 for radius modulation at (500, 200)
+    // Radius modulation at (500, 200)
     let mul_node = graph.add_node(ShaderNodeType::Mul, Point::new(500.0, 200.0));
     graph.add_connection(crate::shader_graph::Connection {
         from_node: sin_node,
@@ -29,9 +30,9 @@ pub fn create_default_graph() -> ShaderGraph {
         to_node: mul_node,
         to_socket: 0,
     });
-    // Note: Second input (0.5) would be set via socket default value
+    // B is left unconnected, so codegen substitutes the socket default (0.0).
 
-    // Add base radius: 2.0 + (Sin * 0.5) at (700, 150)
+    // Base radius at (700, 150)
     let add_node = graph.add_node(ShaderNodeType::Add, Point::new(700.0, 150.0));
     graph.add_connection(crate::shader_graph::Connection {
         from_node: mul_node,
@@ -39,7 +40,7 @@ pub fn create_default_graph() -> ShaderGraph {
         to_node: add_node,
         to_socket: 1,
     });
-    // First input would be constant 2.0
+    // A is left unconnected, so codegen substitutes the socket default (0.0).
 
     // Circle SDF at (500, 100)
     let circle_node = graph.add_node(ShaderNodeType::SDF_Circle, Point::new(500.0, 100.0));
@@ -64,11 +65,10 @@ pub fn create_default_graph() -> ShaderGraph {
         to_node: smoothstep_node,
         to_socket: 2, // X value
     });
-    // Edge0 = 0.0, Edge1 = 1.0 (defaults)
+    // Edge0 and Edge1 are left unconnected and both default to 0.0.
 
-    // Create color: combine R, G, B channels at (900, 100)
+    // A spare VecCombine3 with nothing connected to it, to wire up by hand.
     let _color_r = graph.add_node(ShaderNodeType::VecCombine3, Point::new(900.0, 50.0));
-    // Would connect RGB values here
 
     // Alpha from smoothstep
     let color_node = graph.add_node(ShaderNodeType::VecCombine4, Point::new(1100.0, 100.0));

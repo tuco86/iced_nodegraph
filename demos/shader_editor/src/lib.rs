@@ -24,22 +24,22 @@
 //! - **Drag nodes** - Move nodes around the canvas
 //! - **Drag from pins** - Create connections between compatible sockets
 //! - **Scroll** - Zoom in/out
-//! - **Middle-drag** - Pan the canvas
+//! - **Right-drag** - Pan the canvas
 //!
 //! ## Available Nodes
 //!
 //! Use the command palette to add nodes from categories: Math, Vector, Color,
 //! Texture, Input, and Output. Connect them to build WGSL fragment shaders.
 
-pub mod colors;
+mod colors;
 mod compiler;
 mod default_shader;
 mod shader_graph;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(feature = "wasm")]
 use wasm_bindgen::prelude::*;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(feature = "wasm")]
 #[wasm_bindgen(start)]
 pub fn wasm_init() {
     console_error_panic_hook::set_once();
@@ -83,7 +83,7 @@ pub fn main() -> iced::Result {
         .run()
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(feature = "wasm")]
 #[wasm_bindgen]
 pub fn run_demo() {
     let _ = main();
@@ -395,7 +395,7 @@ impl Application {
 
         // Add all edges
         for (from, to) in &self.visual_edges {
-            graph.push_edge(ng_edge(*from, *to, ()));
+            graph.push_edge(ng_edge(*from, *to));
         }
 
         let graph_element: Element<Message> = graph.into();
@@ -517,7 +517,7 @@ impl Application {
             }
             Err(err) => {
                 self.compiled_shader = None;
-                self.compilation_error = Some(format!("{:?}", err));
+                self.compilation_error = Some(err.to_string());
             }
         }
     }
@@ -609,12 +609,8 @@ fn pin_style(
         colors::SOCKET_VEC2
     } else if ty == TypeId::of::<colors::Vec3>() {
         colors::SOCKET_VEC3
-    } else if ty == TypeId::of::<colors::Vec4>() {
-        colors::SOCKET_VEC4
-    } else if ty == TypeId::of::<colors::Bool>() {
-        colors::SOCKET_BOOL
     } else {
-        colors::SOCKET_INT
+        colors::SOCKET_VEC4
     };
     PinStyle {
         color: color.into(),
@@ -651,14 +647,6 @@ fn create_typed_pin<'a, Message: Clone + 'a>(
         SocketType::Vec4 => node_pin(side, pin_id, content)
             .direction(direction)
             .info(::std::any::TypeId::of::<colors::Vec4>())
-            .into(),
-        SocketType::Bool => node_pin(side, pin_id, content)
-            .direction(direction)
-            .info(::std::any::TypeId::of::<colors::Bool>())
-            .into(),
-        SocketType::Int => node_pin(side, pin_id, content)
-            .direction(direction)
-            .info(::std::any::TypeId::of::<colors::Int>())
             .into(),
     }
 }

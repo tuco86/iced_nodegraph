@@ -318,12 +318,10 @@ impl App {
 
         for &(from, to) in &self.edges {
             // Each edge derives its gradient from the two connected pins' ports.
-            ng.push_edge(
-                edge!(from, to).style(|theme, status, start, end| EdgeStyle {
-                    stroke_color: edge_stroke(*start.info(), *end.info()),
-                    ..default_edge_style(theme, status)
-                }),
-            );
+            ng.push_edge(edge(from, to).style(|theme, status, start, end| EdgeStyle {
+                stroke_color: edge_stroke(*start.info(), *end.info()),
+                ..default_edge_style(theme, status)
+            }));
         }
 
         ng.into()

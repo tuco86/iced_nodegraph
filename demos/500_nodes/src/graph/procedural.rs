@@ -224,49 +224,32 @@ pub fn generate_procedural_graph() -> (Vec<(Point, NodeType)>, Vec<Edge>) {
     let optimized_nodes: Vec<(Point, NodeType)> =
         optimized_positions.into_iter().zip(node_types).collect();
 
-    // Validate edges in debug builds
-    #[cfg(debug_assertions)]
-    validate_edges(&optimized_nodes, &edges);
-
     (optimized_nodes, edges)
 }
 
-/// Validates that all edges connect outputs to inputs correctly.
-#[allow(dead_code)]
-fn validate_edges(nodes: &[(Point, NodeType)], edges: &[Edge]) {
-    let mut error_count = 0;
-    for (from, to) in edges {
-        let from_type = &nodes[from.node_id].1;
-        let to_type = &nodes[to.node_id].1;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        let valid_out = from_type.output_pin() == Some(from.pin_id);
-        let valid_in = (0..4).any(|s| to_type.input_pin(s) == Some(to.pin_id));
-
-        if !valid_out {
-            eprintln!(
-                "INVALID OUTPUT: {:?} -> {:?} (node {:?} has output at {:?}, not {})",
-                from,
-                to,
-                from_type,
+    /// The generator hands out pin ids per node type: a node type whose pin
+    /// layout changes silently yields edges referencing pins that do not exist.
+    #[test]
+    fn generated_edges_attach_to_declared_pins() {
+        let (nodes, edges) = generate_procedural_graph();
+        for (from, to) in &edges {
+            let from_type = nodes[from.node_id].1;
+            let to_type = nodes[to.node_id].1;
+            assert_eq!(
                 from_type.output_pin(),
-                from.pin_id
+                Some(from.pin_id),
+                "{from_type:?} -> {to_type:?}: source pin {} is not an output pin",
+                from.pin_id,
             );
-            error_count += 1;
-        }
-        if !valid_in {
-            eprintln!(
-                "INVALID INPUT: {:?} -> {:?} (node {:?} has no input at pin {})",
-                from, to, to_type, to.pin_id
+            assert!(
+                (0..4).any(|slot| to_type.input_pin(slot) == Some(to.pin_id)),
+                "{from_type:?} -> {to_type:?}: target pin {} is not an input pin",
+                to.pin_id,
             );
-            error_count += 1;
         }
-    }
-    if error_count > 0 {
-        eprintln!("Edge validation found {} errors", error_count);
-    } else {
-        println!(
-            "Edge validation passed: all {} edges are valid",
-            edges.len()
-        );
     }
 }

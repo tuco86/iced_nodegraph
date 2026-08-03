@@ -24,19 +24,19 @@ use iced_widget::core::{Element, Event, Length, Point, Rectangle, Size, Theme, V
 use web_time::Instant;
 
 use super::{
-    Counts, DragInfo, GraphInfo, NodeGraph, OpTiming, RenderContext,
+    Counts, DragInfo, Edge, GraphInfo, NodeGraph, OpTiming, RenderContext,
     euclid::{IntoIced, WorldVector},
     state::{Dragging, NodeGraphState, z_render_indices},
 };
 use super::{EdgeStyleFn, NodeStyleFn, PinStyleFn};
 use crate::{
     PinDirection, PinRef, PinSide,
-    ids::{EdgeId, NodeId, PinId},
+    ids::{NodeId, PinId},
     node_graph::euclid::{IntoEuclid, ScreenPoint, WorldPoint},
     node_pin::{NodePinState, PinEnd, PinInfo},
     style::{
         EdgeGeometry, EdgeStatus, EdgeStyle, GraphStyle, NodeStatus, NodeStyle, PinStatus,
-        PinStyle, TilingKind,
+        PinStyle, SelectionStyle, TilingKind,
     },
 };
 use iced_nodegraph_sdf::{Pattern, SdfPrimitive, Shape, Style, Tiling};
@@ -77,12 +77,11 @@ fn pin_side_direction(side: u32) -> [f32; 2] {
     }
 }
 
-impl<N, P, E, UI, Message, Renderer> iced_wgpu::core::Widget<Message, Theme, Renderer>
-    for NodeGraph<'_, N, P, UI, Message, Theme, Renderer, E>
+impl<N, P, UI, Message, Renderer> iced_wgpu::core::Widget<Message, Theme, Renderer>
+    for NodeGraph<'_, N, P, UI, Message, Theme, Renderer>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
-    E: EdgeId + 'static,
     UI: Clone + 'static,
     Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
@@ -194,7 +193,7 @@ where
         let children: Vec<overlay::Element<'b, Message, Theme, Renderer>> = self
             .nodes
             .iter_mut()
-            .map(|(_, _, element, _, _)| element)
+            .map(|node| &mut node.element)
             .zip(&mut tree.children)
             .zip(layout.children())
             .filter_map(|((element, node_tree), node_layout)| {
@@ -254,17 +253,16 @@ where
     }
 }
 
-impl<'a, N, P, E, UI, Message, Renderer> From<NodeGraph<'a, N, P, UI, Message, Theme, Renderer, E>>
+impl<'a, N, P, UI, Message, Renderer> From<NodeGraph<'a, N, P, UI, Message, Theme, Renderer>>
     for Element<'a, Message, Theme, Renderer>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
-    E: EdgeId + 'static,
     UI: Clone + 'static,
     Renderer: iced_wgpu::core::renderer::Renderer + 'a + iced_wgpu::primitive::Renderer,
     Message: 'static,
 {
-    fn from(graph: NodeGraph<'a, N, P, UI, Message, Theme, Renderer, E>) -> Self {
+    fn from(graph: NodeGraph<'a, N, P, UI, Message, Theme, Renderer>) -> Self {
         Element::new(graph)
     }
 }
@@ -281,14 +279,21 @@ where
     NodeGraph::default()
 }
 
-/// Helper function to find all NodePin elements in the tree of a Node.
-/// Returns: Vec of (pin_index, &NodePinState, (Point, Point) positions).
-/// Generic over `P` and `UI`; within one graph all pins share the same `P` and
-/// `UI`, so the tag match resolves a single concrete `NodePinState<P, UI>`.
+/// A pin as found in the laid-out widget tree: its positional index within the
+/// owning node, its state, and the `(start, end)` anchors an edge attaches to.
+///
+/// The index is the pin's position in `find_pins` walk order, which is the
+/// `pin_index` the [`Dragging`] states carry.
+pub(super) type PinLayout<'a, P, UI> = (usize, &'a NodePinState<P, UI>, (Point, Point));
+
+/// Every pin in a node's subtree, in depth-first layout order.
+///
+/// Within one graph all pins share the same `P` and `UI`, so the `tree::Tag`
+/// match resolves a single concrete `NodePinState<P, UI>`.
 fn find_pins<'a, P: 'static, UI: 'static>(
     tree: &'a Tree,
     layout: Layout<'a>,
-) -> Vec<(usize, &'a NodePinState<P, UI>, (Point, Point))> {
+) -> Vec<PinLayout<'a, P, UI>> {
     let mut flat = Vec::new();
     let mut pin_index = 0;
     inner_find_pins::<P, UI>(&mut flat, &mut pin_index, layout, tree);
@@ -296,7 +301,7 @@ fn find_pins<'a, P: 'static, UI: 'static>(
 }
 
 fn inner_find_pins<'a, P: 'static, UI: 'static>(
-    flat: &mut Vec<(usize, &'a NodePinState<P, UI>, (Point, Point))>,
+    flat: &mut Vec<PinLayout<'a, P, UI>>,
     pin_index: &mut usize,
     node_layout: Layout<'a>,
     pin_tree: &'a Tree,
@@ -329,25 +334,22 @@ fn orient_connection<N, P>(
     if swap { (to, from) } else { (from, to) }
 }
 
+/// Where an edge attaches to a pin, as (start, end) anchors on the node border.
+///
+/// Both anchors coincide for a pin on one side; a [`PinSide::Row`] pin spans the
+/// node and offers a left and a right anchor, so an edge can arrive on either
+/// side of it.
 fn pin_positions<P, UI>(state: &NodePinState<P, UI>, node_bounds: Rectangle) -> (Point, Point) {
-    if state.side == PinSide::Row {
-        (
-            pin_position(state.position, PinSide::Left, node_bounds),
-            pin_position(state.position, PinSide::Right, node_bounds),
-        )
-    } else {
-        let position = pin_position(state.position, state.side, node_bounds);
-        (position, position)
-    }
-}
-
-fn pin_position(position: Point, side: PinSide, node_bounds: Rectangle) -> Point {
-    match side {
-        PinSide::Row => panic!("Row pin is supposed to be handled separately"),
-        PinSide::Left => Point::new(node_bounds.x, position.y),
-        PinSide::Right => Point::new(node_bounds.x + node_bounds.width, position.y),
-        PinSide::Top => Point::new(position.x, node_bounds.y),
-        PinSide::Bottom => Point::new(position.x, node_bounds.y + node_bounds.height),
+    let Point { x, y } = state.position;
+    let (left, right) = (node_bounds.x, node_bounds.x + node_bounds.width);
+    let (top, bottom) = (node_bounds.y, node_bounds.y + node_bounds.height);
+    let both = |p: Point| (p, p);
+    match state.side {
+        PinSide::Row => (Point::new(left, y), Point::new(right, y)),
+        PinSide::Left => both(Point::new(left, y)),
+        PinSide::Right => both(Point::new(right, y)),
+        PinSide::Top => both(Point::new(x, top)),
+        PinSide::Bottom => both(Point::new(x, bottom)),
     }
 }
 

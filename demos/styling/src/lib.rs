@@ -30,7 +30,7 @@
 //! - **Presets** - Apply Input/Process/Output/Comment presets
 //! - **Theme picker** - Switch between color themes
 //! - **Scroll** - Zoom in/out
-//! - **Middle-drag** - Pan the canvas
+//! - **Right-drag** - Pan the canvas
 
 mod nodes;
 
@@ -62,10 +62,10 @@ fn styling_pin_style(
     }
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(feature = "wasm")]
 use wasm_bindgen::prelude::*;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(feature = "wasm")]
 #[wasm_bindgen(start)]
 pub fn wasm_init() {
     console_error_panic_hook::set_once();
@@ -91,7 +91,7 @@ pub fn main() -> iced::Result {
         .run()
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(feature = "wasm")]
 #[wasm_bindgen]
 pub fn run_demo() {
     let _ = main();
@@ -469,11 +469,14 @@ impl Application {
                 .selection(&self.graph_selection)
                 .graph_style(|theme: &Theme| {
                     let line = theme.extended_palette().background.strong.color;
-                    GraphStyle::from_theme(theme).tiling(TilingBackground::grid(
-                        40.0,
-                        1.0,
-                        iced::Color { a: 0.5, ..line },
-                    ))
+                    GraphStyle {
+                        tiling: Some(TilingBackground::grid(
+                            40.0,
+                            1.0,
+                            iced::Color { a: 0.5, ..line },
+                        )),
+                        ..GraphStyle::from_theme(theme)
+                    }
                 });
 
         for (index, (position, name, style)) in self.nodes.iter().enumerate() {
@@ -496,7 +499,7 @@ impl Application {
         }
 
         for (from, to) in &self.edges {
-            ng.push_edge(edge!(*from, *to));
+            ng.push_edge(edge(*from, *to));
         }
 
         ng.into()

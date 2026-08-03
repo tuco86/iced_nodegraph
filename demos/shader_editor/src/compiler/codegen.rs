@@ -1,13 +1,17 @@
+use super::CompileError;
 use crate::shader_graph::{ShaderGraph, ShaderNode, ShaderNodeType};
 
 pub struct CodeGenerator;
 
 impl CodeGenerator {
-    pub fn generate_node_function(graph: &ShaderGraph, node: &ShaderNode) -> String {
+    pub fn generate_node_function(
+        graph: &ShaderGraph,
+        node: &ShaderNode,
+    ) -> Result<String, CompileError> {
         let func_name = format!("node_{}", node.id);
         let node_type = &node.node_type;
 
-        match node_type {
+        let code = match node_type {
             // Input nodes - directly access uniforms
             ShaderNodeType::UV => {
                 format!(
@@ -175,15 +179,17 @@ impl CodeGenerator {
             | ShaderNodeType::OutputPin
             | ShaderNodeType::OutputFinal => String::new(),
 
-            // Default
-            _ => {
-                format!(
-                    "fn {}() -> f32 {{ return 0.0; }} // TODO: Implement {}\n",
-                    func_name,
-                    node_type.name()
-                )
+            // `ShaderNodeType::all()` offers the palette every declared node
+            // type, but only the arms above have a WGSL body. Refuse to compile
+            // rather than emit a function that silently returns zero.
+            other => {
+                return Err(CompileError::CodeGeneration(format!(
+                    "no WGSL code generator for node type '{}'",
+                    other.name()
+                )));
             }
-        }
+        };
+        Ok(code)
     }
 
     fn get_input_value(

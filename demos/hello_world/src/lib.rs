@@ -1,10 +1,11 @@
-// Pre-existing warnings allowed (not part of StyleFn refactoring)
+// `SpawnNode` carries a whole `NodeType`, whose config variants hold every
+// style field of a node, so the message enum is inherently lopsided.
 #![allow(clippy::large_enum_variant)]
 
 //! # Hello World Demo
 //!
 //! Basic node graph with command palette (Cmd/Ctrl+Space) for adding nodes and changing themes.
-//! Now includes interactive style configuration nodes!
+//! Includes interactive style configuration nodes.
 //!
 //! ## Interactive Demo
 //!
@@ -26,14 +27,14 @@
 //! - **Cmd/Ctrl+Space** - Open command palette
 //! - **Drag nodes** - Move nodes around the canvas
 //! - **Drag from pins** - Create connections between nodes
-//! - **Click edges** - Disconnect existing connections
+//! - **Ctrl/Cmd+click edges** - Cut connections
 //! - **Scroll** - Zoom in/out
-//! - **Middle-drag** - Pan the canvas
+//! - **Right-drag** - Pan the canvas
 //!
 //! ## Style Configuration
 //!
 //! Add input nodes (sliders, color pickers) and connect them to config nodes
-//! to dynamically adjust the graph's appearance!
+//! to dynamically adjust the graph's appearance.
 
 mod ids;
 mod nodes;
@@ -81,10 +82,10 @@ pub struct EdgeData {
     pub to_pin: PinLabel,
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(feature = "wasm")]
 use wasm_bindgen::prelude::*;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(feature = "wasm")]
 #[wasm_bindgen(start)]
 pub fn wasm_init() {
     console_error_panic_hook::set_once();
@@ -126,16 +127,14 @@ pub fn main() -> iced::Result {
         .run()
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(feature = "wasm")]
 #[wasm_bindgen]
 pub fn run_demo() {
     let _ = main();
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 enum ApplicationMessage {
-    Noop,
     EdgeConnected {
         from: PinRef<NodeId, PinLabel>,
         to: PinRef<NodeId, PinLabel>,
@@ -165,7 +164,6 @@ enum ApplicationMessage {
     WindowMoved(Point),
     WindowMaximizedChanged(bool),
     NavigateToSubmenu(String),
-    NavigateBack,
     // Selection-related messages
     SelectionChanged(Vec<NodeId>),
     CloneNodes(Vec<NodeId>),
@@ -247,7 +245,6 @@ enum PaletteView {
 
 /// Output types from config nodes for propagation
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 enum ConfigOutput {
     Node(NodeOverlay),
     Edge(EdgeOverlay),
@@ -1193,7 +1190,6 @@ impl Application {
 
     fn update(&mut self, message: ApplicationMessage) -> Task<ApplicationMessage> {
         match message {
-            ApplicationMessage::Noop => Task::none(),
             ApplicationMessage::EdgeConnected { from, to } => {
                 let edge_id = generate_edge_id();
                 self.edges.insert(
@@ -1452,11 +1448,6 @@ impl Application {
             }
             ApplicationMessage::NavigateToSubmenu(submenu) => {
                 self.palette_view = PaletteView::Submenu(submenu);
-                self.command_input.clear();
-                focus_input()
-            }
-            ApplicationMessage::NavigateBack => {
-                self.palette_view = PaletteView::Main;
                 self.command_input.clear();
                 focus_input()
             }
@@ -1806,7 +1797,6 @@ impl Application {
             ApplicationMessage,
             Theme,
             iced::Renderer,
-            EdgeId,
         > = NodeGraph::default();
 
         ng = ng
@@ -1831,15 +1821,9 @@ impl Application {
             // and ColorQuad share the `ColorData` marker, so a color pin accepts
             // both a picker and the ColorQuad builder; Vec2 only matches Vec2.
             .can_connect(|from, to| from.direction() != to.direction() && from.info() == to.info())
-            // Selection highlight and pending-cut feedback are handled internally
-            // by the widget; per-node/edge styling flows through push_*_styled.
-            .box_select_style(|_theme| {
-                (
-                    iced::Color::from_rgba(0.3, 0.6, 1.0, 0.15), // fill
-                    iced::Color::from_rgb(0.3, 0.6, 1.0),        // border
-                )
-            })
-            .cutting_tool_style(|_theme| iced::Color::from_rgb(1.0, 0.3, 0.3))
+            // Per-node and per-edge styling flows through the `.style()`
+            // closures on the `node(..)` / `edge(..)` builders; only graph-wide
+            // chrome is configured here, via `graph_style` below.
             .dragging_edge_style(move |theme, source| {
                 // The loose edge takes the held pin's data-type color on both ends.
                 let base = EdgeStyle {
@@ -2062,20 +2046,18 @@ impl Application {
                 let from = PinRef::new(edge_data.from_node.clone(), edge_data.from_pin);
                 let to = PinRef::new(edge_data.to_node.clone(), edge_data.to_pin);
                 let overlay = edge_overlay.clone();
-                ng.push_edge(ng_edge(from, to, edge_id.clone()).style(
-                    move |theme, status, start, end| {
-                        // Edges follow their connected pins' data-type colors; the
-                        // Edge Config overlay (if set) overrides the inherited stroke.
-                        let base = EdgeStyle {
-                            stroke_color: ColorQuad::arc(
-                                pin_color_for(*start.info()),
-                                pin_color_for(*end.info()),
-                            ),
-                            ..default_edge_style(theme, status)
-                        };
-                        overlay.resolve_over(base)
-                    },
-                ));
+                ng.push_edge(ng_edge(from, to).style(move |theme, status, start, end| {
+                    // Edges follow their connected pins' data-type colors; the
+                    // Edge Config overlay (if set) overrides the inherited stroke.
+                    let base = EdgeStyle {
+                        stroke_color: ColorQuad::arc(
+                            pin_color_for(*start.info()),
+                            pin_color_for(*end.info()),
+                        ),
+                        ..default_edge_style(theme, status)
+                    };
+                    overlay.resolve_over(base)
+                }));
             }
         }
 
