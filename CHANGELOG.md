@@ -59,6 +59,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Every SDF-drawn color was a gamma step too bright.** `compile::c2v` uploaded
+  a `Color`'s sRGB-encoded components as if they were already linear, while
+  iced's own quad and text pipelines pack through `graphics::color::pack`. The
+  same `Color` therefore rendered as two different colors depending on which
+  pipeline drew it - the canvas quad correct, every node body, border, pin, edge
+  and shadow lifted (`#3A3C40` came out as `#83858A`). Because the error
+  compresses the dark end hardest, it flattened the distinctions between
+  palettes: 22 built-in themes rendered node bodies in nearly the same mid grey.
+  Colors now route through `graphics::color::pack`, so an SDF surface and an
+  iced quad of one `Color` match, gradients interpolate in the target's space,
+  and the pixel-test fill predicates derive their expected bytes from the style
+  instead of transcribing them.
 - **The widget pixel-oracle harness never started a frame.** `edge_grid_pixel`
   drew through `graph.draw` + `Renderer::screenshot` without calling
   `Renderer::reset`, which the iced runtime does per frame and which
@@ -94,6 +106,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The theme defaults are one mapping instead of six.** Every color the widget
+  picks for itself now comes from a single internal role table derived from the
+  iced palette, so the same relationships hold in all 22 built-in themes:
+
+  - SURFACES (canvas, grid, node body, node border) are perceptual lightness
+    steps away from the window background in Oklab, holding its hue and chroma.
+    The previous mapping used `background.weak`/`background.strong`, whose
+    `deviate` helper multiplies chroma as it moves lightness - on a dark,
+    saturated canvas one step also doubles saturation, which a node graph shows
+    as a colored slab under a colored lattice rather than as elevation.
+  - MARKS (edge stroke, pin indicator) sit at a fixed fraction of the distance
+    from the canvas to the theme's own foreground, so each theme places them
+    inside its own contrast range. An edge was `secondary.base`, which is
+    derived from background and text alone and therefore looked the same in
+    every theme; a pin was `primary.base`, the selection accent.
+  - ACCENTS keep the theme's authored hue but are floored to a minimum
+    separation from the canvas. `Theme::KanagawaDragon` pairs a `#181616`
+    background with a `#223249` primary, which previously selected a node in a
+    color 0.09 in lightness from its own background.
+
+  Cross-theme tests pin the contract: the ladder is ordered and equally spaced
+  in every theme, marks resolve against canvas and body, accents separate from
+  both, a pin never wears the selection accent, and a node body keeps at least
+  three quarters of the canvas text contrast.
+- **Node bodies are opaque.** `default_node_style` returned `opacity` 0.75
+  (dark) / 0.85 (light), so the grid and any edge behind a node showed through
+  its content. Selection therefore no longer signals through opacity: a selected
+  body is tinted toward the accent, which also identifies it when its border is
+  scrolled off screen.
+- The canvas grid is opaque one elevation step above the background, rather
+  than `background.strong` at 35% alpha. Node shadows are straight down
+  (`offset (0, 3)`) and carry the elevation the fill no longer does.
+- **Removed `GraphStyle::new`, `GraphStyle::dark` and `GraphStyle::light`.**
+  Two were aliases for `GraphStyle::default` and the third was a hand-picked
+  pale canvas, so together they were a second, theme-blind mapping standing
+  beside `GraphStyle::from_theme`. A fixed canvas is a struct literal over
+  `Default::default()`; a themed one is `from_theme`.
 - **Fine tiles are 8x8 pixels instead of 16x16** (`TILE_SIZE 16 -> 8`,
   `COARSE_FACTOR 4 -> 8`; coarse tiles stay 64px), and `MAX_FINE_SLOTS` drops
   128 -> 64. The index keeps a segment when its lower distance bound to the tile

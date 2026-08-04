@@ -581,9 +581,9 @@ where
 
     /// Sets the style of the selection box.
     ///
-    /// [`default_selection_box_style`] is the theme-derived base and applies when
-    /// this is unset; layer over it with struct-update, exactly like the per-node
-    /// and per-edge closures.
+    /// [`default_selection_box_style`](crate::default_selection_box_style) is the
+    /// theme-derived base and applies when this is unset; layer over it with
+    /// struct-update, exactly like the per-node and per-edge closures.
     ///
     /// A selected *node's* appearance is not set here: it comes from the node's
     /// own [`style`](Node::style) closure, which receives
@@ -608,8 +608,8 @@ where
 
     /// Sets the style of the edge-cutting trail.
     ///
-    /// [`default_cutting_tool_style`] is the theme-derived base and applies when
-    /// this is unset.
+    /// [`default_cutting_tool_style`](crate::default_cutting_tool_style) is the
+    /// theme-derived base and applies when this is unset.
     ///
     /// ```
     /// use iced_nodegraph::{CuttingToolStyle, default_cutting_tool_style, node_graph};

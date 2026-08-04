@@ -5,6 +5,14 @@
 //! set, and the base a user closure overrides via struct-update - so a host
 //! closure can always reach everything the default reaches.
 //!
+//! Every color comes from [`Roles`], the single theme-to-graph mapping, so the
+//! same relationships hold in all 22 built-in themes: node surfaces are
+//! elevations of the canvas, edges and pins are two rungs of one legibility
+//! ladder, and the accents are reserved - `primary` for selection, `danger` for
+//! cutting. Geometry (radii, widths, distances) is theme-independent and lives
+//! here; the only branch on the palette is light-versus-dark shadow weight,
+//! which is a genuine physical difference rather than a hue mapping.
+//!
 //! The per-element defaults take a status and express its feedback in full: a
 //! selected node is not just a recolored border (see [`default_node_style`]), and
 //! an edge marked for cutting takes the cutting tool's own color. The two
@@ -25,90 +33,97 @@
 use iced_nodegraph_sdf::Pattern;
 use iced_widget::core::{Color, Theme};
 
+use super::roles::Roles;
 use super::{
     CuttingToolStyle, EdgeCurve, EdgeStatus, EdgeStyle, NodeStatus, NodeStyle, PinShape, PinStatus,
-    PinStyle, SelectionBoxStyle,
+    PinStyle, SelectionBoxStyle, ramp,
 };
+
+/// Corner radius of a node body, in world units.
+const NODE_CORNER_RADIUS: f32 = 5.0;
+
+/// How far a selected node's body is pulled toward the accent.
+///
+/// Enough to identify the node when its border is off-screen, small enough that
+/// hosted content - colored by the application for the theme's background - stays
+/// readable on it.
+const SELECTION_TINT: f32 = 0.12;
 
 /// Complete theme-derived node style, with the selected look expressed in full
 /// rather than as a border tweak.
 ///
-/// A selected node reads as *brought forward*: the accent border gains a
-/// translucent accent halo, the body goes fully opaque, and the drop shadow
-/// deepens - reinforcing the z-promotion the widget already applies. All four
-/// are style-level (color bands and a stop chain), so switching selection does
-/// not touch node geometry or the shape cache.
+/// A node is an OPAQUE card one elevation step above the canvas. Opacity is not a
+/// styling knob here: a translucent body lets the grid and the edges running
+/// behind it show through the content, which is the single loudest way to make a
+/// node read as an overlay instead of an object.
+///
+/// A selected node reads as *brought forward*: its body is tinted toward the
+/// accent, the border takes the accent and gains a translucent halo, and the drop
+/// shadow deepens - reinforcing the z-promotion the widget already applies. All
+/// of it is style-level (color bands and a stop chain), so switching selection
+/// does not touch node geometry or the shape cache.
 ///
 /// Override any of it by returning your own [`NodeStyle`] from the node's
 /// `style` closure; the closure receives the [`NodeStatus`], so a host is not
 /// limited to recoloring the border.
 pub fn default_node_style(theme: &Theme, status: NodeStatus) -> NodeStyle {
-    let palette = theme.extended_palette();
+    let roles = Roles::of(theme);
 
-    // A node is a raised surface over the canvas. iced fills its container
-    // surfaces (`container::rounded_box`) with `background.weak` and draws
-    // dividers/borders (`rule`, the slider rail) one ramp step up at
-    // `background.strong`. We follow that: a neutral background-ramp border,
-    // not a primary tint - the accent is reserved for the selection border,
-    // exactly as iced reserves `primary` for active/selected affordances. The
-    // ramp is perceptual (oklch) and self-adapts to dark/light, so no hand mix.
-    let fill = palette.background.weak.color;
-    let border = palette.background.strong.color;
-
-    // Opacity and shadow are genuinely light/dark dependent (a black shadow
-    // reads differently against a dark canvas), not theme-hue mappings.
-    let (opacity, shadow_color, shadow_distance) = if palette.is_dark {
-        (0.75, Color::from_rgba(0.0, 0.0, 0.0, 0.3), 4.0)
+    // Shadow weight is genuinely light/dark dependent: a black shadow barely
+    // registers against a dark canvas, so the dark variant leans on the border
+    // for silhouette and keeps the shadow as a hint of depth, while the light
+    // variant lets the shadow do the separating.
+    let (shadow_alpha, shadow_distance) = if roles.is_dark {
+        (0.38, 7.0)
     } else {
-        (0.85, Color::from_rgba(0.0, 0.0, 0.0, 0.22), 6.0)
+        (0.22, 9.0)
     };
 
     let base = NodeStyle {
-        fill_color: fill.into(),
-        corner_radius: 5.0,
-        opacity,
-        border_color: border.into(),
+        fill_color: roles.body.into(),
+        corner_radius: NODE_CORNER_RADIUS,
+        opacity: 1.0,
+        border_color: roles.border.into(),
         border_pattern: Pattern::solid(1.0),
         border_outline_width: 0.0,
         border_outline_color: Color::TRANSPARENT.into(),
-        shadow_color,
+        shadow_color: Color::from_rgba(0.0, 0.0, 0.0, shadow_alpha),
         shadow_distance,
-        shadow_offset: (2.0, 2.0),
+        shadow_offset: (0.0, 3.0),
     };
 
     match status {
         NodeStatus::Idle => base,
-        NodeStatus::Selected => {
-            // iced reserves `primary` for active/selected affordances; the base
-            // border deliberately stays on the neutral background ramp so the
-            // accent means exactly one thing here.
-            let accent = palette.primary.base.color;
-            NodeStyle {
-                border_color: accent.into(),
-                border_pattern: Pattern::solid(2.0),
-                // An outward band on the silhouette, so the halo reads at any
-                // zoom without moving the outline.
-                border_outline_width: 3.0,
-                border_outline_color: Color { a: 0.35, ..accent }.into(),
-                opacity: 1.0,
-                shadow_distance: shadow_distance * 1.5,
-                ..base
+        NodeStatus::Selected => NodeStyle {
+            fill_color: ramp::blend(roles.body, roles.accent, SELECTION_TINT).into(),
+            border_color: roles.accent.into(),
+            border_pattern: Pattern::solid(2.0),
+            // An outward band on the silhouette, so the halo reads at any zoom
+            // without moving the outline.
+            border_outline_width: 3.0,
+            border_outline_color: Color {
+                a: 0.28,
+                ..roles.accent
             }
-        }
+            .into(),
+            shadow_distance: shadow_distance * 1.6,
+            ..base
+        },
     }
 }
 
 /// Complete theme-derived pin style. The valid-target pulse is time-based and
 /// applied by the widget, so both states share the same base.
+///
+/// A pin is the endpoint of a wire, so it takes the wire's ladder one rung
+/// brighter rather than the selection accent: sharing `primary` with selection
+/// would make "this node is selected" and "this is a connection point" the same
+/// color, and would leave the pins of a theme whose `primary` collides with its
+/// background invisible. A filled dot needs no border, exactly as iced's slider
+/// handle carries none.
 pub fn default_pin_style(theme: &Theme, _status: PinStatus) -> PinStyle {
-    let palette = theme.extended_palette();
-
-    // Pins are the node graph's interactive marks - the role iced gives to
-    // slider handles and radio dots, which all paint in `primary`. A filled dot
-    // needs no border (the slider handle is borderless too); the palette accent
-    // adapts to dark/light on its own, so no per-theme channel scaling.
     PinStyle {
-        color: palette.primary.base.color.into(),
+        color: Roles::of(theme).terminal.into(),
         radius: 6.0,
         shape: PinShape::Circle,
         border_color: Color::TRANSPARENT.into(),
@@ -117,7 +132,7 @@ pub fn default_pin_style(theme: &Theme, _status: PinStatus) -> PinStyle {
 }
 
 /// Complete theme-derived edge style with status feedback: `Idle` is a 2px solid
-/// stroke in the theme's secondary color; `PendingCut` tints the stroke with the
+/// stroke in the theme's wire color; `PendingCut` tints the stroke with the
 /// theme's edge-cutting color.
 ///
 /// The default stroke is a single concrete color. To make an edge follow its
@@ -125,11 +140,11 @@ pub fn default_pin_style(theme: &Theme, _status: PinStatus) -> PinStyle {
 /// endpoint's [`PinInfo`](crate::PinInfo) in the edge `style` closure and
 /// struct-update over this base.
 pub fn default_edge_style(theme: &Theme, status: EdgeStatus) -> EdgeStyle {
-    let palette = theme.extended_palette();
+    let roles = Roles::of(theme);
     // Unused-color sentinel for the off fields (border, outlines, shadow).
     let none = Color::TRANSPARENT;
     let base = EdgeStyle {
-        stroke_color: palette.secondary.base.color.into(),
+        stroke_color: roles.wire.into(),
         pattern: Pattern::solid(2.0),
         stroke_outline_width: 0.0,
         stroke_outline_color: none.into(),
@@ -151,7 +166,7 @@ pub fn default_edge_style(theme: &Theme, status: EdgeStatus) -> EdgeStyle {
         EdgeStatus::PendingCut => EdgeStyle {
             // An edge marked for cutting takes the cutting tool's own color, so
             // the trail and its victims read as one gesture.
-            stroke_color: default_cutting_tool_style(theme).color.into(),
+            stroke_color: roles.danger.into(),
             ..base
         },
     }
@@ -162,10 +177,10 @@ pub fn default_edge_style(theme: &Theme, status: EdgeStatus) -> EdgeStyle {
 /// The accent hue at two alphas: a translucent wash so nodes stay legible
 /// underneath, and an opaque-enough outline to read against both.
 pub fn default_selection_box_style(theme: &Theme) -> SelectionBoxStyle {
-    let accent = theme.extended_palette().primary.base.color;
+    let accent = Roles::of(theme).accent;
     SelectionBoxStyle {
         fill: Color { a: 0.15, ..accent },
-        border_color: Color { a: 0.6, ..accent },
+        border_color: Color { a: 0.75, ..accent },
         border_width: 1.5,
     }
 }
@@ -176,7 +191,7 @@ pub fn default_selection_box_style(theme: &Theme) -> SelectionBoxStyle {
 /// than the accent.
 pub fn default_cutting_tool_style(theme: &Theme) -> CuttingToolStyle {
     CuttingToolStyle {
-        color: theme.extended_palette().danger.base.color,
+        color: Roles::of(theme).danger,
         width: 3.0,
     }
 }
@@ -188,29 +203,67 @@ mod tests {
 
     /// Selection is expressed on four independent channels, not just the border,
     /// and every one of them is style-level: switching selection must not cost a
-    /// geometry rebuild.
+    /// geometry rebuild. Asserted across every theme, since a channel that
+    /// collapses does so in the palette that made its accent awkward, not in
+    /// `Theme::Dark`.
     #[test]
     fn selected_node_reads_as_brought_forward() {
-        let t = Theme::Dark;
-        let accent = t.extended_palette().primary.base.color;
-        let idle = default_node_style(&t, NodeStatus::Idle);
-        let sel = default_node_style(&t, NodeStatus::Selected);
+        for theme in Theme::ALL {
+            let idle = default_node_style(theme, NodeStatus::Idle);
+            let sel = default_node_style(theme, NodeStatus::Selected);
 
-        assert_eq!(sel.border_color, accent.into(), "border takes the accent");
-        assert!(
-            sel.border_outline_width > 0.0,
-            "a halo ring distinguishes selection at any zoom"
-        );
-        assert_eq!(sel.opacity, 1.0, "a selected node is fully opaque");
-        assert!(
-            sel.shadow_distance > idle.shadow_distance,
-            "the shadow deepens, reinforcing the z-promotion"
-        );
+            assert_ne!(
+                sel.border_color, idle.border_color,
+                "{theme}: the border must leave the neutral ramp for the accent",
+            );
+            assert_ne!(
+                sel.fill_color, idle.fill_color,
+                "{theme}: the body must carry the selection when the border is \
+                 off-screen",
+            );
+            assert!(
+                sel.border_outline_width > 0.0,
+                "{theme}: a halo ring distinguishes selection at any zoom",
+            );
+            assert!(
+                sel.shadow_distance > idle.shadow_distance,
+                "{theme}: the shadow deepens, reinforcing the z-promotion",
+            );
 
-        // Geometry-affecting fields must match, or the shape cache gains an
-        // entry per selection state.
-        assert_eq!(sel.corner_radius, idle.corner_radius);
-        assert_eq!(sel.shadow_offset, idle.shadow_offset);
+            // Geometry-affecting fields must match, or the shape cache gains an
+            // entry per selection state.
+            assert_eq!(sel.corner_radius, idle.corner_radius);
+            assert_eq!(sel.shadow_offset, idle.shadow_offset);
+        }
+    }
+
+    /// A node is an object, not an overlay. A translucent body shows the grid and
+    /// the edges running behind it straight through the content, which is the one
+    /// change that makes every theme look cheap at once - so no theme may opt out.
+    #[test]
+    fn a_node_body_is_opaque_in_every_theme() {
+        for theme in Theme::ALL {
+            for status in [NodeStatus::Idle, NodeStatus::Selected] {
+                assert_eq!(
+                    default_node_style(theme, status).opacity,
+                    1.0,
+                    "{theme}: a node body must be opaque",
+                );
+            }
+        }
+    }
+
+    /// Pins are marks, not accents. Sharing `primary` with selection would make
+    /// "this node is selected" and "this is a connection point" the same color,
+    /// and would hide the pins of any theme whose `primary` collides with its
+    /// background.
+    #[test]
+    fn a_pin_never_borrows_the_selection_accent() {
+        for theme in Theme::ALL {
+            let pin = default_pin_style(theme, PinStatus::Idle).color;
+            let selected = default_node_style(theme, NodeStatus::Selected).border_color;
+            assert_ne!(pin, selected, "{theme}: a pin wears the selection accent");
+        }
     }
 
     /// An edge marked for cutting must take the cutting tool's own color, so the

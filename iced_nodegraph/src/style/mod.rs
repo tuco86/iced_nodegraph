@@ -16,6 +16,8 @@ mod defaults;
 mod edge;
 mod node;
 mod pin;
+mod ramp;
+mod roles;
 mod sdf;
 
 pub use defaults::{
@@ -174,6 +176,13 @@ pub struct GraphStyle {
     pub tiling: Option<TilingBackground>,
 }
 
+/// A theme-free canvas: a neutral dark plane with no tiling.
+///
+/// The starting point for a host that sets its canvas itself
+/// (`GraphStyle { background_color: mine, ..Default::default() }`). Anything
+/// that should follow the application's theme uses
+/// [`from_theme`](GraphStyle::from_theme) instead - that is where the palette
+/// mapping lives, and it is what the widget draws when no closure is set.
 impl Default for GraphStyle {
     fn default() -> Self {
         Self {
@@ -184,25 +193,6 @@ impl Default for GraphStyle {
 }
 
 impl GraphStyle {
-    /// The default graph style.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// A dark graph style. Same as [`GraphStyle::default`]; named for symmetry
-    /// with the light variant and with iced's own widget styles.
-    pub fn dark() -> Self {
-        Self::default()
-    }
-
-    /// A light graph style: a pale canvas with no tiling.
-    pub fn light() -> Self {
-        Self {
-            background_color: Color::from_rgb(0.95, 0.95, 0.96),
-            tiling: None,
-        }
-    }
-
     /// Sets the canvas background color.
     pub fn background_color(mut self, color: Color) -> Self {
         self.background_color = color;
@@ -215,23 +205,20 @@ impl GraphStyle {
         self
     }
 
-    /// The graph chrome derived from an iced theme: the canvas takes the theme's
-    /// window background, so elevation comes from the palette ramp (nodes ride
-    /// above on `background.weak`) rather than hand-darkening, and a faint
-    /// `background.strong` grid sits on top.
+    /// The graph chrome derived from an iced theme: the canvas is the theme's
+    /// window background untouched, and the grid one perceptual elevation step
+    /// above it - the same ladder node bodies ride on, so canvas, grid and node
+    /// read as one material at three depths.
+    ///
+    /// The grid is opaque rather than a translucent wash: an alpha over the
+    /// canvas makes the line's weight depend on what it happens to cross, and
+    /// nothing crosses an infinite plane predictably.
     pub fn from_theme(theme: &Theme) -> Self {
-        let palette = theme.extended_palette();
+        let roles = roles::Roles::of(theme);
 
         Self {
-            background_color: palette.background.base.color,
-            tiling: Some(TilingBackground::grid(
-                40.0,
-                1.0,
-                Color {
-                    a: 0.35,
-                    ..palette.background.strong.color
-                },
-            )),
+            background_color: roles.canvas,
+            tiling: Some(TilingBackground::grid(40.0, 1.0, roles.grid)),
         }
     }
 }
