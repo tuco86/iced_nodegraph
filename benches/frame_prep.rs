@@ -23,7 +23,7 @@
 //! CPU evaluation, not 10x - the dedup win is real but bounded by the edge
 //! floor. Caching static-edge arc-splines by endpoint is the open follow-up.
 //!
-//! Run with: `cargo bench -p iced_nodegraph --bench frame_prep`.
+//! Run with: `cargo bench -p iced_nodegraph_bench`.
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use iced_nodegraph_sdf::{Shape, ShapeCache};

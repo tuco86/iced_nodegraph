@@ -286,6 +286,17 @@ its name says: the canvas.
   `CompileError`/`ValidationError` rather than a `{:?}` dump, and refuses to
   generate WGSL for an unhandled node type instead of emitting a stub function
   with a `TODO` comment.
+- The criterion benchmark moved from `iced_nodegraph/benches/` into its own
+  `iced_nodegraph_bench` workspace member (`cargo bench -p
+  iced_nodegraph_bench`). Cargo scopes `dev-dependencies` to the package, not to
+  the target that uses them, so every `cargo test -p iced_nodegraph` was
+  compiling criterion's 38-crate tree (~59 CPU-seconds) for test binaries that
+  never link it. The bench only ever used `iced_nodegraph_sdf`.
+- The `iced` dev-dependency drops the `wayland` feature. `winit` refuses to
+  compile on Linux without a display backend, so one is required, but the tests
+  are headless and never open a window: `x11` costs 7 crates where `wayland`
+  costs 34 (the smithay stack plus tiny-skia, pulled in by winit's adwaita
+  client-side decorations).
 
 ## [0.4.2] - 2026-07-23
 

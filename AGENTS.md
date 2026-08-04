@@ -20,8 +20,8 @@ version accordingly (under Cargo's 0.x rules a break needs a minor bump).
 
 ## Orientation
 
-Two published libraries plus demos, with a strictly one-way dependency
-direction: `demos/* -> iced_nodegraph -> iced_nodegraph_sdf`.
+Two published libraries plus demos and a bench crate, with a strictly one-way
+dependency direction: `demos/* -> iced_nodegraph -> iced_nodegraph_sdf`.
 
 - **`iced_nodegraph_sdf`** - the renderer. Shape authoring (`Curve`,
   `ShapeBuilder`, `Shape`, `Tiling`) lowers to `Drawable` segments, which
@@ -33,6 +33,8 @@ direction: `demos/* -> iced_nodegraph -> iced_nodegraph_sdf`.
   iced `Widget` impl, and `style/*` the flat style structs.
 - **`demos/*`** - hello_world, styling, interaction, 500_nodes, shader_editor,
   and the shared `demo_common` crate.
+- **`benches/`** - `iced_nodegraph_bench`, the criterion harness, kept out of
+  the library crates so their `cargo test` does not compile criterion.
 
 The authority on types and behaviour is the rustdoc: read
 `iced_nodegraph/src/lib.rs`'s crate docs and the module docs, and
@@ -160,9 +162,12 @@ widget hands its children using the shared recording renderer in
 `tests/common/record.rs`; `simulator.rs` drives real events through
 `iced_test::Simulator`; `widget_pixel.rs` and `edge_grid_pixel.rs` are pixel
 oracles against the headless GPU harness in `tests/common/mod.rs`.
-`benches/frame_prep.rs` measures frame-preparation cost. The SDF crate's pixel
-tests in `iced_nodegraph_sdf/src/pipeline/pixel_tests.rs` need a real GPU
-adapter and serialized execution.
+The `iced_nodegraph_bench` member (`benches/frame_prep.rs`,
+`cargo bench -p iced_nodegraph_bench`) measures frame-preparation cost; it is a
+separate crate because `dev-dependencies` are package-wide, so criterion's 38
+crates would otherwise be compiled by every `cargo test -p iced_nodegraph`. The
+SDF crate's pixel tests in `iced_nodegraph_sdf/src/pipeline/pixel_tests.rs` need
+a real GPU adapter and serialized execution.
 
 There are no `#[cfg(test)]` modules at the crate root: a test that only touches
 the public API belongs in `tests/`, where it also proves the API is reachable

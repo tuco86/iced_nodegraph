@@ -1,0 +1,21 @@
+[package]
+name = "iced_nodegraph_bench"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+# Criterion's dependency tree (clap, plotters, rayon, serde, ciborium - 38
+# crates) is a package-wide `dev-dependency` wherever the bench lives, so
+# hosting the bench inside `iced_nodegraph` made every `cargo test` there
+# compile all of it for targets that never link criterion. It lives in its own
+# member instead, where only `cargo bench -p iced_nodegraph_bench` pays.
+[[bench]]
+name = "frame_prep"
+path = "frame_prep.rs"
+harness = false
+
+[dependencies]
+criterion.workspace = true
+iced_nodegraph_sdf.workspace = true
