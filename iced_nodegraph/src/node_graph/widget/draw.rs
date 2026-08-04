@@ -303,7 +303,10 @@ where
         let mut camera = state
             .camera
             .with_viewport_origin(layout.bounds().position().into_euclid().to_vector());
-        let z_indices = z_render_indices(state, self.nodes.len(), |i| self.is_selected(i));
+        // One selection read per frame, shared by the z-order and every node's
+        // status, so nothing can disagree about what is selected.
+        let selection = self.resolved_selection(state);
+        let z_indices = z_render_indices(state, self.nodes.len(), |i| selection.contains(&i));
 
         // Update time for animations
         let time = {
@@ -427,7 +430,7 @@ where
         };
         let compute_node_offset = |node_idx: usize| -> WorldVector {
             let mut offset = WorldVector::zero();
-            let is_selected = self.is_selected(node_idx);
+            let is_selected = selection.contains(&node_idx);
 
             // Single node drag
             if let (
@@ -496,7 +499,7 @@ where
                 // Gate only: a node without a tree child gets no geometry
                 // (its pins are already absent from `node_pins`).
                 let _node_tree = tree.children.get(node_index)?;
-                let status = if self.is_selected(node_index) {
+                let status = if selection.contains(&node_index) {
                     NodeStatus::Selected
                 } else {
                     NodeStatus::Idle

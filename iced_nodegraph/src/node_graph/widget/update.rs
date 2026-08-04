@@ -9,6 +9,7 @@
 use super::*;
 use crate::node_graph::input::KeyAction;
 use iced_widget::core::{touch, window};
+use std::collections::HashSet;
 
 // Click detection threshold (screen px; divide by zoom before comparing
 // against world-space distances so the hit target stays constant on screen)
@@ -90,10 +91,25 @@ where
             .camera
             .with_viewport_origin(layout.bounds().position().into_euclid().to_vector());
 
+        // Drop the pending selection once the host has moved on - it either applied
+        // what we reported or set its own value; either way its word is final.
+        // Comparing against the host (not against the pending value) is what stops
+        // a not-yet-refreshed host frame from undoing an interaction that has not
+        // round-tripped yet. This belongs here, not in `push_node`: that never
+        // knows whether another node follows, so it never sees a complete
+        // selection to compare.
+        let host_selection = self.host_selection();
+        if state.selection_baseline.as_ref() != Some(&host_selection) {
+            state.pending_selection = None;
+            state.selection_baseline = Some(host_selection);
+        }
+
         // Assign z-order entries to any newly-seen node indices so freshly
         // pushed nodes spawn on top of older ones.
         state.ensure_z_entries(self.nodes.len());
-        let z_indices = z_render_indices(state, self.nodes.len(), |i| self.is_selected(i));
+        // One selection read per event, shared by every gate and payload below.
+        let selection = self.resolved_selection(state);
+        let z_indices = z_render_indices(state, self.nodes.len(), |i| selection.contains(&i));
 
         // Update time for animations
         // Cap delta to prevent large time jumps when app is in background
@@ -144,15 +160,16 @@ where
                 // persisted, so leave the shortcut unhandled and let the key
                 // fall through instead of silently swallowing it.
                 Some(KeyAction::CloneSelection)
-                    if self.any_selected() && self.on_clone.as_ref().is_some() =>
+                    if !selection.is_empty() && self.on_clone.as_ref().is_some() =>
                 {
-                    let node_ids = self.selected_ids();
+                    let node_ids = self.selection_ids(&selection);
                     if let Some(handler) = self.on_clone.as_ref() {
                         shell.publish(handler(node_ids));
                     }
                     shell.capture_event();
                 }
                 Some(KeyAction::SelectAll) => {
+                    state.pending_selection = Some((0..self.nodes.len()).collect());
                     let selected: Vec<N> = self.nodes.iter().map(|node| node.id.clone()).collect();
                     if let Some(handler) = self.on_select.as_ref() {
                         shell.publish(handler(selected));
@@ -160,7 +177,8 @@ where
                     shell.capture_event();
                     shell.request_redraw();
                 }
-                Some(KeyAction::ClearSelection) if self.any_selected() => {
+                Some(KeyAction::ClearSelection) if !selection.is_empty() => {
+                    state.pending_selection = Some(HashSet::new());
                     if let Some(handler) = self.on_select.as_ref() {
                         shell.publish(handler(vec![]));
                     }
@@ -350,11 +368,11 @@ where
                     }) = event
                         && self.keymap.key_action(key, *physical_key, *modifiers)
                             == Some(KeyAction::DeleteSelection)
-                        && self.any_selected()
+                        && !selection.is_empty()
                         && self.on_delete.as_ref().is_some()
                     {
                         if let Some(handler) = self.on_delete.as_ref() {
-                            ctx.shell.publish(handler(self.selected_ids()));
+                            ctx.shell.publish(handler(self.selection_ids(&selection)));
                         }
                         ctx.shell.capture_event();
                         ctx.shell.request_redraw();
@@ -495,8 +513,9 @@ where
                     && !lost
                     && state.time - pressed_at <= TOUCH_TAP_MAX_SECS
                     && matches!(state.dragging, Dragging::Graph(_))
-                    && self.any_selected()
+                    && !self.resolved_selection(state).is_empty()
                 {
+                    state.pending_selection = Some(HashSet::new());
                     if let Some(handler) = self.on_select.as_ref() {
                         shell.publish(handler(vec![]));
                     }
@@ -963,22 +982,21 @@ where
                     // Without the multi-select modifier (keymap, default
                     // Shift): replace the selection. With it: add to it.
                     let additive = state.modifiers.contains(self.keymap.multi_select_modifiers);
-                    let mut selected: Vec<usize> = if additive {
-                        self.selected_indices()
+                    let mut selected: HashSet<usize> = if additive {
+                        self.resolved_selection(state)
                     } else {
-                        Vec::new()
+                        HashSet::new()
                     };
                     for (node_index, node_layout) in layout.children().enumerate() {
-                        if rects_intersect(&selection_rect, &node_layout.bounds())
-                            && !selected.contains(&node_index)
-                        {
-                            selected.push(node_index);
+                        if rects_intersect(&selection_rect, &node_layout.bounds()) {
+                            selected.insert(node_index);
                         }
                     }
 
                     if let Some(handler) = self.on_select.as_ref() {
-                        shell.publish(handler(self.node_ids_at(&selected)));
+                        shell.publish(handler(self.selection_ids(&selected)));
                     }
+                    state.pending_selection = Some(selected);
                 }
                 state.dragging = Dragging::None;
                 // Emit drag end event
@@ -1009,7 +1027,7 @@ where
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 // Complete group move - notify all selected nodes moved
-                let indices: Vec<usize> = self.selected_indices();
+                let indices: Vec<usize> = Self::selection_indices(&self.resolved_selection(state));
                 if let Some(cursor_position) = world_cursor.position() {
                     let cursor_position: WorldPoint = cursor_position.into_euclid();
                     let offset = cursor_position - origin;
@@ -1356,8 +1374,9 @@ where
         let state = tree.state.downcast_mut::<NodeGraphState>();
         // The flags are last frame's selection, which is exactly the question
         // here: was this node already part of a selection when it was grabbed?
-        let already_selected = self.is_selected(node_index);
-        let current: Vec<usize> = self.selected_indices();
+        let resolved = self.resolved_selection(state);
+        let already_selected = resolved.contains(&node_index);
+        let current: Vec<usize> = Self::selection_indices(&resolved);
         let modifiers = state.modifiers;
         let selection_changed;
 
@@ -1418,12 +1437,15 @@ where
             }
         }
 
-        // Notify selection change
+        // Notify selection change, and hold the new value so a second click
+        // arriving before the host applies this one composes with it.
         if selection_changed {
             let selected = self.node_ids_at(&new_selection);
             if let Some(handler) = self.on_select.as_ref() {
                 shell.publish(handler(selected));
             }
+            let state = tree.state.downcast_mut::<NodeGraphState>();
+            state.pending_selection = Some(new_selection.into_iter().collect());
         }
 
         shell.capture_event();

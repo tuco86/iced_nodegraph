@@ -68,8 +68,10 @@
 //!   selection the widget wants; mark the matching nodes with
 //!   [`Node::selected`] on the next `view`. Selection is a node property, so
 //!   there is no ordering to get right - and, like iced's `checkbox`, nothing
-//!   happens until you feed it back. The camera works the same way through
-//!   [`on_pan`](NodeGraph::on_pan) and [`view`](NodeGraph::view).
+//!   happens until you feed it back. Until you do, the widget keeps rendering and
+//!   building on what it last reported, so a fast series of clicks is not lost.
+//!   The camera works the same way through [`on_pan`](NodeGraph::on_pan) and
+//!   [`view`](NodeGraph::view).
 //!
 //! ## Core types
 //!

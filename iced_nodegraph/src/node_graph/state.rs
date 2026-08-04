@@ -56,6 +56,16 @@ pub(super) struct NodeGraphState {
     pub(super) dragging: Dragging,
     pub(super) time: f32,
     pub(super) last_update: Option<Instant>,
+    /// The selection the widget has reported but not yet seen applied, so a burst
+    /// of clicks composes instead of each one starting from the host's stale
+    /// value. Interaction and rendering both read this when it is set.
+    pub(super) pending_selection: Option<HashSet<usize>>,
+    /// The host selection `pending_selection` was derived from. When the host
+    /// pushes anything else it has moved on - it may have applied our value, or
+    /// set its own - and the pending value is dropped. Comparing against the host
+    /// rather than against `pending_selection` is what keeps a stale host value
+    /// from clobbering an interaction that has not round-tripped yet.
+    pub(super) selection_baseline: Option<HashSet<usize>>,
     pub(super) modifiers: keyboard::Modifiers,
     /// Valid drop targets computed at edge drag start.
     /// Contains (node_index, pin_index) pairs that are valid connection targets.
@@ -96,6 +106,8 @@ impl Default for NodeGraphState {
             dragging: Default::default(),
             time: 0.0,
             last_update: None,
+            pending_selection: None,
+            selection_baseline: None,
             modifiers: keyboard::Modifiers::default(),
             valid_drop_targets: HashSet::new(),
             last_synced_view: None,

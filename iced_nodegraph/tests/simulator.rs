@@ -325,6 +325,52 @@ fn a_node_marked_selected_is_acted_on_without_any_prior_interaction() {
     );
 }
 
+/// A burst of clicks composes even though the host has not applied any of them
+/// yet: the widget holds what it reported until the host's own value moves on.
+/// Without that, the second shift-click would start from the stale (empty) host
+/// selection and replace the first instead of extending it.
+#[test]
+fn a_second_click_composes_with_one_the_host_has_not_applied_yet() {
+    let (a, b) = (Point::new(100.0, 100.0), Point::new(400.0, 100.0));
+    let mut ui = Simulator::new(graph_with(&[(0, a), (1, b)]));
+    ui.simulate([iced::Event::Keyboard(keyboard::Event::ModifiersChanged(
+        keyboard::Modifiers::SHIFT,
+    ))]);
+    ui.point_at(center(a));
+    ui.simulate([moved(center(a)), press(), release()]);
+    ui.point_at(center(b));
+    ui.simulate([moved(center(b)), press(), release()]);
+
+    let msgs = messages(ui);
+    assert_eq!(
+        last_selection(&msgs),
+        Some(vec![0, 1]),
+        "the second shift-click must extend the first, not replace it: {msgs:?}",
+    );
+}
+
+/// The host's value is final: when it reports something else, the held value is
+/// dropped rather than fighting it.
+#[test]
+fn a_host_selection_overrides_what_the_widget_reported() {
+    let (a, b) = (Point::new(100.0, 100.0), Point::new(400.0, 100.0));
+    // The host says node 1 is selected, whatever the widget last reported.
+    let mut ui = Simulator::new(graph_with_selected(&[(0, a), (1, b)], &[1]));
+    // Shift-click node 0: extends the HOST's selection, so both.
+    ui.simulate([iced::Event::Keyboard(keyboard::Event::ModifiersChanged(
+        keyboard::Modifiers::SHIFT,
+    ))]);
+    ui.point_at(center(a));
+    ui.simulate([moved(center(a)), press(), release()]);
+
+    let msgs = messages(ui);
+    assert_eq!(
+        last_selection(&msgs),
+        Some(vec![0, 1]),
+        "an interaction must build on the host's selection: {msgs:?}",
+    );
+}
+
 #[test]
 fn ctrl_d_requests_clone_of_selection() {
     let mut ui = Simulator::new(graph_with_selected(&[(0, Point::new(100.0, 100.0))], &[0]));

@@ -37,7 +37,7 @@
 //! a status, so selection and cut feedback are expressed in the style, not
 //! layered on afterwards.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use iced_widget::core::{Element, Length, Point, Size, Vector};
@@ -518,18 +518,8 @@ where
         self.node_lookup.get(id).copied()
     }
 
-    /// Whether the host marked the node at `index` selected.
-    pub(super) fn is_selected(&self, index: usize) -> bool {
-        self.nodes.get(index).is_some_and(|node| node.selected)
-    }
-
-    /// Whether any node is marked selected.
-    pub(super) fn any_selected(&self) -> bool {
-        self.nodes.iter().any(|node| node.selected)
-    }
-
-    /// Indices of the nodes the host marked selected, in push order.
-    pub(super) fn selected_indices(&self) -> Vec<usize> {
+    /// The selection the host marked on its nodes.
+    pub(super) fn host_selection(&self) -> HashSet<usize> {
         self.nodes
             .iter()
             .enumerate()
@@ -538,13 +528,31 @@ where
             .collect()
     }
 
-    /// Ids of the nodes the host marked selected, in push order.
-    pub(super) fn selected_ids(&self) -> Vec<N> {
-        self.nodes
-            .iter()
-            .filter(|node| node.selected)
-            .map(|node| node.id.clone())
-            .collect()
+    /// The selection to render and act on: the widget's pending value while it
+    /// waits to be applied, else what the host marked.
+    ///
+    /// Both halves of the widget read this, so what is highlighted is always what
+    /// a delete or a group drag will act on.
+    pub(in crate::node_graph) fn resolved_selection(
+        &self,
+        state: &state::NodeGraphState,
+    ) -> HashSet<usize> {
+        match &state.pending_selection {
+            Some(pending) => pending.clone(),
+            None => self.host_selection(),
+        }
+    }
+
+    /// `selection` as node indices in push order.
+    pub(super) fn selection_indices(selection: &HashSet<usize>) -> Vec<usize> {
+        let mut indices: Vec<usize> = selection.iter().copied().collect();
+        indices.sort_unstable();
+        indices
+    }
+
+    /// `selection` as user node ids in push order.
+    pub(super) fn selection_ids(&self, selection: &HashSet<usize>) -> Vec<N> {
+        self.node_ids_at(&Self::selection_indices(selection))
     }
 
     /// The user node ids at the given node indices, skipping unknown indices.
@@ -727,10 +735,14 @@ where
     /// The callback receives the list of currently selected node IDs.
     /// Fires on click-select, selection box, and Shift+click multi-select.
     ///
-    /// The widget holds no selection of its own: it reports the selection it wants
-    /// and renders what comes back through [`Node::selected`]. Store the reported
-    /// ids and mark the matching nodes on the next `view`, or the selection never
-    /// takes effect - the same contract as iced's `checkbox`.
+    /// Store the reported ids and mark the matching nodes with
+    /// [`Node::selected`] on the next `view`, or the selection never takes effect
+    /// - the same contract as iced's `checkbox`.
+    ///
+    /// Until the host's own value changes, the widget holds on to what it last
+    /// reported, so a burst of clicks composes instead of each one starting from a
+    /// value the host has not applied yet. As soon as the host marks anything
+    /// different, its value wins outright.
     pub fn on_select(mut self, f: impl Fn(Vec<N>) -> Message + 'a) -> Self {
         self.on_select = Some(Box::new(f));
         self
