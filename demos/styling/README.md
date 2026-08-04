@@ -26,8 +26,9 @@ entry point both call into it); `src/nodes/mod.rs` builds the node content.
   preset from the node's fill color and reuses the node's own corner radius and
   border thickness, so the header geometry matches the body.
 - **Selection feedback**: when a node's status is `NodeStatus::Selected`, the
-  style closure overlays `SelectionStyle::from_theme(theme)`'s border color and
-  width on top of the stored style.
+  style closure copies the accent border, halo ring and opacity from
+  `default_node_style(theme, NodeStatus::Selected)` onto the stored style, so a
+  hand-styled node highlights like every other node.
 - **Grid background**: a `TilingBackground::grid` layer over
   `GraphStyle::from_theme(theme)`.
 
@@ -74,6 +75,6 @@ result next to the rustdoc output in `target/doc/demo_styling/pkg/`.
 
 `NodeGraph` with `on_connect` / `on_disconnect` / `on_move` / `on_select` /
 `selection` / `graph_style`, `node(..).style(..).pin_style(..)`, `edge(..)`,
-`PinRef`, `NodeStyle`, `PinStyle`, `SelectionStyle`, `GraphStyle`,
+`PinRef`, `NodeStyle`, `PinStyle`, `GraphStyle`,
 `TilingBackground`, `Pattern`, `NodeStatus`, `PinStatus`, `PinDirection`,
 `PinInfo`, `default_pin_style`, `node_header`, and the `pin!` macro.

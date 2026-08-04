@@ -29,20 +29,26 @@
 //!
 //! # Styling
 //!
-//! Every style entry point is a status-driven closure over a theme:
-//! [`Node::style`] and [`Node::pin_style`] for a node and its pins,
-//! [`Edge::style`] for an edge, [`NodeGraph::graph_style`] for the canvas and
-//! selection chrome, and [`NodeGraph::dragging_edge_style`] for the loose edge
-//! during a connect drag.
+//! One shape throughout: a closure over the theme, with a `default_*_style`
+//! function as its base. [`Node::style`] and [`Node::pin_style`] for a node and
+//! its pins, [`Edge::style`] for an edge, and one entry point per piece of chrome
+//! the widget draws itself - [`NodeGraph::graph_style`] (canvas),
+//! [`NodeGraph::selection_box_style`], [`NodeGraph::cutting_tool_style`] and
+//! [`NodeGraph::dragging_edge_style`]. Per-element closures additionally receive
+//! a status, so selection and cut feedback are expressed in the style, not
+//! layered on afterwards.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-use iced_widget::core::{Color, Element, Length, Point, Size, Vector};
+use iced_widget::core::{Element, Length, Point, Size, Vector};
 
 use crate::ids::{EdgeId, NodeId, PinId};
 use crate::node_pin::{PinEnd, PinInfo};
-use crate::style::{EdgeStatus, EdgeStyle, GraphStyle, NodeStatus, NodeStyle, PinStatus, PinStyle};
+use crate::style::{
+    CuttingToolStyle, EdgeStatus, EdgeStyle, GraphStyle, NodeStatus, NodeStyle, PinStatus,
+    PinStyle, SelectionBoxStyle,
+};
 
 /// Per-node style callback: theme + status -> resolved style. Used by [`Node`].
 pub(crate) type NodeStyleFn<'a, Theme> = Box<dyn Fn(&Theme, NodeStatus) -> NodeStyle + 'a>;
@@ -382,12 +388,11 @@ pub struct NodeGraph<
     /// Style for the edge being dragged (theme -> resolved style). The graph
     /// injects the source pin's color for inheriting (TRANSPARENT) stroke ends.
     pub(super) dragging_edge_style: Option<DragEdgeStyleFn<'a, P, UI, Theme>>,
-    /// Box-selection overlay colors, overriding
-    /// `GraphStyle::selection_style.box_select_*` when set.
-    pub(super) box_select_style: Option<Box<dyn Fn(&Theme) -> (Color, Color) + 'a>>,
-    /// Edge-cutting trail color, overriding
-    /// `GraphStyle::selection_style.edge_cutting_color` when set.
-    pub(super) cutting_tool_style: Option<Box<dyn Fn(&Theme) -> Color + 'a>>,
+    /// Box-selection rectangle style; [`default_selection_box_style`] applies when
+    /// unset.
+    pub(super) selection_box_style: Option<Box<dyn Fn(&Theme) -> SelectionBoxStyle + 'a>>,
+    /// Edge-cutting trail style; [`default_cutting_tool_style`] applies when unset.
+    pub(super) cutting_tool_style: Option<Box<dyn Fn(&Theme) -> CuttingToolStyle + 'a>>,
     /// Host-controlled camera (world position + zoom). The widget syncs its
     /// internal camera to this whenever the host changes it, while still running
     /// pan/zoom interaction internally and committing via `on_pan`. Mirrors the
@@ -431,7 +436,7 @@ where
             on_pan: None,
             on_info: None,
             dragging_edge_style: None,
-            box_select_style: None,
+            selection_box_style: None,
             cutting_tool_style: None,
             view: None,
             can_connect: None,
@@ -509,53 +514,62 @@ where
             .collect()
     }
 
-    /// Sets the graph chrome style (canvas background, tiling, selection
-    /// overlay) as a theme-derived closure.
+    /// Sets the canvas style: background color and the optional tiling.
     ///
-    /// Every style entry point on the widget is a `Fn(&Theme) -> _`. For a
-    /// static style, ignore the theme argument:
+    /// The two interaction overlays have their own entry points
+    /// ([`selection_box_style`](Self::selection_box_style),
+    /// [`cutting_tool_style`](Self::cutting_tool_style)), so this closure is only
+    /// about the canvas itself. For a static style, ignore the theme argument:
     /// `.graph_style(|_| GraphStyle { ..base })`.
     pub fn graph_style(mut self, f: impl Fn(&Theme) -> GraphStyle + 'a) -> Self {
         self.graph_style = Some(Box::new(f));
         self
     }
 
-    /// Sets the box-selection overlay colors as `(fill, border)`.
+    /// Sets the style of the box-selection rectangle.
     ///
-    /// Overrides `GraphStyle::selection_style.box_select_fill` /
-    /// `box_select_border` for this graph; the theme-derived values apply when
-    /// unset. To set the whole selection chrome at once - including the selected
-    /// node border, which has no closure of its own - go through
-    /// [`graph_style`](Self::graph_style) and [`SelectionStyle`].
+    /// [`default_selection_box_style`] is the theme-derived base and applies when
+    /// this is unset; layer over it with struct-update, exactly like the per-node
+    /// and per-edge closures.
+    ///
+    /// A selected *node's* appearance is not set here: it comes from the node's
+    /// own [`style`](Node::style) closure, which receives
+    /// [`NodeStatus::Selected`](crate::NodeStatus).
     ///
     /// ```
-    /// use iced_nodegraph::node_graph;
+    /// use iced_nodegraph::{SelectionBoxStyle, default_selection_box_style, node_graph};
     /// use iced::Color;
     /// use iced_wgpu::Renderer;
     ///
-    /// let graph = node_graph::<(), iced::Theme, Renderer>().box_select_style(|theme| {
-    ///     let accent = theme.extended_palette().primary.base.color;
-    ///     (Color { a: 0.15, ..accent }, accent)
+    /// let graph = node_graph::<(), iced::Theme, Renderer>().selection_box_style(|theme| {
+    ///     SelectionBoxStyle {
+    ///         border_width: 2.0,
+    ///         ..default_selection_box_style(theme)
+    ///     }
     /// });
     /// ```
-    pub fn box_select_style(mut self, f: impl Fn(&Theme) -> (Color, Color) + 'a) -> Self {
-        self.box_select_style = Some(Box::new(f));
+    pub fn selection_box_style(mut self, f: impl Fn(&Theme) -> SelectionBoxStyle + 'a) -> Self {
+        self.selection_box_style = Some(Box::new(f));
         self
     }
 
-    /// Sets the color of the edge-cutting trail.
+    /// Sets the style of the edge-cutting trail.
     ///
-    /// Overrides `GraphStyle::selection_style.edge_cutting_color` for this graph;
-    /// the theme's `danger` color applies when unset.
+    /// [`default_cutting_tool_style`] is the theme-derived base and applies when
+    /// this is unset.
     ///
     /// ```
-    /// use iced_nodegraph::node_graph;
+    /// use iced_nodegraph::{CuttingToolStyle, default_cutting_tool_style, node_graph};
     /// use iced_wgpu::Renderer;
     ///
-    /// let graph = node_graph::<(), iced::Theme, Renderer>()
-    ///     .cutting_tool_style(|theme| theme.extended_palette().danger.base.color);
+    /// let graph = node_graph::<(), iced::Theme, Renderer>().cutting_tool_style(|theme| {
+    ///     CuttingToolStyle {
+    ///         width: 5.0,
+    ///         ..default_cutting_tool_style(theme)
+    ///     }
+    /// });
     /// ```
-    pub fn cutting_tool_style(mut self, f: impl Fn(&Theme) -> Color + 'a) -> Self {
+    pub fn cutting_tool_style(mut self, f: impl Fn(&Theme) -> CuttingToolStyle + 'a) -> Self {
         self.cutting_tool_style = Some(Box::new(f));
         self
     }

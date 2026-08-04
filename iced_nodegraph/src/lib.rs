@@ -128,10 +128,13 @@
 //! }
 //! ```
 //!
-//! Canvas chrome - background color, optional [`TilingBackground`], and the
-//! [`SelectionStyle`] used for selected borders, the box-select rectangle and the
-//! edge-cutting trail - lives on [`GraphStyle`], set once via
-//! [`graph_style`](NodeGraph::graph_style).
+//! The chrome the widget draws itself follows the same closure-plus-default
+//! shape, one type per thing: [`GraphStyle`] (canvas background and tiling) via
+//! [`graph_style`](NodeGraph::graph_style), [`SelectionBoxStyle`] via
+//! [`selection_box_style`](NodeGraph::selection_box_style), and [`CuttingToolStyle`]
+//! via [`cutting_tool_style`](NodeGraph::cutting_tool_style). A selected node's
+//! look is not chrome - it comes from the node's own closure through
+//! [`NodeStatus`].
 //!
 //! ## Interaction
 //!
@@ -177,6 +180,7 @@ pub use node_pin::{NodePin, PinDirection, PinEnd, PinInfo, PinSide, node_pin};
 pub use style::{
     // Unified color type for style fields
     ColorQuad,
+    CuttingToolStyle,
     EdgeCurve,
     // Status enums for widget-side styling
     EdgeStatus,
@@ -188,14 +192,16 @@ pub use style::{
     PinShape,
     PinStatus,
     PinStyle,
-    SelectionStyle,
+    SelectionBoxStyle,
     // Tiling background (grid/dots/...) for GraphStyle
     TilingBackground,
     TilingKind,
-    // Built-in status-driven default styles
+    default_cutting_tool_style,
     default_edge_style,
     default_node_style,
     default_pin_style,
+    // Built-in status-driven default styles
+    default_selection_box_style,
 };
 
 // Re-export iced_nodegraph_sdf pattern types for downstream crates

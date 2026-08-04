@@ -6,8 +6,9 @@
 //! and [`default_pin_style`]; override individual fields with struct-update
 //! syntax over them. See [`ColorQuad`] for the unified color type.
 //!
-//! [`GraphStyle`] and [`SelectionStyle`] (canvas background, selection overlay,
-//! drag-edge colors) are also plain structs; they are not per-element styles.
+//! The graph's own chrome follows the same shape, one type per thing the widget
+//! draws itself: [`GraphStyle`] for the canvas, [`SelectionBoxStyle`] for the
+//! box-selection rectangle, [`CuttingToolStyle`] for the edge-cutting trail.
 
 use iced_widget::core::{Color, Theme};
 
@@ -17,7 +18,10 @@ mod node;
 mod pin;
 mod sdf;
 
-pub use defaults::{default_edge_style, default_node_style, default_pin_style};
+pub use defaults::{
+    default_cutting_tool_style, default_edge_style, default_node_style, default_pin_style,
+    default_selection_box_style,
+};
 pub use edge::EdgeStyle;
 pub use node::NodeStyle;
 pub use pin::PinStyle;
@@ -158,16 +162,16 @@ impl TilingBackground {
     }
 }
 
-/// The graph's own chrome: canvas background, optional tiling, and the
-/// selection overlays. Not a per-element style.
+/// The canvas: background color and the optional tiling drawn over it.
+///
+/// The transient overlays have their own types ([`SelectionBoxStyle`],
+/// [`CuttingToolStyle`]), so this is only what is always on screen.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GraphStyle {
     /// Background color for the canvas.
     pub background_color: Color,
     /// Optional tiling drawn over `background_color` (grid, dots, ...).
     pub tiling: Option<TilingBackground>,
-    /// Selection style for node highlighting and box selection.
-    pub selection_style: SelectionStyle,
 }
 
 impl Default for GraphStyle {
@@ -175,7 +179,6 @@ impl Default for GraphStyle {
         Self {
             background_color: Color::from_rgb(0.08, 0.08, 0.09),
             tiling: None,
-            selection_style: SelectionStyle::default(),
         }
     }
 }
@@ -197,7 +200,6 @@ impl GraphStyle {
         Self {
             background_color: Color::from_rgb(0.95, 0.95, 0.96),
             tiling: None,
-            selection_style: SelectionStyle::default(),
         }
     }
 
@@ -210,12 +212,6 @@ impl GraphStyle {
     /// Sets a tiling background (grid, dots, ...) drawn over `background_color`.
     pub fn tiling(mut self, tiling: TilingBackground) -> Self {
         self.tiling = Some(tiling);
-        self
-    }
-
-    /// Sets the selection and selection-drag chrome.
-    pub fn selection_style(mut self, style: SelectionStyle) -> Self {
-        self.selection_style = style;
         self
     }
 
@@ -236,89 +232,33 @@ impl GraphStyle {
                     ..palette.background.strong.color
                 },
             )),
-            selection_style: SelectionStyle::from_theme(theme),
         }
     }
 }
 
-/// Style for node selection highlighting and the two selection-drag overlays
-/// (box select, edge cutting). Held by [`GraphStyle::selection_style`].
-#[derive(Debug, Clone, PartialEq)]
-pub struct SelectionStyle {
-    /// Border color for selected nodes
-    pub selected_border_color: Color,
-    /// Border width for selected nodes
-    pub selected_border_width: f32,
-    /// Fill color for the box selection rectangle (semi-transparent)
-    pub box_select_fill: Color,
-    /// Border color for the box selection rectangle
-    pub box_select_border: Color,
-    /// Color for the edge cutting line
-    pub edge_cutting_color: Color,
+/// Style of the box-selection rectangle the widget draws during a box drag.
+///
+/// The theme-derived base is [`default_selection_box_style`]; override it with
+/// [`NodeGraph::selection_box_style`](crate::NodeGraph::selection_box_style).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SelectionBoxStyle {
+    /// Fill of the rectangle. Usually translucent, since nodes sit under it.
+    pub fill: Color,
+    /// Stroke color of the rectangle.
+    pub border_color: Color,
+    /// Stroke width in SCREEN pixels: the widget divides it by the zoom, so the
+    /// outline stays equally readable at every zoom, like the hit thresholds.
+    pub border_width: f32,
 }
 
-impl Default for SelectionStyle {
-    fn default() -> Self {
-        Self {
-            selected_border_color: Color::from_rgb(0.3, 0.6, 1.0),
-            selected_border_width: 2.5,
-            box_select_fill: Color::from_rgba(0.3, 0.6, 1.0, 0.15),
-            box_select_border: Color::from_rgba(0.3, 0.6, 1.0, 0.6),
-            edge_cutting_color: Color::from_rgb(1.0, 0.3, 0.3),
-        }
-    }
-}
-
-impl SelectionStyle {
-    /// The default selection style.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Sets the border color of a selected node.
-    pub fn selected_border_color(mut self, color: Color) -> Self {
-        self.selected_border_color = color;
-        self
-    }
-
-    /// Sets the border width of a selected node.
-    pub fn selected_border_width(mut self, width: f32) -> Self {
-        self.selected_border_width = width;
-        self
-    }
-
-    /// Sets the fill of the box-selection rectangle.
-    pub fn box_select_fill(mut self, color: Color) -> Self {
-        self.box_select_fill = color;
-        self
-    }
-
-    /// Sets the border of the box-selection rectangle.
-    pub fn box_select_border(mut self, color: Color) -> Self {
-        self.box_select_border = color;
-        self
-    }
-
-    /// Sets the color of the edge-cutting trail.
-    pub fn edge_cutting_color(mut self, color: Color) -> Self {
-        self.edge_cutting_color = color;
-        self
-    }
-
-    /// The selection chrome derived from an iced theme: the accent color for
-    /// highlights, and `danger` for the edge-cutting trail, since a cut is
-    /// destructive.
-    pub fn from_theme(theme: &Theme) -> Self {
-        let palette = theme.extended_palette();
-        let primary = palette.primary.base.color;
-
-        Self {
-            selected_border_color: primary,
-            selected_border_width: 2.5,
-            // Translucent overlays must stay alpha-based; the hue is the accent.
-            box_select_fill: Color { a: 0.15, ..primary },
-            box_select_border: Color { a: 0.6, ..primary },
-            edge_cutting_color: palette.danger.base.color,
-        }
-    }
+/// Style of the trail the edge-cutting gesture draws behind the cursor.
+///
+/// The theme-derived base is [`default_cutting_tool_style`]; override it with
+/// [`NodeGraph::cutting_tool_style`](crate::NodeGraph::cutting_tool_style).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CuttingToolStyle {
+    /// Color of the trail.
+    pub color: Color,
+    /// Stroke width in SCREEN pixels, scaled like [`SelectionBoxStyle::border_width`].
+    pub width: f32,
 }

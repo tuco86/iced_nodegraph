@@ -202,9 +202,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the only path where the widget holds a host-supplied edge: `on_disconnect`
   also fires while a drag leaves a snapped pin, where no host edge exists yet.
   Mirrors `on_delete(Vec<N>)` for nodes: one batched call per cut gesture.
-- `SelectionStyle::edge_cutting_color` setter, completing the builder set (the
-  other four fields already had one).
+- `SelectionBoxStyle` + `default_selection_box_style(theme)` and
+  `CuttingToolStyle` + `default_cutting_tool_style(theme)`: the two interaction
+  overlays now follow the crate's one styling shape - a closure over the theme
+  with a `default_*_style` base - like nodes, pins and edges already did.
+  Both structs expose the stroke width the widget previously kept in a private
+  constant, so a host closure can reach everything the default reaches.
 - `DragInfo` derives `PartialEq`, like the other public diagnostic types.
+
+### Changed
+
+**BREAKING.** `NodeGraph::box_select_style` is now `selection_box_style`, and
+both overlay closures return a named struct instead of a bare `(Color, Color)` /
+`Color`:
+
+```rust
+ng.selection_box_style(|theme| SelectionBoxStyle {
+    border_width: 2.0,
+    ..default_selection_box_style(theme)
+})
+```
+
+A selected node's appearance is no longer a border tweak.
+`default_node_style(theme, NodeStatus::Selected)` now expresses it in full - an
+accent border, an accent halo ring, full opacity and a deepened shadow - so a
+host that wants the theme's selection feedback copies those fields instead of
+reconstructing them from two numbers. Every channel is style-level, so switching
+selection does not rebuild node geometry.
+
+The edge-cutting trail's stroke width is now specified in screen pixels and
+divided by the zoom, matching the selection box and the hit thresholds; it
+previously stayed at a fixed world width and thinned out when zoomed away.
+
+### Removed
+
+**BREAKING.** `SelectionStyle` and `GraphStyle::selection_style`. The struct
+mixed two scopes: three colors for the transient overlays, which the renderer
+read from the configured `GraphStyle`, and `selected_border_color` /
+`selected_border_width`, which it never read at all - `default_node_style` built
+its own `SelectionStyle::from_theme`, so setting those two through `graph_style`
+silently did nothing. The overlays moved to their own style types (above) and the
+selected-node look moved into `default_node_style`, leaving `GraphStyle` as what
+its name says: the canvas.
 
 ### Internal
 

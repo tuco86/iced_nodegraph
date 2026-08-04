@@ -48,8 +48,9 @@ use iced::{
     window,
 };
 use iced_nodegraph::{
-    ColorQuad, EdgeStatus, EdgeStyle, PinRef, default_edge_style, default_node_style,
-    default_pin_style, edge as ng_edge, node as ng_node,
+    ColorQuad, CuttingToolStyle, EdgeStatus, EdgeStyle, PinRef, SelectionBoxStyle,
+    default_cutting_tool_style, default_edge_style, default_node_style, default_pin_style,
+    default_selection_box_style, edge as ng_edge, node as ng_node,
 };
 use iced_nodegraph::{EdgeCurve, PinShape, TilingKind};
 use iced_palette::{
@@ -1839,13 +1840,15 @@ impl Application {
             // Per-node and per-edge styling flows through the `.style()` closures
             // on the `node(..)` / `edge!(..)` builders; only graph-wide chrome is
             // configured here.
-            .box_select_style(|_theme| {
-                (
-                    iced::Color::from_rgba(0.3, 0.6, 1.0, 0.15), // fill
-                    iced::Color::from_rgb(0.3, 0.6, 1.0),        // border
-                )
+            .selection_box_style(|theme| SelectionBoxStyle {
+                fill: iced::Color::from_rgba(0.3, 0.6, 1.0, 0.15),
+                border_color: iced::Color::from_rgb(0.3, 0.6, 1.0),
+                ..default_selection_box_style(theme)
             })
-            .cutting_tool_style(|_theme| iced::Color::from_rgb(1.0, 0.3, 0.3))
+            .cutting_tool_style(|theme| CuttingToolStyle {
+                color: iced::Color::from_rgb(1.0, 0.3, 0.3),
+                ..default_cutting_tool_style(theme)
+            })
             .dragging_edge_style(move |theme, source| {
                 // The loose edge takes the held pin's data-type color on both ends.
                 let base = EdgeStyle {

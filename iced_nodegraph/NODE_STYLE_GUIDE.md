@@ -115,15 +115,28 @@ pub const CORNER_RADIUS_SWATCH: f32 = 2.0;   // Color swatches
 
 ## 6. Shadows
 
-Use shadows sparingly. Available via `ShadowConfig`:
+Use shadows sparingly. A node's shadow is three flat fields on `NodeStyle`; the
+widget renders the node's real silhouette (pin cutouts included), offset, and
+fades it out over `shadow_distance`:
 
 ```rust
-// Subtle - for depth
-ShadowConfig::subtle()  // offset: (2, 2), blur: 4, color: 0.3 opacity
+use iced_nodegraph::{NodeStyle, default_node_style};
 
-// Glow - for selection/hover
-ShadowConfig::glow(color)  // offset: (0, 0), blur: 8, spread: 2
+NodeStyle {
+    // Alpha 0 or distance 0 switches the shadow off.
+    shadow_color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+    // Blur half-width across the silhouette edge, in world pixels.
+    shadow_distance: 4.0,
+    // World pixels; (0, 0) centres the shadow for a glow instead of a drop.
+    shadow_offset: (2.0, 2.0),
+    ..default_node_style(theme, status)
+}
 ```
+
+Do not hand-roll a selection glow: `default_node_style(theme,
+NodeStatus::Selected)` already marks a selected node with an accent border, an
+accent halo ring (`border_outline_*`) and full opacity. Copy those fields if you
+style nodes yourself, so your nodes highlight like every other node.
 
 ---
 

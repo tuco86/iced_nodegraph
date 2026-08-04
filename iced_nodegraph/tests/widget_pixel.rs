@@ -484,3 +484,101 @@ fn full_widget_render_is_deterministic() {
     let differ = a.iter().zip(b.iter()).filter(|(x, y)| x != y).count();
     assert_eq!(differ, 0, "full-widget render flickered on {differ} pixels");
 }
+
+/// Writes idle and selected renders of the same node side by side, for eyeballing
+/// the theme-derived selection default.
+#[test]
+#[ignore = "visual probe: writes selected_node_idle.png / selected_node_sel.png"]
+fn probe_selected_node_appearance() {
+    for (selected, name) in [(false, "idle"), (true, "sel")] {
+        let Some(px) = render_node_selection(selected) else {
+            eprintln!("no GPU adapter; skipping");
+            return;
+        };
+        let path = format!("selected_node_{name}.png");
+        let file = std::fs::File::create(&path).unwrap();
+        let mut enc = png::Encoder::new(std::io::BufWriter::new(file), W, H);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut w = enc.write_header().unwrap();
+        let flat: Vec<u8> = px.iter().flat_map(|p| p.iter().copied()).collect();
+        w.write_image_data(&flat).unwrap();
+        eprintln!("wrote {path}");
+    }
+}
+
+/// One node, optionally selected via the controlled `selection()` channel.
+fn render_node_selection(selected: bool) -> Option<Vec<[u8; 4]>> {
+    let mut guard = shared()?;
+    let renderer = &mut *guard;
+
+    let ids = [0usize];
+    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Renderer> = NodeGraph::default()
+        .width(Length::Fixed(W as f32))
+        .height(Length::Fixed(H as f32))
+        .view(
+            Point::new(W as f32 * 0.5 - 40.0, H as f32 * 0.5 - 20.0),
+            1.0,
+        );
+    // A realistically sized body: the halo is judged relative to the node, and a
+    // bare text label is an order of magnitude smaller than a real node.
+    graph.push_node(node(
+        0_usize,
+        Point::new(0.0, 0.0),
+        Element::from(
+            iced::widget::container(text("Node"))
+                .width(Length::Fixed(160.0))
+                .height(Length::Fixed(90.0)),
+        ),
+    ));
+    // `selection()` resolves ids against the pushed nodes, so it must come after.
+    if selected {
+        graph = graph.selection(&ids);
+    }
+
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Renderer>);
+    let layout_node = graph.layout(
+        &mut tree,
+        &*renderer,
+        &layout::Limits::new(Size::ZERO, Size::new(W as f32, H as f32)),
+    );
+    let layout = Layout::new(&layout_node);
+    let viewport_rect = Rectangle::new(Point::ORIGIN, Size::new(W as f32, H as f32));
+
+    let mut msgs: Vec<()> = Vec::new();
+    let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
+    let mut clipboard = clipboard::Null;
+    graph.update(
+        &mut tree,
+        &iced::Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(-1.0, -1.0),
+        }),
+        layout,
+        mouse::Cursor::Unavailable,
+        &*renderer,
+        &mut clipboard,
+        &mut shell,
+        &viewport_rect,
+    );
+    graph.draw(
+        &tree,
+        renderer,
+        &Theme::Dark,
+        &renderer::Style {
+            text_color: Color::WHITE,
+        },
+        layout,
+        mouse::Cursor::Unavailable,
+        &viewport_rect,
+    );
+    let bytes = renderer.screenshot(
+        &Viewport::with_physical_size(Size::new(W, H), 1.0),
+        Color::TRANSPARENT,
+    );
+    Some(
+        bytes
+            .chunks_exact(4)
+            .map(|c| [c[0], c[1], c[2], c[3]])
+            .collect(),
+    )
+}

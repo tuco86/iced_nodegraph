@@ -40,7 +40,7 @@ use iced::{
 };
 use iced_nodegraph::{
     GraphStyle, NodeStatus, NodeStyle, Pattern, PinDirection, PinInfo, PinRef, PinStatus, PinStyle,
-    SelectionStyle, TilingBackground, default_pin_style, edge, node,
+    TilingBackground, default_node_style, default_pin_style, edge, node,
 };
 use nodes::styled_node;
 use std::collections::HashSet;
@@ -488,9 +488,14 @@ impl Application {
                     .style(move |theme, status| {
                         let mut resolved = node_style.clone();
                         if status == NodeStatus::Selected {
-                            let sel = SelectionStyle::from_theme(theme);
-                            resolved.border_color = sel.selected_border_color.into();
-                            resolved.border_pattern = Pattern::solid(sel.selected_border_width);
+                            // Take the library's selection feedback verbatim, so a
+                            // hand-styled node highlights like every other node.
+                            let sel = default_node_style(theme, status);
+                            resolved.border_color = sel.border_color;
+                            resolved.border_pattern = sel.border_pattern;
+                            resolved.border_outline_width = sel.border_outline_width;
+                            resolved.border_outline_color = sel.border_outline_color;
+                            resolved.opacity = sel.opacity;
                         }
                         resolved
                     })

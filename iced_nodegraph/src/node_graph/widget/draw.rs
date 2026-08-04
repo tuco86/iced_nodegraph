@@ -8,9 +8,6 @@
 use super::*;
 use iced_widget::core::{Border, Shadow};
 
-/// Line width for the edge cutting overlay (in world-space pixels).
-const EDGE_CUT_LINE_WIDTH: f32 = 3.0;
-
 /// Intersects a shape's screen bounds with the widget's layout rectangle.
 ///
 /// `None` means the shape is entirely off-screen, so the caller can skip it.
@@ -1066,20 +1063,16 @@ where
         let t_after_fg = Instant::now();
 
         // ========================================
-        // Layer N+1: Box Selection Overlay
+        // Layer N+1: the selection box
         // ========================================
         if let Dragging::BoxSelect(start, _end) = &state.dragging {
             // `start` was captured in layout-absolute space (the event closure's
             // cursor), so the live corner must match that space.
             let cursor_world = cursor.position().map(cursor_layout).unwrap_or(*start);
 
-            // The per-graph closure overrides the theme-derived chrome.
-            let (fill_color, border_color) = match &self.box_select_style {
+            let selection_box = match &self.selection_box_style {
                 Some(style_fn) => style_fn(theme),
-                None => (
-                    resolved_graph.selection_style.box_select_fill,
-                    resolved_graph.selection_style.box_select_border,
-                ),
+                None => default_selection_box_style(theme),
             };
 
             let center = [
@@ -1090,7 +1083,8 @@ where
                 ((cursor_world.x - start.x) * 0.5).abs(),
                 ((cursor_world.y - start.y) * 0.5).abs(),
             ];
-            let border_width = 1.5 / camera.zoom();
+            // Declared in screen pixels, so the outline reads the same at any zoom.
+            let border_width = selection_box.border_width / camera.zoom();
 
             let select_bounds = world_bbox_to_screen_bounds(
                 start.x,
@@ -1109,10 +1103,14 @@ where
                 // Border (front), fill (behind)
                 select_batch.push(
                     &select_shape,
-                    &Style::stroke(border_color, Pattern::solid(border_width)),
+                    &Style::stroke(selection_box.border_color, Pattern::solid(border_width)),
                     select_place,
                 );
-                select_batch.push(&select_shape, &Style::solid(fill_color), select_place);
+                select_batch.push(
+                    &select_shape,
+                    &Style::solid(selection_box.fill),
+                    select_place,
+                );
 
                 let (cx, cy) = layer_camera(
                     render_context.camera_position,
@@ -1140,17 +1138,19 @@ where
             // cursor), so the live corner must match that space.
             let cursor_world = cursor.position().map(cursor_layout).unwrap_or(*start);
 
-            let cutting_color = match &self.cutting_tool_style {
+            let cut_style = match &self.cutting_tool_style {
                 Some(style_fn) => style_fn(theme),
-                None => resolved_graph.selection_style.edge_cutting_color,
+                None => default_cutting_tool_style(theme),
             };
+            // Screen pixels, like the box-select outline.
+            let cut_width = cut_style.width / render_context.camera_zoom;
 
             let cutting_bounds = world_bbox_to_screen_bounds(
                 start.x,
                 start.y,
                 cursor_world.x,
                 cursor_world.y,
-                EDGE_CUT_LINE_WIDTH + 2.0 / render_context.camera_zoom,
+                cut_width + 2.0 / render_context.camera_zoom,
                 &render_context,
             );
 
@@ -1158,7 +1158,7 @@ where
                 let mut cutting_batch = SdfPrimitive::new();
                 cutting_batch.push(
                     &Shape::line([start.x, start.y], [cursor_world.x, cursor_world.y]),
-                    &Style::stroke(cutting_color, Pattern::solid(EDGE_CUT_LINE_WIDTH)),
+                    &Style::stroke(cut_style.color, Pattern::solid(cut_width)),
                     [0.0, 0.0],
                 );
                 let (cx, cy) = layer_camera(
