@@ -206,36 +206,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other four fields already had one).
 - `DragInfo` derives `PartialEq`, like the other public diagnostic types.
 
-### Removed
-
-**BREAKING.** `NodeGraph::box_select_style` and `NodeGraph::cutting_tool_style`.
-Both shadowed values that `GraphStyle::selection_style` already held, so the same
-three colors had two sources of truth and the closures silently won. The effect
-was visible: `demos/hello_world` hardcoded a blue box-select and a red cut trail
-behind a 22-theme switcher. Set them where they live:
-
-```rust
-ng.graph_style(|theme| GraphStyle {
-    selection_style: SelectionStyle {
-        box_select_fill: my_fill,
-        box_select_border: my_border,
-        edge_cutting_color: my_cut,
-        ..SelectionStyle::from_theme(theme)
-    },
-    ..GraphStyle::from_theme(theme)
-})
-```
-
-The untyped `(Color, Color)` tuple return goes with them.
-
 ### Internal
 
 - `NodeGraph` stores `Node` and `Edge` values directly instead of decomposing
   them into anonymous tuples on push, so the builders are the single
   representation of a node and an edge.
-- `demos/hello_world`'s box-select and edge-cutting colors now follow the active
-  theme (accent and danger) instead of a hardcoded blue and red, so they track
-  the demo's theme switcher.
 - The recording-renderer widget tests moved from `src/{clipping,coordinate,
   overlay}_tests.rs` into `tests/{clipping,coordinates,overlay}.rs` and now share
   one fake renderer in `tests/common/record.rs`, replacing three near-identical

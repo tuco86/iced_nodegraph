@@ -36,7 +36,7 @@ use crate::{
     node_pin::{NodePinState, PinEnd, PinInfo},
     style::{
         EdgeGeometry, EdgeStatus, EdgeStyle, GraphStyle, NodeStatus, NodeStyle, PinStatus,
-        PinStyle, SelectionStyle, TilingKind,
+        PinStyle, TilingKind,
     },
 };
 use iced_nodegraph_sdf::{Pattern, SdfPrimitive, Shape, Style, Tiling};

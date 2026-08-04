@@ -1073,11 +1073,14 @@ where
             // cursor), so the live corner must match that space.
             let cursor_world = cursor.position().map(cursor_layout).unwrap_or(*start);
 
-            let SelectionStyle {
-                box_select_fill: fill_color,
-                box_select_border: border_color,
-                ..
-            } = resolved_graph.selection_style;
+            // The per-graph closure overrides the theme-derived chrome.
+            let (fill_color, border_color) = match &self.box_select_style {
+                Some(style_fn) => style_fn(theme),
+                None => (
+                    resolved_graph.selection_style.box_select_fill,
+                    resolved_graph.selection_style.box_select_border,
+                ),
+            };
 
             let center = [
                 (start.x + cursor_world.x) * 0.5,
@@ -1137,7 +1140,10 @@ where
             // cursor), so the live corner must match that space.
             let cursor_world = cursor.position().map(cursor_layout).unwrap_or(*start);
 
-            let cutting_color = resolved_graph.selection_style.edge_cutting_color;
+            let cutting_color = match &self.cutting_tool_style {
+                Some(style_fn) => style_fn(theme),
+                None => resolved_graph.selection_style.edge_cutting_color,
+            };
 
             let cutting_bounds = world_bbox_to_screen_bounds(
                 start.x,

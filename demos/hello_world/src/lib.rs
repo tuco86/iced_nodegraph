@@ -1836,9 +1836,16 @@ impl Application {
             // and ColorQuad share the `ColorData` marker, so a color pin accepts
             // both a picker and the ColorQuad builder; Vec2 only matches Vec2.
             .can_connect(|from, to| from.direction() != to.direction() && from.info() == to.info())
-            // Per-node and per-edge styling flows through the `.style()`
-            // closures on the `node(..)` / `edge!(..)` builders; only graph-wide
-            // chrome is configured here, via `graph_style` below.
+            // Per-node and per-edge styling flows through the `.style()` closures
+            // on the `node(..)` / `edge!(..)` builders; only graph-wide chrome is
+            // configured here.
+            .box_select_style(|_theme| {
+                (
+                    iced::Color::from_rgba(0.3, 0.6, 1.0, 0.15), // fill
+                    iced::Color::from_rgb(0.3, 0.6, 1.0),        // border
+                )
+            })
+            .cutting_tool_style(|_theme| iced::Color::from_rgb(1.0, 0.3, 0.3))
             .dragging_edge_style(move |theme, source| {
                 // The loose edge takes the held pin's data-type color on both ends.
                 let base = EdgeStyle {
