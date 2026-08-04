@@ -151,13 +151,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   10-pixel dot the old default's 6.0 never did. A `PinShape::Square` takes the
   area of the circle of the same radius, so changing a pin's shape changes its
   outline and not its visual weight.
-- **`PinStatus::ValidTarget` finally looks like anything.** The docs promised a
-  pulsing animation on valid drop targets and nothing implemented it:
-  `default_pin_style` ignored its status argument, so during an edge drag every
-  pin looked identical. A valid target now takes the theme's `success` color
-  with a translucent halo filling its cutout - the third and last accent, next
-  to `primary` for selection and `danger` for destruction, each still meaning
-  exactly one thing.
+- **`PinStatus::ValidTarget` has static feedback again.** Since the valid-target
+  pulse was withdrawn - animation invalidates too much of the SDF renderer's
+  resident shape cache to be worth it yet - `default_pin_style` ignored its
+  status argument entirely, so every pin looked identical during an edge drag. A
+  valid target now takes the theme's `success` color with a translucent halo
+  filling its cutout: the third and last accent, next to `primary` for selection
+  and `danger` for destruction, each still meaning exactly one thing. Both pin
+  states resolve to the same indicator recipe and the same node silhouette
+  (`valid_target_feedback_costs_no_geometry`), so the feedback repaints resident
+  shapes and cannot churn the cache - the property an animated pulse could not
+  offer. `node_pin`'s module docs no longer describe the withdrawn pulse.
 - **Removed the `PinStyle::data`/`execution`/`control`/`event` presets.** Four
   unused constructors with hard-coded colors that ignored the theme, teaching
   the opposite of the one styling convention; two of them also advertised

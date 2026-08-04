@@ -145,8 +145,12 @@ pub fn default_node_style(theme: &Theme, status: NodeStatus) -> NodeStyle {
 /// A valid drop target is the one moment a pin earns an accent, and it gets its
 /// own: `success` reads as "this connection would be accepted", leaving
 /// `primary` to selection and `danger` to cutting. The halo is a translucent
-/// ring drawn outside the indicator, which reaches past the cutout and over the
-/// node body - visible from across the canvas while the edge is in flight.
+/// ring drawn outside the indicator, filling the pin's cutout exactly.
+///
+/// The feedback is a still image, not motion, and every field it touches is a
+/// color band. Both pin states resolve to the same indicator recipe and the same
+/// node silhouette, so a drag repaints what the SDF renderer already has resident
+/// rather than making it rebuild a shape per frame.
 pub fn default_pin_style(theme: &Theme, status: PinStatus) -> PinStyle {
     let roles = Roles::of(theme);
 
@@ -336,16 +340,26 @@ mod tests {
         }
     }
 
-    /// The well is geometry: the node silhouette is a cached shape, so a cutout
-    /// that moves with pin status costs a cache entry per drag state on every
-    /// node in the graph.
+    /// Valid-target feedback must be paint only.
+    ///
+    /// Every geometry-bearing pin field has to survive a status change: `radius`
+    /// and `shape` decide the indicator's recipe, `cutout_radius` the node
+    /// silhouette that is punched around it, and both are content-addressed
+    /// shapes held across frames. A default that moved any of them would rebuild
+    /// and re-cache a shape per drag state, on every node in the graph, for the
+    /// duration of a drag - which is the cost that keeps pin animation out of
+    /// this crate for now. The remaining fields are color bands, which are free.
     #[test]
-    fn the_pin_cutout_holds_across_statuses() {
+    fn valid_target_feedback_costs_no_geometry() {
         for theme in Theme::ALL {
+            let idle = default_pin_style(theme, PinStatus::Idle);
+            let valid = default_pin_style(theme, PinStatus::ValidTarget);
+
+            assert_eq!(valid.radius, idle.radius, "{theme}: the indicator resizes");
+            assert_eq!(valid.shape, idle.shape, "{theme}: the indicator reshapes");
             assert_eq!(
-                default_pin_style(theme, PinStatus::Idle).cutout_radius,
-                default_pin_style(theme, PinStatus::ValidTarget).cutout_radius,
-                "{theme}: the cutout moves with pin status",
+                valid.cutout_radius, idle.cutout_radius,
+                "{theme}: the node silhouette changes with pin status",
             );
         }
     }
