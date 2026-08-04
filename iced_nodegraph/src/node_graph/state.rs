@@ -41,7 +41,7 @@ pub(crate) enum Dragging {
         to_pin: usize,
     },
     /// Rubber-band selection: the press corner and the live corner.
-    BoxSelect(WorldPoint, WorldPoint),
+    SelectionBox(WorldPoint, WorldPoint),
     /// Slicing across edges: the cursor trail and the edge indices it has
     /// crossed so far, cut on release.
     EdgeCutting {
@@ -59,7 +59,7 @@ pub(super) struct NodeGraphState {
     pub(super) selected_nodes: HashSet<usize>,
     /// Last externally-provided selection (via `NodeGraph::selection()`) that
     /// we synced into `selected_nodes`. Lets us tell apart "host pushed a new
-    /// selection" (sync needed) from "internal box-select just changed state
+    /// selection" (sync needed) from "the selection box just changed state
     /// but the host has not yet seen the on_select message" (sync would clobber
     /// the new state with the still-stale external value).
     pub(super) last_synced_external: Option<HashSet<usize>>,
@@ -242,18 +242,18 @@ mod tests {
     }
 
     #[test]
-    fn test_box_select_stores_two_points() {
+    fn selection_box_stores_two_points() {
         let start = Point2D::new(0.0, 0.0);
         let current = Point2D::new(100.0, 100.0);
-        let dragging = Dragging::BoxSelect(start, current);
+        let dragging = Dragging::SelectionBox(start, current);
 
-        if let Dragging::BoxSelect(s, c) = dragging {
+        if let Dragging::SelectionBox(s, c) = dragging {
             assert_eq!(s.x, 0.0);
             assert_eq!(s.y, 0.0);
             assert_eq!(c.x, 100.0);
             assert_eq!(c.y, 100.0);
         } else {
-            panic!("Expected Dragging::BoxSelect");
+            panic!("Expected Dragging::SelectionBox");
         }
     }
 

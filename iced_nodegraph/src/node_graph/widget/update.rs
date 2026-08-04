@@ -98,7 +98,7 @@ where
         // Sync the externally-provided selection (`.selection()`) into state
         // only when the host changed it since we last looked. Comparing
         // against `state.selected_nodes` directly would also fire when the
-        // widget itself just modified the state (box-select drag, click etc.)
+        // widget itself just modified the state (selection-box drag, click etc.)
         // and the matching `on_select` message has not yet propagated back
         // through the host into a refreshed `external_selection` — that race
         // would clobber the new state with a stale external value, breaking
@@ -310,8 +310,8 @@ where
                             to_node,
                             to_pin,
                         } => self.handle_edge_over(&mut ctx, from_node, from_pin, to_node, to_pin),
-                        Dragging::BoxSelect(start, _current) => {
-                            self.handle_box_select(&mut ctx, start)
+                        Dragging::SelectionBox(start, _current) => {
+                            self.handle_selection_box(&mut ctx, start)
                         }
                         Dragging::GroupMove(origin) => self.handle_group_move(&mut ctx, origin),
                     }
@@ -412,7 +412,7 @@ where
     /// A lone finger emulates the left mouse button (press/move/lift become
     /// `ButtonPressed(Left)`/`CursorMoved`/`ButtonReleased` with an
     /// `Available` cursor at the contact point); a press on empty space pans
-    /// instead of box-selecting (see `start_box_select_or_cut`). Two fingers
+    /// instead of opening a selection box (see `start_selection_box_or_cut`). Two fingers
     /// pinch-zoom and pan the camera directly, committing through `on_pan`
     /// like wheel zoom, and return `None`.
     fn apply_touch(
@@ -513,7 +513,7 @@ where
                 let lost = matches!(event, touch::Event::FingerLost { .. });
                 // Tap on empty space (quick, motionless, not cancelled): clear
                 // the selection, matching a mouse click on empty space (which
-                // on touch starts a pan instead of a clearing box-select).
+                // on touch starts a pan instead of a clearing selection box).
                 if let Some((tap_id, _, pressed_at)) = state.touch_tap.take()
                     && tap_id == id
                     && !lost
@@ -959,9 +959,9 @@ where
         }
     }
 
-    /// Handles an in-progress box selection: tracks the moving corner and
+    /// Handles an in-progress selection box: tracks the moving corner and
     /// commits the intersecting set on release (Shift adds to the selection).
-    fn handle_box_select(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>, start: WorldPoint) {
+    fn handle_selection_box(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>, start: WorldPoint) {
         let UpdateCtx {
             tree,
             layout,
@@ -973,14 +973,14 @@ where
         let state = tree.state.downcast_mut::<NodeGraphState>();
         match event {
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                // Update the box selection end point
+                // Update the selection box's moving corner
                 if let Some(cursor_position) = world_cursor.position() {
-                    state.dragging = Dragging::BoxSelect(start, cursor_position.into_euclid());
+                    state.dragging = Dragging::SelectionBox(start, cursor_position.into_euclid());
                 }
                 shell.request_redraw();
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                // Complete box selection - find nodes that intersect the selection rectangle
+                // Close the selection box - collect the nodes it intersects
                 if let Some(cursor_position) = world_cursor.position() {
                     let end: WorldPoint = cursor_position.into_euclid();
                     let selection_rect = selection_rect_from_points(start, end);
@@ -1097,9 +1097,9 @@ where
             }
         }
 
-        // Nothing hit - start box selection on empty space, unless COMMAND is
+        // Nothing hit - open a selection box on empty space, unless COMMAND is
         // held (reserved for edge cutting).
-        self.start_box_select_or_cut(ctx);
+        self.start_selection_box_or_cut(ctx);
     }
 
     /// Cuts the first edge within `EDGE_CUT_THRESHOLD` of the cursor
@@ -1449,8 +1449,8 @@ where
     }
 
     /// Starts the empty-space press interaction: edge-cutting with COMMAND
-    /// held, box selection otherwise (Shift keeps the current selection).
-    fn start_box_select_or_cut(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>) {
+    /// held, a selection box otherwise (Shift keeps the current selection).
+    fn start_selection_box_or_cut(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>) {
         let UpdateCtx {
             tree,
             world_cursor,
@@ -1461,7 +1461,7 @@ where
             let cursor_position: WorldPoint = cursor_position.into_euclid();
             let state = tree.state.downcast_mut::<NodeGraphState>();
 
-            // Edge-cut chord held: start edge cutting mode instead of box selection
+            // Edge-cut chord held: start edge cutting instead of a selection box
             if state.modifiers.contains(self.keymap.edge_cut_modifiers) {
                 state.dragging = Dragging::EdgeCutting {
                     trail: vec![cursor_position],
@@ -1486,10 +1486,10 @@ where
                 state.selected_nodes.clear();
             }
 
-            state.dragging = Dragging::BoxSelect(cursor_position, cursor_position);
-            // Emit drag start event for box select
+            state.dragging = Dragging::SelectionBox(cursor_position, cursor_position);
+            // Emit drag start for the selection box
             if let Some(handler) = self.on_drag_start.as_ref() {
-                shell.publish(handler(DragInfo::BoxSelect {
+                shell.publish(handler(DragInfo::SelectionBox {
                     start_x: cursor_position.x,
                     start_y: cursor_position.y,
                 }));

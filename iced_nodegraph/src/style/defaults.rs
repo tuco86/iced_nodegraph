@@ -157,7 +157,7 @@ pub fn default_edge_style(theme: &Theme, status: EdgeStatus) -> EdgeStyle {
     }
 }
 
-/// Theme-derived style of the box-selection rectangle.
+/// Theme-derived style of the selection box.
 ///
 /// The accent hue at two alphas: a translucent wash so nodes stay legible
 /// underneath, and an opaque-enough outline to read against both.

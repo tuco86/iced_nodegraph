@@ -186,7 +186,7 @@ fn shift_click_adds_to_selection() {
 fn click_empty_space_clears_selection() {
     let mut ui = Simulator::new(graph_with(&[(0, Point::new(100.0, 100.0))]));
     click(&mut ui, center(Point::new(100.0, 100.0)));
-    // Press+release far from any node performs an empty box select -> clears.
+    // Press+release far from any node is an empty selection box -> clears.
     click(&mut ui, Point::new(700.0, 600.0));
     assert_eq!(last_selection(&messages(ui)), Some(vec![]));
 }
@@ -215,7 +215,7 @@ fn escape_clears_selection() {
 }
 
 #[test]
-fn box_select_grabs_enclosed_nodes() {
+fn selection_box_grabs_enclosed_nodes() {
     let mut ui = Simulator::new(graph_with(&[
         (0, Point::new(100.0, 100.0)),
         (1, Point::new(300.0, 100.0)),
@@ -1248,7 +1248,7 @@ fn dragging_a_multi_selection_reports_the_whole_group() {
 }
 
 #[test]
-fn box_select_drag_reports_its_anchor() {
+fn selection_box_drag_reports_its_anchor() {
     let mut ui = Simulator::new(graph_with(&[(0, Point::new(400.0, 400.0))]));
     let anchor = Point::new(50.0, 60.0);
     drag(&mut ui, anchor, Point::new(500.0, 500.0));
@@ -1256,11 +1256,11 @@ fn box_select_drag_reports_its_anchor() {
     let msgs = messages(ui);
     assert_eq!(
         drag_infos(&msgs),
-        vec![DragInfo::BoxSelect {
+        vec![DragInfo::SelectionBox {
             start_x: anchor.x,
             start_y: anchor.y,
         }],
-        "a drag on empty canvas must report the box-select anchor: {msgs:?}",
+        "a drag on empty canvas must report the selection box anchor: {msgs:?}",
     );
 }
 

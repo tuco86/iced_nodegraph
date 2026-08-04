@@ -27,7 +27,7 @@ calendar) wired together, or restores the last saved session on native targets.
   and pattern, pin shape and size). Changes apply immediately as values flow.
 - Theme switching across 22 built-in Iced themes, with live preview while the
   theme submenu is open.
-- Selection, clone, delete, and group-move for nodes, with box selection and an
+- Selection, clone, delete, and group-move for nodes, with a selection box and an
   edge cutting tool.
 - Pan and zoom with cursor-anchored zoom.
 - State persistence (native only): nodes, edges, theme, camera, window

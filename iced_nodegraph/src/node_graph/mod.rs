@@ -296,8 +296,8 @@ pub enum DragInfo<N = usize, P = usize> {
     Group { node_ids: Vec<N> },
     /// Dragging an edge from a pin (the source node and pin).
     Edge { from_node: N, from_pin: P },
-    /// Box selection drag, anchored at this world-space corner.
-    BoxSelect { start_x: f32, start_y: f32 },
+    /// A selection box, anchored at this world-space corner.
+    SelectionBox { start_x: f32, start_y: f32 },
 }
 
 /// Type-safe reference to a pin: a `node_id` paired with a `pin_id`, generic over
@@ -526,7 +526,7 @@ where
         self
     }
 
-    /// Sets the style of the box-selection rectangle.
+    /// Sets the style of the selection box.
     ///
     /// [`default_selection_box_style`] is the theme-derived base and applies when
     /// this is unset; layer over it with struct-update, exactly like the per-node
@@ -684,7 +684,7 @@ where
     /// Sets a callback for when the selection changes.
     ///
     /// The callback receives the list of currently selected node IDs.
-    /// Fires on click-select, box-select, and Shift+click multi-select.
+    /// Fires on click-select, selection box, and Shift+click multi-select.
     ///
     /// The widget keeps its own selection regardless; to make the host the source
     /// of truth, feed the reported value back via [`selection`](Self::selection).

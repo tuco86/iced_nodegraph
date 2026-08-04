@@ -333,9 +333,9 @@ fn content_and_fill_coincide_at_origin_zoom2() {
     );
 }
 
-/// Drags a box-select from screen `p1` to `p2` over empty graph space (the only
+/// Drags a selection box from screen `p1` to `p2` over empty graph space (the only
 /// node is far away) and returns the SDF primitives recorded by a final draw.
-fn box_select_primitives(
+fn selection_box_primitives(
     widget_origin: Vector,
     camera_zoom: f32,
     p1: Point,
@@ -346,7 +346,7 @@ fn box_select_primitives(
         .height(Length::Fixed(400.0))
         .view(Point::ORIGIN, camera_zoom)
         .on_select(|_ids| {});
-    // Node far from the drag so the press starts a box select, not a node click.
+    // Node far from the drag so the press opens a selection box, not a node click.
     graph.push_node(node(
         0_usize,
         Point::new(900.0, 900.0),
@@ -386,7 +386,7 @@ fn box_select_primitives(
         );
     };
 
-    // Move to p1, press (starts box select at p1), drag to p2.
+    // Move to p1, press (opens the selection box at p1), drag to p2.
     send(
         &mut graph,
         &mut tree,
@@ -431,14 +431,14 @@ fn box_select_primitives(
 }
 
 #[test]
-fn box_select_renders_where_dragged_at_nonzero_origin() {
+fn selection_box_renders_where_dragged_at_nonzero_origin() {
     // The selection box must render at the screen rectangle the user dragged,
     // regardless of widget origin or zoom. Box corners map back to the cursor
     // screen positions, so the select clip should span p1..p2 (plus AA padding).
     let origin = Vector::new(0.0, 100.0);
     let p1 = Point::new(40.0, 160.0);
     let p2 = Point::new(120.0, 240.0);
-    let prims = box_select_primitives(origin, 2.0, p1, p2);
+    let prims = selection_box_primitives(origin, 2.0, p1, p2);
 
     let expect = Rectangle::new(p1, Size::new(p2.x - p1.x, p2.y - p1.y));
     // The far node's layers sit elsewhere; find the primitive near the drag rect.

@@ -212,6 +212,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+**BREAKING.** The selection rectangle is called the *selection box* everywhere
+now, so `DragInfo::BoxSelect` is `DragInfo::SelectionBox`. Previously the type
+said `SelectionBoxStyle` while the drag variant said `BoxSelect`.
+
 **BREAKING.** `NodeGraph::box_select_style` is now `selection_box_style`, and
 both overlay closures return a named struct instead of a bare `(Color, Color)` /
 `Color`:

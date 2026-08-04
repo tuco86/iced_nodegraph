@@ -1065,7 +1065,7 @@ where
         // ========================================
         // Layer N+1: the selection box
         // ========================================
-        if let Dragging::BoxSelect(start, _end) = &state.dragging {
+        if let Dragging::SelectionBox(start, _end) = &state.dragging {
             // `start` was captured in layout-absolute space (the event closure's
             // cursor), so the live corner must match that space.
             let cursor_world = cursor.position().map(cursor_layout).unwrap_or(*start);
@@ -1142,7 +1142,7 @@ where
                 Some(style_fn) => style_fn(theme),
                 None => default_cutting_tool_style(theme),
             };
-            // Screen pixels, like the box-select outline.
+            // Screen pixels, like the selection box outline.
             let cut_width = cut_style.width / render_context.camera_zoom;
 
             let cutting_bounds = world_bbox_to_screen_bounds(

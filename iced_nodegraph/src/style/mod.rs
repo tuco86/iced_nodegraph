@@ -8,7 +8,7 @@
 //!
 //! The graph's own chrome follows the same shape, one type per thing the widget
 //! draws itself: [`GraphStyle`] for the canvas, [`SelectionBoxStyle`] for the
-//! box-selection rectangle, [`CuttingToolStyle`] for the edge-cutting trail.
+//! selection box, [`CuttingToolStyle`] for the edge-cutting trail.
 
 use iced_widget::core::{Color, Theme};
 
@@ -236,7 +236,7 @@ impl GraphStyle {
     }
 }
 
-/// Style of the box-selection rectangle the widget draws during a box drag.
+/// Style of the selection box the widget draws while dragging over empty canvas.
 ///
 /// The theme-derived base is [`default_selection_box_style`]; override it with
 /// [`NodeGraph::selection_box_style`](crate::NodeGraph::selection_box_style).
