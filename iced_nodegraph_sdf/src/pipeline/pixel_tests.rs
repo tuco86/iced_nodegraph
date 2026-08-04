@@ -3436,6 +3436,38 @@ fn rgba(r: f32, g: f32, b: f32, a: f32) -> Color {
     Color::from_rgba(r, g, b, a)
 }
 
+/// The bytes this pipeline writes for `color`.
+///
+/// These harnesses render into `Rgba8Unorm` with no sRGB conversion on the way
+/// out, so a readback byte is `compile::c2v`'s channel scaled to 8 bits. Deriving
+/// the expectation keeps a detection predicate pointed at the style it is looking
+/// for instead of at a transcribed pixel value.
+fn written_bytes(color: Color) -> [u8; 3] {
+    let [r, g, b, _] = iced_wgpu::graphics::color::pack(color).components();
+    [
+        (r * 255.0).round() as u8,
+        (g * 255.0).round() as u8,
+        (b * 255.0).round() as u8,
+    ]
+}
+
+/// Whether `pixel` resembles `want` more than `other`.
+///
+/// The scenes these serve paint exactly two things - a body fill over a dark
+/// background (or over nothing) - so nearest-of-two classifies interior pixels
+/// without a hand-picked window per channel.
+fn nearer(pixel: &[u8; 4], want: [u8; 3], other: [u8; 3]) -> bool {
+    let d2 = |t: [u8; 3]| {
+        (0..3)
+            .map(|i| {
+                let d = pixel[i] as i32 - t[i] as i32;
+                d * d
+            })
+            .sum::<i32>()
+    };
+    d2(want) < d2(other)
+}
+
 /// The standard crossing-S edge used by the pattern scenes (matches the edge
 /// editor default so pattern layout is exercised at a real curvature).
 fn corpus_edge() -> Drawable {
@@ -4363,7 +4395,8 @@ fn large_boolean_fill_interior_never_hollows() {
     // diagonal): a 220x150 box has interior tiles up to ~75px from any edge.
     let nw = 220.0_f32;
     let nh = 150.0_f32;
-    let fill_style = Style::solid(rgba(0.30, 0.32, 0.40, 1.0));
+    let body_fill = rgba(0.30, 0.32, 0.40, 1.0);
+    let fill_style = Style::solid(body_fill);
     let full = Rectangle::new(Point::ORIGIN, Size::new(w as f32, h as f32));
 
     // Body = rounded box minus pin cutouts on the left/right edges (as the widget
@@ -4391,7 +4424,8 @@ fn large_boolean_fill_interior_never_hollows() {
         .collect();
     let pixels = r.render_frames_scissored(&frames, w, h, 1.0);
 
-    let is_fill = |p: &[u8; 4]| p[0] > 55 && p[0] < 100 && p[2] > 88 && p[2] < 120;
+    // Nothing is painted behind the body here, so the gap is the cleared target.
+    let is_fill = |p: &[u8; 4]| nearer(p, written_bytes(body_fill), [0, 0, 0]);
     let mut worst: Option<(f32, usize, usize)> = None;
     for (fi, px) in pixels.iter().enumerate() {
         let off = owned[fi].0;
@@ -4459,8 +4493,10 @@ fn pan_sweep_keeps_node_fills_intact() {
     let nw = 60.0_f32;
     let nh = 40.0_f32;
 
-    let dark = Style::solid(rgba(0.12, 0.13, 0.16, 1.0));
-    let fill_style = Style::solid(rgba(0.30, 0.32, 0.40, 1.0));
+    let canvas = rgba(0.12, 0.13, 0.16, 1.0);
+    let body = rgba(0.30, 0.32, 0.40, 1.0);
+    let dark = Style::solid(canvas);
+    let fill_style = Style::solid(body);
     let full = Rectangle::new(Point::ORIGIN, Size::new(lw as f32, lh as f32));
 
     // Fixed screen lattice of node top-left positions (LOGICAL px).
@@ -4528,7 +4564,7 @@ fn pan_sweep_keeps_node_fills_intact() {
 
     let pixels = r.render_frames_scissored(&frames, w, h, scale);
 
-    let is_fill = |p: &[u8; 4]| p[0] > 55 && p[0] < 100 && p[2] > 88 && p[2] < 120;
+    let is_fill = |p: &[u8; 4]| nearer(p, written_bytes(body), written_bytes(canvas));
     // Expected body size in PHYSICAL px.
     let exp_w = nw * zoom * scale;
     let exp_h = nh * zoom * scale;
@@ -4625,8 +4661,10 @@ fn zoomed_out_per_node_fills_all_render() {
     let cam = [-327.7_f32, -132.0];
     let full = Rectangle::new(Point::ORIGIN, Size::new(w as f32, h as f32));
 
-    let dark = Style::solid(rgba(0.12, 0.13, 0.16, 1.0));
-    let fill_style = Style::solid(rgba(0.30, 0.32, 0.40, 1.0));
+    let canvas = rgba(0.12, 0.13, 0.16, 1.0);
+    let body = rgba(0.30, 0.32, 0.40, 1.0);
+    let dark = Style::solid(canvas);
+    let fill_style = Style::solid(body);
 
     // Full-viewport background grid, drawn first like the widget's bg layer. Its
     // large tile region (~w*h/256 tiles) pushes the shared tile buffer past its
@@ -4695,7 +4733,7 @@ fn zoomed_out_per_node_fills_all_render() {
     let px = r.render_primitives_scissored(&seq, w, h);
 
     // A fill pixel matches the opaque gray body, not the dark grid / transparent gap.
-    let is_fill = |p: &[u8; 4]| p[0] > 55 && p[0] < 100 && p[2] > 88 && p[2] < 120;
+    let is_fill = |p: &[u8; 4]| nearer(p, written_bytes(body), written_bytes(canvas));
 
     let mut empty: Vec<usize> = Vec::new();
     for (i, c) in centers.iter().enumerate() {

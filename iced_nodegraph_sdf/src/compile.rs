@@ -114,8 +114,23 @@ pub(crate) fn entry_referencing(
     entry_from_meta(&entry_meta(local), style, z_order, translate, segment_start)
 }
 
+/// A style color in the space the render target expects.
+///
+/// `Color` holds sRGB-encoded components; the target this pipeline draws into is
+/// the one iced picked for itself, so the encoding must match what iced feeds
+/// its own quad and text pipelines. `graphics::color::pack` IS that decision
+/// (linear by default, raw sRGB under iced's `web-colors` feature), so routing
+/// through it keeps an SDF node body and an iced quad of the same `Color`
+/// identical on screen. Encoding the raw components instead lands every fill,
+/// stroke and shadow a full gamma step too bright, which reads as washed-out
+/// surfaces and, because the error compresses the dark end, as a palette whose
+/// distinctions have gone missing.
+///
+/// Stop interpolation then happens in the same space, so a gradient runs through
+/// the colors between its endpoints rather than around them.
 fn c2v(c: Color) -> GpuVec4 {
-    GpuVec4::new(c.r, c.g, c.b, c.a)
+    let [r, g, b, a] = iced_wgpu::graphics::color::pack(c).components();
+    GpuVec4::new(r, g, b, a)
 }
 
 fn compile_style(style: &Style) -> GpuStyle {
