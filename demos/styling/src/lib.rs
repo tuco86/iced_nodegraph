@@ -466,7 +466,6 @@ impl Application {
                 .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })
                 .on_move(|delta, indices| Message::NodesMoved { delta, indices })
                 .on_select(Message::SelectionChanged)
-                .selection(&self.graph_selection)
                 .graph_style(|theme: &Theme| {
                     let line = theme.extended_palette().background.strong.color;
                     GraphStyle {
@@ -485,6 +484,7 @@ impl Application {
             let node_style = style.clone();
             ng.push_node(
                 node(index, *position, styled_node(name, style, theme))
+                    .selected(self.graph_selection.contains(&index))
                     .style(move |theme, status| {
                         let mut resolved = node_style.clone();
                         if status == NodeStatus::Selected {

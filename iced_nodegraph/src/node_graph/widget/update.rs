@@ -93,22 +93,7 @@ where
         // Assign z-order entries to any newly-seen node indices so freshly
         // pushed nodes spawn on top of older ones.
         state.ensure_z_entries(self.nodes.len());
-        let z_indices = z_render_indices(state, self.nodes.len());
-
-        // Sync the externally-provided selection (`.selection()`) into state
-        // only when the host changed it since we last looked. Comparing
-        // against `state.selected_nodes` directly would also fire when the
-        // widget itself just modified the state (selection-box drag, click etc.)
-        // and the matching `on_select` message has not yet propagated back
-        // through the host into a refreshed `external_selection` — that race
-        // would clobber the new state with a stale external value, breaking
-        // any host that uses `.selection()`.
-        if let Some(external) = self.external_selection.as_ref()
-            && state.last_synced_external.as_ref() != Some(external)
-        {
-            state.selected_nodes = external.clone();
-            state.last_synced_external = Some(external.clone());
-        }
+        let z_indices = z_render_indices(state, self.nodes.len(), |i| self.is_selected(i));
 
         // Update time for animations
         // Cap delta to prevent large time jumps when app is in background
@@ -159,28 +144,23 @@ where
                 // persisted, so leave the shortcut unhandled and let the key
                 // fall through instead of silently swallowing it.
                 Some(KeyAction::CloneSelection)
-                    if !state.selected_nodes.is_empty() && self.on_clone.as_ref().is_some() =>
+                    if self.any_selected() && self.on_clone.as_ref().is_some() =>
                 {
-                    let indices: Vec<usize> = state.selected_nodes.iter().copied().collect();
-                    let node_ids = self.node_ids_at(&indices);
+                    let node_ids = self.selected_ids();
                     if let Some(handler) = self.on_clone.as_ref() {
                         shell.publish(handler(node_ids));
                     }
                     shell.capture_event();
                 }
                 Some(KeyAction::SelectAll) => {
-                    let count = self.nodes.len();
-                    state.selected_nodes = (0..count).collect();
-                    let indices: Vec<usize> = state.selected_nodes.iter().copied().collect();
-                    let selected = self.node_ids_at(&indices);
+                    let selected: Vec<N> = self.nodes.iter().map(|node| node.id.clone()).collect();
                     if let Some(handler) = self.on_select.as_ref() {
                         shell.publish(handler(selected));
                     }
                     shell.capture_event();
                     shell.request_redraw();
                 }
-                Some(KeyAction::ClearSelection) if !state.selected_nodes.is_empty() => {
-                    state.selected_nodes.clear();
+                Some(KeyAction::ClearSelection) if self.any_selected() => {
                     if let Some(handler) = self.on_select.as_ref() {
                         shell.publish(handler(vec![]));
                     }
@@ -358,7 +338,6 @@ where
                         return;
                     }
 
-                    let state = ctx.tree.state.downcast_mut::<NodeGraphState>();
                     // Delete/Backspace: Delete selected nodes.
                     // Handled AFTER child widgets so text inputs can consume the event
                     // first. Gated on on_delete: without a handler the delete cannot be
@@ -371,15 +350,12 @@ where
                     }) = event
                         && self.keymap.key_action(key, *physical_key, *modifiers)
                             == Some(KeyAction::DeleteSelection)
-                        && !state.selected_nodes.is_empty()
+                        && self.any_selected()
                         && self.on_delete.as_ref().is_some()
                     {
-                        let indices: Vec<usize> = state.selected_nodes.iter().copied().collect();
-                        let node_ids = self.node_ids_at(&indices);
                         if let Some(handler) = self.on_delete.as_ref() {
-                            ctx.shell.publish(handler(node_ids));
+                            ctx.shell.publish(handler(self.selected_ids()));
                         }
-                        state.selected_nodes.clear();
                         ctx.shell.capture_event();
                         ctx.shell.request_redraw();
                     }
@@ -519,9 +495,8 @@ where
                     && !lost
                     && state.time - pressed_at <= TOUCH_TAP_MAX_SECS
                     && matches!(state.dragging, Dragging::Graph(_))
-                    && !state.selected_nodes.is_empty()
+                    && self.any_selected()
                 {
-                    state.selected_nodes.clear();
                     if let Some(handler) = self.on_select.as_ref() {
                         shell.publish(handler(vec![]));
                     }
@@ -986,23 +961,23 @@ where
                     let selection_rect = selection_rect_from_points(start, end);
 
                     // Without the multi-select modifier (keymap, default
-                    // Shift): replace selection. With it: add to selection.
-                    if !state.modifiers.contains(self.keymap.multi_select_modifiers) {
-                        state.selected_nodes.clear();
-                    }
-
-                    // Find all nodes that intersect the selection rectangle
+                    // Shift): replace the selection. With it: add to it.
+                    let additive = state.modifiers.contains(self.keymap.multi_select_modifiers);
+                    let mut selected: Vec<usize> = if additive {
+                        self.selected_indices()
+                    } else {
+                        Vec::new()
+                    };
                     for (node_index, node_layout) in layout.children().enumerate() {
-                        if rects_intersect(&selection_rect, &node_layout.bounds()) {
-                            state.selected_nodes.insert(node_index);
+                        if rects_intersect(&selection_rect, &node_layout.bounds())
+                            && !selected.contains(&node_index)
+                        {
+                            selected.push(node_index);
                         }
                     }
 
-                    // Notify selection change
-                    let indices: Vec<usize> = state.selected_nodes.iter().copied().collect();
-                    let selected = self.node_ids_at(&indices);
                     if let Some(handler) = self.on_select.as_ref() {
-                        shell.publish(handler(selected));
+                        shell.publish(handler(self.node_ids_at(&selected)));
                     }
                 }
                 state.dragging = Dragging::None;
@@ -1034,7 +1009,7 @@ where
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 // Complete group move - notify all selected nodes moved
-                let indices: Vec<usize> = state.selected_nodes.iter().copied().collect();
+                let indices: Vec<usize> = self.selected_indices();
                 if let Some(cursor_position) = world_cursor.position() {
                     let cursor_position: WorldPoint = cursor_position.into_euclid();
                     let offset = cursor_position - origin;
@@ -1379,32 +1354,38 @@ where
     ) {
         let UpdateCtx { tree, shell, .. } = &mut *ctx;
         let state = tree.state.downcast_mut::<NodeGraphState>();
-        let already_selected = state.selected_nodes.contains(&node_index);
+        // The flags are last frame's selection, which is exactly the question
+        // here: was this node already part of a selection when it was grabbed?
+        let already_selected = self.is_selected(node_index);
+        let current: Vec<usize> = self.selected_indices();
         let modifiers = state.modifiers;
         let selection_changed;
 
         // Handle selection based on the multi-select modifier (keymap,
         // default Shift).
-        if modifiers.contains(self.keymap.multi_select_modifiers) {
-            // Multi-select click: toggle selection membership
+        let new_selection: Vec<usize> = if modifiers.contains(self.keymap.multi_select_modifiers) {
+            selection_changed = true;
             if already_selected {
-                state.selected_nodes.remove(&node_index);
+                // Multi-select click on a selected node: drop it.
+                current
+                    .iter()
+                    .copied()
+                    .filter(|&i| i != node_index)
+                    .collect()
             } else {
-                state.selected_nodes.insert(node_index);
+                let mut next = current.clone();
+                next.push(node_index);
+                next
             }
-            selection_changed = true;
         } else if !already_selected {
-            // Regular click on unselected node: clear and select only this one
-            state.selected_nodes.clear();
-            state.selected_nodes.insert(node_index);
+            // Regular click on an unselected node: this node alone.
             selection_changed = true;
+            vec![node_index]
         } else {
-            // Clicking on already-selected node without modifier, keep selection (for group drag)
+            // Already selected and no modifier: keep it, so a group drag works.
             selection_changed = false;
-        }
-
-        // Get the new selection for callback
-        let new_selection: Vec<usize> = state.selected_nodes.iter().copied().collect();
+            current.clone()
+        };
 
         // Decide between single node drag or group move -
         // only when on_move is wired. Node positions come
@@ -1412,9 +1393,9 @@ where
         // the node visually then snap back on the next frame;
         // gate it off (selection below still fires).
         if self.on_move.as_ref().is_some() {
-            if state.selected_nodes.len() > 1 && state.selected_nodes.contains(&node_index) {
+            if current.len() > 1 && already_selected {
                 // Multiple nodes selected, start group move
-                let selected: Vec<usize> = state.selected_nodes.iter().copied().collect();
+                let selected = current.clone();
                 state.dragging = Dragging::GroupMove(cursor_position.into_euclid());
                 // Emit drag start event for group
                 if let Some(handler) = self.on_drag_start.as_ref() {
@@ -1481,11 +1462,8 @@ where
                 return;
             }
 
-            // Clear selection unless the multi-select modifier is held
-            if !state.modifiers.contains(self.keymap.multi_select_modifiers) {
-                state.selected_nodes.clear();
-            }
-
+            // The selection is replaced (or extended) when the box closes, so the
+            // press leaves the current highlight visible while rubber-banding.
             state.dragging = Dragging::SelectionBox(cursor_position, cursor_position);
             // Emit drag start for the selection box
             if let Some(handler) = self.on_drag_start.as_ref() {

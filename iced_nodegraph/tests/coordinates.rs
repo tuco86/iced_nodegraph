@@ -815,19 +815,31 @@ fn key_press(c: char, code: keyboard::key::Code, modifiers: keyboard::Modifiers)
 /// Builds a two-node graph, feeds it `events` (each with its cursor), and
 /// returns every message the widget published.
 fn run_events<Msg: 'static>(
-    mut graph: NodeGraph<'static, usize, usize, (), Msg, Theme, Recorder>,
+    graph: NodeGraph<'static, usize, usize, (), Msg, Theme, Recorder>,
     events: &[(iced::Event, mouse::Cursor)],
 ) -> Vec<Msg> {
-    graph.push_node(node(
-        0_usize,
-        Point::new(10.0, 10.0),
-        Element::from(ContentProbe),
-    ));
-    graph.push_node(node(
-        1_usize,
-        Point::new(120.0, 10.0),
-        Element::from(ContentProbe),
-    ));
+    run_events_selected(graph, &[], events)
+}
+
+/// Like [`run_events`], but the host marks `selected` node indices, standing in
+/// for a frame where the host has already applied a reported selection.
+fn run_events_selected<Msg: 'static>(
+    mut graph: NodeGraph<'static, usize, usize, (), Msg, Theme, Recorder>,
+    selected: &[usize],
+    events: &[(iced::Event, mouse::Cursor)],
+) -> Vec<Msg> {
+    graph.push_node(
+        node(0_usize, Point::new(10.0, 10.0), Element::from(ContentProbe))
+            .selected(selected.contains(&0)),
+    );
+    graph.push_node(
+        node(
+            1_usize,
+            Point::new(120.0, 10.0),
+            Element::from(ContentProbe),
+        )
+        .selected(selected.contains(&1)),
+    );
 
     let mut tree = Tree::new(&graph as &dyn Widget<Msg, Theme, Recorder>);
     let renderer = Recorder::new(Rc::new(RefCell::new(Recorded::default())));
@@ -1045,7 +1057,7 @@ fn touch_drag_on_empty_space_pans_the_graph() {
 }
 
 #[test]
-fn touch_tap_selects_a_node_and_empty_tap_clears() {
+fn touch_tap_selects_a_node() {
     let graph: NodeGraph<'static, usize, usize, (), Vec<usize>, Theme, Recorder> =
         NodeGraph::default()
             .width(Length::Fixed(400.0))
@@ -1058,16 +1070,30 @@ fn touch_tap_selects_a_node_and_empty_tap_clears() {
             // Tap on node 0 (world 10,10 + 40x20 probe; camera identity).
             finger_press(1, Point::new(30.0, 20.0)),
             finger_lift(1, Point::new(30.0, 20.0)),
-            // Tap on empty space clears the selection on lift.
+        ],
+    );
+    assert_eq!(msgs, vec![vec![0]], "a tap must select the node under it");
+}
+
+/// The clear only fires when something IS selected, and selection now lives on
+/// the host's nodes - so this needs a host that has applied one.
+#[test]
+fn touch_tap_on_empty_space_clears_the_selection() {
+    let graph: NodeGraph<'static, usize, usize, (), Vec<usize>, Theme, Recorder> =
+        NodeGraph::default()
+            .width(Length::Fixed(400.0))
+            .height(Length::Fixed(400.0))
+            .on_select(|ids| ids);
+
+    let msgs = run_events_selected(
+        graph,
+        &[0],
+        &[
             finger_press(1, Point::new(300.0, 300.0)),
             finger_lift(1, Point::new(300.0, 300.0)),
         ],
     );
-    assert_eq!(
-        msgs,
-        vec![vec![0], vec![]],
-        "tap must select on press and empty tap must clear on lift",
-    );
+    assert_eq!(msgs, vec![Vec::<usize>::new()], "an empty tap must clear");
 }
 
 #[test]

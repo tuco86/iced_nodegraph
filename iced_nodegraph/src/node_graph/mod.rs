@@ -5,7 +5,7 @@
 //! The host owns the graph. `NodeGraph` is rebuilt every `view` from the host's
 //! model and holds no graph state between frames; it reports intent through
 //! callbacks and the host applies it. The only state that survives a frame is
-//! interaction state (camera, drag, selection, z-order) in
+//! interaction state (camera, drag, z-order) in
 //! [`state`](self::state), keyed by node index rather than node id.
 //!
 //! ```ignore
@@ -21,11 +21,10 @@
 //!
 //! There is no event enum: each interaction has its own `Fn -> Message` setter
 //! (`on_connect`, `on_move`, `on_select`, `on_clone`, `on_delete`, `on_pan`,
-//! `on_info`). Selection and camera are additionally *controllable*: feed the
-//! reported value back through [`NodeGraph::selection`] / [`NodeGraph::view`] to
-//! make the host the source of truth. `on_drag_start`/`on_drag_update`/
-//! `on_drag_end` expose a drag while it happens, for hosts that mirror it
-//! elsewhere.
+//! `on_info`). Nothing is applied locally: selection comes back per node through
+//! [`Node::selected`] and the camera through [`NodeGraph::view`], so the host is
+//! always the source of truth. `on_drag_start`/`on_drag_update`/`on_drag_end`
+//! expose a drag while it happens, for hosts that mirror it elsewhere.
 //!
 //! # Styling
 //!
@@ -38,7 +37,7 @@
 //! a status, so selection and cut feedback are expressed in the style, not
 //! layered on afterwards.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::Duration;
 
 use iced_widget::core::{Element, Length, Point, Size, Vector};
@@ -78,6 +77,7 @@ pub struct Node<'a, N, P, UI, Message, Theme, Renderer> {
     pub(super) id: N,
     pub(super) position: Point,
     pub(super) element: Element<'a, Message, Theme, Renderer>,
+    pub(super) selected: bool,
     pub(super) style: Option<NodeStyleFn<'a, Theme>>,
     pub(super) pin_style: Option<PinStyleFn<'a, P, UI, Theme>>,
 }
@@ -92,6 +92,7 @@ pub fn node<'a, N, P, UI, Message, Theme, Renderer>(
         id,
         position,
         element: element.into(),
+        selected: false,
         style: None,
         pin_style: None,
     }
@@ -109,6 +110,21 @@ impl<'a, N, P, UI, Message, Theme, Renderer> Node<'a, N, P, UI, Message, Theme, 
     /// ```
     pub fn style(mut self, f: impl Fn(&Theme, NodeStatus) -> NodeStyle + 'a) -> Self {
         self.style = Some(Box::new(f));
+        self
+    }
+
+    /// Marks the node as selected.
+    ///
+    /// Selection is a property of the node, so the host sets it here from its own
+    /// model - typically `.selected(self.selection.contains(&id))`. The widget
+    /// reports the selection it wants through
+    /// [`on_select`](NodeGraph::on_select) and renders what it is given back, the
+    /// same contract as iced's `checkbox`.
+    ///
+    /// A selected node draws with [`NodeStatus::Selected`] and sorts above its
+    /// unselected siblings.
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
         self
     }
 
@@ -372,9 +388,6 @@ pub struct NodeGraph<
     /// id-carrying counterpart to `on_disconnect` for the two paths where the
     /// widget holds a host-supplied edge.
     pub(super) on_edge_delete: Option<Box<dyn Fn(Vec<E>) -> Message + 'a>>,
-    /// Host-controlled selection, translated to node indices by
-    /// [`selection`](Self::selection).
-    pub(super) external_selection: Option<HashSet<usize>>,
     /// Live drag callbacks: fire continuously during a drag, alongside the
     /// commit-on-drop `on_move`. Observing a drag as it happens (to broadcast
     /// it, say) is the app's concern, so the widget only reports it.
@@ -396,7 +409,7 @@ pub struct NodeGraph<
     /// Host-controlled camera (world position + zoom). The widget syncs its
     /// internal camera to this whenever the host changes it, while still running
     /// pan/zoom interaction internally and committing via `on_pan`. Mirrors the
-    /// `selection()` / `on_select` controlled pattern.
+    /// [`Node::selected`] / `on_select` pattern for selection.
     pub(super) view: Option<(Point, f32)>,
     /// Connection validation. When set it is authoritative in
     /// `compute_valid_targets`; otherwise
@@ -429,7 +442,6 @@ where
             on_clone: None,
             on_delete: None,
             on_edge_delete: None,
-            external_selection: None,
             on_drag_start: None,
             on_drag_update: None,
             on_drag_end: None,
@@ -456,7 +468,7 @@ where
     /// The widget snaps its camera to this whenever the host changes the value,
     /// while still running pan/zoom interaction internally and committing through
     /// [`on_pan`](Self::on_pan). This is the controlled-component counterpart to
-    /// `on_pan`, exactly like `selection()` is to `on_select`: feed back what
+    /// `on_pan`, exactly like [`Node::selected`] is to `on_select`: feed back what
     /// `on_pan` reports and the view stays in sync; push a new value (e.g. a reset
     /// to origin) and the view snaps there.
     pub fn view(mut self, position: Point, zoom: f32) -> Self {
@@ -504,6 +516,35 @@ where
     /// The node index of a user node id.
     pub(super) fn node_index(&self, id: &N) -> Option<usize> {
         self.node_lookup.get(id).copied()
+    }
+
+    /// Whether the host marked the node at `index` selected.
+    pub(super) fn is_selected(&self, index: usize) -> bool {
+        self.nodes.get(index).is_some_and(|node| node.selected)
+    }
+
+    /// Whether any node is marked selected.
+    pub(super) fn any_selected(&self) -> bool {
+        self.nodes.iter().any(|node| node.selected)
+    }
+
+    /// Indices of the nodes the host marked selected, in push order.
+    pub(super) fn selected_indices(&self) -> Vec<usize> {
+        self.nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.selected)
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    /// Ids of the nodes the host marked selected, in push order.
+    pub(super) fn selected_ids(&self) -> Vec<N> {
+        self.nodes
+            .iter()
+            .filter(|node| node.selected)
+            .map(|node| node.id.clone())
+            .collect()
     }
 
     /// The user node ids at the given node indices, skipping unknown indices.
@@ -686,8 +727,10 @@ where
     /// The callback receives the list of currently selected node IDs.
     /// Fires on click-select, selection box, and Shift+click multi-select.
     ///
-    /// The widget keeps its own selection regardless; to make the host the source
-    /// of truth, feed the reported value back via [`selection`](Self::selection).
+    /// The widget holds no selection of its own: it reports the selection it wants
+    /// and renders what comes back through [`Node::selected`]. Store the reported
+    /// ids and mark the matching nodes on the next `view`, or the selection never
+    /// takes effect - the same contract as iced's `checkbox`.
     pub fn on_select(mut self, f: impl Fn(Vec<N>) -> Message + 'a) -> Self {
         self.on_select = Some(Box::new(f));
         self
@@ -777,28 +820,6 @@ where
     /// only; no GPU profiling.
     pub fn on_info(mut self, f: impl Fn(GraphInfo) -> Message + 'a) -> Self {
         self.on_info = Some(Box::new(f));
-        self
-    }
-
-    /// Sets the host-controlled selection using user node IDs.
-    ///
-    /// The IDs are converted to internal indices; unknown IDs are ignored.
-    ///
-    /// Optional: the widget tracks selection internally and reports it through
-    /// [`on_select`](Self::on_select), so an uncontrolled graph works without this.
-    /// Feed it only when the host is the source of truth - to drive selection
-    /// programmatically (select-all, clear, restore from a save). This is the
-    /// controlled-component counterpart to `on_select`, exactly like
-    /// [`view`](Self::view) is to `on_pan`.
-    pub fn selection<'b>(mut self, selection: impl IntoIterator<Item = &'b N>) -> Self
-    where
-        N: 'b,
-    {
-        let indices: HashSet<usize> = selection
-            .into_iter()
-            .filter_map(|id| self.node_index(id))
-            .collect();
-        self.external_selection = Some(indices);
         self
     }
 

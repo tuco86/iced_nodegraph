@@ -512,7 +512,6 @@ fn render_node_selection(selected: bool) -> Option<Vec<[u8; 4]>> {
     let mut guard = shared()?;
     let renderer = &mut *guard;
 
-    let ids = [0usize];
     let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Renderer> = NodeGraph::default()
         .width(Length::Fixed(W as f32))
         .height(Length::Fixed(H as f32))
@@ -522,19 +521,18 @@ fn render_node_selection(selected: bool) -> Option<Vec<[u8; 4]>> {
         );
     // A realistically sized body: the halo is judged relative to the node, and a
     // bare text label is an order of magnitude smaller than a real node.
-    graph.push_node(node(
-        0_usize,
-        Point::new(0.0, 0.0),
-        Element::from(
-            iced::widget::container(text("Node"))
-                .width(Length::Fixed(160.0))
-                .height(Length::Fixed(90.0)),
-        ),
-    ));
-    // `selection()` resolves ids against the pushed nodes, so it must come after.
-    if selected {
-        graph = graph.selection(&ids);
-    }
+    graph.push_node(
+        node(
+            0_usize,
+            Point::new(0.0, 0.0),
+            Element::from(
+                iced::widget::container(text("Node"))
+                    .width(Length::Fixed(160.0))
+                    .height(Length::Fixed(90.0)),
+            ),
+        )
+        .selected(selected),
+    );
 
     let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Renderer>);
     let layout_node = graph.layout(

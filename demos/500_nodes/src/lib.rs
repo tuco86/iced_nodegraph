@@ -360,7 +360,6 @@ impl Application {
                 .on_disconnect(|from, to| ApplicationMessage::EdgeDisconnected { from, to })
                 .on_move(|delta, indices| ApplicationMessage::NodesMoved { delta, indices })
                 .on_select(ApplicationMessage::SelectionChanged)
-                .selection(&self.selected_nodes)
                 .on_pan(|pos, zoom| ApplicationMessage::CameraReport { pos, zoom });
         // The `on_info` frame stream exists only while the stats panel is
         // shown: live per-frame diagnostics force continuous redraws, so with
@@ -381,6 +380,7 @@ impl Application {
         for (index, (position, node_type)) in self.nodes.iter().enumerate() {
             ng.push_node(
                 node(index, *position, node_type.create_node(&self.current_theme))
+                    .selected(self.selected_nodes.contains(&index))
                     .pin_style(pin_style),
             );
         }

@@ -74,7 +74,7 @@ result next to the rustdoc output in `target/doc/demo_styling/pkg/`.
 ## Library API Exercised
 
 `NodeGraph` with `on_connect` / `on_disconnect` / `on_move` / `on_select` /
-`selection` / `graph_style`, `node(..).style(..).pin_style(..)`, `edge(..)`,
+`graph_style`, `node(..).selected(..).style(..).pin_style(..)`, `edge(..)`,
 `PinRef`, `NodeStyle`, `PinStyle`, `GraphStyle`,
 `TilingBackground`, `Pattern`, `NodeStatus`, `PinStatus`, `PinDirection`,
 `PinInfo`, `default_pin_style`, `node_header`, and the `pin!` macro.

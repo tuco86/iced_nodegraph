@@ -46,11 +46,16 @@ the renderer. Regenerate with `cargo doc --workspace --no-deps --open`.
   `Fn -> Message` callbacks; the application applies the change and feeds the
   result back next frame.
 - **The widget is stateless between frames.** Only `NodeGraphState` (camera,
-  drag, selection, z-order, touch) survives, and it is keyed by *node index* -
-  a transient per-frame identity derived from the host's push order, not by the
-  user's node id. `node_lookup` is the single id-to-index map, and the identity
-  boundary is the public API: outside it, ids (`N`, `P`, `E`, `PinRef`);
-  inside it, indices.
+  drag, z-order, touch) survives, and it is keyed by *node index* - a transient
+  per-frame identity derived from the host's push order, not by the user's node
+  id. `node_lookup` is the single id-to-index map, and the identity boundary is
+  the public API: outside it, ids (`N`, `P`, `E`, `PinRef`); inside it, indices.
+- **What the host owns is an input, not a copy.** Selection rides on each node
+  (`Node::selected`), the camera on `NodeGraph::view`. The widget reports the
+  value it wants and renders what comes back - it never keeps a second copy to
+  reconcile. A graph-level setter for per-node state is the wrong shape: it needs
+  an id-to-index step, which needs the nodes, which silently makes the call order
+  load-bearing.
 - **Screen and world coordinates are distinct types.** `ScreenPoint` and
   `WorldPoint` are separate euclid spaces; convert only through `Camera2D`
   (`screen_to_world` / `world_to_screen`) and the `IntoIced` / `IntoEuclid`

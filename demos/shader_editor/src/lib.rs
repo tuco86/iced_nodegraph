@@ -384,13 +384,16 @@ impl Application {
                 .on_move(|delta, indices| Message::NodesMoved { delta, indices })
                 .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })
                 .on_select(Message::SelectionChanged)
-                .on_pan(|position, zoom| Message::CameraChanged { position, zoom })
-                .selection(&self.graph_selection);
+                .on_pan(|position, zoom| Message::CameraChanged { position, zoom });
 
         // Add all shader graph nodes
         for (node_idx, node) in self.shader_graph.nodes.iter().enumerate() {
             let node_content = create_node_widget(&node.node_type, &self.current_theme);
-            graph.push_node(ng_node(node_idx, node.position, node_content).pin_style(pin_style));
+            graph.push_node(
+                ng_node(node_idx, node.position, node_content)
+                    .selected(self.graph_selection.contains(&node_idx))
+                    .pin_style(pin_style),
+            );
         }
 
         // Add all edges

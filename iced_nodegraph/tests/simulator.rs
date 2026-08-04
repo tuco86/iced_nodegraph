@@ -45,6 +45,15 @@ const NODE_H: f32 = 30.0;
 /// Builds a graph with one fixed-size node body per `(id, world-position)`,
 /// every interaction callback wired into `Msg`.
 fn graph_with(nodes: &[(usize, Point)]) -> Element<'static, Msg, Theme, Renderer> {
+    graph_with_selected(nodes, &[])
+}
+
+/// Like [`graph_with`], but the host marks `selected` ids - standing in for a
+/// frame where it has already applied a reported selection.
+fn graph_with_selected(
+    nodes: &[(usize, Point)],
+    selected: &[usize],
+) -> Element<'static, Msg, Theme, Renderer> {
     let mut ng: Graph = NodeGraph::default()
         .width(Length::Fill)
         .height(Length::Fill)
@@ -59,7 +68,7 @@ fn graph_with(nodes: &[(usize, Point)]) -> Element<'static, Msg, Theme, Renderer
         let body = container(iced::widget::text("n"))
             .width(Length::Fixed(NODE_W))
             .height(Length::Fixed(NODE_H));
-        ng.push_node(node(id, pos, body));
+        ng.push_node(node(id, pos, body).selected(selected.contains(&id)));
     }
     ng.into()
 }
@@ -165,11 +174,11 @@ fn click_unselected_node_replaces_selection() {
 
 #[test]
 fn shift_click_adds_to_selection() {
-    let mut ui = Simulator::new(graph_with(&[
-        (0, Point::new(100.0, 100.0)),
-        (1, Point::new(400.0, 100.0)),
-    ]));
-    click(&mut ui, center(Point::new(100.0, 100.0)));
+    // Node 0 already selected by the host; shift-click must extend, not replace.
+    let mut ui = Simulator::new(graph_with_selected(
+        &[(0, Point::new(100.0, 100.0)), (1, Point::new(400.0, 100.0))],
+        &[0],
+    ));
 
     let shift = keyboard::Modifiers::SHIFT;
     let a = center(Point::new(400.0, 100.0));
@@ -205,8 +214,8 @@ fn ctrl_a_selects_all() {
 
 #[test]
 fn escape_clears_selection() {
-    let mut ui = Simulator::new(graph_with(&[(0, Point::new(100.0, 100.0))]));
-    click(&mut ui, center(Point::new(100.0, 100.0)));
+    let mut ui = Simulator::new(graph_with_selected(&[(0, Point::new(100.0, 100.0))], &[0]));
+    ui.point_at(center(Point::new(100.0, 100.0)));
     ui.simulate([key_pressed(
         keyboard::Key::Named(keyboard::key::Named::Escape),
         keyboard::Modifiers::default(),
@@ -256,13 +265,11 @@ fn drag_node_emits_move_with_delta() {
 
 #[test]
 fn group_move_emits_move_with_delta_and_all_ids() {
-    let mut ui = Simulator::new(graph_with(&[
-        (0, Point::new(100.0, 100.0)),
-        (1, Point::new(400.0, 100.0)),
-    ]));
-    // Select both, then drag one of them: the move reports the whole group.
-    ui.point_at(Point::new(500.0, 400.0));
-    ui.simulate([key_pressed(keyboard::Key::Character("a".into()), cmd())]);
+    // Both selected by the host; dragging one reports the whole group.
+    let mut ui = Simulator::new(graph_with_selected(
+        &[(0, Point::new(100.0, 100.0)), (1, Point::new(400.0, 100.0))],
+        &[0, 1],
+    ));
     let from = center(Point::new(100.0, 100.0));
     drag(&mut ui, from, from + Vector::new(30.0, -10.0));
 
@@ -285,8 +292,8 @@ fn group_move_emits_move_with_delta_and_all_ids() {
 
 #[test]
 fn delete_key_requests_delete_of_selection() {
-    let mut ui = Simulator::new(graph_with(&[(0, Point::new(100.0, 100.0))]));
-    click(&mut ui, center(Point::new(100.0, 100.0)));
+    let mut ui = Simulator::new(graph_with_selected(&[(0, Point::new(100.0, 100.0))], &[0]));
+    ui.point_at(center(Point::new(100.0, 100.0)));
     ui.simulate([key_pressed(
         keyboard::Key::Named(keyboard::key::Named::Delete),
         keyboard::Modifiers::default(),
@@ -299,10 +306,29 @@ fn delete_key_requests_delete_of_selection() {
     );
 }
 
+/// Selection travels on the node, so it cannot be lost to builder order the way
+/// a graph-level setter resolved against a not-yet-filled node list could be.
+/// Marking the node is enough - no call ordering, no id-to-index step.
+#[test]
+fn a_node_marked_selected_is_acted_on_without_any_prior_interaction() {
+    let mut ui = Simulator::new(graph_with_selected(&[(7, Point::new(100.0, 100.0))], &[7]));
+    ui.point_at(center(Point::new(100.0, 100.0)));
+    ui.simulate([key_pressed(
+        keyboard::Key::Named(keyboard::key::Named::Delete),
+        keyboard::Modifiers::default(),
+    )]);
+
+    let msgs = messages(ui);
+    assert!(
+        msgs.contains(&Msg::Delete(vec![7])),
+        "a host-marked selection must be live on the first frame: {msgs:?}",
+    );
+}
+
 #[test]
 fn ctrl_d_requests_clone_of_selection() {
-    let mut ui = Simulator::new(graph_with(&[(0, Point::new(100.0, 100.0))]));
-    click(&mut ui, center(Point::new(100.0, 100.0)));
+    let mut ui = Simulator::new(graph_with_selected(&[(0, Point::new(100.0, 100.0))], &[0]));
+    ui.point_at(center(Point::new(100.0, 100.0)));
     ui.simulate([key_pressed(keyboard::Key::Character("d".into()), cmd())]);
 
     let msgs = messages(ui);
@@ -1152,9 +1178,8 @@ fn ctrl_click_on_edge_disconnects_under_zoom_and_pan() {
 
 #[test]
 fn shift_click_deselects_already_selected_node() {
-    let mut ui = Simulator::new(graph_with(&[(0, Point::new(100.0, 100.0))]));
+    let mut ui = Simulator::new(graph_with_selected(&[(0, Point::new(100.0, 100.0))], &[0]));
     let c = center(Point::new(100.0, 100.0));
-    click(&mut ui, c); // select node 0
 
     ui.point_at(c);
     ui.simulate([iced::Event::Keyboard(keyboard::Event::ModifiersChanged(
@@ -1223,17 +1248,8 @@ fn drag_update_reports_the_world_cursor() {
 #[test]
 fn dragging_a_multi_selection_reports_the_whole_group() {
     let (a, b) = (Point::new(100.0, 100.0), Point::new(400.0, 100.0));
-    let mut ui = Simulator::new(graph_with(&[(0, a), (1, b)]));
-    click(&mut ui, center(a));
-
-    ui.point_at(center(b));
-    ui.simulate([iced::Event::Keyboard(keyboard::Event::ModifiersChanged(
-        keyboard::Modifiers::SHIFT,
-    ))]);
-    ui.simulate([moved(center(b)), press(), release()]);
-    ui.simulate([iced::Event::Keyboard(keyboard::Event::ModifiersChanged(
-        keyboard::Modifiers::empty(),
-    ))]);
+    // Both selected by the host, so grabbing one starts a group drag.
+    let mut ui = Simulator::new(graph_with_selected(&[(0, a), (1, b)], &[0, 1]));
     drag(&mut ui, center(b), Point::new(600.0, 300.0));
 
     let msgs = messages(ui);

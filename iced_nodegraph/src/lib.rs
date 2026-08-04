@@ -49,8 +49,8 @@
 //!
 //! The widget is stateless between frames and never mutates your data model. It
 //! renders the nodes and edges you pass in and reports intent through callbacks;
-//! your `update` applies the change and the next `view` reflects it. Three
-//! invariants are therefore yours to uphold:
+//! your `update` applies the change and the next `view` reflects it. Which makes
+//! these yours to uphold:
 //!
 //! - **Unique node ids.** Lookups resolve by id, so a duplicate push is ignored
 //!   (first wins) and debug builds assert on it. Prefer a stable id from your
@@ -64,12 +64,12 @@
 //!   always the input pin.
 //! - **Applying moves, deletes and clones.** `on_move` / `on_delete` /
 //!   `on_clone` report intent only.
-//!
-//! Selection and camera are *controllable*: feed what
-//! [`on_select`](NodeGraph::on_select) / [`on_pan`](NodeGraph::on_pan) report
-//! back through [`selection`](NodeGraph::selection) / [`view`](NodeGraph::view)
-//! and the host becomes their source of truth; omit them and the widget keeps
-//! them internally.
+//! - **Applying selection.** [`on_select`](NodeGraph::on_select) reports the
+//!   selection the widget wants; mark the matching nodes with
+//!   [`Node::selected`] on the next `view`. Selection is a node property, so
+//!   there is no ordering to get right - and, like iced's `checkbox`, nothing
+//!   happens until you feed it back. The camera works the same way through
+//!   [`on_pan`](NodeGraph::on_pan) and [`view`](NodeGraph::view).
 //!
 //! ## Core types
 //!

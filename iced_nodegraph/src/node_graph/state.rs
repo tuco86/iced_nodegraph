@@ -56,13 +56,6 @@ pub(super) struct NodeGraphState {
     pub(super) dragging: Dragging,
     pub(super) time: f32,
     pub(super) last_update: Option<Instant>,
-    pub(super) selected_nodes: HashSet<usize>,
-    /// Last externally-provided selection (via `NodeGraph::selection()`) that
-    /// we synced into `selected_nodes`. Lets us tell apart "host pushed a new
-    /// selection" (sync needed) from "the selection box just changed state
-    /// but the host has not yet seen the on_select message" (sync would clobber
-    /// the new state with the still-stale external value).
-    pub(super) last_synced_external: Option<HashSet<usize>>,
     pub(super) modifiers: keyboard::Modifiers,
     /// Valid drop targets computed at edge drag start.
     /// Contains (node_index, pin_index) pairs that are valid connection targets.
@@ -71,8 +64,8 @@ pub(super) struct NodeGraphState {
     /// Last host-provided view (`view()`) that we synced into `camera`. Lets us
     /// tell apart "host pushed a new camera" (sync needed) from "internal pan/zoom
     /// changed the camera but the matching `on_pan` has not yet round-tripped
-    /// back into `view`" (syncing would clobber it). Mirrors
-    /// `last_synced_external` for selection.
+    /// back into `view`" (syncing would clobber it). Selection needs no such
+    /// guard: it is not state here at all, it travels on each [`Node`].
     pub(super) last_synced_view: Option<(Point, f32)>,
     /// Set during draw() when any SDF primitive has active animations.
     /// Read during update() to drive continuous redraws via shell.request_redraw().
@@ -103,8 +96,6 @@ impl Default for NodeGraphState {
             dragging: Default::default(),
             time: 0.0,
             last_update: None,
-            selected_nodes: HashSet::new(),
-            last_synced_external: None,
             modifiers: keyboard::Modifiers::default(),
             valid_drop_targets: HashSet::new(),
             last_synced_view: None,
@@ -149,12 +140,18 @@ impl NodeGraphState {
 /// Returns node indices in render order (back to front).
 /// Unselected nodes by z ascending, then selected nodes by z ascending.
 /// Reverse this iterator for top-first hit-test / event propagation.
-pub(super) fn z_render_indices(state: &NodeGraphState, node_count: usize) -> Vec<usize> {
+///
+/// `is_selected` reads the flag off the host's [`Node`], since selection is not
+/// state this module owns.
+pub(super) fn z_render_indices(
+    state: &NodeGraphState,
+    node_count: usize,
+    is_selected: impl Fn(usize) -> bool,
+) -> Vec<usize> {
     let mut indices: Vec<usize> = (0..node_count).collect();
     indices.sort_by_key(|&i| {
-        let selected = state.selected_nodes.contains(&i);
         let z = state.node_z.get(&i).copied().unwrap_or(0);
-        (selected, z)
+        (is_selected(i), z)
     });
     indices
 }
@@ -302,41 +299,12 @@ mod tests {
     }
 
     #[test]
-    fn test_selection_set_operations() {
-        let mut state = NodeGraphState::default();
-
-        // Start empty
-        assert!(state.selected_nodes.is_empty());
-
-        // Add nodes
-        state.selected_nodes.insert(0);
-        state.selected_nodes.insert(2);
-        state.selected_nodes.insert(5);
-
-        assert_eq!(state.selected_nodes.len(), 3);
-        assert!(state.selected_nodes.contains(&0));
-        assert!(state.selected_nodes.contains(&2));
-        assert!(state.selected_nodes.contains(&5));
-        assert!(!state.selected_nodes.contains(&1));
-
-        // Remove node
-        state.selected_nodes.remove(&2);
-        assert_eq!(state.selected_nodes.len(), 2);
-        assert!(!state.selected_nodes.contains(&2));
-
-        // Clear all
-        state.selected_nodes.clear();
-        assert!(state.selected_nodes.is_empty());
-    }
-
-    #[test]
     fn test_node_graph_state_default() {
         let state = NodeGraphState::default();
 
         assert_eq!(state.dragging, Dragging::None);
         assert_eq!(state.time, 0.0);
         assert!(state.last_update.is_none());
-        assert!(state.selected_nodes.is_empty());
         assert!(state.valid_drop_targets.is_empty());
         assert!(state.node_z.is_empty());
         assert_eq!(state.z_counter, 0);
@@ -396,10 +364,7 @@ mod tests {
 
         // Make 1 most recently moved among unselected.
         state.promote_z(1);
-        // Select 3.
-        state.selected_nodes.insert(3);
-
-        let order = z_render_indices(&state, 4);
+        let order = z_render_indices(&state, 4, |i| i == 3);
 
         // Selected goes last (on top). 3 must be at the end.
         assert_eq!(order.last(), Some(&3));
@@ -413,11 +378,8 @@ mod tests {
     fn test_z_render_indices_selected_sorted_by_z() {
         let mut state = NodeGraphState::default();
         state.ensure_z_entries(3);
-        state.selected_nodes.insert(0);
-        state.selected_nodes.insert(2);
         // 2 is more recently assigned z, so it should render on top of 0.
-
-        let order = z_render_indices(&state, 3);
+        let order = z_render_indices(&state, 3, |i| i == 0 || i == 2);
 
         // 1 (unselected) first, then 0 and 2 (selected, with 2 on top).
         assert_eq!(order, vec![1, 0, 2]);

@@ -472,8 +472,7 @@ impl App {
                 .keymap(Keymap {
                     select_all: Some(KeyCombo::command('l')),
                     ..Keymap::default()
-                })
-                .selection(&self.selected_nodes);
+                });
 
         // Node 0: Number Generator
         let pos = self
@@ -481,7 +480,11 @@ impl App {
             .get(&0)
             .copied()
             .unwrap_or(Point::ORIGIN);
-        ng.push_node(node(0usize, pos, self.number_generator_node(&theme)).pin_style(pin_style));
+        ng.push_node(
+            node(0usize, pos, self.number_generator_node(&theme))
+                .selected(self.selected_nodes.contains(&0))
+                .pin_style(pin_style),
+        );
 
         // Node 1: Math Operations
         let pos = self
@@ -489,7 +492,11 @@ impl App {
             .get(&1)
             .copied()
             .unwrap_or(Point::ORIGIN);
-        ng.push_node(node(1usize, pos, self.math_operations_node(&theme)).pin_style(pin_style));
+        ng.push_node(
+            node(1usize, pos, self.math_operations_node(&theme))
+                .selected(self.selected_nodes.contains(&1))
+                .pin_style(pin_style),
+        );
 
         // Node 2: Type Converter
         let pos = self
@@ -497,7 +504,11 @@ impl App {
             .get(&2)
             .copied()
             .unwrap_or(Point::ORIGIN);
-        ng.push_node(node(2usize, pos, self.type_converter_node(&theme)).pin_style(pin_style));
+        ng.push_node(
+            node(2usize, pos, self.type_converter_node(&theme))
+                .selected(self.selected_nodes.contains(&2))
+                .pin_style(pin_style),
+        );
 
         // Node 3: Display
         let pos = self
@@ -505,7 +516,11 @@ impl App {
             .get(&3)
             .copied()
             .unwrap_or(Point::ORIGIN);
-        ng.push_node(node(3usize, pos, self.display_node(&theme)).pin_style(pin_style));
+        ng.push_node(
+            node(3usize, pos, self.display_node(&theme))
+                .selected(self.selected_nodes.contains(&3))
+                .pin_style(pin_style),
+        );
 
         // Node 4: Bidirectional Hub
         let pos = self
@@ -513,7 +528,11 @@ impl App {
             .get(&4)
             .copied()
             .unwrap_or(Point::ORIGIN);
-        ng.push_node(node(4usize, pos, self.bidirectional_hub_node(&theme)).pin_style(pin_style));
+        ng.push_node(
+            node(4usize, pos, self.bidirectional_hub_node(&theme))
+                .selected(self.selected_nodes.contains(&4))
+                .pin_style(pin_style),
+        );
 
         // Add edges
         for (from, to) in &self.edges {

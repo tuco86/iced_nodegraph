@@ -212,6 +212,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+**BREAKING.** Selection is a property of the node: `Node::selected(bool)`
+replaces `NodeGraph::selection(..)`.
+
+```rust
+ng.push_node(node(id, pos, body).selected(self.selection.contains(&id)));
+```
+
+`selection()` resolved the given ids against the already-pushed nodes, so calling
+it before `push_node` - which is where a builder chain naturally puts it - matched
+nothing and was silently dropped. Every demo in this repository did exactly that,
+so host-controlled selection had never actually worked. A flag on the node has no
+resolution step and no ordering to get wrong.
+
+The widget no longer keeps a selection of its own. It reports the selection it
+wants through `on_select` and renders what comes back, the same contract as
+iced's `checkbox` - so a host that ignores `on_select` now sees no highlight, and
+`Ctrl+A` / `Escape` do nothing without it. Pressing empty canvas also no longer
+clears the highlight on press: the selection is replaced when the box closes, so
+the previous selection stays visible while rubber-banding.
+
 **BREAKING.** The selection rectangle is called the *selection box* everywhere
 now, so `DragInfo::BoxSelect` is `DragInfo::SelectionBox`. Previously the type
 said `SelectionBoxStyle` while the drag variant said `BoxSelect`.
