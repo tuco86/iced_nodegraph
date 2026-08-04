@@ -225,15 +225,16 @@ nothing and was silently dropped. Every demo in this repository did exactly that
 so host-controlled selection had never actually worked. A flag on the node has no
 resolution step and no ordering to get wrong.
 
-The widget reports the selection it wants through `on_select` and renders what
-comes back, the same contract as iced's `checkbox` - so a host that ignores
-`on_select` now sees no highlight, and `Ctrl+A` / `Escape` do nothing without it.
-Until the host's own value changes, the widget holds what it last reported, so a
-burst of clicks composes rather than each one starting from a value the host has
-not applied yet; the moment the host marks anything different, its value wins.
-Pressing empty canvas also no longer clears the highlight on press: the selection
-is replaced when the box closes, so the previous one stays visible while
-rubber-banding.
+Selection behaviour itself is unchanged: the widget still keeps a working
+selection driven by clicks and the selection box, so a host that only reads
+`on_select` needs no changes at all. Marking nodes overrides that working value
+whenever the marked set changes - which is what `selection()` was for, minus the
+ordering trap. An unchanged marked set leaves the working value alone, so a host
+frame that has not caught up cannot undo an interaction.
+
+One visible difference: pressing empty canvas no longer clears the highlight on
+press. The selection is replaced when the box closes, so the previous one stays
+visible while rubber-banding.
 
 **BREAKING.** The selection rectangle is called the *selection box* everywhere
 now, so `DragInfo::BoxSelect` is `DragInfo::SelectionBox`. Previously the type

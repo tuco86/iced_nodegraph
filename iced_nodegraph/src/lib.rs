@@ -64,14 +64,13 @@
 //!   always the input pin.
 //! - **Applying moves, deletes and clones.** `on_move` / `on_delete` /
 //!   `on_clone` report intent only.
-//! - **Applying selection.** [`on_select`](NodeGraph::on_select) reports the
-//!   selection the widget wants; mark the matching nodes with
-//!   [`Node::selected`] on the next `view`. Selection is a node property, so
-//!   there is no ordering to get right - and, like iced's `checkbox`, nothing
-//!   happens until you feed it back. Until you do, the widget keeps rendering and
-//!   building on what it last reported, so a fast series of clicks is not lost.
-//!   The camera works the same way through [`on_pan`](NodeGraph::on_pan) and
-//!   [`view`](NodeGraph::view).
+//! - **Applying selection.** Optional: the widget keeps a working selection, so
+//!   clicks and the selection box work on their own.
+//!   [`on_select`](NodeGraph::on_select) reports it; to own it, mark the matching
+//!   nodes with [`Node::selected`] on the next `view` and your value takes over
+//!   whenever it changes. Selection is a node property, so there is no ordering
+//!   to get right. The camera is the same story through
+//!   [`on_pan`](NodeGraph::on_pan) and [`view`](NodeGraph::view).
 //!
 //! ## Core types
 //!

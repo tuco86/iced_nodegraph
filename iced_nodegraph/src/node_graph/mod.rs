@@ -116,10 +116,14 @@ impl<'a, N, P, UI, Message, Theme, Renderer> Node<'a, N, P, UI, Message, Theme, 
     /// Marks the node as selected.
     ///
     /// Selection is a property of the node, so the host sets it here from its own
-    /// model - typically `.selected(self.selection.contains(&id))`. The widget
-    /// reports the selection it wants through
-    /// [`on_select`](NodeGraph::on_select) and renders what it is given back, the
-    /// same contract as iced's `checkbox`.
+    /// model - typically `.selected(self.selection.contains(&id))`.
+    ///
+    /// Optional. The widget keeps a working selection of its own driven by clicks
+    /// and the selection box, so selection works without any host involvement.
+    /// Marking nodes here *overrides* that whenever the marked set changes, which
+    /// is what makes the host authoritative: drive selection programmatically,
+    /// restore it from a save, or feed back what
+    /// [`on_select`](NodeGraph::on_select) reported.
     ///
     /// A selected node draws with [`NodeStatus::Selected`] and sorts above its
     /// unselected siblings.
@@ -735,14 +739,14 @@ where
     /// The callback receives the list of currently selected node IDs.
     /// Fires on click-select, selection box, and Shift+click multi-select.
     ///
-    /// Store the reported ids and mark the matching nodes with
-    /// [`Node::selected`] on the next `view`, or the selection never takes effect
-    /// - the same contract as iced's `checkbox`.
+    /// The widget keeps a working selection, so it stays consistent without the
+    /// host doing anything: a burst of clicks composes, and what is highlighted is
+    /// what a delete or a group drag acts on.
     ///
-    /// Until the host's own value changes, the widget holds on to what it last
-    /// reported, so a burst of clicks composes instead of each one starting from a
-    /// value the host has not applied yet. As soon as the host marks anything
-    /// different, its value wins outright.
+    /// To make the host the source of truth, store the reported ids and mark the
+    /// matching nodes with [`Node::selected`]. A changed marked set overrides the
+    /// widget's working value; an unchanged one leaves it alone, so a host frame
+    /// that has not caught up yet cannot undo an interaction.
     pub fn on_select(mut self, f: impl Fn(Vec<N>) -> Message + 'a) -> Self {
         self.on_select = Some(Box::new(f));
         self

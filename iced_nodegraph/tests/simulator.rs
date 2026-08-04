@@ -1453,3 +1453,22 @@ fn pin_press_without_on_connect_falls_through_to_selection() {
         "the pin press should fall through to selecting its node: {msgs:?}",
     );
 }
+
+/// A host that only reads `on_select` and never marks a node: selection has to
+/// keep working on its own, so a click followed by Delete acts on the clicked
+/// node. Marking nodes is an override, not a requirement.
+#[test]
+fn selection_works_without_the_host_marking_anything() {
+    let mut ui = Simulator::new(graph_with(&[(0, Point::new(100.0, 100.0))]));
+    click(&mut ui, center(Point::new(100.0, 100.0)));
+    ui.simulate([key_pressed(
+        keyboard::Key::Named(keyboard::key::Named::Delete),
+        keyboard::Modifiers::default(),
+    )]);
+
+    let msgs = messages(ui);
+    assert!(
+        msgs.contains(&Msg::Delete(vec![0])),
+        "an unmarked host must still get a working selection: {msgs:?}",
+    );
+}

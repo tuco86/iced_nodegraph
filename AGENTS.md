@@ -50,12 +50,18 @@ the renderer. Regenerate with `cargo doc --workspace --no-deps --open`.
   per-frame identity derived from the host's push order, not by the user's node
   id. `node_lookup` is the single id-to-index map, and the identity boundary is
   the public API: outside it, ids (`N`, `P`, `E`, `PinRef`); inside it, indices.
-- **What the host owns is an input, not a copy.** Selection rides on each node
-  (`Node::selected`), the camera on `NodeGraph::view`. The widget reports the
-  value it wants and renders what comes back - it never keeps a second copy to
-  reconcile. A graph-level setter for per-node state is the wrong shape: it needs
-  an id-to-index step, which needs the nodes, which silently makes the call order
-  load-bearing.
+- **Host input arrives where the state lives.** Selection rides on each node
+  (`Node::selected`), the camera on `NodeGraph::view`. A graph-level setter for
+  per-node state is the wrong shape: it needs an id-to-index step, which needs the
+  nodes, which silently makes the call order load-bearing - `selection()` did
+  exactly that and never worked in any demo.
+- **A working copy is compared against the host, never against itself.** The
+  widget holds the selection it reported (`pending_selection`) so a burst of
+  clicks composes and rendering agrees with what a delete acts on. It drops that
+  value when the *host's* marked set changes (`selection_baseline`), not when its
+  own does - comparing against itself would let a host frame that has not caught
+  up undo a fresh interaction. Same shape as the `view` / `last_synced_view`
+  guard for the camera.
 - **Screen and world coordinates are distinct types.** `ScreenPoint` and
   `WorldPoint` are separate euclid spaces; convert only through `Camera2D`
   (`screen_to_world` / `world_to_screen`) and the `IntoIced` / `IntoEuclid`
