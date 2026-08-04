@@ -38,7 +38,9 @@
 //! When users drag from a pin, the widget tracks valid drop targets based on:
 //! - Pin direction (inputs connect to outputs)
 //! - The graph's [`NodeGraph::can_connect`](crate::NodeGraph::can_connect) closure
-//! - Visual feedback via pulsing animation on valid targets
+//! - `PinStatus::ValidTarget` on every accepting pin, which
+//!   [`default_pin_style`](crate::default_pin_style) paints in the theme's
+//!   success color with a halo filling its cutout
 
 use crate::ids::PinId;
 use iced_wgpu::core::{

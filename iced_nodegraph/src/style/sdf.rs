@@ -228,7 +228,8 @@ impl EdgeStyle {
 
 impl PinStyle {
     /// SDF layers for a pin indicator, front-to-back: fill then optional border.
-    /// `indicator_r` is the drawn radius (the widget may scale it for pulses).
+    /// `indicator_r` is [`PinStyle::radius`], passed through unchanged - the
+    /// drawn size is the styled size.
     pub(crate) fn sdf_layers(&self, direction: PinDirection, indicator_r: f32) -> Vec<Style> {
         let mut layers = Vec::with_capacity(2);
         let fill = if direction == PinDirection::Input {

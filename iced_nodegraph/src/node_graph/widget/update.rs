@@ -11,9 +11,13 @@ use crate::node_graph::input::KeyAction;
 use iced_widget::core::{touch, window};
 use std::collections::HashSet;
 
-// Click detection threshold (screen px; divide by zoom before comparing
-// against world-space distances so the hit target stays constant on screen)
-const PIN_CLICK_THRESHOLD: f32 = 8.0;
+/// Pin click detection threshold, in screen pixels: divided by zoom before
+/// comparing against world-space distances, so the hit target stays constant on
+/// screen.
+///
+/// Also the size the node body opens up for a pin - see
+/// `style::defaults::PIN_CUTOUT_RADIUS`.
+pub(crate) const PIN_CLICK_THRESHOLD: f32 = 8.0;
 
 // Hysteresis thresholds for edge snap/unsnap (prevents jitter at boundary).
 // Screen px, scaled by 1/zoom at the comparison sites like PIN_CLICK_THRESHOLD.

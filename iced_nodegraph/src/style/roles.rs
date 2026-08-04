@@ -60,12 +60,14 @@ const ACCENT_SEPARATION: f32 = 0.34;
 /// - MARKS ([`wire`](Self::wire), [`terminal`](Self::terminal)) sit at a fixed
 ///   fraction of the distance from the canvas to the theme's foreground, so every
 ///   theme places them the same way inside its own contrast range.
-/// - ACCENTS ([`accent`](Self::accent), [`danger`](Self::danger)) keep the
-///   theme's authored hue, floored to a minimum separation from the canvas.
+/// - ACCENTS ([`accent`](Self::accent), [`valid`](Self::valid),
+///   [`danger`](Self::danger)) keep the theme's authored hue, floored to a
+///   minimum separation from the canvas.
 ///
 /// Each accent means exactly one thing: [`accent`](Self::accent) is selection,
+/// [`valid`](Self::valid) is a connection that would be accepted, and
 /// [`danger`](Self::danger) is destruction. Nothing else may borrow them - which
-/// is why pins are marks and not accents.
+/// is why an idle pin is a mark and not an accent.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Roles {
     /// The infinite plane. The theme's window background, untouched.
@@ -82,6 +84,8 @@ pub(crate) struct Roles {
     pub terminal: Color,
     /// Selection, and nothing else.
     pub accent: Color,
+    /// A pin the in-flight edge would connect to, and nothing else.
+    pub valid: Color,
     /// Destruction (the cutting trail), and nothing else.
     pub danger: Color,
     /// Whether the canvas is dark, and therefore which way the surfaces step.
@@ -107,6 +111,7 @@ impl Roles {
             wire: ramp::blend(canvas, foreground, WIRE_LEGIBILITY),
             terminal: ramp::blend(canvas, foreground, TERMINAL_LEGIBILITY),
             accent: ramp::separate(palette.primary.base.color, canvas, ACCENT_SEPARATION),
+            valid: ramp::separate(palette.success.base.color, canvas, ACCENT_SEPARATION),
             danger: ramp::separate(palette.danger.base.color, canvas, ACCENT_SEPARATION),
             is_dark: palette.is_dark,
         }
@@ -228,7 +233,11 @@ mod tests {
     fn accents_separate_from_both_surfaces_in_every_theme() {
         for theme in Theme::ALL {
             let roles = Roles::of(theme);
-            for (name, accent) in [("accent", roles.accent), ("danger", roles.danger)] {
+            for (name, accent) in [
+                ("accent", roles.accent),
+                ("valid", roles.valid),
+                ("danger", roles.danger),
+            ] {
                 assert!(
                     gap(accent, roles.canvas) >= 0.30,
                     "{theme}: {name} is {:.3} from the canvas",
@@ -243,16 +252,20 @@ mod tests {
         }
     }
 
-    /// An accent means one thing. Selection and destruction must never resolve to
-    /// the same paint, whatever a theme does with `primary` and `danger`.
+    /// An accent means one thing. Selection, an accepting drop target and
+    /// destruction must never resolve to the same paint, whatever a theme does
+    /// with `primary`, `success` and `danger`.
     #[test]
-    fn selection_and_destruction_never_collide() {
+    fn the_three_accents_never_collide() {
         for theme in Theme::ALL {
             let roles = Roles::of(theme);
-            assert_ne!(
-                roles.accent, roles.danger,
-                "{theme}: selection and the cutting tool resolve to one color",
-            );
+            for (a, an, b, bn) in [
+                (roles.accent, "selection", roles.danger, "destruction"),
+                (roles.accent, "selection", roles.valid, "a valid target"),
+                (roles.valid, "a valid target", roles.danger, "destruction"),
+            ] {
+                assert_ne!(a, b, "{theme}: {an} and {bn} resolve to one color");
+            }
         }
     }
 }

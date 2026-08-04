@@ -5,73 +5,47 @@
 //! Color fields are [`ColorQuad`]s; a plain `Color` coerces to a solid quad.
 //! Border on/off is the `border_width` sentinel (0 = no border).
 //!
-use iced_widget::core::Color;
-
 use super::ColorQuad;
 use super::PinShape;
 
-/// Visual style for a pin indicator.
+/// Visual style for a pin indicator, and of the hole it punches in the node
+/// body.
+///
+/// A node styles its own pins ([`Node::pin_style`](crate::Node::pin_style)); the
+/// pin widget carries no style of its own.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PinStyle {
     // Indicator
     /// Pin indicator color.
     pub color: ColorQuad,
-    /// Indicator radius in world-space pixels.
+    /// Radius of the drawn indicator, in world units. This is the size on
+    /// screen: nothing scales it.
     pub radius: f32,
     /// Indicator shape.
     pub shape: PinShape,
 
+    // Cutout
+    /// Radius of the circular hole this pin punches in the node body, in world
+    /// units. 0 leaves the body intact.
+    ///
+    /// Independent of [`radius`](Self::radius) on purpose: the well and the mark
+    /// in it answer different questions - how far the body opens up for an
+    /// arriving edge, and how big a target the pin is - and tying one to the
+    /// other means neither can be set without disturbing the other.
+    ///
+    /// The hole is geometry, not paint: the node silhouette (and its shadow) is
+    /// rebuilt when it changes, and the result is cached by shape. Varying it
+    /// per [`PinStatus`](crate::PinStatus) therefore costs a cache entry per
+    /// state and is the one field to leave alone across statuses.
+    pub cutout_radius: f32,
+
     // Border (width 0 = no border)
     /// Border color.
     pub border_color: ColorQuad,
-    /// Border width in world-space pixels. 0 = no border.
+    /// Border width in world-space pixels. 0 = no border. The border is drawn
+    /// OUTSIDE the indicator, so it may reach past the cutout and over the node
+    /// body - which is what makes it usable as a halo.
     pub border_width: f32,
-}
-
-impl PinStyle {
-    /// Data pin preset (circle, blue).
-    pub fn data() -> Self {
-        Self {
-            color: ColorQuad::solid(Color::from_rgb(0.3, 0.6, 1.0)),
-            radius: 6.0,
-            shape: PinShape::Circle,
-            border_color: ColorQuad::solid(Color::from_rgb(0.5, 0.7, 1.0)),
-            border_width: 1.0,
-        }
-    }
-
-    /// Execution pin preset (triangle, white, borderless).
-    pub fn execution() -> Self {
-        Self {
-            color: ColorQuad::solid(Color::WHITE),
-            radius: 7.0,
-            shape: PinShape::Triangle,
-            border_color: ColorQuad::solid(Color::TRANSPARENT),
-            border_width: 0.0,
-        }
-    }
-
-    /// Control flow pin preset (diamond, yellow).
-    pub fn control() -> Self {
-        Self {
-            color: ColorQuad::solid(Color::from_rgb(1.0, 0.85, 0.3)),
-            radius: 6.0,
-            shape: PinShape::Diamond,
-            border_color: ColorQuad::solid(Color::from_rgb(1.0, 0.95, 0.6)),
-            border_width: 1.0,
-        }
-    }
-
-    /// Event pin preset (square, green).
-    pub fn event() -> Self {
-        Self {
-            color: ColorQuad::solid(Color::from_rgb(0.3, 0.8, 0.4)),
-            radius: 5.0,
-            shape: PinShape::Square,
-            border_color: ColorQuad::solid(Color::from_rgb(0.5, 0.9, 0.6)),
-            border_width: 1.0,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -92,5 +66,18 @@ mod tests {
         assert_eq!(style.radius, 10.0); // override wins
         assert_eq!(style.shape, PinShape::Square); // override wins
         assert_eq!(style.color, base.color); // inherited from default
+    }
+
+    /// The well is the node's, the mark is the pin's. Resizing one must leave
+    /// the other exactly where it was.
+    #[test]
+    fn the_cutout_is_not_derived_from_the_indicator() {
+        use crate::style::{PinStatus, default_pin_style};
+        let base = default_pin_style(&Theme::Dark, PinStatus::Idle);
+        let bigger = PinStyle {
+            radius: base.radius * 3.0,
+            ..base.clone()
+        };
+        assert_eq!(bigger.cutout_radius, base.cutout_radius);
     }
 }

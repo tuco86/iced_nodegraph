@@ -8,6 +8,14 @@
 use super::*;
 use iced_widget::core::{Border, Shadow};
 
+/// Half-extent of a [`PinShape::Square`](crate::PinShape::Square) indicator, as
+/// a fraction of [`PinStyle::radius`].
+///
+/// `sqrt(PI) / 2`, which gives the square the area of the circle it replaces -
+/// so swapping a pin's shape changes its outline, not how heavy it looks next to
+/// its neighbours.
+const SQUARE_HALF_EXTENT: f32 = 0.886_226_9;
+
 /// Intersects a shape's screen bounds with the widget's layout rectangle.
 ///
 /// `None` means the shape is entirely off-screen, so the caller can skip it.
@@ -229,8 +237,10 @@ fn resolve_pin_style<P: PinId + 'static, UI>(
 ///
 /// Shared by the node fill (drag offset only) and the shadow (drag offset plus
 /// shadow offset) so the shadow's holes line up exactly with the body's. The
-/// cutout radius tracks the drawn pin indicator. `is_valid_target(pin_idx)`
-/// selects the valid-target pin style; the cutout radius is static (no pulse).
+/// radius is [`PinStyle::cutout_radius`] verbatim - the well is authored, not
+/// derived from the mark that sits in it. `is_valid_target(pin_idx)` selects the
+/// valid-target pin style, so a host that varies the cutout by status gets one
+/// cached silhouette per status; the built-in default deliberately does not.
 /// World-space `(center, radius)` of each pin cutout - the single source for the
 /// recipe cuts (`ShapeExpr::Circle` at local offsets) that punch the pin holes,
 /// so the body and its shadow punch identical holes.
@@ -252,10 +262,7 @@ fn pin_cutout_params<P: PinId + 'static, UI>(
         };
         let pin_style =
             resolve_pin_style::<P, UI>(pin_style_fn, pin_state, other, theme, pin_status);
-        let indicator_r = pin_style.radius * 0.4;
-        // Cut a hole roughly twice the drawn pin's visual extent, so pins sit in
-        // a clear well rather than hugging the body edge.
-        let cutout_r = (indicator_r + pin_style.border_width) * 2.0;
+        let cutout_r = pin_style.cutout_radius;
         if cutout_r <= 0.01 {
             continue;
         }
@@ -997,7 +1004,7 @@ where
                         theme,
                         pin_status,
                     );
-                    let indicator_r = pin_style.radius * 0.4;
+                    let indicator_r = pin_style.radius;
                     let pin_world: WorldPoint =
                         (pin_pos.into_euclid().to_vector() + offset).to_point();
                     let pw = [pin_world.x, pin_world.y];
@@ -1007,7 +1014,7 @@ where
                     // position - and identical pins share a recipe.
                     let (pin_shape, pin_place) = match pin_style.shape {
                         crate::style::PinShape::Square => {
-                            let h = indicator_r * 0.7;
+                            let h = indicator_r * SQUARE_HALF_EXTENT;
                             (Shape::rounded_box([2.0 * h, 2.0 * h], [0.0; 4]), pw)
                         }
                         _ => (Shape::circle(indicator_r), pw),

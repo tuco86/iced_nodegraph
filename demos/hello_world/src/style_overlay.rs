@@ -381,6 +381,7 @@ impl GraphOverlay {
 pub struct PinOverlay {
     pub color: Option<ColorQuad>,
     pub radius: Option<f32>,
+    pub cutout_radius: Option<f32>,
     pub shape: Option<PinShape>,
     pub border_color: Option<ColorQuad>,
     pub border_width: Option<f32>,
@@ -397,6 +398,10 @@ impl PinOverlay {
     }
     pub fn radius(mut self, v: f32) -> Self {
         self.radius = Some(v);
+        self
+    }
+    pub fn cutout_radius(mut self, v: f32) -> Self {
+        self.cutout_radius = Some(v);
         self
     }
     pub fn shape(mut self, v: impl Into<PinShape>) -> Self {
@@ -417,6 +422,7 @@ impl PinOverlay {
         Self {
             color: self.color.or(other.color),
             radius: self.radius.or(other.radius),
+            cutout_radius: self.cutout_radius.or(other.cutout_radius),
             shape: self.shape.or(other.shape),
             border_color: self.border_color.or(other.border_color),
             border_width: self.border_width.or(other.border_width),
@@ -430,6 +436,9 @@ impl PinOverlay {
         }
         if let Some(v) = self.radius {
             base.radius = v;
+        }
+        if let Some(v) = self.cutout_radius {
+            base.cutout_radius = v;
         }
         if let Some(v) = self.shape {
             base.shape = v;

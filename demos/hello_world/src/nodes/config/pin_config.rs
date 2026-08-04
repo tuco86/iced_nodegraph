@@ -21,6 +21,7 @@ pub struct PinConfigInputs {
     /// Individual field overrides
     pub color: Option<ColorQuad>,
     pub radius: Option<f32>,
+    pub cutout_radius: Option<f32>,
     pub shape: Option<PinShape>,
     pub border_color: Option<ColorQuad>,
     pub border_width: Option<f32>,
@@ -35,6 +36,9 @@ impl PinConfigInputs {
         }
         if let Some(r) = self.radius {
             p = p.radius(r);
+        }
+        if let Some(r) = self.cutout_radius {
+            p = p.cutout_radius(r);
         }
         if let Some(s) = self.shape {
             p = p.shape(s);
@@ -149,6 +153,28 @@ where
     ]
     .align_y(iced::Alignment::Center);
 
+    // Cutout row
+    let cutout_row = row![
+        pin!(
+            Left,
+            pins::pin::CUTOUT_RADIUS,
+            text("cutout").size(10),
+            Input,
+            ::std::any::TypeId::of::<pins::Float>()
+        ),
+        container(
+            text(
+                result
+                    .cutout_radius
+                    .map_or("--".to_string(), |v| format!("{:.1}", v))
+            )
+            .size(9)
+        )
+        .width(Length::Fill)
+        .align_x(Horizontal::Right),
+    ]
+    .align_y(iced::Alignment::Center);
+
     // Shape row
     let shape_label = match result.shape {
         Some(PinShape::Circle) => "circle",
@@ -231,6 +257,7 @@ where
         separator,
         color_row,
         radius_row,
+        cutout_row,
         shape_row,
         border_color_row,
         border_width_row,

@@ -138,6 +138,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The canvas grid is opaque one elevation step above the background, rather
   than `background.strong` at 35% alpha. Node shadows are straight down
   (`offset (0, 3)`) and carry the elevation the fill no longer does.
+- **`PinStyle::cutout_radius` sets the well a pin opens in the node body.** The
+  hole used to be `(radius * 0.4 + border_width) * 2.0`, so it could only be
+  resized by resizing the pin, and neither number was reachable from a style
+  closure. It is now its own field, defaulted in `default_pin_style` to
+  `PIN_CLICK_THRESHOLD` - how far the body steps aside is how far the pin's hit
+  area reaches, which is a property of the interaction rather than of how big
+  the mark happens to be drawn.
+- **`PinStyle::radius` is the drawn radius.** It was scaled by 0.4 before
+  reaching the renderer, so the documented "indicator radius in world-space
+  pixels" rendered at 40% of its value. The default is 5.0, which draws the
+  10-pixel dot the old default's 6.0 never did. A `PinShape::Square` takes the
+  area of the circle of the same radius, so changing a pin's shape changes its
+  outline and not its visual weight.
+- **`PinStatus::ValidTarget` finally looks like anything.** The docs promised a
+  pulsing animation on valid drop targets and nothing implemented it:
+  `default_pin_style` ignored its status argument, so during an edge drag every
+  pin looked identical. A valid target now takes the theme's `success` color
+  with a translucent halo filling its cutout - the third and last accent, next
+  to `primary` for selection and `danger` for destruction, each still meaning
+  exactly one thing.
+- **Removed the `PinStyle::data`/`execution`/`control`/`event` presets.** Four
+  unused constructors with hard-coded colors that ignored the theme, teaching
+  the opposite of the one styling convention; two of them also advertised
+  `PinShape::Triangle`/`Diamond`, which the renderer draws as circles. Every
+  demo already types its pins the supported way, with
+  `PinStyle { color, ..default_pin_style(theme, status) }`.
 - **Removed `GraphStyle::new`, `GraphStyle::dark` and `GraphStyle::light`.**
   Two were aliases for `GraphStyle::default` and the third was a hand-picked
   pale canvas, so together they were a second, theme-blind mapping standing

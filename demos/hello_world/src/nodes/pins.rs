@@ -234,6 +234,9 @@ pub mod pin {
     /// Indicator radius input pin
     pub const RADIUS: &str = "radius";
 
+    /// Body-cutout radius input pin
+    pub const CUTOUT_RADIUS: &str = "cutout_radius";
+
     /// Indicator shape input pin
     pub const SHAPE: &str = "shape";
 

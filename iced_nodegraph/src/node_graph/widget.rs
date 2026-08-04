@@ -43,7 +43,7 @@ use iced_nodegraph_sdf::{Pattern, SdfPrimitive, Shape, Style, Tiling};
 
 mod camera_overlay;
 mod draw;
-mod update;
+pub(crate) mod update;
 
 use camera_overlay::CameraOverlay;
 

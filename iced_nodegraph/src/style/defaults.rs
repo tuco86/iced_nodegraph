@@ -27,8 +27,10 @@
 //! })
 //! ```
 //!
-//! The valid-target pin pulse is time-based and stays in the widget, so
-//! [`default_pin_style`] has no static `ValidTarget` feedback.
+//! Geometry lives here too, as named constants rather than factors applied to
+//! whatever a style happens to hold: a pin's drawn radius is
+//! [`PinStyle::radius`](crate::PinStyle::radius) verbatim, and the well it opens
+//! in the node body is its own field.
 
 use iced_nodegraph_sdf::Pattern;
 use iced_widget::core::{Color, Theme};
@@ -48,6 +50,25 @@ const NODE_CORNER_RADIUS: f32 = 5.0;
 /// hosted content - colored by the application for the theme's background - stays
 /// readable on it.
 const SELECTION_TINT: f32 = 0.12;
+
+/// Drawn radius of a pin indicator, in world units.
+///
+/// A mark you aim at, sized to be aimed at: at zoom 1 this is a 10 pixel dot,
+/// comfortably inside [`PIN_CLICK_THRESHOLD`] so the visible pin is always
+/// smaller than the area that accepts a click, never larger.
+const PIN_RADIUS: f32 = 5.0;
+
+/// Radius of the well a pin opens in the node body, in world units.
+///
+/// [`PIN_CLICK_THRESHOLD`], deliberately: the well is the body stepping aside
+/// for a pin, and how far it steps aside should be how far the pin's hit area
+/// reaches. That is a property of the interaction, not of how big the mark
+/// happens to be drawn - scaling this off [`PIN_RADIUS`] would make restyling a
+/// pin silently reshape the node and desync the two.
+///
+/// It also leaves room for the halo a valid drop target wears, which fills
+/// exactly the gap between the two.
+const PIN_CUTOUT_RADIUS: f32 = crate::node_graph::widget::update::PIN_CLICK_THRESHOLD;
 
 /// Complete theme-derived node style, with the selected look expressed in full
 /// rather than as a border tweak.
@@ -112,22 +133,46 @@ pub fn default_node_style(theme: &Theme, status: NodeStatus) -> NodeStyle {
     }
 }
 
-/// Complete theme-derived pin style. The valid-target pulse is time-based and
-/// applied by the widget, so both states share the same base.
+/// Complete theme-derived pin style, with the valid-target state expressed as a
+/// color change plus a halo.
 ///
-/// A pin is the endpoint of a wire, so it takes the wire's ladder one rung
-/// brighter rather than the selection accent: sharing `primary` with selection
-/// would make "this node is selected" and "this is a connection point" the same
-/// color, and would leave the pins of a theme whose `primary` collides with its
-/// background invisible. A filled dot needs no border, exactly as iced's slider
-/// handle carries none.
-pub fn default_pin_style(theme: &Theme, _status: PinStatus) -> PinStyle {
-    PinStyle {
-        color: Roles::of(theme).terminal.into(),
-        radius: 6.0,
+/// An idle pin is a MARK: it takes the wire's ladder one rung brighter rather
+/// than the selection accent, so "this node is selected" and "this is a
+/// connection point" never resolve to the same color, and so a theme whose
+/// `primary` collides with its background still has visible pins. A filled dot
+/// needs no border, exactly as iced's slider handle carries none.
+///
+/// A valid drop target is the one moment a pin earns an accent, and it gets its
+/// own: `success` reads as "this connection would be accepted", leaving
+/// `primary` to selection and `danger` to cutting. The halo is a translucent
+/// ring drawn outside the indicator, which reaches past the cutout and over the
+/// node body - visible from across the canvas while the edge is in flight.
+pub fn default_pin_style(theme: &Theme, status: PinStatus) -> PinStyle {
+    let roles = Roles::of(theme);
+
+    let base = PinStyle {
+        color: roles.terminal.into(),
+        radius: PIN_RADIUS,
         shape: PinShape::Circle,
+        cutout_radius: PIN_CUTOUT_RADIUS,
         border_color: Color::TRANSPARENT.into(),
         border_width: 0.0,
+    };
+
+    match status {
+        PinStatus::Idle => base,
+        PinStatus::ValidTarget => PinStyle {
+            color: roles.valid.into(),
+            border_color: Color {
+                a: 0.4,
+                ..roles.valid
+            }
+            .into(),
+            border_width: PIN_CUTOUT_RADIUS - PIN_RADIUS,
+            // The cutout is geometry: holding it across statuses keeps one node
+            // silhouette in the shape cache instead of one per drag state.
+            ..base
+        },
     }
 }
 
@@ -256,14 +301,72 @@ mod tests {
     /// Pins are marks, not accents. Sharing `primary` with selection would make
     /// "this node is selected" and "this is a connection point" the same color,
     /// and would hide the pins of any theme whose `primary` collides with its
-    /// background.
+    /// background. Holds in both pin states: a valid target has its own accent.
     #[test]
     fn a_pin_never_borrows_the_selection_accent() {
         for theme in Theme::ALL {
-            let pin = default_pin_style(theme, PinStatus::Idle).color;
             let selected = default_node_style(theme, NodeStatus::Selected).border_color;
-            assert_ne!(pin, selected, "{theme}: a pin wears the selection accent");
+            for status in [PinStatus::Idle, PinStatus::ValidTarget] {
+                assert_ne!(
+                    default_pin_style(theme, status).color,
+                    selected,
+                    "{theme}: a {status:?} pin wears the selection accent",
+                );
+            }
         }
+    }
+
+    /// A drop target you cannot see is a drag you have to guess at. `ValidTarget`
+    /// must differ from `Idle` in fill AND wear a halo, in every theme - the
+    /// status argument is not decoration on the signature.
+    #[test]
+    fn a_valid_drop_target_is_visible_in_every_theme() {
+        for theme in Theme::ALL {
+            let idle = default_pin_style(theme, PinStatus::Idle);
+            let valid = default_pin_style(theme, PinStatus::ValidTarget);
+
+            assert_ne!(
+                valid.color, idle.color,
+                "{theme}: a valid drop target paints like an idle pin",
+            );
+            assert!(
+                valid.border_width > 0.0,
+                "{theme}: a valid drop target has no halo",
+            );
+        }
+    }
+
+    /// The well is geometry: the node silhouette is a cached shape, so a cutout
+    /// that moves with pin status costs a cache entry per drag state on every
+    /// node in the graph.
+    #[test]
+    fn the_pin_cutout_holds_across_statuses() {
+        for theme in Theme::ALL {
+            assert_eq!(
+                default_pin_style(theme, PinStatus::Idle).cutout_radius,
+                default_pin_style(theme, PinStatus::ValidTarget).cutout_radius,
+                "{theme}: the cutout moves with pin status",
+            );
+        }
+    }
+
+    /// The well has to be wider than the mark in it, or the pin overruns the hole
+    /// and sits on the body's own border instead of in a socket. The halo is sized
+    /// to fill exactly that gap.
+    #[test]
+    fn a_pin_fits_inside_the_well_it_opens() {
+        let idle = default_pin_style(&Theme::Dark, PinStatus::Idle);
+        assert!(
+            idle.cutout_radius > idle.radius,
+            "the pin overruns its well"
+        );
+
+        let valid = default_pin_style(&Theme::Dark, PinStatus::ValidTarget);
+        assert_eq!(
+            valid.radius + valid.border_width,
+            valid.cutout_radius,
+            "the valid-target halo must reach the rim of the well, no further",
+        );
     }
 
     /// An edge marked for cutting must take the cutting tool's own color, so the

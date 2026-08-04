@@ -1053,6 +1053,8 @@ impl Application {
                     inputs.color = value.as_color_quad();
                 } else if *pin_label == ppin::RADIUS {
                     inputs.radius = value.as_float();
+                } else if *pin_label == ppin::CUTOUT_RADIUS {
+                    inputs.cutout_radius = value.as_float();
                 } else if *pin_label == ppin::SHAPE {
                     inputs.shape = value.as_pin_shape();
                 } else if *pin_label == ppin::BORDER_COLOR {
