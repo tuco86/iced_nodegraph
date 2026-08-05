@@ -347,8 +347,7 @@ mod tests {
     /// silhouette that is punched around it, and both are content-addressed
     /// shapes held across frames. A default that moved any of them would rebuild
     /// and re-cache a shape per drag state, on every node in the graph, for the
-    /// duration of a drag - which is the cost that keeps pin animation out of
-    /// this crate for now. The remaining fields are color bands, which are free.
+    /// duration of a drag. The remaining fields are color bands, which are free.
     #[test]
     fn valid_target_feedback_costs_no_geometry() {
         for theme in Theme::ALL {
