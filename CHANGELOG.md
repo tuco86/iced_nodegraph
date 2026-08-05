@@ -59,6 +59,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Shapes went missing after a draw-set change.** A primitive skipped
+  re-uploading its cull lists when a per-draw-slot record matched on resident
+  block plus list cursors. That predicate cannot express what the skip needs.
+  The record is keyed by draw slot while the bytes are keyed by cursor, and the
+  cull buffers are one flat arena whose ranges a per-frame cursor hands out, so a
+  frame in which a slot is absent lets a LOWER slot write at the same cursor
+  while the record survives untouched. Every list element embeds its own draw
+  slot, so honouring the stale record scattered the primitive's geometry into a
+  foreign draw's tiles and dropped it from its own: a node lost its border, a pin
+  its indicator, another pin half of one, all with straight tile-aligned edges.
+  It took a particular sequence of moves to hit, which is why it survived since
+  the index reuse landed.
+
+  The reuse decision is now CONTENT-based: `Buffer::write_or_skip` takes what the
+  caller believes the buffer should hold, compares it against the mirror and
+  uploads only on a difference. Ownership of a range is no longer something a key
+  has to encode, so the failure is unrepresentable rather than merely detected.
+  `Buffer::skip`, the scatter-slot records and the block generation they keyed on
+  are gone. Costs nothing: an idle frame's `upload_bytes` and `cull_skipped` are
+  unchanged, since what the skip saves is the GPU upload, not the CPU rebuild.
+
 - **Every SDF-drawn color was a gamma step too bright.** `compile::c2v` uploaded
   a `Color`'s sRGB-encoded components as if they were already linear, while
   iced's own quad and text pipelines pack through `graphics::color::pack`. The

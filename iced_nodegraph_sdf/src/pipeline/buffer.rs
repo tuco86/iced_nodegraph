@@ -298,20 +298,29 @@ impl<T: ShaderSize> Buffer<T> {
         self.live_len = 0;
     }
 
-    /// Reclaims `n` already-resident slots as live WITHOUT rewriting them: the
-    /// previous frame left valid data at `[live_len .. live_len + n)`, so a caller
-    /// that has verified the content is unchanged just advances the cursor over it.
-    /// This is the per-primitive skip path - the data is reused in place, no CPU
-    /// eval and no GPU upload. Panics if those slots were never written (the caller
-    /// must only skip a range it wrote in a prior frame).
-    pub fn skip(&mut self, n: usize) {
-        assert!(
-            self.live_len + n <= self.buffer_vec.len(),
-            "skip {n} past resident data (live {} + {n} > {})",
-            self.live_len,
-            self.buffer_vec.len(),
-        );
-        self.live_len += n;
+    /// Appends `items` at the live cursor, uploading only when the bytes already
+    /// there differ. Returns whether an upload happened.
+    ///
+    /// This is the per-frame list path, and the decision is CONTENT-based on
+    /// purpose. The buffer is one flat arena whose ranges are handed out by a
+    /// per-frame cursor, so which producer owns a given range changes with the
+    /// frame's composition - no key a caller can hold expresses "these bytes are
+    /// still mine". Comparing against the mirror answers exactly that question,
+    /// and what the skip saves is the GPU upload, not the CPU rebuild.
+    pub fn write_or_skip(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, items: &[T]) -> bool
+    where
+        T: ShaderType + ShaderSize + WriteInto + Clone + PartialEq,
+    {
+        if items.is_empty() {
+            return false;
+        }
+        let start = self.live_len;
+        if self.buffer_vec.get(start..start + items.len()) == Some(items) {
+            self.live_len = start + items.len();
+            return false;
+        }
+        let _ = self.push_bulk(device, queue, items);
+        true
     }
 
     /// Lowers the binding ceiling so a test can drive the drop path without

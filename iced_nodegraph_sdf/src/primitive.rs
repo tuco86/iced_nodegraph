@@ -426,10 +426,6 @@ impl Default for SdfPrimitive {
 /// occupies plus everything a later frame needs to draw it without
 /// re-evaluating anything.
 struct ResidentBlock {
-    /// Globally unique block id (monotonic, never reused). Scatter-slot
-    /// records key on this to prove "same bytes" across frames without
-    /// comparing ranges (a freed range can be re-allocated to new content).
-    block_gen: u64,
     /// The block's contiguous range in the entry arena. Draws need entry
     /// contiguity only WITHIN one primitive; `DrawData.entry_start` points
     /// here, wherever the block sits.
@@ -478,22 +474,6 @@ struct StyleResidency {
     idx: u32,
     refs: u32,
     last_ref_gen: u64,
-}
-
-/// Per draw-slot record of the scatter-list ranges written last frame. The
-/// packed cull lists stay per-frame POSITIONAL (they embed the draw slot), so
-/// their reuse is cursor-coupled like the old geometry path - but their
-/// content is SELF-CONTAINED (the own block's indices, the own slot), so
-/// block identity plus cursor equality suffices and no cross-slot poison
-/// exists; a forced rebuild is a cheap prefix-write from the resident block.
-#[derive(Clone, Copy)]
-struct ScatterSlot {
-    /// [`ResidentBlock::gen`] whose data the ranges hold.
-    block_gen: u64,
-    pair_start: u32,
-    pair_count: u32,
-    closed_start: u32,
-    closed_count: u32,
 }
 
 pub struct SdfPipeline {
@@ -587,9 +567,6 @@ pub struct SdfPipeline {
     seg_arena: ArenaAlloc,
     entry_arena: ArenaAlloc,
     style_arena: ArenaAlloc,
-    /// Per draw-slot scatter-list record of the LAST frame (see
-    /// [`ScatterSlot`]). Survives `trim`.
-    scatter_slots: Vec<Option<ScatterSlot>>,
     /// Frame counter (incremented in `trim`); drives block LRU aging.
     frame_counter: u64,
     /// Monotonic [`ResidentBlock::gen`] source.
@@ -920,7 +897,6 @@ impl Pipeline for SdfPipeline {
             seg_arena: ArenaAlloc::new(),
             entry_arena: ArenaAlloc::new(),
             style_arena: ArenaAlloc::new(),
-            scatter_slots: Vec::new(),
             frame_counter: 0,
             next_block_gen: 0,
             compactions: 0,
@@ -1140,7 +1116,6 @@ impl SdfPipeline {
         self.segments_buffer.clear();
         self.entries_buffer.clear();
         self.styles_buffer.clear();
-        self.scatter_slots.clear();
         // The resident spatial index references the dropped ranges; rebuild.
         self.cull_dirty = true;
         self.compactions += 1;
@@ -1452,7 +1427,6 @@ fn compile_block(
     }
 
     ResidentBlock {
-        block_gen,
         entry_start,
         entry_count: entry_batch.len() as u32,
         shape_refs,
@@ -1478,13 +1452,6 @@ impl Primitive for SdfPrimitive {
         if self.entries.is_empty() {
             let draw_index = pipeline.draw_data_buffer.len() as u32;
             self.draw_slot.store(draw_index, Ordering::Relaxed);
-            // Invalidate the slot's scatter record: while this primitive is
-            // empty, later slots' scatter ranges pack shifted-down over its
-            // resident range, so a later frame with the old content must NOT
-            // stale-match (`Buffer::skip` reclaims by LENGTH, not content).
-            if let Some(s) = pipeline.scatter_slots.get_mut(draw_index as usize) {
-                *s = None;
-            }
             // `DrawData::default()` carries sentinel tiling ids.
             let dd = types::DrawData::default();
             pipeline.note_cull_key(draw_index as usize, cull_key(&dd, [0, 0]));
@@ -1494,8 +1461,6 @@ impl Primitive for SdfPrimitive {
 
         let prepare_start = Instant::now();
         let scale = viewport.scale_factor();
-        let pair_start = pipeline.cull_pairs_buffer.len() as u32;
-        let closed_start = pipeline.cull_closed_buffer.len() as u32;
         let draw_slot = pipeline.draw_data_buffer.len();
 
         // Geometry residency (ARCHITECTURE.md, Stage 1): a primitive whose
@@ -1506,12 +1471,12 @@ impl Primitive for SdfPrimitive {
         // an earlier rebuild invalidates nothing.
         let geom_hash = self.geometry_hash();
         let frame = pipeline.frame_counter;
-        let (block_gen, entry_start, dd_tilings) = match pipeline.resident.entry(geom_hash) {
+        let (entry_start, dd_tilings) = match pipeline.resident.entry(geom_hash) {
             std::collections::hash_map::Entry::Occupied(e) => {
                 let b = e.into_mut();
                 b.last_used = frame;
                 pipeline.frame_stats.resident_hits += 1;
-                (b.block_gen, b.entry_start, b.tilings)
+                (b.entry_start, b.tilings)
             }
             std::collections::hash_map::Entry::Vacant(v) => {
                 // The resident spatial index references the current draw set's
@@ -1536,66 +1501,44 @@ impl Primitive for SdfPrimitive {
                     pipeline.next_block_gen,
                     frame,
                 ));
-                (b.block_gen, b.entry_start, b.tilings)
+                (b.entry_start, b.tilings)
             }
         };
 
-        // Scatter work lists (ARCHITECTURE.md, Stage 2): still per-frame packed
-        // - they embed the draw slot - with the same skip-or-push lifecycle.
-        // Same block at the same cursors means the resident list bytes are
-        // valid; anything else re-pushes the block's draw-slot-free index
-        // pairs with the current slot prefixed. Flat u32 writes; geometry is
-        // never re-evaluated here.
-        let record = pipeline
-            .scatter_slots
-            .get(draw_slot)
-            .copied()
-            .flatten()
-            .filter(|r| {
-                r.block_gen == block_gen
-                    && r.pair_start == pair_start
-                    && r.closed_start == closed_start
-            });
-        if let Some(r) = record {
-            pipeline.cull_pairs_buffer.skip(r.pair_count as usize);
-            pipeline.cull_closed_buffer.skip(r.closed_count as usize);
-        } else {
-            // The list bytes on the GPU change; the resident index is stale.
-            pipeline.cull_dirty = true;
-            let block = &pipeline.resident[&geom_hash];
-            let mut pair_batch = std::mem::take(&mut pipeline.pair_scratch);
-            pair_batch.clear();
-            pair_batch.reserve(block.pairs.len() / 2 * 3);
-            for pair in block.pairs.chunks_exact(2) {
-                pair_batch.extend_from_slice(&[draw_slot as u32, pair[0], pair[1]]);
-            }
-            let mut closed_batch = std::mem::take(&mut pipeline.closed_scratch);
-            closed_batch.clear();
-            closed_batch.reserve(block.closed.len() * 2);
-            for &e in &block.closed {
-                closed_batch.extend_from_slice(&[draw_slot as u32, e]);
-            }
-            let _ = pipeline
-                .cull_pairs_buffer
-                .push_bulk(device, queue, &pair_batch);
-            let _ = pipeline
-                .cull_closed_buffer
-                .push_bulk(device, queue, &closed_batch);
-            if draw_slot >= pipeline.scatter_slots.len() {
-                pipeline.scatter_slots.resize(draw_slot + 1, None);
-            }
-            pipeline.scatter_slots[draw_slot] = Some(ScatterSlot {
-                block_gen,
-                pair_start,
-                pair_count: pair_batch.len() as u32,
-                closed_start,
-                closed_count: closed_batch.len() as u32,
-            });
-            pair_batch.clear();
-            closed_batch.clear();
-            pipeline.pair_scratch = pair_batch;
-            pipeline.closed_scratch = closed_batch;
+        // Scatter work lists (ARCHITECTURE.md, Stage 2): per-frame packed - each
+        // element embeds the draw slot - and rebuilt from the resident block every
+        // frame. `write_or_skip` compares them against what the buffer already
+        // holds and uploads only on a difference, so an unchanged frame still
+        // costs no upload while a shifted draw set cannot serve one primitive
+        // another's bytes. Geometry is never re-evaluated here; this is a loop
+        // over the block's index pairs.
+        let block = &pipeline.resident[&geom_hash];
+        let mut pair_batch = std::mem::take(&mut pipeline.pair_scratch);
+        pair_batch.clear();
+        pair_batch.reserve(block.pairs.len() / 2 * 3);
+        for pair in block.pairs.chunks_exact(2) {
+            pair_batch.extend_from_slice(&[draw_slot as u32, pair[0], pair[1]]);
         }
+        let mut closed_batch = std::mem::take(&mut pipeline.closed_scratch);
+        closed_batch.clear();
+        closed_batch.reserve(block.closed.len() * 2);
+        for &e in &block.closed {
+            closed_batch.extend_from_slice(&[draw_slot as u32, e]);
+        }
+        let wrote_pairs = pipeline
+            .cull_pairs_buffer
+            .write_or_skip(device, queue, &pair_batch);
+        let wrote_closed = pipeline
+            .cull_closed_buffer
+            .write_or_skip(device, queue, &closed_batch);
+        if wrote_pairs || wrote_closed {
+            // The list bytes on the GPU changed; the resident index is stale.
+            pipeline.cull_dirty = true;
+        }
+        pair_batch.clear();
+        closed_batch.clear();
+        pipeline.pair_scratch = pair_batch;
+        pipeline.closed_scratch = closed_batch;
 
         let entry_count = self.entries.len() as u32;
         let camera_pos = types::GpuVec2::new(self.camera_position.0, self.camera_position.1);
