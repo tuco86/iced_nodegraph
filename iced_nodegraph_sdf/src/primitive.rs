@@ -1775,4 +1775,103 @@ mod tests {
         p.push(&shape, &s, [0.0, 0.0]);
         assert_eq!(p.entry_count(), 1);
     }
+
+    /// Every [`types::DrawData`] field the cull kernels read has to reach
+    /// [`cull_key`], or the resident spatial index is reused across a change it
+    /// cannot see - the shape of defect that renders a frame from another
+    /// camera's tile lists.
+    ///
+    /// The destructuring below is exhaustive on purpose: a field added to
+    /// `DrawData` fails to COMPILE here until it is either folded into the key or
+    /// listed under `deliberately_unhashed` with the reason the index survives it.
+    #[test]
+    fn cull_key_covers_every_field_the_index_depends_on() {
+        use types::{DrawData, GpuVec2};
+
+        /// A field's name and a mutation of it, for the sweep below.
+        type FieldMutator = (&'static str, fn(&mut DrawData));
+
+        let base = DrawData::default();
+        let grid_base = [3_i64, -7];
+        let key = cull_key(&base, grid_base);
+
+        let DrawData {
+            bounds_origin: _,
+            camera_position: _,
+            grid_offset: _,
+            camera_zoom: _,
+            scale_factor: _,
+            time: _,
+            entry_count: _,
+            entry_start: _,
+            grid_cols: _,
+            grid_rows: _,
+            tile_base: _,
+            coarse_cols: _,
+            coarse_rows: _,
+            coarse_base: _,
+            tilings: _,
+            _pad0: _,
+            _pad1: _,
+        } = base.clone();
+
+        let hashed: [FieldMutator; 11] = [
+            ("camera_zoom", |d| d.camera_zoom = 2.0),
+            ("scale_factor", |d| d.scale_factor = 2.0),
+            ("entry_count", |d| d.entry_count = 1),
+            ("entry_start", |d| d.entry_start = 1),
+            ("grid_cols", |d| d.grid_cols = 1),
+            ("grid_rows", |d| d.grid_rows = 1),
+            ("tile_base", |d| d.tile_base = 1),
+            ("coarse_cols", |d| d.coarse_cols = 1),
+            ("coarse_rows", |d| d.coarse_rows = 1),
+            ("coarse_base", |d| d.coarse_base = 1),
+            ("tilings", |d| d.tilings[0] = 0),
+        ];
+        for (field, mutate) in hashed {
+            let mut d = base.clone();
+            mutate(&mut d);
+            assert_ne!(
+                cull_key(&d, grid_base),
+                key,
+                "cull_key ignores {field}: the index would survive a change to it",
+            );
+        }
+        assert_ne!(
+            cull_key(&base, [4, -7]),
+            key,
+            "cull_key ignores grid_base: the index would survive a pan into another \
+             tile window",
+        );
+
+        // Fields the index provably survives. Each one is a claim about the
+        // world-anchored tile lattice, not a shortcut.
+        let deliberately_unhashed: [FieldMutator; 4] = [
+            // Where the widget sits on screen. Tile membership is world-anchored,
+            // and the per-layer camera already compensates the clip origin.
+            ("bounds_origin", |d| {
+                d.bounds_origin = GpuVec2::new(9.0, 9.0)
+            }),
+            // A tile's world box is `(tile + grid_base) * coarse_px / cs`: the
+            // sub-tile pan remainder cancels between `camera_position` and
+            // `grid_offset`, so only the quantized base can move it.
+            ("camera_position", |d| {
+                d.camera_position = GpuVec2::new(0.5, 0.5)
+            }),
+            ("grid_offset", |d| d.grid_offset = GpuVec2::new(0.5, 0.5)),
+            // The animation clock feeds style evaluation in the fragment shader;
+            // reach bands and tile boxes are time-independent.
+            ("time", |d| d.time = 5.0),
+        ];
+        for (field, mutate) in deliberately_unhashed {
+            let mut d = base.clone();
+            mutate(&mut d);
+            assert_eq!(
+                cull_key(&d, grid_base),
+                key,
+                "cull_key now reacts to {field}, which costs a full index rebuild on \
+                 every frame that touches it - fold it in deliberately or leave it out",
+            );
+        }
+    }
 }
