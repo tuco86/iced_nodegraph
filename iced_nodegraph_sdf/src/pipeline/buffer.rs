@@ -305,18 +305,14 @@ impl<T: ShaderSize> Buffer<T> {
     /// purpose. The buffer is one flat arena whose ranges are handed out by a
     /// per-frame cursor, so which producer owns a given range changes with the
     /// frame's composition - no key a caller can hold expresses "these bytes are
-    /// still mine". Comparing against the mirror answers exactly that question,
-    /// and what the skip saves is the GPU upload, not the CPU rebuild.
+    /// still mine". [`holds_at`] answers exactly that question from the data, and
+    /// what the skip saves is the GPU upload, not the CPU rebuild.
     pub fn write_or_skip(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, items: &[T]) -> bool
     where
         T: ShaderType + ShaderSize + WriteInto + Clone + PartialEq,
     {
-        if items.is_empty() {
-            return false;
-        }
-        let start = self.live_len;
-        if self.buffer_vec.get(start..start + items.len()) == Some(items) {
-            self.live_len = start + items.len();
+        if holds_at(&self.buffer_vec, self.live_len, items) {
+            self.live_len += items.len();
             return false;
         }
         let _ = self.push_bulk(device, queue, items);
@@ -329,6 +325,16 @@ impl<T: ShaderSize> Buffer<T> {
     pub fn set_max_bytes_for_test(&mut self, bytes: u64) {
         self.max_bytes = bytes & !3;
     }
+}
+
+/// Whether `mirror` already holds `items` at element index `start`.
+///
+/// The whole range has to be present and equal: a range that runs past what was
+/// ever written is NOT a match, and neither is one that differs in a single
+/// element. Callers use this to decide whether an upload is needed, so a false
+/// positive would present another producer's bytes as their own.
+fn holds_at<T: PartialEq>(mirror: &[T], start: usize, items: &[T]) -> bool {
+    mirror.get(start..start + items.len()) == Some(items)
 }
 
 fn create_wgpu_buffer(
@@ -399,5 +405,48 @@ mod tests {
     #[test]
     fn an_exactly_full_request_clamps_to_the_ceiling() {
         assert_eq!(grown_size(MAX, ITEM, MAX), MAX);
+    }
+
+    /// The reuse decision, isolated from any frame or GPU. `write_or_skip` skips
+    /// the upload exactly when this says the range is already there, so a false
+    /// positive would hand a producer another producer's bytes.
+    mod holds_at {
+        use super::super::holds_at;
+
+        #[test]
+        fn an_identical_range_matches() {
+            assert!(holds_at(&[7, 8, 9, 10], 1, &[8, 9]));
+        }
+
+        #[test]
+        fn one_differing_element_does_not_match() {
+            assert!(!holds_at(&[7, 8, 9, 10], 1, &[8, 0]));
+        }
+
+        /// The shape the scatter lists fail in: same length, same tail, and only
+        /// the leading draw-slot prefix belongs to somebody else.
+        #[test]
+        fn a_foreign_draw_slot_prefix_does_not_match() {
+            let mirror = [6, 20, 6, 21, 6, 22];
+            assert!(holds_at(&mirror, 0, &[6, 20, 6, 21, 6, 22]));
+            assert!(!holds_at(&mirror, 0, &[7, 20, 7, 21, 7, 22]));
+        }
+
+        /// A range that runs past what was ever written is not a match, however
+        /// far the prefix agrees - the tail would be uninitialized on the GPU.
+        #[test]
+        fn a_range_past_the_written_end_does_not_match() {
+            assert!(!holds_at(&[7, 8], 1, &[8, 9]));
+            assert!(!holds_at(&[7, 8], 3, &[8]));
+        }
+
+        /// Nothing to write is trivially already there, at any reachable cursor:
+        /// `write_or_skip` must not upload and must not move the cursor.
+        #[test]
+        fn an_empty_range_matches_at_any_written_cursor() {
+            assert!(holds_at::<u32>(&[7, 8], 0, &[]));
+            assert!(holds_at::<u32>(&[7, 8], 2, &[]));
+            assert!(holds_at::<u32>(&[], 0, &[]));
+        }
     }
 }
