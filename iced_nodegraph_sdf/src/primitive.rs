@@ -1874,4 +1874,167 @@ mod tests {
             );
         }
     }
+
+    /// A resident geometry block is addressed by a hash over every entry's shape,
+    /// placement and style, so a style field the hash ignores makes two DIFFERENT
+    /// styles share one compiled block.
+    ///
+    /// The destructurings are exhaustive on purpose: a field added to `Style`,
+    /// `Stop` or `Pattern` fails to COMPILE until it is perturbed here.
+    #[test]
+    fn style_hash_reacts_to_every_field() {
+        use crate::pattern::{Pattern, PatternType};
+        use crate::style::{Stop, Transfer};
+
+        fn hash_of(style: &Style) -> u64 {
+            let mut h = KeyHasher::new();
+            hash_style_into(&mut h, style);
+            h.0
+        }
+
+        let base = Style {
+            stops: vec![Stop::grad(1.0, Color::WHITE, Color::BLACK)],
+            pattern: Some(Pattern::solid(2.0)),
+            transfer: Transfer::Linear,
+        };
+        let Style {
+            stops: _,
+            pattern: _,
+            transfer: _,
+        } = base.clone();
+        let Stop {
+            dist: _,
+            start: _,
+            end: _,
+        } = base.stops[0];
+        let Pattern {
+            thickness: _,
+            pattern_type: _,
+            flow_speed: _,
+        } = base.pattern.unwrap();
+
+        let with = |f: fn(&mut Style)| {
+            let mut s = base.clone();
+            f(&mut s);
+            s
+        };
+        let cases: [(&str, Style); 9] = [
+            (
+                "stops.len",
+                with(|s| s.stops.push(Stop::new(2.0, Color::WHITE))),
+            ),
+            ("Stop.dist", with(|s| s.stops[0].dist = 2.0)),
+            ("Stop.start", with(|s| s.stops[0].start = Color::BLACK)),
+            ("Stop.end", with(|s| s.stops[0].end = Color::WHITE)),
+            ("transfer", with(|s| s.transfer = Transfer::Smoothstep)),
+            (
+                "transfer param",
+                with(|s| s.transfer = Transfer::Gamma(2.0)),
+            ),
+            ("pattern presence", with(|s| s.pattern = None)),
+            (
+                "Pattern.thickness",
+                with(|s| s.pattern.as_mut().unwrap().thickness = 3.0),
+            ),
+            (
+                "Pattern.flow_speed",
+                with(|s| s.pattern.as_mut().unwrap().flow_speed = 1.0),
+            ),
+        ];
+        let key = hash_of(&base);
+        for (field, style) in &cases {
+            assert_ne!(
+                hash_of(style),
+                key,
+                "the style hash ignores {field}: two different styles would share one \
+                 compiled block",
+            );
+        }
+
+        // Every `PatternType` variant has to be distinguishable, parameters and all.
+        let typed = |pattern_type: PatternType| Style {
+            pattern: Some(Pattern {
+                thickness: 2.0,
+                pattern_type,
+                flow_speed: 0.0,
+            }),
+            ..base.clone()
+        };
+        let variants = [
+            PatternType::Solid,
+            PatternType::Dashed {
+                dash: 1.0,
+                gap: 2.0,
+                angle: 0.0,
+            },
+            PatternType::Dashed {
+                dash: 1.0,
+                gap: 2.0,
+                angle: 0.5,
+            },
+            PatternType::Arrowed {
+                segment: 1.0,
+                gap: 2.0,
+                angle: 0.0,
+            },
+            PatternType::Dotted {
+                spacing: 1.0,
+                radius: 2.0,
+            },
+            PatternType::Dotted {
+                spacing: 1.0,
+                radius: 3.0,
+            },
+        ];
+        let mut seen: Vec<u64> = Vec::new();
+        for pattern_type in variants {
+            let h = hash_of(&typed(pattern_type));
+            assert!(
+                !seen.contains(&h),
+                "the style hash collapses {pattern_type:?} onto an earlier pattern",
+            );
+            seen.push(h);
+        }
+    }
+
+    /// The block a primitive reuses is addressed by [`SdfPrimitive::geometry_hash`],
+    /// so each of the three things that decide its compiled bytes has to reach it.
+    #[test]
+    fn geometry_hash_reacts_to_shape_placement_and_style() {
+        let shape = Shape::circle(4.0);
+        let style = Style::solid(Color::WHITE);
+        let build = |shape: &Shape, placement: [f32; 2], style: &Style| {
+            let mut p = SdfPrimitive::new();
+            p.push(shape, style, placement);
+            p.geometry_hash()
+        };
+
+        let key = build(&shape, [0.0, 0.0], &style);
+        assert_eq!(build(&shape, [0.0, 0.0], &style), key, "not deterministic");
+        assert_ne!(
+            build(&Shape::circle(5.0), [0.0, 0.0], &style),
+            key,
+            "geometry_hash ignores the shape",
+        );
+        assert_ne!(
+            build(&shape, [1.0, 0.0], &style),
+            key,
+            "geometry_hash ignores the placement",
+        );
+        assert_ne!(
+            build(&shape, [0.0, 0.0], &Style::solid(Color::BLACK)),
+            key,
+            "geometry_hash ignores the style",
+        );
+        assert_ne!(
+            build(&shape, [0.0, 0.0], &style),
+            {
+                let mut p = SdfPrimitive::new();
+                p.push(&shape, &style, [0.0, 0.0]);
+                p.push(&shape, &style, [0.0, 0.0]);
+                p.geometry_hash()
+            },
+            "geometry_hash ignores the entry count",
+        );
+    }
 }

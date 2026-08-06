@@ -549,6 +549,142 @@ mod tests {
         assert_ne!(rect.hash(), circ.hash());
     }
 
+    /// One perturbation per recipe FIELD, produced by an exhaustive match: a
+    /// `ShapeExpr` variant added without its parameters perturbed here fails to
+    /// COMPILE, so the coverage cannot silently rot.
+    ///
+    /// Array-valued fields are perturbed in their LAST element, which also catches
+    /// a fold that stops short of the end.
+    fn perturbations(shape: &Shape) -> Vec<(&'static str, Shape)> {
+        match shape.expr() {
+            ShapeExpr::RoundedBox { size, radii } => vec![
+                (
+                    "RoundedBox.size",
+                    Shape::rounded_box([size[0], size[1] + 1.0], *radii),
+                ),
+                ("RoundedBox.radii", {
+                    let mut r = *radii;
+                    r[3] += 1.0;
+                    Shape::rounded_box(*size, r)
+                }),
+            ],
+            ShapeExpr::Circle { radius } => {
+                vec![("Circle.radius", Shape::circle(radius + 1.0))]
+            }
+            ShapeExpr::Line { a, b } => vec![
+                ("Line.a", Shape::line([a[0], a[1] + 1.0], *b)),
+                ("Line.b", Shape::line(*a, [b[0], b[1] + 1.0])),
+            ],
+            ShapeExpr::Bezier { p0, p1, p2, p3 } => vec![
+                (
+                    "Bezier.p0",
+                    Shape::bezier([p0[0], p0[1] + 1.0], *p1, *p2, *p3),
+                ),
+                (
+                    "Bezier.p1",
+                    Shape::bezier(*p0, [p1[0], p1[1] + 1.0], *p2, *p3),
+                ),
+                (
+                    "Bezier.p2",
+                    Shape::bezier(*p0, *p1, [p2[0], p2[1] + 1.0], *p3),
+                ),
+                (
+                    "Bezier.p3",
+                    Shape::bezier(*p0, *p1, *p2, [p3[0], p3[1] + 1.0]),
+                ),
+            ],
+            ShapeExpr::Arc {
+                center,
+                radius,
+                start,
+                sweep,
+            } => vec![
+                (
+                    "Arc.center",
+                    Shape::arc([center[0], center[1] + 1.0], *radius, *start, *sweep),
+                ),
+                (
+                    "Arc.radius",
+                    Shape::arc(*center, radius + 1.0, *start, *sweep),
+                ),
+                (
+                    "Arc.start",
+                    Shape::arc(*center, *radius, start + 1.0, *sweep),
+                ),
+                (
+                    "Arc.sweep",
+                    Shape::arc(*center, *radius, *start, sweep + 1.0),
+                ),
+            ],
+            ShapeExpr::Point { heading } => {
+                vec![("Point.heading", Shape::point(heading + 1.0))]
+            }
+            ShapeExpr::Tiling(_) => vec![(
+                "Tiling",
+                Shape::tiling(crate::tiling::Tiling::grid(9.0, 9.0, 9.0)),
+            )],
+            ShapeExpr::Translate(inner, offset) => vec![
+                (
+                    "Translate.offset",
+                    (**inner).clone().translate([offset[0], offset[1] + 1.0]),
+                ),
+                ("Translate.inner", Shape::circle(123.0).translate(*offset)),
+            ],
+            ShapeExpr::Difference(a, b) => vec![
+                ("Difference.lhs", Shape::circle(123.0) - (**b).clone()),
+                ("Difference.rhs", (**a).clone() - Shape::circle(123.0)),
+                ("Difference.op", (**a).clone() | (**b).clone()),
+            ],
+            ShapeExpr::Union(a, b) => vec![
+                ("Union.lhs", Shape::circle(123.0) | (**b).clone()),
+                ("Union.rhs", (**a).clone() | Shape::circle(123.0)),
+                ("Union.op", (**a).clone() & (**b).clone()),
+            ],
+            ShapeExpr::Intersection(a, b) => vec![
+                ("Intersection.lhs", Shape::circle(123.0) & (**b).clone()),
+                ("Intersection.rhs", (**a).clone() & Shape::circle(123.0)),
+                ("Intersection.op", (**a).clone() - (**b).clone()),
+            ],
+        }
+    }
+
+    /// The shape cache is keyed on nothing but [`Shape::hash`], so a recipe field
+    /// the hash ignores makes two DIFFERENT shapes share one evaluated geometry.
+    #[test]
+    fn shape_hash_reacts_to_every_recipe_field() {
+        let one = || Shape::circle(2.0);
+        let other = || Shape::rounded_box([4.0, 6.0], [1.0, 2.0, 3.0, 4.0]);
+        let subjects = [
+            other(),
+            one(),
+            Shape::line([1.0, 2.0], [3.0, 4.0]),
+            Shape::bezier([0.0, 0.0], [1.0, 1.0], [2.0, 1.0], [3.0, 0.0]),
+            Shape::arc([1.0, 2.0], 3.0, 0.5, 1.5),
+            Shape::point(0.25),
+            Shape::tiling(crate::tiling::Tiling::grid(4.0, 5.0, 1.0)),
+            one().translate([7.0, 8.0]),
+            other() - one(),
+            other() | one(),
+            other() & one(),
+        ];
+        for subject in &subjects {
+            let cases = perturbations(subject);
+            assert!(
+                !cases.is_empty(),
+                "no perturbation covers {:?}",
+                subject.expr()
+            );
+            for (field, perturbed) in cases {
+                assert_ne!(
+                    perturbed.hash(),
+                    subject.hash(),
+                    "Shape::hash ignores {field}: two different recipes would share \
+                     one cache slot",
+                );
+            }
+        }
+    }
+
     #[test]
     fn hash_excludes_placement() {
         // The shape is position-free, so two identical bodies hash equal; their
