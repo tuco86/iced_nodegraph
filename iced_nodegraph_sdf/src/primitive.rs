@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use parking_lot::Mutex;
 use web_time::Instant;
 
-use iced_wgpu::core::{Color, Rectangle};
+use iced_wgpu::core::Rectangle;
 use iced_wgpu::graphics::Viewport;
 use iced_wgpu::primitive::{Pipeline, Primitive};
 use iced_wgpu::wgpu;
@@ -24,6 +24,7 @@ use std::collections::HashMap;
 use crate::compile::{
     ENTRY_TILING, EntryMeta, FLAG_CLOSED, compile_local_at, entry_from_meta, entry_meta,
 };
+use crate::hash::Fnv1a;
 use crate::pattern::PatternType;
 use crate::pipeline::arena::ArenaAlloc;
 use crate::pipeline::overflow::{FineReport, OverflowProbe};
@@ -224,7 +225,7 @@ impl SdfPrimitive {
     /// buffers. Two frames with an equal hash produce byte-identical geometry, so
     /// `prepare` can skip the re-evaluation and re-upload (see the slot reuse path).
     fn geometry_hash(&self) -> u64 {
-        let mut h = KeyHasher::new();
+        let mut h = Fnv1a::new();
         h.u32(self.entries.len() as u32);
         for e in &self.entries {
             h.u64(e.shape.hash());
@@ -232,41 +233,7 @@ impl SdfPrimitive {
             h.f32(e.placement[1]);
             hash_style_into(&mut h, &e.style);
         }
-        h.0
-    }
-}
-
-/// FNV-1a hasher for the background cache key (deterministic, native==wasm).
-struct KeyHasher(u64);
-
-impl KeyHasher {
-    fn new() -> Self {
-        Self(0xcbf2_9ce4_8422_2325)
-    }
-    fn u32(&mut self, x: u32) {
-        self.0 ^= x as u64;
-        self.0 = self.0.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    fn f32(&mut self, x: f32) {
-        // Canonicalize so -0.0 == 0.0 and all NaNs collapse (key stability).
-        let b = if x == 0.0 {
-            0
-        } else if x.is_nan() {
-            0x7fc0_0000
-        } else {
-            x.to_bits()
-        };
-        self.u32(b);
-    }
-    fn color(&mut self, c: Color) {
-        self.f32(c.r);
-        self.f32(c.g);
-        self.f32(c.b);
-        self.f32(c.a);
-    }
-    fn u64(&mut self, x: u64) {
-        self.u32(x as u32);
-        self.u32((x >> 32) as u32);
+        h.finish()
     }
 }
 
@@ -284,7 +251,7 @@ impl KeyHasher {
 /// the index valid - tile membership is world-anchored, independent of the
 /// widget's screen position.
 fn cull_key(d: &types::DrawData, grid_base: [i64; 2]) -> u64 {
-    let mut h = KeyHasher::new();
+    let mut h = Fnv1a::new();
     h.u64(grid_base[0] as u64);
     h.u64(grid_base[1] as u64);
     h.f32(d.camera_zoom);
@@ -300,13 +267,13 @@ fn cull_key(d: &types::DrawData, grid_base: [i64; 2]) -> u64 {
     for t in d.tilings {
         h.u32(t);
     }
-    h.0
+    h.finish()
 }
 
 /// Folds a [`Style`]'s geometry-relevant recipe (stops, pattern, transfer, df) into
 /// `h`. Used by [`SdfPrimitive::geometry_hash`] to detect whether a primitive's
 /// compiled output would differ from last frame - so the camera/time are NOT here.
-fn hash_style_into(h: &mut KeyHasher, s: &Style) {
+fn hash_style_into(h: &mut Fnv1a, s: &Style) {
     h.u32(s.stops.len() as u32);
     for st in &s.stops {
         h.f32(st.dist);
@@ -380,7 +347,7 @@ fn hash_style_into(h: &mut KeyHasher, s: &Style) {
 /// so byte-identical styles collide and share one slot. Padding is excluded; it
 /// is always zero and carries no rendered state.
 fn hash_gpu_style(s: &types::GpuStyle) -> u64 {
-    let mut h = KeyHasher::new();
+    let mut h = Fnv1a::new();
     for v in s
         .stop_start
         .iter()
@@ -401,7 +368,7 @@ fn hash_gpu_style(s: &types::GpuStyle) -> u64 {
     h.f32(s.flow_speed);
     h.u32(s.transfer_type);
     h.f32(s.transfer_param);
-    h.0
+    h.finish()
 }
 
 impl Default for SdfPrimitive {
@@ -1761,6 +1728,7 @@ impl Primitive for SdfPrimitive {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iced_wgpu::core::Color;
 
     #[test]
     fn test_primitive_empty() {
@@ -1890,9 +1858,9 @@ mod tests {
         use crate::style::{Stop, Transfer};
 
         fn hash_of(style: &Style) -> u64 {
-            let mut h = KeyHasher::new();
+            let mut h = Fnv1a::new();
             hash_style_into(&mut h, style);
-            h.0
+            h.finish()
         }
 
         let base = Style {

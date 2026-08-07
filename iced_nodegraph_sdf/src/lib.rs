@@ -55,6 +55,7 @@ pub mod style;
 pub mod tiling;
 
 pub(crate) mod compile;
+pub(crate) mod hash;
 pub(crate) mod pipeline;
 pub mod primitive;
 pub(crate) mod shared;

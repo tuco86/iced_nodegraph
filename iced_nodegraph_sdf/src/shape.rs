@@ -29,6 +29,7 @@ use std::collections::HashMap;
 use crate::boolean;
 use crate::curve::Curve;
 use crate::drawable::Drawable;
+use crate::hash::Fnv1a;
 use crate::tiling::Tiling;
 
 /// A position-free geometry recipe: an expression tree of primitives
@@ -123,12 +124,12 @@ impl Shape {
     pub fn rounded_box(size: impl Into<[f32; 2]>, radii: impl Into<[f32; 4]>) -> Self {
         let size = size.into();
         let radii = radii.into();
-        let mut h = Fnv::new();
-        h.write_u32(OP_ROUNDED_BOX);
-        h.write_f32(size[0]);
-        h.write_f32(size[1]);
+        let mut h = Fnv1a::new();
+        h.u32(OP_ROUNDED_BOX);
+        h.f32(size[0]);
+        h.f32(size[1]);
         for r in radii {
-            h.write_f32(r);
+            h.f32(r);
         }
         Shape {
             hash: h.finish(),
@@ -137,9 +138,9 @@ impl Shape {
     }
     /// Circle of `radius`, centred on the local origin. Place it with `translate`.
     pub fn circle(radius: f32) -> Self {
-        let mut h = Fnv::new();
-        h.write_u32(OP_CIRCLE);
-        h.write_f32(radius);
+        let mut h = Fnv1a::new();
+        h.u32(OP_CIRCLE);
+        h.f32(radius);
         Shape {
             hash: h.finish(),
             expr: ShapeExpr::Circle { radius },
@@ -149,12 +150,12 @@ impl Shape {
     pub fn line(a: impl Into<[f32; 2]>, b: impl Into<[f32; 2]>) -> Self {
         let a = a.into();
         let b = b.into();
-        let mut h = Fnv::new();
-        h.write_u32(OP_LINE);
-        h.write_f32(a[0]);
-        h.write_f32(a[1]);
-        h.write_f32(b[0]);
-        h.write_f32(b[1]);
+        let mut h = Fnv1a::new();
+        h.u32(OP_LINE);
+        h.f32(a[0]);
+        h.f32(a[1]);
+        h.f32(b[0]);
+        h.f32(b[1]);
         Shape {
             hash: h.finish(),
             expr: ShapeExpr::Line { a, b },
@@ -171,11 +172,11 @@ impl Shape {
         let p1 = p1.into();
         let p2 = p2.into();
         let p3 = p3.into();
-        let mut h = Fnv::new();
-        h.write_u32(OP_BEZIER);
+        let mut h = Fnv1a::new();
+        h.u32(OP_BEZIER);
         for p in [p0, p1, p2, p3] {
-            h.write_f32(p[0]);
-            h.write_f32(p[1]);
+            h.f32(p[0]);
+            h.f32(p[1]);
         }
         Shape {
             hash: h.finish(),
@@ -186,13 +187,13 @@ impl Shape {
     /// `center`, starting at angle `start`.
     pub fn arc(center: impl Into<[f32; 2]>, radius: f32, start: f32, sweep: f32) -> Self {
         let center = center.into();
-        let mut h = Fnv::new();
-        h.write_u32(OP_ARC);
-        h.write_f32(center[0]);
-        h.write_f32(center[1]);
-        h.write_f32(radius);
-        h.write_f32(start);
-        h.write_f32(sweep);
+        let mut h = Fnv1a::new();
+        h.u32(OP_ARC);
+        h.f32(center[0]);
+        h.f32(center[1]);
+        h.f32(radius);
+        h.f32(start);
+        h.f32(sweep);
         Shape {
             hash: h.finish(),
             expr: ShapeExpr::Arc {
@@ -206,9 +207,9 @@ impl Shape {
     /// A single oriented point at the local origin (place it with `translate`);
     /// `heading` orients its distance field.
     pub fn point(heading: f32) -> Self {
-        let mut h = Fnv::new();
-        h.write_u32(OP_POINT);
-        h.write_f32(heading);
+        let mut h = Fnv1a::new();
+        h.u32(OP_POINT);
+        h.f32(heading);
         Shape {
             hash: h.finish(),
             expr: ShapeExpr::Point { heading },
@@ -216,12 +217,12 @@ impl Shape {
     }
     /// An infinite analytic background tiling (grid/dots/triangles/hex).
     pub fn tiling(tiling: Tiling) -> Self {
-        let mut h = Fnv::new();
-        h.write_u32(OP_TILING);
+        let mut h = Fnv1a::new();
+        h.u32(OP_TILING);
         let (tt, params) = tiling.to_gpu();
-        h.write_u32(tt as u32);
+        h.u32(tt as u32);
         for p in params {
-            h.write_f32(p);
+            h.f32(p);
         }
         Shape {
             hash: h.finish(),
@@ -231,12 +232,12 @@ impl Shape {
     /// This shape shifted by `offset` (an operation, returns a new `Shape`).
     pub fn translate(self, offset: impl Into<[f32; 2]>) -> Self {
         let offset = offset.into();
-        let mut h = Fnv::new();
-        h.write_u32(OP_TRANSLATE);
-        h.write_f32(offset[0]);
-        h.write_f32(offset[1]);
+        let mut h = Fnv1a::new();
+        h.u32(OP_TRANSLATE);
+        h.f32(offset[0]);
+        h.f32(offset[1]);
         // Fold in the child's hash BEFORE moving it into the box.
-        h.write_u64(self.hash);
+        h.u64(self.hash);
         Shape {
             hash: h.finish(),
             expr: ShapeExpr::Translate(Box::new(self), offset),
@@ -248,10 +249,10 @@ impl std::ops::Sub for Shape {
     type Output = Shape;
     /// `a - b` = subtract `b` from `a`.
     fn sub(self, rhs: Shape) -> Shape {
-        let mut h = Fnv::new();
-        h.write_u32(OP_DIFFERENCE);
-        h.write_u64(self.hash);
-        h.write_u64(rhs.hash);
+        let mut h = Fnv1a::new();
+        h.u32(OP_DIFFERENCE);
+        h.u64(self.hash);
+        h.u64(rhs.hash);
         Shape {
             hash: h.finish(),
             expr: ShapeExpr::Difference(Box::new(self), Box::new(rhs)),
@@ -262,10 +263,10 @@ impl std::ops::BitOr for Shape {
     type Output = Shape;
     /// `a | b` = the union of `a` and `b` (set algebra).
     fn bitor(self, rhs: Shape) -> Shape {
-        let mut h = Fnv::new();
-        h.write_u32(OP_UNION);
-        h.write_u64(self.hash);
-        h.write_u64(rhs.hash);
+        let mut h = Fnv1a::new();
+        h.u32(OP_UNION);
+        h.u64(self.hash);
+        h.u64(rhs.hash);
         Shape {
             hash: h.finish(),
             expr: ShapeExpr::Union(Box::new(self), Box::new(rhs)),
@@ -276,10 +277,10 @@ impl std::ops::BitAnd for Shape {
     type Output = Shape;
     /// `a & b` = the intersection of `a` and `b`.
     fn bitand(self, rhs: Shape) -> Shape {
-        let mut h = Fnv::new();
-        h.write_u32(OP_INTERSECTION);
-        h.write_u64(self.hash);
-        h.write_u64(rhs.hash);
+        let mut h = Fnv1a::new();
+        h.u32(OP_INTERSECTION);
+        h.u64(self.hash);
+        h.u64(rhs.hash);
         Shape {
             hash: h.finish(),
             expr: ShapeExpr::Intersection(Box::new(self), Box::new(rhs)),
@@ -300,47 +301,6 @@ const OP_INTERSECTION: u32 = 8;
 const OP_TILING: u32 = 9;
 const OP_ARC: u32 = 10;
 const OP_POINT: u32 = 11;
-
-/// Canonical bit pattern of an `f32`: `-0.0` collapses to `+0.0` and every NaN
-/// to one quiet NaN, so semantically-equal operands hash equal across platforms.
-fn canon_bits(x: f32) -> u32 {
-    if x.is_nan() {
-        0x7fc0_0000
-    } else if x == 0.0 {
-        0
-    } else {
-        x.to_bits()
-    }
-}
-
-/// FNV-1a hasher over little-endian bytes: deterministic and identical on native
-/// and wasm (unlike `std`'s `DefaultHasher`, which is only stable in-process).
-struct Fnv(u64);
-
-impl Fnv {
-    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-    const PRIME: u64 = 0x0000_0100_0000_01b3;
-
-    fn new() -> Self {
-        Self(Self::OFFSET)
-    }
-    fn write_u32(&mut self, v: u32) {
-        for b in v.to_le_bytes() {
-            self.0 ^= b as u64;
-            self.0 = self.0.wrapping_mul(Self::PRIME);
-        }
-    }
-    fn write_u64(&mut self, v: u64) {
-        self.write_u32((v & 0xffff_ffff) as u32);
-        self.write_u32((v >> 32) as u32);
-    }
-    fn write_f32(&mut self, x: f32) {
-        self.write_u32(canon_bits(x));
-    }
-    fn finish(&self) -> u64 {
-        self.0
-    }
-}
 
 impl Shape {
     /// Whether this shape is worth caching across frames. Only the expensive

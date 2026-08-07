@@ -6,6 +6,27 @@ use iced_wgpu::wgpu::{self, BindingResource};
 const BUFFER_GROWTH_FACTOR: f32 = 1.5;
 const BUFFER_MIN_ITEMS: usize = 16;
 
+/// Serializes `items` into `scratch`, sized to exactly `items.len() *
+/// T::SHADER_SIZE`.
+///
+/// The write cannot fail: `encase` validates the destination against the same
+/// `T::SHADER_SIZE` the resize above uses, so a short buffer is
+/// unrepresentable here. This is the reason the crate's drop-and-count
+/// overflow handling lives at the capacity check in each caller, not around
+/// the serialization.
+fn fill_scratch<T: ShaderType + ShaderSize + WriteInto>(scratch: &mut Vec<u8>, items: &[T]) {
+    let item_size = T::SHADER_SIZE.get() as usize;
+    scratch.clear();
+    scratch.resize(items.len() * item_size, 0);
+    for (i, item) in items.iter().enumerate() {
+        let slice = &mut scratch[i * item_size..(i + 1) * item_size];
+        let mut writer = encase::StorageBuffer::new(slice);
+        writer
+            .write(item)
+            .expect("Failed to write to storage buffer");
+    }
+}
+
 /// GPU buffer wrapper with incremental update support.
 ///
 /// Manages a GPU storage buffer alongside a CPU-side Vec mirror. The GPU buffer
@@ -136,12 +157,7 @@ impl<T: ShaderSize> Buffer<T> {
             self.generation += 1;
             self.rewrite_all(queue);
         } else {
-            self.scratch.clear();
-            self.scratch.resize(item_size, 0);
-            let mut writer = encase::StorageBuffer::new(&mut self.scratch[..]);
-            writer
-                .write(&self.buffer_vec[slot])
-                .expect("Failed to write to storage buffer");
+            fill_scratch(&mut self.scratch, &self.buffer_vec[slot..slot + 1]);
             queue.write_buffer(&self.buffer_wgpu, offset as u64, &self.scratch);
             self.written_bytes += self.scratch.len() as u64;
         }
@@ -156,19 +172,8 @@ impl<T: ShaderSize> Buffer<T> {
             return;
         }
 
-        let item_size = T::SHADER_SIZE.get() as usize;
-        let total_size = self.live_len * item_size;
-        self.scratch.clear();
-        self.scratch.resize(total_size, 0);
-
-        for (i, item) in self.buffer_vec[..self.live_len].iter().enumerate() {
-            let offset = i * item_size;
-            let slice = &mut self.scratch[offset..offset + item_size];
-            let mut writer = encase::StorageBuffer::new(slice);
-            writer
-                .write(item)
-                .expect("Failed to write to storage buffer");
-        }
+        let live = self.live_len;
+        fill_scratch(&mut self.scratch, &self.buffer_vec[..live]);
         queue.write_buffer(&self.buffer_wgpu, 0, &self.scratch);
         self.written_bytes += self.scratch.len() as u64;
     }
@@ -211,19 +216,8 @@ impl<T: ShaderSize> Buffer<T> {
             self.generation += 1;
             self.rewrite_all(queue);
         } else {
-            let total_write = items.len() * item_size;
             let offset = start_slot * item_size;
-            self.scratch.clear();
-            self.scratch.resize(total_write, 0);
-
-            for (i, item) in items.iter().enumerate() {
-                let item_offset = i * item_size;
-                let slice = &mut self.scratch[item_offset..item_offset + item_size];
-                let mut writer = encase::StorageBuffer::new(slice);
-                writer
-                    .write(item)
-                    .expect("Failed to write to storage buffer");
-            }
+            fill_scratch(&mut self.scratch, items);
             queue.write_buffer(&self.buffer_wgpu, offset as u64, &self.scratch);
             self.written_bytes += self.scratch.len() as u64;
         }
@@ -271,17 +265,7 @@ impl<T: ShaderSize> Buffer<T> {
             self.generation += 1;
             self.rewrite_all(queue);
         } else {
-            let total_write = items.len() * item_size;
-            self.scratch.clear();
-            self.scratch.resize(total_write, 0);
-            for (i, item) in items.iter().enumerate() {
-                let item_offset = i * item_size;
-                let slice = &mut self.scratch[item_offset..item_offset + item_size];
-                let mut writer = encase::StorageBuffer::new(slice);
-                writer
-                    .write(item)
-                    .expect("Failed to write to storage buffer");
-            }
+            fill_scratch(&mut self.scratch, items);
             queue.write_buffer(
                 &self.buffer_wgpu,
                 (offset * item_size) as u64,
