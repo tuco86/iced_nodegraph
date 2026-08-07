@@ -34,8 +34,11 @@
 //! - Integer implicitly converts to Float
 //! - Single-connection pins reject additional connections
 
-use demo_common::{NodeContentStyle, simple_node};
-use demo_common::{ScreenshotHelper, ScreenshotMessage};
+mod content;
+mod screenshot;
+
+use content::simple_node;
+use demo_common::NodeContentStyle;
 use iced::{
     Color, Element, Length, Point, Subscription, Theme, Vector,
     alignment::Horizontal,
@@ -45,6 +48,7 @@ use iced_nodegraph::{
     KeyCombo, Keymap, PinInfo as NgPinInfo, PinRef, PinStatus, PinStyle, default_pin_style, edge,
     node, pin,
 };
+use screenshot::{ScreenshotHelper, ScreenshotMessage};
 use std::collections::{HashMap, HashSet};
 
 #[cfg(feature = "wasm")]

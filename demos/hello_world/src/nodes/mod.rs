@@ -38,13 +38,12 @@ pub use int_slider::{IntSliderConfig, int_slider_node};
 pub use math::math_node;
 pub use theme_node::{theme_extended_node, theme_node};
 
-use demo_common::NodeContentStyle;
 use iced::{
-    Color, Element, Length, Padding, Theme,
+    Color, Element, Length, Theme,
     alignment::Horizontal,
-    widget::{Container, Row, container, row, text},
+    widget::{Row, container, row, text},
 };
-use iced_nodegraph::{ColorQuad, EdgeCurve, PinShape, TilingKind, node_header};
+use iced_nodegraph::{ColorQuad, EdgeCurve, PinShape, TilingKind};
 
 /// Semantic pin colors for consistent visual language across nodes.
 /// Based on "Industrial Precision" design system.
@@ -102,10 +101,6 @@ pub enum NodeValue {
     Float(f32),
     Int(i32),
     Color(Color),
-    /// Produced by the Bool Toggle node. No style field is a bool, so no config
-    /// node reads it yet; the variant keeps `InputNodeType::output_value` total.
-    #[allow(dead_code)]
-    Bool(bool),
     EdgeCurve(EdgeCurve),
     PinShape(PinShape),
     PatternType(PatternType),
@@ -352,17 +347,21 @@ pub enum InputNodeType {
 }
 
 impl InputNodeType {
-    /// Returns the output value for this input node
-    pub fn output_value(&self) -> NodeValue {
+    /// The value this input node offers its output pin, or `None` when the
+    /// node produces nothing the demo's config nodes can consume - no style
+    /// field is a bool, so Bool Toggle has no reader.
+    pub fn output_value(&self) -> Option<NodeValue> {
         match self {
-            Self::FloatSlider { value, .. } => NodeValue::Float(*value),
-            Self::IntSlider { value, .. } => NodeValue::Int(*value),
-            Self::BoolToggle { value, .. } => NodeValue::Bool(*value),
-            Self::EdgeCurveSelector { value } => NodeValue::EdgeCurve(*value),
-            Self::PinShapeSelector { value } => NodeValue::PinShape(*value),
-            Self::PatternTypeSelector { value } => NodeValue::PatternType(*value),
-            Self::TilingKindSelector { value } => NodeValue::TilingKind(*value),
-            Self::ColorPicker { color } | Self::ColorPreset { color } => NodeValue::Color(*color),
+            Self::FloatSlider { value, .. } => Some(NodeValue::Float(*value)),
+            Self::IntSlider { value, .. } => Some(NodeValue::Int(*value)),
+            Self::BoolToggle { .. } => None,
+            Self::EdgeCurveSelector { value } => Some(NodeValue::EdgeCurve(*value)),
+            Self::PinShapeSelector { value } => Some(NodeValue::PinShape(*value)),
+            Self::PatternTypeSelector { value } => Some(NodeValue::PatternType(*value)),
+            Self::TilingKindSelector { value } => Some(NodeValue::TilingKind(*value)),
+            Self::ColorPicker { color } | Self::ColorPreset { color } => {
+                Some(NodeValue::Color(*color))
+            }
         }
     }
 }
@@ -392,7 +391,7 @@ impl NodeType {
     /// Returns the output value for this node, if it produces one
     pub fn output_value(&self) -> Option<NodeValue> {
         match self {
-            Self::Input(input) => Some(input.output_value()),
+            Self::Input(input) => input.output_value(),
             Self::Math(state) => state.result().map(NodeValue::Float),
             Self::ColorQuad(state) => Some(NodeValue::ColorQuad(state.quad())),
             Self::Vec2(state) => {
@@ -421,31 +420,7 @@ where
     }
 }
 
-/// Creates a themed title bar container for nodes.
-///
-/// Uses `node_header` from the library as the base container with proper
-/// rounded corners, then adds title text with appropriate padding.
-pub fn node_title_bar<'a, Message>(
-    title: impl Into<String>,
-    style: NodeContentStyle,
-) -> Container<'a, Message, Theme, iced::Renderer>
-where
-    Message: Clone + 'a,
-{
-    let title_text = text(title.into()).size(13).color(style.title_text);
-
-    // Use node_header for the rounded corner container
-    node_header(
-        container(title_text).padding(Padding {
-            top: 4.0,
-            bottom: 4.0,
-            left: 8.0,
-            right: 8.0,
-        }),
-        style.title_background,
-        style.corner_radius,
-    )
-}
+pub use demo_common::node_title_bar;
 
 /// Creates a collapsible section header with optional collapsed pins inline.
 /// Format when expanded: "──── Label - ────"

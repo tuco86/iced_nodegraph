@@ -1,35 +1,13 @@
-use demo_common::NodeContentStyle;
+use demo_common::{NodeContentStyle, node_title_bar};
 use iced::{
-    Length, Padding,
+    Length,
     alignment::Horizontal,
-    widget::{Container, column, container, row, text},
+    widget::{column, container, row, text},
 };
-use iced_nodegraph::{NodeStyle, node_header, pin};
+use iced_nodegraph::{NodeStyle, pin};
 
 /// Marker type for generic data pins
 pub struct Data;
-
-/// Creates a themed title bar container for nodes.
-fn node_title_bar<'a, Message>(
-    title: impl Into<String>,
-    style: NodeContentStyle,
-) -> Container<'a, Message, iced::Theme, iced::Renderer>
-where
-    Message: Clone + 'a,
-{
-    let title_text = text(title.into()).size(13).color(style.title_text);
-
-    node_header(
-        container(title_text).padding(Padding {
-            top: 4.0,
-            bottom: 4.0,
-            left: 8.0,
-            right: 8.0,
-        }),
-        style.title_background,
-        style.corner_radius,
-    )
-}
 
 /// Creates a styled node with input and output pins.
 ///

@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-use crate::ids::{EdgeId, NodeId};
+use crate::ids::{EdgeData, EdgeId, NodeId};
 use crate::nodes::{
     BoolToggleConfig, ColorQuadNode, ConfigNodeType, EdgeConfigInputs, EdgeSections,
     FloatSliderConfig, GraphConfigInputs, InputNodeType, IntSliderConfig, MathNodeState,
@@ -199,16 +199,6 @@ pub struct SavedEdge {
     pub to_node: NodeId,
     /// Target pin label (unique within target node)
     pub to_pin: String,
-}
-
-/// Edge data for in-memory representation.
-/// Uses &'static str for pin labels to match the compile-time pin constants.
-#[derive(Debug, Clone)]
-pub struct EdgeData {
-    pub from_node: NodeId,
-    pub from_pin: &'static str,
-    pub to_node: NodeId,
-    pub to_pin: &'static str,
 }
 
 /// Maps a string pin label to its static equivalent.

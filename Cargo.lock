@@ -840,7 +840,6 @@ version = "0.5.0-dev"
 dependencies = [
  "iced",
  "iced_nodegraph",
- "png",
 ]
 
 [[package]]
@@ -868,6 +867,7 @@ dependencies = [
  "demo_common",
  "iced",
  "iced_nodegraph",
+ "png",
  "wasm-bindgen",
 ]
 

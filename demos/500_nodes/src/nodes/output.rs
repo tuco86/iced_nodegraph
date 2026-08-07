@@ -1,28 +1,11 @@
 use iced::{
-    Length, Theme,
+    Theme,
     widget::{column, container, text},
 };
 use iced_nodegraph::pin;
 
 use super::colors::{self, SPACING_PIN};
-
-fn title_bar<'a, Message>(
-    title: &'a str,
-    theme: &'a Theme,
-) -> iced::widget::Container<'a, Message, Theme, iced::Renderer>
-where
-    Message: 'a,
-{
-    let palette = theme.extended_palette();
-    container(text(title).size(12).width(Length::Fill))
-        .width(Length::Fill)
-        .padding([2, 8])
-        .style(move |_: &Theme| container::Style {
-            background: None,
-            text_color: Some(palette.background.base.text),
-            ..container::Style::default()
-        })
-}
+use super::title_bar;
 
 pub fn base_color_node<'a, Message>(theme: &'a Theme) -> iced::Element<'a, Message>
 where

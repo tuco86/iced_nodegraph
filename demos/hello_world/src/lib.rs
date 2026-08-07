@@ -57,7 +57,7 @@ use iced_palette::{
     Command, Shortcut, command, command_palette, find_matching_shortcut, focus_input,
     get_filtered_command_index, get_filtered_count, is_toggle_shortcut, navigate_down, navigate_up,
 };
-use ids::{EdgeId, NodeId, PinLabel, generate_edge_id, generate_node_id};
+use ids::{EdgeData, EdgeId, NodeId, PinLabel, generate_edge_id, generate_node_id};
 use nodes::{
     BoolToggleConfig, ColorQuadNode, ConfigNodeType, EdgeConfigInputs, EdgeSection, EdgeSections,
     FloatSliderConfig, GraphConfigInputs, InputNodeType, IntSliderConfig, MathNodeState,
@@ -68,20 +68,8 @@ use nodes::{
     node, node_config_node, pattern_type_selector_node, pin_config_node, pin_shape_selector_node,
     theme_extended_node, theme_node, tiling_kind_selector_node, vec2_node,
 };
-#[cfg(not(target_arch = "wasm32"))]
-use persistence::EdgeData;
 use std::collections::{HashMap, HashSet};
 use style_overlay::{EdgeOverlay, GraphOverlay, NodeOverlay, PinOverlay};
-
-/// Edge data for in-memory representation (WASM version).
-#[cfg(target_arch = "wasm32")]
-#[derive(Debug, Clone)]
-pub struct EdgeData {
-    pub from_node: NodeId,
-    pub from_pin: PinLabel,
-    pub to_node: NodeId,
-    pub to_pin: PinLabel,
-}
 
 #[cfg(feature = "wasm")]
 use wasm_bindgen::prelude::*;
@@ -842,13 +830,15 @@ impl Application {
 
             if let (Some(from_type), Some(to_type)) = (from_node_type, to_node_type) {
                 // Handle Input → Config connections
-                if let (NodeType::Input(input), NodeType::Config(_)) = (&from_type, &to_type) {
-                    let value = input.output_value();
+                if let (NodeType::Input(input), NodeType::Config(_)) = (&from_type, &to_type)
+                    && let Some(value) = input.output_value()
+                {
                     self.apply_value_to_config_node(&edge.to_node, &edge.to_pin, &value);
                 }
                 // Handle Config → Input connections (reverse direction)
-                if let (NodeType::Config(_), NodeType::Input(input)) = (&from_type, &to_type) {
-                    let value = input.output_value();
+                if let (NodeType::Config(_), NodeType::Input(input)) = (&from_type, &to_type)
+                    && let Some(value) = input.output_value()
+                {
                     self.apply_value_to_config_node(&edge.from_node, &edge.from_pin, &value);
                 }
                 // Handle Math → Config connections

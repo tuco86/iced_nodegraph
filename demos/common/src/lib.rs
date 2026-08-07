@@ -1,8 +1,6 @@
-//! Shared utilities for iced_nodegraph demos: themed node content (title bar
-//! plus body) and `--screenshot` capture.
+//! Shared utilities for iced_nodegraph demos: the theme-derived node content
+//! palette and the title bar built from it.
 
 mod content;
-mod screenshot;
 
-pub use content::{NodeContentStyle, simple_node};
-pub use screenshot::{ScreenshotHelper, ScreenshotMessage};
+pub use content::{NodeContentStyle, node_title_bar};

@@ -29,6 +29,18 @@ pub type EdgeId = String;
 /// Uses &'static str for compile-time pin labels defined as constants.
 pub type PinLabel = &'static str;
 
+/// An edge in memory: the two endpoints it wires, by node id and pin label.
+///
+/// Distinct from `persistence::SavedEdge`, which carries owned `String` pin
+/// labels because a label read back from disk is not `'static`.
+#[derive(Debug, Clone)]
+pub struct EdgeData {
+    pub from_node: NodeId,
+    pub from_pin: PinLabel,
+    pub to_node: NodeId,
+    pub to_pin: PinLabel,
+}
+
 /// Generates a new unique node ID.
 pub fn generate_node_id() -> NodeId {
     nanoid!(ID_LENGTH, &ALPHABET)

@@ -9,4 +9,3 @@ publish = false
 [dependencies]
 iced = { workspace = true, features = ["wgpu", "crisp", "thread-pool", "linux-theme-detection", "x11", "wayland"] }
 iced_nodegraph.workspace = true
-png.workspace = true

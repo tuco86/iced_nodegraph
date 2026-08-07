@@ -25,6 +25,7 @@ wasm = ["console_error_panic_hook", "iced/fira-sans", "wasm-bindgen"]
 demo_common.workspace = true
 iced = { workspace = true, features = ["wgpu", "crisp", "thread-pool", "linux-theme-detection", "x11", "wayland"] }
 iced_nodegraph.workspace = true
+png.workspace = true
 
 console_error_panic_hook = { workspace = true, optional = true }
 wasm-bindgen = { workspace = true, optional = true }

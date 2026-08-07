@@ -6,7 +6,30 @@ mod output;
 mod texture;
 mod vector;
 
-use iced::Theme;
+use iced::{
+    Length, Theme,
+    widget::{container, text},
+};
+
+/// The demo's node header: the title in the theme's text colour over the node
+/// fill, with no background of its own.
+pub(super) fn title_bar<'a, Message>(
+    title: &'a str,
+    theme: &'a Theme,
+) -> iced::widget::Container<'a, Message, Theme, iced::Renderer>
+where
+    Message: 'a,
+{
+    let palette = theme.extended_palette();
+    container(text(title).size(12).width(Length::Fill))
+        .width(Length::Fill)
+        .padding([2, 8])
+        .style(move |_: &Theme| container::Style {
+            background: None,
+            text_color: Some(palette.background.base.text),
+            ..container::Style::default()
+        })
+}
 
 /// All available node types in the shader graph.
 #[derive(Debug, Clone, Copy, PartialEq)]
