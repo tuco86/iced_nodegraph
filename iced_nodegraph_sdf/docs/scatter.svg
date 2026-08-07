@@ -91,8 +91,8 @@
       <text x="12" y="124">keep holds interior-only tiles</text>
       <text x="532" y="62">one workgroup per LIVE coarse tile: bitonic</text>
       <text x="532" y="76">sort by (entry, seg) &#8212; deterministic despite</text>
-      <text x="532" y="90">atomic appends &#8212; then 16 threads re-cull</text>
-      <text x="532" y="104">the 16px fine tiles into 16-bit refs</text>
+      <text x="532" y="90">atomic appends &#8212; then 64 threads re-cull</text>
+      <text x="532" y="104">the 8px fine tiles into 16-bit refs</text>
     </g>
     <g stroke="#9aa6b4" stroke-width="1.4" fill="none">
       <path d="M 380 28 C 440 28 470 48 516 58" marker-end="url(#arG)"/>

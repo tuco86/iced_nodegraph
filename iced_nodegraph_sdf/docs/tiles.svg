@@ -1,13 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 520" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, sans-serif">
-  <rect x="0" y="0" width="960" height="520" rx="12" fill="#fbfcfe" stroke="#d9dee5"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 544" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, sans-serif">
+  <rect x="0" y="0" width="960" height="544" rx="12" fill="#fbfcfe" stroke="#d9dee5"/>
   <text x="32" y="40" font-size="20" font-weight="700" fill="#1b2026">A two-level tile index</text>
-  <text x="32" y="60" font-size="13" fill="#5b6672">A compute shader builds two grids. Coarse 64px tiles hold the heavy (segment, entry) cull results; the 16x more</text>
-  <text x="32" y="77" font-size="13" fill="#5b6672">numerous 16px fine tiles hold only compact 16-bit indices into them - one indirection for a far smaller fine buffer.</text>
+  <text x="32" y="60" font-size="13" fill="#5b6672">A compute shader builds two grids. Coarse 64px tiles hold the heavy (segment, entry) cull results; the 64x more</text>
+  <text x="32" y="77" font-size="13" fill="#5b6672">numerous 8px fine tiles hold only compact 16-bit indices into them - one indirection for a far smaller fine buffer.</text>
 
-  <!-- grid: one coarse tile = 4x4 fine tiles -->
+  <!-- grid: schematic, 4x4 fine cells drawn per coarse tile; the real ratio is 8x8 -->
   <g transform="translate(32,92)">
     <rect x="0" y="0" width="384" height="384" fill="#ffffff" stroke="#cfd8e3"/>
-    <!-- fine 16px lines (light): 6x6 cells of 64px? use 24px cells visually = 16 cells -->
     <g stroke="#eef2f7" stroke-width="1">
       <line x1="24" y1="0" x2="24" y2="384"/><line x1="48" y1="0" x2="48" y2="384"/>
       <line x1="72" y1="0" x2="72" y2="384"/><line x1="120" y1="0" x2="120" y2="384"/>
@@ -35,7 +34,7 @@
     <text x="100" y="112" font-size="11" font-weight="700" fill="#7048e8">coarse 64px</text>
     <!-- highlight one fine tile within it -->
     <rect x="120" y="120" width="24" height="24" fill="#2f6df6" opacity="0.30" stroke="#2f6df6" stroke-width="2"/>
-    <text x="132" y="136" font-size="9" fill="#1b2026" text-anchor="middle">16px</text>
+    <text x="132" y="136" font-size="9" fill="#1b2026" text-anchor="middle">8px</text>
   </g>
 
   <!-- right: the two slot lists -->
@@ -52,7 +51,7 @@
     <text x="0" y="104" font-size="11" fill="#5b6672">Few coarse tiles, so the fat 4KB/tile buffer is cheap.</text>
 
     <!-- fine index list -->
-    <text x="0" y="150" font-size="13" font-weight="700" fill="#2f6df6">Fine tile &#183; 128 slots</text>
+    <text x="0" y="150" font-size="13" font-weight="700" fill="#2f6df6">Fine tile &#183; 64 slots</text>
     <text x="0" y="168" font-size="11" fill="#5b6672">each slot = one 16-bit index into the coarse result above</text>
     <g font-size="12" font-family="ui-monospace, monospace">
       <rect x="0" y="180" width="44" height="30" rx="5" fill="#dbeafe" stroke="#2f6df6"/>
@@ -63,7 +62,7 @@
       <text x="126" y="200" fill="#1b2026" text-anchor="middle">0</text>
       <text x="160" y="200" fill="#5b6672">... packed 2 per u32</text>
     </g>
-    <text x="0" y="236" font-size="11" fill="#5b6672">16x more fine tiles, but 2 bytes/slot instead of 8.</text>
+    <text x="0" y="236" font-size="11" fill="#5b6672">64x more fine tiles, but 2 bytes/slot instead of 8.</text>
 
     <!-- indirection arrows -->
     <defs>
@@ -76,5 +75,6 @@
     <text x="0" y="324" font-size="12" fill="#3a424c">parent coarse result, then shades as usual.</text>
   </g>
 
-  <text x="32" y="502" font-size="12" fill="#5b6672">Built by scatter: each (entry, segment) visits only tiles in its reach; a per-tile sort orders the result, then 16 threads re-cull the fine tiles into 16-bit indices.</text>
+  <text x="32" y="502" font-size="12" fill="#5b6672">Built by scatter: each (entry, segment) visits only tiles in its reach; a per-tile sort orders the result, then 64 threads re-cull the fine tiles into 16-bit indices.</text>
+  <text x="32" y="520" font-size="12" fill="#5b6672">Grid is schematic: 4x4 fine cells drawn per coarse tile; the real ratio is 8x8.</text>
 </svg>
