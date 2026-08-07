@@ -183,9 +183,7 @@ where
         // never appears. Mirror the camera the draw/update paths use so the
         // pop-out anchors and scales with the node content beneath it.
         let state = tree.state.downcast_ref::<NodeGraphState>();
-        let camera = state
-            .camera
-            .with_viewport_origin(layout.bounds().position().into_euclid().to_vector());
+        let camera = state.camera_for(layout);
 
         // Collect each node's overlay (most yield None). Child layouts are in
         // the widget's layout-absolute space; `CameraOverlay` applies the

@@ -49,6 +49,18 @@ use crate::style::{
     PinStyle, SelectionBoxStyle,
 };
 
+/// Pin click detection threshold, in screen pixels: divided by zoom before
+/// comparing against world-space distances, so the hit target stays constant on
+/// screen.
+///
+/// Also the size the node body opens up for a pin - see
+/// `style::defaults::PIN_CUTOUT_RADIUS`.
+pub(crate) const PIN_CLICK_THRESHOLD: f32 = 8.0;
+
+/// Edge-cut click distance, in screen pixels, scaled by 1/zoom at the
+/// comparison site like [`PIN_CLICK_THRESHOLD`].
+pub(crate) const EDGE_CUT_THRESHOLD: f32 = 10.0;
+
 /// Per-node style callback: theme + status -> resolved style. Used by [`Node`].
 pub(crate) type NodeStyleFn<'a> = Box<dyn Fn(&Theme, NodeStatus) -> NodeStyle + 'a>;
 /// Per-edge style callback: theme + status + both endpoint pin infos (in draw

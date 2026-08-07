@@ -68,7 +68,7 @@ const PIN_RADIUS: f32 = 5.0;
 ///
 /// It also leaves room for the halo a valid drop target wears, which fills
 /// exactly the gap between the two.
-const PIN_CUTOUT_RADIUS: f32 = crate::node_graph::widget::update::PIN_CLICK_THRESHOLD;
+const PIN_CUTOUT_RADIUS: f32 = crate::node_graph::PIN_CLICK_THRESHOLD;
 
 /// Complete theme-derived node style, with the selected look expressed in full
 /// rather than as a border tweak.

@@ -329,8 +329,11 @@ Two behaviours worth knowing before touching `widget/update.rs`:
   Releasing while snapped keeps the connection, releasing while unsnapped
   discards the drag. So one drag can report several connections.
 - **Hit thresholds.** `PIN_CLICK_THRESHOLD` (8.0) and `EDGE_CUT_THRESHOLD`
-  (10.0) in `widget/update.rs` are screen pixels, divided by `camera.zoom()` at
-  the comparison sites so the on-screen hit target stays constant at any zoom.
+  (10.0) in `node_graph/mod.rs` are screen pixels, divided by `camera.zoom()`
+  at the comparison sites so the on-screen hit target stays constant at any
+  zoom. They live there, not in `widget/update.rs`, because `style/defaults.rs`
+  ties `PIN_CUTOUT_RADIUS` to the first one and must not reach into the
+  interaction module.
 
 ## Platform Notes
 

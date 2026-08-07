@@ -8,24 +8,15 @@
 
 use super::*;
 use crate::node_graph::input::KeyAction;
+use crate::node_graph::{EDGE_CUT_THRESHOLD, PIN_CLICK_THRESHOLD};
 use iced_widget::core::{touch, window};
 use std::collections::HashSet;
 
-/// Pin click detection threshold, in screen pixels: divided by zoom before
-/// comparing against world-space distances, so the hit target stays constant on
-/// screen.
-///
-/// Also the size the node body opens up for a pin - see
-/// `style::defaults::PIN_CUTOUT_RADIUS`.
-pub(crate) const PIN_CLICK_THRESHOLD: f32 = 8.0;
-
-// Hysteresis thresholds for edge snap/unsnap (prevents jitter at boundary).
-// Screen px, scaled by 1/zoom at the comparison sites like PIN_CLICK_THRESHOLD.
+/// Hysteresis thresholds for edge snap/unsnap (prevents jitter at boundary).
+/// Screen px, scaled by 1/zoom at the comparison sites like
+/// [`PIN_CLICK_THRESHOLD`].
 const SNAP_THRESHOLD: f32 = 10.0; // Distance to enter snap zone
 const UNSNAP_THRESHOLD: f32 = 15.0; // Distance to leave snap zone (larger = more stable)
-
-// Edge-cut click distance (screen px, scaled by 1/zoom like the above)
-const EDGE_CUT_THRESHOLD: f32 = 10.0;
 
 // Touch gesture thresholds: maximum travel (screen px) and duration for a
 // press+lift pair to count as a tap.
@@ -91,9 +82,7 @@ where
         // child event propagation) aligns when the graph is not at the window
         // origin. Drag deltas and emitted positions are relative or use stored
         // world coordinates, so this origin term cancels there.
-        state.camera = state
-            .camera
-            .with_viewport_origin(layout.bounds().position().into_euclid().to_vector());
+        state.camera = state.camera_for(layout);
 
         // Drop the pending selection once the host has moved on - it either applied
         // what we reported or set its own value; either way its word is final.
@@ -586,32 +575,22 @@ where
                                 None => continue,
                             };
 
-                            // Get pin positions and sides for bezier calculation
-                            let from_pin_data =
-                                layout
-                                    .children()
-                                    .nth(from_node_idx)
-                                    .and_then(|node_layout| {
-                                        tree.children.get(from_node_idx).and_then(|node_tree| {
-                                            let pins = find_pins::<P, UI>(node_tree, node_layout);
-                                            pins.iter()
-                                                .find(|(_, state, _)| {
-                                                    state.pin_id == from_ref.pin_id
-                                                })
-                                                .map(|(_, state, (pos, _))| (*pos, state.side))
-                                        })
-                                    });
-                            let to_pin_data =
-                                layout.children().nth(to_node_idx).and_then(|node_layout| {
-                                    tree.children.get(to_node_idx).and_then(|node_tree| {
-                                        let pins = find_pins::<P, UI>(node_tree, node_layout);
-                                        pins.iter()
-                                            .find(|(_, state, _)| state.pin_id == to_ref.pin_id)
-                                            .map(|(_, state, (pos, _))| (*pos, state.side))
-                                    })
-                                });
+                            // Pin positions and sides for the bezier the cut
+                            // is measured against.
+                            let from_pin_data = pin_by_id::<P, UI>(
+                                &tree.children,
+                                *layout,
+                                from_node_idx,
+                                &from_ref.pin_id,
+                            );
+                            let to_pin_data = pin_by_id::<P, UI>(
+                                &tree.children,
+                                *layout,
+                                to_node_idx,
+                                &to_ref.pin_id,
+                            );
 
-                            if let (Some((p0, from_side)), Some((p3, to_side))) =
+                            if let (Some((_, (p0, _), from_side)), Some((_, (p3, _), to_side))) =
                                 (from_pin_data, to_pin_data)
                             {
                                 // Calculate bezier control points
@@ -1133,28 +1112,13 @@ where
                 None => continue,
             };
 
-            // Get pin positions and sides for both ends of the edge
-            let from_pin_data = layout
-                .children()
-                .nth(from_node_idx)
-                .and_then(|node_layout| {
-                    tree.children.get(from_node_idx).and_then(|node_tree| {
-                        let pins = find_pins::<P, UI>(node_tree, node_layout);
-                        pins.iter()
-                            .find(|(_, state, _)| state.pin_id == from_ref.pin_id)
-                            .map(|(_, state, (a, _))| (*a, state.side))
-                    })
-                });
-            let to_pin_data = layout.children().nth(to_node_idx).and_then(|node_layout| {
-                tree.children.get(to_node_idx).and_then(|node_tree| {
-                    let pins = find_pins::<P, UI>(node_tree, node_layout);
-                    pins.iter()
-                        .find(|(_, state, _)| state.pin_id == to_ref.pin_id)
-                        .map(|(_, state, (a, _))| (*a, state.side))
-                })
-            });
+            // Pin positions and sides for both ends of the edge.
+            let from_pin_data =
+                pin_by_id::<P, UI>(&tree.children, *layout, from_node_idx, &from_ref.pin_id);
+            let to_pin_data =
+                pin_by_id::<P, UI>(&tree.children, *layout, to_node_idx, &to_ref.pin_id);
 
-            if let (Some((from_pos, from_side)), Some((to_pos, to_side))) =
+            if let (Some((_, (from_pos, _), from_side)), Some((_, (to_pos, _), to_side))) =
                 (from_pin_data, to_pin_data)
             {
                 // Measure against the rendered bezier, not the straight
@@ -1303,9 +1267,13 @@ where
         let Some(anchor_node_idx) = self.node_index(&anchor.node_id) else {
             return false;
         };
-        let Some(anchor_pin_idx) =
-            resolve_pin_index::<P, UI>(ctx.tree, ctx.layout, anchor_node_idx, &anchor.pin_id)
-        else {
+        let Some(anchor_pin_idx) = pin_by_id::<P, UI>(
+            &ctx.tree.children,
+            ctx.layout,
+            anchor_node_idx,
+            &anchor.pin_id,
+        )
+        .map(|(index, _, _)| index) else {
             return false;
         };
         // Compute valid targets for the new drag, excluding the grabbed edge
@@ -1642,21 +1610,28 @@ where
     valid_targets
 }
 
-/// Resolves a pin's positional index within `node_idx` from its user pin id.
+/// The positional index, anchors and side of pin `pin_id` on node `node_index`,
+/// read out of the laid-out tree.
 ///
-/// The index is the pin's position in `find_pins` walk order, which is also
-/// the `pin_index` the drag states store.
-fn resolve_pin_index<P: PinId + 'static, UI: 'static>(
-    tree: &Tree,
+/// The index is the pin's position in `find_pins` walk order, which is also the
+/// `pin_index` the drag states store. `None` when the node index is out of
+/// range or the node has no such pin - a host may push an edge naming a pin
+/// this frame's content does not contain.
+///
+/// Takes `tree.children` rather than the `Tree`, so a caller mid-interaction
+/// can hold its `tree.state` borrow across the lookup.
+fn pin_by_id<P: PinId + 'static, UI: 'static>(
+    node_trees: &[Tree],
     layout: Layout<'_>,
-    node_idx: usize,
+    node_index: usize,
     pin_id: &P,
-) -> Option<usize> {
-    let node_tree = tree.children.get(node_idx)?;
-    let node_layout = layout.children().nth(node_idx)?;
+) -> Option<(usize, (Point, Point), PinSide)> {
+    let node_tree = node_trees.get(node_index)?;
+    let node_layout = layout.children().nth(node_index)?;
     find_pins::<P, UI>(node_tree, node_layout)
         .iter()
-        .position(|(_, s, _)| s.pin_id == *pin_id)
+        .find(|(_, state, _)| state.pin_id == *pin_id)
+        .map(|(index, state, anchors)| (*index, *anchors, state.side))
 }
 
 /// Creates a selection rectangle from two corner points (handles any corner order)

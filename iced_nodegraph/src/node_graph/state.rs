@@ -11,8 +11,8 @@
 
 use super::GraphInfo;
 use super::camera::Camera2D;
-use super::euclid::WorldPoint;
-use iced_widget::core::{Point, keyboard, touch};
+use super::euclid::{IntoEuclid, WorldPoint};
+use iced_widget::core::{Layout, Point, keyboard, touch};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use web_time::Instant;
@@ -125,6 +125,16 @@ impl Default for NodeGraphState {
 }
 
 impl NodeGraphState {
+    /// The camera anchored to this frame's widget origin, which is where all
+    /// screen/world conversion for the graph starts. The stored camera holds
+    /// only pan and zoom; the widget's screen position is a layout fact that
+    /// changes without any interaction, so it is folded in per frame rather
+    /// than kept in state.
+    pub(super) fn camera_for(&self, layout: Layout<'_>) -> Camera2D {
+        self.camera
+            .with_viewport_origin(layout.bounds().position().into_euclid().to_vector())
+    }
+
     /// Ensure every index in `0..node_count` has a z entry. Newly seen indices
     /// receive the next counter value, so freshly pushed nodes render on top.
     pub(super) fn ensure_z_entries(&mut self, node_count: usize) {

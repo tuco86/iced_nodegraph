@@ -307,9 +307,7 @@ where
         // Refresh the camera's viewport origin from the widget's screen position
         // so SDF layers, child content, and hit-testing stay aligned when the
         // graph is not at the window origin (e.g. below a toolbar).
-        let mut camera = state
-            .camera
-            .with_viewport_origin(layout.bounds().position().into_euclid().to_vector());
+        let mut camera = state.camera_for(layout);
         // One selection read per frame, shared by the z-order and every node's
         // status, so nothing can disagree about what is selected.
         let selection = self.resolved_selection(state);
