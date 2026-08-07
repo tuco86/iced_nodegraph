@@ -5,7 +5,7 @@
 //! curvature. A straight line is an arc of zero curvature, a point an arc of
 //! zero length, and a cubic bezier a CPU-fitted spline of arcs - so the GPU
 //! evaluates one distance function for every shape. Closed contours combine via
-//! [`boolean`] set operations, a tile spatial index culls per pixel, and
+//! set operations, a tile spatial index culls per pixel, and
 //! front-to-back premultiplied compositing has an opaque early-out.
 //!
 //! See `README.md` and `ARCHITECTURE.md` for the full design and its invariants.
@@ -17,12 +17,13 @@
 //!
 //! # Builders
 //!
-//! - [`Curve`] - Disconnected segments and factory shapes (edges, lines, beziers, rects, circles)
-//! - [`ShapeBuilder`] - Connected open or closed contours (nodes, pin cutouts)
+//! - [`Shape`] - Position-free geometry recipes: the primitives
+//!   (`rounded_box`, `circle`, `line`, `bezier`, `arc`, `point`), `translate`,
+//!   and the `-` / `|` / `&` operators for set algebra (difference, union,
+//!   intersection), so a node body with pin cutouts is one expression.
 //! - [`Tiling`] - Infinite repeating backgrounds (grid, dots, triangles, hex)
-//!
-//! Closed contours combine via [`boolean`] operations (union, difference,
-//! intersection) for compound shapes such as node bodies with pin cutouts.
+//! - [`ShapeCache`] - Cross-frame reuse of the arcs an expensive recipe
+//!   evaluates to, keyed by the recipe's content hash.
 //!
 //! # Rendering
 //!
@@ -44,9 +45,9 @@
 //! ```
 
 pub(crate) mod biarc;
-pub mod boolean;
+pub(crate) mod boolean;
 pub mod color;
-pub mod curve;
+pub(crate) mod curve;
 pub mod drawable;
 pub mod pattern;
 pub(crate) mod segment;
@@ -62,7 +63,6 @@ pub(crate) mod shared;
 
 // Public API re-exports
 pub use color::ColorQuad;
-pub use curve::{Curve, ShapeBuilder};
 pub use drawable::Drawable;
 pub use pattern::Pattern;
 pub use pipeline::types::SdfStats;

@@ -1,9 +1,10 @@
 //! Geometry construction entry point.
 //!
 //! `Curve` provides static methods for all geometry:
-//! - Single segments: `Curve::line()`, `Curve::bezier()`
-//! - Connected contours: `Curve::shape()` returns a [`ShapeBuilder`]
-//! - Factory shapes: `Curve::rect()`, `Curve::rounded_rect()`, `Curve::circle()`
+//! - Single segments: `Curve::line()`, `Curve::point()`, `Curve::arc_segment()`,
+//!   `Curve::bezier()`
+//! - Connected closed contours: `Curve::shape()` returns a [`ShapeBuilder`]
+//! - Factory shapes: `Curve::rounded_rect_with_radii()`, `Curve::circle()`
 //!
 //! All angles are in **radians**. Use `std::f32::consts::{PI, FRAC_PI_2}`.
 //!
@@ -20,7 +21,6 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 
 use glam::Vec2;
 
-use crate::biarc::{ArcPiece, cubic_to_arcs};
 use crate::drawable::{Drawable, DrawableType, Segment};
 
 /// Arc-spline tolerance (world units) for approximating cubic beziers as arcs in
@@ -91,31 +91,6 @@ impl Curve {
         }
     }
 
-    /// Closed rectangle. Starts heading RIGHT, builds CW.
-    pub fn rect(center: impl Into<[f32; 2]>, half_size: impl Into<[f32; 2]>) -> Drawable {
-        let c = Vec2::from(center.into());
-        let h = Vec2::from(half_size.into());
-        // Start top-left, heading RIGHT (PI/2)
-        Curve::shape([c.x - h.x, c.y - h.y], FRAC_PI_2)
-            .line(h.x * 2.0)
-            .angle(FRAC_PI_2) // top edge, turn down
-            .line(h.y * 2.0)
-            .angle(FRAC_PI_2) // right edge, turn left
-            .line(h.x * 2.0)
-            .angle(FRAC_PI_2) // bottom edge, turn up
-            .line(h.y * 2.0) // left edge
-            .close()
-    }
-
-    /// Closed rounded rectangle with one radius on every corner.
-    pub fn rounded_rect(
-        center: impl Into<[f32; 2]>,
-        half_size: impl Into<[f32; 2]>,
-        radius: f32,
-    ) -> Drawable {
-        Curve::rounded_rect_with_radii(center, half_size, [radius; 4])
-    }
-
     /// Closed rounded rectangle with four independent corner radii, ordered
     /// `[top_left, top_right, bottom_right, bottom_left]`. The contour walks
     /// clockwise from just past the top-left corner, one arc per corner.
@@ -182,17 +157,6 @@ enum ShapeSegment {
         start_angle: f32,
         sweep: f32,
     },
-    CubicBezier {
-        p0: Vec2,
-        p1: Vec2,
-        p2: Vec2,
-        p3: Vec2,
-    },
-    /// Junction point at a corner. Heading = bisector of adjacent segments.
-    Point {
-        pos: Vec2,
-        heading: f32,
-    },
 }
 
 impl ShapeBuilder {
@@ -207,20 +171,6 @@ impl ShapeBuilder {
             b: end,
         });
         self.cursor = end;
-        self
-    }
-
-    /// Turn heading by `radians`. Positive = clockwise.
-    /// Emits a junction point at the current position with bisector heading.
-    pub fn angle(mut self, radians: f32) -> Self {
-        let heading_before = self.heading;
-        self.heading += radians;
-        // Junction point with bisector heading between incoming and outgoing
-        let bisector = (heading_before + self.heading) * 0.5;
-        self.segments.push(ShapeSegment::Point {
-            pos: self.cursor,
-            heading: bisector,
-        });
         self
     }
 
@@ -257,66 +207,6 @@ impl ShapeBuilder {
         self
     }
 
-    // --- Coordinate API ---
-
-    /// Line to an absolute point.
-    pub fn line_to(mut self, end: impl Into<[f32; 2]>) -> Self {
-        let end = Vec2::from(end.into());
-        let dir = end - self.cursor;
-        if dir.length_squared() > 1e-10 {
-            self.heading = heading_from_dir(dir);
-        }
-        self.segments.push(ShapeSegment::Line {
-            a: self.cursor,
-            b: end,
-        });
-        self.cursor = end;
-        self
-    }
-
-    /// Arc around `center` with explicit `radius` and `sweep` radians.
-    pub fn arc_to(mut self, center: impl Into<[f32; 2]>, radius: f32, sweep: f32) -> Self {
-        let center = Vec2::from(center.into());
-        let start_offset = self.cursor - center;
-        let start_angle = start_offset.y.atan2(start_offset.x);
-
-        self.segments.push(ShapeSegment::Arc {
-            center,
-            radius,
-            start_angle,
-            sweep,
-        });
-
-        let end_angle = start_angle + sweep;
-        self.cursor = center + Vec2::new(end_angle.cos(), end_angle.sin()) * radius;
-        self.heading += sweep;
-        self
-    }
-
-    /// Cubic bezier to endpoint with control points.
-    pub fn bezier_to(
-        mut self,
-        cp1: impl Into<[f32; 2]>,
-        cp2: impl Into<[f32; 2]>,
-        end: impl Into<[f32; 2]>,
-    ) -> Self {
-        let cp1 = Vec2::from(cp1.into());
-        let cp2 = Vec2::from(cp2.into());
-        let end = Vec2::from(end.into());
-        self.segments.push(ShapeSegment::CubicBezier {
-            p0: self.cursor,
-            p1: cp1,
-            p2: cp2,
-            p3: end,
-        });
-        let tangent = end - cp2;
-        if tangent.length_squared() > 1e-10 {
-            self.heading = heading_from_dir(tangent);
-        }
-        self.cursor = end;
-        self
-    }
-
     // --- Finalize ---
 
     /// Close the contour. Fillable.
@@ -328,12 +218,7 @@ impl ShapeBuilder {
                 b: self.start,
             });
         }
-        self.build_drawable(true)
-    }
-
-    /// End the contour (open, stroke only).
-    pub fn end(self) -> Drawable {
-        self.build_drawable(false)
+        self.build_drawable()
     }
 
     // --- Internal ---
@@ -353,9 +238,10 @@ impl ShapeBuilder {
         Vec2::new(-self.heading.cos(), -self.heading.sin())
     }
 
-    fn build_drawable(self, closed: bool) -> Drawable {
-        // One arc primitive: lines and points pass through; arcs are split into
-        // minor sub-arcs; cubics are arc-splined on the CPU (no GPU bezier).
+    /// Lowers the authored segments to the one GPU primitive: lines pass
+    /// through and arcs are split into minor sub-arcs. Every contour a
+    /// [`ShapeBuilder`] produces is closed, so the result is always fillable.
+    fn build_drawable(self) -> Drawable {
         let mut gpu_segments: Vec<Segment> = Vec::with_capacity(self.segments.len());
         let mut acc = 0.0f32;
 
@@ -363,7 +249,7 @@ impl ShapeBuilder {
             match seg {
                 ShapeSegment::Line { a, b } => {
                     let len = a.distance(*b);
-                    gpu_segments.push(Segment::line(*a, *b, closed, acc, acc + len));
+                    gpu_segments.push(Segment::line(*a, *b, true, acc, acc + len));
                     acc += len;
                 }
                 ShapeSegment::Arc {
@@ -378,45 +264,9 @@ impl ShapeBuilder {
                         *radius,
                         *start_angle,
                         *sweep,
-                        closed,
+                        true,
                         &mut acc,
                     );
-                }
-                ShapeSegment::CubicBezier { p0, p1, p2, p3 } => {
-                    for piece in cubic_to_arcs(*p0, *p1, *p2, *p3, CUBIC_ARC_TOL) {
-                        match piece {
-                            ArcPiece::Line { start, end, length } => {
-                                gpu_segments.push(Segment::line(
-                                    start,
-                                    end,
-                                    closed,
-                                    acc,
-                                    acc + length,
-                                ));
-                                acc += length;
-                            }
-                            ArcPiece::Arc {
-                                center,
-                                radius,
-                                start_angle,
-                                sweep,
-                                ..
-                            } => {
-                                Segment::push_arc(
-                                    &mut gpu_segments,
-                                    center,
-                                    radius,
-                                    start_angle,
-                                    sweep,
-                                    closed,
-                                    &mut acc,
-                                );
-                            }
-                        }
-                    }
-                }
-                ShapeSegment::Point { pos, heading } => {
-                    gpu_segments.push(Segment::point(*pos, *heading, closed, acc));
                 }
             }
         }
@@ -435,25 +285,15 @@ impl ShapeBuilder {
         }
 
         Drawable {
-            drawable_type: if closed {
-                DrawableType::Shape
-            } else {
-                DrawableType::CurveSegment
-            },
+            drawable_type: DrawableType::Shape,
             segments: gpu_segments,
             total_arc_length: total_length,
             bounds: [min.x, min.y, max.x, max.y],
-            is_closed: closed,
+            is_closed: true,
             tiling_type: None,
             tiling_params: [0.0; 4],
         }
     }
-}
-
-/// Compute heading from a direction vector.
-/// heading 0 = UP = (0, -1), PI/2 = RIGHT = (1, 0).
-fn heading_from_dir(dir: Vec2) -> f32 {
-    dir.x.atan2(-dir.y)
 }
 
 /// Compute signed area of a polygon. Negative = CW in screen Y-down.
@@ -474,8 +314,6 @@ fn signed_area(segments: &[ShapeSegment]) -> f32 {
                 let b = *center + Vec2::new(end_angle.cos(), end_angle.sin()) * *radius;
                 (a.x, a.y, b.x, b.y)
             }
-            ShapeSegment::CubicBezier { p0, p3, .. } => (p0.x, p0.y, p3.x, p3.y),
-            ShapeSegment::Point { .. } => continue, // zero-length, no area contribution
         };
         area += (bx - ax) * (by + ay);
     }
@@ -525,7 +363,7 @@ mod tests {
 
     #[test]
     fn heading_0_is_up() {
-        let s = Curve::shape([0.0, 0.0], 0.0).line(10.0).end();
+        let s = Curve::shape([0.0, 0.0], 0.0).line(10.0).close();
         let seg = &s.segments[0];
         // Should go from (0,0) to (0, -10)
         assert_near(seg.end.x, 0.0, 0.01, "end x");
@@ -534,7 +372,7 @@ mod tests {
 
     #[test]
     fn heading_pi2_is_right() {
-        let s = Curve::shape([0.0, 0.0], FRAC_PI_2).line(10.0).end();
+        let s = Curve::shape([0.0, 0.0], FRAC_PI_2).line(10.0).close();
         let seg = &s.segments[0];
         assert_near(seg.end.x, 10.0, 0.01, "end x");
         assert_near(seg.end.y, 0.0, 0.01, "end y");
@@ -542,22 +380,22 @@ mod tests {
 
     #[test]
     fn heading_pi_is_down() {
-        let s = Curve::shape([0.0, 0.0], PI).line(10.0).end();
+        let s = Curve::shape([0.0, 0.0], PI).line(10.0).close();
         let seg = &s.segments[0];
         assert_near(seg.end.x, 0.0, 0.01, "end x");
         assert_near(seg.end.y, 10.0, 0.01, "end y");
     }
 
     #[test]
-    fn angle_positive_is_cw() {
-        // Start UP, turn PI/2 CW → heading RIGHT
-        // Segments: Line, Point (junction), Line
+    fn positive_sweep_turns_clockwise() {
+        // Start UP, turn PI/2 CW -> heading RIGHT. A zero-radius arc turns in
+        // place and emits nothing, so the two lines are segments 0 and 1.
         let s = Curve::shape([0.0, 0.0], 0.0)
             .line(5.0)
-            .angle(FRAC_PI_2)
+            .arc(0.0, FRAC_PI_2)
             .line(5.0)
-            .end();
-        let seg2 = &s.segments[2]; // second line (index 2, after junction point)
+            .close();
+        let seg2 = &s.segments[1];
         assert_near(seg2.end.x, 5.0, 0.01, "end x");
         assert_near(seg2.end.y, -5.0, 0.01, "end y");
     }
@@ -568,14 +406,14 @@ mod tests {
     fn segments_are_connected() {
         let d = Curve::shape([0.0, 0.0], FRAC_PI_2)
             .line(10.0)
-            .angle(FRAC_PI_2)
+            .arc(0.0, FRAC_PI_2)
             .line(10.0)
-            .angle(FRAC_PI_2)
+            .arc(0.0, FRAC_PI_2)
             .line(10.0)
-            .angle(FRAC_PI_2)
+            .arc(0.0, FRAC_PI_2)
             .line(10.0)
             .close();
-        // Filter to only Line segments (Points are zero-length junctions)
+        // Filter to the straight runs; `close` may append one more.
         let lines: Vec<_> = d
             .segments
             .iter()
@@ -592,11 +430,11 @@ mod tests {
     fn close_returns_to_start() {
         let d = Curve::shape([5.0, 5.0], FRAC_PI_2)
             .line(10.0)
-            .angle(FRAC_PI_2)
+            .arc(0.0, FRAC_PI_2)
             .line(10.0)
-            .angle(FRAC_PI_2)
+            .arc(0.0, FRAC_PI_2)
             .line(10.0)
-            .angle(FRAC_PI_2)
+            .arc(0.0, FRAC_PI_2)
             .line(10.0)
             .close();
         let last = d.segments.last().unwrap();
@@ -613,11 +451,11 @@ mod tests {
         // Shoelace gives negative for CW in Y-down
         let builder = Curve::shape([0.0, 0.0], FRAC_PI_2)
             .line(10.0)
-            .angle(FRAC_PI_2)
+            .arc(0.0, FRAC_PI_2)
             .line(10.0)
-            .angle(FRAC_PI_2)
+            .arc(0.0, FRAC_PI_2)
             .line(10.0)
-            .angle(FRAC_PI_2)
+            .arc(0.0, FRAC_PI_2)
             .line(10.0);
         let area = signed_area(&builder.segments);
         assert!(
@@ -630,7 +468,7 @@ mod tests {
 
     #[test]
     fn rect_perimeter() {
-        let d = Curve::rect([0.0, 0.0], [50.0, 30.0]);
+        let d = Curve::rounded_rect_with_radii([0.0, 0.0], [50.0, 30.0], [0.0; 4]);
         assert!(d.is_closed());
         assert_near(d.total_arc_length(), 320.0, 1.0, "rect perimeter");
     }
@@ -639,11 +477,11 @@ mod tests {
     fn rect_is_cw() {
         let builder = Curve::shape([0.0, 0.0], FRAC_PI_2)
             .line(100.0)
-            .angle(FRAC_PI_2)
+            .arc(0.0, FRAC_PI_2)
             .line(60.0)
-            .angle(FRAC_PI_2)
+            .arc(0.0, FRAC_PI_2)
             .line(100.0)
-            .angle(FRAC_PI_2)
+            .arc(0.0, FRAC_PI_2)
             .line(60.0);
         assert!(
             signed_area(&builder.segments) < 0.0,
@@ -730,11 +568,11 @@ mod tests {
         // CW square: (0,0) → (10,0) → (10,10) → (0,10) → close
         let d = Curve::shape([0.0, 0.0], FRAC_PI_2)
             .line(10.0)
-            .angle(FRAC_PI_2)
+            .arc(0.0, FRAC_PI_2)
             .line(10.0)
-            .angle(FRAC_PI_2)
+            .arc(0.0, FRAC_PI_2)
             .line(10.0)
-            .angle(FRAC_PI_2)
+            .arc(0.0, FRAC_PI_2)
             .line(10.0)
             .close();
         let center = Vec2::new(5.0, 5.0);
@@ -749,11 +587,11 @@ mod tests {
     fn cw_square_outside_is_positive() {
         let d = Curve::shape([0.0, 0.0], FRAC_PI_2)
             .line(10.0)
-            .angle(FRAC_PI_2)
+            .arc(0.0, FRAC_PI_2)
             .line(10.0)
-            .angle(FRAC_PI_2)
+            .arc(0.0, FRAC_PI_2)
             .line(10.0)
-            .angle(FRAC_PI_2)
+            .arc(0.0, FRAC_PI_2)
             .line(10.0)
             .close();
         let outside = Vec2::new(-5.0, 5.0);
@@ -790,7 +628,7 @@ mod tests {
 
     #[test]
     fn rect_factory_center_is_inside() {
-        let d = Curve::rect([0.0, 0.0], [50.0, 30.0]);
+        let d = Curve::rounded_rect_with_radii([0.0, 0.0], [50.0, 30.0], [0.0; 4]);
         let dist = cpu_eval_shape(Vec2::new(0.0, 0.0), &d);
         assert!(
             dist < 0.0,
@@ -800,7 +638,7 @@ mod tests {
 
     #[test]
     fn rect_factory_outside_is_positive() {
-        let d = Curve::rect([0.0, 0.0], [50.0, 30.0]);
+        let d = Curve::rounded_rect_with_radii([0.0, 0.0], [50.0, 30.0], [0.0; 4]);
         let dist = cpu_eval_shape(Vec2::new(100.0, 0.0), &d);
         assert!(
             dist > 0.0,

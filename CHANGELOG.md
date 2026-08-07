@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- **`iced_nodegraph_sdf` authors geometry through `Shape` alone.** `Curve`,
+  `ShapeBuilder` and the `boolean` module are no longer public, and
+  `Segment`, `DrawableType` and `TilingType` are crate-private. They were an
+  authoring layer with no sink: `SdfPrimitive::push` accepts only a `&Shape`,
+  so a `Drawable` built through them could never be submitted. `Shape`'s
+  primitives plus the `-` / `|` / `&` operators express the same set algebra,
+  and `Drawable` stays public as `Shape::evaluate`'s return type.
+
 ### Added
 
 - **GPU work and memory counters.** `SdfStats` gains `upload_bytes`,

@@ -659,7 +659,7 @@ mod tests {
         let cuts_local = [[-70.0, -20.0], [70.0, 20.0]];
         let from_shape = node_body().evaluate();
 
-        let body = Curve::rounded_rect([0.0, 0.0], [70.0, 44.0], 10.0);
+        let body = Curve::rounded_rect_with_radii([0.0, 0.0], [70.0, 44.0], [10.0; 4]);
         let cuts: Vec<Drawable> = cuts_local.iter().map(|p| Curve::circle(*p, 4.0)).collect();
         let world = boolean::difference_many(&body, &cuts);
         assert_eq!(from_shape.segment_count(), world.segment_count());
@@ -670,7 +670,7 @@ mod tests {
         // RoundedBox (centred, size = 2*half) evaluates to the same local geometry
         // as the centred Curve::rounded_rect builder.
         let from_shape = Shape::rounded_box([140.0, 88.0], [10.0; 4]).evaluate();
-        let direct = Curve::rounded_rect([0.0, 0.0], [70.0, 44.0], 10.0);
+        let direct = Curve::rounded_rect_with_radii([0.0, 0.0], [70.0, 44.0], [10.0; 4]);
         assert_eq!(from_shape.segment_count(), direct.segment_count());
         let a = from_shape.bounds();
         let b = direct.bounds();
@@ -778,7 +778,7 @@ mod tests {
         let (cx, cy) = (300.0, -150.0);
         let local = Shape::rounded_box([140.0, 88.0], [10.0; 4]).evaluate();
         let placed = local.translated(cx, cy);
-        let world = Curve::rounded_rect([cx, cy], [70.0, 44.0], 10.0);
+        let world = Curve::rounded_rect_with_radii([cx, cy], [70.0, 44.0], [10.0; 4]);
         assert_eq!(placed.segment_count(), world.segment_count());
         for (ps, ws) in placed.segments.iter().zip(world.segments.iter()) {
             assert!(

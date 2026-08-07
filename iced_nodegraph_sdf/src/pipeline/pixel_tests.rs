@@ -2904,7 +2904,7 @@ fn bounds_origin_shift_preserves_shape_position() {
 
     // Shape at world (0, 0). With bounds_origin=(0,0) and camera centering
     // world on screen, the shape lands at screen center.
-    let shape = Curve::rounded_rect([0.0, 0.0], [40.0, 25.0], 6.0);
+    let shape = Curve::rounded_rect_with_radii([0.0, 0.0], [40.0, 25.0], [6.0; 4]);
     let style = Style::solid(Color::from_rgb(1.0, 0.0, 0.0));
 
     let cs = zoom;
@@ -2983,7 +2983,7 @@ fn closed_stroke_border_complete() {
     let height = 128u32;
     let zoom = 1.0;
 
-    let shape = Curve::rounded_rect([0.0, 0.0], [80.0, 40.0], 10.0);
+    let shape = Curve::rounded_rect_with_radii([0.0, 0.0], [80.0, 40.0], [10.0; 4]);
     let style = Style::stroke(Color::WHITE, Pattern::solid(3.0));
 
     let pixels = renderer.render(&[(&shape, &style)], width, height, zoom);
@@ -3020,7 +3020,7 @@ fn closed_solid_fill_large_no_interior_holes() {
     let zoom = 1.0;
 
     // Center is ~100 px from the nearest boundary (many tile widths).
-    let shape = Curve::rounded_rect([0.0, 0.0], [200.0, 100.0], 12.0);
+    let shape = Curve::rounded_rect_with_radii([0.0, 0.0], [200.0, 100.0], [12.0; 4]);
     let style = Style::solid(Color::from_rgb(1.0, 0.0, 0.0));
 
     let pixels = renderer.render(&[(&shape, &style)], width, height, zoom);
@@ -3112,7 +3112,7 @@ fn closed_solid_fill_no_interior_holes() {
     let zoom = 1.0;
 
     // Big enough that the center is many tiles away from any boundary.
-    let shape = Curve::rounded_rect([0.0, 0.0], [50.0, 35.0], 8.0);
+    let shape = Curve::rounded_rect_with_radii([0.0, 0.0], [50.0, 35.0], [8.0; 4]);
     let style = Style::solid(Color::from_rgb(1.0, 0.0, 0.0));
 
     let pixels = renderer.render(&[(&shape, &style)], width, height, zoom);
@@ -3486,7 +3486,7 @@ fn camera_centered_on(p: [f32; 2], w: u32, h: u32, zoom: f32) -> [f32; 2] {
 /// A segment-dense pin node: a rounded body punched by a ring of pin cutouts,
 /// composed into ONE shape via `difference_many` (the `boolean.rs` pin path).
 fn pin_dense_node(center: [f32; 2]) -> Drawable {
-    let body = Curve::rounded_rect(center, [70.0, 44.0], 10.0);
+    let body = Curve::rounded_rect_with_radii(center, [70.0, 44.0], [10.0; 4]);
     let mut cuts = Vec::new();
     // Small cutouts centered on the left and right borders, mirroring the
     // widget's pin punches: each is a notch in the boundary, the composed
@@ -3607,7 +3607,11 @@ fn corpus() -> Vec<Scene> {
         let mut items = Vec::new();
         for i in 0..6 {
             let f = i as f32;
-            let c = Curve::rect([-25.0 + f * 10.0, -25.0 + f * 10.0], [34.0, 34.0]);
+            let c = Curve::rounded_rect_with_radii(
+                [-25.0 + f * 10.0, -25.0 + f * 10.0],
+                [34.0, 34.0],
+                [0.0; 4],
+            );
             let col = rgba(0.15 + f * 0.13, 0.9 - f * 0.1, 0.4 + f * 0.08, 0.85);
             items.push((c, Style::solid(col)));
         }
@@ -3635,7 +3639,7 @@ fn corpus() -> Vec<Scene> {
             camera: Some(camera_centered_on(p, 256, 256, 1.2)),
             untiled_safe: false,
             items: vec![(
-                Curve::rounded_rect(p, [70.0, 44.0], 10.0),
+                Curve::rounded_rect_with_radii(p, [70.0, 44.0], [10.0; 4]),
                 Style::solid(rgba(0.85, 0.55, 0.3, 1.0)),
             )],
         });

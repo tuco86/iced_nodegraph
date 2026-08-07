@@ -193,7 +193,7 @@ mod tests {
     /// skip the segment upload and still render the same.
     #[test]
     fn entry_referencing_matches_full_command() {
-        let local = Curve::rounded_rect([0.0, 0.0], [40.0, 25.0], 6.0);
+        let local = Curve::rounded_rect_with_radii([0.0, 0.0], [40.0, 25.0], [6.0; 4]);
         let t = [100.0, 50.0];
         let style = Style::solid(Color::WHITE);
 

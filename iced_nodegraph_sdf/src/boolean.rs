@@ -927,7 +927,7 @@ mod tests {
     /// Sanity: one cutout notch on an edge stays closed.
     #[test]
     fn rect_minus_one_edge_circle_closed() {
-        let body = Curve::rect([80.0, 200.0], [80.0, 200.0]);
+        let body = Curve::rounded_rect_with_radii([80.0, 200.0], [80.0, 200.0], [0.0; 4]);
         let out = difference_many(&body, &[Curve::circle([0.0, 100.0], 6.0)]);
         assert!(out.segment_count() > 0, "empty");
         assert!(out.is_closed(), "not closed");
@@ -936,7 +936,7 @@ mod tests {
     /// Many well-separated cutouts on one edge (the dense-node case).
     #[test]
     fn rect_minus_many_edge_circles_closed() {
-        let body = Curve::rect([80.0, 200.0], [80.0, 200.0]); // x in [0,160], y in [0,400]
+        let body = Curve::rounded_rect_with_radii([80.0, 200.0], [80.0, 200.0], [0.0; 4]); // x in [0,160], y in [0,400]
         let cuts: Vec<Drawable> = (0..20)
             .map(|i| Curve::circle([0.0, 20.0 + i as f32 * 18.0], 3.4))
             .collect();
@@ -948,7 +948,7 @@ mod tests {
     /// Same on a rounded body (matches the actual node shape with corner arcs).
     #[test]
     fn rounded_rect_minus_many_edge_circles_closed() {
-        let body = Curve::rounded_rect([80.0, 200.0], [80.0, 200.0], 8.0);
+        let body = Curve::rounded_rect_with_radii([80.0, 200.0], [80.0, 200.0], [8.0; 4]);
         let cuts: Vec<Drawable> = (0..20)
             .map(|i| Curve::circle([0.0, 20.0 + i as f32 * 18.0], 3.4))
             .collect();
@@ -960,7 +960,7 @@ mod tests {
     /// A cutout straddling a (rounded) corner — arc-vs-arc near-tangency.
     #[test]
     fn rounded_rect_minus_corner_circle_closed() {
-        let body = Curve::rounded_rect([80.0, 200.0], [80.0, 200.0], 8.0);
+        let body = Curve::rounded_rect_with_radii([80.0, 200.0], [80.0, 200.0], [8.0; 4]);
         // Near the top-left rounded corner.
         let out = difference_many(&body, &[Curve::circle([0.0, 0.0], 5.0)]);
         assert!(out.segment_count() > 0, "empty");
@@ -973,7 +973,7 @@ mod tests {
     #[test]
     fn rect_minus_many_edge_circles_far_from_origin_closed() {
         let (ox, oy) = (12345.0_f32, 6789.0_f32);
-        let body = Curve::rect([ox + 80.0, oy + 200.0], [80.0, 200.0]);
+        let body = Curve::rounded_rect_with_radii([ox + 80.0, oy + 200.0], [80.0, 200.0], [0.0; 4]);
         let cuts: Vec<Drawable> = (0..20)
             .map(|i| Curve::circle([ox, oy + 20.0 + i as f32 * 18.0], 3.4))
             .collect();
@@ -987,7 +987,8 @@ mod tests {
     /// plus one on the right border; well separated, yet it failed to stitch.
     #[test]
     fn edge_config_node_real_geometry_closed() {
-        let body = Curve::rounded_rect([641.626, 643.551], [75.000, 302.600], 8.000);
+        let body =
+            Curve::rounded_rect_with_radii([641.626, 643.551], [75.000, 302.600], [8.000; 4]);
         let cuts = [
             Curve::circle([566.626, 384.251], 2.400),
             Curve::circle([716.626, 384.251], 2.400),
@@ -1028,7 +1029,7 @@ mod tests {
     #[test]
     fn rect_minus_many_edge_circles_extreme_coords_closed() {
         let (ox, oy) = (1_000_000.0_f32, 2_000_000.0_f32);
-        let body = Curve::rect([ox + 80.0, oy + 200.0], [80.0, 200.0]);
+        let body = Curve::rounded_rect_with_radii([ox + 80.0, oy + 200.0], [80.0, 200.0], [0.0; 4]);
         let cuts: Vec<Drawable> = (0..20)
             .map(|i| Curve::circle([ox, oy + 20.0 + i as f32 * 18.0], 3.4))
             .collect();
@@ -1040,7 +1041,7 @@ mod tests {
     /// Two near-tangent cutouts (spacing ≈ 2r) on an edge.
     #[test]
     fn rect_minus_near_tangent_circles_closed() {
-        let body = Curve::rect([80.0, 200.0], [80.0, 200.0]);
+        let body = Curve::rounded_rect_with_radii([80.0, 200.0], [80.0, 200.0], [0.0; 4]);
         let r = 4.0;
         let cuts = [
             Curve::circle([0.0, 100.0], r),
@@ -1241,7 +1242,7 @@ mod tests {
     #[test]
     fn difference_box_minus_circle_on_edge() {
         // Rounded rect centered at origin, half-size 60x40, corner radius 6.
-        let rect = Curve::rounded_rect([0.0, 0.0], [60.0, 40.0], 6.0);
+        let rect = Curve::rounded_rect_with_radii([0.0, 0.0], [60.0, 40.0], [6.0; 4]);
         // Circle straddling the right edge (a pin cutout poking inward).
         let circle = Curve::circle([60.0, 0.0], 8.0);
         let result = super::difference(&rect, &circle);
@@ -1258,8 +1259,8 @@ mod tests {
     fn union_two_overlapping_rects() {
         // Offset in both axes so no edges are collinear (collinear overlap is a
         // separate degeneracy handled later).
-        let a = Curve::rect([0.0, 0.0], [30.0, 20.0]);
-        let b = Curve::rect([25.0, 12.0], [30.0, 20.0]);
+        let a = Curve::rounded_rect_with_radii([0.0, 0.0], [30.0, 20.0], [0.0; 4]);
+        let b = Curve::rounded_rect_with_radii([25.0, 12.0], [30.0, 20.0], [0.0; 4]);
         let result = super::union(&a, &b);
         assert!(result.is_closed());
         assert_matches(
@@ -1278,7 +1279,7 @@ mod tests {
     fn pin_cutouts_overlapping_on_left_edge() {
         // Rounded node, several pin cutouts on the left edge (x = -60), spaced
         // 8 apart with radius 6 so adjacent cutouts overlap.
-        let rect = Curve::rounded_rect([0.0, 0.0], [60.0, 40.0], 6.0);
+        let rect = Curve::rounded_rect_with_radii([0.0, 0.0], [60.0, 40.0], [6.0; 4]);
         let r = 6.0;
         let centers: Vec<Vec2> = [-16.0, -8.0, 0.0, 8.0]
             .iter()
@@ -1303,7 +1304,7 @@ mod tests {
     fn pin_cutouts_exactly_coincident() {
         // Two identical cutouts at the same spot must not produce a tangled
         // chain - the result is a single clean notch.
-        let rect = Curve::rounded_rect([0.0, 0.0], [60.0, 40.0], 6.0);
+        let rect = Curve::rounded_rect_with_radii([0.0, 0.0], [60.0, 40.0], [6.0; 4]);
         let r = 6.0;
         let c = Vec2::new(-60.0, 0.0);
         let dup = super::merge(&[Curve::circle([c.x, c.y], r), Curve::circle([c.x, c.y], r)]);
@@ -1325,7 +1326,7 @@ mod tests {
     #[test]
     fn difference_circle_fully_inside_makes_hole() {
         // A cutout entirely within the body becomes an interior hole loop.
-        let rect = Curve::rounded_rect([0.0, 0.0], [60.0, 40.0], 6.0);
+        let rect = Curve::rounded_rect_with_radii([0.0, 0.0], [60.0, 40.0], [6.0; 4]);
         let hole = Curve::circle([0.0, 0.0], 10.0);
         let result = super::difference(&rect, &hole);
         assert!(result.is_closed());
@@ -1340,7 +1341,7 @@ mod tests {
     #[test]
     fn difference_cutout_over_rounded_corner() {
         // Cutout overlapping the top-right rounded corner (arc-arc clipping).
-        let rect = Curve::rounded_rect([0.0, 0.0], [60.0, 40.0], 10.0);
+        let rect = Curve::rounded_rect_with_radii([0.0, 0.0], [60.0, 40.0], [10.0; 4]);
         let c = Vec2::new(60.0, -40.0);
         let circle = Curve::circle([c.x, c.y], 14.0);
         let result = super::difference(&rect, &circle);
@@ -1356,8 +1357,8 @@ mod tests {
     #[test]
     fn union_collinear_shared_edges() {
         // Equal heights -> top and bottom edges are collinear (shared lines).
-        let a = Curve::rect([0.0, 0.0], [30.0, 20.0]);
-        let b = Curve::rect([40.0, 0.0], [30.0, 20.0]);
+        let a = Curve::rounded_rect_with_radii([0.0, 0.0], [30.0, 20.0], [0.0; 4]);
+        let b = Curve::rounded_rect_with_radii([40.0, 0.0], [30.0, 20.0], [0.0; 4]);
         let result = super::union(&a, &b);
         assert!(result.is_closed());
         assert_matches(
@@ -1390,11 +1391,8 @@ mod tests {
     fn open_contour_input_trips_assert() {
         // An open stroke is not a valid boolean operand; the closed-loop guard
         // must catch it in debug builds rather than silently mis-rendering.
-        let open = Curve::shape([0.0, 0.0], FRAC_PI_2)
-            .line(40.0)
-            .line(40.0)
-            .end();
-        let square = Curve::rect([0.0, 0.0], [20.0, 20.0]);
+        let open = Curve::line([0.0, 0.0], [40.0, 0.0]);
+        let square = Curve::rounded_rect_with_radii([0.0, 0.0], [20.0, 20.0], [0.0; 4]);
         let _ = super::difference(&square, &open);
     }
 }

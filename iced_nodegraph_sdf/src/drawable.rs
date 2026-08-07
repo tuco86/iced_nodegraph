@@ -1,6 +1,7 @@
-//! Compiled drawable: the result of building a Curve, Shape, or Tiling.
+//! The evaluated geometry a [`Shape`](crate::Shape) or
+//! [`Tiling`](crate::Tiling) lowers to.
 //!
-//! A Drawable holds pre-computed segment geometry and arc-length data,
+//! A [`Drawable`] holds pre-computed segment geometry and arc-length data,
 //! ready for upload to the GPU.
 
 use glam::Vec2;
@@ -13,7 +14,7 @@ use glam::Vec2;
 /// `1/|curvature|` bulging to the side `curvature`'s sign selects. There is no
 /// separate Line / Cubic / Point type: those are degenerate arcs.
 #[derive(Debug, Clone, Copy)]
-pub struct Segment {
+pub(crate) struct Segment {
     /// Part of a closed contour: SDF returns signed distance (negative = interior).
     pub signed: bool,
     pub start: Vec2,
@@ -125,7 +126,7 @@ impl Segment {
 /// Draw entry type discriminant (matches GPU constants).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
-pub enum DrawableType {
+pub(crate) enum DrawableType {
     /// Open stroke: one or more arc segments (a line, an arc, or an
     /// arc-splined cubic). Stroke only, never filled.
     CurveSegment = 0,
@@ -138,14 +139,15 @@ pub enum DrawableType {
 /// Tiling type discriminant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
-pub enum TilingType {
+pub(crate) enum TilingType {
     Grid = 0,
     Dots = 1,
     Triangles = 2,
     Hex = 3,
 }
 
-/// Compiled result from a Curve, Shape, or Tiling builder.
+/// Evaluated geometry: what a [`Shape`](crate::Shape) or
+/// [`Tiling`](crate::Tiling) lowers to, read-only from outside the crate.
 #[derive(Debug, Clone)]
 pub struct Drawable {
     pub(crate) drawable_type: DrawableType,
@@ -184,8 +186,8 @@ impl Drawable {
     /// Translates every segment's positional geometry and the cached bounds;
     /// radii, angles and arc lengths are translation-invariant. Cheaper than
     /// rebuilding a shape at a new origin, e.g. to reuse a node silhouette for
-    /// its offset shadow. Curve and shape drawables only; a tiling pattern's
-    /// origin is not adjusted.
+    /// its offset shadow. Shifts stroke and shape geometry only; a tiling
+    /// pattern's origin is not adjusted.
     pub fn translated(&self, dx: f32, dy: f32) -> Self {
         let mut out = self.clone();
         let off = Vec2::new(dx, dy);
