@@ -1,10 +1,13 @@
-//! State that survives between frames, owned by the widget's `tree::State`.
+//! State that survives between frames, owned by the widget's `tree::State`:
+//! camera, drag, z-order and touch contacts.
 //!
 //! Everything here is keyed by *node index* - the node's position in the
 //! `NodeGraph::nodes` vector for the current frame - not by the host's node id.
 //! An index is a per-frame identity: the host owns node order, so a reorder
-//! re-maps every index. Selection is re-synced from the host whenever it pushes
-//! a new `selection()`; z-order is not, so it follows index, not identity.
+//! re-maps every index. Selection is not state this module owns; it is a
+//! property of each [`Node`] and is read off the host's nodes every frame. The
+//! only selection value kept here is `pending_selection`, the reported-but-not-
+//! yet-applied working copy, guarded by `selection_baseline`.
 
 use super::GraphInfo;
 use super::camera::Camera2D;

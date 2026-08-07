@@ -152,7 +152,7 @@ pub struct DemandReport {
 pub struct FineReport {
     /// Sum of per-fine-tile referenced slot counts.
     pub slot_sum: u64,
-    /// Highest per-fine-tile slot count (against `MAX_FINE_SLOTS` = 128).
+    /// Highest per-fine-tile slot count (against [`crate::primitive::MAX_FINE_SLOTS`]).
     pub slot_max: u32,
     /// Fine tiles with at least one slot.
     pub live_tiles: u32,

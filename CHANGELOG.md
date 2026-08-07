@@ -57,73 +57,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   0.5x-2x resolution (it tracks geometry), sort 254.2 us and rising with
   resolution (it tracks tiles) - so the scatter is 15% of index-build time.
 
-### Fixed
-
-- **Shapes went missing after a draw-set change.** A primitive skipped
-  re-uploading its cull lists when a per-draw-slot record matched on resident
-  block plus list cursors. That predicate cannot express what the skip needs.
-  The record is keyed by draw slot while the bytes are keyed by cursor, and the
-  cull buffers are one flat arena whose ranges a per-frame cursor hands out, so a
-  frame in which a slot is absent lets a LOWER slot write at the same cursor
-  while the record survives untouched. Every list element embeds its own draw
-  slot, so honouring the stale record scattered the primitive's geometry into a
-  foreign draw's tiles and dropped it from its own: a node lost its border, a pin
-  its indicator, another pin half of one, all with straight tile-aligned edges.
-  It took a particular sequence of moves to hit, which is why it survived since
-  the index reuse landed.
-
-  The reuse decision is now CONTENT-based: `Buffer::write_or_skip` takes what the
-  caller believes the buffer should hold, compares it against the mirror and
-  uploads only on a difference. Ownership of a range is no longer something a key
-  has to encode, so the failure is unrepresentable rather than merely detected.
-  `Buffer::skip`, the scatter-slot records and the block generation they keyed on
-  are gone. Costs nothing: an idle frame's `upload_bytes` and `cull_skipped` are
-  unchanged, since what the skip saves is the GPU upload, not the CPU rebuild.
-
-- **Every SDF-drawn color was a gamma step too bright.** `compile::c2v` uploaded
-  a `Color`'s sRGB-encoded components as if they were already linear, while
-  iced's own quad and text pipelines pack through `graphics::color::pack`. The
-  same `Color` therefore rendered as two different colors depending on which
-  pipeline drew it - the canvas quad correct, every node body, border, pin, edge
-  and shadow lifted (`#3A3C40` came out as `#83858A`). Because the error
-  compresses the dark end hardest, it flattened the distinctions between
-  palettes: 22 built-in themes rendered node bodies in nearly the same mid grey.
-  Colors now route through `graphics::color::pack`, so an SDF surface and an
-  iced quad of one `Color` match, gradients interpolate in the target's space,
-  and the pixel-test fill predicates derive their expected bytes from the style
-  instead of transcribing them.
-- **The widget pixel-oracle harness never started a frame.** `edge_grid_pixel`
-  drew through `graph.draw` + `Renderer::screenshot` without calling
-  `Renderer::reset`, which the iced runtime does per frame and which
-  `screenshot()` - unlike `present()` - does not. Every render therefore piled
-  another copy of the scene onto the previous layers: the Nth screenshot
-  prepared N scenes, so draws, entries and index tiles grew linearly
-  (1001 -> 6006 draws over six renders). `edge_grid_stable_across_frames` was
-  measuring accumulation, not stability, and passed only because the tile total
-  happened to stay under the device-limit fallback within six frames. Edge
-  coverage is now byte-identical across frames (52456 six times, previously
-  drifting 52494 -> 58035 once the fallback engaged). The same missing reset was
-  the real cause behind two tests ignored as "shared-renderer cross-test
-  pollution"; both are un-ignored and pass in the full suite.
-- **The geometry arenas could exceed the device's storage-binding limit.** The
-  tile index has always clamped against `max_storage_buffer_binding_size` and
-  degraded to `grid_cols = 0`; `Buffer<T>` grew 1.5x unconditionally until wgpu
-  rejected the allocation - a hard failure with no fallback, and the only
-  unbounded resource in the pipeline. At the wgpu default of 128 MiB that is
-  2_097_152 `GpuSegment`s, with the first overshooting grow at ~1_398_101 live
-  segments. Growth now clamps, and every write path checks capacity BEFORE
-  mutating, so a refusal needs no rollback: the slot never becomes live and
-  consumers bounded by `len()` cannot read it. Refused items are counted in
-  `SdfStats::gpu_dropped_items` instead of being silent.
-- The bezier tessellation tolerance is now actually tested.
-  `bezier_tessellation_matches_a_finer_reference` renders a production-fitted
-  curve against a 20x finer reference spline at the widget's maximum zoom, and
-  `cubic_tolerance_stays_within_one_screen_pixel_at_max_zoom` pins the stated
-  `tol * zoom <= 1.0 px` contract. Every existing bezier test either compared
-  like against like (`tiled` vs `untiled` uses the same tolerance for both, so
-  it cannot see a tolerance change) or asserted a structural invariant, so a
-  tenfold tolerance increase - plainly visible when zoomed in - left all 155
-  tests green.
+- `NodeGraph::on_edge_delete(Vec<E>)` reports the edges the cutting tool
+  destroyed, named by the ids the host passed to `edge!`. Until now the edge id
+  went in and never came back out, so a host keyed by edge id had to recover it
+  by matching the endpoint pair - `demos/hello_world` did exactly that. This is
+  the only path where the widget holds a host-supplied edge: `on_disconnect`
+  also fires while a drag leaves a snapped pin, where no host edge exists yet.
+  Mirrors `on_delete(Vec<N>)` for nodes: one batched call per cut gesture.
+- `SelectionBoxStyle` + `default_selection_box_style(theme)` and
+  `CuttingToolStyle` + `default_cutting_tool_style(theme)`: the two interaction
+  overlays now follow the crate's one styling shape - a closure over the theme
+  with a `default_*_style` base - like nodes, pins and edges already did.
+  Both structs expose the stroke width the widget previously kept in a private
+  constant, so a host closure can reach everything the default reaches.
+- `DragInfo` derives `PartialEq`, like the other public diagnostic types.
 
 ### Changed
 
@@ -286,32 +233,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   graph regardless of what the demos themselves asked for. No demo pulls the
   software renderer any more.
 
-### Fixed
-
-- The doc examples for the `pin!` macro and for the `node_pin` module were
-  `ignore`d pseudo-code fragments that did not compile (macro calls in item
-  position, undeclared types). They are now real, compile-checked examples, so
-  `cargo test --doc` covers the macro surface.
-
-### Added
-
-- `NodeGraph::on_edge_delete(Vec<E>)` reports the edges the cutting tool
-  destroyed, named by the ids the host passed to `edge!`. Until now the edge id
-  went in and never came back out, so a host keyed by edge id had to recover it
-  by matching the endpoint pair - `demos/hello_world` did exactly that. This is
-  the only path where the widget holds a host-supplied edge: `on_disconnect`
-  also fires while a drag leaves a snapped pin, where no host edge exists yet.
-  Mirrors `on_delete(Vec<N>)` for nodes: one batched call per cut gesture.
-- `SelectionBoxStyle` + `default_selection_box_style(theme)` and
-  `CuttingToolStyle` + `default_cutting_tool_style(theme)`: the two interaction
-  overlays now follow the crate's one styling shape - a closure over the theme
-  with a `default_*_style` base - like nodes, pins and edges already did.
-  Both structs expose the stroke width the widget previously kept in a private
-  constant, so a host closure can reach everything the default reaches.
-- `DragInfo` derives `PartialEq`, like the other public diagnostic types.
-
-### Changed
-
 **BREAKING.** Selection is a property of the node: `Node::selected(bool)`
 replaces `NodeGraph::selection(..)`.
 
@@ -372,6 +293,79 @@ its own `SelectionStyle::from_theme`, so setting those two through `graph_style`
 silently did nothing. The overlays moved to their own style types (above) and the
 selected-node look moved into `default_node_style`, leaving `GraphStyle` as what
 its name says: the canvas.
+
+### Fixed
+
+- **Shapes went missing after a draw-set change.** A primitive skipped
+  re-uploading its cull lists when a per-draw-slot record matched on resident
+  block plus list cursors. That predicate cannot express what the skip needs.
+  The record is keyed by draw slot while the bytes are keyed by cursor, and the
+  cull buffers are one flat arena whose ranges a per-frame cursor hands out, so a
+  frame in which a slot is absent lets a LOWER slot write at the same cursor
+  while the record survives untouched. Every list element embeds its own draw
+  slot, so honouring the stale record scattered the primitive's geometry into a
+  foreign draw's tiles and dropped it from its own: a node lost its border, a pin
+  its indicator, another pin half of one, all with straight tile-aligned edges.
+  It took a particular sequence of moves to hit, which is why it survived since
+  the index reuse landed.
+
+  The reuse decision is now CONTENT-based: `Buffer::write_or_skip` takes what the
+  caller believes the buffer should hold, compares it against the mirror and
+  uploads only on a difference. Ownership of a range is no longer something a key
+  has to encode, so the failure is unrepresentable rather than merely detected.
+  `Buffer::skip`, the scatter-slot records and the block generation they keyed on
+  are gone. Costs nothing: an idle frame's `upload_bytes` and `cull_skipped` are
+  unchanged, since what the skip saves is the GPU upload, not the CPU rebuild.
+
+- **Every SDF-drawn color was a gamma step too bright.** `compile::c2v` uploaded
+  a `Color`'s sRGB-encoded components as if they were already linear, while
+  iced's own quad and text pipelines pack through `graphics::color::pack`. The
+  same `Color` therefore rendered as two different colors depending on which
+  pipeline drew it - the canvas quad correct, every node body, border, pin, edge
+  and shadow lifted (`#3A3C40` came out as `#83858A`). Because the error
+  compresses the dark end hardest, it flattened the distinctions between
+  palettes: 22 built-in themes rendered node bodies in nearly the same mid grey.
+  Colors now route through `graphics::color::pack`, so an SDF surface and an
+  iced quad of one `Color` match, gradients interpolate in the target's space,
+  and the pixel-test fill predicates derive their expected bytes from the style
+  instead of transcribing them.
+- **The widget pixel-oracle harness never started a frame.** `edge_grid_pixel`
+  drew through `graph.draw` + `Renderer::screenshot` without calling
+  `Renderer::reset`, which the iced runtime does per frame and which
+  `screenshot()` - unlike `present()` - does not. Every render therefore piled
+  another copy of the scene onto the previous layers: the Nth screenshot
+  prepared N scenes, so draws, entries and index tiles grew linearly
+  (1001 -> 6006 draws over six renders). `edge_grid_stable_across_frames` was
+  measuring accumulation, not stability, and passed only because the tile total
+  happened to stay under the device-limit fallback within six frames. Edge
+  coverage is now byte-identical across frames (52456 six times, previously
+  drifting 52494 -> 58035 once the fallback engaged). The same missing reset was
+  the real cause behind two tests ignored as "shared-renderer cross-test
+  pollution"; both are un-ignored and pass in the full suite.
+- **The geometry arenas could exceed the device's storage-binding limit.** The
+  tile index has always clamped against `max_storage_buffer_binding_size` and
+  degraded to `grid_cols = 0`; `Buffer<T>` grew 1.5x unconditionally until wgpu
+  rejected the allocation - a hard failure with no fallback, and the only
+  unbounded resource in the pipeline. At the wgpu default of 128 MiB that is
+  2_097_152 `GpuSegment`s, with the first overshooting grow at ~1_398_101 live
+  segments. Growth now clamps, and every write path checks capacity BEFORE
+  mutating, so a refusal needs no rollback: the slot never becomes live and
+  consumers bounded by `len()` cannot read it. Refused items are counted in
+  `SdfStats::gpu_dropped_items` instead of being silent.
+- The bezier tessellation tolerance is now actually tested.
+  `bezier_tessellation_matches_a_finer_reference` renders a production-fitted
+  curve against a 20x finer reference spline at the widget's maximum zoom, and
+  `cubic_tolerance_stays_within_one_screen_pixel_at_max_zoom` pins the stated
+  `tol * zoom <= 1.0 px` contract. Every existing bezier test either compared
+  like against like (`tiled` vs `untiled` uses the same tolerance for both, so
+  it cannot see a tolerance change) or asserted a structural invariant, so a
+  tenfold tolerance increase - plainly visible when zoomed in - left all 155
+  tests green.
+
+- The doc examples for the `pin!` macro and for the `node_pin` module were
+  `ignore`d pseudo-code fragments that did not compile (macro calls in item
+  position, undeclared types). They are now real, compile-checked examples, so
+  `cargo test --doc` covers the macro surface.
 
 ### Internal
 

@@ -163,7 +163,8 @@ that drives the widget through its public API lives in `iced_nodegraph/tests/`:
 widget hands its children using the shared recording renderer in
 `tests/common/record.rs`; `simulator.rs` drives real events through
 `iced_test::Simulator`; `widget_pixel.rs` and `edge_grid_pixel.rs` are pixel
-oracles against the headless GPU harness in `tests/common/mod.rs`.
+oracles against the headless GPU harness in `tests/common/mod.rs`;
+`theme_gallery.rs` pins the perceptual role table across every built-in theme.
 The `iced_nodegraph_bench` member (`benches/frame_prep.rs`,
 `cargo bench -p iced_nodegraph_bench`) measures frame-preparation cost; it is a
 separate crate because `dev-dependencies` are package-wide, so criterion's 38

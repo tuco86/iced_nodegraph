@@ -326,7 +326,7 @@ that interval overlaps the style's reach band. The cull must be a conservative
   is a hole. Never under-include.
 - A closed fill whose interior covers the tile but whose contour is far is kept via
   the nearest-segment sign at the tile centre, trusted only far from the contour.
-- Fine-level eviction (when a fine tile exceeds its 128 references) is
+- Fine-level eviction (when a fine tile exceeds its 64 references) is
   keep-nearest, ranked by `|distance|` at the tile centre, so the segments that
   dominate the tile's pixels survive.
 

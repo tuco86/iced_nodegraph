@@ -569,7 +569,10 @@ pub struct SdfPipeline {
     style_arena: ArenaAlloc,
     /// Frame counter (incremented in `trim`); drives block LRU aging.
     frame_counter: u64,
-    /// Monotonic [`ResidentBlock::gen`] source.
+    /// Monotonic source of the generation stamp a block compile writes into
+    /// every [`ShapeResidency::last_ref_gen`] / [`StyleResidency::last_ref_gen`]
+    /// it touches, so a block that instances one shape many times still holds a
+    /// single residency ref.
     next_block_gen: u64,
     /// Lifetime arena-compaction count (reported in [`types::SdfStats`]).
     compactions: u64,

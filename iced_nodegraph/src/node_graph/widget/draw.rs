@@ -566,9 +566,9 @@ where
         // primitive collapses the whole below-nodes layer into a single
         // fullscreen fragment pass. Pushing ALL strokes before ANY shadow keeps
         // every edge line above every shadow. The node bodies (Layer 4) paint
-        // over all of it. The grid is no longer marked cacheable: the dynamic
-        // shadows/edges sharing this draw would never let the static-background
-        // texture cache hit. Node shadows within the z1 band are pushed in
+        // over all of it. The grid is not marked cacheable: it shares this draw
+        // with the dynamic shadows and edges, so the static-background texture
+        // cache could never hit. Node shadows within the z1 band are pushed in
         // STABLE node-index order rather than the selection-sorted `z_indices`
         // (see below) - bg_layer is a single SdfPrimitive whose geometry hash
         // covers entry push order, so ordering shadows by `z_indices` would
@@ -897,9 +897,10 @@ where
                         let bounds = node_layout.bounds();
                         let screen_offset: Vector = offset.into_iced();
                         // Clip content to the full node bounds (the body edge).
-                        // The border sits outside the silhouette, so it never
-                        // narrows the content area: selection thickening the
-                        // border no longer shrinks the node interior.
+                        // The border grows outward from the silhouette, so the
+                        // content area is the same width at any border
+                        // thickness: selecting a node cannot reflow its
+                        // interior.
                         let node_clip = Rectangle {
                             x: bounds.x + screen_offset.x,
                             y: bounds.y + screen_offset.y,

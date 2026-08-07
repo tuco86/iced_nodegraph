@@ -263,13 +263,13 @@ colour one of its pixels. This index has **two levels** (see the `cs_scatter_*`
 and `cs_sort_fine` kernels in
 [`src/pipeline/shader.wgsl`](src/pipeline/shader.wgsl)):
 
-<img src="docs/tiles.svg" alt="A two-level tile index: 64px coarse tiles hold (segment, entry) results; 16px fine tiles hold 16-bit indices into them." width="100%">
+<img src="docs/tiles.svg" alt="A two-level tile index: 64px coarse tiles hold (segment, entry) results; 8px fine tiles hold 16-bit indices into them." width="100%">
 
 - A **coarse** grid of 64&times;64-pixel tiles holds the actual cull result: up to
   512 `(segment, entry)` slots per tile, each a pair of 32-bit indices, sorted by
   entry so the fragment shader walks one shape at a time, front to back.
-- A **fine** grid of 16&times;16-pixel tiles (16&times; as many) holds, per tile, up
-  to 128 **16-bit indices** into its parent coarse tile's result.
+- A **fine** grid of 8&times;8-pixel tiles (64&times; as many) holds, per tile, up
+  to 64 **16-bit indices** into its parent coarse tile's result.
 
 The split is a memory trade. The fat `(segment, entry)` slots live once per coarse
 tile, of which there are few; the numerous fine tiles store two bytes per slot
@@ -305,7 +305,7 @@ kernel scatters open strokes per segment, one handles closed contours per
 entry (their interiors need the centre-sign keep), and a third sorts every
 coarse tile's slots by (entry, segment) — a unique total order that makes the
 frame deterministic regardless of atomic append order — before its threads
-re-cull the 16px fine tiles into compact 16-bit references. Every kernel is
+re-cull the 8px fine tiles into compact 16-bit references. Every kernel is
 dispatched flat and sized to the actual work — the sort runs one workgroup per
 *live* coarse tile and binary-searches its owning draw, so no workgroup is dead
 on arrival — and the whole frame is **one** `queue.submit` — skipped

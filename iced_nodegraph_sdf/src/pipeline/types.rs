@@ -101,7 +101,7 @@ pub(crate) struct GpuDrawEntry {
     pub segment_start: u32,
     /// Number of segments.
     pub segment_count: u32,
-    /// Tiling type: 0=grid, 1=dots.
+    /// Tiling type, as encoded by [`crate::drawable::TilingType`].
     pub tiling_type: u32,
     pub _pad: u32,
     /// Tiling params: (spacing_x, spacing_y, thickness/radius, 0).
