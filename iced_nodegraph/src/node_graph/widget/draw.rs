@@ -1018,7 +1018,7 @@ where
                             let h = indicator_r * SQUARE_HALF_EXTENT;
                             (Shape::rounded_box([2.0 * h, 2.0 * h], [0.0; 4]), pw)
                         }
-                        _ => (Shape::circle(indicator_r), pw),
+                        crate::style::PinShape::Circle => (Shape::circle(indicator_r), pw),
                     };
 
                     let pin_layers = pin_style.sdf_layers(pin_state.direction, indicator_r);

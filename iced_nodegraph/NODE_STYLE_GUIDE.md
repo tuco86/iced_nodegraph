@@ -1,6 +1,10 @@
 # Node Style Guide
 
-Design guidelines for creating consistent, professional nodes in iced_nodegraph.
+Design guidelines for the *content* of a node - the interior the host builds
+and the widget only lays out and clips. These are demo-side conventions, with a
+fixed palette chosen for the demos; the widget's own chrome (body, border, pin
+indicators, edges) is theme-derived and lives in `style/roles.rs`, so the two
+colour systems are deliberately independent and do not agree.
 
 ## 1. Color System
 
@@ -229,9 +233,7 @@ Symmetric input/output on first row:
 | Shape    | Usage              | When to use                    |
 |----------|--------------------|--------------------------------|
 | Circle   | Data flow (default)| Numbers, strings, colors, etc. |
-| Diamond  | Control flow       | Triggers, events               |
 | Square   | Arrays/Collections | Lists, buffers                 |
-| Triangle | References         | Pointers, handles              |
 
 ---
 

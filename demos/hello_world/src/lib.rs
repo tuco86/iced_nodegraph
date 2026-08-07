@@ -2238,7 +2238,7 @@ impl Application {
                             }),
                         }),
                     command("pin_shape", "Pin Shape Selector")
-                        .description("Select pin shape (Circle, Square, Diamond)")
+                        .description("Select pin shape (Circle, Square)")
                         .action(ApplicationMessage::SpawnNode {
                             node_type: NodeType::Input(InputNodeType::PinShapeSelector {
                                 value: PinShape::Circle,
@@ -2690,12 +2690,12 @@ mod tests {
             pin: PinOverlay::new()
                 .color(Color::from_rgb(1.0, 0.0, 0.0))
                 .radius(10.0)
-                .shape(PinShape::Diamond),
+                .shape(PinShape::Square),
             ..Default::default()
         };
         assert!(style.pin.color.is_some());
         assert_eq!(style.pin.radius, Some(10.0));
-        assert_eq!(style.pin.shape, Some(PinShape::Diamond));
+        assert_eq!(style.pin.shape, Some(PinShape::Square));
     }
 
     #[test]

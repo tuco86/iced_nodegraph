@@ -746,8 +746,6 @@ fn pin_shape_to_string(shape: PinShape) -> String {
     match shape {
         PinShape::Circle => "Circle",
         PinShape::Square => "Square",
-        PinShape::Diamond => "Diamond",
-        PinShape::Triangle => "Triangle",
     }
     .to_string()
 }
@@ -756,8 +754,6 @@ fn string_to_pin_shape(s: &str) -> PinShape {
     match s {
         "Circle" => PinShape::Circle,
         "Square" => PinShape::Square,
-        "Diamond" => PinShape::Diamond,
-        "Triangle" => PinShape::Triangle,
         _ => PinShape::Circle,
     }
 }

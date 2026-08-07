@@ -36,20 +36,13 @@ pub use iced_nodegraph_sdf::ColorQuad;
 pub(crate) use sdf::EdgeGeometry;
 
 /// Shape of a pin indicator.
-///
-/// Different shapes help users visually distinguish pin types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[repr(u32)]
 pub enum PinShape {
-    /// Standard circular pin (default)
+    /// Round indicator.
     #[default]
-    Circle = 0,
-    /// Square pin for data ports
-    Square = 1,
-    /// Diamond pin for control flow
-    Diamond = 2,
-    /// Triangle pin pointing outward
-    Triangle = 3,
+    Circle,
+    /// Square indicator, sized to the area of the circle it replaces.
+    Square,
 }
 
 /// Node status for styling purposes.

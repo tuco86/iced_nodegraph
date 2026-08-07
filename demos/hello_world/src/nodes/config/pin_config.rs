@@ -179,8 +179,6 @@ where
     let shape_label = match result.shape {
         Some(PinShape::Circle) => "circle",
         Some(PinShape::Square) => "square",
-        Some(PinShape::Diamond) => "diamond",
-        Some(PinShape::Triangle) => "triangle",
         None => "--",
     };
     let shape_row = row![

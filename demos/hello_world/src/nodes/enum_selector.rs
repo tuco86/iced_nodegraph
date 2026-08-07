@@ -139,8 +139,6 @@ where
     // Create pills directly for clean layout
     let on_change1 = on_change.clone();
     let on_change2 = on_change.clone();
-    let on_change3 = on_change.clone();
-    let on_change4 = on_change.clone();
 
     let row1 = row![
         pill_button(
@@ -160,24 +158,6 @@ where
     ]
     .spacing(4);
 
-    let row2 = row![
-        pill_button(
-            "Diamond",
-            PinShape::Diamond,
-            selected,
-            on_change3(PinShape::Diamond),
-            accent
-        ),
-        pill_button(
-            "Triangle",
-            PinShape::Triangle,
-            selected,
-            on_change4(PinShape::Triangle),
-            accent
-        ),
-    ]
-    .spacing(4);
-
     let output_pin = container(pin!(
         Right,
         "value",
@@ -190,8 +170,7 @@ where
 
     column![
         node_title_bar("Pin Shape", style),
-        container(column![column![row1, row2].spacing(4), output_pin,].spacing(8))
-            .padding([10, 12])
+        container(column![row1, output_pin,].spacing(8)).padding([10, 12])
     ]
     .width(160.0)
     .into()

@@ -580,3 +580,134 @@ fn render_node_selection(selected: bool) -> Option<Vec<[u8; 4]>> {
             .collect(),
     )
 }
+
+/// One node whose single Output pin is drawn as `shape` in an unmistakable
+/// magenta, big enough that its footprint spans tens of pixels.
+fn render_pin_shape(shape: iced_nodegraph::PinShape) -> Option<Vec<[u8; 4]>> {
+    use iced_nodegraph::{PinDirection, PinSide, PinStyle, default_pin_style, node_pin};
+
+    let mut guard = shared()?;
+    let renderer = &mut *guard;
+
+    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Renderer> = NodeGraph::default()
+        .width(Length::Fixed(W as f32))
+        .height(Length::Fixed(H as f32))
+        .view(Point::ORIGIN, 1.0);
+    graph.push_node(
+        node(
+            0_usize,
+            Point::new(90.0, 70.0),
+            Element::from(
+                iced::widget::container(
+                    node_pin(PinSide::Left, 0_usize, text("")).direction(PinDirection::Output),
+                )
+                .width(Length::Fixed(120.0))
+                .height(Length::Fixed(80.0)),
+            ),
+        )
+        .pin_style(move |theme, _pin, _peer, status| PinStyle {
+            color: Color::from_rgb(1.0, 0.0, 1.0).into(),
+            radius: 20.0,
+            shape,
+            // A cutout or a border would add geometry outside the indicator and
+            // blur the footprint this test measures.
+            cutout_radius: 0.0,
+            border_width: 0.0,
+            ..default_pin_style(theme, status)
+        }),
+    );
+
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Renderer>);
+    let layout_node = graph.layout(
+        &mut tree,
+        &*renderer,
+        &layout::Limits::new(Size::ZERO, Size::new(W as f32, H as f32)),
+    );
+    let layout = Layout::new(&layout_node);
+    let viewport_rect = Rectangle::new(Point::ORIGIN, Size::new(W as f32, H as f32));
+
+    let mut msgs: Vec<()> = Vec::new();
+    let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
+    let mut clipboard = clipboard::Null;
+    graph.update(
+        &mut tree,
+        &iced::Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(-1.0, -1.0),
+        }),
+        layout,
+        mouse::Cursor::Unavailable,
+        &*renderer,
+        &mut clipboard,
+        &mut shell,
+        &viewport_rect,
+    );
+    graph.draw(
+        &tree,
+        renderer,
+        &Theme::Dark,
+        &renderer::Style {
+            text_color: Color::WHITE,
+        },
+        layout,
+        mouse::Cursor::Unavailable,
+        &viewport_rect,
+    );
+    let bytes = renderer.screenshot(
+        &Viewport::with_physical_size(Size::new(W, H), 1.0),
+        Color::TRANSPARENT,
+    );
+    Some(
+        bytes
+            .chunks_exact(4)
+            .map(|c| [c[0], c[1], c[2], c[3]])
+            .collect(),
+    )
+}
+
+/// Fraction of the magenta footprint's bounding box that the footprint covers.
+/// A disc fills PI/4 of its box; an axis-aligned square fills all of it.
+fn magenta_box_fill(px: &[[u8; 4]]) -> f32 {
+    let hit = |p: &[u8; 4]| p[0] > 200 && p[2] > 200 && p[1] < 60;
+    let (mut x0, mut y0, mut x1, mut y1) = (W, H, 0u32, 0u32);
+    let mut count = 0u32;
+    for (i, p) in px.iter().enumerate() {
+        if !hit(p) {
+            continue;
+        }
+        let (x, y) = (i as u32 % W, i as u32 / W);
+        x0 = x0.min(x);
+        y0 = y0.min(y);
+        x1 = x1.max(x);
+        y1 = y1.max(y);
+        count += 1;
+    }
+    assert!(count > 300, "pin indicator did not render ({count} px)");
+    count as f32 / ((x1 - x0 + 1) * (y1 - y0 + 1)) as f32
+}
+
+/// `PinShape` is a rendering contract, not a label: every variant must reach
+/// the GPU as its own silhouette. Circle and Square are drawn at equal area, so
+/// only the footprint's shape tells them apart - a disc leaves its bounding
+/// box's corners empty, a square fills them.
+#[test]
+fn every_pin_shape_draws_its_own_silhouette() {
+    use iced_nodegraph::PinShape;
+
+    let Some(circle) = render_pin_shape(PinShape::Circle) else {
+        eprintln!("no GPU adapter - skipping every_pin_shape_draws_its_own_silhouette");
+        return;
+    };
+    let square = render_pin_shape(PinShape::Square).expect("GPU was available a moment ago");
+
+    let circle_fill = magenta_box_fill(&circle);
+    let square_fill = magenta_box_fill(&square);
+    assert!(
+        circle_fill < 0.85,
+        "Circle filled {circle_fill:.3} of its bounding box; a disc covers about 0.785",
+    );
+    assert!(
+        square_fill > 0.93,
+        "Square filled {square_fill:.3} of its bounding box; a square covers about 1.0 - \
+         it is being drawn as a disc",
+    );
+}

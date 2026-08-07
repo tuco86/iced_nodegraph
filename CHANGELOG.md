@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   primitives plus the `-` / `|` / `&` operators express the same set algebra,
   and `Drawable` stays public as `Shape::evaluate`'s return type.
 
+- **`PinShape` carries only the two shapes the renderer draws**, `Circle` and
+  `Square`. `Diamond` and `Triangle` were declared but never drawn - the pin
+  draw path matched `Square` and sent everything else to a circle - so a host
+  that selected one got a circle and no diagnostic. The `#[repr(u32)]` and the
+  explicit discriminants are gone with them: nothing casts a `PinShape` to its
+  discriminant.
+
 ### Added
 
 - **GPU work and memory counters.** `SdfStats` gains `upload_bytes`,
