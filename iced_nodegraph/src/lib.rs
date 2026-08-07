@@ -93,8 +93,14 @@
 //! fields with struct-update over a theme-derived default, inside a `.style()`
 //! closure that also receives the element's status:
 //!
-//! ```ignore
-//! node(0, pos, body).style(|theme, status| NodeStyle {
+//! ```rust,no_run
+//! use iced::{widget::text, Color, Point};
+//! use iced_nodegraph::{ColorQuad, NodeStyle, default_node_style, node};
+//!
+//! # #[derive(Debug, Clone)]
+//! # enum Message {}
+//! # let (pos, body) = (Point::ORIGIN, text("body"));
+//! node::<_, usize, (), Message, iced::Renderer>(0, pos, body).style(|theme, status| NodeStyle {
 //!     fill_color: ColorQuad::solid(Color::from_rgb(0.2, 0.3, 0.5)),
 //!     ..default_node_style(theme, status)
 //! });
@@ -115,10 +121,19 @@
 //! already has it, along with any per-node status. Derive the status there and
 //! capture it:
 //!
-//! ```ignore
-//! for n in &self.nodes {
-//!     let working = self.is_working(n.id);
-//!     ng.push_node(node(n.id, n.pos, body).style(move |theme, status| {
+//! ```rust,no_run
+//! use iced::{widget::text, Point};
+//! use iced_nodegraph::{NodeGraph, NodeStyle, Pattern, default_node_style, node};
+//!
+//! # #[derive(Debug, Clone)]
+//! # enum Message {}
+//! # struct MyNode { id: usize, pos: Point }
+//! # let nodes = [MyNode { id: 0, pos: Point::ORIGIN }];
+//! # let is_working = |_: usize| true;
+//! # let mut ng: NodeGraph<'_, usize, usize, (), Message> = NodeGraph::default();
+//! for n in &nodes {
+//!     let working = is_working(n.id);
+//!     ng.push_node(node(n.id, n.pos, text("body")).style(move |theme, status| {
 //!         let base = default_node_style(theme, status);
 //!         if working {
 //!             NodeStyle { border_pattern: Pattern::dashed(2.0, 6.0, 4.0).flow(40.0), ..base }

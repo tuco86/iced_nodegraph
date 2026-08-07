@@ -8,14 +8,7 @@
 //! interaction state (camera, drag, z-order) in
 //! [`state`](self::state), keyed by node index rather than node id.
 //!
-//! ```ignore
-//! let mut ng = node_graph()
-//!     .on_connect(|from, to| Message::Connected { from, to })
-//!     .on_move(|delta, node_ids| Message::NodesMoved { delta, node_ids });
-//!
-//! ng.push_node(node(0, Point::new(100.0, 100.0), my_node_content));
-//! ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)));
-//! ```
+//! The crate-level Quick Start ([`crate`]) shows the whole `view` shape.
 //!
 //! # Reporting
 //!
@@ -114,11 +107,18 @@ impl<'a, N, P, UI, Message, Renderer> Node<'a, N, P, UI, Message, Renderer> {
     /// Sets the per-node style closure: receives the theme and the node's
     /// [`NodeStatus`], returns the resolved style. Layer over the built-in
     /// default:
-    /// ```ignore
-    /// node(0, pos, el).style(|theme, status| NodeStyle {
-    ///     fill_color: Color::WHITE.into(),
-    ///     ..default_node_style(theme, status)
-    /// })
+    /// ```rust,no_run
+    /// use iced::{widget::text, Color, Point};
+    /// use iced_nodegraph::{NodeStyle, default_node_style, node};
+    ///
+    /// # #[derive(Debug, Clone)]
+    /// # enum Message {}
+    /// # let (pos, el) = (Point::ORIGIN, text("body"));
+    /// let n = node::<_, usize, (), Message, iced::Renderer>(0, pos, el)
+    ///     .style(|theme, status| NodeStyle {
+    ///         fill_color: Color::WHITE.into(),
+    ///         ..default_node_style(theme, status)
+    ///     });
     /// ```
     pub fn style(mut self, f: impl Fn(&Theme, NodeStatus) -> NodeStyle + 'a) -> Self {
         self.style = Some(Box::new(f));
@@ -148,11 +148,19 @@ impl<'a, N, P, UI, Message, Renderer> Node<'a, N, P, UI, Message, Renderer> {
     /// this pin's [`PinInfo`] view (direction, user info, id), the other
     /// endpoint's info (the drag source during an edge drag, else `None`) and
     /// the pin's [`PinStatus`], returns the resolved pin style.
-    /// ```ignore
-    /// node(0, pos, el).pin_style(|theme, pin, other, status| PinStyle {
-    ///     color: color_for(pin.info()).into(),
-    ///     ..default_pin_style(theme, status)
-    /// })
+    /// ```rust,no_run
+    /// use iced::{widget::text, Color, Point};
+    /// use iced_nodegraph::{PinStyle, default_pin_style, node};
+    ///
+    /// # #[derive(Debug, Clone)]
+    /// # enum Message {}
+    /// # let (pos, el) = (Point::ORIGIN, text("body"));
+    /// # fn color_for(_: &()) -> Color { Color::WHITE }
+    /// let n = node::<_, usize, (), Message, iced::Renderer>(0, pos, el)
+    ///     .pin_style(|theme, pin, _other, status| PinStyle {
+    ///         color: color_for(pin.info()).into(),
+    ///         ..default_pin_style(theme, status)
+    ///     });
     /// ```
     pub fn pin_style(
         mut self,
@@ -661,9 +669,15 @@ where
     /// built-in rules with
     /// [`default_can_connect`](crate::connection::default_can_connect):
     ///
-    /// ```ignore
+    /// ```rust,no_run
+    /// use iced_nodegraph::NodeGraph;
     /// use iced_nodegraph::connection::default_can_connect;
-    /// ng.can_connect(|from, to| default_can_connect(from, to) && from.info() == to.info());
+    ///
+    /// # #[derive(Debug, Clone)]
+    /// # enum Message {}
+    /// # let ng: NodeGraph<'_, usize, usize, (), Message> = NodeGraph::default();
+    /// let ng = ng
+    ///     .can_connect(|from, to| default_can_connect(from, to) && from.info() == to.info());
     /// ```
     ///
     /// Or pick individual predicates ([`direction_ok`](crate::connection::direction_ok),

@@ -4,7 +4,7 @@
 //! base lives in [`default_node_style`](crate::default_node_style); override
 //! individual fields with struct-update syntax over it:
 //!
-//! ```ignore
+//! ```text
 //! NodeStyle { fill_color: Color::WHITE.into(), ..default_node_style(theme, status) }
 //! ```
 //!

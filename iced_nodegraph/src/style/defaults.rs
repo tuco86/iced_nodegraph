@@ -20,7 +20,7 @@
 //! [`default_cutting_tool_style`]) have no status - the overlay exists only while
 //! its gesture is running.
 //!
-//! ```ignore
+//! ```text
 //! node.style(|theme, status| NodeStyle {
 //!     fill_color: Color::WHITE.into(),      // user override wins
 //!     ..default_node_style(theme, status)   // theme base + status fills the rest

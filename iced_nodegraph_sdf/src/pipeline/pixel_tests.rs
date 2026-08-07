@@ -6054,12 +6054,13 @@ fn coarse_overflow_telemetry_reports_true_demand() {
     assert_eq!(stats.coarse_overflow_tiles, tiles, "report must be sticky");
 }
 
-/// TEMP measure-first probe (ignored): steady-state `prepare` CPU cost of an IDLE
-/// 500-node frame (same scene re-prepared each frame, no camera change). Sizes the
-/// prize for the persistent-buffer / dirty-skip work: how much CPU an unchanged
-/// frame currently burns re-evaluating, recompiling and re-uploading identical
-/// data. Frame 0 is cold (eval + buffer growth); frames 1+ are steady (shape-cache
-/// hits, no growth). Run with:
+/// Sizing probe: steady-state `prepare` CPU cost of an IDLE
+/// 500-node frame (same scene re-prepared each frame, no camera change). Sizes
+/// the prize for caching static-edge arc-splines by endpoint - how much CPU an
+/// unchanged frame burns re-evaluating, recompiling and re-uploading identical
+/// data - which is the decision `benches/frame_prep.rs` is aimed at. Frame 0 is
+/// cold (eval + buffer growth); frames 1+ are steady (shape-cache hits, no
+/// growth). Ignored because it measures rather than asserts. Run with:
 ///   cargo test -p iced_nodegraph_sdf idle_prepare_cost -- --ignored --nocapture
 #[test]
 #[ignore]
@@ -6179,7 +6180,7 @@ fn measure_idle_prepare_cost() {
     println!("----------------------------------------------------------------\n");
 }
 
-/// TEMP measure-first probe (ignored): steady-state `prepare` CPU cost of a DRAG
+/// Sizing probe: steady-state `prepare` CPU cost of a DRAG
 /// frame on the same representative scene as `measure_idle_prepare_cost` (bg
 /// tiling + 500 node fills + 640 bezier edges in one batch). Each frame moves
 /// ONE node: its fill primitive gets a new placement and the 3 edges incident
@@ -6189,7 +6190,8 @@ fn measure_idle_prepare_cost() {
 /// arena residency already meets the <= ~2 ms drag-frame target (it does;
 /// measured median 0.72 ms) or whether the fit still dominates. `build` is the
 /// widget-side cost of reconstructing the changed primitives (hashing included);
-/// `prepare` is the renderer-side cost this probe targets. Run with:
+/// `prepare` is the renderer-side cost this probe targets. Ignored because it
+/// measures rather than asserts. Run with:
 ///   cargo test -p iced_nodegraph_sdf --release drag_prepare_cost -- --ignored --nocapture
 #[test]
 #[ignore]

@@ -76,12 +76,16 @@ fn section_border_radius(radii: EdgeRadii, position: ContentPosition) -> border:
 /// The returned [`Container`] can be laid out further by the caller.
 ///
 /// # Example
-/// ```ignore
+/// ```rust
 /// use iced_nodegraph::node_header;
 /// use iced::{widget::text, Color};
 ///
-/// let header = node_header(text("Title"), Color::from_rgb(0.2, 0.3, 0.4), 5.0);
-/// let header = node_header(text("Title"), Color::BLACK, (4.0, 8.0));
+/// # #[derive(Clone)]
+/// # enum Message {}
+/// let flush: iced::widget::Container<'_, Message> =
+///     node_header(text("Title"), Color::from_rgb(0.2, 0.3, 0.4), 5.0);
+/// let asymmetric: iced::widget::Container<'_, Message> =
+///     node_header(text("Title"), Color::BLACK, (4.0, 8.0));
 /// ```
 pub fn node_header<'a, Message>(
     content: impl Into<Element<'a, Message, Theme, Renderer>>,
@@ -102,11 +106,14 @@ where
 /// laid out further by the caller.
 ///
 /// # Example
-/// ```ignore
+/// ```rust
 /// use iced_nodegraph::node_footer;
 /// use iced::{widget::text, Color};
 ///
-/// let footer = node_footer(text("Footer"), Color::from_rgb(0.15, 0.15, 0.15), 5.0);
+/// # #[derive(Clone)]
+/// # enum Message {}
+/// let footer: iced::widget::Container<'_, Message> =
+///     node_footer(text("Footer"), Color::from_rgb(0.15, 0.15, 0.15), 5.0);
 /// ```
 pub fn node_footer<'a, Message>(
     content: impl Into<Element<'a, Message, Theme, Renderer>>,

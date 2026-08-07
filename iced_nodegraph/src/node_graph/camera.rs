@@ -15,7 +15,7 @@
 //!
 //! ## Camera2D Structure
 //!
-//! ```rust,ignore
+//! ```text
 //! pub struct Camera2D {
 //!     zoom: Scale<f32, Screen, World>,  // Magnification level (1.0 = 1:1, 2.0 = zoomed in 2x)
 //!     position: WorldPoint,              // Camera look-at point in world coordinates
@@ -80,7 +80,7 @@
 //!
 //! ## Correct: Using .scale().then_translate()
 //!
-//! ```rust,ignore
+//! ```text
 //! // CORRECT - matches rendering inverse
 //! let inv_zoom = 1.0 / zoom.get();
 //! Transform2D::scale(inv_zoom, inv_zoom).then_translate(-position.to_vector())
@@ -97,7 +97,7 @@
 //!
 //! ## Mouse Input → World Coordinates
 //!
-//! ```rust,ignore
+//! ```text
 //! use crate::node_graph::euclid::IntoEuclid;
 //!
 //! // Mouse events arrive in screen space
@@ -119,7 +119,7 @@
 //!
 //! ## Rendering with Camera Transform
 //!
-//! ```rust,ignore
+//! ```text
 //! // Rendering happens through draw_with() which sets up GPU transforms
 //! camera.draw_with(renderer, viewport, cursor, |renderer, world_viewport, world_cursor| {
 //!     // Inside this closure:
@@ -136,7 +136,7 @@
 //!
 //! ## Zoom While Preserving Cursor Position
 //!
-//! ```rust,ignore
+//! ```text
 //! // User scrolls mouse wheel
 //! let zoom_delta = 0.1; // Positive = zoom in, negative = zoom out
 //! camera = camera.zoom_at(cursor_screen_pos, zoom_delta);
@@ -145,7 +145,7 @@
 //!
 //! # Testing
 //!
-//! This module includes 15 comprehensive tests covering:
+//! This module's tests cover:
 //! - Identity transforms (no zoom/pan)
 //! - Zoom-only transforms at various levels
 //! - Pan-only transforms

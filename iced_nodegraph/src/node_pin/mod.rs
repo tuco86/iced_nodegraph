@@ -252,8 +252,19 @@ where
     /// Changing the payload type also changes the pin's `UI` type parameter.
     ///
     /// # Example
-    /// ```rust,ignore
-    /// pin!(Left, "value", text("x"), Input).info(MyKind::Scalar)
+    /// ```rust
+    /// use iced::widget::text;
+    /// use iced_nodegraph::{NodePin, pin};
+    ///
+    /// #[derive(Clone)]
+    /// enum MyKind {
+    ///     Scalar,
+    /// }
+    ///
+    /// # #[derive(Debug, Clone)]
+    /// # enum Message {}
+    /// let scalar: NodePin<'_, &str, MyKind, Message, iced::Renderer> =
+    ///     pin!(Left, "value", text("x"), Input).info(MyKind::Scalar);
     /// ```
     pub fn info<UI2>(self, info: UI2) -> NodePin<'a, P, UI2, Message, Renderer> {
         NodePin {

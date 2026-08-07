@@ -6,14 +6,18 @@
 //! one call at a time, and [`default_can_connect`] bundles the set the widget applies
 //! when no `can_connect` is set.
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use iced_nodegraph::connection::{default_can_connect, direction_ok};
+//! use iced_nodegraph::NodeGraph;
 //!
+//! # #[derive(Debug, Clone)]
+//! # enum Message {}
+//! # let mut ng: NodeGraph<'_, usize, usize, (), Message> = NodeGraph::default();
 //! // Keep every built-in rule, add a payload check:
-//! ng.can_connect(|from, to| default_can_connect(from, to) && from.info() == to.info());
+//! ng = ng.can_connect(|from, to| default_can_connect(from, to) && from.info() == to.info());
 //!
 //! // Or pick individual rules (here: direction only, allowing a second edge per input):
-//! ng.can_connect(direction_ok);
+//! ng = ng.can_connect(direction_ok);
 //! ```
 
 use crate::node_pin::{PinDirection, PinEnd};
