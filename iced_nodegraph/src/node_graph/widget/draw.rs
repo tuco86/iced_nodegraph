@@ -183,7 +183,7 @@ fn push_edge_layers(
 
 /// Resolves a node's style: theme base, then the optional per-node callback.
 fn resolve_node_style(
-    style_fn: Option<&NodeStyleFn<'_, Theme>>,
+    style_fn: Option<&NodeStyleFn<'_>>,
     theme: &Theme,
     status: NodeStatus,
 ) -> NodeStyle {
@@ -195,7 +195,7 @@ fn resolve_node_style(
 
 /// Resolves an edge's style: the per-edge callback, or the built-in default.
 fn resolve_edge_style<P: PinId + 'static, UI>(
-    style_fn: Option<&EdgeStyleFn<'_, P, UI, Theme>>,
+    style_fn: Option<&EdgeStyleFn<'_, P, UI>>,
     theme: &Theme,
     status: EdgeStatus,
     start: Option<PinInfo<'_, P, UI>>,
@@ -219,7 +219,7 @@ fn pin_info<'s, P, UI>(state: &'s NodePinState<P, UI>) -> Option<PinInfo<'s, P, 
 /// Resolves a pin's drawn style: theme base merged with the per-pin overlay,
 /// then the indicator fill color forced to the pin's `color`.
 fn resolve_pin_style<P: PinId + 'static, UI>(
-    pin_style_fn: Option<&PinStyleFn<'_, P, UI, Theme>>,
+    pin_style_fn: Option<&PinStyleFn<'_, P, UI>>,
     state: &NodePinState<P, UI>,
     other: Option<&NodePinState<P, UI>>,
     theme: &Theme,
@@ -246,7 +246,7 @@ fn resolve_pin_style<P: PinId + 'static, UI>(
 /// so the body and its shadow punch identical holes.
 fn pin_cutout_params<P: PinId + 'static, UI>(
     pins: &[PinLayout<'_, P, UI>],
-    pin_style_fn: Option<&PinStyleFn<'_, P, UI, Theme>>,
+    pin_style_fn: Option<&PinStyleFn<'_, P, UI>>,
     other: Option<&NodePinState<P, UI>>,
     theme: &Theme,
     offset: WorldVector,
@@ -279,7 +279,7 @@ fn pin_cutout_params<P: PinId + 'static, UI>(
     cuts
 }
 
-impl<N, P, UI, Message, Renderer, E> NodeGraph<'_, N, P, UI, Message, Theme, Renderer, E>
+impl<N, P, UI, Message, Renderer, E> NodeGraph<'_, N, P, UI, Message, Renderer, E>
 where
     N: NodeId + 'static,
     P: PinId + 'static,

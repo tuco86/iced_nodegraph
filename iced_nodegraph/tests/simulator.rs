@@ -19,7 +19,7 @@ use iced_nodegraph::{DragInfo, NodeGraph, PinRef, edge, node, pin};
 use iced_test::Simulator;
 
 type Renderer = iced::Renderer;
-type Graph = NodeGraph<'static, usize, usize, (), Msg, Theme, Renderer>;
+type Graph = NodeGraph<'static, usize, usize, (), Msg, Renderer>;
 type Pin = PinRef<usize, usize>;
 
 /// Captures every interaction callback the graph can emit.
@@ -545,12 +545,11 @@ fn cutting_an_edge_reports_its_host_id() {
         Cut(Vec<&'static str>),
     }
 
-    let mut ng: NodeGraph<'_, usize, usize, (), M, Theme, Renderer, &'static str> =
-        NodeGraph::default()
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .on_disconnect(M::Disconnect)
-            .on_edge_delete(M::Cut);
+    let mut ng: NodeGraph<'_, usize, usize, (), M, Renderer, &'static str> = NodeGraph::default()
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .on_disconnect(M::Disconnect)
+        .on_edge_delete(M::Cut);
     ng.push_node(node(
         0usize,
         OUT_POS,

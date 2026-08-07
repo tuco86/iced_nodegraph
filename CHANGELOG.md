@@ -24,6 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   explicit discriminants are gone with them: nothing casts a `PinShape` to its
   discriminant.
 
+- **The `Theme` type parameter is gone** from `NodeGraph`, `Node`, `Edge`,
+  `NodePin` and the style-fn types; all of them are now concrete on
+  `iced::Theme`. Only `iced::Theme` ever satisfied the `Widget` impl - it was
+  spelled concretely there, not as a generic - so no other theme could reach an
+  `Element`. Worse, `node_graph()` declared its own `Theme` parameter that
+  shadowed the concrete import, so `node_graph::<Msg, MyTheme, R>()` compiled
+  and handed back a graph with no `Widget` impl. Drop the parameter from every
+  turbofish and type annotation; `node_graph::<Msg, Renderer>()` is the new
+  spelling.
+
 ### Added
 
 - **GPU work and memory counters.** `SdfStats` gains `upload_bytes`,

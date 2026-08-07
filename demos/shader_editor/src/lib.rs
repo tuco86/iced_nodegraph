@@ -378,7 +378,7 @@ impl Application {
 
     fn view(&self) -> Element<'_, Message> {
         // Build node graph
-        let mut graph: ::iced_nodegraph::NodeGraph<usize, usize, ::std::any::TypeId, _, _, _> =
+        let mut graph: ::iced_nodegraph::NodeGraph<usize, usize, ::std::any::TypeId, _, _> =
             ::iced_nodegraph::NodeGraph::default()
                 .on_connect(|from, to| Message::EdgeConnected { from, to })
                 .on_move(|delta, indices| Message::NodesMoved { delta, indices })

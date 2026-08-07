@@ -40,7 +40,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-use iced_widget::core::{Element, Length, Point, Size, Vector};
+use iced_widget::core::{Element, Length, Point, Size, Theme, Vector};
 
 use crate::ids::{EdgeId, NodeId, PinId};
 use crate::node_pin::{PinEnd, PinInfo};
@@ -50,22 +50,22 @@ use crate::style::{
 };
 
 /// Per-node style callback: theme + status -> resolved style. Used by [`Node`].
-pub(crate) type NodeStyleFn<'a, Theme> = Box<dyn Fn(&Theme, NodeStatus) -> NodeStyle + 'a>;
+pub(crate) type NodeStyleFn<'a> = Box<dyn Fn(&Theme, NodeStatus) -> NodeStyle + 'a>;
 /// Per-edge style callback: theme + status + both endpoint pin infos (in draw
 /// order: start = output side, end = input side) -> resolved style. Used by
 /// [`Edge`].
-pub(crate) type EdgeStyleFn<'a, P, UI, Theme> =
+pub(crate) type EdgeStyleFn<'a, P, UI> =
     Box<dyn Fn(&Theme, EdgeStatus, PinInfo<'_, P, UI>, PinInfo<'_, P, UI>) -> EdgeStyle + 'a>;
 /// Per-node pin style callback: theme + this pin's info + the other endpoint's
 /// info (the drag source during an edge drag, else `None`) + status -> resolved
 /// pin style. The node styles all of its pins (pins carry no style of their
 /// own). Used by [`Node::pin_style`].
-pub(crate) type PinStyleFn<'a, P, UI, Theme> = Box<
+pub(crate) type PinStyleFn<'a, P, UI> = Box<
     dyn Fn(&Theme, &PinInfo<'_, P, UI>, Option<&PinInfo<'_, P, UI>>, PinStatus) -> PinStyle + 'a,
 >;
 /// Drag-edge style callback: theme + the source pin's info -> resolved style. A
 /// freshly dragged edge has no status. Used by [`NodeGraph::dragging_edge_style`].
-pub(crate) type DragEdgeStyleFn<'a, P, UI, Theme> =
+pub(crate) type DragEdgeStyleFn<'a, P, UI> =
     Box<dyn Fn(&Theme, PinInfo<'_, P, UI>) -> EdgeStyle + 'a>;
 
 /// A node to push onto the graph: id, position, content element, an optional
@@ -73,21 +73,21 @@ pub(crate) type DragEdgeStyleFn<'a, P, UI, Theme> =
 /// Build with [`node`] + [`Node::style`]/[`Node::pin_style`], then add via
 /// [`NodeGraph::push_node`]. Looks like its own widget even though the body and
 /// pins are drawn by the graph.
-pub struct Node<'a, N, P, UI, Message, Theme, Renderer> {
+pub struct Node<'a, N, P, UI, Message, Renderer> {
     pub(super) id: N,
     pub(super) position: Point,
     pub(super) element: Element<'a, Message, Theme, Renderer>,
     pub(super) selected: bool,
-    pub(super) style: Option<NodeStyleFn<'a, Theme>>,
-    pub(super) pin_style: Option<PinStyleFn<'a, P, UI, Theme>>,
+    pub(super) style: Option<NodeStyleFn<'a>>,
+    pub(super) pin_style: Option<PinStyleFn<'a, P, UI>>,
 }
 
 /// Creates a [`Node`] with default (theme) styling.
-pub fn node<'a, N, P, UI, Message, Theme, Renderer>(
+pub fn node<'a, N, P, UI, Message, Renderer>(
     id: N,
     position: Point,
     element: impl Into<Element<'a, Message, Theme, Renderer>>,
-) -> Node<'a, N, P, UI, Message, Theme, Renderer> {
+) -> Node<'a, N, P, UI, Message, Renderer> {
     Node {
         id,
         position,
@@ -98,7 +98,7 @@ pub fn node<'a, N, P, UI, Message, Theme, Renderer>(
     }
 }
 
-impl<'a, N, P, UI, Message, Theme, Renderer> Node<'a, N, P, UI, Message, Theme, Renderer> {
+impl<'a, N, P, UI, Message, Renderer> Node<'a, N, P, UI, Message, Renderer> {
     /// Sets the per-node style closure: receives the theme and the node's
     /// [`NodeStatus`], returns the resolved style. Layer over the built-in
     /// default:
@@ -155,22 +155,18 @@ impl<'a, N, P, UI, Message, Theme, Renderer> Node<'a, N, P, UI, Message, Theme, 
 /// optional per-edge status-driven style closure. Build with [`edge`] +
 /// [`Edge::style`], then add via [`NodeGraph::push_edge`]. The id is the user's
 /// own (e.g. a database key); it travels with the edge, symmetric to [`node`].
-pub struct Edge<'a, N, P, E, UI, Theme> {
+pub struct Edge<'a, N, P, E, UI> {
     pub(super) id: E,
     pub(super) from: PinRef<N, P>,
     pub(super) to: PinRef<N, P>,
-    pub(super) style: Option<EdgeStyleFn<'a, P, UI, Theme>>,
+    pub(super) style: Option<EdgeStyleFn<'a, P, UI>>,
 }
 
 /// Creates an [`Edge`] with the given id and default (theme) styling.
 ///
 /// The id comes last so the common no-id case reads cleanly via the `edge!`
 /// macro: `edge!(from, to)` expands to `edge(from, to, ())`.
-pub fn edge<'a, N, P, E, UI, Theme>(
-    from: PinRef<N, P>,
-    to: PinRef<N, P>,
-    id: E,
-) -> Edge<'a, N, P, E, UI, Theme> {
+pub fn edge<'a, N, P, E, UI>(from: PinRef<N, P>, to: PinRef<N, P>, id: E) -> Edge<'a, N, P, E, UI> {
     Edge {
         id,
         from,
@@ -184,7 +180,7 @@ pub fn edge<'a, N, P, E, UI, Theme>(
 /// ```rust
 /// use iced_nodegraph::{Edge, PinRef, edge};
 ///
-/// # type E<'a, Id> = Edge<'a, u32, u32, Id, (), iced::Theme>;
+/// # type E<'a, Id> = Edge<'a, u32, u32, Id, ()>;
 /// let default_id: E<'_, ()> = edge!(PinRef::new(0, 0), PinRef::new(1, 0));
 /// let explicit_id: E<'_, u8> = edge!(PinRef::new(0, 0), PinRef::new(1, 0), 7);
 /// ```
@@ -198,7 +194,7 @@ macro_rules! edge {
     };
 }
 
-impl<'a, N, P, E, UI, Theme> Edge<'a, N, P, E, UI, Theme> {
+impl<'a, N, P, E, UI> Edge<'a, N, P, E, UI> {
     /// Sets the per-edge style closure: theme, [`EdgeStatus`], and both endpoint
     /// [`PinInfo`]s in draw order (start = output side, end = input side) ->
     /// resolved style.
@@ -352,9 +348,12 @@ impl<N: Clone, P: Clone> PinRef<N, P> {
 /// - `UI`: per-pin user payload surfaced to `pin_style`/`can_connect`
 ///   (defaults to `()`)
 /// - `Message`: application message type
-/// - `Theme`: iced theme type
 /// - `Renderer`: iced renderer type
 /// - `E`: edge id type (defaults to `()`, "this edge has no id")
+///
+/// There is no theme parameter: the widget styles against
+/// [`iced_widget::core::Theme`] because every `default_*_style` reads that
+/// theme's palette.
 ///
 /// Bring your own id types by implementing [`NodeId`], [`PinId`] and [`EdgeId`].
 #[allow(missing_debug_implementations)]
@@ -364,7 +363,6 @@ pub struct NodeGraph<
     P = usize,
     UI = (),
     Message = (),
-    Theme = iced_widget::core::Theme,
     Renderer = iced_widget::renderer::Renderer,
     E = (),
 > where
@@ -374,13 +372,13 @@ pub struct NodeGraph<
 {
     pub(super) size: Size<Length>,
     /// Nodes in push order, which is also their initial z-order.
-    pub(super) nodes: Vec<Node<'a, N, P, UI, Message, Theme, Renderer>>,
+    pub(super) nodes: Vec<Node<'a, N, P, UI, Message, Renderer>>,
     /// Id -> index map: O(1) `node_index` lookups and deterministic duplicate
     /// detection in `push_node` (first push wins).
     pub(super) node_lookup: HashMap<N, usize>,
     /// Edges in push order. Endpoint pin ids are resolved to positional pin
     /// indices at draw time, since only the laid-out widget tree knows them.
-    pub(super) edges: Vec<Edge<'a, N, P, E, UI, Theme>>,
+    pub(super) edges: Vec<Edge<'a, N, P, E, UI>>,
     pub(super) graph_style: Option<Box<dyn Fn(&Theme) -> GraphStyle + 'a>>,
     pub(super) on_connect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>>,
     pub(super) on_disconnect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>>,
@@ -404,7 +402,7 @@ pub struct NodeGraph<
     pub(super) on_info: Option<Box<dyn Fn(GraphInfo) -> Message + 'a>>,
     /// Style for the edge being dragged (theme -> resolved style). The graph
     /// injects the source pin's color for inheriting (TRANSPARENT) stroke ends.
-    pub(super) dragging_edge_style: Option<DragEdgeStyleFn<'a, P, UI, Theme>>,
+    pub(super) dragging_edge_style: Option<DragEdgeStyleFn<'a, P, UI>>,
     /// Box-selection rectangle style; [`default_selection_box_style`] applies when
     /// unset.
     pub(super) selection_box_style: Option<Box<dyn Fn(&Theme) -> SelectionBoxStyle + 'a>>,
@@ -425,8 +423,7 @@ pub struct NodeGraph<
     pub(super) keymap: input::Keymap,
 }
 
-impl<N, P, UI, Message, Theme, Renderer, E> Default
-    for NodeGraph<'_, N, P, UI, Message, Theme, Renderer, E>
+impl<N, P, UI, Message, Renderer, E> Default for NodeGraph<'_, N, P, UI, Message, Renderer, E>
 where
     N: NodeId,
     P: PinId,
@@ -461,7 +458,7 @@ where
     }
 }
 
-impl<'a, N, P, UI, Message, Theme, Renderer, E> NodeGraph<'a, N, P, UI, Message, Theme, Renderer, E>
+impl<'a, N, P, UI, Message, Renderer, E> NodeGraph<'a, N, P, UI, Message, Renderer, E>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
@@ -486,7 +483,7 @@ where
     /// the id wins) and debug builds assert on it. Prefer a stable id from your
     /// data (a DB key, `uuid::Uuid`, a typed newtype) over a hand-managed
     /// counter.
-    pub fn push_node(&mut self, node: Node<'a, N, P, UI, Message, Theme, Renderer>) {
+    pub fn push_node(&mut self, node: Node<'a, N, P, UI, Message, Renderer>) {
         match self.node_lookup.entry(node.id.clone()) {
             std::collections::hash_map::Entry::Occupied(_) => {
                 debug_assert!(
@@ -508,7 +505,7 @@ where
     /// The widget normalizes orientation when drawing and reporting, so the
     /// output pin is always the edge start (output -> input) regardless of the
     /// order given here.
-    pub fn push_edge(&mut self, edge: Edge<'a, N, P, E, UI, Theme>) {
+    pub fn push_edge(&mut self, edge: Edge<'a, N, P, E, UI>) {
         self.edges.push(edge);
     }
 
@@ -594,7 +591,7 @@ where
     /// use iced::Color;
     /// use iced_wgpu::Renderer;
     ///
-    /// let graph = node_graph::<(), iced::Theme, Renderer>().selection_box_style(|theme| {
+    /// let graph = node_graph::<(), Renderer>().selection_box_style(|theme| {
     ///     SelectionBoxStyle {
     ///         border_width: 2.0,
     ///         ..default_selection_box_style(theme)
@@ -615,7 +612,7 @@ where
     /// use iced_nodegraph::{CuttingToolStyle, default_cutting_tool_style, node_graph};
     /// use iced_wgpu::Renderer;
     ///
-    /// let graph = node_graph::<(), iced::Theme, Renderer>().cutting_tool_style(|theme| {
+    /// let graph = node_graph::<(), Renderer>().cutting_tool_style(|theme| {
     ///     CuttingToolStyle {
     ///         width: 5.0,
     ///         ..default_cutting_tool_style(theme)
@@ -685,7 +682,7 @@ where
     ///     select_all: None, // disable Select All
     ///     ..Keymap::default()
     /// };
-    /// let graph = node_graph::<(), iced::Theme, Renderer>().keymap(keymap);
+    /// let graph = node_graph::<(), Renderer>().keymap(keymap);
     /// ```
     pub fn keymap(mut self, keymap: input::Keymap) -> Self {
         self.keymap = keymap;

@@ -78,7 +78,7 @@ fn pin_side_direction(side: u32) -> [f32; 2] {
 }
 
 impl<N, P, UI, Message, Renderer, E> iced_wgpu::core::Widget<Message, Theme, Renderer>
-    for NodeGraph<'_, N, P, UI, Message, Theme, Renderer, E>
+    for NodeGraph<'_, N, P, UI, Message, Renderer, E>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
@@ -254,7 +254,7 @@ where
     }
 }
 
-impl<'a, N, P, UI, Message, Renderer, E> From<NodeGraph<'a, N, P, UI, Message, Theme, Renderer, E>>
+impl<'a, N, P, UI, Message, Renderer, E> From<NodeGraph<'a, N, P, UI, Message, Renderer, E>>
     for Element<'a, Message, Theme, Renderer>
 where
     N: NodeId + 'static,
@@ -264,7 +264,7 @@ where
     Renderer: iced_wgpu::core::renderer::Renderer + 'a + iced_wgpu::primitive::Renderer,
     Message: 'static,
 {
-    fn from(graph: NodeGraph<'a, N, P, UI, Message, Theme, Renderer, E>) -> Self {
+    fn from(graph: NodeGraph<'a, N, P, UI, Message, Renderer, E>) -> Self {
         Element::new(graph)
     }
 }
@@ -272,9 +272,8 @@ where
 /// Creates a new NodeGraph with default usize-based IDs and no pin user info.
 ///
 /// For custom types, use
-/// `NodeGraph::<N, P, UI, Message, Theme, Renderer, E>::default()`.
-pub fn node_graph<'a, Message, Theme, Renderer>()
--> NodeGraph<'a, usize, usize, (), Message, Theme, Renderer>
+/// `NodeGraph::<N, P, UI, Message, Renderer, E>::default()`.
+pub fn node_graph<'a, Message, Renderer>() -> NodeGraph<'a, usize, usize, (), Message, Renderer>
 where
     Renderer: iced_wgpu::core::renderer::Renderer,
 {

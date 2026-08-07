@@ -1811,7 +1811,6 @@ impl Application {
             PinLabel,
             ::std::any::TypeId,
             ApplicationMessage,
-            Theme,
             iced::Renderer,
             EdgeId,
         > = NodeGraph::default();

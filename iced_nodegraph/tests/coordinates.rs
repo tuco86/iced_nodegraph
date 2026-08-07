@@ -70,6 +70,10 @@ impl<'a, Message: 'a> From<ContentProbe> for Element<'a, Message, Theme, Recorde
     }
 }
 
+/// The graph shape every case here builds: default ids, no pin payload, the
+/// recording renderer.
+type Graph<Msg> = NodeGraph<'static, usize, usize, (), Msg, Recorder>;
+
 /// Lays out a single-node graph, places it at `widget_origin`, applies the
 /// given camera (zoom, world position), draws it, and returns the recorded
 /// content quad and SDF primitive bounds.
@@ -79,7 +83,7 @@ fn draw_at_origin(
     camera_pos: Point,
     camera_zoom: f32,
 ) -> Recorded {
-    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Recorder> = NodeGraph::default()
+    let mut graph: Graph<()> = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
         .view(camera_pos, camera_zoom);
@@ -174,7 +178,7 @@ fn click_select(
     let selected: Rc<RefCell<Option<Vec<usize>>>> = Rc::new(RefCell::new(None));
     let sel = selected.clone();
 
-    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Recorder> = NodeGraph::default()
+    let mut graph: Graph<()> = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
         .view(camera_pos, camera_zoom)
@@ -341,7 +345,7 @@ fn selection_box_primitives(
     p1: Point,
     p2: Point,
 ) -> Vec<Rectangle> {
-    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Recorder> = NodeGraph::default()
+    let mut graph: Graph<()> = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
         .view(Point::ORIGIN, camera_zoom)
@@ -367,7 +371,7 @@ fn selection_box_primitives(
     let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
     let mut clipboard = clipboard::Null;
 
-    let send = |graph: &mut NodeGraph<'static, usize, usize, (), (), Theme, Recorder>,
+    let send = |graph: &mut Graph<()>,
                 tree: &mut Tree,
                 shell: &mut iced_wgpu::core::Shell<'_, ()>,
                 clipboard: &mut clipboard::Null,
@@ -609,7 +613,7 @@ fn geometry_fingerprint(rec: &Recorded) -> Vec<u32> {
 #[test]
 fn recipe_hash_is_stable_across_120_frames() {
     // A static three-node graph (no edges, so only node geometry is under test).
-    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Recorder> = NodeGraph::default()
+    let mut graph: Graph<()> = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
         .view(Point::ORIGIN, 1.0);
@@ -707,7 +711,7 @@ fn content_event_indices(events: &[DrawEvent]) -> Vec<usize> {
 #[test]
 fn hosted_content_sandwiched_between_sdf_layers() {
     // Two nodes, both well on-screen so neither fill nor foreground is culled.
-    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Recorder> = NodeGraph::default()
+    let mut graph: Graph<()> = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
         .view(Point::ORIGIN, 1.0);
@@ -815,7 +819,7 @@ fn key_press(c: char, code: keyboard::key::Code, modifiers: keyboard::Modifiers)
 /// Builds a two-node graph, feeds it `events` (each with its cursor), and
 /// returns every message the widget published.
 fn run_events<Msg: 'static>(
-    graph: NodeGraph<'static, usize, usize, (), Msg, Theme, Recorder>,
+    graph: Graph<Msg>,
     events: &[(iced::Event, mouse::Cursor)],
 ) -> Vec<Msg> {
     run_events_selected(graph, &[], events)
@@ -824,7 +828,7 @@ fn run_events<Msg: 'static>(
 /// Like [`run_events`], but the host marks `selected` node indices, standing in
 /// for a frame where the host has already applied a reported selection.
 fn run_events_selected<Msg: 'static>(
-    mut graph: NodeGraph<'static, usize, usize, (), Msg, Theme, Recorder>,
+    mut graph: Graph<Msg>,
     selected: &[usize],
     events: &[(iced::Event, mouse::Cursor)],
 ) -> Vec<Msg> {
@@ -871,11 +875,10 @@ fn run_events_selected<Msg: 'static>(
 
 #[test]
 fn default_keymap_select_all_publishes_selection() {
-    let graph: NodeGraph<'static, usize, usize, (), Vec<usize>, Theme, Recorder> =
-        NodeGraph::default()
-            .width(Length::Fixed(400.0))
-            .height(Length::Fixed(400.0))
-            .on_select(|ids| ids);
+    let graph: Graph<Vec<usize>> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .on_select(|ids| ids);
 
     let msgs = run_events(
         graph,
@@ -898,12 +901,11 @@ fn rebound_select_all_moves_to_the_new_combo() {
         select_all: Some(iced_nodegraph::KeyCombo::command('l')),
         ..iced_nodegraph::Keymap::default()
     };
-    let graph: NodeGraph<'static, usize, usize, (), Vec<usize>, Theme, Recorder> =
-        NodeGraph::default()
-            .width(Length::Fixed(400.0))
-            .height(Length::Fixed(400.0))
-            .keymap(keymap)
-            .on_select(|ids| ids);
+    let graph: Graph<Vec<usize>> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .keymap(keymap)
+        .on_select(|ids| ids);
 
     let msgs = run_events(
         graph,
@@ -927,12 +929,11 @@ fn rebound_select_all_moves_to_the_new_combo() {
 
 #[test]
 fn keymap_none_disables_all_shortcuts() {
-    let graph: NodeGraph<'static, usize, usize, (), Vec<usize>, Theme, Recorder> =
-        NodeGraph::default()
-            .width(Length::Fixed(400.0))
-            .height(Length::Fixed(400.0))
-            .keymap(iced_nodegraph::Keymap::none())
-            .on_select(|ids| ids);
+    let graph: Graph<Vec<usize>> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .keymap(iced_nodegraph::Keymap::none())
+        .on_select(|ids| ids);
 
     let msgs = run_events(
         graph,
@@ -961,11 +962,10 @@ fn rebound_pan_button_commits_a_pan() {
     };
 
     // Default keymap: middle button is unbound, no pan is committed.
-    let default_graph: NodeGraph<'static, usize, usize, (), (Point, f32), Theme, Recorder> =
-        NodeGraph::default()
-            .width(Length::Fixed(400.0))
-            .height(Length::Fixed(400.0))
-            .on_pan(|position, zoom| (position, zoom));
+    let default_graph: Graph<(Point, f32)> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .on_pan(|position, zoom| (position, zoom));
     let msgs = run_events(default_graph, &events(mouse::Button::Middle));
     assert!(
         msgs.is_empty(),
@@ -977,12 +977,11 @@ fn rebound_pan_button_commits_a_pan() {
         pan_button: mouse::Button::Middle,
         ..iced_nodegraph::Keymap::default()
     };
-    let rebound_graph: NodeGraph<'static, usize, usize, (), (Point, f32), Theme, Recorder> =
-        NodeGraph::default()
-            .width(Length::Fixed(400.0))
-            .height(Length::Fixed(400.0))
-            .keymap(keymap)
-            .on_pan(|position, zoom| (position, zoom));
+    let rebound_graph: Graph<(Point, f32)> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .keymap(keymap)
+        .on_pan(|position, zoom| (position, zoom));
     let msgs = run_events(rebound_graph, &events(mouse::Button::Middle));
     assert_eq!(
         msgs.len(),
@@ -1029,11 +1028,10 @@ fn finger_lift(id: u64, position: Point) -> (iced::Event, mouse::Cursor) {
 
 #[test]
 fn touch_drag_on_empty_space_pans_the_graph() {
-    let graph: NodeGraph<'static, usize, usize, (), (Point, f32), Theme, Recorder> =
-        NodeGraph::default()
-            .width(Length::Fixed(400.0))
-            .height(Length::Fixed(400.0))
-            .on_pan(|position, zoom| (position, zoom));
+    let graph: Graph<(Point, f32)> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .on_pan(|position, zoom| (position, zoom));
 
     let msgs = run_events(
         graph,
@@ -1058,11 +1056,10 @@ fn touch_drag_on_empty_space_pans_the_graph() {
 
 #[test]
 fn touch_tap_selects_a_node() {
-    let graph: NodeGraph<'static, usize, usize, (), Vec<usize>, Theme, Recorder> =
-        NodeGraph::default()
-            .width(Length::Fixed(400.0))
-            .height(Length::Fixed(400.0))
-            .on_select(|ids| ids);
+    let graph: Graph<Vec<usize>> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .on_select(|ids| ids);
 
     let msgs = run_events(
         graph,
@@ -1079,11 +1076,10 @@ fn touch_tap_selects_a_node() {
 /// the host's nodes - so this needs a host that has applied one.
 #[test]
 fn touch_tap_on_empty_space_clears_the_selection() {
-    let graph: NodeGraph<'static, usize, usize, (), Vec<usize>, Theme, Recorder> =
-        NodeGraph::default()
-            .width(Length::Fixed(400.0))
-            .height(Length::Fixed(400.0))
-            .on_select(|ids| ids);
+    let graph: Graph<Vec<usize>> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .on_select(|ids| ids);
 
     let msgs = run_events_selected(
         graph,
@@ -1098,11 +1094,10 @@ fn touch_tap_on_empty_space_clears_the_selection() {
 
 #[test]
 fn two_finger_pinch_zooms_the_camera() {
-    let graph: NodeGraph<'static, usize, usize, (), (Point, f32), Theme, Recorder> =
-        NodeGraph::default()
-            .width(Length::Fixed(400.0))
-            .height(Length::Fixed(400.0))
-            .on_pan(|position, zoom| (position, zoom));
+    let graph: Graph<(Point, f32)> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .on_pan(|position, zoom| (position, zoom));
 
     let msgs = run_events(
         graph,
@@ -1122,12 +1117,11 @@ fn two_finger_pinch_zooms_the_camera() {
 
 #[test]
 fn second_finger_cancels_a_touch_node_drag() {
-    let graph: NodeGraph<'static, usize, usize, (), &'static str, Theme, Recorder> =
-        NodeGraph::default()
-            .width(Length::Fixed(400.0))
-            .height(Length::Fixed(400.0))
-            .on_move(|_, _| "move")
-            .on_drag_end(|| "end");
+    let graph: Graph<&'static str> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .on_move(|_, _| "move")
+        .on_drag_end(|| "end");
 
     let msgs = run_events(
         graph,

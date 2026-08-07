@@ -48,7 +48,7 @@ struct UpdateCtx<'a, 'b, 'm, Message> {
     shell: &'a mut Shell<'m, Message>,
 }
 
-impl<N, P, UI, Message, Renderer, E> NodeGraph<'_, N, P, UI, Message, Theme, Renderer, E>
+impl<N, P, UI, Message, Renderer, E> NodeGraph<'_, N, P, UI, Message, Renderer, E>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
@@ -1546,7 +1546,7 @@ where
 /// of the occupancy check so it can be dropped back onto its own input. Pass `None`
 /// when starting a fresh edge.
 fn compute_valid_targets<N, P, UI, Message, Renderer, E>(
-    graph: &NodeGraph<'_, N, P, UI, Message, Theme, Renderer, E>,
+    graph: &NodeGraph<'_, N, P, UI, Message, Renderer, E>,
     tree: &Tree,
     layout: Layout<'_>,
     from_node: usize,

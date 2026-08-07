@@ -72,7 +72,7 @@ fn render_theme(theme: &Theme) -> Option<Vec<[u8; 4]>> {
     let mut guard = shared()?;
     let renderer = &mut *guard;
 
-    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Renderer> = NodeGraph::default()
+    let mut graph: NodeGraph<'static, usize, usize, (), (), Renderer> = NodeGraph::default()
         .width(Length::Fixed(CW as f32))
         .height(Length::Fixed(CH as f32))
         .view(Point::ORIGIN, 1.0);

@@ -39,7 +39,7 @@ fn render_one_node() -> Option<Vec<[u8; 4]>> {
     let renderer = &mut *guard;
 
     // Camera centred so the node (world origin) lands mid-viewport at zoom 1.
-    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Renderer> = NodeGraph::default()
+    let mut graph: NodeGraph<'static, usize, usize, (), (), Renderer> = NodeGraph::default()
         .width(Length::Fixed(W as f32))
         .height(Length::Fixed(H as f32))
         .view(
@@ -197,11 +197,10 @@ fn zoomout_grid_missing_nodes_at(scale: f32, frames: u32, cam: Point, zoom: f32)
     let mut px: Vec<[u8; 4]> = Vec::new();
     for _ in 0..frames.max(1) {
         // Rebuild the view each frame, exactly as a live app does.
-        let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Renderer> =
-            NodeGraph::default()
-                .width(Length::Fixed(GW as f32))
-                .height(Length::Fixed(GH as f32))
-                .view(cam, zoom);
+        let mut graph: NodeGraph<'static, usize, usize, (), (), Renderer> = NodeGraph::default()
+            .width(Length::Fixed(GW as f32))
+            .height(Length::Fixed(GH as f32))
+            .view(cam, zoom);
         for (id, &(tlx, tly)) in lattice.iter().enumerate() {
             let (wx, wy) = world_of(tlx, tly);
             graph.push_node(
@@ -369,7 +368,7 @@ fn offscreen_node_does_not_desync_later_nodes() {
     let mut worlds = vec![(700.0_f32, 120.0_f32)];
     worlds.extend_from_slice(&visible);
 
-    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Renderer> = NodeGraph::default()
+    let mut graph: NodeGraph<'static, usize, usize, (), (), Renderer> = NodeGraph::default()
         .width(Length::Fixed(GW as f32))
         .height(Length::Fixed(GH as f32))
         .view(cam, zoom);
@@ -512,7 +511,7 @@ fn render_node_selection(selected: bool) -> Option<Vec<[u8; 4]>> {
     let mut guard = shared()?;
     let renderer = &mut *guard;
 
-    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Renderer> = NodeGraph::default()
+    let mut graph: NodeGraph<'static, usize, usize, (), (), Renderer> = NodeGraph::default()
         .width(Length::Fixed(W as f32))
         .height(Length::Fixed(H as f32))
         .view(
@@ -589,7 +588,7 @@ fn render_pin_shape(shape: iced_nodegraph::PinShape) -> Option<Vec<[u8; 4]>> {
     let mut guard = shared()?;
     let renderer = &mut *guard;
 
-    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Renderer> = NodeGraph::default()
+    let mut graph: NodeGraph<'static, usize, usize, (), (), Renderer> = NodeGraph::default()
         .width(Length::Fixed(W as f32))
         .height(Length::Fixed(H as f32))
         .view(Point::ORIGIN, 1.0);

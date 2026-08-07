@@ -19,7 +19,7 @@
 //!
 //! # #[derive(Debug, Clone)]
 //! # enum Message {}
-//! # type Pin<'a, UI> = NodePin<'a, u32, UI, Message, iced::Theme, iced::Renderer>;
+//! # type Pin<'a, UI> = NodePin<'a, u32, UI, Message, iced::Renderer>;
 //! // Simple pin with just a label
 //! let input: Pin<'_, ()> = pin!(Left, 0, text("Input"), Input);
 //!
@@ -47,7 +47,7 @@ use iced_wgpu::core::{
     Clipboard, Layout, Shell, Widget, layout, mouse, renderer,
     widget::{Tree, tree},
 };
-use iced_widget::core::{Element, Event, Length, Point, Rectangle, Size};
+use iced_widget::core::{Element, Event, Length, Point, Rectangle, Size, Theme};
 /// Default pin size when no content widget is provided.
 const DEFAULT_PIN_SIZE: Size = Size::new(50.0, 20.0);
 
@@ -197,7 +197,7 @@ impl<'a, N, P, UI> PinEnd<'a, N, P, UI> {
 /// Generic over `P` (the pin identifier type, e.g. `String`, enum, UUID) and
 /// `UI` (the user-defined per-pin payload surfaced to `pin_style`/`can_connect`,
 /// defaults to `()`).
-pub struct NodePin<'a, P, UI, Message, Theme, Renderer>
+pub struct NodePin<'a, P, UI, Message, Renderer>
 where
     P: PinId,
     Renderer: renderer::Renderer,
@@ -215,7 +215,7 @@ where
     interactions_disabled: bool,
 }
 
-impl<'a, P, Message, Theme, Renderer> NodePin<'a, P, (), Message, Theme, Renderer>
+impl<'a, P, Message, Renderer> NodePin<'a, P, (), Message, Renderer>
 where
     P: PinId,
     Renderer: renderer::Renderer,
@@ -236,7 +236,7 @@ where
     }
 }
 
-impl<'a, P, UI, Message, Theme, Renderer> NodePin<'a, P, UI, Message, Theme, Renderer>
+impl<'a, P, UI, Message, Renderer> NodePin<'a, P, UI, Message, Renderer>
 where
     P: PinId,
     Renderer: renderer::Renderer,
@@ -255,7 +255,7 @@ where
     /// ```rust,ignore
     /// pin!(Left, "value", text("x"), Input).info(MyKind::Scalar)
     /// ```
-    pub fn info<UI2>(self, info: UI2) -> NodePin<'a, P, UI2, Message, Theme, Renderer> {
+    pub fn info<UI2>(self, info: UI2) -> NodePin<'a, P, UI2, Message, Renderer> {
         NodePin {
             side: self.side,
             direction: self.direction,
@@ -296,13 +296,12 @@ pub(super) struct NodePinState<P, UI> {
     pub user_info: UI,
 }
 
-impl<'a, P, UI, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
-    for NodePin<'a, P, UI, Message, Theme, Renderer>
+impl<'a, P, UI, Message, Renderer> Widget<Message, Theme, Renderer>
+    for NodePin<'a, P, UI, Message, Renderer>
 where
     P: PinId + 'static,
     UI: Clone + 'static,
     Renderer: renderer::Renderer + 'a,
-    Theme: 'a,
     Message: 'a,
 {
     fn tag(&self) -> tree::Tag {
@@ -440,25 +439,24 @@ where
     }
 }
 
-impl<'a, P, UI, Message, Theme, Renderer> From<NodePin<'a, P, UI, Message, Theme, Renderer>>
+impl<'a, P, UI, Message, Renderer> From<NodePin<'a, P, UI, Message, Renderer>>
     for Element<'a, Message, Theme, Renderer>
 where
     P: PinId + 'static,
     UI: Clone + 'static,
     Renderer: renderer::Renderer + 'a,
     Message: 'a,
-    Theme: 'a,
 {
-    fn from(widget: NodePin<'a, P, UI, Message, Theme, Renderer>) -> Self {
+    fn from(widget: NodePin<'a, P, UI, Message, Renderer>) -> Self {
         Element::new(widget)
     }
 }
 
-pub fn node_pin<'a, P, Message, Theme, Renderer>(
+pub fn node_pin<'a, P, Message, Renderer>(
     side: PinSide,
     pin_id: P,
     content: impl Into<Element<'a, Message, Theme, Renderer>>,
-) -> NodePin<'a, P, (), Message, Theme, Renderer>
+) -> NodePin<'a, P, (), Message, Renderer>
 where
     P: PinId,
     Renderer: iced_wgpu::core::renderer::Renderer,
@@ -488,7 +486,7 @@ where
 ///
 /// # #[derive(Debug, Clone)]
 /// # enum Message {}
-/// # type Pin<'a, UI> = NodePin<'a, &'static str, UI, Message, iced::Theme, iced::Renderer>;
+/// # type Pin<'a, UI> = NodePin<'a, &'static str, UI, Message, iced::Renderer>;
 /// // Full syntax: side, pin_id, content, direction, user info
 /// let full: Pin<'_, MyKind> = pin!(Right, "output", text("output"), Output, MyKind::Email);
 ///

@@ -161,11 +161,11 @@ fn graph_with_node(
     element: Element<'static, (), Theme, Recorder>,
     renderer: &Recorder,
 ) -> (
-    NodeGraph<'static, usize, usize, (), (), Theme, Recorder>,
+    NodeGraph<'static, usize, usize, (), (), Recorder>,
     Tree,
     layout::Node,
 ) {
-    let mut graph: NodeGraph<'static, usize, usize, (), (), Theme, Recorder> = NodeGraph::default()
+    let mut graph: NodeGraph<'static, usize, usize, (), (), Recorder> = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
         .view(camera_pos, camera_zoom);
