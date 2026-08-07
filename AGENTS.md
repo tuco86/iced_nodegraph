@@ -115,10 +115,12 @@ The same shape covers everything the widget draws, one closure plus one
 wasm check CI does not run.
 
 - `cargo fmt --all -- --check`
-- `cargo clippy -p iced_nodegraph -p iced_nodegraph_sdf -- -D warnings`
+- `cargo clippy -p iced_nodegraph -p iced_nodegraph_sdf --all-targets -- -D warnings`
 - `cargo test -p iced_nodegraph`
 - `cargo test -p iced_nodegraph_sdf -- --test-threads=1` (the pixel tests each
   spin up a wgpu device; parallel runs oversubscribe the GPU)
+- `cargo check --workspace` (the demos compile nowhere else)
+- `cargo check -p iced_nodegraph_bench`
 - `cargo check -p iced_nodegraph --target wasm32-unknown-unknown`
 
 A task is only complete when all checks pass and the code is pushed.

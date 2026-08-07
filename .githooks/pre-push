@@ -6,8 +6,8 @@ set -euo pipefail
 echo "pre-push: cargo fmt --all -- --check"
 cargo fmt --all -- --check
 
-echo "pre-push: cargo clippy -p iced_nodegraph -p iced_nodegraph_sdf -- -D warnings"
-cargo clippy -p iced_nodegraph -p iced_nodegraph_sdf -- -D warnings
+echo "pre-push: cargo clippy -p iced_nodegraph -p iced_nodegraph_sdf --all-targets -- -D warnings"
+cargo clippy -p iced_nodegraph -p iced_nodegraph_sdf --all-targets -- -D warnings
 
 echo "pre-push: cargo test -p iced_nodegraph"
 cargo test -p iced_nodegraph
@@ -15,6 +15,12 @@ cargo test -p iced_nodegraph
 # The SDF pixel tests each spin up a full wgpu device; serialize them like CI.
 echo "pre-push: cargo test -p iced_nodegraph_sdf -- --test-threads=1"
 cargo test -p iced_nodegraph_sdf -- --test-threads=1
+
+echo "pre-push: cargo check --workspace"
+cargo check --workspace
+
+echo "pre-push: cargo check -p iced_nodegraph_bench"
+cargo check -p iced_nodegraph_bench
 
 # WASM compilation is checked locally only (CI is native-only).
 if rustup target list --installed 2>/dev/null | grep -qx wasm32-unknown-unknown; then

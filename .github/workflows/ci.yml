@@ -70,7 +70,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy -p iced_nodegraph -p iced_nodegraph_sdf -- -D warnings
+        run: cargo clippy -p iced_nodegraph -p iced_nodegraph_sdf --all-targets -- -D warnings
 
       - name: Test (iced_nodegraph)
         run: cargo test -p iced_nodegraph
@@ -81,6 +81,12 @@ jobs:
       # serialize them - lavapipe handles one device at a time reliably.
       - name: Test (iced_nodegraph_sdf, serialized GPU tests)
         run: cargo test -p iced_nodegraph_sdf -- --test-threads=1
+
+      - name: Check (workspace, demos included)
+        run: cargo check --workspace
+
+      - name: Check (bench crate)
+        run: cargo check -p iced_nodegraph_bench
 
   semver:
     name: Semver checks
