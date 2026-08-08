@@ -227,7 +227,7 @@ impl<'a, N, P, E, UI> Edge<'a, N, P, E, UI> {
     }
 }
 
-pub mod camera;
+pub(crate) mod camera;
 pub(crate) mod euclid;
 pub(crate) mod input;
 pub(crate) mod state;

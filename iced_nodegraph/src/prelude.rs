@@ -4,8 +4,8 @@
 //! almost every `view()`: the builders, [`PinRef`], the pin and
 //! status types used by `style`/`can_connect` closures, the concrete style
 //! structs with their theme-derived `default_*` bases, and the node-content
-//! helpers. Graph-level configuration set once (`Camera2D`, `GraphStyle`, and
-//! the overlay styles) is imported explicitly when opted into.
+//! helpers. Graph-level configuration set once (`GraphStyle` and the overlay
+//! styles) is imported explicitly when opted into.
 
 // Builders: the entry point, the node/edge/pin constructors and the types they
 // return (named when writing helpers per node type), and the `pin!` macro.

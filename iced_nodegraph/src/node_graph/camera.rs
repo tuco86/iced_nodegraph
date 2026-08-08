@@ -257,6 +257,15 @@ impl Camera2D {
     }
 
     /// World-to-screen transform: `screen = (world + position) * zoom + viewport_origin`.
+    ///
+    /// The reference implementation of the forward transform, derived by
+    /// inverting [`screen_to_world`](Self::screen_to_world). Rendering does not
+    /// call it - it goes through [`layer_transformation`](Self::layer_transformation),
+    /// which composes the same mapping directly for the renderer's stack. Its
+    /// job is to be the independent oracle both live paths are checked against:
+    /// that `screen_to_world` really inverts it, and that
+    /// `layer_transformation` really agrees with it.
+    #[cfg(test)]
     pub fn world_to_screen(&self) -> Transform2D<f32, World, Screen> {
         // Converts world coordinates to screen coordinates.
         // The transform is always invertible since zoom is clamped to [0.1, 10.0].

@@ -79,7 +79,9 @@
 //! - [`PinEnd`] is the richer endpoint view (direction, occupancy, payload)
 //!   handed to [`can_connect`](NodeGraph::can_connect); [`PinInfo`] is the
 //!   per-pin view handed to the style closures.
-//! - [`Camera2D`] holds zoom and pan and owns the screen/world transforms.
+//! - The camera is not a type you hold: push pan and zoom in through
+//!   [`NodeGraph::view`] and read the user's back out through
+//!   [`on_pan`](NodeGraph::on_pan), both as a plain `(Point, f32)`.
 //! - [`Keymap`] holds the rebindable key and pointer bindings, with
 //!   platform-appropriate defaults.
 //! - [`GraphInfo`] carries per-frame diagnostics to
@@ -174,7 +176,8 @@
 //! - **World -> screen**: `screen = (world + position) * zoom`
 //! - **Zoom at cursor**: `new_pos = old_pos + cursor_screen * (1/new_zoom - 1/old_zoom)`
 //!
-//! See [`Camera2D`] for the derivations.
+//! The derivations, and the screen/world type discipline they rest on, are in
+//! `node_graph/camera.rs`.
 //!
 //! ## Platform support
 //!
@@ -185,9 +188,7 @@ pub use connection::{default_can_connect, direction_ok, input_not_occupied, not_
 pub use content::{EdgeRadii, node_footer, node_header};
 pub use ids::{EdgeId, NodeId, PinId};
 pub use node_graph::{
-    Counts, DragInfo, Edge, GraphInfo, Node, NodeGraph, OpTiming, PinRef,
-    camera::Camera2D,
-    edge,
+    Counts, DragInfo, Edge, GraphInfo, Node, NodeGraph, OpTiming, PinRef, edge,
     input::{ComboKey, KeyAction, KeyCombo, Keymap},
     node,
     widget::node_graph,

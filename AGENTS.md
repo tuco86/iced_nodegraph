@@ -66,9 +66,11 @@ the renderer. Regenerate with `cargo doc --workspace --no-deps --open`.
   guard for the camera.
 - **Screen and world coordinates are distinct types.** `ScreenPoint` and
   `WorldPoint` are separate euclid spaces; convert only through `Camera2D`
-  (`screen_to_world` / `world_to_screen`) and the `IntoIced` / `IntoEuclid`
-  traits in `node_graph/euclid.rs`. Never coerce one into the other with a raw
-  `Point`.
+  (`screen_to_world` for input, `layer_transformation` for rendering) and the
+  `IntoIced` / `IntoEuclid` traits in `node_graph/euclid.rs`. Never coerce one
+  into the other with a raw `Point`. `Camera2D` and the euclid spaces are
+  crate-internal: the host's camera API is `NodeGraph::view` in and `on_pan`
+  out, both plain `(Point, f32)`.
 - **The renderer never fails a frame.** When SDF work does not fit, it is
   dropped and counted in `SdfStats` rather than erroring.
 

@@ -34,6 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   turbofish and type annotation; `node_graph::<Msg, Renderer>()` is the new
   spelling.
 
+- **`Camera2D` is no longer public.** Ten of its fourteen methods took or
+  returned types from the crate-private `euclid` module, so an outside caller
+  could reach only `new()` - an identity camera with no reachable setter, and
+  no way to obtain the one the widget uses. The host's camera API is, and was,
+  `NodeGraph::view` in and `on_pan` out, both plain `(Point, f32)`.
+
 ### Added
 
 - **GPU work and memory counters.** `SdfStats` gains `upload_bytes`,
