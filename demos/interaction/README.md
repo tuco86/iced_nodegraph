@@ -62,7 +62,7 @@ The root [README](../../README.md#controls) has the full default control table.
 cargo run -p demo_interaction
 ```
 
-This demo is the one that wires `demo_common`'s `ScreenshotHelper`, so it also
+This demo owns the `ScreenshotHelper` (`src/screenshot.rs`), so it also
 accepts the documentation-capture flag:
 
 ```bash

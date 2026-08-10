@@ -181,8 +181,8 @@ fn edge_grid_edges_are_visible() {
     );
 }
 
-/// Probe: print the real per-frame GPU buffer sizes (and what the tile-slot buffer
-/// would be at cap 32 vs 128), so the cap's memory cost is concrete.
+/// Probe: print the per-frame GPU memory the renderer actually reports, so the
+/// spatial index's cost on a dense scene is concrete.
 #[test]
 #[ignore = "diagnostic: prints GPU buffer sizes"]
 fn report_buffer_sizes() {
@@ -198,12 +198,9 @@ fn report_buffer_sizes() {
     );
     eprintln!("  tile_counts:  {} KiB ({tiles} x 4)", kib(tiles * 4));
     eprintln!(
-        "  tile_slots @cap32:  {} KiB ({tiles} x 64 x 4)",
-        kib(tiles * 64 * 4)
-    );
-    eprintln!(
-        "  tile_slots @cap128: {} KiB ({tiles} x 256 x 4)  <- current",
-        kib(tiles * 256 * 4)
+        "  spatial index: {} KiB | all GPU buffers: {} KiB",
+        kib(s.index_bytes),
+        kib(s.gpu_bytes)
     );
     eprintln!(
         "  segments: {} KiB ({} x 64) | entries: {} KiB ({} x 80)",

@@ -26,19 +26,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The `Theme` type parameter is gone** from `NodeGraph`, `Node`, `Edge`,
   `NodePin` and the style-fn types; all of them are now concrete on
-  `iced::Theme`. Only `iced::Theme` ever satisfied the `Widget` impl - it was
-  spelled concretely there, not as a generic - so no other theme could reach an
-  `Element`. Worse, `node_graph()` declared its own `Theme` parameter that
-  shadowed the concrete import, so `node_graph::<Msg, MyTheme, R>()` compiled
-  and handed back a graph with no `Widget` impl. Drop the parameter from every
+  `iced::Theme`. For `NodeGraph` the parameter was already a fiction: its
+  `Widget` and `Element` impls spelled the concrete `iced::Theme`, not a
+  generic, so no other theme could reach an `Element` - and `node_graph()`
+  declared its own `Theme` parameter that shadowed the concrete import, so
+  `node_graph::<Msg, MyTheme, R>()` compiled and handed back a graph with no
+  `Widget` impl. `NodePin` is the one type that was honestly polymorphic: its
+  `Widget`, `From` and constructor were generic over `Theme`, and that
+  capability is deliberately dropped, because a `NodePin` only ever renders
+  inside a `NodeGraph`, which is monomorphic. Drop the parameter from every
   turbofish and type annotation; `node_graph::<Msg, Renderer>()` is the new
   spelling.
 
-- **`Camera2D` is no longer public.** Ten of its fourteen methods took or
-  returned types from the crate-private `euclid` module, so an outside caller
-  could reach only `new()` - an identity camera with no reachable setter, and
-  no way to obtain the one the widget uses. The host's camera API is, and was,
-  `NodeGraph::view` in and `on_pan` out, both plain `(Point, f32)`.
+- **`Camera2D` is no longer public.** Eight of its fourteen methods - every
+  one that sets or reads pan/zoom - name a type from the crate-private `euclid`
+  module. Those were reachable only out of band, by taking a matching `euclid`
+  dependency and letting the unit parameter infer; the remaining six (`new`,
+  `zoom`, `layer_transformation`, `draw_with`, `update_with`,
+  `cursor_screen_to_layout`) were plainly callable. What no caller could ever
+  obtain is the camera the widget actually uses: it lives in private widget
+  state. The host's camera API is, and was, `NodeGraph::view` in and `on_pan`
+  out, both plain `(Point, f32)`.
 
 ### Added
 

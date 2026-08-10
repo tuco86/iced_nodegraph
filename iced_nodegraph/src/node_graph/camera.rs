@@ -184,8 +184,9 @@ impl Default for Camera2D {
 
 impl Camera2D {
     /// Zoom clamp bounds: keep the world<->screen transforms invertible and
-    /// well-conditioned (`world_to_screen` inverts the scale). Enforced by
-    /// every zoom entry point (`zoom_at`, `with_zoom_and_position`).
+    /// well-conditioned - `screen_to_world` divides by zoom and
+    /// `layer_transformation` scales by it. Enforced by every zoom entry point
+    /// (`zoom_at`, `with_zoom_and_position`).
     pub const ZOOM_MIN: f32 = 0.1;
     pub const ZOOM_MAX: f32 = 10.0;
 
@@ -258,13 +259,13 @@ impl Camera2D {
 
     /// World-to-screen transform: `screen = (world + position) * zoom + viewport_origin`.
     ///
-    /// The reference implementation of the forward transform, derived by
-    /// inverting [`screen_to_world`](Self::screen_to_world). Rendering does not
-    /// call it - it goes through [`layer_transformation`](Self::layer_transformation),
-    /// which composes the same mapping directly for the renderer's stack. Its
-    /// job is to be the independent oracle both live paths are checked against:
-    /// that `screen_to_world` really inverts it, and that
-    /// `layer_transformation` really agrees with it.
+    /// Derived by inverting [`screen_to_world`](Self::screen_to_world), so a
+    /// round-trip through the two can only surface float error, never a wrong
+    /// camera formula. What earns it its keep is the cross-check against
+    /// [`layer_transformation`](Self::layer_transformation), which composes the
+    /// forward mapping independently for the renderer's stack: the two must
+    /// agree, and `test_layer_transformation_matches_world_to_screen` pins both
+    /// to a hand-computed constant.
     #[cfg(test)]
     pub fn world_to_screen(&self) -> Transform2D<f32, World, Screen> {
         // Converts world coordinates to screen coordinates.

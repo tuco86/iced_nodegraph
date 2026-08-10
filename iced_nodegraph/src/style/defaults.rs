@@ -20,11 +20,18 @@
 //! [`default_cutting_tool_style`]) have no status - the overlay exists only while
 //! its gesture is running.
 //!
-//! ```text
-//! node.style(|theme, status| NodeStyle {
-//!     fill_color: Color::WHITE.into(),      // user override wins
-//!     ..default_node_style(theme, status)   // theme base + status fills the rest
-//! })
+//! ```rust,no_run
+//! use iced::{widget::text, Color, Point};
+//! use iced_nodegraph::{NodeStyle, default_node_style, node};
+//!
+//! # #[derive(Debug, Clone)]
+//! # enum Message {}
+//! # let (pos, body) = (Point::ORIGIN, text("body"));
+//! node::<_, usize, (), Message, iced::Renderer>(0, pos, body)
+//!     .style(|theme, status| NodeStyle {
+//!         fill_color: Color::WHITE.into(),      // user override wins
+//!         ..default_node_style(theme, status)   // theme base + status fills the rest
+//!     });
 //! ```
 //!
 //! Geometry lives here too, as named constants rather than factors applied to

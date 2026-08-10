@@ -81,7 +81,7 @@ the vsync floor*, and how fast it grows past it.
 | `NG_NO_GRID` or `NG_NO_EDGES` gives a large win | fragment-bound in that specific layer |
 | interval tracks `NG_NODES` at constant `shaded Mpx` | draw-count or index-build bound |
 | `upload KiB` well above `draws * 96 B` on an idle graph | the RAM->GPU bandwidth hypothesis has a real target |
-| `fine max` sits at 128 | the fine slot cap is saturated: `evals M` under-counts real demand |
+| `fine max` sits at 64 | the fine slot cap is saturated: `evals M` under-counts real demand |
 
 `cull_skipped: true` means the frame reused the resident spatial index and ran
 no cull dispatch at all - the steady state for a static graph.
@@ -123,11 +123,11 @@ cd demos/hello_world
 cargo run
 ```
 
-The shared `demos/common` crate provides a `ScreenshotHelper` for the
+The `interaction` demo owns a `ScreenshotHelper` for the
 `--screenshot <path.png>` CLI flag used in documentation captures. Wiring it up
-is per demo (state field, `Message` variant, `update` arm, subscription); the
-`interaction` demo shows the full pattern and is the one that currently
-supports the flag:
+is per demo (state field, `Message` variant, `update` arm, subscription);
+`interaction` is the only demo that currently supports the flag, and shows the
+full pattern:
 
 ```bash
 cargo run -p demo_interaction --bin interaction -- --screenshot shot.png

@@ -133,7 +133,7 @@ impl Curve {
 
 // --- ShapeBuilder ---
 
-/// Builder for connected contours (open or closed).
+/// Builder for connected closed contours.
 ///
 /// **Heading**: 0 = UP, positive = clockwise. All angles in radians.
 /// **Right side** of each segment = negative distance.

@@ -15,7 +15,7 @@ use iced::{
 use iced_nodegraph::node_header;
 
 /// Default node corner radius. Kept in sync with the widget's `default_node_style`
-/// so a `simple_node` lines up with the rendered fill (asserted in tests).
+/// so a [`node_title_bar`] lines up with the rendered fill (asserted in tests).
 const DEFAULT_CORNER_RADIUS: f32 = 5.0;
 /// Default node border width. Kept in sync with `default_node_style`.
 const DEFAULT_BORDER_WIDTH: f32 = 1.0;

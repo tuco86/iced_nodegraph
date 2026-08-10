@@ -304,7 +304,7 @@ pub struct GraphInfo {
     /// Fragment-shader `eval_segment` calls this frame; 0 unless the index probe
     /// is enabled (`SdfStats::segment_evals`).
     pub sdf_segment_evals: u64,
-    /// Highest per-fine-tile slot count against the 128 cap
+    /// Highest per-fine-tile slot count against the 64-slot cap
     /// (`SdfStats::fine_slots_max`).
     pub sdf_fine_slots_max: u32,
     /// Fine index tiles that dropped a candidate segment at the slot cap

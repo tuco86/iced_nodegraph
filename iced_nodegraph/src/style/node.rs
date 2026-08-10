@@ -4,8 +4,12 @@
 //! base lives in [`default_node_style`](crate::default_node_style); override
 //! individual fields with struct-update syntax over it:
 //!
-//! ```text
-//! NodeStyle { fill_color: Color::WHITE.into(), ..default_node_style(theme, status) }
+//! ```rust
+//! use iced::{Color, Theme};
+//! use iced_nodegraph::{NodeStatus, NodeStyle, default_node_style};
+//!
+//! # let (theme, status) = (&Theme::Dark, NodeStatus::Idle);
+//! NodeStyle { fill_color: Color::WHITE.into(), ..default_node_style(theme, status) };
 //! ```
 //!
 //! On/off is encoded by sentinels (border thickness 0, shadow blur/alpha 0), so

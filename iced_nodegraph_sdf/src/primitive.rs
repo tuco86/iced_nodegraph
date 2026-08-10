@@ -453,7 +453,7 @@ pub struct SdfPipeline {
     segments_buffer: buffer::Buffer<types::GpuSegment>,
     styles_buffer: buffer::Buffer<types::GpuStyle>,
     // Two-level spatial index. Coarse (64px) tiles hold the (segment, entry)
-    // results; fine (16px) tiles hold 16-bit indices into the parent coarse tile.
+    // results; fine (8px) tiles hold 16-bit indices into the parent coarse tile.
     coarse_counts_buffer: wgpu::Buffer,
     coarse_slots_buffer: wgpu::Buffer,
     fine_counts_buffer: wgpu::Buffer,

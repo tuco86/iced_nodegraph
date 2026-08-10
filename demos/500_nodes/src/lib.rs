@@ -523,7 +523,7 @@ fn gpu_rows(info: Option<&GraphInfo>) -> Element<'_, ApplicationMessage> {
                 i.sdf_shaded_px as f64 / 1e6
             ),
             format!(
-                "evals {:.2} M   fine max {}/128",
+                "evals {:.2} M   fine max {}/64",
                 i.sdf_segment_evals as f64 / 1e6,
                 i.sdf_fine_slots_max
             ),

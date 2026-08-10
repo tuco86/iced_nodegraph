@@ -169,7 +169,7 @@ pub(crate) struct DrawData {
     pub entry_count: u32,
     /// Offset into draw_entries buffer.
     pub entry_start: u32,
-    /// Fine (16px) tile grid columns (0 = no spatial index, iterate all).
+    /// Fine (8px) tile grid columns (0 = no spatial index, iterate all).
     pub grid_cols: u32,
     /// Fine tile grid rows.
     pub grid_rows: u32,

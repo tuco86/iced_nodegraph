@@ -275,7 +275,7 @@ build went 4260.9 -> 958.5 us (4.4x) at pixel-identical output.
   per culled frame.
 
 The split trades one indirection for memory: the fat coarse slots exist once per
-(few) coarse tiles; the 16x-more-numerous fine tiles cost two bytes per slot, not
+(few) coarse tiles; the 64x-more-numerous fine tiles cost two bytes per slot, not
 eight.
 
 **The build SCATTERS work-proportionally instead of gathering per tile.** The
