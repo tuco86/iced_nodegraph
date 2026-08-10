@@ -1,0 +1,11 @@
+# Line endings are LF everywhere - in the repository and in the working tree on
+# every platform. Without this the stored ending is whatever the contributing
+# machine happened to write, which is how one CRLF file reached the history and
+# made a two-line edit read as a full-file rewrite in `git diff`.
+#
+# `text=auto` still detects binary content, so `eol=lf` never touches it; the
+# one binary in the tree is listed below anyway, so the intent is explicit
+# rather than inferred.
+* text=auto eol=lf
+
+*.png binary
