@@ -37,7 +37,7 @@ web-time.workspace = true
 # cheaper one: `x11` adds 7 crates, `wayland` adds 34 (the smithay stack plus
 # tiny-skia, through winit's adwaita client-side decorations). Both are inert
 # off Linux - winit declares their dependencies in a Linux-only target table.
-iced = { workspace = true, features = ["wgpu", "advanced", "thread-pool", "x11"] }
+iced = { workspace = true, features = ["wgpu", "tiny-skia", "advanced", "thread-pool", "x11"] }
 iced_test = { workspace = true }
 proptest.workspace = true
 pollster.workspace = true

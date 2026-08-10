@@ -72,8 +72,14 @@ jobs:
       - name: Clippy
         run: cargo clippy -p iced_nodegraph -p iced_nodegraph_sdf --all-targets -- -D warnings
 
+      # `iced_test::Simulator` builds its own headless renderer per instance and
+      # never releases it within the process. With 49 tests that exhausts the
+      # GPU: device creation starts failing around the 27th, and in parallel it
+      # segfaults or deadlocks instead. These tests assert messages, not pixels,
+      # so run them on the CPU backend - no GPU device, and 25x faster. The
+      # pixel oracles are unaffected: they build `iced_wgpu::Renderer` directly.
       - name: Test (iced_nodegraph)
-        run: cargo test -p iced_nodegraph
+        run: ICED_TEST_BACKEND=tiny-skia cargo test -p iced_nodegraph
 
       # The SDF pixel tests each spin up a full wgpu device and render through
       # the software Vulkan driver. Running them in parallel oversubscribes the
@@ -86,7 +92,7 @@ jobs:
         run: cargo check --workspace
 
       - name: Check (bench crate)
-        run: cargo check -p iced_nodegraph_bench
+        run: cargo check -p iced_nodegraph_bench --benches
 
   semver:
     name: Semver checks

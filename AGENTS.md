@@ -118,11 +118,16 @@ wasm check CI does not run.
 
 - `cargo fmt --all -- --check`
 - `cargo clippy -p iced_nodegraph -p iced_nodegraph_sdf --all-targets -- -D warnings`
-- `cargo test -p iced_nodegraph`
+- `ICED_TEST_BACKEND=tiny-skia cargo test -p iced_nodegraph` (the backend is
+  not optional: `iced_test::Simulator` builds a headless renderer per
+  instance and never releases it, so on the GPU backend the 49 simulator
+  tests exhaust the device and the run segfaults or hangs about half the
+  time. They assert messages, not pixels. The pixel oracles build
+  `iced_wgpu::Renderer` directly and are unaffected.)
 - `cargo test -p iced_nodegraph_sdf -- --test-threads=1` (the pixel tests each
   spin up a wgpu device; parallel runs oversubscribe the GPU)
 - `cargo check --workspace` (the demos compile nowhere else)
-- `cargo check -p iced_nodegraph_bench`
+- `cargo check -p iced_nodegraph_bench --benches`
 - `cargo check -p iced_nodegraph --target wasm32-unknown-unknown`
 
 A task is only complete when all checks pass and the code is pushed.
@@ -166,7 +171,8 @@ widget hands its children using the shared recording renderer in
 `tests/common/record.rs`; `simulator.rs` drives real events through
 `iced_test::Simulator`; `widget_pixel.rs` and `edge_grid_pixel.rs` are pixel
 oracles against the headless GPU harness in `tests/common/mod.rs`;
-`theme_gallery.rs` pins the perceptual role table across every built-in theme.
+`theme_gallery.rs` is an ignored visual probe that renders one scene under
+every built-in theme to PNG contact sheets for review.
 The `iced_nodegraph_bench` member (`benches/frame_prep.rs`,
 `cargo bench -p iced_nodegraph_bench`) measures frame-preparation cost; it is a
 separate crate because `dev-dependencies` are package-wide, so criterion's 38
@@ -269,7 +275,8 @@ MUST NOT:
   (users copy examples verbatim).
 - For examples that need a renderer/window/event loop (most widget usage), mark
   the fence `no_run` - it still compiles (and stays correct) but is not executed.
-  Use `ignore` only when it cannot even compile in a doctest context.
+  Use `text` only when it cannot even compile in a doctest context (a struct
+  sketch, an expression fragment, or a snippet naming crate-private paths).
 
 ### Uncertainty handling (critical for a bulk pass)
 

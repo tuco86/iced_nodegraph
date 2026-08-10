@@ -35,7 +35,7 @@
 //! - Single-connection pins reject additional connections
 
 mod content;
-mod screenshot;
+pub mod screenshot;
 
 use content::simple_node;
 use demo_common::NodeContentStyle;

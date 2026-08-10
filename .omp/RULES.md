@@ -6,10 +6,10 @@ a long conversation has pushed that context out of view.
 - **The gate is non-negotiable.** Before calling anything done:
   `cargo fmt --all -- --check`,
   `cargo clippy -p iced_nodegraph -p iced_nodegraph_sdf --all-targets -- -D warnings`,
-  `cargo test -p iced_nodegraph`,
+  `ICED_TEST_BACKEND=tiny-skia cargo test -p iced_nodegraph`,
   `cargo test -p iced_nodegraph_sdf -- --test-threads=1`,
   `cargo check --workspace`,
-  `cargo check -p iced_nodegraph_bench`,
+  `cargo check -p iced_nodegraph_bench --benches`,
   `cargo check -p iced_nodegraph --target wasm32-unknown-unknown`.
   Never weaken a test or widen an `allow` to make it pass.
 

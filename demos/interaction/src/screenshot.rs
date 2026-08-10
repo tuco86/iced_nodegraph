@@ -39,7 +39,7 @@ impl std::fmt::Debug for ScreenshotMessage {
 /// # Usage
 ///
 /// ```
-/// use demo_common::{ScreenshotHelper, ScreenshotMessage};
+/// use demo_interaction::screenshot::{ScreenshotHelper, ScreenshotMessage};
 /// use iced::{Subscription, Task};
 ///
 /// #[derive(Debug, Clone)]
