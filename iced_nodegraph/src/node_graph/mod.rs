@@ -24,12 +24,12 @@
 //!
 //! One shape throughout: a closure over the theme, with a `default_*_style`
 //! function as its base. [`Node::style`] and [`Node::pin_style`] for a node and
-//! its pins, [`Edge::style`] for an edge, and one entry point per piece of chrome
-//! the widget draws itself - [`NodeGraph::graph_style`] (canvas),
-//! [`NodeGraph::selection_box_style`], [`NodeGraph::cutting_tool_style`] and
-//! [`NodeGraph::dragging_edge_style`]. Per-element closures additionally receive
-//! a status, so selection and cut feedback are expressed in the style, not
-//! layered on afterwards.
+//! its pins, [`Edge::style`] for an edge, [`Anchor::style`] for a routing anchor,
+//! and one entry point per piece of chrome the widget draws itself -
+//! [`NodeGraph::graph_style`] (canvas), [`NodeGraph::selection_box_style`],
+//! [`NodeGraph::cutting_tool_style`] and [`NodeGraph::dragging_edge_style`].
+//! Per-element closures additionally receive a status, so selection and cut
+//! feedback are expressed in the style, not layered on afterwards.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -39,8 +39,8 @@ use iced_widget::core::{Element, Length, Padding, Point, Rectangle, Size, Theme,
 use crate::ids::{EdgeId, NodeId, PinId};
 use crate::node_pin::{PinEnd, PinInfo};
 use crate::style::{
-    CuttingToolStyle, EdgeStatus, EdgeStyle, GraphStyle, NodeStatus, NodeStyle, PinStatus,
-    PinStyle, SelectionBoxStyle,
+    AnchorStatus, AnchorStyle, CuttingToolStyle, EdgeStatus, EdgeStyle, GraphStyle, NodeStatus,
+    NodeStyle, PinStatus, PinStyle, SelectionBoxStyle,
 };
 
 /// Pin click detection threshold, in screen pixels: divided by zoom before
@@ -54,6 +54,13 @@ pub(crate) const PIN_CLICK_THRESHOLD: f32 = 8.0;
 /// Edge-cut click distance, in screen pixels, scaled by 1/zoom at the
 /// comparison site like [`PIN_CLICK_THRESHOLD`].
 pub(crate) const EDGE_CUT_THRESHOLD: f32 = 10.0;
+
+/// Anchor-core grab distance, in screen pixels, scaled by 1/zoom at the
+/// comparison site like [`PIN_CLICK_THRESHOLD`].
+///
+/// The hit target, not the drawn size: `style::defaults` keeps the core inside
+/// this, so what you can grab is never smaller than what you can see.
+pub(crate) const ANCHOR_GRAB_THRESHOLD: f32 = 10.0;
 
 /// Side of a resizable node's bottom-right grip, in screen pixels, scaled by
 /// 1/zoom at the use sites like [`PIN_CLICK_THRESHOLD`]. The draw path and the
@@ -84,6 +91,9 @@ pub(crate) type PinStyleFn<'a, P, UI> = Box<
 /// freshly dragged edge has no status. Used by [`NodeGraph::dragging_edge_style`].
 pub(crate) type DragEdgeStyleFn<'a, P, UI> =
     Box<dyn Fn(&Theme, PinInfo<'_, P, UI>) -> EdgeStyle + 'a>;
+/// Per-anchor style callback: theme + status -> resolved style. Used by
+/// [`Anchor`].
+pub(crate) type AnchorStyleFn<'a> = Box<dyn Fn(&Theme, AnchorStatus) -> AnchorStyle + 'a>;
 
 /// A node to push onto the graph: id, position, content element, an optional
 /// per-node style closure, and an optional closure styling all of its pins.
@@ -201,14 +211,88 @@ impl<'a, N, P, UI, Message, Renderer> Node<'a, N, P, UI, Message, Renderer> {
     }
 }
 
-/// An edge to push onto the graph: a user id, endpoint pin references, and an
+/// Which way a cable wraps an anchor, as seen on screen.
+///
+/// An orbit takes exactly two attachments and they must wrap the same way
+/// round, so the second edge to arrive gets the opposite hand of the first -
+/// that is what makes the pair one continuous cable instead of two ends that
+/// meet head-on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Hand {
+    /// The cable passes its attachment point travelling clockwise on screen.
+    Clockwise,
+    /// The cable passes its attachment point travelling counter-clockwise.
+    CounterClockwise,
+}
+
+impl Hand {
+    /// The other way round.
+    pub fn flip(self) -> Hand {
+        match self {
+            Hand::Clockwise => Hand::CounterClockwise,
+            Hand::CounterClockwise => Hand::Clockwise,
+        }
+    }
+
+    /// Signed unit of the wrap: `+1` clockwise, matching the sign convention of
+    /// a screen-space (y-down) angle sweep.
+    pub(crate) fn sign(self) -> f32 {
+        match self {
+            Hand::Clockwise => 1.0,
+            Hand::CounterClockwise => -1.0,
+        }
+    }
+}
+
+/// One end of an [`Edge`]: a node pin, or an orbit around an anchor.
+///
+/// A `PinRef` converts into this, so an edge between two node pins is written
+/// exactly as before.
+///
+/// An orbit end is an ATTACHMENT, not a terminus: the cable meets the orbit
+/// tangentially at a point the geometry picks, and the pair of edges sharing
+/// one orbit forms a single connection through it. An orbit end on its own
+/// leaves the connection open - the widget draws the leg, and it is up to the
+/// host whether a half-attached pin counts as connected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EdgeEnd<N, P> {
+    /// A pin on a node.
+    Pin(PinRef<N, P>),
+    /// An orbit around an anchor, and which way the cable wraps it.
+    Orbit {
+        /// The anchor's user id, in the shared node/anchor id space.
+        anchor: N,
+        /// Which orbit, counting outward from `0`.
+        orbit: u8,
+        /// Which of the two tangents the cable takes.
+        hand: Hand,
+    },
+}
+
+impl<N, P> From<PinRef<N, P>> for EdgeEnd<N, P> {
+    fn from(pin: PinRef<N, P>) -> Self {
+        EdgeEnd::Pin(pin)
+    }
+}
+
+impl<N, P> EdgeEnd<N, P> {
+    /// The pin this end names, or `None` for an orbit attachment.
+    pub fn pin(&self) -> Option<&PinRef<N, P>> {
+        match self {
+            EdgeEnd::Pin(pin) => Some(pin),
+            EdgeEnd::Orbit { .. } => None,
+        }
+    }
+}
+
+/// An edge to push onto the graph: a user id, its two endpoints, and an
 /// optional per-edge status-driven style closure. Build with [`edge`] +
 /// [`Edge::style`], then add via [`NodeGraph::push_edge`]. The id is the user's
 /// own (e.g. a database key); it travels with the edge, symmetric to [`node`].
 pub struct Edge<'a, N, P, E, UI> {
     pub(super) id: E,
-    pub(super) from: PinRef<N, P>,
-    pub(super) to: PinRef<N, P>,
+    pub(super) from: EdgeEnd<N, P>,
+    pub(super) to: EdgeEnd<N, P>,
     pub(super) style: Option<EdgeStyleFn<'a, P, UI>>,
 }
 
@@ -216,11 +300,15 @@ pub struct Edge<'a, N, P, E, UI> {
 ///
 /// The id comes last so the common no-id case reads cleanly via the `edge!`
 /// macro: `edge!(from, to)` expands to `edge(from, to, ())`.
-pub fn edge<'a, N, P, E, UI>(from: PinRef<N, P>, to: PinRef<N, P>, id: E) -> Edge<'a, N, P, E, UI> {
+pub fn edge<'a, N, P, E, UI>(
+    from: impl Into<EdgeEnd<N, P>>,
+    to: impl Into<EdgeEnd<N, P>>,
+    id: E,
+) -> Edge<'a, N, P, E, UI> {
     Edge {
         id,
-        from,
-        to,
+        from: from.into(),
+        to: to.into(),
         style: None,
     }
 }
@@ -252,6 +340,39 @@ impl<'a, N, P, E, UI> Edge<'a, N, P, E, UI> {
         mut self,
         f: impl Fn(&Theme, EdgeStatus, PinInfo<'_, P, UI>, PinInfo<'_, P, UI>) -> EdgeStyle + 'a,
     ) -> Self {
+        self.style = Some(Box::new(f));
+        self
+    }
+}
+
+/// An anchor to push onto the graph: id, position, and an optional per-anchor
+/// style closure.
+///
+/// Build with [`anchor`] + [`Anchor::style`], then add via
+/// [`NodeGraph::push_anchor`]. Anchors share the node id space `N` but are
+/// their own collection and never a widget-tree element: cables attach to an
+/// anchor's orbits through [`EdgeEnd::Orbit`], and a pair of edges sharing one
+/// orbit becomes a single connection wrapping it.
+#[allow(missing_debug_implementations)]
+pub struct Anchor<'a, N> {
+    pub(super) id: N,
+    pub(super) position: Point,
+    pub(super) style: Option<AnchorStyleFn<'a>>,
+}
+
+/// Creates an [`Anchor`] with default (theme) styling.
+pub fn anchor<'a, N>(id: N, position: Point) -> Anchor<'a, N> {
+    Anchor {
+        id,
+        position,
+        style: None,
+    }
+}
+
+impl<'a, N> Anchor<'a, N> {
+    /// Sets the per-anchor style closure: receives the theme and the anchor's
+    /// [`AnchorStatus`], returns the resolved style.
+    pub fn style(mut self, f: impl Fn(&Theme, AnchorStatus) -> AnchorStyle + 'a) -> Self {
         self.style = Some(Box::new(f));
         self
     }
@@ -315,6 +436,8 @@ pub struct GraphInfo {
     pub pins: Counts,
     /// Edge counts.
     pub edges: Counts,
+    /// Anchor counts.
+    pub anchors: Counts,
     /// Per-operation CPU timings, in stack order.
     pub timings: Vec<OpTiming>,
     /// SDF draw entries submitted this frame.
@@ -530,6 +653,12 @@ pub struct NodeGraph<
     /// Id -> index map: O(1) `node_index` lookups and deterministic duplicate
     /// detection in `push_node` (first push wins).
     pub(super) node_lookup: HashMap<N, usize>,
+    /// Anchors in push order: routing waypoints, sharing the node id space but
+    /// their own collection and never a widget-tree element (see [`Anchor`]).
+    pub(super) anchors: Vec<Anchor<'a, N>>,
+    /// Id -> index map, the anchor counterpart of `node_lookup`; both are
+    /// checked on either push, since the two share one id space.
+    pub(super) anchor_lookup: HashMap<N, usize>,
     /// Edges in push order. Endpoint pin ids are resolved to positional pin
     /// indices at draw time, since only the laid-out widget tree knows them.
     pub(super) edges: Vec<Edge<'a, N, P, E, UI>>,
@@ -540,6 +669,9 @@ pub struct NodeGraph<
     /// Grip-resize report, the size counterpart to `on_move`. Only nodes marked
     /// [`Node::resizable`] carry a grip, and only while this is wired.
     pub(super) on_resize: Option<Box<dyn Fn(N, Size) -> Message + 'a>>,
+    /// Anchor-drag report. An anchor is a point, so this carries its new world
+    /// position outright rather than a delta, mirroring `on_resize`.
+    pub(super) on_anchor_move: Option<Box<dyn Fn(N, Point) -> Message + 'a>>,
     pub(super) on_select: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
     pub(super) on_clone: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
     pub(super) on_delete: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
@@ -596,12 +728,15 @@ where
             size: Size::new(Length::Fill, Length::Fill),
             nodes: Vec::new(),
             node_lookup: HashMap::new(),
+            anchors: Vec::new(),
+            anchor_lookup: HashMap::new(),
             edges: Vec::new(),
             graph_style: None,
             on_connect: None,
             on_disconnect: None,
             on_move: None,
             on_resize: None,
+            on_anchor_move: None,
             on_select: None,
             on_clone: None,
             on_delete: None,
@@ -660,25 +795,47 @@ where
 
     /// Adds a node, styled by the theme unless the builder overrides it.
     ///
-    /// Node ids must be unique: a duplicate push is ignored (the first node with
-    /// the id wins) and debug builds assert on it. Prefer a stable id from your
-    /// data (a DB key, `uuid::Uuid`, a typed newtype) over a hand-managed
-    /// counter.
+    /// Node ids must be unique - and, since
+    /// [`push_anchor`](Self::push_anchor) shares the same id space, unique
+    /// across BOTH collections. A duplicate push is ignored (the first push
+    /// with the id wins) and debug builds assert on it. Prefer a stable id
+    /// from your data (a DB key, `uuid::Uuid`, a typed newtype) over a
+    /// hand-managed counter.
     pub fn push_node(&mut self, node: Node<'a, N, P, UI, Message, Renderer>) {
-        match self.node_lookup.entry(node.id.clone()) {
-            std::collections::hash_map::Entry::Occupied(_) => {
-                debug_assert!(
-                    false,
-                    "duplicate node id {:?}: node ids must be unique; \
-                     the duplicate push is ignored (first wins)",
-                    node.id,
-                );
-            }
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(self.nodes.len());
-                self.nodes.push(node);
-            }
+        if self.node_lookup.contains_key(&node.id) || self.anchor_lookup.contains_key(&node.id) {
+            debug_assert!(
+                false,
+                "duplicate id {:?}: node and anchor ids share one id space and must be \
+                 unique; the duplicate push is ignored (first wins)",
+                node.id,
+            );
+            return;
         }
+        self.node_lookup.insert(node.id.clone(), self.nodes.len());
+        self.nodes.push(node);
+    }
+
+    /// Adds an anchor: a routing waypoint edges thread through via
+    /// [`Edge::route`], never an edge endpoint and never a widget-tree
+    /// element.
+    ///
+    /// Anchor ids share the node id space and follow the same rule as
+    /// [`push_node`](Self::push_node): unique across both collections, first
+    /// push wins, debug builds assert on a collision.
+    pub fn push_anchor(&mut self, anchor: Anchor<'a, N>) {
+        if self.anchor_lookup.contains_key(&anchor.id) || self.node_lookup.contains_key(&anchor.id)
+        {
+            debug_assert!(
+                false,
+                "duplicate id {:?}: node and anchor ids share one id space and must be \
+                 unique; the duplicate push is ignored (first wins)",
+                anchor.id,
+            );
+            return;
+        }
+        self.anchor_lookup
+            .insert(anchor.id.clone(), self.anchors.len());
+        self.anchors.push(anchor);
     }
 
     /// Adds an edge, styled by the theme unless the builder overrides it.
@@ -698,6 +855,12 @@ where
     /// The node index of a user node id.
     pub(super) fn node_index(&self, id: &N) -> Option<usize> {
         self.node_lookup.get(id).copied()
+    }
+
+    /// The anchor index of a user id, or `None` when the id names a node or
+    /// nothing at all.
+    pub(super) fn anchor_index(&self, id: &N) -> Option<usize> {
+        self.anchor_lookup.get(id).copied()
     }
 
     /// The selection the host marked on its nodes.
@@ -932,6 +1095,18 @@ where
     /// gating [`on_move`](Self::on_move) has.
     pub fn on_resize(mut self, f: impl Fn(N, Size) -> Message + 'a) -> Self {
         self.on_resize = Some(Box::new(f));
+        self
+    }
+
+    /// Sets the anchor-drag report: the anchor's id and the world position it
+    /// was dragged to.
+    ///
+    /// The widget never moves the anchor itself - it previews the drag and
+    /// reports the result, and the next `view` renders whatever the host
+    /// applied. Anchors are only draggable while this is wired, the same gating
+    /// [`on_resize`](Self::on_resize) has.
+    pub fn on_anchor_move(mut self, f: impl Fn(N, Point) -> Message + 'a) -> Self {
+        self.on_anchor_move = Some(Box::new(f));
         self
     }
 

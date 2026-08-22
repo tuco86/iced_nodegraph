@@ -15,7 +15,7 @@
 use iced::widget::{container, text};
 use iced::{Element, Length, Point, Size, Theme, Vector};
 use iced::{keyboard, mouse};
-use iced_nodegraph::{DragInfo, NodeGraph, PinRef, edge, node, pin};
+use iced_nodegraph::{DragInfo, NodeGraph, PinRef, anchor, edge, node, pin};
 use iced_test::Simulator;
 
 type Renderer = iced::Renderer;
@@ -38,6 +38,7 @@ enum Msg {
     DragEnd,
     Button,
     Input(String),
+    AnchorMove(usize, Point),
 }
 
 const NODE_W: f32 = 60.0;
@@ -89,6 +90,26 @@ fn graph_of(
                 .resizable(resizable),
         );
     }
+    ng.into()
+}
+
+/// A graph with one node and one draggable anchor at `anchor_at`.
+fn graph_with_anchor(anchor_at: Point) -> Element<'static, Msg, Theme, Renderer> {
+    let mut ng: Graph = NodeGraph::default()
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .on_select(Msg::Select)
+        .on_move(Msg::Move)
+        .on_anchor_move(Msg::AnchorMove)
+        .on_drag_end(|| Msg::DragEnd);
+    ng.push_node(node(
+        0usize,
+        Point::new(0.0, 0.0),
+        container(iced::widget::text("n"))
+            .width(Length::Fixed(NODE_W))
+            .height(Length::Fixed(NODE_H)),
+    ));
+    ng.push_anchor(anchor(7usize, anchor_at));
     ng.into()
 }
 
@@ -1037,23 +1058,97 @@ fn backspace_in_focused_text_input_does_not_delete_node() {
 }
 
 // ---------------------------------------------------------------------------
-// Duplicate node id: debug-build guard. `node_index` resolves to the first
-// match, so a duplicate renders one node twice and behaves undefined. Edges
-// need no such guard: they carry no id and are addressed by index.
+// Shared node/anchor id space: debug-build guard. `node_index`/`anchor_index`
+// resolve to the first match, so a duplicate renders one element twice and
+// behaves undefined. Edges need no such guard: they carry no id and are
+// addressed by index.
 // ---------------------------------------------------------------------------
+
+fn guard_body() -> iced::widget::Container<'static, Msg, Theme, Renderer> {
+    container(text("n"))
+        .width(Length::Fixed(NODE_W))
+        .height(Length::Fixed(NODE_H))
+}
 
 #[cfg(debug_assertions)]
 #[test]
-#[should_panic(expected = "duplicate node id")]
+#[should_panic(expected = "duplicate id")]
 fn push_node_rejects_duplicate_id_in_debug() {
     let mut ng: Graph = NodeGraph::default();
-    let body = || {
-        container(text("n"))
-            .width(Length::Fixed(NODE_W))
-            .height(Length::Fixed(NODE_H))
-    };
-    ng.push_node(node(7usize, Point::new(0.0, 0.0), body()));
-    ng.push_node(node(7usize, Point::new(50.0, 50.0), body()));
+    ng.push_node(node(7usize, Point::new(0.0, 0.0), guard_body()));
+    ng.push_node(node(7usize, Point::new(50.0, 50.0), guard_body()));
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "node and anchor ids share one id space")]
+fn push_anchor_rejects_an_id_a_node_already_took() {
+    let mut ng: Graph = NodeGraph::default();
+    ng.push_node(node(7usize, Point::new(0.0, 0.0), guard_body()));
+    ng.push_anchor(anchor(7usize, Point::new(120.0, 120.0)));
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "node and anchor ids share one id space")]
+fn push_node_rejects_an_id_an_anchor_already_took() {
+    let mut ng: Graph = NodeGraph::default();
+    ng.push_anchor(anchor(7usize, Point::new(120.0, 120.0)));
+    ng.push_node(node(7usize, Point::new(0.0, 0.0), guard_body()));
+}
+
+// ---------------------------------------------------------------------------
+// Anchor dragging. The anchor is a grabbable object, and like every other
+// gesture the widget only REPORTS the result - it never moves the anchor.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dragging_an_anchor_reports_its_new_position() {
+    let at = Point::new(200.0, 150.0);
+    let mut ui = Simulator::new(graph_with_anchor(at));
+    drag(&mut ui, at, Point::new(260.0, 190.0));
+
+    let msgs: Vec<Msg> = ui.into_messages().collect();
+    assert!(
+        msgs.contains(&Msg::AnchorMove(7, Point::new(260.0, 190.0))),
+        "expected the dragged-to position, got {msgs:?}",
+    );
+}
+
+/// A press and release without motion is a click, not a move - the same rule
+/// node dragging follows, so a plain click never dirties host state.
+#[test]
+fn clicking_an_anchor_reports_no_move() {
+    let at = Point::new(200.0, 150.0);
+    let mut ui = Simulator::new(graph_with_anchor(at));
+    click(&mut ui, at);
+
+    let msgs: Vec<Msg> = ui.into_messages().collect();
+    assert!(
+        !msgs.iter().any(|m| matches!(m, Msg::AnchorMove(..))),
+        "a motionless click reported a move: {msgs:?}",
+    );
+}
+
+/// The grab is gated on `on_anchor_move` being wired: without it the press
+/// falls through to the selection box rather than starting a drag the host
+/// could never apply.
+#[test]
+fn an_anchor_is_not_grabbable_without_the_callback() {
+    let at = Point::new(200.0, 150.0);
+    let mut ng: Graph = NodeGraph::default()
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .on_select(Msg::Select);
+    ng.push_anchor(anchor(7usize, at));
+    let mut ui = Simulator::new(Element::from(ng));
+    drag(&mut ui, at, Point::new(260.0, 190.0));
+
+    let msgs: Vec<Msg> = ui.into_messages().collect();
+    assert!(
+        !msgs.iter().any(|m| matches!(m, Msg::AnchorMove(..))),
+        "an anchor moved without a handler to report it to: {msgs:?}",
+    );
 }
 
 // ---------------------------------------------------------------------------

@@ -10,7 +10,9 @@ use super::*;
 use crate::node_graph::camera::Camera2D;
 use crate::node_graph::euclid::{WorldRect, WorldSize};
 use crate::node_graph::input::KeyAction;
-use crate::node_graph::{EDGE_CUT_THRESHOLD, FocusOptions, FocusTarget, PIN_CLICK_THRESHOLD};
+use crate::node_graph::{
+    ANCHOR_GRAB_THRESHOLD, EDGE_CUT_THRESHOLD, FocusOptions, FocusTarget, PIN_CLICK_THRESHOLD,
+};
 use iced_widget::core::{touch, window};
 use std::collections::HashSet;
 
@@ -417,6 +419,9 @@ where
                             self.handle_selection_box(&mut ctx, start)
                         }
                         Dragging::GroupMove(origin) => self.handle_group_move(&mut ctx, origin),
+                        Dragging::Anchor { anchor, origin } => {
+                            self.handle_anchor_drag(&mut ctx, anchor, origin)
+                        }
                     }
 
                     // Iterate top-first so the topmost node's child widgets get a
@@ -722,9 +727,14 @@ where
                         pending_cuts.clear();
 
                         // Check each edge for intersection with the cutting line
+                        // Cutting still measures against the direct pin-to-pin
+                        // bezier, so an edge with an orbit end is out of scope
+                        // here until hit-testing moves onto the built path.
                         for (edge_idx, edge) in self.edges.iter().enumerate() {
-                            let (from_ref, to_ref) = (&edge.from, &edge.to);
-                            // Resolve user IDs to indices
+                            let (Some(from_ref), Some(to_ref)) = (edge.from.pin(), edge.to.pin())
+                            else {
+                                continue;
+                            };
                             let from_node_idx = match self.node_index(&from_ref.node_id) {
                                 Some(idx) => idx,
                                 None => continue,
@@ -782,7 +792,9 @@ where
                     let mut cut_ids = Vec::new();
                     for &edge_idx in pending_cuts.iter() {
                         if let Some(Edge { id, from, to, .. }) = self.edges.get(edge_idx) {
-                            if let Some(handler) = self.on_disconnect.as_ref() {
+                            if let (Some(from), Some(to)) = (from.pin(), to.pin())
+                                && let Some(handler) = self.on_disconnect.as_ref()
+                            {
                                 shell.publish(handler(from.clone(), to.clone()));
                             }
                             cut_ids.push(id.clone());
@@ -883,6 +895,52 @@ where
             shell.invalidate_layout();
             shell.request_redraw();
         }
+    }
+
+    /// Handles an in-progress anchor drag: reports the world position the
+    /// anchor was dragged to, on release.
+    ///
+    /// A report, not a change: the widget previews the offset in `draw` and the
+    /// host applies it. A motionless press+release is a click, not a move, and
+    /// emits nothing.
+    fn handle_anchor_drag(
+        &self,
+        ctx: &mut UpdateCtx<'_, '_, '_, Message>,
+        anchor_index: usize,
+        origin: WorldPoint,
+    ) {
+        let UpdateCtx {
+            tree,
+            event,
+            world_cursor,
+            shell,
+            ..
+        } = &mut *ctx;
+        if !matches!(
+            event,
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+        ) {
+            return;
+        }
+        if let Some(cursor_position) = world_cursor.position() {
+            let offset = cursor_position.into_euclid() - origin;
+            let moved = offset.x.abs() > f32::EPSILON || offset.y.abs() > f32::EPSILON;
+            if let Some(anchor) = self.anchors.get(anchor_index)
+                && let Some(handler) = self.on_anchor_move.as_ref()
+                && moved
+            {
+                shell.publish(handler(
+                    anchor.id.clone(),
+                    Point::new(anchor.position.x + offset.x, anchor.position.y + offset.y),
+                ));
+            }
+        }
+        tree.state.downcast_mut::<NodeGraphState>().dragging = Dragging::None;
+        if let Some(handler) = self.on_drag_end.as_ref() {
+            shell.publish(handler());
+        }
+        shell.capture_event();
+        shell.request_redraw();
     }
 
     /// Handles an in-progress grip resize: reports the size the node's content
@@ -1291,11 +1349,51 @@ where
                     return;
                 }
             }
+
+            // Anchors sit above the cables but below the nodes, exactly as they
+            // are drawn, so a node covering one wins the press.
+            if self.try_start_anchor_drag(ctx, cursor_position.into_euclid()) {
+                return;
+            }
         }
 
         // Nothing hit - open a selection box on empty space, unless COMMAND is
         // held (reserved for edge cutting).
         self.start_selection_box_or_cut(ctx);
+    }
+
+    /// Grabs the anchor whose core is under the cursor. Returns whether the
+    /// press was consumed.
+    ///
+    /// Only while [`on_anchor_move`](NodeGraph::on_anchor_move) is wired: a
+    /// drag the host cannot apply would snap back on release, which reads as
+    /// the widget being broken rather than as the feature being off.
+    fn try_start_anchor_drag(
+        &self,
+        ctx: &mut UpdateCtx<'_, '_, '_, Message>,
+        cursor_position: WorldPoint,
+    ) -> bool {
+        if self.on_anchor_move.is_none() {
+            return false;
+        }
+        let state = ctx.tree.state.downcast_mut::<NodeGraphState>();
+        // Screen-space threshold like every other hit target, so the core stays
+        // grabbable at any zoom even once it is only a few pixels across.
+        let half = ANCHOR_GRAB_THRESHOLD / state.camera.zoom();
+        let hit = self.anchors.iter().position(|anchor| {
+            (cursor_position.x - anchor.position.x).abs() <= half
+                && (cursor_position.y - anchor.position.y).abs() <= half
+        });
+        let Some(anchor_index) = hit else {
+            return false;
+        };
+        state.dragging = Dragging::Anchor {
+            anchor: anchor_index,
+            origin: cursor_position,
+        };
+        ctx.shell.capture_event();
+        ctx.shell.request_redraw();
+        true
     }
 
     /// Cuts the first edge within `EDGE_CUT_THRESHOLD` of the cursor
@@ -1317,11 +1415,16 @@ where
         // Check if click is near any edge
         for Edge {
             id: edge_id,
-            from: from_ref,
-            to: to_ref,
+            from,
+            to,
             ..
         } in &self.edges
         {
+            // Same scope as the trail cut: the distance is measured against the
+            // direct pin-to-pin bezier, so an orbit end has nothing to compare.
+            let (Some(from_ref), Some(to_ref)) = (from.pin(), to.pin()) else {
+                continue;
+            };
             // Resolve user IDs to indices
             let from_node_idx = match self.node_index(&from_ref.node_id) {
                 Some(idx) => idx,
@@ -1416,12 +1519,10 @@ where
                 // fall through to start a fresh edge, leaving existing
                 // connections intact.
                 if !multi_select_held {
-                    for Edge {
-                        from: from_ref,
-                        to: to_ref,
-                        ..
-                    } in &self.edges
-                    {
+                    for Edge { from, to, .. } in &self.edges {
+                        let (Some(from_ref), Some(to_ref)) = (from.pin(), to.pin()) else {
+                            continue;
+                        };
                         // Unplug the clicked end, staying anchored at the
                         // other one: grabbing "from" anchors at TO and vice
                         // versa.
@@ -1843,15 +1944,18 @@ where
         Some(WorldRect::new(origin, WorldSize::new(b.width, b.height)))
     };
     let union_of = |rects: &mut dyn Iterator<Item = WorldRect>| rects.reduce(|a, b| a.union(&b));
-    // An edge's frame target is the union of its two endpoint nodes' bounds
-    // (seeing a connection means seeing both ends it connects); either
-    // endpoint failing to resolve skips the whole edge.
+    // An edge's frame target is the union of the bounds of whatever nodes it
+    // touches (seeing a connection means seeing the ends it connects). An orbit
+    // end contributes nothing: an anchor has no layout child to measure.
     let edge_rect = |id: &E| -> Option<WorldRect> {
         let edge = graph.edges.iter().find(|edge| edge.id == *id)?;
-        let (from, to) = (&edge.from, &edge.to);
-        let a = node_rect(graph.node_index(&from.node_id)?)?;
-        let b = node_rect(graph.node_index(&to.node_id)?)?;
-        Some(a.union(&b))
+        union_of(
+            &mut [&edge.from, &edge.to]
+                .into_iter()
+                .filter_map(|end| end.pin())
+                .filter_map(|pin| graph.node_index(&pin.node_id))
+                .filter_map(node_rect),
+        )
     };
 
     match target {
@@ -1929,13 +2033,14 @@ where
     let occupied: std::collections::HashSet<(&N, &P)> = graph
         .edges
         .iter()
-        .filter(|edge| excluded_edge != Some((&edge.from, &edge.to)))
-        .flat_map(|edge| {
-            [
-                (&edge.from.node_id, &edge.from.pin_id),
-                (&edge.to.node_id, &edge.to.pin_id),
-            ]
+        .filter(|edge| match (edge.from.pin(), edge.to.pin()) {
+            (Some(from), Some(to)) => excluded_edge != Some((from, to)),
+            // An edge with an orbit end is never the dragged pin-to-pin edge.
+            _ => true,
         })
+        .flat_map(|edge| [&edge.from, &edge.to])
+        .filter_map(|end| end.pin())
+        .map(|pin| (&pin.node_id, &pin.pin_id))
         .collect();
     let is_occupied = |node_id: &N, pin_id: &P| occupied.contains(&(node_id, pin_id));
 

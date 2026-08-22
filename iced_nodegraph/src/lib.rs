@@ -52,10 +52,10 @@
 //! your `update` applies the change and the next `view` reflects it. Which makes
 //! these yours to uphold:
 //!
-//! - **Unique node ids.** Lookups resolve by id, so a duplicate push is ignored
-//!   (first wins) and debug builds assert on it. Prefer a stable id from your
-//!   data - a database key, `uuid::Uuid`, a typed newtype - over a hand-managed
-//!   counter.
+//! - **Unique node and anchor ids.** Lookups resolve by id, and the two share
+//!   one id space, so a duplicate push into either collection is ignored (first
+//!   wins) and debug builds assert on it. Prefer a stable id from your data - a
+//!   database key, `uuid::Uuid`, a typed newtype - over a hand-managed counter.
 //! - **Edge dedupe.** [`on_connect`](NodeGraph::on_connect) fires on every snap
 //!   during a drag, not on release, so one drag can report several connections.
 //!   The default [`can_connect`](NodeGraph::can_connect) already rejects a second
@@ -188,19 +188,21 @@ pub use connection::{default_can_connect, direction_ok, input_not_occupied, not_
 pub use content::{EdgeRadii, node_footer, node_header};
 pub use ids::{EdgeId, NodeId, PinId};
 pub use node_graph::{
-    Counts, DragInfo, Easing, Edge, FocusAnimation, FocusOptions, FocusTarget, GraphInfo, Node,
-    NodeGraph, OpTiming, PinRef, edge,
+    Anchor, Counts, DragInfo, Easing, Edge, EdgeEnd, FocusAnimation, FocusOptions, FocusTarget,
+    GraphInfo, Hand, Node, NodeGraph, OpTiming, PinRef, anchor, edge,
     input::{ComboKey, KeyAction, KeyCombo, Keymap},
     node,
     widget::node_graph,
 };
 pub use node_pin::{NodePin, PinDirection, PinEnd, PinInfo, PinSide, node_pin};
 pub use style::{
+    // Status enums for widget-side styling
+    AnchorStatus,
+    AnchorStyle,
     // Unified color type for style fields
     ColorQuad,
     CuttingToolStyle,
     EdgeCurve,
-    // Status enums for widget-side styling
     EdgeStatus,
     EdgeStyle,
     GraphStyle,
@@ -214,6 +216,7 @@ pub use style::{
     // Tiling background (grid/dots/...) for GraphStyle
     TilingBackground,
     TilingKind,
+    default_anchor_style,
     default_cutting_tool_style,
     default_edge_style,
     default_node_style,

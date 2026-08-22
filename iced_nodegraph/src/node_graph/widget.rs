@@ -49,27 +49,29 @@ use iced_wgpu::core::{
 use iced_widget::core::{Element, Event, Length, Point, Rectangle, Size, Theme, Vector, keyboard};
 use web_time::Instant;
 
+use super::{AnchorStyleFn, EdgeStyleFn, NodeStyleFn, PinStyleFn};
 use super::{
-    Counts, DragInfo, Edge, GraphInfo, MIN_NODE_SIZE, NodeGraph, OpTiming, RESIZE_GRIP_SIDE,
-    RenderContext,
+    Counts, DragInfo, Edge, EdgeEnd, GraphInfo, Hand, MIN_NODE_SIZE, NodeGraph, OpTiming,
+    RESIZE_GRIP_SIDE, RenderContext,
     euclid::{IntoIced, LayoutVector},
     state::{CameraTween, Dragging, NodeGraphState, z_render_indices},
 };
-use super::{EdgeStyleFn, NodeStyleFn, PinStyleFn};
 use crate::{
     PinDirection, PinRef, PinSide,
     ids::{EdgeId, NodeId, PinId},
     node_graph::euclid::{IntoEuclid, LayoutPoint, ScreenPoint, WorldPoint},
     node_pin::{NodePinState, PinEnd, PinInfo},
     style::{
-        EdgeGeometry, EdgeStatus, EdgeStyle, GraphStyle, NodeStatus, NodeStyle, PinStatus,
-        PinStyle, TilingKind, default_cutting_tool_style, default_selection_box_style,
+        AnchorStatus, AnchorStyle, EdgeGeometry, EdgeStatus, EdgeStyle, GraphStyle, NodeStatus,
+        NodeStyle, PinStatus, PinStyle, TilingKind, default_cutting_tool_style,
+        default_selection_box_style,
     },
 };
 use iced_nodegraph_sdf::{Pattern, SdfPrimitive, Shape, Style, Tiling};
 
 mod camera_overlay;
 mod draw;
+mod edge_path;
 pub(crate) mod update;
 
 use camera_overlay::CameraOverlay;
@@ -289,7 +291,10 @@ where
         // grip or node bounds left behind: the drag is still going.
         match &state.dragging {
             Dragging::Resize { .. } => return mouse::Interaction::ResizingDiagonallyDown,
-            Dragging::Graph(_) | Dragging::Node { .. } | Dragging::GroupMove(_) => {
+            Dragging::Graph(_)
+            | Dragging::Node { .. }
+            | Dragging::GroupMove(_)
+            | Dragging::Anchor { .. } => {
                 return mouse::Interaction::Grabbing;
             }
             Dragging::Edge { .. }

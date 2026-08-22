@@ -689,3 +689,201 @@ fn every_pin_shape_draws_its_own_silhouette() {
          it is being drawn as a disc",
     );
 }
+
+/// Which of the three routing scenes to render: no anchor at all, an anchor no
+/// cable touches, or a connection wrapping that anchor's orbit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RouteScene {
+    Bare,
+    Anchored,
+    Wrapped,
+    Dragging,
+}
+
+/// Render two pin-carrying nodes, with an anchor placed well below the direct
+/// pin-to-pin line, and either one direct edge or two edges joined at its
+/// orbit.
+fn render_routed_edge(scene: RouteScene) -> Option<Vec<[u8; 4]>> {
+    use iced::widget::{Column, container};
+    use iced_nodegraph::{EdgeEnd, Hand, PinDirection, PinRef, PinSide, anchor, edge, node_pin};
+
+    let mut guard = shared()?;
+    let renderer = &mut *guard;
+
+    const ANCHOR: usize = 9;
+
+    let mut graph: NodeGraph<'static, usize, usize, (), (), Renderer> = NodeGraph::default()
+        .width(Length::Fixed(W as f32))
+        .height(Length::Fixed(H as f32))
+        .view(Point::new(20.0, 20.0), 1.0)
+        .on_anchor_move(|_id, _position| ());
+
+    for (index, x) in [(0usize, 0.0f32), (1usize, 200.0)] {
+        let pins = Column::with_children(vec![
+            Element::from(
+                node_pin(PinSide::Right, 0usize, text("o")).direction(PinDirection::Output),
+            ),
+            Element::from(
+                node_pin(PinSide::Left, 1usize, text("i")).direction(PinDirection::Input),
+            ),
+        ]);
+        let content: Element<'static, (), Theme, Renderer> = container(pins)
+            .width(Length::Fixed(60.0))
+            .height(Length::Fixed(50.0))
+            .into();
+        graph.push_node(node(index, Point::new(x, 0.0), content));
+    }
+
+    let out = PinRef::new(0usize, 0usize);
+    let into = PinRef::new(1usize, 1usize);
+    if matches!(scene, RouteScene::Wrapped | RouteScene::Dragging) {
+        // Two edges, one orbit: the cable dives below both nodes, wraps the
+        // anchor and climbs back - nothing like the direct curve.
+        let orbit = |hand| EdgeEnd::Orbit {
+            anchor: ANCHOR,
+            orbit: 0,
+            hand,
+        };
+        graph.push_edge(edge!(out, orbit(Hand::CounterClockwise)));
+        graph.push_edge(edge!(orbit(Hand::Clockwise), into));
+    } else {
+        graph.push_edge(edge!(out, into));
+    }
+    if scene != RouteScene::Bare {
+        graph.push_anchor(anchor(ANCHOR, Point::new(115.0, 160.0)));
+    }
+
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Renderer>);
+    let layout_node = graph.layout(
+        &mut tree,
+        &*renderer,
+        &layout::Limits::new(Size::ZERO, Size::new(W as f32, H as f32)),
+    );
+    let layout = Layout::new(&layout_node);
+    let viewport_rect = Rectangle::new(Point::ORIGIN, Size::new(W as f32, H as f32));
+
+    let mut msgs: Vec<()> = Vec::new();
+    let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
+    let mut clipboard = clipboard::Null;
+    let mut feed = |graph: &mut NodeGraph<'static, usize, usize, (), (), Renderer>,
+                    tree: &mut Tree,
+                    event: iced::Event,
+                    cursor: mouse::Cursor| {
+        graph.update(
+            tree,
+            &event,
+            layout,
+            cursor,
+            &*renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport_rect,
+        );
+    };
+    feed(
+        &mut graph,
+        &mut tree,
+        iced::Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(-1.0, -1.0),
+        }),
+        mouse::Cursor::Unavailable,
+    );
+
+    // Grab the anchor and hold the cursor elsewhere WITHOUT releasing, so the
+    // frame shows the in-flight preview rather than a committed move.
+    let mut cursor = mouse::Cursor::Unavailable;
+    if scene == RouteScene::Dragging {
+        // view() offsets world by (20, 20) at zoom 1.
+        let grab = Point::new(135.0, 180.0);
+        let held = Point::new(95.0, 130.0);
+        for (event, at) in [
+            (
+                iced::Event::Mouse(mouse::Event::CursorMoved { position: grab }),
+                grab,
+            ),
+            (
+                iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                grab,
+            ),
+            (
+                iced::Event::Mouse(mouse::Event::CursorMoved { position: held }),
+                held,
+            ),
+        ] {
+            feed(&mut graph, &mut tree, event, mouse::Cursor::Available(at));
+        }
+        cursor = mouse::Cursor::Available(held);
+    }
+
+    graph.draw(
+        &tree,
+        renderer,
+        &Theme::Dark,
+        &renderer::Style {
+            text_color: Color::WHITE,
+        },
+        layout,
+        cursor,
+        &viewport_rect,
+    );
+
+    let bytes = renderer.screenshot(
+        &Viewport::with_physical_size(Size::new(W, H), 1.0),
+        Color::TRANSPARENT,
+    );
+    Some(bytes.as_chunks::<4>().0.to_vec())
+}
+
+/// Routing is a rendering contract, not bookkeeping. Four frames pin it:
+/// pushing an anchor has to change the framebuffer (its core and, once
+/// occupied, its rings reach the GPU), and joining two edges at that anchor's
+/// orbit has to change it again (the cable leaves the direct curve to wrap it).
+///
+/// Comparing `Anchored` against `Wrapped` isolates the cable: the anchor is in
+/// both, so every differing pixel belongs to it. The fourth frame holds a grab
+/// in flight - no release, nothing committed - and must still move both the
+/// core and the cables hanging off it, because a drag you cannot see is a drag
+/// that feels broken.
+#[test]
+fn full_widget_renders_routed_edge_and_anchor() {
+    let Some(bare) = render_routed_edge(RouteScene::Bare) else {
+        eprintln!("no GPU adapter - skipping full_widget_renders_routed_edge_and_anchor");
+        return;
+    };
+    let anchored = render_routed_edge(RouteScene::Anchored).expect("GPU was available");
+    let routed = render_routed_edge(RouteScene::Wrapped).expect("GPU was available");
+
+    for (label, px) in [
+        ("bare", &bare),
+        ("anchored", &anchored),
+        ("routed", &routed),
+    ] {
+        let distinct: std::collections::HashSet<[u8; 4]> = px.iter().copied().collect();
+        assert!(
+            distinct.len() > 3,
+            "{label} frame is near-uniform ({} distinct colours): nothing rendered",
+            distinct.len(),
+        );
+    }
+
+    let diff = |a: &[[u8; 4]], b: &[[u8; 4]]| a.iter().zip(b).filter(|(x, y)| x != y).count();
+
+    let anchor_px = diff(&bare, &anchored);
+    assert!(
+        anchor_px > 100,
+        "pushing an anchor changed only {anchor_px} pixels: the core did not draw",
+    );
+
+    let cable_px = diff(&anchored, &routed);
+    assert!(
+        cable_px > 400,
+        "routing the edge changed only {cable_px} pixels: the via did not bend the cable",
+    );
+
+    let dragging = render_routed_edge(RouteScene::Dragging).expect("GPU was available");
+    let preview_px = diff(&routed, &dragging);
+    assert!(
+        preview_px > 400,
+        "holding the anchor mid-drag changed only {preview_px} pixels: the preview is missing",
+    );
+}

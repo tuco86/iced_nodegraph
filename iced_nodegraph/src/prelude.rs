@@ -9,13 +9,15 @@
 
 // Builders: the entry point, the node/edge/pin constructors and the types they
 // return (named when writing helpers per node type), and the `pin!` macro.
-pub use crate::{Edge, Node, edge, node, node_graph, node_pin, pin};
+pub use crate::{Anchor, Edge, Node, anchor, edge, node, node_graph, node_pin, pin};
 
 // Core types named when wiring callbacks and edges.
-pub use crate::{NodeGraph, PinRef};
+pub use crate::{EdgeEnd, Hand, NodeGraph, PinRef};
 
 // Pin and status vocabulary passed to `style` / `pin_style` / `can_connect` closures.
-pub use crate::{EdgeStatus, NodeStatus, PinDirection, PinEnd, PinInfo, PinSide, PinStatus};
+pub use crate::{
+    AnchorStatus, EdgeStatus, NodeStatus, PinDirection, PinEnd, PinInfo, PinSide, PinStatus,
+};
 
 // Input rebinding: the keymap and its combo vocabulary.
 pub use crate::{ComboKey, KeyAction, KeyCombo, Keymap};
@@ -29,8 +31,8 @@ pub use crate::connection::{default_can_connect, direction_ok, input_not_occupie
 
 // Concrete style structs and their theme-derived defaults to layer overrides over.
 pub use crate::{
-    ColorQuad, EdgeCurve, EdgeStyle, NodeStyle, Pattern, PinShape, PinStyle, default_edge_style,
-    default_node_style, default_pin_style,
+    AnchorStyle, ColorQuad, EdgeCurve, EdgeStyle, NodeStyle, Pattern, PinShape, PinStyle,
+    default_anchor_style, default_edge_style, default_node_style, default_pin_style,
 };
 
 // Rounded header/footer helpers for node interiors.

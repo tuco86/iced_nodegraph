@@ -16,6 +16,28 @@ use iced_widget::core::{Border, Shadow};
 /// its neighbours.
 const SQUARE_HALF_EXTENT: f32 = 0.886_226_9;
 
+/// Alpha multiplier for the one empty orbit ring an anchor offers.
+///
+/// Visible enough to aim at, quiet enough that an idle anchor does not read as
+/// having a cable on it.
+const FREE_SHELL_OPACITY: f32 = 0.45;
+
+/// The orbits an anchor shows, innermost first: every one carrying a cable,
+/// plus the first free one.
+///
+/// Shells fill from the inside out - orbit `k + 1` is only offered once `k` is
+/// taken - so exactly one empty ring is ever on offer, and an anchor cannot
+/// sprout arbitrarily many. An orbit occupied out of order (a host is free to
+/// author that) still gets its ring; the offer is the first genuinely free one
+/// regardless.
+fn visible_orbits(occupied: &std::collections::HashSet<u8>) -> Vec<u8> {
+    let first_free = (0u8..=u8::MAX).find(|k| !occupied.contains(k));
+    let mut shells: Vec<u8> = occupied.iter().copied().chain(first_free).collect();
+    shells.sort_unstable();
+    shells.dedup();
+    shells
+}
+
 /// Intersects a shape's screen bounds with the widget's layout rectangle.
 ///
 /// `None` means the shape is entirely off-screen, so the caller can skip it.
@@ -138,6 +160,14 @@ fn edge_shape(
     }
 }
 
+/// Whether an edge's shadow is both visible and displaced, and therefore needs
+/// its own geometry rather than a clone of the stroke.
+fn edge_shadow_is_offset(style: &EdgeStyle) -> bool {
+    style.shadow_blur > 0.0
+        && (style.shadow_color.near_start.a > 0.0 || style.shadow_color.near_end.a > 0.0)
+        && style.shadow_offset != (0.0, 0.0)
+}
+
 /// Build the stroke `Shape` for an edge plus its shadow shape.
 ///
 /// The shadow shares the stroke geometry, shifted by `style.shadow.offset` when
@@ -150,9 +180,7 @@ fn edge_shapes(
     style: &EdgeStyle,
 ) -> (Shape, Shape) {
     let shape = edge_shape(start, end, start_side, end_side, &style.curve);
-    let has_shadow = style.shadow_blur > 0.0
-        && (style.shadow_color.near_start.a > 0.0 || style.shadow_color.near_end.a > 0.0);
-    let shadow_shape = if has_shadow && style.shadow_offset != (0.0, 0.0) {
+    let shadow_shape = if edge_shadow_is_offset(style) {
         let (ox, oy) = style.shadow_offset;
         let s_start = LayoutPoint::new(start.x + ox, start.y + oy);
         let s_end = LayoutPoint::new(end.x + ox, end.y + oy);
@@ -204,6 +232,19 @@ fn resolve_edge_style<P: PinId + 'static, UI>(
     match (style_fn, start, end) {
         (Some(f), Some(s), Some(e)) => f(theme, status, s, e),
         _ => crate::style::default_edge_style(theme, status),
+    }
+}
+
+/// Resolves an anchor's style: the per-anchor callback, or the built-in
+/// default.
+fn resolve_anchor_style(
+    style_fn: Option<&AnchorStyleFn<'_>>,
+    theme: &Theme,
+    status: AnchorStatus,
+) -> AnchorStyle {
+    match style_fn {
+        Some(f) => f(theme, status),
+        None => crate::style::default_anchor_style(theme, status),
     }
 }
 
@@ -554,6 +595,65 @@ where
             .collect();
         let t_after_geom = Instant::now();
 
+        // Anchors resolved once per frame, before any cable is built:
+        // `orbit_offset`/`orbit_spacing` are the radii the paths below are laid
+        // tangent to, so the style has to exist first. Host positions are
+        // world-space; edge endpoints in this pass are layout-absolute, so fold
+        // the viewport origin in here and nowhere else.
+        //
+        // A drag in flight is previewed here, so the cables attached to the
+        // anchor follow it live: their tangent points are recomputed from this
+        // centre every frame.
+        let anchor_drag = match state.dragging {
+            Dragging::Anchor { anchor, origin } => cursor.position().map(|p| {
+                (
+                    anchor,
+                    camera.screen_to_world().transform_point(p.into_euclid()) - origin,
+                )
+            }),
+            _ => None,
+        };
+        let anchor_layouts: Vec<[f32; 2]> = self
+            .anchors
+            .iter()
+            .enumerate()
+            .map(|(index, a)| {
+                let mut p = camera.world_to_layout(a.position.into_euclid());
+                if let Some((dragged, offset)) = anchor_drag
+                    && dragged == index
+                {
+                    p += LayoutVector::new(offset.x, offset.y);
+                }
+                [p.x, p.y]
+            })
+            .collect();
+        let anchor_styles: Vec<AnchorStyle> = self
+            .anchors
+            .iter()
+            .map(|a| resolve_anchor_style(a.style.as_ref(), theme, AnchorStatus::Idle))
+            .collect();
+
+        // Every orbit attachment in the graph, keyed by (anchor index, orbit).
+        // An orbit takes at most two: the pair is one connection through it, a
+        // single one is a connection left open. Beyond two the extras are
+        // ignored - they have no free hand to take.
+        let mut junctions: std::collections::HashMap<(usize, u8), Vec<usize>> =
+            std::collections::HashMap::new();
+        for (edge_idx, edge) in self.edges.iter().enumerate() {
+            for end in [&edge.from, &edge.to] {
+                let EdgeEnd::Orbit { anchor, orbit, .. } = end else {
+                    continue;
+                };
+                let Some(anchor_idx) = self.anchor_index(anchor) else {
+                    continue;
+                };
+                let slots = junctions.entry((anchor_idx, *orbit)).or_default();
+                if slots.len() < 2 && !slots.contains(&edge_idx) {
+                    slots.push(edge_idx);
+                }
+            }
+        }
+
         // ========================================
         // Graph background: ONE batched SDF draw under all nodes. Within a single
         // SDF primitive the FIRST-pushed entry composites in FRONT (the cull
@@ -594,87 +694,252 @@ where
             let mut edge_strokes: Vec<(Shape, Style)> = Vec::with_capacity(self.edges.len() * 2);
             let mut edge_shadows: Vec<(Shape, Style)> = Vec::with_capacity(self.edges.len());
 
-            for (edge_idx, edge) in self.edges.iter().enumerate() {
-                let Edge {
-                    from,
-                    to,
-                    style: edge_style_fn,
+            // Resolve one endpoint into the data the cable and the style need.
+            // A pin end that no longer exists kills the whole edge, exactly as
+            // before; an orbit end resolves to its circle in layout space.
+            enum End<'p, P, UI> {
+                Pin {
+                    point: [f32; 2],
+                    side: u32,
+                    direction: PinDirection,
+                    info: Option<PinInfo<'p, P, UI>>,
+                },
+                Orbit {
+                    /// Junction identity: anchor index plus orbit number.
+                    key: (usize, u8),
+                    orbit: edge_path::Orbit,
+                    hand: Hand,
+                },
+            }
+            let resolve_end = |end: &EdgeEnd<N, P>| -> Option<End<'_, P, UI>> {
+                match end {
+                    EdgeEnd::Pin(pin) => {
+                        let node_idx = self.node_index(&pin.node_id)?;
+                        let (_, pin_state, (pin_pos, _)) = node_pins[node_idx]
+                            .iter()
+                            .find(|(_, state, _)| state.pin_id == pin.pin_id)?;
+                        let p = (pin_pos.into_euclid().to_vector() + compute_node_offset(node_idx))
+                            .to_point();
+                        Some(End::Pin {
+                            point: [p.x, p.y],
+                            side: pin_state.side.into(),
+                            direction: pin_state.direction,
+                            info: pin_info::<P, UI>(pin_state),
+                        })
+                    }
+                    EdgeEnd::Orbit {
+                        anchor,
+                        orbit,
+                        hand,
+                    } => {
+                        let anchor_idx = self.anchor_index(anchor)?;
+                        Some(End::Orbit {
+                            key: (anchor_idx, *orbit),
+                            orbit: edge_path::Orbit {
+                                center: anchor_layouts[anchor_idx],
+                                radius: anchor_styles[anchor_idx].orbit_radius(*orbit),
+                            },
+                            hand: *hand,
+                        })
+                    }
+                }
+            };
+            let orbit_key = |end: &EdgeEnd<N, P>| -> Option<(usize, u8)> {
+                match end {
+                    EdgeEnd::Orbit { anchor, orbit, .. } => {
+                        self.anchor_index(anchor).map(|i| (i, *orbit))
+                    }
+                    EdgeEnd::Pin(_) => None,
+                }
+            };
+
+            // A CONNECTION, not an edge, is the unit that gets drawn: two edges
+            // sharing an orbit are one cable, and only one path means the dash
+            // or flow pattern phases across the whole run. Walk from a pin end
+            // through the junction index, consuming every edge on the way.
+            let mut consumed = vec![false; self.edges.len()];
+            for seed in 0..self.edges.len() {
+                if consumed[seed] {
+                    continue;
+                }
+                let seed_edge = &self.edges[seed];
+                let (Some(from), Some(to)) =
+                    (resolve_end(&seed_edge.from), resolve_end(&seed_edge.to))
+                else {
+                    consumed[seed] = true;
+                    continue;
+                };
+
+                // Start at a pin, and when both ends are pins start at the
+                // OUTPUT one so gradient, arrow and flow follow the data-flow
+                // direction regardless of which side was dragged from. An
+                // orbit-only chain has no terminus to start from and is skipped.
+                let head_is_from = match (&from, &to) {
+                    (End::Pin { direction, .. }, End::Pin { .. }) => {
+                        matches!(direction, PinDirection::Output)
+                            || !matches!(
+                                to,
+                                End::Pin {
+                                    direction: PinDirection::Output,
+                                    ..
+                                }
+                            )
+                    }
+                    (End::Pin { .. }, End::Orbit { .. }) => true,
+                    (End::Orbit { .. }, End::Pin { .. }) => false,
+                    (End::Orbit { .. }, End::Orbit { .. }) => continue,
+                };
+                let (head, mut tail) = if head_is_from { (from, to) } else { (to, from) };
+
+                let End::Pin {
+                    point: head_point,
+                    side: head_side,
+                    info: head_info,
                     ..
-                } = edge;
-                let Some(from_node_idx) = self.node_index(&from.node_id) else {
-                    continue;
-                };
-                let Some(to_node_idx) = self.node_index(&to.node_id) else {
-                    continue;
-                };
-                let from_offset = compute_node_offset(from_node_idx);
-                let to_offset = compute_node_offset(to_node_idx);
-
-                let from_pins = &node_pins[from_node_idx];
-                let Some((_, from_pin_state, (from_pin_pos, _))) = from_pins
-                    .iter()
-                    .find(|(_, state, _)| state.pin_id == from.pin_id)
+                } = head
                 else {
                     continue;
                 };
 
-                let to_pins = &node_pins[to_node_idx];
-                let Some((_, to_pin_state, (to_pin_pos, _))) = to_pins
+                let mut hops = vec![edge_path::Hop::Pin {
+                    point: head_point,
+                    side: head_side,
+                }];
+                let mut chain = vec![seed];
+                let mut tail_info = None;
+                consumed[seed] = true;
+
+                loop {
+                    match tail {
+                        End::Pin {
+                            point, side, info, ..
+                        } => {
+                            hops.push(edge_path::Hop::Pin { point, side });
+                            tail_info = info;
+                            break;
+                        }
+                        End::Orbit { key, orbit, hand } => {
+                            hops.push(edge_path::Hop::Wrap { orbit, hand });
+                            // The partner on this orbit continues the cable; its
+                            // far end becomes the new tail. Without one the
+                            // connection is left open and stops here.
+                            let last = *chain.last().expect("chain is never empty");
+                            let Some(&partner) = junctions
+                                .get(&key)
+                                .and_then(|edges| edges.iter().find(|&&e| e != last))
+                            else {
+                                break;
+                            };
+                            if consumed[partner] {
+                                break;
+                            }
+                            consumed[partner] = true;
+                            chain.push(partner);
+                            // Continue through whichever of the partner's ends
+                            // is NOT this junction.
+                            let partner_edge = &self.edges[partner];
+                            let far = if orbit_key(&partner_edge.from) == Some(key) {
+                                &partner_edge.to
+                            } else {
+                                &partner_edge.from
+                            };
+                            let Some(next) = resolve_end(far) else { break };
+                            tail = next;
+                        }
+                    }
+                }
+
+                let edge_status = if chain
                     .iter()
-                    .find(|(_, state, _)| state.pin_id == to.pin_id)
-                else {
-                    continue;
-                };
-
-                let from_pos = (from_pin_pos.into_euclid().to_vector() + from_offset).to_point();
-                let to_pos = (to_pin_pos.into_euclid().to_vector() + to_offset).to_point();
-                let from_side: u32 = from_pin_state.side.into();
-                let to_side: u32 = to_pin_state.side.into();
-                let from_info = pin_info::<P, UI>(from_pin_state);
-                let to_info = pin_info::<P, UI>(to_pin_state);
-
-                // Normalize orientation so the OUTPUT pin is the edge start
-                // (output -> input). Gradient, arrow and flow then follow the
-                // data-flow direction regardless of which side was dragged from.
-                let swap = !matches!(from_pin_state.direction, PinDirection::Output)
-                    && matches!(to_pin_state.direction, PinDirection::Output);
-                let (start_pos, end_pos, start_side, end_side, start_info, end_info) = if swap {
-                    (to_pos, from_pos, to_side, from_side, to_info, from_info)
-                } else {
-                    (from_pos, to_pos, from_side, to_side, from_info, to_info)
-                };
-
-                let edge_status = if pending_cuts.is_some_and(|cuts| cuts.contains(&edge_idx)) {
+                    .any(|i| pending_cuts.is_some_and(|cuts| cuts.contains(i)))
+                {
                     EdgeStatus::PendingCut
                 } else {
                     EdgeStatus::Idle
                 };
+                // The chain's style comes from the edge that carries its head
+                // pin: one cable, one stroke, one style.
                 let edge_style = resolve_edge_style(
-                    edge_style_fn.as_ref(),
+                    self.edges[chain[0]].style.as_ref(),
                     theme,
                     edge_status,
-                    start_info,
-                    end_info,
+                    head_info,
+                    tail_info,
                 );
 
-                let (shape, shadow_shape) =
-                    edge_shapes(&start_pos, &end_pos, start_side, end_side, &edge_style);
+                let shape = edge_path::build(&hops, &edge_style.curve).into_shape();
+                // Translation commutes with the path construction, so shifting
+                // the finished cable is the same geometry as building it from
+                // shifted endpoints.
+                let shadow_shape = if edge_shadow_is_offset(&edge_style) {
+                    let (ox, oy) = edge_style.shadow_offset;
+                    shape.clone().translate([ox, oy])
+                } else {
+                    shape.clone()
+                };
 
-                // Collect this edge's layers by geometry; both groups are pushed
-                // in z order after the loop.
+                // Collect this chain's layers by geometry; both groups are
+                // pushed in z order after the loop.
                 for layer in edge_style.sdf_layers() {
                     match layer.geometry {
-                        EdgeGeometry::Stroke => {
-                            edge_strokes.push((shape.clone(), layer.style));
-                        }
+                        EdgeGeometry::Stroke => edge_strokes.push((shape.clone(), layer.style)),
                         EdgeGeometry::Shadow => {
-                            edge_shadows.push((shadow_shape.clone(), layer.style));
+                            edge_shadows.push((shadow_shape.clone(), layer.style))
                         }
                     }
                 }
             }
 
-            // z2: edge strokes (frontmost in the background layer).
+            // z3: anchor cores and orbit rings, in front of the cables wrapping
+            // them (the node bodies of Layer 4 still cover both). The core is an
+            // axis-aligned rounded box: the SDF has no rotate op, so a diamond
+            // would need a primitive that does not exist.
+            for (anchor_idx, style) in anchor_styles.iter().enumerate() {
+                let center = anchor_layouts[anchor_idx];
+
+                // Shells fill from the inside out, so an anchor shows every
+                // orbit that carries a cable plus exactly ONE empty one - the
+                // next shell you may drop onto. The free ring is drawn fainter:
+                // it is an affordance, not geometry anything follows yet.
+                if style.ring_width > 0.0 {
+                    let occupied: std::collections::HashSet<u8> = junctions
+                        .keys()
+                        .filter(|(a, _)| *a == anchor_idx)
+                        .map(|(_, orbit)| *orbit)
+                        .collect();
+                    for orbit in visible_orbits(&occupied) {
+                        let color = if occupied.contains(&orbit) {
+                            style.ring_color
+                        } else {
+                            style.ring_color.with_opacity(FREE_SHELL_OPACITY)
+                        };
+                        let ring = Shape::circle(style.orbit_radius(orbit)).translate(center);
+                        bg.push(
+                            &ring,
+                            &Style::quad_stroke(&color, Pattern::solid(style.ring_width)),
+                            [0.0, 0.0],
+                        );
+                    }
+                }
+
+                let core = Shape::rounded_box([style.core_size; 2], [style.core_radius; 4])
+                    .translate(center);
+                bg.push(
+                    &core,
+                    &Style::quad_band(&style.core_color, -1e6, 0.0),
+                    [0.0, 0.0],
+                );
+                if style.core_border_width > 0.0 {
+                    bg.push(
+                        &core,
+                        &Style::quad_band(&style.core_border_color, -1e6, 0.0)
+                            .expand(style.core_border_width),
+                        [0.0, 0.0],
+                    );
+                }
+            }
+
+            // z2: edge strokes, behind the anchors they terminate on.
             for (shape, style) in &edge_strokes {
                 bg.push(shape, style, [0.0, 0.0]);
             }
@@ -1281,13 +1546,54 @@ where
                     pins_in += pin_count;
                 }
             }
+            // An anchor's footprint is its core, grown to the outermost orbit a
+            // cable is attached to.
+            let anchor_in_view: Vec<bool> = (0..self.anchors.len())
+                .map(|i| {
+                    let style = &anchor_styles[i];
+                    let outermost = junctions
+                        .keys()
+                        .filter(|(a, _)| *a == i)
+                        .map(|(_, orbit)| *orbit)
+                        .max();
+                    let half = match outermost {
+                        Some(orbit) => style.orbit_radius(orbit) + style.ring_width,
+                        None => style.core_size * 0.5,
+                    };
+                    let c = anchor_layouts[i];
+                    let bb = world_bbox_to_screen_bounds(
+                        c[0] - half,
+                        c[1] - half,
+                        c[0] + half,
+                        c[1] + half,
+                        0.0,
+                        &render_context,
+                    );
+                    Rectangle {
+                        x: bb[0],
+                        y: bb[1],
+                        width: bb[2],
+                        height: bb[3],
+                    }
+                    .intersects(&viewport)
+                })
+                .collect();
+            let anchors_in = anchor_in_view.iter().filter(|v| **v).count();
+
+            // An edge is in view when either end is: a pin on a visible node,
+            // or an orbit whose anchor is on screen.
+            let end_in_view = |end: &EdgeEnd<N, P>| match end {
+                EdgeEnd::Pin(pin) => self
+                    .node_index(&pin.node_id)
+                    .is_some_and(|idx| node_in_view[idx]),
+                EdgeEnd::Orbit { anchor, .. } => self
+                    .anchor_index(anchor)
+                    .is_some_and(|idx| anchor_in_view[idx]),
+            };
             let edges_in = self
                 .edges
                 .iter()
-                .filter(|edge| {
-                    let visible = |id| self.node_index(id).is_some_and(|idx| node_in_view[idx]);
-                    visible(&edge.from.node_id) || visible(&edge.to.node_id)
-                })
+                .filter(|edge| end_in_view(&edge.from) || end_in_view(&edge.to))
                 .count();
 
             let counts = |total: usize, in_view: usize| Counts {
@@ -1300,6 +1606,7 @@ where
                 nodes: counts(node_geoms.len(), nodes_in),
                 pins: counts(pins_total, pins_in),
                 edges: counts(self.edges.len(), edges_in),
+                anchors: counts(self.anchors.len(), anchors_in),
                 timings: vec![
                     OpTiming {
                         label: "geometry",
@@ -1333,5 +1640,34 @@ where
             };
             state.last_info.replace(Some(info));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::visible_orbits;
+    use std::collections::HashSet;
+
+    fn shells(occupied: &[u8]) -> Vec<u8> {
+        visible_orbits(&occupied.iter().copied().collect::<HashSet<u8>>())
+    }
+
+    /// An untouched anchor offers exactly one shell, and taking it opens the
+    /// next - the "like an atom" rule. Without the cap an anchor would show a
+    /// ring per orbit that could ever exist.
+    #[test]
+    fn shells_open_one_at_a_time() {
+        assert_eq!(shells(&[]), vec![0]);
+        assert_eq!(shells(&[0]), vec![0, 1]);
+        assert_eq!(shells(&[0, 1]), vec![0, 1, 2]);
+    }
+
+    /// A host may author an outer orbit without the inner ones; its ring still
+    /// draws, and the offer stays the innermost genuinely free shell rather
+    /// than jumping outward to follow the gap.
+    #[test]
+    fn an_out_of_order_orbit_keeps_its_ring_and_the_inner_offer() {
+        assert_eq!(shells(&[3]), vec![0, 3]);
+        assert_eq!(shells(&[0, 2]), vec![0, 1, 2]);
     }
 }

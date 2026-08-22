@@ -95,6 +95,10 @@ pub(crate) enum Dragging {
         trail: Vec<LayoutPoint>,
         pending_cuts: HashSet<usize>,
     },
+    /// Moving one anchor. `origin` is the cursor at press, in WORLD space:
+    /// an anchor is placed by the host in world coordinates and has no layout
+    /// child, unlike a node.
+    Anchor { anchor: usize, origin: WorldPoint },
 }
 
 #[derive(Debug)]
