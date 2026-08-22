@@ -123,6 +123,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Both structs expose the stroke width the widget previously kept in a private
   constant, so a host closure can reach everything the default reaches.
 - `DragInfo` derives `PartialEq`, like the other public diagnostic types.
+- **Node content can set the mouse cursor.** `NodeGraph::mouse_interaction`
+  forwards the query into the topmost node under the cursor, so a text input,
+  button or slider embedded in a node shows its own cursor. The graph claims
+  the cursor itself only for what it owns: `Grabbing` while panning or moving
+  nodes, `Crosshair` while dragging an edge, cutting edges or rubber-banding,
+  and the resize grip's `ResizingDiagonallyDown`. Gated on node bounds, so an
+  occluded node never claims a cursor over the node covering it.
 
 ### Changed
 
@@ -348,6 +355,17 @@ its name says: the canvas.
 
 ### Fixed
 
+- **A touch pan drifted by the widget's screen offset.** The press captured its
+  anchor in the widget's layout-absolute space while the release compared
+  against the raw screen cursor, so a graph placed anywhere but the window
+  origin - below a toolbar, in a `row!` - panned by the finger travel plus that
+  offset. Mouse panning was always correct; only the touch entry point mixed
+  the two spaces.
+- **Pop-out overlays at zoom laid out against the wrong region.** A node's
+  combo box menu or tooltip places itself in the graph's layout-absolute space
+  but was handed the window size in screen pixels, so at zoom 2 it believed it
+  had twice the room and flipped or clamped against an edge that was not there.
+  It is now told the region divided by zoom.
 - **Shapes went missing after a draw-set change.** A primitive skipped
   re-uploading its cull lists when a per-draw-slot record matched on resident
   block plus list cursors. That predicate cannot express what the skip needs.
