@@ -21,8 +21,30 @@ impl<Message, Renderer> overlay::Overlay<Message, Theme, Renderer>
 where
     Renderer: iced_wgpu::core::renderer::Renderer,
 {
+    /// Lays the content out against the window expressed in layout-absolute
+    /// units, while the node this returns keeps the window's own size.
+    ///
+    /// The two halves answer to different consumers. The content places itself
+    /// in layout-absolute space, so the room it has is the window divided by
+    /// zoom - a menu deciding whether it fits below its anchor has to be told
+    /// that, or at zoom 2 it believes it has twice the space. The runtime, on
+    /// the other hand, clips each overlay by the bounds of the node returned
+    /// here and does so outside this wrapper's transform
+    /// (`overlay::Nested::draw`), so that size has to stay the untransformed
+    /// window or the clip would cut the pop-out down to a fraction of the
+    /// screen.
+    ///
+    /// The region's ORIGIN is the accepted limitation: `Overlay::layout` carries
+    /// only a `Size`, so under pan the content is told how much room it has but
+    /// not where the room starts, and an edge-flip decision can misjudge by the
+    /// pan distance.
     fn layout(&mut self, renderer: &Renderer, bounds: Size) -> layout::Node {
-        self.content.as_overlay_mut().layout(renderer, bounds)
+        let zoom = self.camera.zoom();
+        let content = self.content.as_overlay_mut().layout(
+            renderer,
+            Size::new(bounds.width / zoom, bounds.height / zoom),
+        );
+        layout::Node::with_children(bounds, content.children().to_vec())
     }
 
     fn draw(

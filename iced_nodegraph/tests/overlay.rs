@@ -28,17 +28,30 @@ mod common;
 use common::record::{Recorded, Recorder};
 
 // ---------------------------------------------------------------------------
-// An overlay that paints a 10x10 quad at a fixed anchor and records the cursor
-// it last received. The anchor is captured (in layout-absolute space) when the
-// host widget produces the overlay.
+// An overlay that paints a 10x10 quad at a fixed anchor and records what it was
+// handed. The anchor is captured (in layout-absolute space) when the host
+// widget produces the overlay.
 // ---------------------------------------------------------------------------
+
+/// What a probe records about the frame it was drawn in.
+#[derive(Default)]
+struct ProbeLog {
+    /// Cursor the overlay's `update` received.
+    cursor: Cell<Option<Point>>,
+    /// Innermost clip the overlay painted under.
+    clip: Cell<Option<Rectangle>>,
+    /// `bounds` the overlay's `layout` was given.
+    bounds: Cell<Option<Size>>,
+}
+
 struct ProbeOverlay {
     anchor: Point,
-    cursor_seen: Rc<Cell<Option<Point>>>,
+    log: Rc<ProbeLog>,
 }
 
 impl overlay::Overlay<(), Theme, Recorder> for ProbeOverlay {
-    fn layout(&mut self, _renderer: &Recorder, _bounds: Size) -> layout::Node {
+    fn layout(&mut self, _renderer: &Recorder, bounds: Size) -> layout::Node {
+        self.log.bounds.set(Some(bounds));
         layout::Node::new(Size::new(10.0, 10.0)).move_to(self.anchor)
     }
     fn draw(
@@ -49,6 +62,7 @@ impl overlay::Overlay<(), Theme, Recorder> for ProbeOverlay {
         layout: Layout<'_>,
         _cursor: mouse::Cursor,
     ) {
+        self.log.clip.set(renderer.clip());
         renderer.fill_quad(
             renderer::Quad {
                 bounds: layout.bounds(),
@@ -68,7 +82,7 @@ impl overlay::Overlay<(), Theme, Recorder> for ProbeOverlay {
         _clipboard: &mut dyn clipboard::Clipboard,
         _shell: &mut iced_wgpu::core::Shell<'_, ()>,
     ) {
-        self.cursor_seen.set(cursor.position());
+        self.log.cursor.set(cursor.position());
     }
 }
 
@@ -78,7 +92,7 @@ impl overlay::Overlay<(), Theme, Recorder> for ProbeOverlay {
 // position plus the incoming translation, exactly as the real widgets do.
 // ---------------------------------------------------------------------------
 struct OverlayProbe {
-    cursor_seen: Rc<Cell<Option<Point>>>,
+    log: Rc<ProbeLog>,
 }
 
 impl Widget<(), Theme, Recorder> for OverlayProbe {
@@ -110,7 +124,7 @@ impl Widget<(), Theme, Recorder> for OverlayProbe {
         let anchor = layout.position() + translation;
         Some(overlay::Element::new(Box::new(ProbeOverlay {
             anchor,
-            cursor_seen: self.cursor_seen.clone(),
+            log: self.log.clone(),
         })))
     }
 }
@@ -210,9 +224,7 @@ fn overlay_forwarded_when_child_has_one() {
         Point::new(50.0, 50.0),
         Point::ORIGIN,
         1.0,
-        Element::from(OverlayProbe {
-            cursor_seen: Rc::new(Cell::new(None)),
-        }),
+        Element::from(OverlayProbe { log: Rc::default() }),
         &renderer,
     );
     let layout = Layout::new(&layout_node);
@@ -263,9 +275,7 @@ fn overlay_draws_through_camera_transform() {
         world,
         cam_pos,
         zoom,
-        Element::from(OverlayProbe {
-            cursor_seen: Rc::new(Cell::new(None)),
-        }),
+        Element::from(OverlayProbe { log: Rc::default() }),
         &renderer,
     );
     let layout = Layout::with_offset(origin, &layout_node);
@@ -319,16 +329,14 @@ fn overlay_maps_cursor_into_layout_space() {
     let cam_pos = Point::new(20.0, -10.0);
     let zoom = 2.0;
 
-    let cursor_seen = Rc::new(Cell::new(None));
+    let log = Rc::new(ProbeLog::default());
     let renderer = Recorder::new(Rc::new(RefCell::new(Recorded::default())));
     let (mut graph, mut tree, layout_node) = graph_with_node(
         origin,
         world,
         cam_pos,
         zoom,
-        Element::from(OverlayProbe {
-            cursor_seen: cursor_seen.clone(),
-        }),
+        Element::from(OverlayProbe { log: log.clone() }),
         &renderer,
     );
     let layout = Layout::with_offset(origin, &layout_node);
@@ -357,10 +365,104 @@ fn overlay_maps_cursor_into_layout_space() {
         &mut shell,
     );
 
-    let seen = cursor_seen.get().expect("overlay must receive a cursor");
+    let seen = log.cursor.get().expect("overlay must receive a cursor");
     let expected = Point::new(origin.x + world.x, origin.y + world.y);
     assert!(
         (seen.x - expected.x).abs() < 0.5 && (seen.y - expected.y).abs() < 0.5,
         "cursor reached overlay as {seen:?}, expected layout-absolute {expected:?}",
+    );
+}
+
+#[test]
+fn overlay_survives_the_runtime_clip_at_zoom() {
+    // The runtime clips every overlay by the bounds of the node the overlay
+    // returned, computed OUTSIDE the camera transform (iced_core 0.14
+    // `overlay/nested.rs`), and `push_clip` bakes in the transformation active
+    // at entry and REPLACES the parent clip (iced_graphics 0.14 `layer.rs`). So
+    // the node has to keep reporting the untransformed window: a node scaled
+    // down to the layout-space region would clip the pop-out to a fraction of
+    // the screen. Probe placed so its transformed rect is inside the window but
+    // outside `window / zoom` - exactly the band such a node would lose.
+    let world = Point::new(300.0, 200.0);
+    let zoom = 2.0;
+
+    let log = Rc::new(ProbeLog::default());
+    let out = Rc::new(RefCell::new(Recorded::default()));
+    let mut renderer = Recorder::new(out.clone());
+    let (mut graph, mut tree, layout_node) = graph_with_node(
+        Vector::ZERO,
+        world,
+        Point::ORIGIN,
+        zoom,
+        Element::from(OverlayProbe { log: log.clone() }),
+        &renderer,
+    );
+    let layout = Layout::new(&layout_node);
+    let viewport = Rectangle::new(Point::ORIGIN, VIEWPORT);
+
+    let mut ov = graph
+        .overlay(&mut tree, layout, &renderer, &viewport, Vector::ZERO)
+        .expect("overlay must be present");
+    let onode = ov.as_overlay_mut().layout(&renderer, VIEWPORT);
+    let olayout = Layout::new(&onode);
+    let nested_clip = olayout.bounds();
+    renderer.with_layer(nested_clip, |renderer| {
+        ov.as_overlay().draw(
+            renderer,
+            &Theme::Dark,
+            &renderer::Style {
+                text_color: Color::WHITE,
+            },
+            olayout,
+            mouse::Cursor::Unavailable,
+        );
+    });
+
+    let drawn = out
+        .borrow()
+        .quads
+        .first()
+        .copied()
+        .expect("overlay drew a quad");
+    let clip = log.clip.get().expect("overlay painted inside a clip");
+    assert!(
+        clip.intersection(&drawn).is_some_and(|visible| {
+            (visible.width - drawn.width).abs() < 0.5 && (visible.height - drawn.height).abs() < 0.5
+        }),
+        "the pop-out at {drawn:?} is clipped by {clip:?} (untransformed wrapper was \
+         {nested_clip:?}): the whole quad must survive",
+    );
+}
+
+#[test]
+fn overlay_lays_out_in_layout_units() {
+    // The content lays out in layout-absolute space while `bounds` arrives in
+    // screen pixels, so a menu deciding whether it fits below its anchor has to
+    // be handed the region divided by zoom - otherwise at zoom 2 it believes it
+    // has twice the room it has.
+    let zoom = 2.0;
+    let log = Rc::new(ProbeLog::default());
+    let renderer = Recorder::detached();
+    let (mut graph, mut tree, layout_node) = graph_with_node(
+        Vector::ZERO,
+        Point::new(30.0, 40.0),
+        Point::ORIGIN,
+        zoom,
+        Element::from(OverlayProbe { log: log.clone() }),
+        &renderer,
+    );
+    let layout = Layout::new(&layout_node);
+    let viewport = Rectangle::new(Point::ORIGIN, VIEWPORT);
+
+    let mut ov = graph
+        .overlay(&mut tree, layout, &renderer, &viewport, Vector::ZERO)
+        .expect("overlay must be present");
+    let _ = ov.as_overlay_mut().layout(&renderer, VIEWPORT);
+
+    let seen = log.bounds.get().expect("overlay must be laid out");
+    let expected = Size::new(VIEWPORT.width / zoom, VIEWPORT.height / zoom);
+    assert!(
+        (seen.width - expected.width).abs() < 0.5 && (seen.height - expected.height).abs() < 0.5,
+        "content overlay laid out against {seen:?}, expected {expected:?} at zoom {zoom}",
     );
 }
