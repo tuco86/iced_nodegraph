@@ -300,6 +300,8 @@ where
             Dragging::Edge { .. }
             | Dragging::EdgeOver { .. }
             | Dragging::EdgeOverOrbit { .. }
+            | Dragging::EdgeFromOrbit { .. }
+            | Dragging::OrbitEdgeOver { .. }
             | Dragging::EdgeCutting { .. }
             | Dragging::SelectionBox(..) => return mouse::Interaction::Crosshair,
             Dragging::None => {}

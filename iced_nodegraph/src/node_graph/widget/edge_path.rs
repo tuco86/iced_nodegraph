@@ -116,6 +116,12 @@ fn travel_dir(theta: f32, hand: Hand) -> [f32; 2] {
     [-s * theta.sin(), s * theta.cos()]
 }
 
+/// Polar angle of `cursor` about `center` - the start angle [`PathSeg::Arc`]
+/// leaves implicit, since an arc begins wherever the previous segment ended.
+fn arc_start_angle(cursor: [f32; 2], center: [f32; 2]) -> f32 {
+    (cursor[1] - center[1]).atan2(cursor[0] - center[0])
+}
+
 /// One station on a cable.
 ///
 /// The chain always starts at a [`Hop::Pin`]; a trailing [`Hop::Wrap`] is a
@@ -143,6 +149,36 @@ impl EdgePath {
     pub(crate) fn into_shape(self) -> iced_nodegraph_sdf::Shape {
         iced_nodegraph_sdf::Shape::path(self.start, self.segs)
     }
+
+    /// Shortest distance from `p` to any point on the cable.
+    ///
+    /// The walk carries the running cursor because an arc reads its start
+    /// angle from where the previous segment left off.
+    pub(crate) fn distance(&self, p: [f32; 2]) -> f32 {
+        let mut cursor = self.start;
+        let mut best = f32::MAX;
+        for seg in &self.segs {
+            best = best.min(seg_distance(cursor, seg, p));
+            cursor = seg_end(cursor, seg);
+        }
+        best
+    }
+
+    /// Whether the finite probe segment `a`-`b` crosses the cable anywhere.
+    ///
+    /// Finite at both ends: a probe aimed at the cable but stopping short of
+    /// it does not cross, which is what makes a cut gesture's stroke length
+    /// mean something.
+    pub(crate) fn intersects(&self, a: [f32; 2], b: [f32; 2]) -> bool {
+        let mut cursor = self.start;
+        for seg in &self.segs {
+            if seg_intersects(cursor, seg, a, b) {
+                return true;
+            }
+            cursor = seg_end(cursor, seg);
+        }
+        false
+    }
 }
 
 /// Builds the cable through `hops`, in order.
@@ -151,25 +187,33 @@ impl EdgePath {
 /// before anchors existed. Each wrap in between adds its entry leg and the arc
 /// that leaves it.
 ///
+/// A chain may also START on a wrap - a cable held at a ring while its other
+/// end follows the cursor. There is no station before it, so that wrap
+/// contributes only the tangent it leaves by, no arc.
+///
 /// A wrap whose orbit swallows the previous station (no tangent exists) is
 /// skipped, so a frame still renders. Two wraps in a row aim the intervening
 /// leg at the next orbit's centre rather than solving the common tangent
 /// between two circles - an approximation, exact only for pin-to-orbit chains.
 pub(crate) fn build(hops: &[Hop], curve: &EdgeCurve) -> EdgePath {
     let mut segs = Vec::with_capacity(hops.len() * 2);
-    let (start, mut dir) = match hops.first() {
-        Some(&Hop::Pin { point, side }) => (point, pin_side_direction(side)),
-        _ => {
-            debug_assert!(
-                hops.is_empty(),
-                "a cable chain must start at a pin, got {:?}",
-                hops.first(),
-            );
-            return EdgePath {
-                start: [0.0, 0.0],
-                segs,
+    let empty = EdgePath {
+        start: [0.0, 0.0],
+        segs: Vec::new(),
+    };
+    let (start, mut dir) = match (hops.first(), hops.get(1)) {
+        (Some(&Hop::Pin { point, side }), _) => (point, pin_side_direction(side)),
+        (Some(&Hop::Wrap { orbit, hand }), Some(next)) => {
+            let target = match *next {
+                Hop::Pin { point, .. } => point,
+                Hop::Wrap { orbit: far, .. } => far.center,
             };
+            let Some(exit) = orbit.attachment(target, hand.flip()) else {
+                return empty;
+            };
+            (exit.point, negate(exit.direction))
         }
+        _ => return empty,
     };
     let mut cursor = start;
 
@@ -254,6 +298,171 @@ fn push_leg(
             segs.push(PathSeg::Bezier { c1, c2, to });
         }
     }
+}
+
+/// How many chords a curved segment is flattened into for the queries above:
+/// they are exact on a line and on an arc's radius, and polyline
+/// approximations along a bezier leg and across any curve for intersection.
+const CURVE_FLATTEN_SEGMENTS: usize = 32;
+
+/// End point of `seg` starting from `cursor`.
+fn seg_end(cursor: [f32; 2], seg: &PathSeg) -> [f32; 2] {
+    match *seg {
+        PathSeg::Line { to } | PathSeg::Bezier { to, .. } => to,
+        PathSeg::Arc {
+            center,
+            radius,
+            sweep,
+        } => {
+            let end = arc_start_angle(cursor, center) + sweep;
+            [
+                center[0] + radius * end.cos(),
+                center[1] + radius * end.sin(),
+            ]
+        }
+    }
+}
+
+fn seg_distance(cursor: [f32; 2], seg: &PathSeg, p: [f32; 2]) -> f32 {
+    match *seg {
+        PathSeg::Line { to } => dist_point_segment(p, cursor, to),
+        PathSeg::Arc {
+            center,
+            radius,
+            sweep,
+        } => dist_point_arc(p, cursor, center, radius, sweep),
+        PathSeg::Bezier { c1, c2, to } => dist_point_bezier(p, cursor, c1, c2, to),
+    }
+}
+
+/// Point at parameter `t` in `[0, 1]` along `seg`, starting from `cursor`.
+fn seg_point_at(cursor: [f32; 2], seg: &PathSeg, t: f32) -> [f32; 2] {
+    match *seg {
+        PathSeg::Line { to } => [
+            cursor[0] + (to[0] - cursor[0]) * t,
+            cursor[1] + (to[1] - cursor[1]) * t,
+        ],
+        PathSeg::Arc {
+            center,
+            radius,
+            sweep,
+        } => {
+            let a = arc_start_angle(cursor, center) + sweep * t;
+            [center[0] + radius * a.cos(), center[1] + radius * a.sin()]
+        }
+        PathSeg::Bezier { c1, c2, to } => cubic_point(cursor, c1, c2, to, t),
+    }
+}
+
+fn seg_intersects(cursor: [f32; 2], seg: &PathSeg, a: [f32; 2], b: [f32; 2]) -> bool {
+    match *seg {
+        PathSeg::Line { to } => segments_intersect(cursor, to, a, b),
+        PathSeg::Arc { .. } | PathSeg::Bezier { .. } => {
+            let mut prev = cursor;
+            for i in 1..=CURVE_FLATTEN_SEGMENTS {
+                let t = i as f32 / CURVE_FLATTEN_SEGMENTS as f32;
+                let cur = seg_point_at(cursor, seg, t);
+                if segments_intersect(prev, cur, a, b) {
+                    return true;
+                }
+                prev = cur;
+            }
+            false
+        }
+    }
+}
+
+/// Whether `angle` falls inside the range swept from `start` by `sweep`,
+/// measured along the sweep's own direction so a negative sweep reads
+/// counter-clockwise.
+fn angle_in_sweep(angle: f32, start: f32, sweep: f32) -> bool {
+    if sweep == 0.0 {
+        return (angle - start).rem_euclid(std::f32::consts::TAU) < 1e-6;
+    }
+    let off = ((angle - start) * sweep.signum()).rem_euclid(std::f32::consts::TAU);
+    off <= sweep.abs() + 1e-6
+}
+
+fn dist2(a: [f32; 2], b: [f32; 2]) -> f32 {
+    let dx = a[0] - b[0];
+    let dy = a[1] - b[1];
+    dx * dx + dy * dy
+}
+
+/// Distance from `p` to the finite segment `a`-`b`, so a point past either end
+/// measures to that end rather than to the infinite line.
+fn dist_point_segment(p: [f32; 2], a: [f32; 2], b: [f32; 2]) -> f32 {
+    let ab = [b[0] - a[0], b[1] - a[1]];
+    let len2 = ab[0] * ab[0] + ab[1] * ab[1];
+    let t = if len2 > 1e-12 {
+        (((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1]) / len2).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let proj = [a[0] + ab[0] * t, a[1] + ab[1] * t];
+    dist2(p, proj).sqrt()
+}
+
+/// Distance from `p` to the SWEPT part of the circle only: within the sweep it
+/// is the radial offset, outside it the distance to the nearer arc end. A
+/// point sitting on the circle but off the wrap is far from the cable, not on
+/// it.
+fn dist_point_arc(p: [f32; 2], cursor: [f32; 2], center: [f32; 2], radius: f32, sweep: f32) -> f32 {
+    let start = arc_start_angle(cursor, center);
+    let rel = [p[0] - center[0], p[1] - center[1]];
+    let ang = rel[1].atan2(rel[0]);
+    if angle_in_sweep(ang, start, sweep) {
+        return ((rel[0] * rel[0] + rel[1] * rel[1]).sqrt() - radius).abs();
+    }
+    let end = start + sweep;
+    let a = [
+        center[0] + radius * start.cos(),
+        center[1] + radius * start.sin(),
+    ];
+    let b = [
+        center[0] + radius * end.cos(),
+        center[1] + radius * end.sin(),
+    ];
+    dist2(p, a).sqrt().min(dist2(p, b).sqrt())
+}
+
+fn cubic_point(p0: [f32; 2], p1: [f32; 2], p2: [f32; 2], p3: [f32; 2], t: f32) -> [f32; 2] {
+    let mt = 1.0 - t;
+    let a = mt * mt * mt;
+    let b = 3.0 * mt * mt * t;
+    let c = 3.0 * mt * t * t;
+    let d = t * t * t;
+    [
+        a * p0[0] + b * p1[0] + c * p2[0] + d * p3[0],
+        a * p0[1] + b * p1[1] + c * p2[1] + d * p3[1],
+    ]
+}
+
+fn dist_point_bezier(p: [f32; 2], p0: [f32; 2], p1: [f32; 2], p2: [f32; 2], p3: [f32; 2]) -> f32 {
+    let mut prev = p0;
+    let mut best = f32::MAX;
+    for i in 1..=CURVE_FLATTEN_SEGMENTS {
+        let t = i as f32 / CURVE_FLATTEN_SEGMENTS as f32;
+        let cur = cubic_point(p0, p1, p2, p3, t);
+        best = best.min(dist_point_segment(p, prev, cur));
+        prev = cur;
+    }
+    best
+}
+
+fn cross(o: [f32; 2], a: [f32; 2], b: [f32; 2]) -> f32 {
+    (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+}
+
+/// Orientation test for two finite segments: true only when each straddles the
+/// other's line, so touching endpoints and collinear overlap read as no
+/// crossing.
+fn segments_intersect(p1: [f32; 2], p2: [f32; 2], p3: [f32; 2], p4: [f32; 2]) -> bool {
+    let d1 = cross(p3, p4, p1);
+    let d2 = cross(p3, p4, p2);
+    let d3 = cross(p1, p2, p3);
+    let d4 = cross(p1, p2, p4);
+    ((d1 > 0.0) != (d2 > 0.0)) && ((d3 > 0.0) != (d4 > 0.0))
 }
 
 #[cfg(test)]
@@ -559,5 +768,187 @@ mod tests {
         );
         assert_eq!(path.segs.len(), 1);
         assert!(matches!(path.segs[0], PathSeg::Bezier { to, .. } if to == far));
+    }
+
+    /// The leg-arc-leg cable of [`closed_chain_is_leg_arc_leg`], plus the point
+    /// its arc starts at and the arc's signed sweep - everything a query test
+    /// needs to name a spot on the wrap.
+    fn wrapped_cable() -> (EdgePath, [f32; 2], f32) {
+        let path = build(
+            &[
+                Hop::Pin {
+                    point: [0.0, 200.0],
+                    side: 1,
+                },
+                Hop::Wrap {
+                    orbit: ORBIT,
+                    hand: Hand::Clockwise,
+                },
+                Hop::Pin {
+                    point: [200.0, 500.0],
+                    side: 2,
+                },
+            ],
+            &EdgeCurve::BezierCubic,
+        );
+        let PathSeg::Bezier { to: entry, .. } = path.segs[0] else {
+            panic!("first segment is not a leg: {:?}", path.segs[0]);
+        };
+        let PathSeg::Arc { sweep, .. } = path.segs[1] else {
+            panic!("middle segment is not an arc: {:?}", path.segs[1]);
+        };
+        (path, entry, sweep)
+    }
+
+    /// A point on `ORBIT`'s centre at polar angle `angle`, `radius` out.
+    fn polar(angle: f32, radius: f32) -> [f32; 2] {
+        [
+            ORBIT.center[0] + radius * angle.cos(),
+            ORBIT.center[1] + radius * angle.sin(),
+        ]
+    }
+
+    fn line_cable() -> EdgePath {
+        build(
+            &[
+                Hop::Pin {
+                    point: [0.0, 0.0],
+                    side: 1,
+                },
+                Hop::Pin {
+                    point: [100.0, 0.0],
+                    side: 0,
+                },
+            ],
+            &EdgeCurve::Line,
+        )
+    }
+
+    /// The wrap is part of the cable, so a point on it is at distance zero -
+    /// a query that only knew about the legs would miss the whole arc.
+    #[test]
+    fn distance_is_zero_on_the_wrap() {
+        let (path, entry, sweep) = wrapped_cable();
+        let mid = arc_start_angle(entry, ORBIT.center) + sweep / 2.0;
+        let on_wrap = polar(mid, ORBIT.radius);
+        assert!(
+            path.distance(on_wrap) < 1e-2,
+            "point on the wrap reads {} away",
+            path.distance(on_wrap),
+        );
+    }
+
+    /// Off the wrap radially, the distance IS the radial offset - and it counts
+    /// the same from inside the circle as from outside.
+    #[test]
+    fn distance_beside_the_wrap_is_the_radial_offset() {
+        let (path, entry, sweep) = wrapped_cable();
+        let mid = arc_start_angle(entry, ORBIT.center) + sweep / 2.0;
+
+        let outside = path.distance(polar(mid, ORBIT.radius + 12.0));
+        assert!(
+            (outside - 12.0).abs() < 1e-2,
+            "12px outside reads {outside}"
+        );
+
+        let inside = path.distance(polar(mid, ORBIT.radius - 10.0));
+        assert!((inside - 10.0).abs() < 1e-2, "10px inside reads {inside}");
+    }
+
+    /// The cable follows the SWEPT range, not the circle. A probe on the circle
+    /// but diametrically opposite the wrap sits equally far from both arc ends,
+    /// and that end distance is the answer - measuring against the full circle
+    /// would read zero instead.
+    #[test]
+    fn a_point_past_the_sweep_measures_to_the_arc_end() {
+        let (path, entry, sweep) = wrapped_cable();
+        let arc = EdgePath {
+            start: entry,
+            segs: vec![path.segs[1]],
+        };
+        let mid = arc_start_angle(entry, ORBIT.center) + sweep / 2.0;
+        let opposite = polar(mid + PI, ORBIT.radius);
+        assert!(
+            ORBIT.ring_distance(opposite) < 1e-3,
+            "the probe must lie on the circle for this to mean anything",
+        );
+
+        let exit = seg_end(entry, &path.segs[1]);
+        let nearer_end = dist(opposite, entry).min(dist(opposite, exit));
+        let measured = arc.distance(opposite);
+        assert!(
+            (measured - nearer_end).abs() < 1e-2,
+            "measured {measured}, nearer arc end is {nearer_end} away",
+        );
+        assert!(
+            measured > ORBIT.radius,
+            "measured {measured} hugs the circle"
+        );
+    }
+
+    /// The cable goes ROUND the anchor, so its centre is a full radius away
+    /// from every part of the cable - including the leg that leaves the wrap,
+    /// which starts at the arc's far end rather than where the arc began.
+    #[test]
+    fn the_anchor_centre_is_a_radius_from_the_cable() {
+        let (path, _, _) = wrapped_cable();
+        let measured = path.distance(ORBIT.center);
+        assert!(
+            (measured - ORBIT.radius).abs() < 1e-2,
+            "centre reads {measured} from the cable, radius is {}",
+            ORBIT.radius,
+        );
+    }
+
+    /// The analytic case: a straight cable, where the distance is the
+    /// point-to-segment distance and the segment is finite - a point past the
+    /// end measures to the end, not to the infinite line.
+    #[test]
+    fn distance_on_a_straight_cable_is_point_to_segment() {
+        let path = line_cable();
+        assert!((path.distance([50.0, 25.0]) - 25.0).abs() < 1e-3);
+        assert!((path.distance([-30.0, 0.0]) - 30.0).abs() < 1e-3);
+    }
+
+    /// Cutting has to catch the cable wherever the stroke crosses it: on a leg,
+    /// on the wrap, and nowhere else.
+    #[test]
+    fn intersects_catches_legs_and_wraps() {
+        let (path, entry, _) = wrapped_cable();
+        assert!(
+            path.intersects([60.0, 150.0], [60.0, 250.0]),
+            "a probe across the first leg must cross the cable",
+        );
+
+        let arc = EdgePath {
+            start: entry,
+            segs: vec![path.segs[1]],
+        };
+        let out = [ORBIT.center[0] + ORBIT.radius * 2.0, ORBIT.center[1]];
+        let inner = [ORBIT.center[0] + ORBIT.radius * 0.25, ORBIT.center[1]];
+        assert!(
+            arc.intersects(inner, out),
+            "a probe radially through the wrap must cross it",
+        );
+
+        assert!(
+            !path.intersects([500.0, 500.0], [600.0, 600.0]),
+            "a probe well clear of the cable must not cross it",
+        );
+    }
+
+    /// The probe is a segment, not a ray: a stroke aimed at the cable but
+    /// stopping short of it does not cut.
+    #[test]
+    fn a_probe_that_stops_short_does_not_cross() {
+        let path = line_cable();
+        assert!(
+            !path.intersects([50.0, 20.0], [50.0, 10.0]),
+            "the probe stops 10px above the cable",
+        );
+        assert!(
+            path.intersects([50.0, 20.0], [50.0, -10.0]),
+            "extended through the cable, the same probe crosses",
+        );
     }
 }

@@ -1873,3 +1873,170 @@ fn leaving_the_orbit_disconnects_again() {
         "moving off the ring must unsnap: {msgs:?}",
     );
 }
+
+// ---------------------------------------------------------------------------
+// Cutting and unplugging a cable that runs through an anchor. Both used to be
+// blind to orbit ends because they measured against a direct pin-to-pin
+// bezier; they now measure against the cable as it is drawn.
+// ---------------------------------------------------------------------------
+
+/// A third node's input, free for a re-plug to land on.
+const SPARE_IN_POS: Point = Point::new(300.0, 320.0);
+
+fn spare_in_anchor() -> Point {
+    Point::new(SPARE_IN_POS.x, SPARE_IN_POS.y + NODE_H / 2.0)
+}
+
+/// Endpoint-shaped reports plus edge ids, for the cut and unplug cases.
+#[derive(Debug, Clone, PartialEq)]
+enum Cable {
+    Connect(End, End),
+    Disconnect(End, End),
+    Cut(Vec<usize>),
+}
+
+type CableGraph<'a> = NodeGraph<'a, usize, usize, (), Cable, Renderer, usize>;
+
+/// A closed connection: node 0's output and node 1's input, joined through
+/// orbit 0 of one anchor. Two host edges, one cable.
+fn wrapped_cable() -> Element<'static, Cable, Theme, Renderer> {
+    let mut ng: CableGraph<'static> = NodeGraph::default()
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .on_connect(Cable::Connect)
+        .on_disconnect(Cable::Disconnect)
+        .on_edge_delete(Cable::Cut);
+    ng.push_node(node(
+        0usize,
+        OUT_POS,
+        pin!(Right, 0usize, pin_body::<_>(), Output),
+    ));
+    ng.push_node(node(
+        1usize,
+        IN_POS,
+        pin!(Left, 0usize, pin_body::<_>(), Input),
+    ));
+    ng.push_node(node(
+        2usize,
+        SPARE_IN_POS,
+        pin!(Left, 0usize, pin_body::<_>(), Input),
+    ));
+    ng.push_anchor(anchor(ORBIT_ANCHOR, ANCHOR_AT));
+    let ring = |hand| EdgeEnd::Orbit {
+        anchor: ORBIT_ANCHOR,
+        orbit: 0,
+        hand,
+    };
+    ng.push_edge(edge!(
+        PinRef::new(0, 0),
+        ring(Hand::CounterClockwise),
+        100usize
+    ));
+    ng.push_edge(edge!(ring(Hand::Clockwise), PinRef::new(1, 0), 101usize));
+    ng.into()
+}
+
+/// A cut destroys the whole cable. Slicing one leg must take BOTH host edges,
+/// or the gesture leaves a stump hanging on the ring that the user never asked
+/// for.
+#[test]
+fn cutting_a_wrapped_cable_takes_every_edge_in_it() {
+    let mut ui = Simulator::new(wrapped_cable());
+    // A chord straight across the wrap, well clear of both node bodies.
+    let above = Point::new(ANCHOR_AT.x - 60.0, ANCHOR_AT.y);
+    let below = Point::new(ANCHOR_AT.x + 60.0, ANCHOR_AT.y);
+    ui.point_at(above);
+    ui.simulate([
+        iced::Event::Keyboard(keyboard::Event::ModifiersChanged(cmd())),
+        moved(above),
+        press(),
+    ]);
+    ui.point_at(below);
+    ui.simulate([moved(below), release()]);
+
+    let msgs: Vec<Cable> = ui.into_messages().collect();
+    let cut = msgs.iter().find_map(|m| match m {
+        Cable::Cut(ids) => Some(ids.clone()),
+        _ => None,
+    });
+    let mut cut = cut.unwrap_or_else(|| panic!("the trail must cut the cable: {msgs:?}"));
+    cut.sort_unstable();
+    assert_eq!(cut, vec![100, 101], "a cut must take the whole cable");
+
+    // Both halves are also reported endpoint-shaped, which is the only channel
+    // a host without edge ids has: it removes by value, and must not be left
+    // holding the far half of a cable whose near half is gone.
+    let disconnects = msgs
+        .iter()
+        .filter(|m| matches!(m, Cable::Disconnect(..)))
+        .count();
+    assert_eq!(
+        disconnects, 2,
+        "every edge of the cut cable must be reported: {msgs:?}",
+    );
+}
+
+/// Grabbing the pin end of a wrapped cable must GRAB it, not start a second
+/// edge alongside it. The ring is kept; leaving the pin reports the
+/// disconnection, exactly as unplugging from a pin does.
+#[test]
+fn grabbing_a_wrapped_cables_pin_unplugs_it() {
+    let mut ui = Simulator::new(wrapped_cable());
+    let far = Point::new(IN_POS.x + 200.0, IN_POS.y + 200.0);
+    ui.point_at(in_anchor());
+    ui.simulate([moved(in_anchor()), press()]);
+    ui.point_at(far);
+    ui.simulate([moved(far), release()]);
+
+    let msgs: Vec<Cable> = ui.into_messages().collect();
+    assert!(
+        msgs.iter().any(|m| matches!(
+            m,
+            Cable::Disconnect(
+                EdgeEnd::Pin(_),
+                EdgeEnd::Orbit {
+                    anchor: 7,
+                    orbit: 0,
+                    ..
+                }
+            )
+        )),
+        "leaving the grabbed pin must report the unplug: {msgs:?}",
+    );
+    assert!(
+        !msgs
+            .iter()
+            .any(|m| matches!(m, Cable::Connect(EdgeEnd::Pin(_), EdgeEnd::Pin(_)))),
+        "grabbing an attached pin must not fork a fresh pin-to-pin edge: {msgs:?}",
+    );
+}
+
+/// The unplugged pin can be re-plugged elsewhere, and the connection is
+/// reported against the ring it was kept at.
+#[test]
+fn an_unplugged_orbit_cable_can_be_replugged() {
+    let mut ui = Simulator::new(wrapped_cable());
+    ui.point_at(in_anchor());
+    ui.simulate([moved(in_anchor()), press()]);
+    let away = Point::new(ANCHOR_AT.x, ANCHOR_AT.y - 200.0);
+    ui.point_at(away);
+    ui.simulate([moved(away)]);
+    ui.point_at(spare_in_anchor());
+    ui.simulate([moved(spare_in_anchor()), release()]);
+
+    let msgs: Vec<Cable> = ui.into_messages().collect();
+    assert!(
+        msgs.iter().any(|m| matches!(
+            m,
+            Cable::Connect(
+                EdgeEnd::Pin(PinRef { node_id: 2, .. }),
+                EdgeEnd::Orbit {
+                    anchor: 7,
+                    orbit: 0,
+                    ..
+                }
+            )
+        )),
+        "dropping the loose end on a pin must reconnect it to the ring: {msgs:?}",
+    );
+}

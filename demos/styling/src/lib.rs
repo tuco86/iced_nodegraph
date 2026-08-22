@@ -31,6 +31,12 @@
 //! - **Theme picker** - Switch between color themes
 //! - **Scroll** - Zoom in/out
 //! - **Right-drag** - Pan the canvas
+//! - **Drag the orange anchor** - Move it; the cables wrapping it follow
+//! - **Drag a pin onto the faint ring** - Attach a cable to the anchor's next
+//!   free orbit; which side you release on decides which way it wraps
+//! - **Drag a wired pin** - Unplug that cable, keeping it on its ring
+//! - **Cmd/Ctrl+Click or Cmd/Ctrl+drag across a cable** - Cut it; a cable
+//!   through an anchor is cut whole
 
 mod nodes;
 

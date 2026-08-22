@@ -392,6 +392,8 @@ where
                 to_node: _,
                 to_pin: _
             } | Dragging::EdgeOverOrbit { .. }
+                | Dragging::EdgeFromOrbit { .. }
+                | Dragging::OrbitEdgeOver { .. }
         );
 
         // Per-frame pin table, built ONCE per node: `find_pins` is a
@@ -733,30 +735,21 @@ where
 
             // A CONNECTION, not an edge, is the unit that gets drawn: two edges
             // sharing an orbit are one cable, and only one path means the dash
-            // or flow pattern phases across the whole run. Walk from a pin end
-            // through the junction index, consuming every edge on the way.
-            let mut consumed = vec![false; self.edges.len()];
-            for seed in 0..self.edges.len() {
-                if consumed[seed] {
-                    continue;
-                }
-                let seed_edge = &self.edges[seed];
-                let (Some(from), Some(to)) =
-                    (resolve_end(&seed_edge.from), resolve_end(&seed_edge.to))
-                else {
-                    consumed[seed] = true;
+            // or flow pattern phases across the whole run. The topology comes
+            // from the graph so the cut path agrees about what one cable is.
+            for chain in self.connection_chains() {
+                let first = &self.edges[chain[0]];
+                let (Some(a), Some(b)) = (resolve_end(&first.from), resolve_end(&first.to)) else {
                     continue;
                 };
-
                 // Start at a pin, and when both ends are pins start at the
                 // OUTPUT one so gradient, arrow and flow follow the data-flow
-                // direction regardless of which side was dragged from. An
-                // orbit-only chain has no terminus to start from and is skipped.
-                let head_is_from = match (&from, &to) {
+                // direction regardless of which side was dragged from.
+                let head_is_from = match (&a, &b) {
                     (End::Pin { direction, .. }, End::Pin { .. }) => {
                         matches!(direction, PinDirection::Output)
                             || !matches!(
-                                to,
+                                b,
                                 End::Pin {
                                     direction: PinDirection::Output,
                                     ..
@@ -767,8 +760,7 @@ where
                     (End::Orbit { .. }, End::Pin { .. }) => false,
                     (End::Orbit { .. }, End::Orbit { .. }) => continue,
                 };
-                let (head, mut tail) = if head_is_from { (from, to) } else { (to, from) };
-
+                let (head, tail) = if head_is_from { (a, b) } else { (b, a) };
                 let End::Pin {
                     point: head_point,
                     side: head_side,
@@ -783,47 +775,37 @@ where
                     point: head_point,
                     side: head_side,
                 }];
-                let mut chain = vec![seed];
                 let mut tail_info = None;
-                consumed[seed] = true;
-
-                loop {
-                    match tail {
-                        End::Pin {
+                // Each edge contributes the station at its FAR end: a wrap when
+                // the cable carries on through an orbit, a pin when it lands.
+                let mut entry: Option<(usize, u8)> = None;
+                let mut far_end = Some(tail);
+                for &edge_index in &chain {
+                    let resolved = match far_end.take() {
+                        Some(resolved) => Some(resolved),
+                        None => {
+                            let edge = &self.edges[edge_index];
+                            let far = if orbit_key(&edge.from) == entry {
+                                &edge.to
+                            } else {
+                                &edge.from
+                            };
+                            resolve_end(far)
+                        }
+                    };
+                    match resolved {
+                        Some(End::Pin {
                             point, side, info, ..
-                        } => {
+                        }) => {
                             hops.push(edge_path::Hop::Pin { point, side });
                             tail_info = info;
                             break;
                         }
-                        End::Orbit { key, orbit, hand } => {
+                        Some(End::Orbit { key, orbit, hand }) => {
                             hops.push(edge_path::Hop::Wrap { orbit, hand });
-                            // The partner on this orbit continues the cable; its
-                            // far end becomes the new tail. Without one the
-                            // connection is left open and stops here.
-                            let last = *chain.last().expect("chain is never empty");
-                            let Some(&partner) = junctions
-                                .get(&key)
-                                .and_then(|edges| edges.iter().find(|&&e| e != last))
-                            else {
-                                break;
-                            };
-                            if consumed[partner] {
-                                break;
-                            }
-                            consumed[partner] = true;
-                            chain.push(partner);
-                            // Continue through whichever of the partner's ends
-                            // is NOT this junction.
-                            let partner_edge = &self.edges[partner];
-                            let far = if orbit_key(&partner_edge.from) == Some(key) {
-                                &partner_edge.to
-                            } else {
-                                &partner_edge.from
-                            };
-                            let Some(next) = resolve_end(far) else { break };
-                            tail = next;
+                            entry = Some(key);
                         }
+                        None => break,
                     }
                 }
 
@@ -1043,6 +1025,70 @@ where
                 let mut drag_batch = SdfPrimitive::new();
                 push_edge_layers(&mut drag_batch, &shape, &shadow_shape, &drag_edge_style);
 
+                let wo = layout.bounds().position();
+                let (cx, cy) = layer_camera(
+                    render_context.camera_position,
+                    render_context.camera_zoom,
+                    wo,
+                    layout.bounds(),
+                );
+                renderer.with_layer(layout.bounds(), |renderer| {
+                    draw_sdf(
+                        renderer,
+                        &state.sdf_animated,
+                        layout.bounds(),
+                        drag_batch
+                            .camera(cx, cy, render_context.camera_zoom)
+                            .time(render_context.time),
+                    );
+                });
+            }
+        }
+
+        // The same loose cable, kept at an orbit instead of a pin: it leaves the
+        // ring tangentially, so the held end is a wrap rather than a point.
+        if let Dragging::EdgeFromOrbit {
+            anchor,
+            orbit,
+            hand,
+            origin: _,
+        } = &state.dragging
+            && let Some(cursor_pos) = cursor.position()
+            && let Some(&center) = anchor_layouts.get(*anchor)
+            && let Some(style) = anchor_styles.get(*anchor)
+        {
+            let end: LayoutPoint = cursor_layout(cursor_pos);
+            let ring = edge_path::Orbit {
+                center,
+                radius: style.orbit_radius(*orbit),
+            };
+            let drag_edge_style = crate::style::default_edge_style(theme, EdgeStatus::Idle);
+            // The cursor is the far station, so the wrap resolves its exit
+            // tangent against it - the cable stays taut while it is dragged.
+            // The loose end has no pin side, so it takes the one that has the
+            // cable arriving from the ring rather than doubling back over it.
+            let (dx, dy) = (end.x - center[0], end.y - center[1]);
+            let cursor_side = if dx.abs() > dy.abs() {
+                if dx > 0.0 { 0 } else { 1 }
+            } else if dy > 0.0 {
+                2
+            } else {
+                3
+            };
+            let hops = [
+                edge_path::Hop::Wrap {
+                    orbit: ring,
+                    hand: *hand,
+                },
+                edge_path::Hop::Pin {
+                    point: [end.x, end.y],
+                    side: cursor_side,
+                },
+            ];
+            let shape = edge_path::build(&hops, &drag_edge_style.curve).into_shape();
+            let mut drag_batch = SdfPrimitive::new();
+            push_edge_layers(&mut drag_batch, &shape, &shape, &drag_edge_style);
+            if !drag_batch.is_empty() {
                 let wo = layout.bounds().position();
                 let (cx, cy) = layer_camera(
                     render_context.camera_position,

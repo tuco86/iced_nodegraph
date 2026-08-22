@@ -97,6 +97,24 @@ pub(crate) enum Dragging {
         orbit: u8,
         hand: Hand,
     },
+    /// A loose edge held at the cursor, kept at an anchor orbit instead of a
+    /// pin. Reached by grabbing the pin end of a cable that runs through an
+    /// anchor.
+    EdgeFromOrbit {
+        anchor: usize,
+        orbit: u8,
+        hand: Hand,
+        origin: LayoutPoint,
+    },
+    /// The mirror of [`Dragging::EdgeOver`] for a cable kept at an orbit: the
+    /// grabbed pin is still snapped, and the hysteresis is measured against it.
+    OrbitEdgeOver {
+        anchor: usize,
+        orbit: u8,
+        hand: Hand,
+        to_node: usize,
+        to_pin: usize,
+    },
     /// Rubber-band selection: the press corner and the live corner.
     SelectionBox(LayoutPoint, LayoutPoint),
     /// Slicing across edges: the cursor trail and the edge indices it has

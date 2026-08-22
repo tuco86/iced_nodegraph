@@ -429,6 +429,20 @@ where
                         } => self.handle_edge_over_orbit(
                             &mut ctx, from_node, from_pin, anchor, orbit, hand,
                         ),
+                        Dragging::EdgeFromOrbit {
+                            anchor,
+                            orbit,
+                            hand,
+                            origin: _,
+                        } => self.handle_edge_from_orbit(&mut ctx, anchor, orbit, hand),
+                        Dragging::OrbitEdgeOver {
+                            anchor,
+                            orbit,
+                            hand,
+                            to_node,
+                            to_pin,
+                        } => self
+                            .handle_orbit_edge_over(&mut ctx, anchor, orbit, hand, to_node, to_pin),
                         Dragging::Anchor { anchor, origin } => {
                             self.handle_anchor_drag(&mut ctx, anchor, origin)
                         }
@@ -715,111 +729,55 @@ where
             shell,
             ..
         } = &mut *ctx;
-        let state = tree.state.downcast_mut::<NodeGraphState>();
         match event {
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                if let Some(cursor_position) = world_cursor.position() {
-                    let cursor_position: LayoutPoint = cursor_position.into_euclid();
+                let Some(cursor_position) = world_cursor.position() else {
+                    return;
+                };
+                let cursor_position: LayoutPoint = cursor_position.into_euclid();
+                // Cable geometry reads the tree immutably, so it is taken before
+                // the mutable state borrow the trail needs.
+                let paths = {
+                    let state = tree.state.downcast_ref::<NodeGraphState>();
+                    cable_paths(self, tree, *layout, state)
+                };
+                let state = tree.state.downcast_mut::<NodeGraphState>();
+                if let Dragging::EdgeCutting {
+                    ref mut trail,
+                    ref mut pending_cuts,
+                } = state.dragging
+                {
+                    trail.push(cursor_position);
+                    let cut_start = trail.first().copied().unwrap_or(cursor_position);
 
-                    // Update trail and check which edges intersect with cutting line
-                    if let Dragging::EdgeCutting {
-                        ref mut trail,
-                        ref mut pending_cuts,
-                    } = state.dragging
-                    {
-                        trail.push(cursor_position);
-
-                        // Get cutting line: from start point to current cursor
-                        let cut_start = trail.first().copied().unwrap_or(cursor_position);
-                        let cut_end = cursor_position;
-
-                        // Clear and recalculate - only edges intersecting cutting line are highlighted
-                        pending_cuts.clear();
-
-                        // Check each edge for intersection with the cutting line
-                        // Cutting still measures against the direct pin-to-pin
-                        // bezier, so an edge with an orbit end is out of scope
-                        // here until hit-testing moves onto the built path.
-                        for (edge_idx, edge) in self.edges.iter().enumerate() {
-                            let (Some(from_ref), Some(to_ref)) = (edge.from.pin(), edge.to.pin())
-                            else {
-                                continue;
-                            };
-                            let from_node_idx = match self.node_index(&from_ref.node_id) {
-                                Some(idx) => idx,
-                                None => continue,
-                            };
-                            let to_node_idx = match self.node_index(&to_ref.node_id) {
-                                Some(idx) => idx,
-                                None => continue,
-                            };
-
-                            // Pin positions and sides for the bezier the cut
-                            // is measured against.
-                            let from_pin_data = pin_by_id::<P, UI>(
-                                &tree.children,
-                                *layout,
-                                from_node_idx,
-                                &from_ref.pin_id,
-                            );
-                            let to_pin_data = pin_by_id::<P, UI>(
-                                &tree.children,
-                                *layout,
-                                to_node_idx,
-                                &to_ref.pin_id,
-                            );
-
-                            if let (Some((_, (p0, _), from_side)), Some((_, (p3, _), to_side))) =
-                                (from_pin_data, to_pin_data)
-                            {
-                                // Calculate bezier control points
-                                let dir_from = pin_side_direction(from_side.into());
-                                let dir_to = pin_side_direction(to_side.into());
-                                let l = adaptive_bezier_length([p0.x, p0.y], [p3.x, p3.y]);
-                                let p1 = Point::new(p0.x + dir_from[0] * l, p0.y + dir_from[1] * l);
-                                let p2 = Point::new(p3.x + dir_to[0] * l, p3.y + dir_to[1] * l);
-
-                                // Check if cutting line intersects this bezier edge
-                                if line_intersects_bezier(
-                                    cut_start.into_iced(),
-                                    cut_end.into_iced(),
-                                    p0,
-                                    p1,
-                                    p2,
-                                    p3,
-                                ) {
-                                    pending_cuts.insert(edge_idx);
-                                }
-                            }
+                    // Recomputed from scratch each move: the trail is a single
+                    // chord from its start, so a cut can be taken back by
+                    // dragging away again.
+                    pending_cuts.clear();
+                    for (chain, path) in &paths {
+                        if path.intersects(
+                            [cut_start.x, cut_start.y],
+                            [cursor_position.x, cursor_position.y],
+                        ) {
+                            // A cable is cut whole, so its whole chain is
+                            // marked - that is also what paints them all in the
+                            // pending-cut color.
+                            pending_cuts.extend(chain.iter().copied());
                         }
                     }
                 }
                 shell.request_redraw();
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                // Delete all pending edges on release
-                if let Dragging::EdgeCutting { pending_cuts, .. } = &state.dragging {
-                    let mut cut_ids = Vec::new();
-                    for &edge_idx in pending_cuts.iter() {
-                        if let Some(Edge { id, from, to, .. }) = self.edges.get(edge_idx) {
-                            if let (Some(from), Some(to)) = (from.pin(), to.pin())
-                                && let Some(handler) = self.on_disconnect.as_ref()
-                            {
-                                shell.publish(handler(
-                                    EdgeEnd::Pin(from.clone()),
-                                    EdgeEnd::Pin(to.clone()),
-                                ));
-                            }
-                            cut_ids.push(id.clone());
-                        }
+                let state = tree.state.downcast_mut::<NodeGraphState>();
+                let cuts: Vec<usize> = match &state.dragging {
+                    Dragging::EdgeCutting { pending_cuts, .. } => {
+                        pending_cuts.iter().copied().collect()
                     }
-                    if let Some(handler) = self.on_edge_delete.as_ref()
-                        && !cut_ids.is_empty()
-                    {
-                        shell.publish(handler(cut_ids));
-                    }
-                }
+                    _ => Vec::new(),
+                };
                 state.dragging = Dragging::None;
+                self.report_cut(shell, &cuts);
                 shell.capture_event();
                 shell.request_redraw();
             }
@@ -1351,6 +1309,149 @@ where
         }
     }
 
+    /// Handles a loose cable kept at an orbit: snap-tests against the valid
+    /// target pins and reports the connection on snap, the mirror of
+    /// [`handle_edge_drag`] with a ring at the fixed end.
+    fn handle_edge_from_orbit(
+        &self,
+        ctx: &mut UpdateCtx<'_, '_, '_, Message>,
+        anchor_index: usize,
+        orbit: u8,
+        hand: Hand,
+    ) {
+        let UpdateCtx {
+            tree,
+            layout,
+            event,
+            world_cursor,
+            shell,
+            ..
+        } = &mut *ctx;
+        match event {
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                let Some(cursor_position) = world_cursor.position() else {
+                    return;
+                };
+                let state = tree.state.downcast_ref::<NodeGraphState>();
+                let snap_threshold = SNAP_THRESHOLD / state.camera.zoom();
+                let valid_targets = state.valid_drop_targets.clone();
+                let target = nearest_valid_pin::<P, UI>(
+                    &tree.children,
+                    *layout,
+                    &valid_targets,
+                    cursor_position,
+                    snap_threshold,
+                );
+
+                if let Some((to_node, to_pin, to_pin_id)) = target {
+                    if let (Some(to_nid), Some(anchor_id)) = (
+                        self.node_id_at(to_node).cloned(),
+                        self.anchors.get(anchor_index).map(|a| a.id.clone()),
+                    ) && let Some(handler) = self.on_connect.as_ref()
+                    {
+                        shell.publish(handler(
+                            EdgeEnd::Pin(PinRef::new(to_nid, to_pin_id)),
+                            EdgeEnd::Orbit {
+                                anchor: anchor_id,
+                                orbit,
+                                hand,
+                            },
+                        ));
+                    }
+                    tree.state.downcast_mut::<NodeGraphState>().dragging =
+                        Dragging::OrbitEdgeOver {
+                            anchor: anchor_index,
+                            orbit,
+                            hand,
+                            to_node,
+                            to_pin,
+                        };
+                }
+                shell.request_redraw();
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                tree.state.downcast_mut::<NodeGraphState>().dragging = Dragging::None;
+                if let Some(handler) = self.on_drag_end.as_ref() {
+                    shell.publish(handler());
+                }
+                shell.capture_event();
+                shell.request_redraw();
+            }
+            _ => {}
+        }
+    }
+
+    /// Handles a cable kept at an orbit whose grabbed pin is still snapped:
+    /// leaving that pin by more than `UNSNAP_THRESHOLD` reports the
+    /// disconnection and drops back to a loose drag.
+    fn handle_orbit_edge_over(
+        &self,
+        ctx: &mut UpdateCtx<'_, '_, '_, Message>,
+        anchor_index: usize,
+        orbit: u8,
+        hand: Hand,
+        to_node: usize,
+        to_pin: usize,
+    ) {
+        let UpdateCtx {
+            tree,
+            layout,
+            event,
+            world_cursor,
+            shell,
+            ..
+        } = &mut *ctx;
+        match event {
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                let Some(cursor_position) = world_cursor.position() else {
+                    return;
+                };
+                let state = tree.state.downcast_ref::<NodeGraphState>();
+                let unsnap_threshold = UNSNAP_THRESHOLD / state.camera.zoom();
+                let held = pin_anchors::<P, UI>(&tree.children, *layout, to_node, to_pin);
+                let still_over = held.is_some_and(|(a, b)| {
+                    a.distance(cursor_position).min(b.distance(cursor_position)) < unsnap_threshold
+                });
+
+                if !still_over {
+                    let to_pin_id = find_pin_id::<P, UI>(&tree.children, *layout, to_node, to_pin);
+                    if let (Some(to_nid), Some(to_pid), Some(anchor_id)) = (
+                        self.node_id_at(to_node).cloned(),
+                        to_pin_id,
+                        self.anchors.get(anchor_index).map(|a| a.id.clone()),
+                    ) && let Some(handler) = self.on_disconnect.as_ref()
+                    {
+                        shell.publish(handler(
+                            EdgeEnd::Pin(PinRef::new(to_nid, to_pid)),
+                            EdgeEnd::Orbit {
+                                anchor: anchor_id,
+                                orbit,
+                                hand,
+                            },
+                        ));
+                    }
+                    tree.state.downcast_mut::<NodeGraphState>().dragging =
+                        Dragging::EdgeFromOrbit {
+                            anchor: anchor_index,
+                            orbit,
+                            hand,
+                            origin: cursor_position.into_euclid(),
+                        };
+                }
+                shell.request_redraw();
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                tree.state.downcast_mut::<NodeGraphState>().dragging = Dragging::None;
+                if let Some(handler) = self.on_drag_end.as_ref() {
+                    shell.publish(handler());
+                }
+                shell.capture_event();
+                shell.request_redraw();
+            }
+            _ => {}
+        }
+    }
+
     /// Handles an in-progress selection box: tracks the moving corner and
     /// commits the intersecting set on release (Shift adds to the selection).
     fn handle_selection_box(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>, start: LayoutPoint) {
@@ -1547,65 +1648,44 @@ where
             return false;
         };
         // Screen-space threshold: constant hit target at any zoom.
-        let cut_threshold =
-            EDGE_CUT_THRESHOLD / tree.state.downcast_ref::<NodeGraphState>().camera.zoom();
-        // Check if click is near any edge
-        for Edge {
-            id: edge_id,
-            from,
-            to,
-            ..
-        } in &self.edges
-        {
-            // Same scope as the trail cut: the distance is measured against the
-            // direct pin-to-pin bezier, so an orbit end has nothing to compare.
-            let (Some(from_ref), Some(to_ref)) = (from.pin(), to.pin()) else {
+        let state = tree.state.downcast_ref::<NodeGraphState>();
+        let cut_threshold = EDGE_CUT_THRESHOLD / state.camera.zoom();
+        let cursor = [cursor_position.x, cursor_position.y];
+
+        // A cut destroys a CABLE, not an edge: slicing a run that threads an
+        // anchor takes every edge in it, so the gesture cannot leave a stump
+        // dangling on a ring.
+        for (chain, path) in cable_paths(self, tree, *layout, state) {
+            if path.distance(cursor) >= cut_threshold {
                 continue;
-            };
-            // Resolve user IDs to indices
-            let from_node_idx = match self.node_index(&from_ref.node_id) {
-                Some(idx) => idx,
-                None => continue,
-            };
-            let to_node_idx = match self.node_index(&to_ref.node_id) {
-                Some(idx) => idx,
-                None => continue,
-            };
-
-            // Pin positions and sides for both ends of the edge.
-            let from_pin_data =
-                pin_by_id::<P, UI>(&tree.children, *layout, from_node_idx, &from_ref.pin_id);
-            let to_pin_data =
-                pin_by_id::<P, UI>(&tree.children, *layout, to_node_idx, &to_ref.pin_id);
-
-            if let (Some((_, (from_pos, _), from_side)), Some((_, (to_pos, _), to_side))) =
-                (from_pin_data, to_pin_data)
-            {
-                // Measure against the rendered bezier, not the straight
-                // chord: same control-point construction as the draw path.
-                let dir_from = pin_side_direction(from_side.into());
-                let dir_to = pin_side_direction(to_side.into());
-                let l = adaptive_bezier_length([from_pos.x, from_pos.y], [to_pos.x, to_pos.y]);
-                let p1 = Point::new(from_pos.x + dir_from[0] * l, from_pos.y + dir_from[1] * l);
-                let p2 = Point::new(to_pos.x + dir_to[0] * l, to_pos.y + dir_to[1] * l);
-                let distance = point_to_bezier_distance(cursor_position, from_pos, p1, p2, to_pos);
-                if distance < cut_threshold {
-                    if let Some(handler) = self.on_disconnect.as_ref() {
-                        shell.publish(handler(
-                            EdgeEnd::Pin(from_ref.clone()),
-                            EdgeEnd::Pin(to_ref.clone()),
-                        ));
-                    }
-                    if let Some(handler) = self.on_edge_delete.as_ref() {
-                        shell.publish(handler(vec![edge_id.clone()]));
-                    }
-                    shell.capture_event();
-                    shell.request_redraw();
-                    return true;
-                }
             }
+            self.report_cut(shell, &chain);
+            shell.capture_event();
+            shell.request_redraw();
+            return true;
         }
         false
+    }
+
+    /// Reports every edge of a cut cable: `on_disconnect` per edge (live
+    /// feedback, endpoint-shaped) and one batched `on_edge_delete` naming their
+    /// host ids.
+    fn report_cut(&self, shell: &mut Shell<'_, Message>, chain: &[usize]) {
+        let mut ids = Vec::with_capacity(chain.len());
+        for &edge_index in chain {
+            let Some(edge) = self.edges.get(edge_index) else {
+                continue;
+            };
+            if let Some(handler) = self.on_disconnect.as_ref() {
+                shell.publish(handler(edge.from.clone(), edge.to.clone()));
+            }
+            ids.push(edge.id.clone());
+        }
+        if let Some(handler) = self.on_edge_delete.as_ref()
+            && !ids.is_empty()
+        {
+            shell.publish(handler(ids));
+        }
     }
 
     /// Hit-tests one node's pins and body for a left press.
@@ -1659,7 +1739,7 @@ where
                 // fall through to start a fresh edge, leaving existing
                 // connections intact.
                 if !multi_select_held {
-                    for Edge { from, to, .. } in &self.edges {
+                    for (edge_index, Edge { from, to, .. }) in self.edges.iter().enumerate() {
                         let (Some(from_ref), Some(to_ref)) = (from.pin(), to.pin()) else {
                             continue;
                         };
@@ -1674,10 +1754,41 @@ where
                             } else {
                                 continue;
                             };
-                        if self.try_start_unplug(
+                        if self.try_start_unplug(ctx, anchor, edge_index, (node_index, pin_index)) {
+                            return true;
+                        }
+                    }
+
+                    // A cable that runs through an anchor keeps its ring and
+                    // hands the pin to the cursor, the mirror of the case
+                    // above.
+                    for (edge_index, edge) in self.edges.iter().enumerate() {
+                        let grabbed = |end: &EdgeEnd<N, P>| {
+                            end.pin().is_some_and(|pin| {
+                                pin.node_id == current_node_id && pin.pin_id == pin_id
+                            })
+                        };
+                        let kept = if grabbed(&edge.from) {
+                            &edge.to
+                        } else if grabbed(&edge.to) {
+                            &edge.from
+                        } else {
+                            continue;
+                        };
+                        let EdgeEnd::Orbit {
+                            anchor,
+                            orbit,
+                            hand,
+                        } = kept
+                        else {
+                            continue;
+                        };
+                        if self.try_start_orbit_unplug(
                             ctx,
                             anchor,
-                            (from_ref, to_ref),
+                            *orbit,
+                            *hand,
+                            edge_index,
                             (node_index, pin_index),
                         ) {
                             return true;
@@ -1727,7 +1838,7 @@ where
         &self,
         ctx: &mut UpdateCtx<'_, '_, '_, Message>,
         anchor: &PinRef<N, P>,
-        edge: (&PinRef<N, P>, &PinRef<N, P>),
+        edge_index: usize,
         grabbed: (usize, usize),
     ) -> bool {
         let Some(anchor_node_idx) = self.node_index(&anchor.node_id) else {
@@ -1750,7 +1861,7 @@ where
             ctx.layout,
             anchor_node_idx,
             anchor_pin_idx,
-            Some(edge),
+            Some(edge_index),
         );
         let valid_orbits =
             compute_valid_orbits(self, ctx.tree, ctx.layout, anchor_node_idx, anchor_pin_idx);
@@ -1762,6 +1873,75 @@ where
         state.dragging = Dragging::EdgeOver {
             from_node: anchor_node_idx,
             from_pin: anchor_pin_idx,
+            to_node: grabbed.0,
+            to_pin: grabbed.1,
+        };
+        ctx.shell.capture_event();
+        true
+    }
+
+    /// Starts the unplug drag for the pin end of a cable whose other end is an
+    /// anchor orbit: the ring is kept, the pin comes loose.
+    ///
+    /// Valid targets are computed as if the drag came from the orbit's OTHER
+    /// edge, because that is what a re-plugged pin would end up connected
+    /// through. An orbit holding nothing else imposes no rule at all - it
+    /// passes cables through and has no type of its own.
+    fn try_start_orbit_unplug(
+        &self,
+        ctx: &mut UpdateCtx<'_, '_, '_, Message>,
+        anchor_id: &N,
+        orbit: u8,
+        hand: Hand,
+        edge_index: usize,
+        grabbed: (usize, usize),
+    ) -> bool {
+        if self.on_connect.is_none() {
+            return false;
+        }
+        let Some(anchor_index) = self.anchor_index(anchor_id) else {
+            return false;
+        };
+        let key = (anchor_index, orbit);
+        let partner_pin = self
+            .orbit_attachments()
+            .get(&key)
+            .into_iter()
+            .flatten()
+            .filter_map(|&edge_index| self.orbit_far_end(edge_index, key))
+            .filter_map(|end| end.pin())
+            .find(|pin| !(self.node_index(&pin.node_id) == Some(grabbed.0)))
+            .cloned();
+
+        let valid_targets = match partner_pin {
+            Some(pin) => {
+                let Some(node_index) = self.node_index(&pin.node_id) else {
+                    return false;
+                };
+                let Some((pin_index, _, _)) =
+                    pin_by_id::<P, UI>(&ctx.tree.children, ctx.layout, node_index, &pin.pin_id)
+                else {
+                    return false;
+                };
+                compute_valid_targets(
+                    self,
+                    ctx.tree,
+                    ctx.layout,
+                    node_index,
+                    pin_index,
+                    Some(edge_index),
+                )
+            }
+            None => every_enabled_pin::<P, UI>(&ctx.tree.children, ctx.layout),
+        };
+
+        let state = ctx.tree.state.downcast_mut::<NodeGraphState>();
+        state.valid_drop_targets = valid_targets;
+        state.valid_drop_orbits = std::collections::HashSet::new();
+        state.dragging = Dragging::OrbitEdgeOver {
+            anchor: anchor_index,
+            orbit,
+            hand,
             to_node: grabbed.0,
             to_pin: grabbed.1,
         };
@@ -2136,16 +2316,18 @@ where
 ///    otherwise [`default_can_connect`](crate::connection::default_can_connect)
 ///    (direction + not-same-node + one-edge-per-input) accepts it.
 ///
-/// `excluded_edge` is the edge currently being re-routed (its endpoints), left out
-/// of the occupancy check so it can be dropped back onto its own input. Pass `None`
-/// when starting a fresh edge.
+/// `excluded_edge` is the index of the edge currently being re-routed, left out
+/// of the occupancy check so it can be dropped back onto its own input. An index
+/// rather than an endpoint pair, because a re-routed cable may have an orbit at
+/// one end and no pin pair to name it by. Pass `None` when starting a fresh
+/// edge.
 fn compute_valid_targets<N, P, UI, Message, Renderer, E>(
     graph: &NodeGraph<'_, N, P, UI, Message, Renderer, E>,
     tree: &Tree,
     layout: Layout<'_>,
     from_node: usize,
     from_pin: usize,
-    excluded_edge: Option<(&PinRef<N, P>, &PinRef<N, P>)>,
+    excluded_edge: Option<usize>,
 ) -> std::collections::HashSet<(usize, usize)>
 where
     N: NodeId + 'static,
@@ -2178,12 +2360,9 @@ where
     let occupied: std::collections::HashSet<(&N, &P)> = graph
         .edges
         .iter()
-        .filter(|edge| match (edge.from.pin(), edge.to.pin()) {
-            (Some(from), Some(to)) => excluded_edge != Some((from, to)),
-            // An edge with an orbit end is never the dragged pin-to-pin edge.
-            _ => true,
-        })
-        .flat_map(|edge| [&edge.from, &edge.to])
+        .enumerate()
+        .filter(|(index, _)| Some(*index) != excluded_edge)
+        .flat_map(|(_, edge)| [&edge.from, &edge.to])
         .filter_map(|end| end.pin())
         .map(|pin| (&pin.node_id, &pin.pin_id))
         .collect();
@@ -2235,6 +2414,86 @@ where
     }
 
     valid_targets
+}
+
+/// Every pin in the graph that accepts interaction, as `(node, pin)` indices.
+///
+/// The target set when nothing constrains the drop: an orbit with no other
+/// cable on it has no type to be compatible with, so every reachable pin is
+/// fair game.
+fn every_enabled_pin<P, UI>(
+    children: &[Tree],
+    layout: Layout<'_>,
+) -> std::collections::HashSet<(usize, usize)>
+where
+    P: PinId + 'static,
+    UI: Clone + 'static,
+{
+    let mut pins = std::collections::HashSet::new();
+    for (node_index, node_tree) in children.iter().enumerate() {
+        let Some(node_layout) = layout.children().nth(node_index) else {
+            continue;
+        };
+        for (pin_index, pin_state, _) in find_pins::<P, UI>(node_tree, node_layout) {
+            if !pin_state.interactions_disabled {
+                pins.insert((node_index, pin_index));
+            }
+        }
+    }
+    pins
+}
+
+/// The two hit anchors of pin `pin_index` on node `node_index`.
+fn pin_anchors<P, UI>(
+    children: &[Tree],
+    layout: Layout<'_>,
+    node_index: usize,
+    pin_index: usize,
+) -> Option<(Point, Point)>
+where
+    P: PinId + 'static,
+    UI: Clone + 'static,
+{
+    let node_tree = children.get(node_index)?;
+    let node_layout = layout.children().nth(node_index)?;
+    find_pins::<P, UI>(node_tree, node_layout)
+        .into_iter()
+        .nth(pin_index)
+        .map(|(_, _, anchors)| anchors)
+}
+
+/// The valid target pin nearest `cursor` within `threshold`, as
+/// `(node index, pin index, pin id)`.
+fn nearest_valid_pin<P, UI>(
+    children: &[Tree],
+    layout: Layout<'_>,
+    valid: &std::collections::HashSet<(usize, usize)>,
+    cursor: Point,
+    threshold: f32,
+) -> Option<(usize, usize, P)>
+where
+    P: PinId + 'static,
+    UI: Clone + 'static,
+{
+    let mut best: Option<(f32, usize, usize, P)> = None;
+    for (node_index, node_tree) in children.iter().enumerate() {
+        let Some(node_layout) = layout.children().nth(node_index) else {
+            continue;
+        };
+        for (pin_index, pin_state, (a, b)) in find_pins::<P, UI>(node_tree, node_layout) {
+            if !valid.contains(&(node_index, pin_index)) {
+                continue;
+            }
+            let distance = a.distance(cursor).min(b.distance(cursor));
+            if distance >= threshold {
+                continue;
+            }
+            if best.as_ref().is_none_or(|(d, ..)| distance < *d) {
+                best = Some((distance, node_index, pin_index, pin_state.pin_id.clone()));
+            }
+        }
+    }
+    best.map(|(_, node, pin, id)| (node, pin, id))
 }
 
 /// The user id of pin `pin_index` on node `node_index`, read out of the
@@ -2501,173 +2760,113 @@ fn rects_intersect(a: &Rectangle, b: &Rectangle) -> bool {
     a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y
 }
 
-/// Minimum distance from a point to a cubic bezier, via uniform flattening.
+/// Every connection's cable geometry in world space, paired with the edge
+/// indices it was built from.
 ///
-/// 32 segments keep the flattening error far below the 10px cut threshold
-/// for edge-scale curves; no allocation.
-fn point_to_bezier_distance(point: Point, p0: Point, p1: Point, p2: Point, p3: Point) -> f32 {
-    const SEGMENTS: u32 = 32;
-    let mut prev = p0;
-    let mut min_dist = f32::MAX;
-    for i in 1..=SEGMENTS {
-        let t = i as f32 / SEGMENTS as f32;
-        let it = 1.0 - t;
-        let a = it * it * it;
-        let b = 3.0 * it * it * t;
-        let c = 3.0 * it * t * t;
-        let d = t * t * t;
-        let cur = Point::new(
-            a * p0.x + b * p1.x + c * p2.x + d * p3.x,
-            a * p0.y + b * p1.y + c * p2.y + d * p3.y,
-        );
-        min_dist = min_dist.min(point_to_line_distance(point, prev, cur));
-        prev = cur;
-    }
-    min_dist
-}
-
-/// Calculates the distance from a point to a line segment
-fn point_to_line_distance(point: Point, line_start: Point, line_end: Point) -> f32 {
-    let dx = line_end.x - line_start.x;
-    let dy = line_end.y - line_start.y;
-    let line_length_sq = dx * dx + dy * dy;
-
-    if line_length_sq < 0.001 {
-        // Line segment is essentially a point
-        return ((point.x - line_start.x).powi(2) + (point.y - line_start.y).powi(2)).sqrt();
-    }
-
-    // Calculate projection of point onto line
-    let t = ((point.x - line_start.x) * dx + (point.y - line_start.y) * dy) / line_length_sq;
-    let t = t.clamp(0.0, 1.0);
-
-    // Find closest point on line segment
-    let closest_x = line_start.x + t * dx;
-    let closest_y = line_start.y + t * dy;
-
-    // Return distance from point to closest point on line
-    ((point.x - closest_x).powi(2) + (point.y - closest_y).powi(2)).sqrt()
-}
-
-/// Checks if a line segment intersects a cubic bezier curve.
-/// Uses analytical solution by substituting bezier into line equation.
-fn line_intersects_bezier(
-    line_start: Point,
-    line_end: Point,
-    p0: Point,
-    p1: Point,
-    p2: Point,
-    p3: Point,
-) -> bool {
-    // Line in implicit form: ax + by + c = 0
-    let a = line_end.y - line_start.y;
-    let b = line_start.x - line_end.x;
-    let c = line_end.x * line_start.y - line_start.x * line_end.y;
-
-    // Evaluate line equation at bezier control points
-    let d0 = a * p0.x + b * p0.y + c;
-    let d1 = a * p1.x + b * p1.y + c;
-    let d2 = a * p2.x + b * p2.y + c;
-    let d3 = a * p3.x + b * p3.y + c;
-
-    // Coefficients of cubic polynomial: at³ + bt² + ct + d = 0
-    // Derived from substituting bezier B(t) into line equation
-    let coef_a = -d0 + 3.0 * d1 - 3.0 * d2 + d3;
-    let coef_b = 3.0 * d0 - 6.0 * d1 + 3.0 * d2;
-    let coef_c = -3.0 * d0 + 3.0 * d1;
-    let coef_d = d0;
-
-    // Find roots of the cubic polynomial
-    let roots = solve_cubic(coef_a, coef_b, coef_c, coef_d);
-
-    // Check if any root in [0, 1] produces a point within the line segment
-    let line_len_sq = (line_end.x - line_start.x).powi(2) + (line_end.y - line_start.y).powi(2);
-
-    for t in roots {
-        if (0.0..=1.0).contains(&t) {
-            // Evaluate bezier at this t
-            let mt = 1.0 - t;
-            let mt2 = mt * mt;
-            let mt3 = mt2 * mt;
-            let t2 = t * t;
-            let t3 = t2 * t;
-
-            let bx = mt3 * p0.x + 3.0 * mt2 * t * p1.x + 3.0 * mt * t2 * p2.x + t3 * p3.x;
-            let by = mt3 * p0.y + 3.0 * mt2 * t * p1.y + 3.0 * mt * t2 * p2.y + t3 * p3.y;
-
-            // Check if this point is within the line segment bounds
-            let dx = bx - line_start.x;
-            let dy = by - line_start.y;
-            let proj = dx * (line_end.x - line_start.x) + dy * (line_end.y - line_start.y);
-
-            if proj >= 0.0 && proj <= line_len_sq {
-                return true;
+/// The cut paths measure against THIS - the cable as it is drawn, wraps and
+/// all, rather than a direct pin-to-pin chord - so a cable that runs through an
+/// anchor is hit where it actually is.
+///
+/// Curvature is taken as [`EdgeCurve::BezierCubic`]: resolving an edge's own
+/// style needs the theme, which the interaction path does not have. Only a host
+/// that switches an edge to `Line` sees a difference, and only in where the cut
+/// threshold bites.
+fn cable_paths<N, P, UI, Message, Renderer, E>(
+    graph: &NodeGraph<'_, N, P, UI, Message, Renderer, E>,
+    tree: &Tree,
+    layout: Layout<'_>,
+    state: &NodeGraphState,
+) -> Vec<(Vec<usize>, edge_path::EdgePath)>
+where
+    N: NodeId + 'static,
+    P: PinId + 'static,
+    E: EdgeId + 'static,
+    UI: Clone + 'static,
+    Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
+{
+    let geometry = state.orbit_geometry.borrow();
+    let station = |end: &EdgeEnd<N, P>| -> Option<edge_path::Hop> {
+        match end {
+            EdgeEnd::Pin(pin) => {
+                let node_index = graph.node_index(&pin.node_id)?;
+                let (_, (position, _), side) =
+                    pin_by_id::<P, UI>(&tree.children, layout, node_index, &pin.pin_id)?;
+                Some(edge_path::Hop::Pin {
+                    point: [position.x, position.y],
+                    side: side.into(),
+                })
+            }
+            EdgeEnd::Orbit {
+                anchor,
+                orbit,
+                hand,
+            } => {
+                let anchor_index = graph.anchor_index(anchor)?;
+                let center = graph.anchors.get(anchor_index)?.position;
+                let (offset, spacing) = geometry
+                    .get(anchor_index)
+                    .copied()
+                    .unwrap_or((DEFAULT_ORBIT_OFFSET, DEFAULT_ORBIT_SPACING));
+                Some(edge_path::Hop::Wrap {
+                    orbit: edge_path::Orbit {
+                        center: [center.x, center.y],
+                        radius: offset + *orbit as f32 * spacing,
+                    },
+                    hand: *hand,
+                })
             }
         }
-    }
-    false
-}
-
-/// Solves cubic equation ax³ + bx² + cx + d = 0.
-/// Returns up to 3 real roots.
-fn solve_cubic(a: f32, b: f32, c: f32, d: f32) -> Vec<f32> {
-    const EPSILON: f32 = 1e-6;
-
-    // Handle degenerate cases
-    if a.abs() < EPSILON {
-        // Quadratic: bx² + cx + d = 0
-        if b.abs() < EPSILON {
-            // Linear: cx + d = 0
-            if c.abs() < EPSILON {
-                return vec![];
-            }
-            return vec![-d / c];
+    };
+    let orbit_key = |end: &EdgeEnd<N, P>| match end {
+        EdgeEnd::Orbit { anchor, orbit, .. } => {
+            graph.anchor_index(anchor).map(|index| (index, *orbit))
         }
-        let disc = c * c - 4.0 * b * d;
-        if disc < 0.0 {
-            return vec![];
-        }
-        let sqrt_disc = disc.sqrt();
-        return vec![(-c + sqrt_disc) / (2.0 * b), (-c - sqrt_disc) / (2.0 * b)];
-    }
+        EdgeEnd::Pin(_) => None,
+    };
 
-    // Normalize: x³ + px² + qx + r = 0
-    let p = b / a;
-    let q = c / a;
-    let r = d / a;
-
-    // Substitute x = t - p/3 to get depressed cubic: t³ + pt + q = 0
-    let p_new = q - p * p / 3.0;
-    let q_new = 2.0 * p * p * p / 27.0 - p * q / 3.0 + r;
-
-    // Cardano's formula
-    let disc = q_new * q_new / 4.0 + p_new * p_new * p_new / 27.0;
-
-    let offset = -p / 3.0;
-
-    if disc > EPSILON {
-        // One real root
-        let sqrt_disc = disc.sqrt();
-        let u = (-q_new / 2.0 + sqrt_disc).cbrt();
-        let v = (-q_new / 2.0 - sqrt_disc).cbrt();
-        vec![u + v + offset]
-    } else if disc < -EPSILON {
-        // Three real roots (casus irreducibilis)
-        let m = (-p_new / 3.0).sqrt();
-        let theta = (-q_new / (2.0 * m * m * m)).acos() / 3.0;
-        let pi = std::f32::consts::PI;
-        vec![
-            2.0 * m * theta.cos() + offset,
-            2.0 * m * (theta + 2.0 * pi / 3.0).cos() + offset,
-            2.0 * m * (theta + 4.0 * pi / 3.0).cos() + offset,
-        ]
-    } else {
-        // Double or triple root
-        if q_new.abs() < EPSILON {
-            vec![offset]
+    let mut paths = Vec::new();
+    for chain in graph.connection_chains() {
+        let first = &graph.edges[chain[0]];
+        // The chain starts at a pin; which one does not matter for a distance
+        // query, so take `from` unless it is the orbit continuing the chain.
+        let head_is_from = matches!(first.from, EdgeEnd::Pin(_));
+        let (head, tail) = if head_is_from {
+            (&first.from, &first.to)
         } else {
-            let u = (-q_new / 2.0).cbrt();
-            vec![2.0 * u + offset, -u + offset]
+            (&first.to, &first.from)
+        };
+        let Some(head_hop) = station(head) else {
+            continue;
+        };
+        let mut hops = vec![head_hop];
+
+        let mut entry: Option<(usize, u8)> = None;
+        let mut next = Some(tail);
+        for &edge_index in &chain {
+            let end = match next.take() {
+                Some(end) => end,
+                None => {
+                    let edge = &graph.edges[edge_index];
+                    if orbit_key(&edge.from) == entry {
+                        &edge.to
+                    } else {
+                        &edge.from
+                    }
+                }
+            };
+            let Some(hop) = station(end) else { break };
+            let is_wrap = matches!(hop, edge_path::Hop::Wrap { .. });
+            hops.push(hop);
+            if !is_wrap {
+                break;
+            }
+            entry = orbit_key(end);
         }
+
+        paths.push((
+            chain,
+            edge_path::build(&hops, &crate::style::EdgeCurve::BezierCubic),
+        ));
     }
+    paths
 }

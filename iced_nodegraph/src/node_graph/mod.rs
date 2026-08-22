@@ -929,6 +929,69 @@ where
         junctions
     }
 
+    /// One CONNECTION per entry: the edge indices that form a single cable,
+    /// ordered from a pin end through every orbit it wraps.
+    ///
+    /// Two edges sharing an orbit are one cable, so this - not the edge list -
+    /// is the unit that gets drawn, hit-tested and cut. Traversal always starts
+    /// at a pin, since that is where a cable terminates; a chain ending in an
+    /// orbit is a connection the host left open.
+    ///
+    /// An edge whose ends are both orbits, or a ring cycle with no pin at all,
+    /// has no terminus to start from and is skipped: there is nothing to draw
+    /// it relative to.
+    pub(super) fn connection_chains(&self) -> Vec<Vec<usize>> {
+        let junctions = self.orbit_attachments();
+        let orbit_key = |end: &EdgeEnd<N, P>| match end {
+            EdgeEnd::Orbit { anchor, orbit, .. } => {
+                self.anchor_index(anchor).map(|index| (index, *orbit))
+            }
+            EdgeEnd::Pin(_) => None,
+        };
+
+        let mut chains = Vec::new();
+        let mut consumed = vec![false; self.edges.len()];
+        for seed in 0..self.edges.len() {
+            if consumed[seed] {
+                continue;
+            }
+            let edge = &self.edges[seed];
+            // Walk away from a pin end. With two pin ends either would do; the
+            // draw path picks the output side for itself.
+            let mut tail = match (&edge.from, &edge.to) {
+                (EdgeEnd::Pin(_), _) => orbit_key(&edge.to),
+                (_, EdgeEnd::Pin(_)) => orbit_key(&edge.from),
+                _ => continue,
+            };
+            consumed[seed] = true;
+            let mut chain = vec![seed];
+
+            while let Some(key) = tail {
+                let Some(&next) = junctions
+                    .get(&key)
+                    .and_then(|edges| edges.iter().find(|&&e| e != *chain.last().unwrap()))
+                else {
+                    break;
+                };
+                if consumed[next] {
+                    break;
+                }
+                consumed[next] = true;
+                chain.push(next);
+                // Continue through whichever of the partner's ends is not this
+                // junction.
+                let partner = &self.edges[next];
+                tail = if orbit_key(&partner.from) == Some(key) {
+                    orbit_key(&partner.to)
+                } else {
+                    orbit_key(&partner.from)
+                };
+            }
+            chains.push(chain);
+        }
+        chains
+    }
+
     /// The far end of `edge`, given that one of its ends is the orbit `key`.
     pub(super) fn orbit_far_end(
         &self,

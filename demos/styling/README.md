@@ -74,7 +74,13 @@ result next to the rustdoc output in `target/doc/demo_styling/pkg/`.
 ## Library API Exercised
 
 `NodeGraph` with `on_connect` / `on_disconnect` / `on_move` / `on_select` /
-`graph_style`, `node(..).selected(..).style(..).pin_style(..)`, `edge(..)`,
-`PinRef`, `NodeStyle`, `PinStyle`, `GraphStyle`,
-`TilingBackground`, `Pattern`, `NodeStatus`, `PinStatus`, `PinDirection`,
-`PinInfo`, `default_pin_style`, `node_header`, and the `pin!` macro.
+`on_anchor_move` / `graph_style`,
+`node(..).selected(..).style(..).pin_style(..)`, `edge(..)`,
+`anchor(..).style(..)`, `EdgeEnd` / `Hand` endpoints,
+`PinRef`, `NodeStyle`, `PinStyle`, `AnchorStyle`, `GraphStyle`,
+`TilingBackground`, `Pattern`, `NodeStatus`, `PinStatus`, `AnchorStatus`,
+`PinDirection`, `PinInfo`, `default_pin_style`, `default_anchor_style`,
+`node_header`, and the `pin!` macro.
+
+Two of its connections run through a routing anchor: each is a PAIR of edges
+joined at one orbit, which the widget draws as a single cable.
