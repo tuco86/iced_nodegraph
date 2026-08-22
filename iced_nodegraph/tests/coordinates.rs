@@ -14,6 +14,7 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::Duration;
 
 use iced::advanced::renderer::Renderer as _;
 use iced::advanced::widget::{Tree, Widget};
@@ -23,7 +24,7 @@ use iced::touch;
 use iced::{Background, Color, Element, Length, Point, Rectangle, Size, Theme, Vector};
 use iced_wgpu::core::clipboard;
 
-use iced_nodegraph::{NodeGraph, node};
+use iced_nodegraph::{Easing, FocusAnimation, FocusOptions, FocusTarget, NodeGraph, node};
 
 mod common;
 
@@ -816,6 +817,23 @@ fn key_press(c: char, code: keyboard::key::Code, modifiers: keyboard::Modifiers)
     })
 }
 
+fn named_key_press(
+    named: keyboard::key::Named,
+    code: keyboard::key::Code,
+    modifiers: keyboard::Modifiers,
+) -> iced::Event {
+    let key = keyboard::Key::Named(named);
+    iced::Event::Keyboard(keyboard::Event::KeyPressed {
+        key: key.clone(),
+        modified_key: key,
+        physical_key: keyboard::key::Physical::Code(code),
+        location: keyboard::Location::Standard,
+        modifiers,
+        text: None,
+        repeat: false,
+    })
+}
+
 /// Builds a two-node graph, feeds it `events` (each with its cursor), and
 /// returns every message the widget published.
 fn run_events<Msg: 'static>(
@@ -1286,4 +1304,397 @@ fn the_corner_of_a_non_resizable_node_reports_no_cursor() {
         interaction_at(GRIP_ORIGIN, GRIP_CAMERA, GRIP_ZOOM, cursor, false),
         mouse::Interaction::default(),
     );
+}
+
+// ---------------------------------------------------------------------------
+// Fit-to-view: the `Home`/`f` keymap actions and the declarative `.focus()`
+// prop. Both resolve a `FocusTarget` against live layout and drive the camera
+// through the same fit math; the pure math is covered next to it in
+// `node_graph::camera`. What these pin is the widget path: what reaches
+// `on_pan`, and when nothing may.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn frame_all_keypress_emits_on_pan() {
+    // `Home` carries the same default `FocusOptions` as `.focus()` (a 300ms
+    // tween), so the press only starts the tween; the first `RedrawRequested`
+    // after it advances the tween and commits through `on_pan`. The message
+    // count is deterministic even though the tick's camera value is
+    // wall-clock timed.
+    let graph: Graph<(Point, f32)> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .on_pan(|position, zoom| (position, zoom));
+
+    let msgs = run_events(
+        graph,
+        &[
+            (
+                named_key_press(
+                    keyboard::key::Named::Home,
+                    keyboard::key::Code::Home,
+                    keyboard::Modifiers::empty(),
+                ),
+                mouse::Cursor::Unavailable,
+            ),
+            (
+                iced::Event::Window(iced::window::Event::RedrawRequested(
+                    iced::time::Instant::now(),
+                )),
+                mouse::Cursor::Unavailable,
+            ),
+        ],
+    );
+    assert_eq!(
+        msgs.len(),
+        1,
+        "Home must start a tween that commits exactly one on_pan on the next redraw: {msgs:?}"
+    );
+}
+
+#[test]
+fn frame_selection_with_nothing_selected_is_a_noop() {
+    // Bare `f` with an empty selection resolves no AABB: no camera change and
+    // no `on_pan`, mirroring Blender's "View Selected" on an empty pick.
+    let graph: Graph<(Point, f32)> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .on_pan(|position, zoom| (position, zoom));
+
+    let msgs = run_events(
+        graph,
+        &[(
+            key_press('f', keyboard::key::Code::KeyF, keyboard::Modifiers::empty()),
+            mouse::Cursor::Unavailable,
+        )],
+    );
+    assert!(
+        msgs.is_empty(),
+        "frame-selection with nothing selected must be a no-op: {msgs:?}"
+    );
+}
+
+#[test]
+fn frame_all_without_on_pan_falls_through_unconsumed() {
+    // No `on_pan`: the widget cannot commit a fit, so `Home` must not be
+    // swallowed - the same gating `CloneSelection` has without `on_clone`.
+    let graph: Graph<()> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0));
+
+    let msgs = run_events(
+        graph,
+        &[(
+            named_key_press(
+                keyboard::key::Named::Home,
+                keyboard::key::Code::Home,
+                keyboard::Modifiers::empty(),
+            ),
+            mouse::Cursor::Unavailable,
+        )],
+    );
+    assert!(
+        msgs.is_empty(),
+        "Home without on_pan must publish nothing: {msgs:?}"
+    );
+}
+
+#[test]
+fn focus_seq_dedups_and_new_seq_retriggers() {
+    // Deterministic jump path (`animation: None`): `.focus()` fits exactly once
+    // per new `seq`, however many rebuilds carry the same value, and fits again
+    // the moment `seq` changes - the same nonce discipline as
+    // `view()`/`last_synced_view`. Rebuilds a fresh `NodeGraph` per call while
+    // reusing one `Tree`, exactly as an app re-running `view()` every frame
+    // over persistent widget state.
+    let jump_opts = FocusOptions {
+        animation: None,
+        ..FocusOptions::default()
+    };
+    let build = |seq: u64| -> Graph<(Point, f32)> {
+        let mut graph = NodeGraph::default()
+            .width(Length::Fixed(400.0))
+            .height(Length::Fixed(400.0))
+            .on_pan(|position, zoom| (position, zoom))
+            .focus(seq, FocusTarget::All, jump_opts.clone());
+        graph.push_node(node(
+            0_usize,
+            Point::new(10.0, 10.0),
+            Element::from(ContentProbe),
+        ));
+        graph.push_node(node(
+            1_usize,
+            Point::new(120.0, 10.0),
+            Element::from(ContentProbe),
+        ));
+        graph
+    };
+
+    let mut graph = build(1);
+    let mut tree = Tree::new(&graph as &dyn Widget<(Point, f32), Theme, Recorder>);
+    let renderer = Recorder::detached();
+    let layout_node = graph.layout(
+        &mut tree,
+        &renderer,
+        &layout::Limits::new(Size::ZERO, Size::new(1024.0, 768.0)),
+    );
+    let layout = Layout::new(&layout_node);
+    let viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
+    let mut clipboard = clipboard::Null;
+    let no_op_event = iced::Event::Mouse(mouse::Event::CursorMoved {
+        position: Point::ORIGIN,
+    });
+    let mut msgs: Vec<(Point, f32)> = Vec::new();
+
+    let mut send =
+        |graph: &mut Graph<(Point, f32)>, tree: &mut Tree, msgs: &mut Vec<(Point, f32)>| {
+            let mut shell = iced_wgpu::core::Shell::new(msgs);
+            graph.update(
+                tree,
+                &no_op_event,
+                layout,
+                mouse::Cursor::Unavailable,
+                &renderer,
+                &mut clipboard,
+                &mut shell,
+                &viewport,
+            );
+        };
+
+    send(&mut graph, &mut tree, &mut msgs);
+    assert_eq!(msgs.len(), 1, "seq 1 must fit once: {msgs:?}");
+
+    // Same seq again, rebuilt as a real app does every frame: deduped.
+    graph = build(1);
+    send(&mut graph, &mut tree, &mut msgs);
+    assert_eq!(msgs.len(), 1, "repeating seq 1 must dedup: {msgs:?}");
+
+    // New seq: fits again.
+    graph = build(2);
+    send(&mut graph, &mut tree, &mut msgs);
+    assert_eq!(msgs.len(), 2, "seq 2 must re-trigger the fit: {msgs:?}");
+}
+
+/// Like [`run_events`], but also returns each event's resulting
+/// [`iced::window::RedrawRequest`].
+///
+/// The plain harness drops the `Shell` after every event, which hides redraw
+/// scheduling entirely - and scheduling is load-bearing for the focus tween:
+/// `UserInterface::update` rebuilds `redraw_request` from `Wait` on every pass
+/// and iced_winit's redraw loop keeps only the LAST pass's state, so a tween
+/// that fails to re-assert the request on a re-entrant pass never gets another
+/// frame.
+fn run_events_collecting_redraw<Msg: 'static>(
+    mut graph: Graph<Msg>,
+    events: &[(iced::Event, mouse::Cursor)],
+) -> (Vec<Msg>, Vec<iced::window::RedrawRequest>) {
+    graph.push_node(node(
+        0_usize,
+        Point::new(10.0, 10.0),
+        Element::from(ContentProbe),
+    ));
+    graph.push_node(node(
+        1_usize,
+        Point::new(120.0, 10.0),
+        Element::from(ContentProbe),
+    ));
+
+    let mut tree = Tree::new(&graph as &dyn Widget<Msg, Theme, Recorder>);
+    let renderer = Recorder::detached();
+    let layout_node = graph.layout(
+        &mut tree,
+        &renderer,
+        &layout::Limits::new(Size::ZERO, Size::new(1024.0, 768.0)),
+    );
+    let layout = Layout::new(&layout_node);
+    let viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
+
+    let mut msgs: Vec<Msg> = Vec::new();
+    let mut requests = Vec::new();
+    let mut clipboard = clipboard::Null;
+    for (event, cursor) in events {
+        let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
+        graph.update(
+            &mut tree,
+            event,
+            layout,
+            *cursor,
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+        requests.push(shell.redraw_request());
+    }
+    (msgs, requests)
+}
+
+#[test]
+fn reentrant_redraw_still_requests_the_next_frame() {
+    // A re-entrant pass must stay SILENT but must still keep the animation
+    // scheduled. `UserInterface::update` rebuilds `redraw_request` from `Wait`
+    // on every pass and iced_winit's redraw loop breaks with the LAST pass's
+    // state, so a guard that skips `request_redraw()` too throws away the
+    // request pass 1 made and no further frame is ever scheduled. Observable
+    // symptom: the camera advances exactly one tween step per triggering event
+    // and then stops, creeping toward the target one keypress at a time.
+    let graph: Graph<(Point, f32)> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .on_pan(|position, zoom| (position, zoom))
+        .focus(1, FocusTarget::All, FocusOptions::default());
+
+    // Two passes of ONE frame: the second is re-entrant (same `Instant`). The
+    // default 300ms animation is nowhere near done after a single frame, so
+    // both passes must leave a redraw scheduled.
+    let same_instant = iced::time::Instant::now();
+    let redraw = || {
+        (
+            iced::Event::Window(iced::window::Event::RedrawRequested(same_instant)),
+            mouse::Cursor::Unavailable,
+        )
+    };
+    let (msgs, requests) = run_events_collecting_redraw(graph, &[redraw(), redraw()]);
+
+    assert_eq!(msgs.len(), 1, "only the first pass may publish: {msgs:?}");
+    assert_eq!(
+        requests,
+        vec![
+            iced::window::RedrawRequest::NextFrame,
+            iced::window::RedrawRequest::NextFrame
+        ],
+        "a live tween must keep the next frame scheduled on EVERY pass, \
+         including the silent re-entrant one - iced keeps only the last",
+    );
+}
+
+#[test]
+fn tween_converges_under_simulated_iced_redraw_loop() {
+    // End-to-end model of the loop the widget lives in, because the per-event
+    // tests cannot see a stall: iced_winit re-runs `UserInterface::update` for
+    // one `RedrawRequested` while a pass keeps producing messages (max 3
+    // passes), then schedules the next frame ONLY if the LAST pass asked for
+    // one. Reproducing that termination rule is the difference between "the
+    // tween publishes a value" and "the tween actually animates".
+    let mut graph: Graph<(Point, f32)> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .on_pan(|position, zoom| (position, zoom))
+        .focus(
+            1,
+            FocusTarget::All,
+            FocusOptions {
+                animation: Some(FocusAnimation {
+                    duration: Duration::from_millis(300),
+                    easing: Easing::EaseInOutCubic,
+                }),
+                ..FocusOptions::default()
+            },
+        );
+    graph.push_node(node(
+        0_usize,
+        Point::new(10.0, 10.0),
+        Element::from(ContentProbe),
+    ));
+    graph.push_node(node(
+        1_usize,
+        Point::new(120.0, 10.0),
+        Element::from(ContentProbe),
+    ));
+
+    let mut tree = Tree::new(&graph as &dyn Widget<(Point, f32), Theme, Recorder>);
+    let renderer = Recorder::detached();
+    let layout_node = graph.layout(
+        &mut tree,
+        &renderer,
+        &layout::Limits::new(Size::ZERO, Size::new(1024.0, 768.0)),
+    );
+    let layout = Layout::new(&layout_node);
+    let viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
+    let mut clipboard = clipboard::Null;
+
+    let mut msgs: Vec<(Point, f32)> = Vec::new();
+    let mut frame_at = iced::time::Instant::now();
+    let mut frames = 0;
+
+    // 60fps for well past the 300ms duration; the loop is expected to stop
+    // itself once the tween finishes and stops asking for frames.
+    for _ in 0..60 {
+        let event = iced::Event::Window(iced::window::Event::RedrawRequested(frame_at));
+        let mut scheduled_next_frame = false;
+
+        // iced's inner pass loop: repeat while a pass produced a message,
+        // capped at 3 passes. The LAST pass's request is the one that counts.
+        for _ in 0..3 {
+            let before = msgs.len();
+            let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
+            graph.update(
+                &mut tree,
+                &event,
+                layout,
+                mouse::Cursor::Unavailable,
+                &renderer,
+                &mut clipboard,
+                &mut shell,
+                &viewport,
+            );
+            scheduled_next_frame = shell.redraw_request() == iced::window::RedrawRequest::NextFrame;
+            if msgs.len() == before {
+                break;
+            }
+        }
+
+        frames += 1;
+        if !scheduled_next_frame {
+            break;
+        }
+        frame_at += Duration::from_millis(16);
+    }
+
+    // A 300ms tween at 60fps needs ~19 frames. One frame means the stall is
+    // back: the camera would jump a single easing step per triggering event.
+    assert!(
+        frames > 15,
+        "tween must keep scheduling frames for its whole duration, ran {frames}",
+    );
+    assert!(
+        frames < 60,
+        "tween must stop scheduling frames once finished, ran {frames}",
+    );
+
+    // And it must land exactly on the fit target, not merely near it. The jump
+    // path (`animation: None`) commits that target through the same public
+    // route in one message - ground truth without restating node geometry.
+    let jump_graph: Graph<(Point, f32)> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .on_pan(|position, zoom| (position, zoom))
+        .focus(
+            1,
+            FocusTarget::All,
+            FocusOptions {
+                animation: None,
+                ..FocusOptions::default()
+            },
+        );
+    let target = *run_events(
+        jump_graph,
+        &[(
+            iced::Event::Mouse(mouse::Event::CursorMoved {
+                position: Point::ORIGIN,
+            }),
+            mouse::Cursor::Unavailable,
+        )],
+    )
+    .first()
+    .expect("jump path must commit the fit target");
+
+    let (final_position, final_zoom) = *msgs.last().expect("tween must publish");
+    assert!(
+        (final_position.x - target.0.x).abs() < 1e-2
+            && (final_position.y - target.0.y).abs() < 1e-2,
+        "final {final_position:?} must equal fit target {:?}",
+        target.0,
+    );
+    assert!((final_zoom - target.1).abs() < 1e-4);
 }

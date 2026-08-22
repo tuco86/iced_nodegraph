@@ -19,6 +19,10 @@ pub enum KeyAction {
     CloneSelection,
     /// Remove the selected nodes (and their incident edges).
     DeleteSelection,
+    /// Fit the camera to frame every node.
+    FrameAll,
+    /// Fit the camera to frame the current selection.
+    FrameSelection,
 }
 
 /// The logical key half of a [`KeyCombo`].
@@ -129,6 +133,11 @@ pub struct Keymap {
     /// Removes the selected nodes. Any combo in this list triggers the
     /// action; an empty list disables the shortcut.
     pub delete_selection: Vec<KeyCombo>,
+    /// Fits the camera to frame every node. `None` disables the shortcut.
+    pub frame_all: Option<KeyCombo>,
+    /// Fits the camera to frame the current selection (a no-op when nothing
+    /// is selected). `None` disables the shortcut.
+    pub frame_selection: Option<KeyCombo>,
     /// The pointer button that pans the graph.
     pub pan_button: mouse::Button,
     /// The modifier state that starts an edge-cutting drag.
@@ -176,6 +185,8 @@ impl Default for Keymap {
             clear_selection: Some(KeyCombo::bare(ComboKey::Named(Named::Escape))),
             clone_selection,
             delete_selection,
+            frame_all: Some(KeyCombo::bare(ComboKey::Named(Named::Home))),
+            frame_selection: Some(KeyCombo::bare(ComboKey::Char('f'))),
             pan_button: mouse::Button::Right,
             edge_cut_modifiers: Modifiers::COMMAND,
             multi_select_modifiers: Modifiers::SHIFT,
@@ -195,6 +206,8 @@ impl Keymap {
             clear_selection: None,
             clone_selection: None,
             delete_selection: Vec::new(),
+            frame_all: None,
+            frame_selection: None,
             ..Self::default()
         }
     }
@@ -202,8 +215,8 @@ impl Keymap {
     /// Resolves a key press to the [`KeyAction`] it triggers, if any.
     ///
     /// Checks bindings in field order (`select_all`, `clear_selection`,
-    /// `clone_selection`, then `delete_selection`) and returns the first
-    /// match.
+    /// `clone_selection`, `delete_selection`, `frame_all`, then
+    /// `frame_selection`) and returns the first match.
     pub fn key_action(
         &self,
         key: &Key,
@@ -228,6 +241,12 @@ impl Keymap {
             .any(|combo| combo.matches(key, physical, modifiers))
         {
             return Some(KeyAction::DeleteSelection);
+        }
+        if hit(self.frame_all) {
+            return Some(KeyAction::FrameAll);
+        }
+        if hit(self.frame_selection) {
+            return Some(KeyAction::FrameSelection);
         }
 
         None
@@ -369,6 +388,47 @@ mod tests {
         assert_eq!(
             keymap.key_action(&escape, Physical::Code(Code::Escape), Modifiers::empty()),
             Some(KeyAction::ClearSelection)
+        );
+    }
+
+    #[test]
+    fn frame_all_resolves_from_bare_home() {
+        let keymap = Keymap::default();
+        let key = Key::Named(Named::Home);
+        let physical = Physical::Code(Code::Home);
+
+        assert_eq!(
+            keymap.key_action(&key, physical, Modifiers::empty()),
+            Some(KeyAction::FrameAll)
+        );
+    }
+
+    #[test]
+    fn frame_selection_resolves_from_bare_f() {
+        let keymap = Keymap::default();
+        let key = Key::Character("f".into());
+        let physical = Physical::Code(Code::KeyF);
+
+        assert_eq!(
+            keymap.key_action(&key, physical, Modifiers::empty()),
+            Some(KeyAction::FrameSelection)
+        );
+    }
+
+    #[test]
+    fn none_disables_frame_shortcuts_too() {
+        let keymap = Keymap::none();
+
+        let home = Key::Named(Named::Home);
+        assert_eq!(
+            keymap.key_action(&home, Physical::Code(Code::Home), Modifiers::empty()),
+            None
+        );
+
+        let f = Key::Character("f".into());
+        assert_eq!(
+            keymap.key_action(&f, Physical::Code(Code::KeyF), Modifiers::empty()),
+            None
         );
     }
 }

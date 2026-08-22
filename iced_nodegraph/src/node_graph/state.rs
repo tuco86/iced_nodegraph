@@ -9,13 +9,41 @@
 //! only selection value kept here is `pending_selection`, the reported-but-not-
 //! yet-applied working copy, guarded by `selection_baseline`.
 
+use super::Easing;
 use super::GraphInfo;
 use super::camera::Camera2D;
 use super::euclid::{IntoEuclid, LayoutPoint, WorldPoint};
-use iced_widget::core::{Layout, Point, Size, keyboard, touch};
+use iced_widget::core::{Layout, Padding, Point, Size, keyboard, touch};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use web_time::Instant;
+
+/// In-flight camera animation started by
+/// [`NodeGraph::focus`](super::NodeGraph::focus) or a keymap frame action
+/// (`Home`/`f`), advanced once per `RedrawRequested` frame in `update()`.
+/// Center-based interpolation with geometric zoom; `position` is
+/// recomputed each frame from `center`/`zoom` via
+/// [`Camera2D::position_for_center`], using the `viewport`/`padding` frozen
+/// at tween start, so the focused content stays centered throughout.
+///
+/// Arbitration: user input aborts a running tween; the tween in turn
+/// suppresses the routine `view()` sync while it runs, except for an
+/// explicit app override that pushes a `view()` differing from the
+/// tween's own last emission (see the `view()`-sync block in `update.rs`).
+#[derive(Debug, Clone, Copy)]
+pub(super) struct CameraTween {
+    pub(super) start_center: WorldPoint,
+    pub(super) start_zoom: f32,
+    pub(super) end_center: WorldPoint,
+    pub(super) end_zoom: f32,
+    /// Viewport size frozen at tween start.
+    pub(super) viewport: Size,
+    /// Padding frozen at tween start.
+    pub(super) padding: Padding,
+    pub(super) elapsed: f32,
+    pub(super) duration: f32,
+    pub(super) easing: Easing,
+}
 
 /// What the pointer is currently dragging, with the anchor captured at press.
 ///
@@ -96,6 +124,20 @@ pub(super) struct NodeGraphState {
     /// back into `view`" (syncing would clobber it). Selection needs no such
     /// guard: it is not state here at all, it travels on each [`Node`].
     pub(super) last_synced_view: Option<(Point, f32)>,
+    /// In-flight camera tween started by `NodeGraph::focus` or a keymap
+    /// frame action. `None` when the camera is not currently animating.
+    pub(super) camera_tween: Option<CameraTween>,
+    /// Last `seq` from `NodeGraph::focus` that was processed (fit performed
+    /// or resolved to a no-op). Nonce dedup, mirroring `last_synced_view`.
+    pub(super) last_focus_seq: Option<u64>,
+    /// Timestamp of the last `RedrawRequested` event the focus tween advanced
+    /// against, distinct from `last_update` (which times every animation).
+    /// Two jobs: it derives the tween's delta from the redraw event's OWN
+    /// timestamp, because iced dispatches non-redraw events in a separate
+    /// pass whose delta would otherwise starve the tween; and an equal
+    /// timestamp identifies a RE-ENTRANT pass of the same redraw cycle, which
+    /// must neither advance the clock nor publish again.
+    pub(super) last_redraw: Option<Instant>,
     /// Set during draw() when any SDF primitive has active animations.
     /// Read during update() to drive continuous redraws via shell.request_redraw().
     pub(super) sdf_animated: Cell<bool>,
@@ -130,6 +172,9 @@ impl Default for NodeGraphState {
             modifiers: keyboard::Modifiers::default(),
             valid_drop_targets: HashSet::new(),
             last_synced_view: None,
+            camera_tween: None,
+            last_focus_seq: None,
+            last_redraw: None,
             sdf_animated: Cell::new(false),
             last_info: RefCell::new(None),
             node_z: HashMap::new(),

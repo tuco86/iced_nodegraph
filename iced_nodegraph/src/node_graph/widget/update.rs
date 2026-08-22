@@ -7,8 +7,10 @@
 //! each comparison, so the on-screen hit target is constant at any zoom.
 
 use super::*;
+use crate::node_graph::camera::Camera2D;
+use crate::node_graph::euclid::{WorldRect, WorldSize};
 use crate::node_graph::input::KeyAction;
-use crate::node_graph::{EDGE_CUT_THRESHOLD, PIN_CLICK_THRESHOLD};
+use crate::node_graph::{EDGE_CUT_THRESHOLD, FocusOptions, FocusTarget, PIN_CLICK_THRESHOLD};
 use iced_widget::core::{touch, window};
 use std::collections::HashSet;
 
@@ -71,11 +73,14 @@ where
             && state.last_synced_view != Some(view)
         {
             let (position, zoom) = view;
-            state.camera = crate::node_graph::camera::Camera2D::with_zoom_and_position(
-                zoom,
-                WorldPoint::new(position.x, position.y),
-            );
+            state.camera =
+                Camera2D::with_zoom_and_position(zoom, WorldPoint::new(position.x, position.y));
             state.last_synced_view = Some(view);
+            // An explicit view() the running tween did not just emit is an
+            // app override: it wins and cancels the tween (arbitration rule:
+            // explicit view() > user input > running tween > routine sync).
+            // A no-op when no tween is running.
+            state.camera_tween = None;
         }
 
         // Refresh the viewport origin so screen->layout mapping (cursor hit-tests,
@@ -104,6 +109,24 @@ where
         let selection = self.resolved_selection(state);
         let z_indices = z_render_indices(state, self.nodes.len(), |i| selection.contains(&i));
 
+        // Declarative programmatic focus (`NodeGraph::focus`): resolve the
+        // target from live layout and perform the fit exactly once per new
+        // `seq` (nonce dedup), mirroring the `view()` / `last_synced_view`
+        // pattern above. Unlike the keymap frame actions below this is not
+        // gated on `on_pan`: an uncontrolled graph (no `view()`/`on_pan`
+        // round trip) can still use `.focus()` to frame content once, since
+        // the camera lives in `state` regardless of whether the host
+        // observes it (`begin_focus` only *publishes* through `on_pan` when
+        // a handler is set).
+        if let Some((seq, target, opts)) = &self.focus
+            && state.last_focus_seq != Some(*seq)
+        {
+            state.last_focus_seq = Some(*seq);
+            if let Some(world_aabb) = resolve_focus_target(self, layout, state, target) {
+                self.begin_focus(state, world_aabb, layout.bounds().size(), opts, shell);
+            }
+        }
+
         // Update time for animations
         // Cap delta to prevent large time jumps when app is in background
         let now = Instant::now();
@@ -111,14 +134,13 @@ where
         if let Some(last_update) = state.last_update {
             let delta = now.duration_since(last_update).as_secs_f32();
             // Cap at 100ms to prevent freeze after background
-            let capped_delta = delta.min(0.1);
-            state.time += capped_delta;
+            state.time += delta.min(0.1);
         }
         state.last_update = Some(now);
 
         // On each frame, drive continuous redraws for SDF animations and deliver
         // the diagnostics measured during the previous draw().
-        if let Event::Window(window::Event::RedrawRequested(_)) = event {
+        if let Event::Window(window::Event::RedrawRequested(redraw_at)) = event {
             if state.sdf_animated.get() {
                 shell.request_redraw();
             }
@@ -130,6 +152,83 @@ where
                     shell.publish(handler(info));
                 }
                 shell.request_redraw();
+            }
+
+            // Advance the focus/frame tween (if any): center-based
+            // interpolation with geometric zoom, position recomputed each
+            // frame from the frozen viewport/padding via the fit formula so
+            // the focused content stays centered throughout. Commits
+            // through `on_pan` every frame and keeps `last_synced_view` in
+            // step with what it just emitted, so the view()-sync above
+            // neither fights it (routine sync suppressed) nor clobbers it
+            // once done (arbitration rules above).
+            //
+            // Driven by the REDRAW EVENT'S OWN timestamp (`redraw_at`), not
+            // `frame_delta`: iced_winit dispatches non-redraw events (e.g.
+            // CursorMoved) in a separate update pass that runs immediately
+            // before the redraw pass each frame, so `frame_delta` is
+            // whichever event reached `update()` first -- often near-zero
+            // for the redraw pass once anything else is in flight that
+            // frame, which would stall the tween. `last_redraw` also flags
+            // a RE-ENTRANT pass of the SAME `RedrawRequested` cycle:
+            // iced_winit re-runs the redraw update (reusing one `Instant`
+            // for every pass) up to three times while a pass keeps
+            // invalidating layout, and advancing/publishing again there
+            // would both warp the tween's clock (near-zero elapsed) and
+            // publish a second `on_pan` whose value disagrees with
+            // `last_synced_view` in the low f32 bits -- which the
+            // view()-sync block above would then mistake for an app
+            // override and snap the camera back, aborting the tween.
+            let is_reentrant_redraw = state.last_redraw == Some(*redraw_at);
+            let redraw_delta = state
+                .last_redraw
+                .map(|last| redraw_at.duration_since(last).as_secs_f32().min(0.1))
+                .unwrap_or(0.0);
+            state.last_redraw = Some(*redraw_at);
+
+            if is_reentrant_redraw {
+                // A re-entrant pass must not advance or publish, but it MUST
+                // still re-assert the redraw request. `UserInterface::update`
+                // rebuilds `redraw_request` from `Wait` on every pass
+                // (iced_runtime/src/user_interface.rs:193) and the winit
+                // redraw loop keeps only the LAST pass's state, so a request
+                // made by the first pass is discarded the moment a second
+                // pass stays silent -- the tween would then advance exactly
+                // one frame per triggering event and stall, creeping toward
+                // the target one keypress at a time instead of animating.
+                if state.camera_tween.is_some() {
+                    shell.request_redraw();
+                }
+            } else if let Some(tween) = state.camera_tween.as_mut() {
+                tween.elapsed += redraw_delta;
+                let t = if tween.duration > 0.0 {
+                    (tween.elapsed / tween.duration).clamp(0.0, 1.0)
+                } else {
+                    1.0
+                };
+                let e = tween.easing.apply(t);
+                let center = WorldPoint::new(
+                    tween.start_center.x + (tween.end_center.x - tween.start_center.x) * e,
+                    tween.start_center.y + (tween.end_center.y - tween.start_center.y) * e,
+                );
+                let zoom = tween.start_zoom * (tween.end_zoom / tween.start_zoom).powf(e);
+                let position =
+                    Camera2D::position_for_center(center, zoom, tween.viewport, tween.padding);
+                let viewport_origin = state.camera.viewport_origin();
+                state.camera = Camera2D::with_zoom_and_position(zoom, position)
+                    .with_viewport_origin(viewport_origin);
+
+                let view = (Point::new(position.x, position.y), zoom);
+                if let Some(handler) = self.on_pan.as_ref() {
+                    shell.publish(handler(view.0, view.1));
+                }
+                state.last_synced_view = Some(view);
+
+                if t < 1.0 {
+                    shell.request_redraw();
+                } else {
+                    state.camera_tween = None;
+                }
             }
         }
 
@@ -202,6 +301,9 @@ where
             #[cfg(not(target_arch = "wasm32"))]
             let zoom_delta = scroll_amount * 0.01 * state.camera.zoom();
 
+            // User-driven zoom aborts a running focus tween (arbitration:
+            // user input beats a tween).
+            state.camera_tween = None;
             state.camera = state.camera.zoom_at(cursor_pos, zoom_delta);
 
             // Commit the new camera (zoom shifts position too).
@@ -376,6 +478,50 @@ where
                         ctx.shell.request_redraw();
                     }
 
+                    // Frame-all / frame-selection: same after-children
+                    // dispatch position as DeleteSelection (a focused text
+                    // input consumes Home/f first). Gated on on_pan (like
+                    // Clone on on_clone): without a handler the fit cannot
+                    // be committed, so the key falls through unconsumed
+                    // instead of being silently swallowed. Event capture
+                    // only fires on an actual fit -- an unresolvable target
+                    // (e.g. frame-selection with nothing selected) is a
+                    // no-op that also lets the key fall through, mirroring
+                    // Clone's empty-selection guard above.
+                    if let Event::Keyboard(keyboard::Event::KeyPressed {
+                        key,
+                        physical_key,
+                        modifiers,
+                        ..
+                    }) = event
+                        && self.on_pan.as_ref().is_some()
+                    {
+                        let frame_target =
+                            match self.keymap.key_action(key, *physical_key, *modifiers) {
+                                Some(KeyAction::FrameAll) => Some(FocusTarget::All),
+                                Some(KeyAction::FrameSelection) => Some(FocusTarget::Selection),
+                                _ => None,
+                            };
+                        // `state` is re-derived here rather than held from the
+                        // top of the closure: the drag dispatch above needs
+                        // `&mut ctx`, and one long-lived borrow of `ctx.tree`
+                        // across it would conflict with every handler call.
+                        let state = ctx.tree.state.downcast_mut::<NodeGraphState>();
+                        if let Some(target) = frame_target
+                            && let Some(world_aabb) =
+                                resolve_focus_target(self, layout, state, &target)
+                        {
+                            self.begin_focus(
+                                state,
+                                world_aabb,
+                                layout.bounds().size(),
+                                &FocusOptions::default(),
+                                ctx.shell,
+                            );
+                            ctx.shell.capture_event();
+                        }
+                    }
+
                     // Only process mouse events if cursor is within our bounds
                     if !screen_cursor.is_over(layout.bounds()) {
                         return;
@@ -473,6 +619,9 @@ where
                     let next_mid =
                         Point::new((next.0.x + next.1.x) / 2.0, (next.0.y + next.1.y) / 2.0);
 
+                    // User-driven pinch aborts a running focus tween
+                    // (arbitration: user input beats a tween).
+                    state.camera_tween = None;
                     if prev_distance > 1.0 && next_distance > 1.0 {
                         let zoom_delta =
                             (next_distance / prev_distance - 1.0) * state.camera.zoom();
@@ -1552,6 +1701,9 @@ where
             // touch expectation; a tap (no travel) clears the selection on
             // lift instead (see `apply_touch`).
             if !state.fingers.is_empty() {
+                // User-driven pan aborts a running focus tween (arbitration:
+                // user input beats a tween).
+                state.camera_tween = None;
                 // A pan anchor is compared against the raw screen cursor, so it
                 // is a world point: fold the viewport origin back out of the
                 // layout-absolute press position first.
@@ -1596,9 +1748,125 @@ where
                 .screen_to_world()
                 .transform_point(cursor_position);
             let state = tree.state.downcast_mut::<NodeGraphState>();
+            // User-driven pan aborts a running focus tween (arbitration:
+            // user input beats a tween).
+            state.camera_tween = None;
             state.dragging = Dragging::Graph(cursor_position.into_euclid());
             shell.capture_event();
         }
+    }
+
+    /// Starts a fit toward `world_aabb`: a tween when `opts.animation` is
+    /// set with a positive duration, otherwise an immediate jump. Replaces
+    /// any running tween (new focus/frame always wins, arbitration rule 1).
+    /// The jump commits through `on_pan` immediately, like any other camera
+    /// change; the tween commits once per `RedrawRequested` frame (see the
+    /// tween-advance block in `update_impl`).
+    fn begin_focus(
+        &self,
+        state: &mut NodeGraphState,
+        world_aabb: WorldRect,
+        viewport: Size,
+        opts: &FocusOptions,
+        shell: &mut Shell<'_, Message>,
+    ) {
+        let (end_position, end_zoom) = Camera2D::fit(world_aabb, viewport, opts);
+        let viewport_origin = state.camera.viewport_origin();
+
+        let jump = match opts.animation {
+            None => true,
+            Some(anim) => anim.duration.as_secs_f32() <= 0.0,
+        };
+
+        if jump {
+            state.camera_tween = None;
+            state.camera = Camera2D::with_zoom_and_position(end_zoom, end_position)
+                .with_viewport_origin(viewport_origin);
+            if let Some(handler) = self.on_pan.as_ref() {
+                shell.publish(handler(
+                    Point::new(end_position.x, end_position.y),
+                    end_zoom,
+                ));
+            }
+        } else if let Some(anim) = opts.animation {
+            let start_center = Camera2D::center_for_position(
+                state.camera.position(),
+                state.camera.zoom(),
+                viewport,
+                opts.padding,
+            );
+            state.camera_tween = Some(CameraTween {
+                start_center,
+                start_zoom: state.camera.zoom(),
+                end_center: world_aabb.center(),
+                end_zoom,
+                viewport,
+                padding: opts.padding,
+                elapsed: 0.0,
+                duration: anim.duration.as_secs_f32(),
+                easing: anim.easing,
+            });
+        }
+        shell.request_redraw();
+    }
+}
+
+/// Resolves a [`FocusTarget`] to a world-space AABB using live layout, or
+/// `None` for an unknown/empty target -- a no-op per the design (no camera
+/// change, no `on_pan`): an unresolvable id is skipped, `All`/`Selection`
+/// with nothing to union is empty, `Nodes`/`Edges` union whatever resolves.
+fn resolve_focus_target<N, P, E, UI, Message, Renderer>(
+    graph: &NodeGraph<'_, N, P, UI, Message, Renderer, E>,
+    layout: Layout<'_>,
+    state: &NodeGraphState,
+    target: &FocusTarget<N, E>,
+) -> Option<WorldRect>
+where
+    N: NodeId + 'static,
+    P: PinId + 'static,
+    E: EdgeId + 'static,
+    UI: Clone + 'static,
+    Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
+{
+    // Node layout bounds are layout-absolute (`viewport_origin + world`,
+    // unzoomed - layout runs before the camera transform), and the fit math
+    // works in world coordinates, so every rect folds the origin back out
+    // through the camera's single conversion.
+    let node_rect = |index: usize| -> Option<WorldRect> {
+        let b = layout.children().nth(index)?.bounds();
+        let origin = state.camera.layout_to_world(LayoutPoint::new(b.x, b.y));
+        Some(WorldRect::new(origin, WorldSize::new(b.width, b.height)))
+    };
+    let union_of = |rects: &mut dyn Iterator<Item = WorldRect>| rects.reduce(|a, b| a.union(&b));
+    // An edge's frame target is the union of its two endpoint nodes' bounds
+    // (seeing a connection means seeing both ends it connects); either
+    // endpoint failing to resolve skips the whole edge.
+    let edge_rect = |id: &E| -> Option<WorldRect> {
+        let edge = graph.edges.iter().find(|edge| edge.id == *id)?;
+        let (from, to) = (&edge.from, &edge.to);
+        let a = node_rect(graph.node_index(&from.node_id)?)?;
+        let b = node_rect(graph.node_index(&to.node_id)?)?;
+        Some(a.union(&b))
+    };
+
+    match target {
+        FocusTarget::All => union_of(&mut (0..graph.nodes.len()).filter_map(node_rect)),
+        FocusTarget::Selection => union_of(
+            &mut graph
+                .resolved_selection(state)
+                .into_iter()
+                .filter_map(node_rect),
+        ),
+        FocusTarget::Node(id) => graph.node_index(id).and_then(node_rect),
+        FocusTarget::Nodes(ids) => union_of(
+            &mut ids
+                .iter()
+                .filter_map(|id| graph.node_index(id))
+                .filter_map(node_rect),
+        ),
+        FocusTarget::Edge(id) => edge_rect(id),
+        FocusTarget::Edges(ids) => union_of(&mut ids.iter().filter_map(edge_rect)),
+        FocusTarget::Rect(rect) => Some((*rect).into_euclid()),
     }
 }
 

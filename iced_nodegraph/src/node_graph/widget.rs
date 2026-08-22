@@ -53,7 +53,7 @@ use super::{
     Counts, DragInfo, Edge, GraphInfo, MIN_NODE_SIZE, NodeGraph, OpTiming, RESIZE_GRIP_SIDE,
     RenderContext,
     euclid::{IntoIced, LayoutVector},
-    state::{Dragging, NodeGraphState, z_render_indices},
+    state::{CameraTween, Dragging, NodeGraphState, z_render_indices},
 };
 use super::{EdgeStyleFn, NodeStyleFn, PinStyleFn};
 use crate::{
