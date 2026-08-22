@@ -61,6 +61,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   moves (`line_to`/`arc_to`/`bezier_to`) and the open finalizer (`end`) to the
   crate-private contour builder, which until now emitted closed contours only;
   a path is therefore never a fillable shape.
+- **Fit-to-view focus.** `NodeGraph::focus(seq, target, opts)` frames content
+  declaratively: the app names a `FocusTarget` (`All`, `Selection`, node or
+  edge ids, or an explicit world `Rect`) and the widget resolves it to a world
+  AABB from live layout, so the host never computes node bounds. `seq` is a
+  nonce - the fit runs once per new value and dedupes on repeats, the
+  immediate-mode substitute for calling `fitView()` once. `FocusOptions`
+  carries per-side padding, optional zoom bounds (`max_zoom` defaults to
+  `Some(1.0)`, so focusing one small node fits it at native size) and the
+  tween. The keymap gains `frame_all` (`Home`) and `frame_selection` (`f`),
+  both gated on `on_pan` like every other camera change. An unknown id or an
+  empty selection is a no-op.
+
+  The camera travels one perceptual path rather than two ramps: zoom
+  interpolates geometrically (apparent size is linear in `log(zoom)`, so the
+  visual midpoint of 1x to 4x is 2x) and the center is weighted by `1/zoom`,
+  the same invariant zoom-at-cursor holds. Every world point therefore crosses
+  the screen in a straight line and reaches the same fraction of its path at
+  the same instant. Interpolating center and zoom on separate linear ramps
+  does not: content swings out and back - 5.8x its straight-line screen
+  distance on a 12.5x zoom-in - and which half appears to lead flips with the
+  zoom direction.
 - **Resizable nodes.** `Node::resizable(true)` gives a node a bottom-right
   grip; dragging it reports the size its content should have through
   `NodeGraph::on_resize(|node_id, size| ...)`. Both halves are required - the
