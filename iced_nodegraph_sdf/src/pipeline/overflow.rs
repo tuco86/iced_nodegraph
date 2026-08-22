@@ -217,8 +217,8 @@ impl OverflowProbe {
             let mut demand_max = 0u32;
             let mut overflow_tiles = 0u32;
             let mut demand_sum = 0u64;
-            for chunk in data.chunks_exact(4) {
-                let count = u32::from_le_bytes(chunk.try_into().expect("4-byte chunk"));
+            for chunk in data.as_chunks::<4>().0 {
+                let count = u32::from_le_bytes(*chunk);
                 demand_max = demand_max.max(count);
                 overflow_tiles += u32::from(count > usable_cap);
                 demand_sum += u64::from(count.min(slot_cap));
@@ -235,8 +235,8 @@ impl OverflowProbe {
     pub fn harvest_fine(&mut self, device: &Device) -> Option<FineReport> {
         self.fine.harvest(device, |data| {
             let mut r = FineReport::default();
-            for chunk in data.chunks_exact(4) {
-                let word = u32::from_le_bytes(chunk.try_into().expect("4-byte chunk"));
+            for chunk in data.as_chunks::<4>().0 {
+                let word = u32::from_le_bytes(*chunk);
                 let count = word & 0xFFFF;
                 let evicted = word >> 16;
                 r.slot_sum += u64::from(count);

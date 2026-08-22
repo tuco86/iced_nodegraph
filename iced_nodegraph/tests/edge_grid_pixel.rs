@@ -148,12 +148,7 @@ fn render_edge_grid() -> Option<Vec<[u8; 4]>> {
         &Viewport::with_physical_size(Size::new(GW, GH), 1.0),
         Color::TRANSPARENT,
     );
-    Some(
-        bytes
-            .chunks_exact(4)
-            .map(|c| [c[0], c[1], c[2], c[3]])
-            .collect(),
-    )
+    Some(bytes.as_chunks::<4>().0.to_vec())
 }
 
 /// Counts how many GREEN edge pixels the grid render produces. With ~72 green
@@ -354,12 +349,7 @@ fn render_minimal_edges() -> Option<Vec<[u8; 4]>> {
         &Viewport::with_physical_size(Size::new(GW, GH), 1.0),
         Color::TRANSPARENT,
     );
-    Some(
-        bytes
-            .chunks_exact(4)
-            .map(|c| [c[0], c[1], c[2], c[3]])
-            .collect(),
-    )
+    Some(bytes.as_chunks::<4>().0.to_vec())
 }
 
 #[test]

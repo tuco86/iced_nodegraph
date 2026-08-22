@@ -139,12 +139,7 @@ fn render_theme(theme: &Theme) -> Option<Vec<[u8; 4]>> {
         &Viewport::with_physical_size(Size::new(CW, CH), 1.0),
         Color::TRANSPARENT,
     );
-    Some(
-        bytes
-            .chunks_exact(4)
-            .map(|c| [c[0], c[1], c[2], c[3]])
-            .collect(),
-    )
+    Some(bytes.as_chunks::<4>().0.to_vec())
 }
 
 /// Writes contact sheets of the whole built-in theme set to

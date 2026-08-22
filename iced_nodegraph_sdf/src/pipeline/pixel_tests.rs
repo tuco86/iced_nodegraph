@@ -1265,8 +1265,8 @@ impl TestRenderer {
             let d = coarse_rb.slice(..).get_mapped_range();
             let mut max = 0u32;
             let mut sum = 0u64;
-            for c in d.chunks_exact(4) {
-                let n = u32::from_le_bytes(c.try_into().unwrap());
+            for c in d.as_chunks::<4>().0 {
+                let n = u32::from_le_bytes(*c);
                 max = max.max(n);
                 sum += u64::from(n.min(MAX_COARSE_SLOTS));
             }
@@ -1281,8 +1281,8 @@ impl TestRenderer {
             let mut max = 0u32;
             let mut live = 0u32;
             let mut evicted = 0u32;
-            for c in d.chunks_exact(4) {
-                let word = u32::from_le_bytes(c.try_into().unwrap());
+            for c in d.as_chunks::<4>().0 {
+                let word = u32::from_le_bytes(*c);
                 let n = word & 0xFFFF;
                 sum += u64::from(n);
                 max = max.max(n);
@@ -1791,10 +1791,7 @@ impl TestRenderer {
             })
             .unwrap();
         let data = slice.get_mapped_range();
-        let px: Vec<[u8; 4]> = data
-            .chunks_exact(4)
-            .map(|c| [c[0], c[1], c[2], c[3]])
-            .collect();
+        let px: Vec<[u8; 4]> = data.as_chunks::<4>().0.to_vec();
         drop(data);
         readback.unmap();
         px
@@ -1900,10 +1897,7 @@ impl TestRenderer {
             })
             .unwrap();
         let data = slice.get_mapped_range();
-        let px: Vec<[u8; 4]> = data
-            .chunks_exact(4)
-            .map(|c| [c[0], c[1], c[2], c[3]])
-            .collect();
+        let px: Vec<[u8; 4]> = data.as_chunks::<4>().0.to_vec();
         drop(data);
         readback.unmap();
         px
@@ -2021,11 +2015,7 @@ impl TestRenderer {
                 })
                 .unwrap();
             let data = slice.get_mapped_range();
-            out.push(
-                data.chunks_exact(4)
-                    .map(|c| [c[0], c[1], c[2], c[3]])
-                    .collect(),
-            );
+            out.push(data.as_chunks::<4>().0.to_vec());
             drop(data);
             readback.unmap();
         }

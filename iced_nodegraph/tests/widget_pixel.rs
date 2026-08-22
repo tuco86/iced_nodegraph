@@ -94,12 +94,7 @@ fn render_one_node() -> Option<Vec<[u8; 4]>> {
         &Viewport::with_physical_size(Size::new(W, H), 1.0),
         Color::TRANSPARENT,
     );
-    Some(
-        bytes
-            .chunks_exact(4)
-            .map(|c| [c[0], c[1], c[2], c[3]])
-            .collect(),
-    )
+    Some(bytes.as_chunks::<4>().0.to_vec())
 }
 
 /// The full widget rasterizes end-to-end: a full-bounds background PLUS a
@@ -260,10 +255,7 @@ fn zoomout_grid_missing_nodes_at(scale: f32, frames: u32, cam: Point, zoom: f32)
             &Viewport::with_physical_size(Size::new(pw, ph), scale),
             Color::TRANSPARENT,
         );
-        px = bytes
-            .chunks_exact(4)
-            .map(|c| [c[0], c[1], c[2], c[3]])
-            .collect();
+        px = bytes.as_chunks::<4>().0.to_vec();
     }
 
     let is_red = |p: &[u8; 4]| p[0] > 120 && p[1] < 90 && p[2] < 90;
@@ -432,10 +424,7 @@ fn offscreen_node_does_not_desync_later_nodes() {
         &Viewport::with_physical_size(Size::new(VW, GH), 1.0),
         Color::from_rgb(0.0, 0.0, 0.0),
     );
-    let px: Vec<[u8; 4]> = bytes
-        .chunks_exact(4)
-        .map(|c| [c[0], c[1], c[2], c[3]])
-        .collect();
+    let px: Vec<[u8; 4]> = bytes.as_chunks::<4>().0.to_vec();
 
     let is_fill = |p: &[u8; 4]| p[2] > 90 && p[2] as i32 > p[0] as i32 + 30;
     let is_text = |p: &[u8; 4]| p[0] > 170 && p[1] > 170 && p[2] > 170;
@@ -572,12 +561,7 @@ fn render_node_selection(selected: bool) -> Option<Vec<[u8; 4]>> {
         &Viewport::with_physical_size(Size::new(W, H), 1.0),
         Color::TRANSPARENT,
     );
-    Some(
-        bytes
-            .chunks_exact(4)
-            .map(|c| [c[0], c[1], c[2], c[3]])
-            .collect(),
-    )
+    Some(bytes.as_chunks::<4>().0.to_vec())
 }
 
 /// One node whose single Output pin is drawn as `shape` in an unmistakable
@@ -655,12 +639,7 @@ fn render_pin_shape(shape: iced_nodegraph::PinShape) -> Option<Vec<[u8; 4]>> {
         &Viewport::with_physical_size(Size::new(W, H), 1.0),
         Color::TRANSPARENT,
     );
-    Some(
-        bytes
-            .chunks_exact(4)
-            .map(|c| [c[0], c[1], c[2], c[3]])
-            .collect(),
-    )
+    Some(bytes.as_chunks::<4>().0.to_vec())
 }
 
 /// Fraction of the magenta footprint's bounding box that the footprint covers.

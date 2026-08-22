@@ -1486,7 +1486,7 @@ impl Primitive for SdfPrimitive {
         let mut pair_batch = std::mem::take(&mut pipeline.pair_scratch);
         pair_batch.clear();
         pair_batch.reserve(block.pairs.len() / 2 * 3);
-        for pair in block.pairs.chunks_exact(2) {
+        for pair in block.pairs.as_chunks::<2>().0 {
             pair_batch.extend_from_slice(&[draw_slot as u32, pair[0], pair[1]]);
         }
         let mut closed_batch = std::mem::take(&mut pipeline.closed_scratch);
