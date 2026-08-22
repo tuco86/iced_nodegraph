@@ -442,11 +442,14 @@ where
     }
 
     fn diff(&self, tree: &mut Tree) {
-        if let Some(content_tree) = tree.children.first_mut() {
-            self.content.as_widget().diff(content_tree);
-        } else {
-            tree.children.push(Tree::new(&self.content));
-        }
+        // Reconcile through `Tree::diff_children`, never by calling the content's
+        // own `diff` directly: only the former compares widget tags and rebuilds
+        // state whose type changed. Diffing the content directly left a stale
+        // state of the wrong type in place whenever the pin's content widget type
+        // changed at the same tree position -- which happens as soon as a node is
+        // removed from the middle of the graph, since node trees are reconciled by
+        // position. The next access downcast that state and panicked.
+        tree.diff_children(std::slice::from_ref(&self.content));
     }
 }
 
@@ -526,4 +529,51 @@ macro_rules! pin {
     ($side:ident, $pin_id:expr, $content:expr) => {
         $crate::node_pin($crate::PinSide::$side, $pin_id, $content)
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iced::widget::{text, text_input};
+
+    /// A pin whose content widget changed type must be handed a FRESH content
+    /// tree. Node trees are reconciled by position, so removing a node from the
+    /// middle of a graph shifts every following node onto a sibling's tree: a
+    /// pin holding a `text_input` can land on the tree of a pin holding a
+    /// `text`. Reconciling the content directly (instead of through
+    /// `Tree::diff`) skipped the tag comparison and kept the stale state, and
+    /// the next access downcast it to the wrong type and panicked.
+    #[test]
+    fn content_tree_is_rebuilt_when_the_content_type_changes() {
+        let stateful: Element<'_, (), Theme, iced::Renderer> =
+            node_pin(PinSide::Left, 0usize, text_input("", "x")).into();
+        let mut tree = Tree::new(&stateful);
+        let stateful_tag = tree.children[0].tag;
+
+        let stateless: Element<'_, (), Theme, iced::Renderer> =
+            node_pin(PinSide::Left, 0usize, text("y")).into();
+        tree.diff(&stateless);
+
+        assert_eq!(tree.children.len(), 1);
+        assert_ne!(tree.children[0].tag, stateful_tag);
+        assert_eq!(tree.children[0].tag, Tree::new(&stateless).children[0].tag);
+    }
+
+    /// The pin's own state survives a content change: the pin tag is the same,
+    /// so only the content subtree is replaced.
+    #[test]
+    fn the_pin_keeps_its_own_state_across_a_content_change() {
+        let before: Element<'_, (), Theme, iced::Renderer> =
+            node_pin(PinSide::Left, 7usize, text("a")).into();
+        let mut tree = Tree::new(&before);
+        let after: Element<'_, (), Theme, iced::Renderer> =
+            node_pin(PinSide::Left, 7usize, text_input("", "b")).into();
+        tree.diff(&after);
+
+        assert_eq!(tree.tag, tree::Tag::of::<NodePinState<usize, ()>>());
+        assert_eq!(
+            tree.state.downcast_ref::<NodePinState<usize, ()>>().pin_id,
+            7
+        );
+    }
 }
