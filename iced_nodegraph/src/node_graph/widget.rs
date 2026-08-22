@@ -267,49 +267,94 @@ where
         );
     }
 
-    /// Only the resize grip claims a cursor; everything else keeps the default,
-    /// so node content is free to set its own.
+    /// The cursor the graph claims, in precedence order: an in-flight gesture,
+    /// then a node's resize grip, then whatever the topmost node under the
+    /// cursor reports for its own content.
+    ///
+    /// Recursion is gated on node bounds instead of forwarded to every child:
+    /// only one cursor can win, so an occluded node must not claim it. The
+    /// topmost node under the cursor consumes the query even when its subtree
+    /// reports [`mouse::Interaction::None`], which is what keeps a node body
+    /// from showing a cursor set by something behind it.
     fn mouse_interaction(
         &self,
         tree: &Tree,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
-        _viewport: &Rectangle,
-        _renderer: &Renderer,
+        viewport: &Rectangle,
+        renderer: &Renderer,
     ) -> mouse::Interaction {
         let state = tree.state.downcast_ref::<NodeGraphState>();
-        // A resize in flight holds the cursor even once it has been dragged off
-        // the grip - the drag is still going.
-        if matches!(state.dragging, Dragging::Resize { .. }) {
-            return mouse::Interaction::ResizingDiagonallyDown;
+        // A gesture in flight owns the cursor wherever it has been dragged to,
+        // grip or node bounds left behind: the drag is still going.
+        match &state.dragging {
+            Dragging::Resize { .. } => return mouse::Interaction::ResizingDiagonallyDown,
+            Dragging::Graph(_) | Dragging::Node { .. } | Dragging::GroupMove(_) => {
+                return mouse::Interaction::Grabbing;
+            }
+            Dragging::Edge { .. }
+            | Dragging::EdgeOver { .. }
+            | Dragging::EdgeCutting { .. }
+            | Dragging::SelectionBox(..) => return mouse::Interaction::Crosshair,
+            Dragging::None => {}
         }
-        if self.on_resize.is_none() {
-            return mouse::Interaction::default();
+        // Outside the graph - or levitating, because a sibling in a `stack`
+        // claimed the event - nothing here may claim the cursor.
+        if cursor.position_over(layout.bounds()).is_none() {
+            return mouse::Interaction::None;
         }
         let camera = state.camera_for(layout);
-        // Grips live in layout-absolute space, the space `update` hit-tests in.
-        let Some(position) = camera.cursor_screen_to_layout(cursor).position() else {
-            return mouse::Interaction::default();
-        };
-        let selection = self.resolved_selection(state);
-        let z_indices = z_render_indices(state, self.nodes.len(), |i| selection.contains(&i));
-        // Top-first, like the press hit-test: a node covering another node's
-        // corner takes the cursor with it.
-        for &node_index in z_indices.iter().rev() {
-            let Some(node_layout) = layout.children().nth(node_index) else {
-                continue;
-            };
-            if !node_layout.bounds().contains(position) {
-                continue;
-            }
-            let resizable = self.nodes[node_index].resizable;
-            if resizable && resize_grip_zone(node_layout.bounds(), camera.zoom()).contains(position)
-            {
-                return mouse::Interaction::ResizingDiagonallyDown;
-            }
-            return mouse::Interaction::default();
-        }
-        mouse::Interaction::default()
+        // The spaces the child `update` walk uses: cursor and viewport
+        // camera-inverted into layout-absolute space, the viewport first
+        // clipped to the graph as `draw` clips it.
+        let clipped_viewport = layout
+            .bounds()
+            .intersection(viewport)
+            .unwrap_or(Rectangle::new(layout.bounds().position(), Size::ZERO));
+        camera.update_with(
+            &clipped_viewport,
+            cursor,
+            |child_viewport, layout_cursor| {
+                let Some(position) = layout_cursor.position() else {
+                    return mouse::Interaction::None;
+                };
+                let selection = self.resolved_selection(state);
+                let z_indices =
+                    z_render_indices(state, self.nodes.len(), |i| selection.contains(&i));
+                // Top-first, like the press hit-test: a node covering another
+                // node's corner takes the cursor with it.
+                for &node_index in z_indices.iter().rev() {
+                    let Some(node) = self.nodes.get(node_index) else {
+                        continue;
+                    };
+                    let Some(child_tree) = tree.children.get(node_index) else {
+                        continue;
+                    };
+                    let Some(node_layout) = layout.children().nth(node_index) else {
+                        continue;
+                    };
+                    if !node_layout.bounds().contains(position) {
+                        continue;
+                    }
+                    // Grips live in layout-absolute space, the space `update`
+                    // hit-tests in, and sit above the node's own content.
+                    if self.on_resize.is_some()
+                        && node.resizable
+                        && resize_grip_zone(node_layout.bounds(), camera.zoom()).contains(position)
+                    {
+                        return mouse::Interaction::ResizingDiagonallyDown;
+                    }
+                    return node.element.as_widget().mouse_interaction(
+                        child_tree,
+                        node_layout,
+                        layout_cursor,
+                        child_viewport,
+                        renderer,
+                    );
+                }
+                mouse::Interaction::None
+            },
+        )
     }
 }
 

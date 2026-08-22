@@ -348,9 +348,13 @@ impl Camera2D {
         })
     }
 
-    pub fn update_with<F>(self, viewport: &Rectangle, cursor: mouse::Cursor, f: F)
+    /// Runs `f` in the widget's layout-absolute space, handing it the
+    /// camera-inverted viewport and cursor, and returns whatever `f` returns.
+    /// The input-side counterpart of [`draw_with`](Self::draw_with): same two
+    /// conversions, no renderer transformation.
+    pub fn update_with<F, T>(self, viewport: &Rectangle, cursor: mouse::Cursor, f: F) -> T
     where
-        F: FnOnce(&Rectangle, mouse::Cursor),
+        F: FnOnce(&Rectangle, mouse::Cursor) -> T,
     {
         let transformed_cursor = self.cursor_screen_to_layout(cursor);
         let world_viewport = self.viewport_screen_to_layout(viewport);
