@@ -10,10 +10,11 @@
 //! The non-obvious part is the transformation stack: `iced_graphics` composes a
 //! pushed transformation onto the current one (`child = current * transformation`),
 //! so multiplying a drawn rect by the current entry maps it back to absolute
-//! screen pixels. The layer stack mirrors iced's other quirk: `start_layer`
-//! REPLACES the parent clip rather than intersecting it, so the innermost entry
-//! is the effective clip and any intersection with an ancestor must have been
-//! done by the widget under test.
+//! screen pixels. Clips go through the same composition: `push_clip` bakes the
+//! transformation active at entry into the pushed rect and REPLACES the parent
+//! clip rather than intersecting it, so a recorded clip is an absolute screen
+//! rect, the innermost entry is the effective clip, and any intersection with an
+//! ancestor must have been done by the widget under test.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -83,7 +84,7 @@ impl Recorder {
 
 impl renderer::Renderer for Recorder {
     fn start_layer(&mut self, bounds: Rectangle) {
-        self.layers.push(bounds);
+        self.layers.push(bounds * self.current());
     }
     fn end_layer(&mut self) {
         self.layers.pop();
