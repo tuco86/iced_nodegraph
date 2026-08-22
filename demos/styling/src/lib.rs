@@ -39,8 +39,9 @@ use iced::{
     widget::{button, column, container, opaque, pick_list, row, slider, stack, text},
 };
 use iced_nodegraph::{
-    GraphStyle, NodeStatus, NodeStyle, Pattern, PinDirection, PinInfo, PinRef, PinStatus, PinStyle,
-    TilingBackground, default_node_style, default_pin_style, edge, node,
+    AnchorStyle, EdgeEnd, GraphStyle, Hand, NodeStatus, NodeStyle, Pattern, PinDirection, PinInfo,
+    PinRef, PinStatus, PinStyle, TilingBackground, anchor, default_anchor_style,
+    default_node_style, default_pin_style, edge, node,
 };
 use nodes::styled_node;
 use std::collections::HashSet;
@@ -113,6 +114,7 @@ enum Message {
         delta: Vector,
         indices: Vec<usize>,
     },
+    AnchorMoved(usize, Point),
 
     // Style controls
     CornerRadiusChanged(f32),
@@ -151,8 +153,13 @@ impl NodePreset {
     ];
 }
 
+/// Id of the routing anchor, in the shared node/anchor id space (nodes are
+/// 0..3).
+const ANCHOR: usize = 10;
+
 struct Application {
-    edges: Vec<(PinRef<usize, usize>, PinRef<usize, usize>)>,
+    edges: Vec<(EdgeEnd<usize, usize>, EdgeEnd<usize, usize>)>,
+    anchor_pos: Point,
     nodes: Vec<(Point, String, NodeStyle)>,
     current_theme: Theme,
     selected_node: Option<usize>,
@@ -168,8 +175,41 @@ impl Default for Application {
     fn default() -> Self {
         Self {
             edges: vec![
-                (PinRef::new(0, 1), PinRef::new(1, 0)), // Input node output -> Process node input
-                (PinRef::new(1, 1), PinRef::new(2, 0)), // Process node output -> Output node input
+                // Input output -> around the anchor -> Output input. Two edges,
+                // one cable: the orbit joins them.
+                (
+                    PinRef::new(0, 1).into(),
+                    EdgeEnd::Orbit {
+                        anchor: ANCHOR,
+                        orbit: 0,
+                        hand: Hand::CounterClockwise,
+                    },
+                ),
+                (
+                    EdgeEnd::Orbit {
+                        anchor: ANCHOR,
+                        orbit: 0,
+                        hand: Hand::Clockwise,
+                    },
+                    PinRef::new(2, 0).into(),
+                ),
+                // Transform output -> the next orbit out -> Comment input.
+                (
+                    PinRef::new(1, 1).into(),
+                    EdgeEnd::Orbit {
+                        anchor: ANCHOR,
+                        orbit: 1,
+                        hand: Hand::Clockwise,
+                    },
+                ),
+                (
+                    EdgeEnd::Orbit {
+                        anchor: ANCHOR,
+                        orbit: 1,
+                        hand: Hand::CounterClockwise,
+                    },
+                    PinRef::new(3, 0).into(),
+                ),
             ],
             nodes: vec![
                 (
@@ -193,6 +233,7 @@ impl Default for Application {
                     NodeStyle::comment(),
                 ),
             ],
+            anchor_pos: Point::new(430.0, 330.0),
             current_theme: Theme::CatppuccinFrappe,
             selected_node: Some(0),
             graph_selection: HashSet::new(),
@@ -219,9 +260,10 @@ impl Application {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::EdgeConnected { from, to } => {
-                self.edges.push((from, to));
+                self.edges.push((from.into(), to.into()));
             }
             Message::EdgeDisconnected { from, to } => {
+                let (from, to) = (EdgeEnd::Pin(from), EdgeEnd::Pin(to));
                 self.edges.retain(|(f, t)| !(f == &from && t == &to));
             }
             Message::SelectionChanged(indices) => {
@@ -234,6 +276,9 @@ impl Application {
                         pos.y += delta.y;
                     }
                 }
+            }
+            Message::AnchorMoved(_id, position) => {
+                self.anchor_pos = position;
             }
             Message::CornerRadiusChanged(value) => {
                 self.corner_radius = value;
@@ -465,6 +510,7 @@ impl Application {
                 .on_connect(|from, to| Message::EdgeConnected { from, to })
                 .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })
                 .on_move(|delta, indices| Message::NodesMoved { delta, indices })
+                .on_anchor_move(Message::AnchorMoved)
                 .on_select(Message::SelectionChanged)
                 .graph_style(|theme: &Theme| {
                     let line = theme.extended_palette().background.strong.color;
@@ -502,6 +548,17 @@ impl Application {
                     .pin_style(styling_pin_style),
             );
         }
+
+        // One routing anchor, two connections wrapping it on successive orbits.
+        // Each connection is TWO host edges joined at the orbit; the widget
+        // draws the pair as a single cable - leg, arc, leg - so a pattern runs
+        // through it without a seam.
+        ng.push_anchor(
+            anchor(ANCHOR, self.anchor_pos).style(|theme, status| AnchorStyle {
+                core_color: iced::Color::from_rgb(0.95, 0.55, 0.20).into(),
+                ..default_anchor_style(theme, status)
+            }),
+        );
 
         for (from, to) in &self.edges {
             ng.push_edge(edge!(*from, *to));

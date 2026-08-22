@@ -61,6 +61,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   moves (`line_to`/`arc_to`/`bezier_to`) and the open finalizer (`end`) to the
   crate-private contour builder, which until now emitted closed contours only;
   a path is therefore never a fillable shape.
+- **Routing anchors.** `NodeGraph::push_anchor` places an `anchor(id, position)`
+  on the canvas: a draggable point surrounded by concentric orbits that cables
+  wrap. An edge end is now an `EdgeEnd` - either a `Pin(PinRef)` or an
+  `Orbit { anchor, orbit, hand }` - and a `PinRef` converts into one, so an
+  edge between two pins is written exactly as before.
+
+  An orbit is met TANGENTIALLY, at a point the geometry picks rather than a
+  fixed slot: from an external pin there are two tangents to the circle, and
+  `Hand` chooses which, and therefore which way round the cable goes. Two edges
+  sharing one orbit are ONE connection - leg, arc, leg - emitted as a single
+  `Shape::path`, so a dash or flow pattern phases across the whole run instead
+  of restarting at the anchor. A lone edge on an orbit draws its leg and leaves
+  the connection open.
+
+  Orbits fill from the inside out: an anchor shows every orbit carrying a cable
+  plus exactly one empty one, the next shell available to drop onto.
+  `NodeGraph::on_anchor_move` reports a drag; like every other gesture the
+  widget previews it and the host applies it. Anchors share the node id space,
+  and both pushers check both collections. `AnchorStyle`/`AnchorStatus` follow
+  the usual struct-update-over-`default_anchor_style` convention, and its
+  `orbit_offset`/`orbit_spacing` are geometry - the radii cables are laid
+  tangent to. `GraphInfo` gains an `anchors: Counts` field.
 - **Fit-to-view focus.** `NodeGraph::focus(seq, target, opts)` frames content
   declaratively: the app names a `FocusTarget` (`All`, `Selection`, node or
   edge ids, or an explicit world `Rect`) and the widget resolves it to a world

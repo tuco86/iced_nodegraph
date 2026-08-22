@@ -436,9 +436,17 @@ impl Application {
         };
 
         let info = self.latest_info.as_ref();
-        let (nodes_c, pins_c, edges_c, entries, tiles) = match info {
-            Some(i) => (i.nodes, i.pins, i.edges, i.sdf_entries, i.sdf_tiles),
+        let (nodes_c, pins_c, edges_c, anchors_c, entries, tiles) = match info {
+            Some(i) => (
+                i.nodes,
+                i.pins,
+                i.edges,
+                i.anchors,
+                i.sdf_entries,
+                i.sdf_tiles,
+            ),
             None => (
+                Counts::default(),
                 Counts::default(),
                 Counts::default(),
                 Counts::default(),
@@ -483,6 +491,7 @@ impl Application {
             counts_line("Nodes", nodes_c),
             counts_line("Pins", pins_c),
             counts_line("Edges", edges_c),
+            counts_line("Anchors", anchors_c),
             text(format!("SDF: {entries} entries · {tiles} tiles")).size(12),
             gpu_rows(info),
             text(format!(
