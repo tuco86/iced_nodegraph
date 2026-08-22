@@ -50,6 +50,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Resizable nodes.** `Node::resizable(true)` gives a node a bottom-right
+  grip; dragging it reports the size its content should have through
+  `NodeGraph::on_resize(|node_id, size| ...)`. Both halves are required - the
+  widget owns no node size, the host's content layout does, so a grip drag is
+  a report the host applies on the next frame, exactly like `on_move` for
+  position. Every report is absolute (size at press plus cursor delta, floored
+  at 32x24 world px), so applying none, some or all of them still tracks the
+  cursor. The grip is 12 screen px across at any zoom, hover reports
+  `mouse::Interaction::ResizingDiagonallyDown`, and it is drawn only where it
+  is live - no grip without `on_resize`, and the corner of a node that is not
+  `resizable` drags it as before.
 - **GPU work and memory counters.** `SdfStats` gains `upload_bytes`,
   `gpu_bytes`, `index_bytes`, `sdf_draws`, `shaded_px`, `segment_evals`,
   `fine_slots_max`, `fine_live_tiles`, `fine_evicted_tiles`,

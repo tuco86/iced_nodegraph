@@ -12,7 +12,7 @@
 use super::GraphInfo;
 use super::camera::Camera2D;
 use super::euclid::{IntoEuclid, WorldPoint};
-use iced_widget::core::{Layout, Point, keyboard, touch};
+use iced_widget::core::{Layout, Point, Size, keyboard, touch};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use web_time::Instant;
@@ -29,6 +29,15 @@ pub(crate) enum Dragging {
     Node { node: usize, origin: WorldPoint },
     /// Moving every selected node together.
     GroupMove(WorldPoint),
+    /// Resizing one node by its bottom-right grip. `start` is the node's
+    /// content size at press: the reported size is `start + cursor delta`, so
+    /// the drag stays exact even though the node itself never changes size
+    /// until the host applies the report.
+    Resize {
+        node: usize,
+        origin: WorldPoint,
+        start: Size,
+    },
     /// A loose edge held at the cursor, anchored at its source pin.
     Edge {
         from_node: usize,

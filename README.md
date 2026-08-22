@@ -87,6 +87,7 @@ cargo run --release -p demo_500_nodes
 | Disconnect | Click a connected pin to unplug | Tap a connected pin to unplug |
 | Fork edge | Shift+drag from a connected pin | - |
 | Move node | Drag node | Drag node |
+| Resize node | Drag the bottom-right grip (needs `Node::resizable`) | Drag the bottom-right grip |
 | Box select | Left drag on empty canvas | - (empty-canvas drag pans) |
 | Add to selection | Shift+click | - |
 | Select all | Ctrl+A | - |

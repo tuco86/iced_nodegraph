@@ -946,12 +946,15 @@ where
                 );
             });
 
-            // Layer 4c: Node Foreground (border + pins batched)
+            // Layer 4c: Node Foreground (border + pins + resize grip batched)
             let has_border = resolved.border_pattern.thickness > 0.0;
             let has_pins = !pins.is_empty();
+            // Drawn on exactly the condition the press honours, so the
+            // affordance never promises an interaction that is not wired.
+            let has_grip = node.resizable && self.on_resize.is_some();
 
-            if has_border || has_pins {
-                let mut fg_batch = SdfPrimitive::with_capacity(pins.len() * 2 + 2);
+            if has_border || has_pins || has_grip {
+                let mut fg_batch = SdfPrimitive::with_capacity(pins.len() * 2 + 4);
                 let mut fg_min_x = f32::MAX;
                 let mut fg_min_y = f32::MAX;
                 let mut fg_max_x = f32::MIN;
@@ -1046,6 +1049,50 @@ where
                     fg_min_y = fg_min_y.min(pin_bounds[1]);
                     fg_max_x = fg_max_x.max(pin_bounds[0] + pin_bounds[2]);
                     fg_max_y = fg_max_y.max(pin_bounds[1] + pin_bounds[3]);
+                }
+
+                // Resize grip: two ticks parallel to the corner bevel, filling
+                // the same square `resize_grip_zone` hit-tests. It borrows the
+                // node's border color rather than adding a style knob - the
+                // grip is part of the node's outline, not a separate element.
+                if has_grip {
+                    let zone = resize_grip_zone(
+                        Rectangle::new(Point::new(node_position.x, node_position.y), node_size),
+                        cam_zoom,
+                    );
+                    // Screen-pixel width like every other outline the widget
+                    // draws itself, so the ticks stay legible at any zoom.
+                    let tick_width = 1.5 / cam_zoom;
+                    let grip_style = Style::quad_stroke(
+                        &resolved.border_color.with_opacity(opacity),
+                        Pattern::solid(tick_width),
+                    );
+                    // Shapes are local to the corner, so every resizable node
+                    // of the same size shares one recipe.
+                    let corner = [zone.x + zone.width, zone.y + zone.height];
+                    let inset = zone.width * 0.2;
+                    for reach in [zone.width * 0.9, zone.width * 0.5] {
+                        fg_batch.push(
+                            &Shape::line([-reach, -inset], [-inset, -reach]),
+                            &grip_style,
+                            corner,
+                        );
+                    }
+
+                    // Ticks are open strokes: half the width spills to each side.
+                    let grip_pad = tick_width * 0.5 + 2.0 / cam_zoom;
+                    let grip_bounds = world_bbox_to_screen_bounds(
+                        zone.x,
+                        zone.y,
+                        zone.x + zone.width,
+                        zone.y + zone.height,
+                        grip_pad,
+                        &render_context,
+                    );
+                    fg_min_x = fg_min_x.min(grip_bounds[0]);
+                    fg_min_y = fg_min_y.min(grip_bounds[1]);
+                    fg_max_x = fg_max_x.max(grip_bounds[0] + grip_bounds[2]);
+                    fg_max_y = fg_max_y.max(grip_bounds[1] + grip_bounds[3]);
                 }
 
                 if let Some(fg_clip) = clipped_shape_bounds(

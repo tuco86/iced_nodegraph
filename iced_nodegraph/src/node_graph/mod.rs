@@ -13,8 +13,9 @@
 //! # Reporting
 //!
 //! There is no event enum: each interaction has its own `Fn -> Message` setter
-//! (`on_connect`, `on_move`, `on_select`, `on_clone`, `on_delete`, `on_pan`,
-//! `on_info`). Nothing is applied locally: selection comes back per node through
+//! (`on_connect`, `on_move`, `on_resize`, `on_select`, `on_clone`, `on_delete`,
+//! `on_pan`, `on_info`). Nothing is applied locally: selection comes back per
+//! node through
 //! [`Node::selected`] and the camera through [`NodeGraph::view`], so the host is
 //! always the source of truth. `on_drag_start`/`on_drag_update`/`on_drag_end`
 //! expose a drag while it happens, for hosts that mirror it elsewhere.
@@ -54,6 +55,17 @@ pub(crate) const PIN_CLICK_THRESHOLD: f32 = 8.0;
 /// comparison site like [`PIN_CLICK_THRESHOLD`].
 pub(crate) const EDGE_CUT_THRESHOLD: f32 = 10.0;
 
+/// Side of a resizable node's bottom-right grip, in screen pixels, scaled by
+/// 1/zoom at the use sites like [`PIN_CLICK_THRESHOLD`]. The draw path and the
+/// hit test derive the zone from this one value, so what is painted is exactly
+/// what can be grabbed.
+pub(crate) const RESIZE_GRIP_SIDE: f32 = 12.0;
+
+/// Floor for the content size a grip drag reports, in world pixels. A node
+/// dragged to nothing would take its own grip with it, leaving the host no way
+/// to grab it back.
+pub(crate) const MIN_NODE_SIZE: Size = Size::new(32.0, 24.0);
+
 /// Per-node style callback: theme + status -> resolved style. Used by [`Node`].
 pub(crate) type NodeStyleFn<'a> = Box<dyn Fn(&Theme, NodeStatus) -> NodeStyle + 'a>;
 /// Per-edge style callback: theme + status + both endpoint pin infos (in draw
@@ -83,6 +95,7 @@ pub struct Node<'a, N, P, UI, Message, Renderer> {
     pub(super) position: Point,
     pub(super) element: Element<'a, Message, Theme, Renderer>,
     pub(super) selected: bool,
+    pub(super) resizable: bool,
     pub(super) style: Option<NodeStyleFn<'a>>,
     pub(super) pin_style: Option<PinStyleFn<'a, P, UI>>,
 }
@@ -98,6 +111,7 @@ pub fn node<'a, N, P, UI, Message, Renderer>(
         position,
         element: element.into(),
         selected: false,
+        resizable: false,
         style: None,
         pin_style: None,
     }
@@ -141,6 +155,22 @@ impl<'a, N, P, UI, Message, Renderer> Node<'a, N, P, UI, Message, Renderer> {
     /// unselected siblings.
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
+        self
+    }
+
+    /// Gives the node a bottom-right grip the user can drag to resize it.
+    ///
+    /// The widget owns no node size - the content element's layout does - so a
+    /// grip drag is a *report*, not an applied change: the new size travels
+    /// through [`NodeGraph::on_resize`] and takes effect only once the host
+    /// hands back a content element laid out that big. Same split as
+    /// position and [`on_move`](NodeGraph::on_move).
+    ///
+    /// Both halves must be wired. Without `on_resize` the grip has nowhere to
+    /// report, so it is neither drawn nor hit-tested and the corner keeps
+    /// dragging the node like any other part of its body.
+    pub fn resizable(mut self, resizable: bool) -> Self {
+        self.resizable = resizable;
         self
     }
 
@@ -403,6 +433,9 @@ pub struct NodeGraph<
     pub(super) on_connect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>>,
     pub(super) on_disconnect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>>,
     pub(super) on_move: Option<Box<dyn Fn(Vector, Vec<N>) -> Message + 'a>>,
+    /// Grip-resize report, the size counterpart to `on_move`. Only nodes marked
+    /// [`Node::resizable`] carry a grip, and only while this is wired.
+    pub(super) on_resize: Option<Box<dyn Fn(N, Size) -> Message + 'a>>,
     pub(super) on_select: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
     pub(super) on_clone: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
     pub(super) on_delete: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
@@ -459,6 +492,7 @@ where
             on_connect: None,
             on_disconnect: None,
             on_move: None,
+            on_resize: None,
             on_select: None,
             on_clone: None,
             on_delete: None,
@@ -754,6 +788,23 @@ where
     /// (selection still works).
     pub fn on_move(mut self, f: impl Fn(Vector, Vec<N>) -> Message + 'a) -> Self {
         self.on_move = Some(Box::new(f));
+        self
+    }
+
+    /// Sets a callback for a node resized by its corner grip.
+    ///
+    /// The callback receives the node id and the size the host should give that
+    /// node's CONTENT element, in world units. It fires on every cursor move of
+    /// the drag, so treat it as a stream, and it reports rather than applies:
+    /// node size is the content's layout, which only the host can change, so
+    /// the node stays the size it is until the host feeds the new one back.
+    ///
+    /// Required for resizing, together with [`Node::resizable`]. Without it a
+    /// grip could only report into the void, so no grip is drawn or hit-tested
+    /// and the corner drags the node like the rest of its body - the same
+    /// gating [`on_move`](Self::on_move) has.
+    pub fn on_resize(mut self, f: impl Fn(N, Size) -> Message + 'a) -> Self {
+        self.on_resize = Some(Box::new(f));
         self
     }
 

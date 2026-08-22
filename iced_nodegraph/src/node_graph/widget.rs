@@ -24,7 +24,8 @@ use iced_widget::core::{Element, Event, Length, Point, Rectangle, Size, Theme, V
 use web_time::Instant;
 
 use super::{
-    Counts, DragInfo, Edge, GraphInfo, NodeGraph, OpTiming, RenderContext,
+    Counts, DragInfo, Edge, GraphInfo, MIN_NODE_SIZE, NodeGraph, OpTiming, RESIZE_GRIP_SIDE,
+    RenderContext,
     euclid::{IntoIced, WorldVector},
     state::{Dragging, NodeGraphState, z_render_indices},
 };
@@ -240,14 +241,48 @@ where
         );
     }
 
+    /// Only the resize grip claims a cursor; everything else keeps the default,
+    /// so node content is free to set its own.
     fn mouse_interaction(
         &self,
-        _tree: &Tree,
-        _layout: Layout<'_>,
-        _cursor: mouse::Cursor,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
         _viewport: &Rectangle,
         _renderer: &Renderer,
     ) -> mouse::Interaction {
+        let state = tree.state.downcast_ref::<NodeGraphState>();
+        // A resize in flight holds the cursor even once it has been dragged off
+        // the grip - the drag is still going.
+        if matches!(state.dragging, Dragging::Resize { .. }) {
+            return mouse::Interaction::ResizingDiagonallyDown;
+        }
+        if self.on_resize.is_none() {
+            return mouse::Interaction::default();
+        }
+        let camera = state.camera_for(layout);
+        // Grips live in layout-absolute space, the space `update` hit-tests in.
+        let Some(position) = camera.cursor_screen_to_layout(cursor).position() else {
+            return mouse::Interaction::default();
+        };
+        let selection = self.resolved_selection(state);
+        let z_indices = z_render_indices(state, self.nodes.len(), |i| selection.contains(&i));
+        // Top-first, like the press hit-test: a node covering another node's
+        // corner takes the cursor with it.
+        for &node_index in z_indices.iter().rev() {
+            let Some(node_layout) = layout.children().nth(node_index) else {
+                continue;
+            };
+            if !node_layout.bounds().contains(position) {
+                continue;
+            }
+            let resizable = self.nodes[node_index].resizable;
+            if resizable && resize_grip_zone(node_layout.bounds(), camera.zoom()).contains(position)
+            {
+                return mouse::Interaction::ResizingDiagonallyDown;
+            }
+            return mouse::Interaction::default();
+        }
         mouse::Interaction::default()
     }
 }
@@ -349,6 +384,63 @@ fn pin_positions<P, UI>(state: &NodePinState<P, UI>, node_bounds: Rectangle) -> 
         PinSide::Right => both(Point::new(right, y)),
         PinSide::Top => both(Point::new(x, top)),
         PinSide::Bottom => both(Point::new(x, bottom)),
+    }
+}
+
+/// The bottom-right square a resizable node is grabbed by, in the same
+/// layout-absolute space as `bounds`.
+///
+/// [`RESIZE_GRIP_SIDE`] is a screen-pixel size divided by zoom here, like
+/// [`PIN_CLICK_THRESHOLD`](crate::node_graph::PIN_CLICK_THRESHOLD), so the grip
+/// covers the same pixels at every zoom. Capped at half the node in each axis:
+/// a node at [`MIN_NODE_SIZE`](crate::node_graph::MIN_NODE_SIZE) must still
+/// have a body left to drag it by.
+///
+/// One source for both the hit test and the drawn affordance, so the grip can
+/// never be painted somewhere the press does not accept.
+fn resize_grip_zone(bounds: Rectangle, zoom: f32) -> Rectangle {
+    let side = (RESIZE_GRIP_SIDE / zoom)
+        .min(bounds.width * 0.5)
+        .min(bounds.height * 0.5);
+    Rectangle {
+        x: bounds.x + bounds.width - side,
+        y: bounds.y + bounds.height - side,
+        width: side,
+        height: side,
+    }
+}
+
+#[cfg(test)]
+mod grip_tests {
+    use super::{MIN_NODE_SIZE, resize_grip_zone};
+    use iced_widget::core::{Point, Rectangle, Size};
+
+    fn zone(size: Size, zoom: f32) -> Rectangle {
+        resize_grip_zone(Rectangle::new(Point::new(10.0, 20.0), size), zoom)
+    }
+
+    #[test]
+    fn sits_in_the_bottom_right_corner() {
+        assert_eq!(
+            zone(Size::new(100.0, 60.0), 1.0),
+            Rectangle::new(Point::new(98.0, 68.0), Size::new(12.0, 12.0)),
+        );
+    }
+
+    // The side scales with 1/zoom, so the grip covers the same screen pixels
+    // however far the camera is zoomed in or out.
+    #[test]
+    fn scales_inversely_with_zoom() {
+        assert_eq!(zone(Size::new(100.0, 60.0), 2.0).width, 6.0);
+        assert_eq!(zone(Size::new(100.0, 60.0), 0.5).width, 24.0);
+    }
+
+    // Half the node is the ceiling in each axis: a node at the minimum size
+    // keeps a body to drag it by, and a zoomed-out node is not all grip.
+    #[test]
+    fn never_covers_more_than_half_the_node() {
+        assert_eq!(zone(MIN_NODE_SIZE, 1.0).width, 12.0);
+        assert_eq!(zone(Size::new(100.0, 60.0), 0.25).width, 30.0);
     }
 }
 

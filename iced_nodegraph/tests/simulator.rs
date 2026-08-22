@@ -13,7 +13,7 @@
 //! `p .. p + (w, h)`.
 
 use iced::widget::{container, text};
-use iced::{Element, Length, Point, Theme, Vector};
+use iced::{Element, Length, Point, Size, Theme, Vector};
 use iced::{keyboard, mouse};
 use iced_nodegraph::{DragInfo, NodeGraph, PinRef, edge, node, pin};
 use iced_test::Simulator;
@@ -27,6 +27,7 @@ type Pin = PinRef<usize, usize>;
 enum Msg {
     Select(Vec<usize>),
     Move(Vector, Vec<usize>),
+    Resize(usize, Size),
     Clone(Vec<usize>),
     Delete(Vec<usize>),
     Connect(Pin, Pin),
@@ -54,11 +55,25 @@ fn graph_with_selected(
     nodes: &[(usize, Point)],
     selected: &[usize],
 ) -> Element<'static, Msg, Theme, Renderer> {
+    graph_of(nodes, selected, false)
+}
+
+/// Like [`graph_with`], but every node carries a resize grip.
+fn resizable_graph(nodes: &[(usize, Point)]) -> Element<'static, Msg, Theme, Renderer> {
+    graph_of(nodes, &[], true)
+}
+
+fn graph_of(
+    nodes: &[(usize, Point)],
+    selected: &[usize],
+    resizable: bool,
+) -> Element<'static, Msg, Theme, Renderer> {
     let mut ng: Graph = NodeGraph::default()
         .width(Length::Fill)
         .height(Length::Fill)
         .on_select(Msg::Select)
         .on_move(Msg::Move)
+        .on_resize(Msg::Resize)
         .on_clone(Msg::Clone)
         .on_delete(Msg::Delete)
         .on_drag_start(Msg::DragStart)
@@ -68,7 +83,11 @@ fn graph_with_selected(
         let body = container(iced::widget::text("n"))
             .width(Length::Fixed(NODE_W))
             .height(Length::Fixed(NODE_H));
-        ng.push_node(node(id, pos, body).selected(selected.contains(&id)));
+        ng.push_node(
+            node(id, pos, body)
+                .selected(selected.contains(&id))
+                .resizable(resizable),
+        );
     }
     ng.into()
 }
@@ -1469,5 +1488,112 @@ fn selection_works_without_the_host_marking_anything() {
     assert!(
         msgs.contains(&Msg::Delete(vec![0])),
         "an unmarked host must still get a working selection: {msgs:?}",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Corner-grip resize
+//
+// The grip is the bottom-right RESIZE_GRIP_SIDE (12 world px at zoom 1) square
+// of a resizable node's body, so for a NODE_W x NODE_H body at world `p` it
+// spans `p + (48, 18) .. p + (60, 30)`. A resize is only ever REPORTED: the
+// host owns the content, so the node keeps its size for the whole drag and
+// every report is absolute (`size at press + cursor delta`).
+// ---------------------------------------------------------------------------
+
+/// A point inside the bottom-right grip of a node whose top-left is `p`.
+fn grip(p: Point) -> Point {
+    Point::new(p.x + NODE_W - 6.0, p.y + NODE_H - 6.0)
+}
+
+fn last_resize(msgs: &[Msg]) -> Option<(usize, Size)> {
+    msgs.iter().rev().find_map(|m| match m {
+        Msg::Resize(id, size) => Some((*id, *size)),
+        _ => None,
+    })
+}
+
+fn any_move(msgs: &[Msg]) -> bool {
+    msgs.iter().any(|m| matches!(m, Msg::Move(..)))
+}
+
+#[test]
+fn grip_drag_on_resizable_node_reports_the_new_size() {
+    let start = Point::new(100.0, 100.0);
+    let mut ui = Simulator::new(resizable_graph(&[(0, start)]));
+    drag(&mut ui, grip(start), grip(start) + Vector::new(40.0, 10.0));
+
+    let msgs = messages(ui);
+    let (id, size) = last_resize(&msgs).expect("dragging the grip must emit Resize");
+    assert_eq!(id, 0);
+    assert!(
+        (size.width - (NODE_W + 40.0)).abs() < 0.5 && (size.height - (NODE_H + 10.0)).abs() < 0.5,
+        "grip drag should report (100, 40), got {size:?}",
+    );
+    assert!(
+        !any_move(&msgs),
+        "a resize must not move the node: {msgs:?}",
+    );
+}
+
+#[test]
+fn grip_drag_on_non_resizable_node_moves_it_instead() {
+    let start = Point::new(100.0, 100.0);
+    let mut ui = Simulator::new(graph_with(&[(0, start)]));
+    drag(&mut ui, grip(start), grip(start) + Vector::new(40.0, 10.0));
+
+    let msgs = messages(ui);
+    assert_eq!(last_resize(&msgs), None, "unmarked node must not resize");
+    let moved = msgs.iter().find_map(|m| match m {
+        Msg::Move(delta, ids) => Some((*delta, sorted(ids.clone()))),
+        _ => None,
+    });
+    let (delta, ids) = moved.expect("the corner of an unmarked node still drags it");
+    assert_eq!(ids, vec![0]);
+    assert!(
+        (delta.x - 40.0).abs() < 0.5 && (delta.y - 10.0).abs() < 0.5,
+        "node should move by (40, 10), got {delta:?}",
+    );
+}
+
+/// Dragging the grip up and left past zero clamps at MIN_NODE_SIZE, so the node
+/// keeps a body to grab and a grip to grow it back by.
+#[test]
+fn grip_drag_clamps_to_the_minimum_size() {
+    let start = Point::new(100.0, 100.0);
+    let mut ui = Simulator::new(resizable_graph(&[(0, start)]));
+    // Delta (-44, -14) would ask for 16x16; both axes hit the floor.
+    drag(&mut ui, grip(start), start + Vector::new(10.0, 10.0));
+
+    let msgs = messages(ui);
+    let (_, size) = last_resize(&msgs).expect("dragging the grip must emit Resize");
+    assert_eq!(size, Size::new(32.0, 24.0));
+}
+
+#[test]
+fn body_drag_on_a_resizable_node_still_moves_it() {
+    let start = Point::new(100.0, 100.0);
+    let mut ui = Simulator::new(resizable_graph(&[(0, start)]));
+    drag(
+        &mut ui,
+        center(start),
+        center(start) + Vector::new(50.0, 20.0),
+    );
+
+    let msgs = messages(ui);
+    assert_eq!(
+        last_resize(&msgs),
+        None,
+        "a body drag is a move, not a resize: {msgs:?}",
+    );
+    let moved = msgs.iter().find_map(|m| match m {
+        Msg::Move(delta, ids) => Some((*delta, sorted(ids.clone()))),
+        _ => None,
+    });
+    let (delta, ids) = moved.expect("dragging a resizable node's body must emit Move");
+    assert_eq!(ids, vec![0]);
+    assert!(
+        (delta.x - 50.0).abs() < 0.5 && (delta.y - 20.0).abs() < 0.5,
+        "node should move by (50, 20), got {delta:?}",
     );
 }

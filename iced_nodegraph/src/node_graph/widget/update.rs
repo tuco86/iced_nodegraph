@@ -290,6 +290,11 @@ where
                             node: node_index,
                             origin,
                         } => self.handle_node_drag(&mut ctx, node_index, origin),
+                        Dragging::Resize {
+                            node: node_index,
+                            origin,
+                            start,
+                        } => self.handle_resize(&mut ctx, node_index, origin, start),
                         Dragging::Edge {
                             from_node,
                             from_pin,
@@ -723,6 +728,67 @@ where
             shell.capture_event();
             shell.invalidate_layout();
             shell.request_redraw();
+        }
+    }
+
+    /// Handles an in-progress grip resize: reports the size the node's content
+    /// should have on every cursor move, and ends the drag on release.
+    ///
+    /// A report, not a change. The widget has no node size to set - the content
+    /// element's layout is the size - so the node keeps its current bounds for
+    /// the whole drag and only grows once the host lays its content out at the
+    /// reported size. Measuring against `start` (the size at press) rather than
+    /// against the live bounds is what makes that lag harmless: every report is
+    /// absolute, so a host that applies none, some or all of them still lands
+    /// exactly under the cursor.
+    ///
+    /// Release commits nothing further: the last report already carried the
+    /// final size, and neither a move nor a selection change belongs to a
+    /// gesture that never moved the node.
+    fn handle_resize(
+        &self,
+        ctx: &mut UpdateCtx<'_, '_, '_, Message>,
+        node_index: usize,
+        origin: WorldPoint,
+        start: Size,
+    ) {
+        let UpdateCtx {
+            tree,
+            event,
+            world_cursor,
+            shell,
+            ..
+        } = &mut *ctx;
+        match event {
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                let Some(cursor_position) = world_cursor.position() else {
+                    return;
+                };
+                // Same conversion as `Dragging::Node`: both points are in
+                // layout-absolute space, so that origin term cancels and the
+                // delta is pure world units.
+                let offset = cursor_position.into_euclid() - origin;
+                let Some(node_id) = self.node_id_at(node_index).cloned() else {
+                    return;
+                };
+                if let Some(handler) = self.on_resize.as_ref() {
+                    let size = Size::new(
+                        (start.width + offset.x).max(MIN_NODE_SIZE.width),
+                        (start.height + offset.y).max(MIN_NODE_SIZE.height),
+                    );
+                    shell.publish(handler(node_id, size));
+                }
+                shell.capture_event();
+                shell.request_redraw();
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                let state = tree.state.downcast_mut::<NodeGraphState>();
+                state.dragging = Dragging::None;
+                shell.capture_event();
+                shell.invalidate_layout();
+                shell.request_redraw();
+            }
+            _ => {}
         }
     }
 
@@ -1241,8 +1307,13 @@ where
             }
         }
 
-        // Body check for this same node (still top-first).
+        // Body check for this same node (still top-first). The grip is a corner
+        // of that body, so it is tested here and takes the press before the
+        // move drag would - pins keep their precedence either way.
         if ctx.world_cursor.is_over(node_layout.bounds()) {
+            if self.try_start_resize(ctx, node_index, cursor_position, node_layout.bounds()) {
+                return true;
+            }
             self.select_or_drag_node(ctx, node_index, cursor_position);
             return true;
         }
@@ -1330,6 +1401,36 @@ where
                 from_pin: pin_id.clone(),
             }));
         }
+        ctx.shell.capture_event();
+        true
+    }
+
+    /// Starts a resize drag when the press lands in a resizable node's grip.
+    /// Returns whether the grip took the press.
+    ///
+    /// Gated on `on_resize` for the same reason the move drag is gated on
+    /// `on_move`: node size is the host's content layout, so without a handler
+    /// the drag would have nowhere to land - and no grip is drawn either, so
+    /// the corner is plain node body.
+    fn try_start_resize(
+        &self,
+        ctx: &mut UpdateCtx<'_, '_, '_, Message>,
+        node_index: usize,
+        cursor_position: Point,
+        bounds: Rectangle,
+    ) -> bool {
+        if self.on_resize.is_none() || !self.nodes[node_index].resizable {
+            return false;
+        }
+        let state = ctx.tree.state.downcast_mut::<NodeGraphState>();
+        if !resize_grip_zone(bounds, state.camera.zoom()).contains(cursor_position) {
+            return false;
+        }
+        state.dragging = Dragging::Resize {
+            node: node_index,
+            origin: cursor_position.into_euclid(),
+            start: bounds.size(),
+        };
         ctx.shell.capture_event();
         true
     }

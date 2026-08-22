@@ -1138,3 +1138,104 @@ fn second_finger_cancels_a_touch_node_drag() {
         "second finger must cancel the drag via on_drag_end",
     );
 }
+
+// ---------------------------------------------------------------------------
+// Resize-grip cursor: `mouse_interaction` hit-tests the grip in the same
+// layout-absolute space the press path uses, so the reported cursor has to
+// survive a non-zero widget origin AND a panned, zoomed camera - the exact
+// combination the rest of this file exists for.
+// ---------------------------------------------------------------------------
+
+/// Screen pixel of a layout-absolute point (`widget_origin + world`) under the
+/// given camera: `screen = origin + (p - origin + camera_position) * zoom`.
+fn layout_to_screen(origin: Vector, p: Point, camera_pos: Point, zoom: f32) -> Point {
+    Point::new(
+        origin.x + (p.x - origin.x + camera_pos.x) * zoom,
+        origin.y + (p.y - origin.y + camera_pos.y) * zoom,
+    )
+}
+
+/// The interaction a graph at `widget_origin` reports for a screen `cursor`,
+/// holding one 40x20 node at the world origin.
+fn interaction_at(
+    widget_origin: Vector,
+    camera_pos: Point,
+    camera_zoom: f32,
+    cursor: Point,
+    resizable: bool,
+) -> mouse::Interaction {
+    let mut graph: Graph<()> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .on_resize(|_, _| ())
+        .view(camera_pos, camera_zoom);
+    graph.push_node(node(0_usize, Point::ORIGIN, Element::from(ContentProbe)).resizable(resizable));
+
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Recorder>);
+    let renderer = Recorder::detached();
+    let layout_node = graph.layout(
+        &mut tree,
+        &renderer,
+        &layout::Limits::new(Size::ZERO, Size::new(1024.0, 768.0)),
+    );
+    let layout = Layout::with_offset(widget_origin, &layout_node);
+    let viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
+
+    // One update syncs `view()` into the widget camera and its viewport origin.
+    let mut msgs: Vec<()> = Vec::new();
+    let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
+    let mut clipboard = clipboard::Null;
+    graph.update(
+        &mut tree,
+        &iced::Event::Mouse(mouse::Event::CursorMoved { position: cursor }),
+        layout,
+        mouse::Cursor::Available(cursor),
+        &renderer,
+        &mut clipboard,
+        &mut shell,
+        &viewport,
+    );
+
+    graph.mouse_interaction(
+        &tree,
+        layout,
+        mouse::Cursor::Available(cursor),
+        &viewport,
+        &renderer,
+    )
+}
+
+// Widget at (60, 40), camera panned (25, 15) and zoomed 2x. The 40x20 node sits
+// at the world origin, so its layout-absolute body is (60, 40)..(100, 60) and
+// its grip - RESIZE_GRIP_SIDE (12) / zoom (2) = 6 world px, under the half-node
+// cap - is (94, 54)..(100, 60).
+const GRIP_ORIGIN: Vector = Vector::new(60.0, 40.0);
+const GRIP_CAMERA: Point = Point::new(25.0, 15.0);
+const GRIP_ZOOM: f32 = 2.0;
+
+#[test]
+fn hovering_the_grip_of_a_resizable_node_reports_the_resize_cursor() {
+    let cursor = layout_to_screen(GRIP_ORIGIN, Point::new(97.0, 57.0), GRIP_CAMERA, GRIP_ZOOM);
+    assert_eq!(
+        interaction_at(GRIP_ORIGIN, GRIP_CAMERA, GRIP_ZOOM, cursor, true),
+        mouse::Interaction::ResizingDiagonallyDown,
+    );
+}
+
+#[test]
+fn hovering_a_node_body_outside_the_grip_reports_no_cursor() {
+    let cursor = layout_to_screen(GRIP_ORIGIN, Point::new(70.0, 45.0), GRIP_CAMERA, GRIP_ZOOM);
+    assert_eq!(
+        interaction_at(GRIP_ORIGIN, GRIP_CAMERA, GRIP_ZOOM, cursor, true),
+        mouse::Interaction::default(),
+    );
+}
+
+#[test]
+fn the_corner_of_a_non_resizable_node_reports_no_cursor() {
+    let cursor = layout_to_screen(GRIP_ORIGIN, Point::new(97.0, 57.0), GRIP_CAMERA, GRIP_ZOOM);
+    assert_eq!(
+        interaction_at(GRIP_ORIGIN, GRIP_CAMERA, GRIP_ZOOM, cursor, false),
+        mouse::Interaction::default(),
+    );
+}
