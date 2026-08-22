@@ -491,12 +491,172 @@ impl Camera2D {
     ) -> WorldPoint {
         Self::position_for_center(position, zoom, viewport, padding)
     }
+
+    /// The `(center, zoom)` a focus tween shows at eased progress `e`, moving
+    /// from `(start_center, start_zoom)` to `(end_center, end_zoom)`.
+    ///
+    /// Zoom interpolates geometrically, because apparent size is linear in
+    /// `log(zoom)`, not in `zoom`: the visual midpoint between 1x and 4x is 2x,
+    /// not 2.5x. The center is then weighted by `1/zoom` - the same invariant
+    /// [`zoom_at`](Self::zoom_at) holds, since `screen = (world + position) *
+    /// zoom` means one world step covers less screen the further in the camera
+    /// is. Together the two keep the whole image moving as one body: every
+    /// world point traces a straight line across the screen, and every point
+    /// covers the same fraction of its path at the same `e`.
+    ///
+    /// Lerping the center linearly against a changing zoom does not do that.
+    /// The on-screen path is then a ratio of two ramps, so content swings out
+    /// and back - measured at 5.8x its straight-line screen distance on a
+    /// 12.5x zoom-in - and which half appears to lead flips with the zoom
+    /// direction, which is why matching "progress" in linear zoom units reads
+    /// as out of sync in both directions.
+    ///
+    /// A tween whose zoom does not change falls back to a plain center lerp,
+    /// so a pure pan travels straight at constant speed with no zoom-out
+    /// detour. `e >= 1.0` returns the endpoints verbatim: that value is what
+    /// the host stores and echoes back through `view()`, so it must not be
+    /// f32's approach to the target.
+    pub(crate) fn tween_step(
+        start_center: WorldPoint,
+        start_zoom: f32,
+        end_center: WorldPoint,
+        end_zoom: f32,
+        e: f32,
+    ) -> (WorldPoint, f32) {
+        if e >= 1.0 {
+            return (end_center, end_zoom);
+        }
+        let zoom = start_zoom * (end_zoom / start_zoom).powf(e);
+        let inv_start = 1.0 / start_zoom;
+        let inv_span = inv_start - 1.0 / end_zoom;
+        // Below this the two zooms are the same screen scale, and the ratio
+        // would be a quotient of two cancelling near-zeros; 1/zoom is O(0.1..10)
+        // over the clamped zoom range, so 1e-6 is far under any real difference.
+        let progress = if inv_span.abs() > 1e-6 {
+            (inv_start - 1.0 / zoom) / inv_span
+        } else {
+            e
+        };
+        (
+            WorldPoint::new(
+                start_center.x + (end_center.x - start_center.x) * progress,
+                start_center.y + (end_center.y - start_center.y) * progress,
+            ),
+            zoom,
+        )
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::node_graph::euclid::WorldSize;
+
+    /// Screen path of `probe` over a sampled tween, as the camera would show it.
+    fn tween_screen_path(
+        probe: WorldPoint,
+        start: (WorldPoint, f32),
+        end: (WorldPoint, f32),
+        viewport: Size,
+    ) -> Vec<ScreenPoint> {
+        const STEPS: usize = 64;
+        (0..=STEPS)
+            .map(|i| {
+                let e = i as f32 / STEPS as f32;
+                let (center, zoom) = Camera2D::tween_step(start.0, start.1, end.0, end.1, e);
+                let position = Camera2D::position_for_center(center, zoom, viewport, Padding::ZERO);
+                Camera2D::with_zoom_and_position(zoom, position)
+                    .world_to_screen()
+                    .transform_point(probe)
+            })
+            .collect()
+    }
+
+    fn path_length(path: &[ScreenPoint]) -> f32 {
+        path.windows(2).map(|w| (w[1] - w[0]).length()).sum()
+    }
+
+    /// What "pan and zoom in sync" means, measured: every world point travels a
+    /// STRAIGHT line across the screen. A center lerped linearly against a
+    /// geometric zoom sends the target point out and back instead - 5.8x its
+    /// straight-line distance on this fixture - which reads as the image
+    /// swinging past its destination.
+    #[test]
+    fn a_focus_tween_moves_every_point_straight_across_the_screen() {
+        let viewport = Size::new(1280.0, 768.0);
+        // Zoom in 12.5x while panning, and back out again: the lead flips with
+        // the zoom direction, so both directions have to hold.
+        let wide = (WorldPoint::new(2000.0, 1250.0), 0.2752);
+        let close = (WorldPoint::new(3500.0, 2000.0), 3.44);
+
+        for (name, from, to) in [("zoom in", wide, close), ("zoom out", close, wide)] {
+            for probe in [
+                to.0,
+                from.0,
+                WorldPoint::new(to.0.x + 800.0, to.0.y - 600.0),
+            ] {
+                let path = tween_screen_path(probe, from, to, viewport);
+                let straight = (path[path.len() - 1] - path[0]).length();
+                assert!(
+                    straight > 1.0,
+                    "{name}: fixture must actually move {probe:?} on screen",
+                );
+                let ratio = path_length(&path) / straight;
+                assert!(
+                    ratio < 1.01,
+                    "{name}: {probe:?} travelled {ratio:.2}x its straight-line screen \
+                     distance - the image is swinging, not moving",
+                );
+            }
+        }
+    }
+
+    /// The other half of "in sync": the image moves as ONE body. Two different
+    /// world points must be the same fraction along their own screen paths at
+    /// every step, or the picture shears while the camera flies.
+    #[test]
+    fn a_focus_tween_advances_every_point_by_the_same_fraction() {
+        let viewport = Size::new(1280.0, 768.0);
+        let from = (WorldPoint::new(0.0, 0.0), 1.0);
+        let to = (WorldPoint::new(2000.0, 1250.0), 0.2752);
+
+        let a = tween_screen_path(to.0, from, to, viewport);
+        let b = tween_screen_path(
+            WorldPoint::new(to.0.x - 450.0, to.0.y + 275.0),
+            from,
+            to,
+            viewport,
+        );
+        let (total_a, total_b) = (path_length(&a), path_length(&b));
+
+        for i in 1..a.len() {
+            let done_a = path_length(&a[..=i]) / total_a;
+            let done_b = path_length(&b[..=i]) / total_b;
+            assert!(
+                (done_a - done_b).abs() < 1e-3,
+                "step {i}: one point is {:.1}% along its path, the other {:.1}%",
+                done_a * 100.0,
+                done_b * 100.0,
+            );
+        }
+    }
+
+    /// A move that changes no zoom must be a plain straight pan: no 1/zoom
+    /// weighting to divide by, and no zoom-out-and-back detour.
+    #[test]
+    fn a_pure_pan_tween_interpolates_linearly() {
+        let from = (WorldPoint::new(0.0, 0.0), 1.5);
+        let to = (WorldPoint::new(400.0, -200.0), 1.5);
+
+        for e in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            let (center, zoom) = Camera2D::tween_step(from.0, from.1, to.0, to.1, e);
+            assert!(approx_eq(zoom, 1.5), "zoom must not move: {zoom}");
+            assert!(
+                point_approx_eq(center, WorldPoint::new(to.0.x * e, to.0.y * e),),
+                "at e={e} the center must be the linear midpoint, got {center:?}",
+            );
+        }
+    }
 
     const EPSILON: f32 = 0.001;
 

@@ -207,11 +207,16 @@ where
                     1.0
                 };
                 let e = tween.easing.apply(t);
-                let center = WorldPoint::new(
-                    tween.start_center.x + (tween.end_center.x - tween.start_center.x) * e,
-                    tween.start_center.y + (tween.end_center.y - tween.start_center.y) * e,
+                // One perceptual path for both halves: geometric zoom with a
+                // 1/zoom-weighted center, so the image moves as one body
+                // instead of pan and zoom each running their own ramp.
+                let (center, zoom) = Camera2D::tween_step(
+                    tween.start_center,
+                    tween.start_zoom,
+                    tween.end_center,
+                    tween.end_zoom,
+                    e,
                 );
-                let zoom = tween.start_zoom * (tween.end_zoom / tween.start_zoom).powf(e);
                 let position =
                     Camera2D::position_for_center(center, zoom, tween.viewport, tween.padding);
                 let viewport_origin = state.camera.viewport_origin();
