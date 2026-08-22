@@ -11,14 +11,21 @@
 
 use super::GraphInfo;
 use super::camera::Camera2D;
-use super::euclid::{IntoEuclid, WorldPoint};
+use super::euclid::{IntoEuclid, LayoutPoint, WorldPoint};
 use iced_widget::core::{Layout, Point, Size, keyboard, touch};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use web_time::Instant;
 
-/// What the pointer is currently dragging. `WorldPoint`s are the drag's world
-/// anchor, captured at press.
+/// What the pointer is currently dragging, with the anchor captured at press.
+///
+/// The anchors live in two spaces, and which one a variant uses follows the
+/// cursor it was captured from. Panning is driven by the raw screen cursor
+/// (`Camera2D::screen_to_world`), so its anchor is a [`WorldPoint`]. Every
+/// other gesture hit-tests against child layouts, so its anchor is the
+/// layout-absolute [`LayoutPoint`] the camera hands the child walk. The two
+/// differ by the viewport origin, which cancels in the deltas these anchors
+/// are consumed as.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) enum Dragging {
     #[default]
@@ -26,23 +33,23 @@ pub(crate) enum Dragging {
     /// Panning the canvas (right mouse button).
     Graph(WorldPoint),
     /// Moving one unselected node.
-    Node { node: usize, origin: WorldPoint },
+    Node { node: usize, origin: LayoutPoint },
     /// Moving every selected node together.
-    GroupMove(WorldPoint),
+    GroupMove(LayoutPoint),
     /// Resizing one node by its bottom-right grip. `start` is the node's
     /// content size at press: the reported size is `start + cursor delta`, so
     /// the drag stays exact even though the node itself never changes size
     /// until the host applies the report.
     Resize {
         node: usize,
-        origin: WorldPoint,
+        origin: LayoutPoint,
         start: Size,
     },
     /// A loose edge held at the cursor, anchored at its source pin.
     Edge {
         from_node: usize,
         from_pin: usize,
-        origin: WorldPoint,
+        origin: LayoutPoint,
     },
     /// A dragged edge snapped onto a compatible target pin. Releasing here keeps
     /// the connection.
@@ -53,11 +60,11 @@ pub(crate) enum Dragging {
         to_pin: usize,
     },
     /// Rubber-band selection: the press corner and the live corner.
-    SelectionBox(WorldPoint, WorldPoint),
+    SelectionBox(LayoutPoint, LayoutPoint),
     /// Slicing across edges: the cursor trail and the edge indices it has
     /// crossed so far, cut on release.
     EdgeCutting {
-        trail: Vec<WorldPoint>,
+        trail: Vec<LayoutPoint>,
         pending_cuts: HashSet<usize>,
     },
 }
@@ -203,10 +210,11 @@ mod tests {
 
     #[test]
     fn test_dragging_states_not_equal() {
-        let origin = Point2D::new(10.0, 20.0);
+        let world = WorldPoint::new(10.0, 20.0);
+        let origin = LayoutPoint::new(10.0, 20.0);
 
-        assert_ne!(Dragging::None, Dragging::Graph(origin));
-        assert_ne!(Dragging::Graph(origin), Dragging::Node { node: 0, origin });
+        assert_ne!(Dragging::None, Dragging::Graph(world));
+        assert_ne!(Dragging::Graph(world), Dragging::Node { node: 0, origin });
         assert_ne!(
             Dragging::Node { node: 0, origin },
             Dragging::Edge {

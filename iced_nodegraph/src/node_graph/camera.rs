@@ -157,8 +157,8 @@
 //! Run tests with: `cargo test --lib camera`
 
 use super::euclid::{
-    IntoEuclid, IntoIced, Screen, ScreenPoint, ScreenRect, ScreenToWorld, ScreenVector, World,
-    WorldPoint, WorldRect, WorldSize, WorldVector,
+    IntoEuclid, IntoIced, LayoutPoint, LayoutRect, LayoutSize, Screen, ScreenPoint, ScreenRect,
+    ScreenToWorld, ScreenVector, World, WorldPoint, WorldVector,
 };
 use euclid::{Scale, Transform2D};
 use iced_wgpu::core::{mouse, renderer};
@@ -371,8 +371,8 @@ impl Camera2D {
     pub fn cursor_screen_to_layout(&self, cursor: mouse::Cursor) -> mouse::Cursor {
         let to_world = self.screen_to_world();
         let map = |pos: Point| -> Point {
-            let w = to_world.transform_point(pos.into_euclid());
-            Point::new(w.x + self.viewport_origin.x, w.y + self.viewport_origin.y)
+            self.world_to_layout(to_world.transform_point(pos.into_euclid()))
+                .into_iced()
         };
         match cursor {
             mouse::Cursor::Available(pos) => mouse::Cursor::Available(map(pos)),
@@ -381,23 +381,38 @@ impl Camera2D {
         }
     }
 
+    /// Folds the viewport origin into a world position, yielding the
+    /// layout-absolute point iced `Layout` bounds are expressed in.
+    ///
+    /// This and [`layout_to_world`](Self::layout_to_world) are the only origin
+    /// fold: anything else that turns one space's position into the other's is
+    /// reconstructing the transform by hand.
+    pub fn world_to_layout(&self, p: WorldPoint) -> LayoutPoint {
+        LayoutPoint::new(p.x + self.viewport_origin.x, p.y + self.viewport_origin.y)
+    }
+
+    /// Removes the viewport origin from a layout-absolute point, yielding the
+    /// world position the host expresses node coordinates in. Inverse of
+    /// [`world_to_layout`](Self::world_to_layout).
+    pub fn layout_to_world(&self, p: LayoutPoint) -> WorldPoint {
+        WorldPoint::new(p.x - self.viewport_origin.x, p.y - self.viewport_origin.y)
+    }
+
     fn viewport_screen_to_layout(&self, viewport: &Rectangle<f32>) -> Rectangle<f32> {
         let viewport: ScreenRect = viewport.into_euclid();
         // Screen -> layout-absolute: (screen - origin) / zoom - position + origin.
         let inv_zoom = 1.0 / self.zoom.get();
-        let world_viewport: WorldRect = WorldRect::new(
-            WorldPoint::new(
-                (viewport.origin.x - self.viewport_origin.x) * inv_zoom - self.position.x
-                    + self.viewport_origin.x,
-                (viewport.origin.y - self.viewport_origin.y) * inv_zoom - self.position.y
-                    + self.viewport_origin.y,
-            ),
-            WorldSize::new(
+        let layout_viewport: LayoutRect = LayoutRect::new(
+            self.world_to_layout(WorldPoint::new(
+                (viewport.origin.x - self.viewport_origin.x) * inv_zoom - self.position.x,
+                (viewport.origin.y - self.viewport_origin.y) * inv_zoom - self.position.y,
+            )),
+            LayoutSize::new(
                 viewport.size.width * inv_zoom,
                 viewport.size.height * inv_zoom,
             ),
         );
-        world_viewport.into_iced()
+        layout_viewport.into_iced()
     }
 }
 

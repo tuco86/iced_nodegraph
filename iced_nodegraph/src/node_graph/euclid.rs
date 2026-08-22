@@ -1,10 +1,12 @@
 //! Type-safe coordinate space conversions.
 //!
 //! This module provides phantom types and conversion traits for working with
-//! two distinct coordinate spaces:
+//! three distinct coordinate spaces:
 //!
 //! - **Screen space** - Pixel coordinates from user input (mouse position, viewport)
 //! - **World space** - Virtual canvas coordinates where nodes exist
+//! - **Layout space** - `viewport_origin + world`, the space iced `Layout`
+//!   bounds and child hit tests live in
 //!
 //! Using the [`euclid`](https://docs.rs/euclid) crate's phantom types prevents
 //! accidental mixing of coordinate spaces at compile time.
@@ -15,6 +17,7 @@
 //! |------|-------------|
 //! | [`WorldPoint`] | A point in world coordinates |
 //! | [`ScreenPoint`] | A point in screen coordinates |
+//! | [`LayoutPoint`] | A point in the widget's layout-absolute space |
 //! | [`WorldVector`] | A displacement vector in world space |
 //! | [`ScreenToWorld`] | Transform matrix from screen to world |
 //!
@@ -35,6 +38,16 @@ pub enum World {}
 #[derive(Debug, Clone, Copy)]
 pub enum Screen {}
 
+/// The widget's layout-absolute space: `viewport_origin + world`.
+///
+/// iced `Layout` bounds, the positions of node child widgets, and every hit
+/// test against them live here. It differs from [`World`] by the pure
+/// translation `viewport_origin`, so a *displacement* is identical in both
+/// spaces while a *position* is not. Fold the origin only through
+/// `Camera2D::world_to_layout` and `Camera2D::layout_to_world`.
+#[derive(Debug, Clone, Copy)]
+pub enum LayoutSpace {}
+
 pub type WorldPoint = Point2D<f32, World>;
 pub type ScreenPoint = Point2D<f32, Screen>;
 
@@ -42,11 +55,15 @@ pub type WorldVector = Vector2D<f32, World>;
 
 pub type ScreenVector = Vector2D<f32, Screen>;
 
-pub type WorldSize = Size2D<f32, World>;
-
-pub type WorldRect = Rect<f32, World>;
-
 pub type ScreenRect = Rect<f32, Screen>;
+
+pub type LayoutPoint = Point2D<f32, LayoutSpace>;
+
+pub type LayoutVector = Vector2D<f32, LayoutSpace>;
+
+pub type LayoutSize = Size2D<f32, LayoutSpace>;
+
+pub type LayoutRect = Rect<f32, LayoutSpace>;
 
 pub type ScreenToWorld = Transform2D<f32, Screen, World>;
 

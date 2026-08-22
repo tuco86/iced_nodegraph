@@ -112,11 +112,11 @@ fn world_bbox_to_screen_bounds(
 }
 
 /// Construct the open `Shape` for an edge based on curve type and pin sides. The
-/// geometry is world-space (edges are ephemeral, never deduped), so callers push
-/// it with a zero placement.
+/// geometry is in the widget's layout-absolute space (edges are ephemeral, never
+/// deduped), so callers push it with a zero placement.
 fn edge_shape(
-    start: &WorldPoint,
-    end: &WorldPoint,
+    start: &LayoutPoint,
+    end: &LayoutPoint,
     start_side: u32,
     end_side: u32,
     curve: &crate::style::EdgeCurve,
@@ -143,8 +143,8 @@ fn edge_shape(
 /// The shadow shares the stroke geometry, shifted by `style.shadow.offset` when
 /// non-zero (otherwise it is a clone of the stroke shape).
 fn edge_shapes(
-    start: &WorldPoint,
-    end: &WorldPoint,
+    start: &LayoutPoint,
+    end: &LayoutPoint,
     start_side: u32,
     end_side: u32,
     style: &EdgeStyle,
@@ -154,8 +154,8 @@ fn edge_shapes(
         && (style.shadow_color.near_start.a > 0.0 || style.shadow_color.near_end.a > 0.0);
     let shadow_shape = if has_shadow && style.shadow_offset != (0.0, 0.0) {
         let (ox, oy) = style.shadow_offset;
-        let s_start = WorldPoint::new(start.x + ox, start.y + oy);
-        let s_end = WorldPoint::new(end.x + ox, end.y + oy);
+        let s_start = LayoutPoint::new(start.x + ox, start.y + oy);
+        let s_end = LayoutPoint::new(end.x + ox, end.y + oy);
         edge_shape(&s_start, &s_end, start_side, end_side, &style.curve)
     } else {
         shape.clone()
@@ -241,7 +241,7 @@ fn resolve_pin_style<P: PinId + 'static, UI>(
 /// derived from the mark that sits in it. `is_valid_target(pin_idx)` selects the
 /// valid-target pin style, so a host that varies the cutout by status gets one
 /// cached silhouette per status; the built-in default deliberately does not.
-/// World-space `(center, radius)` of each pin cutout - the single source for the
+/// Layout-absolute `(center, radius)` of each pin cutout - the single source for the
 /// recipe cuts (`ShapeExpr::Circle` at local offsets) that punch the pin holes,
 /// so the body and its shadow punch identical holes.
 fn pin_cutout_params<P: PinId + 'static, UI>(
@@ -249,7 +249,7 @@ fn pin_cutout_params<P: PinId + 'static, UI>(
     pin_style_fn: Option<&PinStyleFn<'_, P, UI>>,
     other: Option<&NodePinState<P, UI>>,
     theme: &Theme,
-    offset: WorldVector,
+    offset: LayoutVector,
     mut is_valid_target: impl FnMut(usize) -> bool,
 ) -> Vec<([f32; 2], f32)> {
     let mut cuts = Vec::new();
@@ -426,15 +426,15 @@ where
         // Node/group drag origins are captured in layout-absolute space (the
         // event closure's cursor), so the live preview must compute the cursor
         // in the same space; the `viewport_origin` term cancels in the delta.
-        let vo = camera.viewport_origin();
-        let cursor_layout = |cursor_pos: Point| -> WorldPoint {
-            let w = camera
-                .screen_to_world()
-                .transform_point(cursor_pos.into_euclid());
-            WorldPoint::new(w.x + vo.x, w.y + vo.y)
+        let cursor_layout = |cursor_pos: Point| -> LayoutPoint {
+            camera.world_to_layout(
+                camera
+                    .screen_to_world()
+                    .transform_point(cursor_pos.into_euclid()),
+            )
         };
-        let compute_node_offset = |node_idx: usize| -> WorldVector {
-            let mut offset = WorldVector::zero();
+        let compute_node_offset = |node_idx: usize| -> LayoutVector {
+            let mut offset = LayoutVector::zero();
             let is_selected = selection.contains(&node_idx);
 
             // Single node drag
@@ -475,8 +475,8 @@ where
             shape: Shape,
             center: [f32; 2],
             resolved: NodeStyle,
-            offset: WorldVector,
-            position: WorldPoint,
+            offset: LayoutVector,
+            position: LayoutPoint,
             size: Size,
         }
         impl NodeGeom {
@@ -511,7 +511,7 @@ where
                 };
                 let resolved = resolve_node_style(node.style.as_ref(), theme, status);
                 let offset = compute_node_offset(node_index);
-                let position: WorldPoint =
+                let position: LayoutPoint =
                     (node_layout.bounds().position().into_euclid().to_vector() + offset).to_point();
                 let size = node_layout.bounds().size();
                 let pins = &node_pins[node_index];
@@ -765,7 +765,7 @@ where
                 // Loose end follows the cursor in the same layout-absolute space
                 // as the pin geometry so the dragged edge stays aligned when the
                 // graph is off the window origin.
-                let end_pos: WorldPoint = cursor_layout(cursor_pos);
+                let end_pos: LayoutPoint = cursor_layout(cursor_pos);
 
                 let drag_edge_style = match (
                     self.dragging_edge_style.as_ref(),
@@ -1014,9 +1014,9 @@ where
                         pin_status,
                     );
                     let indicator_r = pin_style.radius;
-                    let pin_world: WorldPoint =
+                    let pin_layout: LayoutPoint =
                         (pin_pos.into_euclid().to_vector() + offset).to_point();
-                    let pw = [pin_world.x, pin_world.y];
+                    let pw = [pin_layout.x, pin_layout.y];
 
                     // Pin shapes are centred on the pin, and so is every
                     // primitive's origin, so the placement is just the pin
@@ -1040,10 +1040,10 @@ where
                             .fold(0.0_f32, f32::max)
                         + 2.0 / cam_zoom;
                     let pin_bounds = world_bbox_to_screen_bounds(
-                        pin_world.x - pin_pad,
-                        pin_world.y - pin_pad,
-                        pin_world.x + pin_pad,
-                        pin_world.y + pin_pad,
+                        pin_layout.x - pin_pad,
+                        pin_layout.y - pin_pad,
+                        pin_layout.x + pin_pad,
+                        pin_layout.y + pin_pad,
                         0.0,
                         &render_context,
                     );

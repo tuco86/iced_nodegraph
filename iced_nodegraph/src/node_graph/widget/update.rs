@@ -550,7 +550,7 @@ where
         match event {
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 if let Some(cursor_position) = world_cursor.position() {
-                    let cursor_position: WorldPoint = cursor_position.into_euclid();
+                    let cursor_position: LayoutPoint = cursor_position.into_euclid();
 
                     // Update trail and check which edges intersect with cutting line
                     if let Dragging::EdgeCutting {
@@ -687,7 +687,7 @@ where
         &self,
         ctx: &mut UpdateCtx<'_, '_, '_, Message>,
         node_index: usize,
-        origin: WorldPoint,
+        origin: LayoutPoint,
     ) {
         let UpdateCtx {
             tree,
@@ -749,7 +749,7 @@ where
         &self,
         ctx: &mut UpdateCtx<'_, '_, '_, Message>,
         node_index: usize,
-        origin: WorldPoint,
+        origin: LayoutPoint,
         start: Size,
     ) {
         let UpdateCtx {
@@ -1004,7 +1004,7 @@ where
 
     /// Handles an in-progress selection box: tracks the moving corner and
     /// commits the intersecting set on release (Shift adds to the selection).
-    fn handle_selection_box(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>, start: WorldPoint) {
+    fn handle_selection_box(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>, start: LayoutPoint) {
         let UpdateCtx {
             tree,
             layout,
@@ -1025,7 +1025,7 @@ where
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 // Close the selection box - collect the nodes it intersects
                 if let Some(cursor_position) = world_cursor.position() {
-                    let end: WorldPoint = cursor_position.into_euclid();
+                    let end: LayoutPoint = cursor_position.into_euclid();
                     let selection_rect = selection_rect_from_points(start, end);
 
                     // Without the multi-select modifier (keymap, default
@@ -1061,7 +1061,7 @@ where
 
     /// Handles an in-progress group move: reports one shared delta for every
     /// selected node on release.
-    fn handle_group_move(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>, origin: WorldPoint) {
+    fn handle_group_move(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>, origin: LayoutPoint) {
         let UpdateCtx {
             tree,
             event,
@@ -1078,7 +1078,7 @@ where
                 // Complete group move - notify all selected nodes moved
                 let indices: Vec<usize> = Self::selection_indices(&self.resolved_selection(state));
                 if let Some(cursor_position) = world_cursor.position() {
-                    let cursor_position: WorldPoint = cursor_position.into_euclid();
+                    let cursor_position: LayoutPoint = cursor_position.into_euclid();
                     let offset = cursor_position - origin;
 
                     // Translate internal indices to user IDs
@@ -1534,7 +1534,7 @@ where
             ..
         } = &mut *ctx;
         if let Some(cursor_position) = world_cursor.position() {
-            let cursor_position: WorldPoint = cursor_position.into_euclid();
+            let cursor_position: LayoutPoint = cursor_position.into_euclid();
             let state = tree.state.downcast_mut::<NodeGraphState>();
 
             // Edge-cut chord held: start edge cutting instead of a selection box
@@ -1552,7 +1552,10 @@ where
             // touch expectation; a tap (no travel) clears the selection on
             // lift instead (see `apply_touch`).
             if !state.fingers.is_empty() {
-                state.dragging = Dragging::Graph(cursor_position);
+                // A pan anchor is compared against the raw screen cursor, so it
+                // is a world point: fold the viewport origin back out of the
+                // layout-absolute press position first.
+                state.dragging = Dragging::Graph(state.camera.layout_to_world(cursor_position));
                 shell.capture_event();
                 return;
             }
@@ -1735,8 +1738,9 @@ fn pin_by_id<P: PinId + 'static, UI: 'static>(
         .map(|(index, state, anchors)| (*index, *anchors, state.side))
 }
 
-/// Creates a selection rectangle from two corner points (handles any corner order)
-fn selection_rect_from_points(a: WorldPoint, b: WorldPoint) -> Rectangle {
+/// Creates a selection rectangle from two layout-absolute corner points
+/// (handles any corner order), ready to compare against child layout bounds.
+fn selection_rect_from_points(a: LayoutPoint, b: LayoutPoint) -> Rectangle {
     let min_x = a.x.min(b.x);
     let min_y = a.y.min(b.y);
     let max_x = a.x.max(b.x);

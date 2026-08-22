@@ -828,7 +828,19 @@ fn run_events<Msg: 'static>(
 /// Like [`run_events`], but the host marks `selected` node indices, standing in
 /// for a frame where the host has already applied a reported selection.
 fn run_events_selected<Msg: 'static>(
+    graph: Graph<Msg>,
+    selected: &[usize],
+    events: &[(iced::Event, mouse::Cursor)],
+) -> Vec<Msg> {
+    run_events_at(graph, Vector::ZERO, selected, events)
+}
+
+/// Like [`run_events_selected`], but the graph sits at `widget_origin` - the
+/// case every anchor that is captured in one space and consumed in another has
+/// to survive.
+fn run_events_at<Msg: 'static>(
     mut graph: Graph<Msg>,
+    widget_origin: Vector,
     selected: &[usize],
     events: &[(iced::Event, mouse::Cursor)],
 ) -> Vec<Msg> {
@@ -852,7 +864,7 @@ fn run_events_selected<Msg: 'static>(
         &renderer,
         &layout::Limits::new(Size::ZERO, Size::new(1024.0, 768.0)),
     );
-    let layout = Layout::new(&layout_node);
+    let layout = Layout::with_offset(widget_origin, &layout_node);
     let viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
 
     let mut msgs: Vec<Msg> = Vec::new();
@@ -1050,6 +1062,42 @@ fn touch_drag_on_empty_space_pans_the_graph() {
     assert!(
         (position.x + 50.0).abs() < 1e-3 && position.y.abs() < 1e-3,
         "touch pan committed the wrong offset: {position:?}",
+    );
+    assert!((zoom - 1.0).abs() < 1e-6);
+}
+
+/// A touch pan captures its anchor from the layout-absolute press position,
+/// while the release compares against the raw screen cursor - so the widget
+/// origin has to be folded back out in between. At a non-zero origin the
+/// committed pan is the finger's travel and nothing more; counting the origin
+/// twice would report it plus the toolbar offset.
+#[test]
+fn touch_pan_at_nonzero_origin_commits_only_the_finger_travel() {
+    let origin = Vector::new(40.0, 100.0);
+    let graph: Graph<(Point, f32)> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .on_pan(|position, zoom| (position, zoom));
+
+    let msgs = run_events_at(
+        graph,
+        origin,
+        &[],
+        &[
+            finger_press(1, Point::new(origin.x + 300.0, origin.y + 300.0)),
+            finger_move(1, Point::new(origin.x + 250.0, origin.y + 300.0)),
+            finger_lift(1, Point::new(origin.x + 250.0, origin.y + 300.0)),
+        ],
+    );
+    assert_eq!(
+        msgs.len(),
+        1,
+        "touch pan must commit exactly once: {msgs:?}"
+    );
+    let (position, zoom) = msgs[0];
+    assert!(
+        (position.x + 50.0).abs() < 1e-3 && position.y.abs() < 1e-3,
+        "touch pan at origin {origin:?} committed {position:?}, expected (-50, 0)",
     );
     assert!((zoom - 1.0).abs() < 1e-6);
 }

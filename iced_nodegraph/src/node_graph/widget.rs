@@ -52,14 +52,14 @@ use web_time::Instant;
 use super::{
     Counts, DragInfo, Edge, GraphInfo, MIN_NODE_SIZE, NodeGraph, OpTiming, RESIZE_GRIP_SIDE,
     RenderContext,
-    euclid::{IntoIced, WorldVector},
+    euclid::{IntoIced, LayoutVector},
     state::{Dragging, NodeGraphState, z_render_indices},
 };
 use super::{EdgeStyleFn, NodeStyleFn, PinStyleFn};
 use crate::{
     PinDirection, PinRef, PinSide,
     ids::{EdgeId, NodeId, PinId},
-    node_graph::euclid::{IntoEuclid, ScreenPoint, WorldPoint},
+    node_graph::euclid::{IntoEuclid, LayoutPoint, ScreenPoint, WorldPoint},
     node_pin::{NodePinState, PinEnd, PinInfo},
     style::{
         EdgeGeometry, EdgeStatus, EdgeStyle, GraphStyle, NodeStatus, NodeStyle, PinStatus,
