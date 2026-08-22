@@ -77,6 +77,33 @@ impl Orbit {
         let delta = (angle(to) - angle(from)) * hand.sign();
         hand.sign() * delta.rem_euclid(std::f32::consts::TAU)
     }
+
+    /// Which way a cable dragged from `from` should wrap, given where the
+    /// cursor let go: the hand whose tangent point is nearer the drop.
+    ///
+    /// This is the whole of "from the left or from the right" - the user aims
+    /// at a side of the ring, and that side IS the wrap direction.
+    pub(crate) fn drop_hand(&self, from: [f32; 2], cursor: [f32; 2]) -> Option<Hand> {
+        let reach = |hand| {
+            self.attachment(from, hand).map(|a| {
+                let d = [a.point[0] - cursor[0], a.point[1] - cursor[1]];
+                d[0] * d[0] + d[1] * d[1]
+            })
+        };
+        match (reach(Hand::Clockwise), reach(Hand::CounterClockwise)) {
+            (Some(cw), Some(ccw)) if cw <= ccw => Some(Hand::Clockwise),
+            (Some(_), Some(_)) => Some(Hand::CounterClockwise),
+            _ => None,
+        }
+    }
+
+    /// Distance from `p` to the ring itself, not to its centre - so the orbit
+    /// nearest the cursor is the one whose circle it is closest to, whichever
+    /// side of that circle the cursor is on.
+    pub(crate) fn ring_distance(&self, p: [f32; 2]) -> f32 {
+        let d = [p[0] - self.center[0], p[1] - self.center[1]];
+        ((d[0] * d[0] + d[1] * d[1]).sqrt() - self.radius).abs()
+    }
 }
 
 /// Unit travel direction at polar angle `theta`, following `hand`.
@@ -466,6 +493,46 @@ mod tests {
             panic!("half chain is not a single leg: {:?}", path.segs)
         };
         assert!((dist(to, ORBIT.center) - ORBIT.radius).abs() < 1e-3);
+    }
+
+    /// Dropping picks the side you aimed at: the tangent point nearer the
+    /// cursor decides the wrap, which is what "from the left or from the right"
+    /// means in practice.
+    #[test]
+    fn the_drop_side_decides_the_hand() {
+        let from = [0.0, 200.0];
+        let cw = ORBIT.attachment(from, Hand::Clockwise).unwrap().point;
+        let ccw = ORBIT
+            .attachment(from, Hand::CounterClockwise)
+            .unwrap()
+            .point;
+
+        assert_eq!(ORBIT.drop_hand(from, cw), Some(Hand::Clockwise));
+        assert_eq!(ORBIT.drop_hand(from, ccw), Some(Hand::CounterClockwise));
+    }
+
+    #[test]
+    fn a_pin_inside_the_orbit_has_no_drop_side() {
+        assert_eq!(ORBIT.drop_hand(ORBIT.center, [0.0, 0.0]), None);
+    }
+
+    /// The nearest orbit is measured against the RING, so a cursor sitting on a
+    /// wide ring picks that one rather than the tight inner shell it happens to
+    /// be closer to the middle of.
+    #[test]
+    fn ring_distance_measures_to_the_circle() {
+        let outer = Orbit {
+            center: ORBIT.center,
+            radius: 100.0,
+        };
+        let on_outer = [ORBIT.center[0] + 105.0, ORBIT.center[1]];
+        assert!(outer.ring_distance(on_outer) < ORBIT.ring_distance(on_outer));
+
+        let on_ring = [ORBIT.center[0] + ORBIT.radius, ORBIT.center[1]];
+        assert!(ORBIT.ring_distance(on_ring) < 1e-3);
+        // Inside counts like outside: it is a distance to the circle, not a
+        // signed field.
+        assert!((ORBIT.ring_distance(ORBIT.center) - ORBIT.radius).abs() < 1e-3);
     }
 
     /// Render-heal: an orbit that swallows the pin has no tangent, so the wrap

@@ -102,12 +102,12 @@ pub fn run_demo() {
 enum Message {
     // Graph events
     EdgeConnected {
-        from: PinRef<usize, usize>,
-        to: PinRef<usize, usize>,
+        from: EdgeEnd<usize, usize>,
+        to: EdgeEnd<usize, usize>,
     },
     EdgeDisconnected {
-        from: PinRef<usize, usize>,
-        to: PinRef<usize, usize>,
+        from: EdgeEnd<usize, usize>,
+        to: EdgeEnd<usize, usize>,
     },
     SelectionChanged(Vec<usize>),
     NodesMoved {
@@ -260,10 +260,9 @@ impl Application {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::EdgeConnected { from, to } => {
-                self.edges.push((from.into(), to.into()));
+                self.edges.push((from, to));
             }
             Message::EdgeDisconnected { from, to } => {
-                let (from, to) = (EdgeEnd::Pin(from), EdgeEnd::Pin(to));
                 self.edges.retain(|(f, t)| !(f == &from && t == &to));
             }
             Message::SelectionChanged(indices) => {

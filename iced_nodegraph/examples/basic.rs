@@ -63,8 +63,9 @@ impl Value {
     }
 }
 
-/// A connection endpoint with the default `usize` node and pin ids.
-type Pin = PinRef<usize, usize>;
+/// A connection endpoint with the default `usize` node and pin ids. Either end
+/// of an edge may also be an anchor orbit, which this example does not use.
+type End = EdgeEnd<usize, usize>;
 
 // Node ids.
 const VALUE: usize = 0; // slider  -> Number out (pin 0)
@@ -77,7 +78,7 @@ struct App {
     /// Node positions in world space, indexed by node id.
     positions: Vec<Point>,
     /// Active connections between pins.
-    edges: Vec<(Pin, Pin)>,
+    edges: Vec<(End, End)>,
     /// Live input state of the two source nodes.
     value: f32,
     switch: bool,
@@ -95,10 +96,10 @@ impl Default for App {
             ],
             // Pre-wired into "value > 0 AND switch -> lamp" so it works on launch.
             edges: vec![
-                (PinRef::new(VALUE, 0), PinRef::new(GT0, 0)),
-                (PinRef::new(GT0, 1), PinRef::new(AND, 0)),
-                (PinRef::new(SWITCH, 0), PinRef::new(AND, 1)),
-                (PinRef::new(AND, 2), PinRef::new(LAMP, 0)),
+                (PinRef::new(VALUE, 0).into(), PinRef::new(GT0, 0).into()),
+                (PinRef::new(GT0, 1).into(), PinRef::new(AND, 0).into()),
+                (PinRef::new(SWITCH, 0).into(), PinRef::new(AND, 1).into()),
+                (PinRef::new(AND, 2).into(), PinRef::new(LAMP, 0).into()),
             ],
             value: 0.5,
             switch: true,
@@ -109,8 +110,8 @@ impl Default for App {
 #[derive(Debug, Clone)]
 enum Message {
     Moved { delta: Vector, ids: Vec<usize> },
-    Connected { from: Pin, to: Pin },
-    Disconnected { from: Pin, to: Pin },
+    Connected { from: End, to: End },
+    Disconnected { from: End, to: End },
     Value(f32),
     Switch(bool),
 }
@@ -194,6 +195,7 @@ impl App {
         let (from, _) = self
             .edges
             .iter()
+            .filter_map(|(from, to)| Some((from.pin()?, to.pin()?)))
             .find(|(_, to)| to.node_id == node && to.pin_id == pin)?;
         self.output(from.node_id, depth - 1)
     }

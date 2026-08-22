@@ -50,7 +50,7 @@ use iced::{
     widget::{canvas, column, container, opaque, row, stack, text, toggler},
 };
 use iced_nodegraph::{
-    Counts, GraphInfo, GraphStyle, PinInfo, PinRef, PinStatus, PinStyle, default_pin_style, edge,
+    Counts, EdgeEnd, GraphInfo, GraphStyle, PinInfo, PinStatus, PinStyle, default_pin_style, edge,
     node,
 };
 use nodes::NodeType;
@@ -137,12 +137,12 @@ pub fn run_demo() {
 #[derive(Debug, Clone)]
 enum ApplicationMessage {
     EdgeConnected {
-        from: PinRef<usize, usize>,
-        to: PinRef<usize, usize>,
+        from: EdgeEnd<usize, usize>,
+        to: EdgeEnd<usize, usize>,
     },
     EdgeDisconnected {
-        from: PinRef<usize, usize>,
-        to: PinRef<usize, usize>,
+        from: EdgeEnd<usize, usize>,
+        to: EdgeEnd<usize, usize>,
     },
     SelectionChanged(Vec<usize>),
     NodesMoved {
@@ -163,7 +163,7 @@ enum ApplicationMessage {
 }
 
 struct Application {
-    edges: Vec<(PinRef<usize, usize>, PinRef<usize, usize>)>,
+    edges: Vec<(EdgeEnd<usize, usize>, EdgeEnd<usize, usize>)>,
     nodes: Vec<(Point, NodeType)>,
     current_theme: Theme,
     selected_nodes: HashSet<usize>,
@@ -213,7 +213,10 @@ impl Default for Application {
         // so it is only armed while something is actually reading it.
         iced_nodegraph_sdf::set_index_probe(stats_visible || report);
         Self {
-            edges,
+            edges: edges
+                .into_iter()
+                .map(|(from, to)| (from.into(), to.into()))
+                .collect(),
             nodes,
             current_theme: Theme::CatppuccinMocha,
             selected_nodes: HashSet::new(),

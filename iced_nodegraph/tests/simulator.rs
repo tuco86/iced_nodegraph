@@ -15,12 +15,13 @@
 use iced::widget::{container, text};
 use iced::{Element, Length, Point, Size, Theme, Vector};
 use iced::{keyboard, mouse};
-use iced_nodegraph::{DragInfo, NodeGraph, PinRef, anchor, edge, node, pin};
+use iced_nodegraph::{DragInfo, EdgeEnd, Hand, NodeGraph, PinRef, anchor, edge, node, pin};
 use iced_test::Simulator;
 
 type Renderer = iced::Renderer;
 type Graph = NodeGraph<'static, usize, usize, (), Msg, Renderer>;
 type Pin = PinRef<usize, usize>;
+type End = EdgeEnd<usize, usize>;
 
 /// Captures every interaction callback the graph can emit.
 #[derive(Debug, Clone, PartialEq)]
@@ -30,8 +31,8 @@ enum Msg {
     Resize(usize, Size),
     Clone(Vec<usize>),
     Delete(Vec<usize>),
-    Connect(Pin, Pin),
-    Disconnect(Pin, Pin),
+    Connect(End, End),
+    Disconnect(End, End),
     Camera(Point, f32),
     DragStart(DragInfo<usize, usize>),
     DragUpdate(Point),
@@ -116,6 +117,11 @@ fn graph_with_anchor(anchor_at: Point) -> Element<'static, Msg, Theme, Renderer>
 /// Screen center of a node body whose top-left world position is `p`.
 fn center(p: Point) -> Point {
     Point::new(p.x + NODE_W / 2.0, p.y + NODE_H / 2.0)
+}
+
+/// The edge endpoint a plain pin reports as.
+fn pin_end(node: usize, pin: usize) -> End {
+    EdgeEnd::Pin(Pin::new(node, pin))
 }
 
 fn moved(p: Point) -> iced::Event {
@@ -510,7 +516,7 @@ fn drag_output_to_input_connects() {
 
     let msgs = messages(ui);
     assert!(
-        msgs.contains(&Msg::Connect(PinRef::new(0, 0), PinRef::new(1, 0))),
+        msgs.contains(&Msg::Connect(pin_end(0, 0), pin_end(1, 0))),
         "dragging output -> input must connect them: {msgs:?}",
     );
 }
@@ -524,7 +530,7 @@ fn drag_input_to_output_reports_output_first() {
 
     let msgs = messages(ui);
     assert!(
-        msgs.contains(&Msg::Connect(PinRef::new(0, 0), PinRef::new(1, 0))),
+        msgs.contains(&Msg::Connect(pin_end(0, 0), pin_end(1, 0))),
         "connection must be normalized output-first regardless of drag direction: {msgs:?}",
     );
 }
@@ -569,7 +575,7 @@ fn ctrl_click_on_edge_disconnects() {
 
     let msgs = messages(ui);
     assert!(
-        msgs.contains(&Msg::Disconnect(PinRef::new(0, 0), PinRef::new(1, 0))),
+        msgs.contains(&Msg::Disconnect(pin_end(0, 0), pin_end(1, 0))),
         "ctrl+click on an edge must disconnect it: {msgs:?}",
     );
 }
@@ -581,7 +587,7 @@ fn ctrl_click_on_edge_disconnects() {
 fn cutting_an_edge_reports_its_host_id() {
     #[derive(Debug, Clone, PartialEq)]
     enum M {
-        Disconnect(Pin, Pin),
+        Disconnect(End, End),
         Cut(Vec<&'static str>),
     }
 
@@ -743,7 +749,7 @@ fn dragging_connected_pin_past_hysteresis_disconnects() {
     let far = Point::new(in_anchor().x + 30.0, in_anchor().y);
     let msgs = last_msgs_after_grab(far);
     assert!(
-        msgs.contains(&Msg::Disconnect(PinRef::new(0, 0), PinRef::new(1, 0))),
+        msgs.contains(&Msg::Disconnect(pin_end(0, 0), pin_end(1, 0))),
         "dragging past the hysteresis threshold must disconnect: {msgs:?}",
     );
 }
@@ -795,11 +801,11 @@ fn rewire_grabbed_pin_to_another_pin() {
 
     let msgs = messages(ui);
     assert!(
-        msgs.contains(&Msg::Disconnect(PinRef::new(0, 0), PinRef::new(1, 0))),
+        msgs.contains(&Msg::Disconnect(pin_end(0, 0), pin_end(1, 0))),
         "re-wiring must disconnect the original edge: {msgs:?}",
     );
     assert!(
-        msgs.contains(&Msg::Connect(PinRef::new(0, 0), PinRef::new(2, 0))),
+        msgs.contains(&Msg::Connect(pin_end(0, 0), pin_end(2, 0))),
         "re-wiring must connect the grabbed end to the new pin: {msgs:?}",
     );
 }
@@ -827,7 +833,7 @@ fn rewire_back_to_own_input_reconnects() {
         "popping the edge off its input must disconnect first: {msgs:?}",
     );
     assert!(
-        msgs.contains(&Msg::Connect(PinRef::new(0, 0), PinRef::new(1, 0))),
+        msgs.contains(&Msg::Connect(pin_end(0, 0), pin_end(1, 0))),
         "dropping back on the original input must reconnect it: {msgs:?}",
     );
 }
@@ -864,7 +870,7 @@ fn default_rejects_second_edge_to_occupied_input() {
 
     let msgs = messages(ui);
     assert!(
-        !msgs.contains(&Msg::Connect(PinRef::new(2, 0), PinRef::new(1, 0))),
+        !msgs.contains(&Msg::Connect(pin_end(2, 0), pin_end(1, 0))),
         "default one-edge-per-input must reject a second edge to an occupied input: {msgs:?}",
     );
 }
@@ -916,7 +922,7 @@ fn drop_connect_through_covering_node_is_possible() {
 
     let msgs = messages(ui);
     assert!(
-        msgs.contains(&Msg::Connect(PinRef::new(0, 0), PinRef::new(1, 0))),
+        msgs.contains(&Msg::Connect(pin_end(0, 0), pin_end(1, 0))),
         "dropping onto a covered pin must still connect: {msgs:?}",
     );
 }
@@ -1304,7 +1310,7 @@ fn drag_connects_under_zoom_and_pan() {
 
     let msgs = messages(ui);
     assert!(
-        msgs.contains(&Msg::Connect(PinRef::new(0, 0), PinRef::new(1, 0))),
+        msgs.contains(&Msg::Connect(pin_end(0, 0), pin_end(1, 0))),
         "dragging output -> input under zoom+pan must connect them: {msgs:?}",
     );
 }
@@ -1326,7 +1332,7 @@ fn ctrl_click_on_edge_disconnects_under_zoom_and_pan() {
 
     let msgs = messages(ui);
     assert!(
-        msgs.contains(&Msg::Disconnect(PinRef::new(0, 0), PinRef::new(1, 0))),
+        msgs.contains(&Msg::Disconnect(pin_end(0, 0), pin_end(1, 0))),
         "ctrl+click on the edge under zoom+pan must disconnect it: {msgs:?}",
     );
 }
@@ -1690,5 +1696,180 @@ fn body_drag_on_a_resizable_node_still_moves_it() {
     assert!(
         (delta.x - 50.0).abs() < 0.5 && (delta.y - 20.0).abs() < 0.5,
         "node should move by (50, 20), got {delta:?}",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Attaching a dragged edge to an anchor orbit. An anchor passes cables through
+// and has no type, so an empty orbit accepts anything; the connection rules
+// only bite once something is already on the ring.
+// ---------------------------------------------------------------------------
+
+const ORBIT_ANCHOR: usize = 7;
+/// Matches `default_anchor_style`'s `orbit_offset`, so orbit 0's ring is this
+/// far out from the anchor centre.
+const ORBIT_0: f32 = 16.0;
+
+/// One output pin plus one anchor. `connect_ok` drives `can_connect`, and
+/// `seed` optionally pre-attaches an edge from node 1's input to orbit 0, so a
+/// drag arrives at a HALF-occupied ring.
+fn orbit_graph(connect_ok: bool, seed: bool) -> Element<'static, Msg, Theme, Renderer> {
+    let mut ng: Graph = NodeGraph::default()
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .on_connect(Msg::Connect)
+        .on_disconnect(Msg::Disconnect)
+        .can_connect(move |_, _| connect_ok);
+    ng.push_node(node(
+        0usize,
+        OUT_POS,
+        pin!(Right, 0usize, pin_body::<_>(), Output),
+    ));
+    ng.push_node(node(
+        1usize,
+        IN_POS,
+        pin!(Left, 0usize, pin_body::<_>(), Input),
+    ));
+    ng.push_anchor(anchor(ORBIT_ANCHOR, ANCHOR_AT));
+    if seed {
+        ng.push_edge(edge!(
+            PinRef::new(1, 0),
+            EdgeEnd::Orbit {
+                anchor: ORBIT_ANCHOR,
+                orbit: 0,
+                hand: Hand::Clockwise,
+            }
+        ));
+    }
+    ng.into()
+}
+
+const ANCHOR_AT: Point = Point::new(200.0, 220.0);
+
+/// A point on orbit 0's ring, `angle` radians round from the anchor centre.
+fn on_orbit_0(angle: f32) -> Point {
+    Point::new(
+        ANCHOR_AT.x + ORBIT_0 * angle.cos(),
+        ANCHOR_AT.y + ORBIT_0 * angle.sin(),
+    )
+}
+
+#[test]
+fn dragging_onto_an_empty_orbit_attaches() {
+    let mut ui = Simulator::new(orbit_graph(true, false));
+    drag(
+        &mut ui,
+        out_anchor(),
+        on_orbit_0(-std::f32::consts::FRAC_PI_2),
+    );
+
+    let msgs = messages(ui);
+    assert!(
+        msgs.iter().any(|m| matches!(
+            m,
+            Msg::Connect(
+                EdgeEnd::Pin(_),
+                EdgeEnd::Orbit {
+                    anchor: 7,
+                    orbit: 0,
+                    ..
+                }
+            )
+        )),
+        "dropping on orbit 0 must attach to it: {msgs:?}",
+    );
+}
+
+/// An empty orbit has nothing to be compatible with, so a rejecting
+/// `can_connect` must not block it - that is what "an anchor passes through"
+/// means. The rule applies to what is already attached, not to the ring.
+#[test]
+fn an_empty_orbit_accepts_even_when_can_connect_rejects() {
+    let mut ui = Simulator::new(orbit_graph(false, false));
+    drag(
+        &mut ui,
+        out_anchor(),
+        on_orbit_0(-std::f32::consts::FRAC_PI_2),
+    );
+
+    let msgs = messages(ui);
+    assert!(
+        msgs.iter()
+            .any(|m| matches!(m, Msg::Connect(_, EdgeEnd::Orbit { .. }))),
+        "an empty orbit must accept anything: {msgs:?}",
+    );
+}
+
+/// Once an edge holds the ring, the drop is validated against ITS far end -
+/// dropping here would join the two into one connection, so the far pin is the
+/// thing to be compatible with.
+///
+/// Being refused does not end the gesture: orbit 0 is occupied, so orbit 1 is
+/// on offer, and an empty ring accepts anything. The drag falls outward to it
+/// rather than doing nothing, which is the shell rule doing its job.
+#[test]
+fn a_rejected_partner_pushes_the_drop_to_the_next_shell() {
+    let mut ui = Simulator::new(orbit_graph(false, true));
+    drag(
+        &mut ui,
+        out_anchor(),
+        on_orbit_0(-std::f32::consts::FRAC_PI_2),
+    );
+
+    let msgs = messages(ui);
+    assert!(
+        !msgs
+            .iter()
+            .any(|m| matches!(m, Msg::Connect(_, EdgeEnd::Orbit { orbit: 0, .. }))),
+        "a rejected partner must block ITS ring: {msgs:?}",
+    );
+    assert!(
+        msgs.iter()
+            .any(|m| matches!(m, Msg::Connect(_, EdgeEnd::Orbit { orbit: 1, .. }))),
+        "the drag must fall outward to the free shell: {msgs:?}",
+    );
+}
+
+#[test]
+fn a_half_occupied_orbit_accepts_a_compatible_partner() {
+    let mut ui = Simulator::new(orbit_graph(true, true));
+    drag(
+        &mut ui,
+        out_anchor(),
+        on_orbit_0(-std::f32::consts::FRAC_PI_2),
+    );
+
+    let msgs = messages(ui);
+    assert!(
+        msgs.iter()
+            .any(|m| matches!(m, Msg::Connect(_, EdgeEnd::Orbit { .. }))),
+        "a compatible partner must allow the drop: {msgs:?}",
+    );
+}
+
+/// Leaving the ring unsnaps, exactly as leaving a pin does - the attachment is
+/// live drag state, not a commit.
+#[test]
+fn leaving_the_orbit_disconnects_again() {
+    let mut ui = Simulator::new(orbit_graph(true, false));
+    let on_ring = on_orbit_0(-std::f32::consts::FRAC_PI_2);
+    ui.point_at(out_anchor());
+    ui.simulate([moved(out_anchor()), press()]);
+    ui.point_at(on_ring);
+    ui.simulate([moved(on_ring)]);
+    let far = Point::new(ANCHOR_AT.x + 400.0, ANCHOR_AT.y + 400.0);
+    ui.point_at(far);
+    ui.simulate([moved(far), release()]);
+
+    let msgs = messages(ui);
+    assert!(
+        msgs.iter()
+            .any(|m| matches!(m, Msg::Connect(_, EdgeEnd::Orbit { .. }))),
+        "the drag must attach on the way past the ring: {msgs:?}",
+    );
+    assert!(
+        msgs.iter()
+            .any(|m| matches!(m, Msg::Disconnect(_, EdgeEnd::Orbit { .. }))),
+        "moving off the ring must unsnap: {msgs:?}",
     );
 }

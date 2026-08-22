@@ -18,18 +18,19 @@
 //! ## Quick Start
 //!
 //! ```rust,no_run
-//! use iced_nodegraph::{NodeGraph, PinRef, edge, node, node_graph};
+//! use iced_nodegraph::{EdgeEnd, NodeGraph, edge, node, node_graph};
 //! use iced::{Element, Theme, Point, Vector};
 //! use iced::widget::text;
 //! use iced_wgpu::Renderer;
 //!
+//! # type End = EdgeEnd<usize, usize>;
 //! #[derive(Debug, Clone)]
 //! enum Message {
-//!     EdgeConnected { from: PinRef<usize, usize>, to: PinRef<usize, usize> },
+//!     EdgeConnected { from: End, to: End },
 //!     NodesMoved { delta: Vector, node_ids: Vec<usize> },
 //! }
 //!
-//! fn view(edges: &[(PinRef<usize, usize>, PinRef<usize, usize>)]) -> Element<'_, Message, Theme, Renderer> {
+//! fn view(edges: &[(End, End)]) -> Element<'_, Message, Theme, Renderer> {
 //!     let mut ng = node_graph()
 //!         .on_connect(|from, to| Message::EdgeConnected { from, to })
 //!         .on_move(|delta, node_ids| Message::NodesMoved { delta, node_ids });

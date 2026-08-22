@@ -210,8 +210,8 @@ pub fn default_anchor_style(theme: &Theme, status: AnchorStatus) -> AnchorStyle 
         core_color: roles.body.into(),
         core_border_color: roles.border.into(),
         core_border_width: 1.0,
-        orbit_offset: 16.0,
-        orbit_spacing: 10.0,
+        orbit_offset: crate::node_graph::DEFAULT_ORBIT_OFFSET,
+        orbit_spacing: crate::node_graph::DEFAULT_ORBIT_SPACING,
         ring_color: Color {
             a: 0.35,
             ..roles.wire

@@ -299,6 +299,7 @@ where
             }
             Dragging::Edge { .. }
             | Dragging::EdgeOver { .. }
+            | Dragging::EdgeOverOrbit { .. }
             | Dragging::EdgeCutting { .. }
             | Dragging::SelectionBox(..) => return mouse::Interaction::Crosshair,
             Dragging::None => {}

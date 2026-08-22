@@ -48,7 +48,7 @@ use iced::{
     window,
 };
 use iced_nodegraph::{
-    ColorQuad, CuttingToolStyle, EdgeStatus, EdgeStyle, FocusOptions, FocusTarget, PinRef,
+    ColorQuad, CuttingToolStyle, EdgeEnd, EdgeStatus, EdgeStyle, FocusOptions, FocusTarget,
     SelectionBoxStyle, default_cutting_tool_style, default_edge_style, default_node_style,
     default_pin_style, default_selection_box_style, edge as ng_edge, node as ng_node,
 };
@@ -125,12 +125,12 @@ pub fn run_demo() {
 #[derive(Debug, Clone)]
 enum ApplicationMessage {
     EdgeConnected {
-        from: PinRef<NodeId, PinLabel>,
-        to: PinRef<NodeId, PinLabel>,
+        from: EdgeEnd<NodeId, PinLabel>,
+        to: EdgeEnd<NodeId, PinLabel>,
     },
     EdgeDisconnected {
-        from: PinRef<NodeId, PinLabel>,
-        to: PinRef<NodeId, PinLabel>,
+        from: EdgeEnd<NodeId, PinLabel>,
+        to: EdgeEnd<NodeId, PinLabel>,
     },
     /// Edges the cutting tool destroyed, named by their own ids.
     EdgesCut(Vec<EdgeId>),
@@ -1196,17 +1196,19 @@ impl Application {
     fn update(&mut self, message: ApplicationMessage) -> Task<ApplicationMessage> {
         match message {
             ApplicationMessage::EdgeConnected { from, to } => {
-                let edge_id = generate_edge_id();
-                self.edges.insert(
-                    edge_id.clone(),
-                    EdgeData {
-                        from_node: from.node_id,
-                        from_pin: from.pin_id,
-                        to_node: to.node_id,
-                        to_pin: to.pin_id,
-                    },
-                );
-                self.edge_order.push(edge_id);
+                if let Some((from_pin, to_pin)) = from.pin().zip(to.pin()) {
+                    let edge_id = generate_edge_id();
+                    self.edges.insert(
+                        edge_id.clone(),
+                        EdgeData {
+                            from_node: from_pin.node_id.clone(),
+                            from_pin: from_pin.pin_id,
+                            to_node: to_pin.node_id.clone(),
+                            to_pin: to_pin.pin_id,
+                        },
+                    );
+                    self.edge_order.push(edge_id);
+                }
                 self.propagate_values();
                 self.save_state();
                 Task::none()
@@ -1224,20 +1226,22 @@ impl Application {
             ApplicationMessage::EdgeDisconnected { from, to } => {
                 // Unsnap during a drag: no host edge exists to name, so match the
                 // endpoint pair. Cuts arrive through `EdgesCut` instead.
-                let edge_to_remove: Option<EdgeId> = self
-                    .edges
-                    .iter()
-                    .find(|(_, e)| {
-                        e.from_node == from.node_id
-                            && e.from_pin == from.pin_id
-                            && e.to_node == to.node_id
-                            && e.to_pin == to.pin_id
-                    })
-                    .map(|(id, _)| id.clone());
+                if let Some((from_pin, to_pin)) = from.pin().zip(to.pin()) {
+                    let edge_to_remove: Option<EdgeId> = self
+                        .edges
+                        .iter()
+                        .find(|(_, e)| {
+                            e.from_node == from_pin.node_id
+                                && e.from_pin == from_pin.pin_id
+                                && e.to_node == to_pin.node_id
+                                && e.to_pin == to_pin.pin_id
+                        })
+                        .map(|(id, _)| id.clone());
 
-                if let Some(edge_id) = edge_to_remove {
-                    self.edges.remove(&edge_id);
-                    self.edge_order.retain(|id| id != &edge_id);
+                    if let Some(edge_id) = edge_to_remove {
+                        self.edges.remove(&edge_id);
+                        self.edge_order.retain(|id| id != &edge_id);
+                    }
                 }
                 self.propagate_values();
                 self.save_state();
@@ -1827,12 +1831,12 @@ impl Application {
 
         ng = ng
             .on_connect(
-                |from: PinRef<NodeId, PinLabel>, to: PinRef<NodeId, PinLabel>| {
+                |from: EdgeEnd<NodeId, PinLabel>, to: EdgeEnd<NodeId, PinLabel>| {
                     ApplicationMessage::EdgeConnected { from, to }
                 },
             )
             .on_disconnect(
-                |from: PinRef<NodeId, PinLabel>, to: PinRef<NodeId, PinLabel>| {
+                |from: EdgeEnd<NodeId, PinLabel>, to: EdgeEnd<NodeId, PinLabel>| {
                     ApplicationMessage::EdgeDisconnected { from, to }
                 },
             )

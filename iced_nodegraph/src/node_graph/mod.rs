@@ -55,6 +55,17 @@ pub(crate) const PIN_CLICK_THRESHOLD: f32 = 8.0;
 /// comparison site like [`PIN_CLICK_THRESHOLD`].
 pub(crate) const EDGE_CUT_THRESHOLD: f32 = 10.0;
 
+/// Radius of an anchor's orbit 0, in world units.
+///
+/// The interaction path has no theme, so it cannot resolve an anchor's own
+/// `AnchorStyle`; it falls back to this until a frame has been drawn and the
+/// resolved radii are available. `style::defaults` builds its default from the
+/// same constants, so the fallback and the default agree.
+pub(crate) const DEFAULT_ORBIT_OFFSET: f32 = 16.0;
+
+/// Additional radius per orbit, in world units. See [`DEFAULT_ORBIT_OFFSET`].
+pub(crate) const DEFAULT_ORBIT_SPACING: f32 = 10.0;
+
 /// Anchor-core grab distance, in screen pixels, scaled by 1/zoom at the
 /// comparison site like [`PIN_CLICK_THRESHOLD`].
 ///
@@ -378,6 +389,22 @@ impl<'a, N> Anchor<'a, N> {
     }
 }
 
+/// The orbits an anchor shows, innermost first: every one carrying a cable,
+/// plus the first free one.
+///
+/// Shells fill from the inside out - orbit `k + 1` is only offered once `k` is
+/// taken - so exactly one empty ring is ever on offer, and an anchor cannot
+/// sprout arbitrarily many. An orbit occupied out of order (a host is free to
+/// author that) still gets its ring; the offer is the first genuinely free one
+/// regardless.
+pub(super) fn visible_orbits(occupied: &std::collections::HashSet<u8>) -> Vec<u8> {
+    let first_free = (0u8..=u8::MAX).find(|k| !occupied.contains(k));
+    let mut shells: Vec<u8> = occupied.iter().copied().chain(first_free).collect();
+    shells.sort_unstable();
+    shells.dedup();
+    shells
+}
+
 pub(crate) mod camera;
 pub(crate) mod euclid;
 pub(crate) mod input;
@@ -663,8 +690,8 @@ pub struct NodeGraph<
     /// indices at draw time, since only the laid-out widget tree knows them.
     pub(super) edges: Vec<Edge<'a, N, P, E, UI>>,
     pub(super) graph_style: Option<Box<dyn Fn(&Theme) -> GraphStyle + 'a>>,
-    pub(super) on_connect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>>,
-    pub(super) on_disconnect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>>,
+    pub(super) on_connect: Option<Box<dyn Fn(EdgeEnd<N, P>, EdgeEnd<N, P>) -> Message + 'a>>,
+    pub(super) on_disconnect: Option<Box<dyn Fn(EdgeEnd<N, P>, EdgeEnd<N, P>) -> Message + 'a>>,
     pub(super) on_move: Option<Box<dyn Fn(Vector, Vec<N>) -> Message + 'a>>,
     /// Grip-resize report, the size counterpart to `on_move`. Only nodes marked
     /// [`Node::resizable`] carry a grip, and only while this is wired.
@@ -873,6 +900,55 @@ where
             .collect()
     }
 
+    /// Every orbit attachment in the graph, keyed by `(anchor index, orbit)`.
+    ///
+    /// An orbit takes at most TWO edges - one per hand - and that pair is one
+    /// connection through it; a single edge leaves the connection open. Extras
+    /// beyond two are dropped here rather than at every use site: there is no
+    /// free hand left for them to take.
+    ///
+    /// Both the draw path (which rings to show, which cables to join) and the
+    /// interaction path (which orbit a drag may drop onto) read this, so
+    /// occupancy is decided once.
+    pub(super) fn orbit_attachments(&self) -> HashMap<(usize, u8), Vec<usize>> {
+        let mut junctions: HashMap<(usize, u8), Vec<usize>> = HashMap::new();
+        for (edge_index, edge) in self.edges.iter().enumerate() {
+            for end in [&edge.from, &edge.to] {
+                let EdgeEnd::Orbit { anchor, orbit, .. } = end else {
+                    continue;
+                };
+                let Some(anchor_index) = self.anchor_index(anchor) else {
+                    continue;
+                };
+                let taken = junctions.entry((anchor_index, *orbit)).or_default();
+                if taken.len() < 2 && !taken.contains(&edge_index) {
+                    taken.push(edge_index);
+                }
+            }
+        }
+        junctions
+    }
+
+    /// The far end of `edge`, given that one of its ends is the orbit `key`.
+    pub(super) fn orbit_far_end(
+        &self,
+        edge_index: usize,
+        key: (usize, u8),
+    ) -> Option<&EdgeEnd<N, P>> {
+        let edge = self.edges.get(edge_index)?;
+        let is_key = |end: &EdgeEnd<N, P>| match end {
+            EdgeEnd::Orbit { anchor, orbit, .. } => {
+                self.anchor_index(anchor) == Some(key.0) && *orbit == key.1
+            }
+            EdgeEnd::Pin(_) => false,
+        };
+        if is_key(&edge.from) {
+            Some(&edge.to)
+        } else {
+            Some(&edge.from)
+        }
+    }
+
     /// The selection to render and act on: the widget's pending value while it
     /// waits to be applied, else what the host marked.
     ///
@@ -1039,12 +1115,15 @@ where
         self
     }
 
-    /// Sets a callback for when an edge is connected between two pins.
+    /// Sets a callback for when an edge is connected.
     ///
-    /// `from` is always the OUTPUT pin and `to` always the INPUT pin, whichever way
-    /// the user dragged: the widget normalizes orientation to the rendered data
-    /// flow. So `to` is the key when enforcing one edge per input (see the
-    /// crate-level "What the host owns").
+    /// Either end may be a pin or an anchor orbit, so both are [`EdgeEnd`]s. For
+    /// a pin-to-pin connection `from` is always the OUTPUT pin and `to` always
+    /// the INPUT pin, whichever way the user dragged: the widget normalizes
+    /// orientation to the rendered data flow. So `to` is the key when enforcing
+    /// one edge per input (see the crate-level "What the host owns"). An orbit
+    /// end has no direction, so it keeps the drag's own order: the dragged pin
+    /// first, the orbit second.
     ///
     /// Fires on SNAP during a drag, not on release - a single drag can emit several
     /// connect/disconnect pairs as the edge snaps and unsnaps. Treat it as live
@@ -1052,16 +1131,18 @@ where
     ///
     /// Required to start an edge drag: without this callback, pressing a pin selects
     /// its node instead (a dropped edge could not be persisted anyway).
-    pub fn on_connect(mut self, f: impl Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a) -> Self {
+    pub fn on_connect(mut self, f: impl Fn(EdgeEnd<N, P>, EdgeEnd<N, P>) -> Message + 'a) -> Self {
         self.on_connect = Some(Box::new(f));
         self
     }
 
-    /// Sets a callback for when an edge is disconnected between two pins.
+    /// Sets a callback for when an edge is disconnected.
     ///
-    /// Like [`on_connect`](Self::on_connect), the pair is normalized output-first
-    /// (`from` = output, `to` = input).
-    pub fn on_disconnect(mut self, f: impl Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a) -> Self {
+    /// Mirrors [`on_connect`](Self::on_connect), including the endpoint order.
+    pub fn on_disconnect(
+        mut self,
+        f: impl Fn(EdgeEnd<N, P>, EdgeEnd<N, P>) -> Message + 'a,
+    ) -> Self {
         self.on_disconnect = Some(Box::new(f));
         self
     }
@@ -1241,5 +1322,34 @@ where
         self.nodes
             .iter_mut()
             .map(|node| (node.position, &mut node.element))
+    }
+}
+
+#[cfg(test)]
+mod orbit_tests {
+    use super::visible_orbits;
+    use std::collections::HashSet;
+
+    fn shells(occupied: &[u8]) -> Vec<u8> {
+        visible_orbits(&occupied.iter().copied().collect::<HashSet<u8>>())
+    }
+
+    /// An untouched anchor offers exactly one shell, and taking it opens the
+    /// next - the "like an atom" rule. Without the cap an anchor would show a
+    /// ring per orbit that could ever exist.
+    #[test]
+    fn shells_open_one_at_a_time() {
+        assert_eq!(shells(&[]), vec![0]);
+        assert_eq!(shells(&[0]), vec![0, 1]);
+        assert_eq!(shells(&[0, 1]), vec![0, 1, 2]);
+    }
+
+    /// A host may author an outer orbit without the inner ones; its ring still
+    /// draws, and the offer stays the innermost genuinely free shell rather
+    /// than jumping outward to follow the gap.
+    #[test]
+    fn an_out_of_order_orbit_keeps_its_ring_and_the_inner_offer() {
+        assert_eq!(shells(&[3]), vec![0, 3]);
+        assert_eq!(shells(&[0, 2]), vec![0, 1, 2]);
     }
 }

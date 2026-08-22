@@ -22,22 +22,6 @@ const SQUARE_HALF_EXTENT: f32 = 0.886_226_9;
 /// having a cable on it.
 const FREE_SHELL_OPACITY: f32 = 0.45;
 
-/// The orbits an anchor shows, innermost first: every one carrying a cable,
-/// plus the first free one.
-///
-/// Shells fill from the inside out - orbit `k + 1` is only offered once `k` is
-/// taken - so exactly one empty ring is ever on offer, and an anchor cannot
-/// sprout arbitrarily many. An orbit occupied out of order (a host is free to
-/// author that) still gets its ring; the offer is the first genuinely free one
-/// regardless.
-fn visible_orbits(occupied: &std::collections::HashSet<u8>) -> Vec<u8> {
-    let first_free = (0u8..=u8::MAX).find(|k| !occupied.contains(k));
-    let mut shells: Vec<u8> = occupied.iter().copied().chain(first_free).collect();
-    shells.sort_unstable();
-    shells.dedup();
-    shells
-}
-
 /// Intersects a shape's screen bounds with the widget's layout rectangle.
 ///
 /// `None` means the shape is entirely off-screen, so the caller can skip it.
@@ -407,7 +391,7 @@ where
                 from_pin: _,
                 to_node: _,
                 to_pin: _
-            }
+            } | Dragging::EdgeOverOrbit { .. }
         );
 
         // Per-frame pin table, built ONCE per node: `find_pins` is a
@@ -434,6 +418,11 @@ where
                 from_pin,
                 to_node: _,
                 to_pin: _,
+            }
+            | Dragging::EdgeOverOrbit {
+                from_node,
+                from_pin,
+                ..
             } => node_pins
                 .get(from_node)
                 .and_then(|pins| pins.get(from_pin))
@@ -632,27 +621,16 @@ where
             .iter()
             .map(|a| resolve_anchor_style(a.style.as_ref(), theme, AnchorStatus::Idle))
             .collect();
+        // Hand the resolved radii to the interaction path, which has no theme to
+        // resolve them from itself.
+        state.orbit_geometry.replace(
+            anchor_styles
+                .iter()
+                .map(|s| (s.orbit_offset, s.orbit_spacing))
+                .collect(),
+        );
 
-        // Every orbit attachment in the graph, keyed by (anchor index, orbit).
-        // An orbit takes at most two: the pair is one connection through it, a
-        // single one is a connection left open. Beyond two the extras are
-        // ignored - they have no free hand to take.
-        let mut junctions: std::collections::HashMap<(usize, u8), Vec<usize>> =
-            std::collections::HashMap::new();
-        for (edge_idx, edge) in self.edges.iter().enumerate() {
-            for end in [&edge.from, &edge.to] {
-                let EdgeEnd::Orbit { anchor, orbit, .. } = end else {
-                    continue;
-                };
-                let Some(anchor_idx) = self.anchor_index(anchor) else {
-                    continue;
-                };
-                let slots = junctions.entry((anchor_idx, *orbit)).or_default();
-                if slots.len() < 2 && !slots.contains(&edge_idx) {
-                    slots.push(edge_idx);
-                }
-            }
-        }
+        let junctions = self.orbit_attachments();
 
         // ========================================
         // Graph background: ONE batched SDF draw under all nodes. Within a single
@@ -907,7 +885,7 @@ where
                         .filter(|(a, _)| *a == anchor_idx)
                         .map(|(_, orbit)| *orbit)
                         .collect();
-                    for orbit in visible_orbits(&occupied) {
+                    for orbit in crate::node_graph::visible_orbits(&occupied) {
                         let color = if occupied.contains(&orbit) {
                             style.ring_color
                         } else {
@@ -1640,34 +1618,5 @@ where
             };
             state.last_info.replace(Some(info));
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::visible_orbits;
-    use std::collections::HashSet;
-
-    fn shells(occupied: &[u8]) -> Vec<u8> {
-        visible_orbits(&occupied.iter().copied().collect::<HashSet<u8>>())
-    }
-
-    /// An untouched anchor offers exactly one shell, and taking it opens the
-    /// next - the "like an atom" rule. Without the cap an anchor would show a
-    /// ring per orbit that could ever exist.
-    #[test]
-    fn shells_open_one_at_a_time() {
-        assert_eq!(shells(&[]), vec![0]);
-        assert_eq!(shells(&[0]), vec![0, 1]);
-        assert_eq!(shells(&[0, 1]), vec![0, 1, 2]);
-    }
-
-    /// A host may author an outer orbit without the inner ones; its ring still
-    /// draws, and the offer stays the innermost genuinely free shell rather
-    /// than jumping outward to follow the gap.
-    #[test]
-    fn an_out_of_order_orbit_keeps_its_ring_and_the_inner_offer() {
-        assert_eq!(shells(&[3]), vec![0, 3]);
-        assert_eq!(shells(&[0, 2]), vec![0, 1, 2]);
     }
 }

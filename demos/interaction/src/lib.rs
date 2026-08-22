@@ -45,8 +45,8 @@ use iced::{
     widget::{Space, button, column, container, row, scrollable, text},
 };
 use iced_nodegraph::{
-    KeyCombo, Keymap, PinInfo as NgPinInfo, PinRef, PinStatus, PinStyle, default_pin_style, edge,
-    node, pin,
+    EdgeEnd, KeyCombo, Keymap, PinInfo as NgPinInfo, PinRef, PinStatus, PinStyle,
+    default_pin_style, edge, node, pin,
 };
 use screenshot::{ScreenshotHelper, ScreenshotMessage};
 use std::collections::{HashMap, HashSet};
@@ -165,12 +165,12 @@ struct PinInfo {
 #[derive(Debug, Clone)]
 enum Message {
     EdgeConnected {
-        from: PinRef<usize, usize>,
-        to: PinRef<usize, usize>,
+        from: EdgeEnd<usize, usize>,
+        to: EdgeEnd<usize, usize>,
     },
     EdgeDisconnected {
-        from: PinRef<usize, usize>,
-        to: PinRef<usize, usize>,
+        from: EdgeEnd<usize, usize>,
+        to: EdgeEnd<usize, usize>,
     },
     SelectionChanged(Vec<usize>),
     NodesMoved {
@@ -190,7 +190,7 @@ impl From<ScreenshotMessage> for Message {
 }
 
 struct App {
-    edges: Vec<(PinRef<usize, usize>, PinRef<usize, usize>)>,
+    edges: Vec<(EdgeEnd<usize, usize>, EdgeEnd<usize, usize>)>,
     node_positions: HashMap<usize, Point>,
     pin_registry: HashMap<(usize, usize), PinInfo>,
     selected_nodes: HashSet<usize>,
@@ -318,10 +318,7 @@ impl App {
 
         // Check single-connection constraint on target
         if to_info.single_connection {
-            let already_connected = self
-                .edges
-                .iter()
-                .any(|(_, t)| t.node_id == to.node_id && t.pin_id == to.pin_id);
+            let already_connected = self.edges.iter().any(|(_, t)| t.pin() == Some(to));
             if already_connected {
                 return Err(format!(
                     "Pin '{}' only accepts a single connection",
@@ -332,10 +329,7 @@ impl App {
 
         // Check single-connection constraint on source
         if from_info.single_connection {
-            let already_connected = self
-                .edges
-                .iter()
-                .any(|(f, _)| f.node_id == from.node_id && f.pin_id == from.pin_id);
+            let already_connected = self.edges.iter().any(|(f, _)| f.pin() == Some(from));
             if already_connected {
                 return Err(format!(
                     "Pin '{}' only accepts a single connection",
@@ -346,14 +340,8 @@ impl App {
 
         // Check duplicate
         let duplicate = self.edges.iter().any(|(f, t)| {
-            (f.node_id == from.node_id
-                && f.pin_id == from.pin_id
-                && t.node_id == to.node_id
-                && t.pin_id == to.pin_id)
-                || (f.node_id == to.node_id
-                    && f.pin_id == to.pin_id
-                    && t.node_id == from.node_id
-                    && t.pin_id == from.pin_id)
+            (f.pin() == Some(from) && t.pin() == Some(to))
+                || (f.pin() == Some(to) && t.pin() == Some(from))
         });
         if duplicate {
             return Err("Connection already exists".into());
@@ -371,30 +359,28 @@ impl App {
     fn update(&mut self, message: Message) -> iced::Task<Message> {
         match message {
             Message::Screenshot(msg) => return self.screenshot.update(msg),
-            Message::EdgeConnected { from, to } => match self.validate_connection(&from, &to) {
-                Ok(msg) => {
-                    self.edges.push((from, to));
-                    self.feedback.push(msg);
+            Message::EdgeConnected { from, to } => {
+                if let (Some(from_pin), Some(to_pin)) = (from.pin().copied(), to.pin().copied()) {
+                    match self.validate_connection(&from_pin, &to_pin) {
+                        Ok(msg) => {
+                            self.edges.push((from, to));
+                            self.feedback.push(msg);
+                        }
+                        Err(msg) => {
+                            self.feedback.push(format!("Rejected: {}", msg));
+                        }
+                    }
                 }
-                Err(msg) => {
-                    self.feedback.push(format!("Rejected: {}", msg));
-                }
-            },
+            }
             Message::EdgeDisconnected { from, to } => {
-                self.edges.retain(|(f, t)| {
-                    !((f.node_id == from.node_id
-                        && f.pin_id == from.pin_id
-                        && t.node_id == to.node_id
-                        && t.pin_id == to.pin_id)
-                        || (f.node_id == to.node_id
-                            && f.pin_id == to.pin_id
-                            && t.node_id == from.node_id
-                            && t.pin_id == from.pin_id))
-                });
-                if let (Some(from_info), Some(to_info)) = (
-                    self.pin_registry.get(&(from.node_id, from.pin_id)),
-                    self.pin_registry.get(&(to.node_id, to.pin_id)),
-                ) {
+                self.edges
+                    .retain(|&(f, t)| (f, t) != (from, to) && (t, f) != (from, to));
+                if let (Some(from_pin), Some(to_pin)) = (from.pin(), to.pin())
+                    && let (Some(from_info), Some(to_info)) = (
+                        self.pin_registry.get(&(from_pin.node_id, from_pin.pin_id)),
+                        self.pin_registry.get(&(to_pin.node_id, to_pin.pin_id)),
+                    )
+                {
                     self.feedback.push(format!(
                         "Disconnected: {} -- {}",
                         from_info.label, to_info.label

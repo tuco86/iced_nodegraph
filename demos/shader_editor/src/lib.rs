@@ -52,7 +52,7 @@ use iced::{
     window,
 };
 use iced_nodegraph::{
-    PinDirection, PinInfo, PinRef, PinSide, PinStatus, PinStyle, default_pin_style,
+    EdgeEnd, PinDirection, PinInfo, PinRef, PinSide, PinStatus, PinStyle, default_pin_style,
     edge as ng_edge, node as ng_node, node_pin,
 };
 use iced_palette::{
@@ -92,12 +92,12 @@ pub fn run_demo() {
 #[derive(Debug, Clone)]
 enum Message {
     EdgeConnected {
-        from: PinRef<usize, usize>,
-        to: PinRef<usize, usize>,
+        from: EdgeEnd<usize, usize>,
+        to: EdgeEnd<usize, usize>,
     },
     EdgeDisconnected {
-        from: PinRef<usize, usize>,
-        to: PinRef<usize, usize>,
+        from: EdgeEnd<usize, usize>,
+        to: EdgeEnd<usize, usize>,
     },
     SelectionChanged(Vec<usize>),
     NodesMoved {
@@ -129,7 +129,7 @@ struct Application {
     shader_graph: ShaderGraph,
     compiled_shader: Option<String>,
     compilation_error: Option<String>,
-    visual_edges: Vec<(PinRef<usize, usize>, PinRef<usize, usize>)>,
+    visual_edges: Vec<(EdgeEnd<usize, usize>, EdgeEnd<usize, usize>)>,
     current_theme: Theme,
     graph_selection: HashSet<usize>,
     // Command palette state
@@ -149,7 +149,7 @@ impl Application {
         // Convert shader graph connections to visual edges
         // NodeGraph widget uses flat pin indices: [input0, input1, ..., output0, output1, ...]
         // ShaderGraph uses separate indices: from_socket = output index, to_socket = input index
-        let visual_edges: Vec<(PinRef<usize, usize>, PinRef<usize, usize>)> = shader_graph
+        let visual_edges: Vec<(EdgeEnd<usize, usize>, EdgeEnd<usize, usize>)> = shader_graph
             .connections
             .iter()
             .filter_map(|conn| {
@@ -175,8 +175,8 @@ impl Application {
                 let to_visual_pin = conn.to_socket;
 
                 Some((
-                    PinRef::new(from_node_idx, from_visual_pin),
-                    PinRef::new(to_node_idx, to_visual_pin),
+                    PinRef::new(from_node_idx, from_visual_pin).into(),
+                    PinRef::new(to_node_idx, to_visual_pin).into(),
                 ))
             })
             .collect();
@@ -223,28 +223,25 @@ impl Application {
 
                 // Convert visual pin indices to shader socket indices
                 // First, gather the info we need
-                let connection_info = {
-                    let from_node_data = self.shader_graph.nodes.get(from.node_id);
-                    let to_node_data = self.shader_graph.nodes.get(to.node_id);
+                let connection_info = if let Some((from_pin, to_pin)) = from.pin().zip(to.pin())
+                    && let (Some(from_node_data), Some(to_node_data)) = (
+                        self.shader_graph.nodes.get(from_pin.node_id),
+                        self.shader_graph.nodes.get(to_pin.node_id),
+                    ) {
+                    // from_pin.pin_id is visual index, output starts after inputs
+                    let from_socket = from_pin.pin_id.saturating_sub(from_node_data.inputs.len());
+                    // to_pin.pin_id is visual index, inputs come first so it's direct
+                    let to_socket = to_pin.pin_id;
 
-                    if let (Some(from_node_data), Some(to_node_data)) =
-                        (from_node_data, to_node_data)
+                    if from_socket < from_node_data.outputs.len()
+                        && to_socket < to_node_data.inputs.len()
                     {
-                        // from.pin_id is visual index, output starts after inputs
-                        let from_socket = from.pin_id.saturating_sub(from_node_data.inputs.len());
-                        // to.pin_id is visual index, inputs come first so it's direct
-                        let to_socket = to.pin_id;
-
-                        if from_socket < from_node_data.outputs.len()
-                            && to_socket < to_node_data.inputs.len()
-                        {
-                            Some((from_node_data.id, from_socket, to_node_data.id, to_socket))
-                        } else {
-                            None
-                        }
+                        Some((from_node_data.id, from_socket, to_node_data.id, to_socket))
                     } else {
                         None
                     }
+                } else {
+                    None
                 };
 
                 // Now apply the connection
@@ -263,13 +260,16 @@ impl Application {
 
                 // Convert visual pin indices to shader socket indices and
                 // resolve graph indices to node ids, mirroring EdgeConnected.
-                let from_node = self.shader_graph.nodes.get(from.node_id);
-                let to_node = self.shader_graph.nodes.get(to.node_id);
-                if let (Some(from_node), Some(to_node)) = (from_node, to_node) {
+                if let Some((from_pin, to_pin)) = from.pin().zip(to.pin())
+                    && let (Some(from_node), Some(to_node)) = (
+                        self.shader_graph.nodes.get(from_pin.node_id),
+                        self.shader_graph.nodes.get(to_pin.node_id),
+                    )
+                {
                     let from_id = from_node.id;
                     let to_id = to_node.id;
-                    let from_socket = from.pin_id.saturating_sub(from_node.inputs.len());
-                    let to_socket = to.pin_id;
+                    let from_socket = from_pin.pin_id.saturating_sub(from_node.inputs.len());
+                    let to_socket = to_pin.pin_id;
 
                     self.shader_graph.connections.retain(|c| {
                         !(c.from_node == from_id

@@ -11,7 +11,8 @@ use crate::node_graph::camera::Camera2D;
 use crate::node_graph::euclid::{WorldRect, WorldSize};
 use crate::node_graph::input::KeyAction;
 use crate::node_graph::{
-    ANCHOR_GRAB_THRESHOLD, EDGE_CUT_THRESHOLD, FocusOptions, FocusTarget, PIN_CLICK_THRESHOLD,
+    ANCHOR_GRAB_THRESHOLD, DEFAULT_ORBIT_OFFSET, DEFAULT_ORBIT_SPACING, EDGE_CUT_THRESHOLD,
+    FocusOptions, FocusTarget, PIN_CLICK_THRESHOLD,
 };
 use iced_widget::core::{touch, window};
 use std::collections::HashSet;
@@ -419,6 +420,15 @@ where
                             self.handle_selection_box(&mut ctx, start)
                         }
                         Dragging::GroupMove(origin) => self.handle_group_move(&mut ctx, origin),
+                        Dragging::EdgeOverOrbit {
+                            from_node,
+                            from_pin,
+                            anchor,
+                            orbit,
+                            hand,
+                        } => self.handle_edge_over_orbit(
+                            &mut ctx, from_node, from_pin, anchor, orbit, hand,
+                        ),
                         Dragging::Anchor { anchor, origin } => {
                             self.handle_anchor_drag(&mut ctx, anchor, origin)
                         }
@@ -795,7 +805,10 @@ where
                             if let (Some(from), Some(to)) = (from.pin(), to.pin())
                                 && let Some(handler) = self.on_disconnect.as_ref()
                             {
-                                shell.publish(handler(from.clone(), to.clone()));
+                                shell.publish(handler(
+                                    EdgeEnd::Pin(from.clone()),
+                                    EdgeEnd::Pin(to.clone()),
+                                ));
                             }
                             cut_ids.push(id.clone());
                         }
@@ -1086,7 +1099,8 @@ where
                             );
 
                             if let Some(handler) = self.on_connect.as_ref() {
-                                shell.publish(handler(from_ref, to_ref));
+                                shell
+                                    .publish(handler(EdgeEnd::Pin(from_ref), EdgeEnd::Pin(to_ref)));
                             }
                         }
 
@@ -1096,6 +1110,46 @@ where
                             to_node,
                             to_pin,
                         };
+                    } else if let Some(origin) =
+                        pin_world_position::<P, UI>(&tree.children, *layout, from_node, from_pin)
+                    {
+                        // No pin took the drag, so try the anchor orbits. A pin
+                        // always wins: it is a real endpoint, an orbit only a
+                        // waypoint.
+                        let snap = nearest_droppable_orbit(
+                            self,
+                            state,
+                            origin,
+                            cursor_position.into_euclid(),
+                            snap_threshold,
+                        );
+                        if let Some((anchor_index, orbit, hand)) = snap
+                            && let (Some(from_nid), Some(from_pid), Some(anchor_id)) = (
+                                self.node_id_at(from_node).cloned(),
+                                from_pin_id,
+                                self.anchors.get(anchor_index).map(|a| a.id.clone()),
+                            )
+                        {
+                            // An orbit has no direction, so there is nothing to
+                            // normalize: the dragged pin stays first.
+                            if let Some(handler) = self.on_connect.as_ref() {
+                                shell.publish(handler(
+                                    EdgeEnd::Pin(PinRef::new(from_nid, from_pid)),
+                                    EdgeEnd::Orbit {
+                                        anchor: anchor_id,
+                                        orbit,
+                                        hand,
+                                    },
+                                ));
+                            }
+                            state.dragging = Dragging::EdgeOverOrbit {
+                                from_node,
+                                from_pin,
+                                anchor: anchor_index,
+                                orbit,
+                                hand,
+                            };
+                        }
                     }
                 }
                 shell.request_redraw();
@@ -1186,7 +1240,8 @@ where
                             );
 
                             if let Some(handler) = self.on_disconnect.as_ref() {
-                                shell.publish(handler(from_ref, to_ref));
+                                shell
+                                    .publish(handler(EdgeEnd::Pin(from_ref), EdgeEnd::Pin(to_ref)));
                             }
                         }
 
@@ -1204,6 +1259,88 @@ where
                 // Edge already connected via snap event - just end the drag
                 state.dragging = Dragging::None;
                 // Emit drag end event
+                if let Some(handler) = self.on_drag_end.as_ref() {
+                    shell.publish(handler());
+                }
+                shell.capture_event();
+                shell.request_redraw();
+            }
+            _ => {}
+        }
+    }
+
+    /// The snapped state of an edge drag that landed on an anchor orbit: the
+    /// same hysteresis as [`handle_edge_over`], measured against the ring
+    /// instead of a pin.
+    fn handle_edge_over_orbit(
+        &self,
+        ctx: &mut UpdateCtx<'_, '_, '_, Message>,
+        from_node: usize,
+        from_pin: usize,
+        anchor_index: usize,
+        orbit: u8,
+        hand: Hand,
+    ) {
+        let UpdateCtx {
+            tree,
+            layout,
+            event,
+            world_cursor,
+            shell,
+            ..
+        } = &mut *ctx;
+        match event {
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                let Some(cursor_position) = world_cursor.position() else {
+                    return;
+                };
+                let from_pin_id =
+                    find_pin_id::<P, UI>(&tree.children, *layout, from_node, from_pin);
+                let state = tree.state.downcast_mut::<NodeGraphState>();
+                let unsnap_threshold = UNSNAP_THRESHOLD / state.camera.zoom();
+                let (offset, spacing) = state
+                    .orbit_geometry
+                    .borrow()
+                    .get(anchor_index)
+                    .copied()
+                    .unwrap_or((DEFAULT_ORBIT_OFFSET, DEFAULT_ORBIT_SPACING));
+                let ring = self
+                    .anchors
+                    .get(anchor_index)
+                    .map(|anchor| edge_path::Orbit {
+                        center: [anchor.position.x, anchor.position.y],
+                        radius: offset + orbit as f32 * spacing,
+                    });
+                let still_over = ring.is_some_and(|ring| {
+                    ring.ring_distance([cursor_position.x, cursor_position.y]) < unsnap_threshold
+                });
+
+                if !still_over {
+                    if let (Some(from_nid), Some(from_pid), Some(anchor_id)) = (
+                        self.node_id_at(from_node).cloned(),
+                        from_pin_id,
+                        self.anchors.get(anchor_index).map(|a| a.id.clone()),
+                    ) && let Some(handler) = self.on_disconnect.as_ref()
+                    {
+                        shell.publish(handler(
+                            EdgeEnd::Pin(PinRef::new(from_nid, from_pid)),
+                            EdgeEnd::Orbit {
+                                anchor: anchor_id,
+                                orbit,
+                                hand,
+                            },
+                        ));
+                    }
+                    tree.state.downcast_mut::<NodeGraphState>().dragging = Dragging::Edge {
+                        from_node,
+                        from_pin,
+                        origin: cursor_position.into_euclid(),
+                    };
+                }
+                shell.request_redraw();
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                tree.state.downcast_mut::<NodeGraphState>().dragging = Dragging::None;
                 if let Some(handler) = self.on_drag_end.as_ref() {
                     shell.publish(handler());
                 }
@@ -1454,7 +1591,10 @@ where
                 let distance = point_to_bezier_distance(cursor_position, from_pos, p1, p2, to_pos);
                 if distance < cut_threshold {
                     if let Some(handler) = self.on_disconnect.as_ref() {
-                        shell.publish(handler(from_ref.clone(), to_ref.clone()));
+                        shell.publish(handler(
+                            EdgeEnd::Pin(from_ref.clone()),
+                            EdgeEnd::Pin(to_ref.clone()),
+                        ));
                     }
                     if let Some(handler) = self.on_edge_delete.as_ref() {
                         shell.publish(handler(vec![edge_id.clone()]));
@@ -1612,8 +1752,11 @@ where
             anchor_pin_idx,
             Some(edge),
         );
+        let valid_orbits =
+            compute_valid_orbits(self, ctx.tree, ctx.layout, anchor_node_idx, anchor_pin_idx);
         let state = ctx.tree.state.downcast_mut::<NodeGraphState>();
         state.valid_drop_targets = valid_targets;
+        state.valid_drop_orbits = valid_orbits;
         // Anchor at the kept end, hold the grabbed pin snapped (still
         // connected).
         state.dragging = Dragging::EdgeOver {
@@ -1643,8 +1786,10 @@ where
         // Compute valid targets ONCE at drag-start.
         let valid_targets =
             compute_valid_targets(self, ctx.tree, ctx.layout, node_index, pin_index, None);
+        let valid_orbits = compute_valid_orbits(self, ctx.tree, ctx.layout, node_index, pin_index);
         let state = ctx.tree.state.downcast_mut::<NodeGraphState>();
         state.valid_drop_targets = valid_targets;
+        state.valid_drop_orbits = valid_orbits;
         state.dragging = Dragging::Edge {
             from_node: node_index,
             from_pin: pin_index,
@@ -2090,6 +2235,226 @@ where
     }
 
     valid_targets
+}
+
+/// The user id of pin `pin_index` on node `node_index`, read out of the
+/// laid-out tree.
+fn find_pin_id<P, UI>(
+    children: &[Tree],
+    layout: Layout<'_>,
+    node_index: usize,
+    pin_index: usize,
+) -> Option<P>
+where
+    P: PinId + 'static,
+    UI: Clone + 'static,
+{
+    let node_tree = children.get(node_index)?;
+    let node_layout = layout.children().nth(node_index)?;
+    find_pins::<P, UI>(node_tree, node_layout)
+        .into_iter()
+        .nth(pin_index)
+        .map(|(_, state, _)| state.pin_id.clone())
+}
+
+/// World position of pin `pin_index` on node `node_index`, read out of the
+/// laid-out tree. The two pin anchors coincide for a point pin, so the first
+/// is the position.
+fn pin_world_position<P, UI>(
+    children: &[Tree],
+    layout: Layout<'_>,
+    node_index: usize,
+    pin_index: usize,
+) -> Option<WorldPoint>
+where
+    P: PinId + 'static,
+    UI: Clone + 'static,
+{
+    let node_tree = children.get(node_index)?;
+    let node_layout = layout.children().nth(node_index)?;
+    find_pins::<P, UI>(node_tree, node_layout)
+        .into_iter()
+        .nth(pin_index)
+        .map(|(_, _, (a, _))| a.into_euclid())
+}
+
+/// The orbit a drag should snap to: among the ones it may attach to, the one
+/// whose RING lies nearest the cursor, within `threshold`.
+///
+/// Nearest to the ring, not to the anchor centre - the cursor is aimed at a
+/// circle, and an outer ring you are sitting on top of must win over an inner
+/// one you merely happen to be closer to the middle of.
+///
+/// Returns the orbit and which way round the cable wraps, taken from the side
+/// of the ring the cursor is on.
+fn nearest_droppable_orbit<N, P, UI, Message, Renderer, E>(
+    graph: &NodeGraph<'_, N, P, UI, Message, Renderer, E>,
+    state: &NodeGraphState,
+    from: WorldPoint,
+    cursor: WorldPoint,
+    threshold: f32,
+) -> Option<(usize, u8, Hand)>
+where
+    N: NodeId + 'static,
+    P: PinId + 'static,
+    E: EdgeId + 'static,
+{
+    let geometry = state.orbit_geometry.borrow();
+    let from = [from.x, from.y];
+    let at = [cursor.x, cursor.y];
+    state
+        .valid_drop_orbits
+        .iter()
+        .filter_map(|&(anchor_index, orbit)| {
+            let anchor = graph.anchors.get(anchor_index)?;
+            // Before the first draw there are no resolved radii yet; the
+            // built-in geometry stands in, and `default_anchor_style` is built
+            // from the same constants so the two agree.
+            let (offset, spacing) = geometry
+                .get(anchor_index)
+                .copied()
+                .unwrap_or((DEFAULT_ORBIT_OFFSET, DEFAULT_ORBIT_SPACING));
+            let ring = edge_path::Orbit {
+                center: [anchor.position.x, anchor.position.y],
+                radius: offset + orbit as f32 * spacing,
+            };
+            let distance = ring.ring_distance(at);
+            if distance > threshold {
+                return None;
+            }
+            let hand = ring.drop_hand(from, at)?;
+            Some((distance, anchor_index, orbit, hand))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, anchor_index, orbit, hand)| (anchor_index, orbit, hand))
+}
+
+/// Computes the anchor orbits an edge drag may attach to, as
+/// `(anchor index, orbit)`.
+///
+/// An anchor passes cables through and has no type of its own, so the
+/// connection rules only bite once something is already on the orbit:
+///
+/// - Full (both hands taken): not a target, there is no hand left.
+/// - Empty: accepts anything. There is nothing to be compatible with yet.
+/// - Half: validated against the FAR end of the edge already attached, since
+///   dropping here would join the two into one connection. A far end that is
+///   itself an orbit is accepted - the chain is still open at its other end.
+///
+/// Only orbits [`visible_orbits`] offers are considered, so shells fill from
+/// the inside out instead of a drag being able to jump to an outer ring.
+fn compute_valid_orbits<N, P, UI, Message, Renderer, E>(
+    graph: &NodeGraph<'_, N, P, UI, Message, Renderer, E>,
+    tree: &Tree,
+    layout: Layout<'_>,
+    from_node: usize,
+    from_pin: usize,
+) -> std::collections::HashSet<(usize, u8)>
+where
+    N: NodeId + 'static,
+    P: PinId + 'static,
+    E: EdgeId + 'static,
+    UI: Clone + 'static,
+    Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
+{
+    let mut valid = std::collections::HashSet::new();
+    if graph.anchors.is_empty() {
+        return valid;
+    }
+
+    let from_state = tree.children.get(from_node).and_then(|node_tree| {
+        layout.children().nth(from_node).and_then(|node_layout| {
+            find_pins::<P, UI>(node_tree, node_layout)
+                .into_iter()
+                .nth(from_pin)
+                .map(|(_, state, _)| state.clone())
+        })
+    });
+    let (Some(from_state), Some(from_node_id)) = (from_state, graph.node_id_at(from_node)) else {
+        return valid;
+    };
+
+    let junctions = graph.orbit_attachments();
+    for anchor_index in 0..graph.anchors.len() {
+        let occupied: std::collections::HashSet<u8> = junctions
+            .keys()
+            .filter(|(a, _)| *a == anchor_index)
+            .map(|(_, orbit)| *orbit)
+            .collect();
+
+        for orbit in crate::node_graph::visible_orbits(&occupied) {
+            let key = (anchor_index, orbit);
+            let attached = junctions.get(&key).map_or(0, |edges| edges.len());
+            if attached >= 2 {
+                continue;
+            }
+            let accepted = match junctions.get(&key).and_then(|edges| edges.first()) {
+                None => true,
+                Some(&partner) => match graph.orbit_far_end(partner, key) {
+                    Some(EdgeEnd::Orbit { .. }) | None => true,
+                    Some(EdgeEnd::Pin(far)) => {
+                        pin_pair_accepted(graph, tree, layout, &from_state, from_node_id, far)
+                    }
+                },
+            };
+            if accepted {
+                valid.insert(key);
+            }
+        }
+    }
+    valid
+}
+
+/// Runs the graph's connection rule for the dragged pin against a concrete far
+/// pin, resolving that pin's live state out of the laid-out tree.
+fn pin_pair_accepted<N, P, UI, Message, Renderer, E>(
+    graph: &NodeGraph<'_, N, P, UI, Message, Renderer, E>,
+    tree: &Tree,
+    layout: Layout<'_>,
+    from_state: &NodePinState<P, UI>,
+    from_node_id: &N,
+    far: &PinRef<N, P>,
+) -> bool
+where
+    N: NodeId + 'static,
+    P: PinId + 'static,
+    E: EdgeId + 'static,
+    UI: Clone + 'static,
+    Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
+{
+    let Some(far_index) = graph.node_index(&far.node_id) else {
+        return true;
+    };
+    let Some(far_state) = tree.children.get(far_index).and_then(|node_tree| {
+        layout.children().nth(far_index).and_then(|node_layout| {
+            find_pins::<P, UI>(node_tree, node_layout)
+                .into_iter()
+                .find(|(_, state, _)| state.pin_id == far.pin_id)
+                .map(|(_, state, _)| state.clone())
+        })
+    }) else {
+        return true;
+    };
+    // Neither end counts as occupied: the cable would terminate on the orbit,
+    // not on the far pin, so the one-edge-per-input rule has nothing to bite.
+    let from_end = PinEnd::new(
+        from_node_id,
+        &from_state.pin_id,
+        from_state.direction,
+        &from_state.user_info,
+        false,
+    );
+    let to_end = PinEnd::new(
+        &far.node_id,
+        &far_state.pin_id,
+        far_state.direction,
+        &far_state.user_info,
+        false,
+    );
+    match &graph.can_connect {
+        Some(can_connect) => can_connect(from_end, to_end),
+        None => crate::connection::default_can_connect(from_end, to_end),
+    }
 }
 
 /// The positional index, anchors and side of pin `pin_id` on node `node_index`,

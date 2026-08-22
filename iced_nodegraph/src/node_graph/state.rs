@@ -11,6 +11,7 @@
 
 use super::Easing;
 use super::GraphInfo;
+use super::Hand;
 use super::camera::Camera2D;
 use super::euclid::{IntoEuclid, LayoutPoint, WorldPoint};
 use iced_widget::core::{Layout, Padding, Point, Size, keyboard, touch};
@@ -87,6 +88,15 @@ pub(crate) enum Dragging {
         to_node: usize,
         to_pin: usize,
     },
+    /// A dragged edge snapped onto an anchor orbit: the same magnetic state as
+    /// [`Dragging::EdgeOver`], with a ring instead of a pin at the far end.
+    EdgeOverOrbit {
+        from_node: usize,
+        from_pin: usize,
+        anchor: usize,
+        orbit: u8,
+        hand: Hand,
+    },
     /// Rubber-band selection: the press corner and the live corner.
     SelectionBox(LayoutPoint, LayoutPoint),
     /// Slicing across edges: the cursor trail and the edge indices it has
@@ -122,6 +132,17 @@ pub(super) struct NodeGraphState {
     /// Contains (node_index, pin_index) pairs that are valid connection targets.
     /// Only populated during Edge/EdgeOver dragging states.
     pub(super) valid_drop_targets: HashSet<(usize, usize)>,
+    /// Anchor orbits a drag may attach to, as `(anchor index, orbit)`. Computed
+    /// alongside `valid_drop_targets` at drag start.
+    pub(super) valid_drop_orbits: HashSet<(usize, u8)>,
+    /// Per-anchor `(orbit_offset, orbit_spacing)` as last resolved in `draw`,
+    /// indexed by anchor index.
+    ///
+    /// Orbit radii come from `AnchorStyle`, which needs the theme - and `update`
+    /// has none. So the geometry travels one frame behind, exactly like
+    /// `last_info`: a drag cannot change a radius, so a frame-old value is the
+    /// same value.
+    pub(super) orbit_geometry: RefCell<Vec<(f32, f32)>>,
     /// Last host-provided view (`view()`) that we synced into `camera`. Lets us
     /// tell apart "host pushed a new camera" (sync needed) from "internal pan/zoom
     /// changed the camera but the matching `on_pan` has not yet round-tripped
@@ -175,6 +196,8 @@ impl Default for NodeGraphState {
             selection_baseline: None,
             modifiers: keyboard::Modifiers::default(),
             valid_drop_targets: HashSet::new(),
+            valid_drop_orbits: HashSet::new(),
+            orbit_geometry: RefCell::new(Vec::new()),
             last_synced_view: None,
             camera_tween: None,
             last_focus_seq: None,
