@@ -91,9 +91,10 @@ between levels. `Pattern` (re-exported from `iced_nodegraph_sdf`) controls every
 stroke.
 
 The same shape covers everything the widget draws, one closure plus one
-`default_*_style` per thing: nodes, pins, edges, the dragged edge, the canvas
-(`graph_style`), the selection box (`selection_box_style`) and the cutting trail
-(`cutting_tool_style`). Two rules follow from that and are worth keeping:
+`default_*_style` per thing: nodes, pins, edges, routing anchors, the dragged
+edge, the canvas (`graph_style`), the selection box (`selection_box_style`) and
+the cutting trail (`cutting_tool_style`). Two rules follow from that and are
+worth keeping:
 
 - **A host closure must reach everything the default reaches.** If a default
   consults a value, that value belongs in the public style struct - not in a

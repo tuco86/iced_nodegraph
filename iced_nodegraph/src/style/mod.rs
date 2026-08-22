@@ -12,6 +12,7 @@
 
 use iced_widget::core::{Color, Theme};
 
+mod anchor;
 mod defaults;
 mod edge;
 mod node;
@@ -20,9 +21,10 @@ mod ramp;
 mod roles;
 mod sdf;
 
+pub use anchor::AnchorStyle;
 pub use defaults::{
-    default_cutting_tool_style, default_edge_style, default_node_style, default_pin_style,
-    default_selection_box_style,
+    default_anchor_style, default_cutting_tool_style, default_edge_style, default_node_style,
+    default_pin_style, default_selection_box_style,
 };
 pub use edge::EdgeStyle;
 pub use node::NodeStyle;
@@ -73,6 +75,20 @@ pub enum EdgeStatus {
     Idle,
     /// Edge is pending deletion (during edge cutting)
     PendingCut,
+}
+
+/// Anchor status for styling purposes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AnchorStatus {
+    /// Normal state
+    #[default]
+    Idle,
+    /// The cursor is over the anchor core
+    Hovered,
+    /// The anchor is part of the current selection
+    Selected,
+    /// The anchor is a valid drop target during a route drag
+    ValidTarget,
 }
 
 /// Edge path curve type determining the shape of the connection.

@@ -44,8 +44,8 @@ use iced_widget::core::{Color, Theme};
 
 use super::roles::Roles;
 use super::{
-    CuttingToolStyle, EdgeCurve, EdgeStatus, EdgeStyle, NodeStatus, NodeStyle, PinShape, PinStatus,
-    PinStyle, SelectionBoxStyle, ramp,
+    AnchorStatus, AnchorStyle, CuttingToolStyle, EdgeCurve, EdgeStatus, EdgeStyle, NodeStatus,
+    NodeStyle, PinShape, PinStatus, PinStyle, SelectionBoxStyle, ramp,
 };
 
 /// Corner radius of a node body, in world units.
@@ -182,6 +182,67 @@ pub fn default_pin_style(theme: &Theme, status: PinStatus) -> PinStyle {
             border_width: PIN_CUTOUT_RADIUS - PIN_RADIUS,
             // The cutout is geometry: holding it across statuses keeps one node
             // silhouette in the shape cache instead of one per drag state.
+            ..base
+        },
+    }
+}
+
+/// Complete theme-derived anchor style.
+///
+/// An anchor is furniture, not a mark: the core takes the node recipe (body
+/// fill, border silhouette) because it is a thing you grab, while an occupied
+/// orbit's ring takes the wire color because it is the path a cable runs on.
+/// `Selected` mirrors the node's accent border, and `ValidTarget` mirrors the
+/// pin's `success`-derived valid color, so the three accents keep meaning
+/// exactly one thing each across the whole widget.
+///
+/// `orbit_offset`/`orbit_spacing` are geometry: they are the radii cables are
+/// laid tangent to, resolved before the path is built, so changing them
+/// reshapes the cable rather than recoloring it. Orbit 0 clears the core by a
+/// comfortable margin, and the spacing is wide enough that two wraps read as
+/// separate strands at zoom 1.
+pub fn default_anchor_style(theme: &Theme, status: AnchorStatus) -> AnchorStyle {
+    let roles = Roles::of(theme);
+
+    let base = AnchorStyle {
+        core_size: 12.0,
+        core_radius: 3.0,
+        core_color: roles.body.into(),
+        core_border_color: roles.border.into(),
+        core_border_width: 1.0,
+        orbit_offset: 16.0,
+        orbit_spacing: 10.0,
+        ring_color: Color {
+            a: 0.35,
+            ..roles.wire
+        }
+        .into(),
+        ring_width: 1.0,
+    };
+
+    match status {
+        AnchorStatus::Idle => base,
+        AnchorStatus::Hovered => AnchorStyle {
+            core_border_color: Color {
+                a: 0.6,
+                ..roles.accent
+            }
+            .into(),
+            core_border_width: 1.5,
+            ..base
+        },
+        AnchorStatus::Selected => AnchorStyle {
+            core_border_color: roles.accent.into(),
+            core_border_width: 2.0,
+            ..base
+        },
+        AnchorStatus::ValidTarget => AnchorStyle {
+            core_color: roles.valid.into(),
+            ring_color: Color {
+                a: 0.7,
+                ..roles.valid
+            }
+            .into(),
             ..base
         },
     }
@@ -399,5 +460,59 @@ mod tests {
             o.stroke_color,
             ColorQuad::solid(default_cutting_tool_style(&t).color)
         );
+    }
+
+    /// The anchor accents must resolve to the same roles the rest of the widget
+    /// reserves for those meanings - `primary` for selection, `success` for a
+    /// valid drop target - and the lane geometry must survive every status, or
+    /// hovering an anchor would move the cables threaded through it.
+    ///
+    /// Checked on one light and one dark theme, since the role derivation
+    /// branches on canvas lightness.
+    #[test]
+    fn anchor_statuses_track_the_reserved_accents() {
+        for theme in [Theme::Light, Theme::Dark] {
+            let idle = default_anchor_style(&theme, AnchorStatus::Idle);
+            let hovered = default_anchor_style(&theme, AnchorStatus::Hovered);
+            let selected = default_anchor_style(&theme, AnchorStatus::Selected);
+            let valid = default_anchor_style(&theme, AnchorStatus::ValidTarget);
+
+            let node_border = default_node_style(&theme, NodeStatus::Selected).border_color;
+            let valid_pin = default_pin_style(&theme, PinStatus::ValidTarget).color;
+
+            assert_eq!(
+                idle.core_color,
+                default_node_style(&theme, NodeStatus::Idle).fill_color,
+                "{theme}: an idle core must read as node-body furniture",
+            );
+            assert_eq!(
+                selected.core_border_color, node_border,
+                "{theme}: a selected anchor must wear the selection accent",
+            );
+            assert!(
+                selected.core_border_width > idle.core_border_width,
+                "{theme}: selection must survive a border color the theme washes out",
+            );
+            assert_ne!(
+                hovered.core_border_color, idle.core_border_color,
+                "{theme}: hover must be visible on the core",
+            );
+            assert_eq!(
+                valid.core_color, valid_pin,
+                "{theme}: a valid route target must match a valid pin target",
+            );
+            assert_ne!(
+                valid.ring_color, idle.ring_color,
+                "{theme}: the orbit ring must follow the core into the valid accent",
+            );
+
+            for other in [&hovered, &selected, &valid] {
+                assert_eq!(
+                    (other.orbit_offset, other.orbit_spacing, other.core_size),
+                    (idle.orbit_offset, idle.orbit_spacing, idle.core_size),
+                    "{theme}: status changed anchor geometry, which moves cables",
+                );
+            }
+        }
     }
 }
