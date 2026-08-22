@@ -48,9 +48,9 @@ use iced::{
     window,
 };
 use iced_nodegraph::{
-    ColorQuad, CuttingToolStyle, EdgeStatus, EdgeStyle, PinRef, SelectionBoxStyle,
-    default_cutting_tool_style, default_edge_style, default_node_style, default_pin_style,
-    default_selection_box_style, edge as ng_edge, node as ng_node,
+    ColorQuad, CuttingToolStyle, EdgeStatus, EdgeStyle, FocusOptions, FocusTarget, PinRef,
+    SelectionBoxStyle, default_cutting_tool_style, default_edge_style, default_node_style,
+    default_pin_style, default_selection_box_style, edge as ng_edge, node as ng_node,
 };
 use iced_nodegraph::{EdgeCurve, PinShape, TilingKind};
 use iced_palette::{
@@ -151,6 +151,9 @@ enum ApplicationMessage {
         position: Point,
         zoom: f32,
     },
+    /// Bumps the `.focus()` prop's nonce (see [`Application::focus_seq`]) so
+    /// the widget starts a fresh camera tween toward the fixed demo node.
+    FocusNode,
     WindowResized(iced::Size),
     WindowMoved(Point),
     WindowMaximizedChanged(bool),
@@ -315,6 +318,12 @@ struct Application {
     camera_position: Point,
     /// Current camera zoom from NodeGraph
     camera_zoom: f32,
+    /// Monotonic nonce for the declarative `NodeGraph::focus()` prop. `0`
+    /// means "never requested", so `view()` omits `.focus()` entirely until
+    /// the "Focus node" command first fires; each further press increments
+    /// it so the widget's `last_focus_seq` dedup sees a new value and starts
+    /// another tween even when the target hasn't changed.
+    focus_seq: u64,
     /// Window position (x, y) for persistence
     window_position: Option<(i32, i32)>,
     /// Window size (width, height) for persistence
@@ -447,6 +456,7 @@ impl Default for Application {
             viewport_size: iced::Size::new(800.0, 600.0), // Default size
             camera_position: Point::ORIGIN,
             camera_zoom: 1.0,
+            focus_seq: 0,
             window_position: None,
             window_size: None,
             window_maximized: None,
@@ -1385,6 +1395,12 @@ impl Application {
                                 self.reset_to_default();
                                 Task::none()
                             }
+                            ApplicationMessage::FocusNode => {
+                                self.command_palette_open = false;
+                                self.palette_view = PaletteView::Main;
+                                self.focus_seq += 1;
+                                Task::none()
+                            }
                             _ => Task::none(),
                         }
                     }
@@ -1421,6 +1437,10 @@ impl Application {
                 self.camera_position = position;
                 self.camera_zoom = zoom;
                 self.save_state();
+                Task::none()
+            }
+            ApplicationMessage::FocusNode => {
+                self.focus_seq += 1;
                 Task::none()
             }
             ApplicationMessage::WindowResized(size) => {
@@ -1854,6 +1874,25 @@ impl Application {
                 graph_overlay.resolve_over(iced_nodegraph::GraphStyle::from_theme(theme))
             });
 
+        // "Focus node" command (fit-to-view smoke test): flies the camera to
+        // the first workflow node with the default `FocusOptions` (300ms
+        // EaseInOutCubic tween). `focus_seq == 0` means the command has never
+        // fired, so `.focus()` is omitted entirely -- the widget only sees a
+        // `Some` prop, and thus only fits, once the button has been pressed
+        // at least once. Each further press bumps `focus_seq`, which the
+        // widget dedups against its own `last_focus_seq` to start a new tween
+        // even though the target node hasn't changed (`Home`/`f` cover
+        // All/Selection; this exercises `FocusTarget::Node` instead).
+        if self.focus_seq > 0
+            && let Some(target_id) = self.node_order.first()
+        {
+            ng = ng.focus(
+                self.focus_seq,
+                FocusTarget::Node(target_id.clone()),
+                FocusOptions::default(),
+            );
+        }
+
         // Add all nodes from state (in order)
         for node_id in &self.node_order {
             let Some((position, node_type)) = self.nodes.get(node_id) else {
@@ -2127,6 +2166,9 @@ impl Application {
                     command("reset", "Reset")
                         .description("Reset the app to its initial state")
                         .action(ApplicationMessage::Reset),
+                    command("focus_node", "Focus node")
+                        .description("Fly the camera to a fixed demo node (eased tween)")
+                        .action(ApplicationMessage::FocusNode),
                 ];
                 ("Command Palette", commands)
             }
