@@ -573,6 +573,13 @@ where
         // make every selection click re-hash and rebuild the whole background
         // (all edge biarcs included) just to reshuffle translucent shadows
         // that composite the same either way.
+        // For the same reason the batch is not viewport-culled: its entries are
+        // world-anchored, so under pan and zoom only the camera uniform moves
+        // and the geometry hash stays put, letting the prepare step reuse the
+        // compiled buffers. Dropping offscreen edges or shadows would make the
+        // entry set camera-dependent and re-upload every biarc each pan frame,
+        // while the shading cost it would save is already bounded by the
+        // shader's per-tile segment cull and the primitive's own scissor.
         // ========================================
         let bg_layer = {
             let mut bg = SdfPrimitive::with_capacity(self.nodes.len() + self.edges.len() * 4 + 1);

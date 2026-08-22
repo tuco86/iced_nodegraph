@@ -15,6 +15,32 @@
 //!    content (Iced widgets) -> node foreground (border + pins). Embedding Iced
 //!    widgets between the two SDF node layers lets nodes overlap correctly.
 //! 4. Graph foreground: interaction tools (selection box, edge-cutting overlay).
+//!
+//! ## Interface contract
+//!
+//! What each `Widget` method forwards to the node elements, and in which
+//! space. Every forward maps the cursor and viewport through
+//! [`Camera2D`](super::camera::Camera2D) into the widget's layout-absolute
+//! space, because that is the space the child layouts were produced in.
+//!
+//! - `layout` measures every node with loose limits and positions it at the
+//!   host's world coordinate, so the layout tree is layout-absolute and the
+//!   camera applies at draw and input time only.
+//! - `update` and `operate` reach every node, offscreen ones included. An
+//!   unfocus-on-outside-click, a child drag still in flight, and a focus
+//!   traversal or scroll_to target all live on nodes the viewport does not
+//!   cover.
+//! - `draw` bounds-culls only the SDF layers it builds itself. Node content is
+//!   walked for every node: the per-node pre-passes must run regardless, since
+//!   edges anchor to pins of offscreen nodes and the background batch has to
+//!   stay entry-stable, and an offscreen node's content records into a
+//!   zero-area clip. Culling the child walk would buy little and make what is
+//!   walked diverge from what is drawn.
+//! - `mouse_interaction` recurses into the topmost node under the cursor only.
+//!   One cursor wins, so an occluded node must not claim it.
+//! - `overlay` collects each node's pop-out and wraps the group in
+//!   `CameraOverlay`, which applies the same transform as the node content
+//!   beneath it.
 
 use iced_wgpu::core::{
     Clipboard, Layout, Shell, layout, mouse, overlay, renderer,
