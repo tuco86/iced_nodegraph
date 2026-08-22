@@ -91,13 +91,11 @@ pub(crate) enum ShapeExpr {
     Intersection(Box<Shape>, Box<Shape>),
 }
 
-/// One edge of a [`ShapeExpr::Path`] / [`Shape::path`] multi-segment stroke:
-/// a line, a circular arc, or a cubic bezier, each assumed to end exactly
-/// where the next segment (or the path's own `start`) begins. Fields mirror
-/// [`crate::curve::ShapeBuilder`]'s coordinate API
-/// (`line_to`/`arc_to`/`bezier_to`) so evaluation is a direct fold over the
-/// builder: the caller supplies absolute world-space coordinates, never a
-/// turtle heading.
+/// One edge of a [`Shape::path`] multi-segment stroke: a line, a circular arc,
+/// or a cubic bezier, each assumed to end exactly where the next segment
+/// begins. Every field is an absolute coordinate - the caller never supplies a
+/// turtle heading, so a path can be handed straight over from a router that
+/// works in world space.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PathSeg {
     /// Straight segment from the current point to `to`.
