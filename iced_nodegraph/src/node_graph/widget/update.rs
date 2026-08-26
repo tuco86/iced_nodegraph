@@ -10,6 +10,7 @@ use super::*;
 use crate::node_graph::camera::Camera2D;
 use crate::node_graph::euclid::{WorldRect, WorldSize};
 use crate::node_graph::input::KeyAction;
+use crate::node_graph::state::AnchorGeometry;
 use crate::node_graph::{EDGE_CUT_THRESHOLD, FocusOptions, FocusTarget, PIN_CLICK_THRESHOLD};
 use iced_widget::core::{touch, window};
 use std::collections::HashSet;
@@ -20,10 +21,32 @@ use std::collections::HashSet;
 const SNAP_THRESHOLD: f32 = 10.0; // Distance to enter snap zone
 const UNSNAP_THRESHOLD: f32 = 15.0; // Distance to leave snap zone (larger = more stable)
 
-// Touch gesture thresholds: maximum travel (screen px) and duration for a
-// press+lift pair to count as a tap.
+/// Travel (screen px) a press may drift and still count as a click rather than
+/// a drag: a touch tap, and a pan-button press that commits an anchor delete or
+/// a route detach instead of panning.
 const TOUCH_TAP_TRAVEL: f32 = 8.0;
+/// Longest a touch press and lift may take to count as a tap.
 const TOUCH_TAP_MAX_SECS: f32 = 0.3;
+
+/// Which part of a cable is under the cursor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CableZone {
+    /// The stretch at one end: a press unplugs that end. `at_start` names the
+    /// OUTPUT-side end, the one the cable's hop chain begins at.
+    End { edge: usize, at_start: bool },
+    /// Where the cable wraps an anchor.
+    Wrap { edge: usize, anchor: usize },
+    /// The run between the end zones and the wraps.
+    Run { edge: usize },
+}
+
+/// A resolved zone plus the arc-length window of the cable a press takes hold
+/// of, which is also the stretch the hover feedback marks.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct CableHit {
+    pub zone: CableZone,
+    pub window: (f32, f32),
+}
 
 /// Mutable per-event context threaded through the `update` handlers.
 ///
@@ -41,11 +64,12 @@ struct UpdateCtx<'a, 'b, 'm, Message> {
     shell: &'a mut Shell<'m, Message>,
 }
 
-impl<N, P, UI, Message, Renderer, E> NodeGraph<'_, N, P, UI, Message, Renderer, E>
+impl<N, P, E, A, UI, Message, Renderer> NodeGraph<'_, N, P, E, A, UI, Message, Renderer>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
     E: EdgeId + 'static,
+    A: AnchorId + 'static,
     UI: Clone + 'static,
     Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
@@ -390,13 +414,16 @@ where
                     // dispatch at the bottom of this closure, after child
                     // propagation.
                     match state.dragging.clone() {
-                        Dragging::None => {}
+                        Dragging::None => self.refresh_hover(&mut ctx),
                         Dragging::EdgeCutting { .. } => self.handle_edge_cutting(&mut ctx),
                         Dragging::Graph(origin) => self.handle_graph_pan(&mut ctx, origin),
                         Dragging::Node {
                             node: node_index,
                             origin,
                         } => self.handle_node_drag(&mut ctx, node_index, origin),
+                        Dragging::Anchor { anchor, origin } => {
+                            self.handle_anchor_drag(&mut ctx, anchor, origin)
+                        }
                         Dragging::Resize {
                             node: node_index,
                             origin,
@@ -413,6 +440,21 @@ where
                             to_node,
                             to_pin,
                         } => self.handle_edge_over(&mut ctx, from_node, from_pin, to_node, to_pin),
+                        Dragging::Route { edge, detached } => {
+                            self.handle_route_drag(&mut ctx, edge, detached)
+                        }
+                        // The anchor it left is re-derived on the way out, so
+                        // the variant's own `detached` is only the preview's.
+                        Dragging::RouteOver { edge, anchor, .. } => {
+                            self.handle_route_over(&mut ctx, edge, anchor)
+                        }
+                        Dragging::PressPending {
+                            origin_world,
+                            origin_screen,
+                            target,
+                        } => {
+                            self.handle_press_pending(&mut ctx, origin_world, origin_screen, target)
+                        }
                         Dragging::SelectionBox(start, _current) => {
                             self.handle_selection_box(&mut ctx, start)
                         }
@@ -692,21 +734,14 @@ where
     /// Handles an in-progress edge-cutting drag: extends the cut trail on cursor
     /// move and commits every pending cut on release.
     fn handle_edge_cutting(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>) {
-        let UpdateCtx {
-            tree,
-            layout,
-            event,
-            world_cursor,
-            shell,
-            ..
-        } = &mut *ctx;
-        let state = tree.state.downcast_mut::<NodeGraphState>();
-        match event {
+        match ctx.event {
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                if let Some(cursor_position) = world_cursor.position() {
+                if let Some(cursor_position) = ctx.world_cursor.position() {
                     let cursor_position: LayoutPoint = cursor_position.into_euclid();
-
-                    // Update trail and check which edges intersect with cutting line
+                    // The cables as they are drawn, wraps and all, so a routed
+                    // cable is cut where it actually runs.
+                    let cables = self.cable_geometry(ctx.tree, ctx.layout);
+                    let state = ctx.tree.state.downcast_mut::<NodeGraphState>();
                     if let Dragging::EdgeCutting {
                         ref mut trail,
                         ref mut pending_cuts,
@@ -714,76 +749,31 @@ where
                     {
                         trail.push(cursor_position);
 
-                        // Get cutting line: from start point to current cursor
+                        // The cut runs from where the drag started to the cursor.
                         let cut_start = trail.first().copied().unwrap_or(cursor_position);
-                        let cut_end = cursor_position;
+                        let from = [cut_start.x, cut_start.y];
+                        let to = [cursor_position.x, cursor_position.y];
 
-                        // Clear and recalculate - only edges intersecting cutting line are highlighted
+                        // Only what the line crosses right now is pending.
                         pending_cuts.clear();
-
-                        // Check each edge for intersection with the cutting line
-                        for (edge_idx, edge) in self.edges.iter().enumerate() {
-                            let (from_ref, to_ref) = (&edge.from, &edge.to);
-                            // Resolve user IDs to indices
-                            let from_node_idx = match self.node_index(&from_ref.node_id) {
-                                Some(idx) => idx,
-                                None => continue,
-                            };
-                            let to_node_idx = match self.node_index(&to_ref.node_id) {
-                                Some(idx) => idx,
-                                None => continue,
-                            };
-
-                            // Pin positions and sides for the bezier the cut
-                            // is measured against.
-                            let from_pin_data = pin_by_id::<P, UI>(
-                                &tree.children,
-                                *layout,
-                                from_node_idx,
-                                &from_ref.pin_id,
-                            );
-                            let to_pin_data = pin_by_id::<P, UI>(
-                                &tree.children,
-                                *layout,
-                                to_node_idx,
-                                &to_ref.pin_id,
-                            );
-
-                            if let (Some((_, (p0, _), from_side)), Some((_, (p3, _), to_side))) =
-                                (from_pin_data, to_pin_data)
-                            {
-                                // Calculate bezier control points
-                                let dir_from = pin_side_direction(from_side.into());
-                                let dir_to = pin_side_direction(to_side.into());
-                                let l = adaptive_bezier_length([p0.x, p0.y], [p3.x, p3.y]);
-                                let p1 = Point::new(p0.x + dir_from[0] * l, p0.y + dir_from[1] * l);
-                                let p2 = Point::new(p3.x + dir_to[0] * l, p3.y + dir_to[1] * l);
-
-                                // Check if cutting line intersects this bezier edge
-                                if line_intersects_bezier(
-                                    cut_start.into_iced(),
-                                    cut_end.into_iced(),
-                                    p0,
-                                    p1,
-                                    p2,
-                                    p3,
-                                ) {
-                                    pending_cuts.insert(edge_idx);
-                                }
+                        for (geometry, built) in &cables {
+                            if built.path.intersects(from, to) {
+                                pending_cuts.insert(geometry.edge);
                             }
                         }
                     }
                 }
-                shell.request_redraw();
+                ctx.shell.request_redraw();
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 // Delete all pending edges on release
+                let state = ctx.tree.state.downcast_mut::<NodeGraphState>();
                 if let Dragging::EdgeCutting { pending_cuts, .. } = &state.dragging {
                     let mut cut_ids = Vec::new();
                     for &edge_idx in pending_cuts.iter() {
                         if let Some(Edge { id, from, to, .. }) = self.edges.get(edge_idx) {
                             if let Some(handler) = self.on_disconnect.as_ref() {
-                                shell.publish(handler(from.clone(), to.clone()));
+                                ctx.shell.publish(handler(from.clone(), to.clone()));
                             }
                             cut_ids.push(id.clone());
                         }
@@ -791,12 +781,12 @@ where
                     if let Some(handler) = self.on_edge_delete.as_ref()
                         && !cut_ids.is_empty()
                     {
-                        shell.publish(handler(cut_ids));
+                        ctx.shell.publish(handler(cut_ids));
                     }
                 }
-                state.dragging = Dragging::None;
-                shell.capture_event();
-                shell.request_redraw();
+                ctx.tree.state.downcast_mut::<NodeGraphState>().dragging = Dragging::None;
+                ctx.shell.capture_event();
+                ctx.shell.request_redraw();
             }
             _ => {}
         }
@@ -883,6 +873,59 @@ where
             shell.invalidate_layout();
             shell.request_redraw();
         }
+    }
+
+    /// Handles an in-progress anchor drag: reports the world position the
+    /// anchor was dragged to, on release.
+    ///
+    /// A report, not a change: the widget previews the offset in `draw` and the
+    /// host applies it. A motionless press+release is a click, not a move, and
+    /// emits nothing.
+    fn handle_anchor_drag(
+        &self,
+        ctx: &mut UpdateCtx<'_, '_, '_, Message>,
+        anchor_index: usize,
+        origin: WorldPoint,
+    ) {
+        let UpdateCtx {
+            tree,
+            event,
+            world_cursor,
+            shell,
+            ..
+        } = &mut *ctx;
+        if !matches!(
+            event,
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+        ) {
+            return;
+        }
+        if let Some(cursor_position) = world_cursor.position() {
+            // Both ends of the delta in one space: `origin` is a world point,
+            // and the cursor arrives layout-absolute.
+            let cursor = tree
+                .state
+                .downcast_ref::<NodeGraphState>()
+                .camera
+                .layout_to_world(cursor_position.into_euclid());
+            let offset = cursor - origin;
+            let moved = offset.x.abs() > f32::EPSILON || offset.y.abs() > f32::EPSILON;
+            if let Some(anchor) = self.anchors.get(anchor_index)
+                && let Some(handler) = self.on_anchor_move.as_ref()
+                && moved
+            {
+                shell.publish(handler(
+                    anchor.id.clone(),
+                    Point::new(anchor.position.x + offset.x, anchor.position.y + offset.y),
+                ));
+            }
+        }
+        tree.state.downcast_mut::<NodeGraphState>().dragging = Dragging::None;
+        if let Some(handler) = self.on_drag_end.as_ref() {
+            shell.publish(handler());
+        }
+        shell.capture_event();
+        shell.request_redraw();
     }
 
     /// Handles an in-progress grip resize: reports the size the node's content
@@ -1156,6 +1199,199 @@ where
         }
     }
 
+    /// Handles an in-progress route drag: snap-tests the phantom anchor it
+    /// holds against every eligible anchor and reports the attachment on snap
+    /// (plug behaviour), or a new anchor at the cursor on release.
+    ///
+    /// A plain click on a cable is a grab that never moved, so it creates an
+    /// anchor where it was pressed; the undo is a pan-button click on the core.
+    fn handle_route_drag(
+        &self,
+        ctx: &mut UpdateCtx<'_, '_, '_, Message>,
+        edge: usize,
+        detached: Option<usize>,
+    ) {
+        match ctx.event {
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                if let Some(cursor_position) = ctx.world_cursor.position()
+                    && let Some(anchor) =
+                        self.route_snap_target(ctx.tree, edge, detached, cursor_position)
+                {
+                    if let Some(handler) = self.on_route_attach.as_ref()
+                        && let Some(edge_id) = self.edges.get(edge).map(|edge| edge.id.clone())
+                        && let Some(anchor_id) =
+                            self.anchors.get(anchor).map(|anchor| anchor.id.clone())
+                    {
+                        ctx.shell.publish(handler(edge_id, anchor_id));
+                    }
+                    ctx.tree.state.downcast_mut::<NodeGraphState>().dragging =
+                        Dragging::RouteOver {
+                            edge,
+                            anchor,
+                            // Snapping back onto the anchor the drag pulled off
+                            // supersedes that detachment: the anchor is wanted
+                            // again, so it must stop being held out of the
+                            // preview. Leaving it excluded here contradicts
+                            // being snapped to it, and the cable would draw
+                            // with no wrap at all - the real one suppressed by
+                            // the exclusion, the offered one skipped because
+                            // the host's route still names the anchor.
+                            detached: detached.filter(|held| *held != anchor),
+                        };
+                }
+                ctx.shell.request_redraw();
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                if let Some(cursor_position) = ctx.world_cursor.position()
+                    && let Some(handler) = self.on_anchor_create.as_ref()
+                    && let Some(edge_id) = self.edges.get(edge).map(|edge| edge.id.clone())
+                {
+                    // An anchor's position is a world point the host stores, so
+                    // the layout-absolute cursor folds the viewport origin back
+                    // out. `on_anchor_move` needs no such step: it reports
+                    // position plus a delta, and a delta carries no origin.
+                    let at = ctx
+                        .tree
+                        .state
+                        .downcast_ref::<NodeGraphState>()
+                        .camera
+                        .layout_to_world(cursor_position.into_euclid());
+                    ctx.shell.publish(handler(edge_id, Point::new(at.x, at.y)));
+                }
+                ctx.tree.state.downcast_mut::<NodeGraphState>().dragging = Dragging::None;
+                if let Some(handler) = self.on_drag_end.as_ref() {
+                    ctx.shell.publish(handler());
+                }
+                ctx.shell.capture_event();
+                ctx.shell.request_redraw();
+            }
+            _ => {}
+        }
+    }
+
+    /// Handles the snapped state of a route drag: leaving the held ring by more
+    /// than `UNSNAP_THRESHOLD` reports the detachment and falls back to
+    /// [`Dragging::Route`].
+    ///
+    /// Releasing here commits nothing: the attachment was published on snap.
+    fn handle_route_over(
+        &self,
+        ctx: &mut UpdateCtx<'_, '_, '_, Message>,
+        edge: usize,
+        anchor: usize,
+    ) {
+        match ctx.event {
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                let Some(cursor_position) = ctx.world_cursor.position() else {
+                    return;
+                };
+                let unsnap = UNSNAP_THRESHOLD
+                    / ctx
+                        .tree
+                        .state
+                        .downcast_ref::<NodeGraphState>()
+                        .camera
+                        .zoom();
+                // Measured against the anchor's OUTERMOST ring, the same circle
+                // the snap used, so the gesture does not depend on which orbit
+                // the cable ends up on: that is decided from the geometry of
+                // every cable through the anchor and can change while the drag
+                // is still in flight.
+                let ring = self.anchor_reach(
+                    ctx.tree,
+                    anchor,
+                    Some(PendingRoute {
+                        edge,
+                        attach: Some(anchor),
+                        detach: None,
+                    }),
+                );
+                let left = match ring {
+                    Some(ring) => {
+                        Point::new(ring.center[0], ring.center[1]).distance(cursor_position)
+                            > ring.radius + unsnap
+                    }
+                    // An anchor the host has dropped mid-drag is past every
+                    // threshold there is.
+                    None => true,
+                };
+                if left {
+                    if let Some(handler) = self.on_route_detach.as_ref()
+                        && let Some(edge_id) = self.edges.get(edge).map(|edge| edge.id.clone())
+                        && let Some(anchor_id) =
+                            self.anchors.get(anchor).map(|anchor| anchor.id.clone())
+                    {
+                        ctx.shell.publish(handler(edge_id, anchor_id));
+                    }
+                    ctx.tree.state.downcast_mut::<NodeGraphState>().dragging = Dragging::Route {
+                        edge,
+                        // Held out of the preview until the host applies the
+                        // detach, and eligible again so the drag can put it back.
+                        detached: Some(anchor),
+                    };
+                }
+                ctx.shell.request_redraw();
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                ctx.tree.state.downcast_mut::<NodeGraphState>().dragging = Dragging::None;
+                if let Some(handler) = self.on_drag_end.as_ref() {
+                    ctx.shell.publish(handler());
+                }
+                ctx.shell.capture_event();
+                ctx.shell.request_redraw();
+            }
+            _ => {}
+        }
+    }
+
+    /// The anchor a route drag on `edge` snaps to at `cursor`: the nearest
+    /// eligible one whose offered ring the cursor has reached.
+    ///
+    /// Measured against the ring the cable would RUN on rather than the
+    /// anchor's innermost one, so a busy anchor takes the cable where it will
+    /// actually sit.
+    fn route_snap_target(
+        &self,
+        tree: &Tree,
+        edge: usize,
+        detached: Option<usize>,
+        cursor: Point,
+    ) -> Option<usize> {
+        let snap = SNAP_THRESHOLD / tree.state.downcast_ref::<NodeGraphState>().camera.zoom();
+        // The detach is folded in so an anchor the drag just left offers the
+        // reach it will have once the host applies it; the attach is not,
+        // because that is what each candidate is being asked about.
+        let pending = PendingRoute {
+            edge,
+            attach: None,
+            detach: detached,
+        };
+        let mut best: Option<(usize, f32)> = None;
+        for anchor in self.route_snap_eligible(edge, detached) {
+            let Some(ring) = self.anchor_reach(
+                tree,
+                anchor,
+                Some(PendingRoute {
+                    attach: Some(anchor),
+                    ..pending
+                }),
+            ) else {
+                continue;
+            };
+            // The ring centre IS the anchor's core in the cursor's own space,
+            // so nothing here has to reach for the raw world position.
+            let distance = Point::new(ring.center[0], ring.center[1]).distance(cursor);
+            if distance > ring.radius + snap {
+                continue;
+            }
+            match best {
+                Some((_, held)) if held <= distance => {}
+                _ => best = Some((anchor, distance)),
+            }
+        }
+        best.map(|(anchor, _)| anchor)
+    }
+
     /// Handles an in-progress selection box: tracks the moving corner and
     /// commits the intersecting set on release (Shift adds to the selection).
     fn handle_selection_box(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>, start: LayoutPoint) {
@@ -1291,6 +1527,13 @@ where
                     return;
                 }
             }
+            // Anchors and cables are drawn under every node, so they answer
+            // only once no node has claimed the press.
+            if self.try_start_anchor_drag(ctx, cursor_position.into_euclid())
+                || self.try_press_cable(ctx, cursor_position)
+            {
+                return;
+            }
         }
 
         // Nothing hit - open a selection box on empty space, unless COMMAND is
@@ -1300,69 +1543,39 @@ where
 
     /// Cuts the first edge within `EDGE_CUT_THRESHOLD` of the cursor
     /// (Command+Click edge cut). Returns whether a cut consumed the press.
+    ///
+    /// Measured against the routed cable, so an edge that wraps an anchor is
+    /// cut where it runs.
     fn try_cut_edge_at_cursor(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>) -> bool {
-        let UpdateCtx {
-            tree,
-            layout,
-            world_cursor,
-            shell,
-            ..
-        } = &mut *ctx;
-        let Some(cursor_position) = world_cursor.position() else {
+        let Some(cursor_position) = ctx.world_cursor.position() else {
             return false;
         };
         // Screen-space threshold: constant hit target at any zoom.
-        let cut_threshold =
-            EDGE_CUT_THRESHOLD / tree.state.downcast_ref::<NodeGraphState>().camera.zoom();
-        // Check if click is near any edge
-        for Edge {
-            id: edge_id,
-            from: from_ref,
-            to: to_ref,
-            ..
-        } in &self.edges
-        {
-            // Resolve user IDs to indices
-            let from_node_idx = match self.node_index(&from_ref.node_id) {
-                Some(idx) => idx,
-                None => continue,
-            };
-            let to_node_idx = match self.node_index(&to_ref.node_id) {
-                Some(idx) => idx,
-                None => continue,
-            };
-
-            // Pin positions and sides for both ends of the edge.
-            let from_pin_data =
-                pin_by_id::<P, UI>(&tree.children, *layout, from_node_idx, &from_ref.pin_id);
-            let to_pin_data =
-                pin_by_id::<P, UI>(&tree.children, *layout, to_node_idx, &to_ref.pin_id);
-
-            if let (Some((_, (from_pos, _), from_side)), Some((_, (to_pos, _), to_side))) =
-                (from_pin_data, to_pin_data)
-            {
-                // Measure against the rendered bezier, not the straight
-                // chord: same control-point construction as the draw path.
-                let dir_from = pin_side_direction(from_side.into());
-                let dir_to = pin_side_direction(to_side.into());
-                let l = adaptive_bezier_length([from_pos.x, from_pos.y], [to_pos.x, to_pos.y]);
-                let p1 = Point::new(from_pos.x + dir_from[0] * l, from_pos.y + dir_from[1] * l);
-                let p2 = Point::new(to_pos.x + dir_to[0] * l, to_pos.y + dir_to[1] * l);
-                let distance = point_to_bezier_distance(cursor_position, from_pos, p1, p2, to_pos);
-                if distance < cut_threshold {
-                    if let Some(handler) = self.on_disconnect.as_ref() {
-                        shell.publish(handler(from_ref.clone(), to_ref.clone()));
-                    }
-                    if let Some(handler) = self.on_edge_delete.as_ref() {
-                        shell.publish(handler(vec![edge_id.clone()]));
-                    }
-                    shell.capture_event();
-                    shell.request_redraw();
-                    return true;
-                }
-            }
+        let cut_threshold = EDGE_CUT_THRESHOLD
+            / ctx
+                .tree
+                .state
+                .downcast_ref::<NodeGraphState>()
+                .camera
+                .zoom();
+        let at = [cursor_position.x, cursor_position.y];
+        let cut = self
+            .cable_geometry(ctx.tree, ctx.layout)
+            .into_iter()
+            .find(|(_, built)| built.path.distance(at) < cut_threshold)
+            .map(|(geometry, _)| geometry.edge);
+        let Some(Edge { id, from, to, .. }) = cut.and_then(|edge| self.edges.get(edge)) else {
+            return false;
+        };
+        if let Some(handler) = self.on_disconnect.as_ref() {
+            ctx.shell.publish(handler(from.clone(), to.clone()));
         }
-        false
+        if let Some(handler) = self.on_edge_delete.as_ref() {
+            ctx.shell.publish(handler(vec![id.clone()]));
+        }
+        ctx.shell.capture_event();
+        ctx.shell.request_redraw();
+        true
     }
 
     /// Hit-tests one node's pins and body for a left press.
@@ -1498,7 +1711,7 @@ where
             anchor_node_idx,
             &anchor.pin_id,
         )
-        .map(|(index, _, _)| index) else {
+        .map(|(index, ..)| index) else {
             return false;
         };
         // Compute valid targets for the new drag, excluding the grabbed edge
@@ -1731,34 +1944,575 @@ where
         }
     }
 
-    /// Starts a graph pan from a press of the keymap's pan button.
+    /// Starts a graph pan from a press of the keymap's pan button, unless the
+    /// press lands on something that button clicks instead: an anchor core to
+    /// delete, or a wrap to detach. Either one is provisional - see
+    /// [`handle_press_pending`](Self::handle_press_pending).
     fn handle_pan_press(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>) {
-        let UpdateCtx {
-            tree,
-            screen_cursor,
-            shell,
-            ..
-        } = &mut *ctx;
-        let state = tree.state.downcast_mut::<NodeGraphState>();
+        let state = ctx.tree.state.downcast_ref::<NodeGraphState>();
         // Never cancel an in-progress node/edge/box drag: that would drop the
         // drag without emitting on_drag_end or committing the move.
         if state.dragging != Dragging::None {
             return;
         }
-        // Right-click: start graph panning
-        if let Some(cursor_position) = screen_cursor.position() {
-            let cursor_position: ScreenPoint = cursor_position.into_euclid();
-            let cursor_position: WorldPoint = state
-                .camera
-                .screen_to_world()
-                .transform_point(cursor_position);
-            let state = tree.state.downcast_mut::<NodeGraphState>();
-            // User-driven pan aborts a running focus tween (arbitration:
-            // user input beats a tween).
-            state.camera_tween = None;
-            state.dragging = Dragging::Graph(cursor_position.into_euclid());
-            shell.capture_event();
+        let Some(cursor_position) = ctx.screen_cursor.position() else {
+            return;
+        };
+        let origin_world: WorldPoint = state
+            .camera
+            .screen_to_world()
+            .transform_point(cursor_position.into_euclid());
+
+        if let Some(target) = self.press_target_at(ctx) {
+            let state = ctx.tree.state.downcast_mut::<NodeGraphState>();
+            state.dragging = Dragging::PressPending {
+                origin_world,
+                origin_screen: cursor_position,
+                target,
+            };
+            ctx.shell.capture_event();
+            return;
         }
+
+        let state = ctx.tree.state.downcast_mut::<NodeGraphState>();
+        // User-driven pan aborts a running focus tween (arbitration: user
+        // input beats a tween).
+        state.camera_tween = None;
+        state.dragging = Dragging::Graph(origin_world);
+        ctx.shell.capture_event();
+    }
+
+    /// What the pan button would click at the cursor, or `None` when the press
+    /// is an ordinary pan.
+    ///
+    /// Each target is gated on the callback that would carry its click, not on
+    /// the ones the route DRAG needs: a host that only wires
+    /// [`on_route_detach`](NodeGraph::on_route_detach) still gets the detach
+    /// click.
+    fn press_target_at(&self, ctx: &UpdateCtx<'_, '_, '_, Message>) -> Option<PressTarget> {
+        let cursor_position = ctx.world_cursor.position()?;
+        // Anchors and cables are drawn UNDER every node, so they answer only
+        // once no node covers the cursor - the same precedence the left press
+        // and the cursor icon already follow. Without it, dragging a node over
+        // an anchor turns a pan-button click on that node's body into a delete
+        // of an anchor the user cannot see.
+        if ctx
+            .layout
+            .children()
+            .any(|node| node.bounds().contains(cursor_position))
+        {
+            return None;
+        }
+        if self.on_anchor_delete.is_some()
+            && let Some(anchor) = self.core_at(ctx.tree, cursor_position.into_euclid())
+        {
+            return Some(PressTarget::AnchorCore { anchor });
+        }
+        if self.on_route_detach.is_some()
+            && let Some(CableHit {
+                zone: CableZone::Wrap { edge, anchor },
+                ..
+            }) = self.cable_zone_at(ctx.tree, ctx.layout, cursor_position.into_euclid())
+        {
+            return Some(PressTarget::Wrap { edge, anchor });
+        }
+        None
+    }
+
+    /// Handles a pan-button press held over a clickable target: travel makes it
+    /// the pan it would have been, a release without travel commits the click.
+    ///
+    /// The pan continues from the ORIGINAL press point, so the image does not
+    /// jump by however far the cursor got before the press was one.
+    fn handle_press_pending(
+        &self,
+        ctx: &mut UpdateCtx<'_, '_, '_, Message>,
+        origin_world: WorldPoint,
+        origin_screen: Point,
+        target: PressTarget,
+    ) {
+        match ctx.event {
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                let Some(cursor_position) = ctx.screen_cursor.position() else {
+                    return;
+                };
+                if origin_screen.distance(cursor_position) <= TOUCH_TAP_TRAVEL {
+                    return;
+                }
+                let state = ctx.tree.state.downcast_mut::<NodeGraphState>();
+                // User-driven pan aborts a running focus tween (arbitration:
+                // user input beats a tween).
+                state.camera_tween = None;
+                state.dragging = Dragging::Graph(origin_world);
+                ctx.shell.capture_event();
+                ctx.shell.request_redraw();
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(button))
+                if *button == self.keymap.pan_button =>
+            {
+                match target {
+                    PressTarget::AnchorCore { anchor } => {
+                        if let Some(handler) = self.on_anchor_delete.as_ref()
+                            && let Some(id) = self.anchors.get(anchor).map(|a| a.id.clone())
+                        {
+                            ctx.shell.publish(handler(id));
+                        }
+                    }
+                    PressTarget::Wrap { edge, anchor } => {
+                        if let Some(handler) = self.on_route_detach.as_ref()
+                            && let Some(edge_id) = self.edges.get(edge).map(|e| e.id.clone())
+                            && let Some(anchor_id) = self.anchors.get(anchor).map(|a| a.id.clone())
+                        {
+                            ctx.shell.publish(handler(edge_id, anchor_id));
+                        }
+                    }
+                }
+                // Nothing panned, so no `on_pan`. `on_drag_end` still fires:
+                // this is a `Dragging::* -> None` transition like any other, and
+                // a host that collects orphaned anchors when a gesture finishes
+                // would otherwise never hear that this one did.
+                ctx.tree.state.downcast_mut::<NodeGraphState>().dragging = Dragging::None;
+                if let Some(handler) = self.on_drag_end.as_ref() {
+                    ctx.shell.publish(handler());
+                }
+                ctx.shell.capture_event();
+                ctx.shell.request_redraw();
+            }
+            _ => {}
+        }
+    }
+
+    /// Every edge's routed cable, in the layout-absolute space the press path
+    /// hit-tests in.
+    ///
+    /// The one walk from topology to geometry on the interaction side: pressing,
+    /// cutting and hovering all measure against THIS, so a cable that wraps an
+    /// anchor is hit where it runs rather than along the chord between its pins.
+    ///
+    /// No drag preview is folded in. Nothing here aims at the phantom leg
+    /// following the cursor: the gesture paths run either before a route drag
+    /// starts or against the cable the host wrote.
+    ///
+    /// Curvature comes from the curves the last `draw` published, so a cable is
+    /// hit-tested against the shape on screen: resolving an edge's own style
+    /// needs a theme, which the interaction path does not have. An interaction
+    /// cannot change a curve, so a frame-old value is the same value. Before the
+    /// first frame there is nothing published and nothing drawn to hit either,
+    /// and [`EdgeCurve::default`] stands in.
+    fn cable_geometry(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+    ) -> Vec<(CableGeometry<'_, N, P>, edge_path::Built)> {
+        let pin = |pin: &PinRef<N, P>| -> Option<Station> {
+            let node_index = self.node_index(&pin.node_id)?;
+            let (_, (point, _), side, direction) =
+                pin_by_id::<P, UI>(&tree.children, layout, node_index, &pin.pin_id)?;
+            Some(Station {
+                point: [point.x, point.y],
+                side: side.into(),
+                direction: Some(direction),
+            })
+        };
+        let ring = |anchor: usize, orbit: u8| self.orbit_ring(tree, anchor, orbit);
+        let curves = tree
+            .state
+            .downcast_ref::<NodeGraphState>()
+            .edge_curves
+            .borrow();
+        let curve = |edge: usize| curves.get(edge).copied().unwrap_or_default();
+        self.edge_hops(&pin, &ring, &curve, None)
+            .into_iter()
+            .map(|geometry| {
+                let built = edge_path::build(&geometry.hops, &curve(geometry.edge));
+                (geometry, built)
+            })
+            .collect()
+    }
+
+    /// One edge's endpoints in the order its cable runs them, output pin first.
+    ///
+    /// Read back off the same walk the zones were measured along, so the end a
+    /// press grabs is the end the cursor was near.
+    fn oriented_ends(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        edge: usize,
+    ) -> Option<(&PinRef<N, P>, &PinRef<N, P>)> {
+        self.cable_geometry(tree, layout)
+            .into_iter()
+            .find(|(geometry, _)| geometry.edge == edge)
+            .map(|(geometry, _)| geometry.ends)
+    }
+
+    /// The cable part under `cursor`, or `None` when nothing is close enough or
+    /// the gesture's callbacks are unwired.
+    ///
+    /// An unwired zone reports nothing rather than reporting a zone that cannot
+    /// act, so the press falls through to what is behind the cable - the same
+    /// shape every other gate in this file has.
+    pub(super) fn cable_hit_at(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: LayoutPoint,
+    ) -> Option<CableHit> {
+        let hit = self.cable_zone_at(tree, layout, cursor)?;
+        let wired = match hit.zone {
+            // Unplugging an end re-routes it, which is a connection the host
+            // has to be able to persist.
+            CableZone::End { .. } => self.on_connect.is_some(),
+            // A route drag can create, attach and detach before it is over, so
+            // all three have to be there before it starts.
+            CableZone::Wrap { .. } | CableZone::Run { .. } => {
+                self.on_anchor_create.is_some()
+                    && self.on_route_attach.is_some()
+                    && self.on_route_detach.is_some()
+            }
+        };
+        wired.then_some(hit)
+    }
+
+    /// The cable part under `cursor`, whatever is wired.
+    ///
+    /// Every cable is classified and the CLOSEST zone wins, measured by the
+    /// distance each kind of zone is defined by: a wrap by how far the cursor
+    /// is from the ring the frame draws, an end or a run by how far it is from
+    /// the cable itself. Picking one cable up front by lateral distance instead
+    /// would hand a press on a visible outer ring to whichever cable happens to
+    /// run nearer that spot - a wrap belongs to the edge whose ring it is.
+    fn cable_zone_at(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: LayoutPoint,
+    ) -> Option<CableHit> {
+        let cables = self.cable_geometry(tree, layout);
+        let mut best: Option<(CableHit, f32)> = None;
+        for (geometry, built) in &cables {
+            let Some(candidate) = self.cable_zone_of(tree, geometry, built, cursor) else {
+                continue;
+            };
+            match best {
+                Some((_, held)) if held <= candidate.1 => {}
+                _ => best = Some(candidate),
+            }
+        }
+        best.map(|(hit, _)| hit)
+    }
+
+    /// The zone one cable offers at `cursor`, paired with the distance that
+    /// zone is measured by so [`cable_zone_at`](Self::cable_zone_at) can rank
+    /// cables against each other.
+    fn cable_zone_of(
+        &self,
+        tree: &Tree,
+        geometry: &CableGeometry<'_, N, P>,
+        built: &edge_path::Built,
+        cursor: LayoutPoint,
+    ) -> Option<(CableHit, f32)> {
+        // Screen-space thresholds: constant hit targets at any zoom. Each one
+        // that competes with a WORLD-fixed quantity is capped against it below,
+        // because dividing by zoom grows a threshold without bound as the
+        // camera pulls back while a ring radius or a cable's length stays put.
+        let zoom = tree.state.downcast_ref::<NodeGraphState>().camera.zoom();
+        let grab = EDGE_GRAB_THRESHOLD / zoom;
+        let ring_grab = ANCHOR_GRAB_THRESHOLD / zoom;
+        let at = [cursor.x, cursor.y];
+
+        let near = built.path.nearest(at);
+        let edge = geometry.edge;
+        let total = built.path.total_len();
+
+        // The end zones first: a wrap or a run reaching into one would take a
+        // press that is much more likely meant for the plug. Capped at a third
+        // of the cable so the two ends can never meet in the middle: a cable
+        // shorter than twice the raw budget would otherwise be end zone from
+        // tip to tip, leaving no run to grab and no wrap to detach.
+        let end_zone = (EDGE_END_GRAB_LENGTH / zoom).min(total / 3.0);
+        let from_start = near.arc_len;
+        let from_end = total - near.arc_len;
+        if near.distance <= grab && from_start.min(from_end) <= end_zone {
+            let at_start = from_start <= from_end;
+            let window = if at_start {
+                (0.0, end_zone.min(total))
+            } else {
+                ((total - end_zone).max(0.0), total)
+            };
+            return Some((
+                CableHit {
+                    zone: CableZone::End { edge, at_start },
+                    window,
+                },
+                near.distance,
+            ));
+        }
+
+        // A wrap is grabbed by its RING, not by the cable's lateral distance:
+        // the ring is what the frame draws to say this edge passes here.
+        for touch in &built.touches {
+            let Some(&(_, (anchor, orbit))) =
+                geometry.rings.iter().find(|(hop, _)| *hop == touch.hop)
+            else {
+                // A phantom wrap names no anchor of the host's.
+                continue;
+            };
+            let Some(ring) = self.orbit_ring(tree, anchor, orbit) else {
+                continue;
+            };
+            // Capped at half the radius so the band can never reach the
+            // anchor's centre and swallow the whole disc.
+            let ring_grab = ring_grab.min(ring.radius * 0.5);
+            if near.arc_len < touch.span.0 - ring_grab || near.arc_len > touch.span.1 + ring_grab {
+                continue;
+            }
+            let off_ring = ring.ring_distance(at);
+            if off_ring > ring_grab {
+                continue;
+            }
+            return Some((
+                CableHit {
+                    zone: CableZone::Wrap { edge, anchor },
+                    window: touch.span,
+                },
+                off_ring,
+            ));
+        }
+
+        if near.distance <= grab {
+            // The stretch a press takes hold of is centred on the cursor, so
+            // the glow marks the grab rather than the whole cable.
+            let half = end_zone / 2.0;
+            return Some((
+                CableHit {
+                    zone: CableZone::Run { edge },
+                    window: (
+                        (near.arc_len - half).max(0.0),
+                        (near.arc_len + half).min(total),
+                    ),
+                },
+                near.distance,
+            ));
+        }
+        None
+    }
+
+    /// Where an anchor sits in the layout-absolute space every gesture
+    /// hit-tests in.
+    ///
+    /// A node arrives layout-absolute already - its child layout carries the
+    /// viewport origin - but an anchor has no layout of its own, so the origin
+    /// has to be folded in here. It is the same conversion `draw` applies
+    /// before it strokes a core and its rings, and without it a graph placed
+    /// anywhere but the window origin is grabbed where it would have been at
+    /// the origin rather than where it is.
+    fn anchor_layout_point(&self, tree: &Tree, anchor: usize) -> Option<LayoutPoint> {
+        let position = self.anchors.get(anchor)?.position;
+        Some(
+            tree.state
+                .downcast_ref::<NodeGraphState>()
+                .camera
+                .world_to_layout(position.into_euclid()),
+        )
+    }
+
+    /// The circle an orbit describes, in the layout-absolute space the cable is
+    /// built in, at the radii the last frame published.
+    pub(super) fn orbit_ring(
+        &self,
+        tree: &Tree,
+        anchor: usize,
+        orbit: u8,
+    ) -> Option<edge_path::Orbit> {
+        let center = self.anchor_layout_point(tree, anchor)?;
+        let radius = tree
+            .state
+            .downcast_ref::<NodeGraphState>()
+            .anchor_geometry
+            .borrow()
+            .get(anchor)
+            .copied()
+            .unwrap_or_default()
+            .orbit_radius(orbit);
+        Some(edge_path::Orbit {
+            center: [center.x, center.y],
+            radius,
+        })
+    }
+
+    /// The outermost circle an anchor shows, which is how far a route drag can
+    /// reach it.
+    ///
+    /// Snap and unsnap are both measured against this rather than against the
+    /// orbit the cable will occupy. The orbit is decided from the geometry of
+    /// every cable through the anchor, so it can change while the drag is still
+    /// in flight; the anchor's reach cannot, which is what keeps a drag from
+    /// detaching itself the frame after it attached.
+    ///
+    /// `pending` folds in the drag's own edit, so an anchor about to gain a
+    /// cable already offers the ring that cable will add.
+    fn anchor_reach(
+        &self,
+        tree: &Tree,
+        anchor: usize,
+        pending: Option<PendingRoute>,
+    ) -> Option<edge_path::Orbit> {
+        let rings = self.anchor_rings(pending).get(anchor).copied()?;
+        let outermost = u8::try_from(rings.saturating_sub(1)).unwrap_or(u8::MAX);
+        self.orbit_ring(tree, anchor, outermost)
+    }
+
+    /// Grabs the anchor whose core is under the cursor. Returns whether the
+    /// press was consumed.
+    ///
+    /// Only while [`on_anchor_move`](NodeGraph::on_anchor_move) is wired: a
+    /// drag the host cannot apply would snap back on release, which reads as
+    /// the widget being broken rather than as the feature being off.
+    fn try_start_anchor_drag(
+        &self,
+        ctx: &mut UpdateCtx<'_, '_, '_, Message>,
+        cursor_position: LayoutPoint,
+    ) -> bool {
+        let Some(anchor_index) = self.anchor_core_at(ctx.tree, cursor_position) else {
+            return false;
+        };
+        let state = ctx.tree.state.downcast_mut::<NodeGraphState>();
+        // A world point, as the variant declares: the preview measures the
+        // offset against the screen cursor mapped straight into world space,
+        // so an origin term left in here would show up as a jump.
+        let origin = state.camera.layout_to_world(cursor_position);
+        state.dragging = Dragging::Anchor {
+            anchor: anchor_index,
+            origin,
+        };
+        ctx.shell.capture_event();
+        ctx.shell.request_redraw();
+        true
+    }
+
+    /// The anchor whose core is under `cursor`.
+    ///
+    /// `None` while [`on_anchor_move`](NodeGraph::on_anchor_move) is unwired:
+    /// there is no gesture to offer, so nothing to point at either.
+    pub(super) fn anchor_core_at(&self, tree: &Tree, cursor: LayoutPoint) -> Option<usize> {
+        self.on_anchor_move.as_ref()?;
+        self.core_at(tree, cursor)
+    }
+
+    /// The anchor whose core is under `cursor`, whatever is wired.
+    ///
+    /// `cursor` is the layout-absolute cursor the child walk hands out, the
+    /// same one the pin and cable tests take, which is why the cores it is
+    /// compared against go through
+    /// [`anchor_layout_point`](Self::anchor_layout_point).
+    fn core_at(&self, tree: &Tree, cursor: LayoutPoint) -> Option<usize> {
+        let state = tree.state.downcast_ref::<NodeGraphState>();
+        let zoom = state.camera.zoom();
+        let geometry = state.anchor_geometry.borrow();
+        (0..self.anchors.len()).find(|&anchor| {
+            let half = core_grab_half(geometry.get(anchor).copied().unwrap_or_default(), zoom);
+            self.anchor_layout_point(tree, anchor).is_some_and(|core| {
+                (cursor.x - core.x).abs() <= half && (cursor.y - core.y).abs() <= half
+            })
+        })
+    }
+
+    /// Starts the gesture the cable under the cursor offers: unplugging an end,
+    /// or a route drag from a wrap or the run between them. Returns whether the
+    /// cable took the press.
+    fn try_press_cable(
+        &self,
+        ctx: &mut UpdateCtx<'_, '_, '_, Message>,
+        cursor_position: Point,
+    ) -> bool {
+        let Some(hit) = self.cable_hit_at(ctx.tree, ctx.layout, cursor_position.into_euclid())
+        else {
+            return false;
+        };
+        match hit.zone {
+            CableZone::End { edge, at_start } => {
+                let Some(cable) = self.edges.get(edge) else {
+                    return false;
+                };
+                let Some((output, input)) = self.oriented_ends(ctx.tree, ctx.layout, edge) else {
+                    return false;
+                };
+                // The hop chain starts at the output pin, so that is the end
+                // the arc length was measured from.
+                let (near, far) = if at_start {
+                    (output, input)
+                } else {
+                    (input, output)
+                };
+                let Some(near_node) = self.node_index(&near.node_id) else {
+                    return false;
+                };
+                let Some((near_pin, ..)) =
+                    pin_by_id::<P, UI>(&ctx.tree.children, ctx.layout, near_node, &near.pin_id)
+                else {
+                    return false;
+                };
+                self.try_start_unplug(ctx, far, (&cable.from, &cable.to), (near_node, near_pin))
+            }
+            // Already wrapping this anchor: the grab publishes nothing until it
+            // leaves (`handle_route_over`).
+            CableZone::Wrap { edge, anchor } => {
+                let state = ctx.tree.state.downcast_mut::<NodeGraphState>();
+                state.dragging = Dragging::RouteOver {
+                    edge,
+                    anchor,
+                    detached: None,
+                };
+                ctx.shell.capture_event();
+                ctx.shell.request_redraw();
+                true
+            }
+            CableZone::Run { edge } => {
+                let state = ctx.tree.state.downcast_mut::<NodeGraphState>();
+                state.dragging = Dragging::Route {
+                    edge,
+                    detached: None,
+                };
+                ctx.shell.capture_event();
+                ctx.shell.request_redraw();
+                true
+            }
+        }
+    }
+
+    /// Asks for the frame the hover feedback needs.
+    ///
+    /// A hover keeps no geometry - `draw` resolves what is under the cursor from
+    /// the same walk it strokes - but drawing it needs a frame, and a cursor
+    /// move over an idle graph asks for none. So this decides only WHETHER a
+    /// frame is owed, and it errs wide on purpose: anywhere feedback could
+    /// appear counts, plus the move that leaves such a place, which is the frame
+    /// that clears it.
+    fn refresh_hover(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>) {
+        if !matches!(ctx.event, Event::Mouse(mouse::Event::CursorMoved { .. })) {
+            return;
+        }
+        let inside = ctx
+            .world_cursor
+            .position()
+            .is_some_and(|at| self.hover_zone(ctx.tree, ctx.layout, at));
+        let state = ctx.tree.state.downcast_ref::<NodeGraphState>();
+        if inside || state.hover_zone.get() {
+            ctx.shell.request_redraw();
+        }
+        state.hover_zone.set(inside);
+    }
+
+    /// Whether `cursor` is anywhere the hover feedback can draw something: an
+    /// anchor's core, or a stretch of cable a press would take.
+    ///
+    /// Ordered cheapest first, and a superset of what `draw` lights up.
+    fn hover_zone(&self, tree: &Tree, layout: Layout<'_>, cursor: Point) -> bool {
+        self.anchor_core_at(tree, cursor.into_euclid()).is_some()
+            || self
+                .cable_hit_at(tree, layout, cursor.into_euclid())
+                .is_some()
     }
 
     /// Starts a fit toward `world_aabb`: a tween when `opts.animation` is
@@ -1816,20 +2570,49 @@ where
     }
 }
 
+/// Half-extent of the square a press may land in and still grab an anchor's
+/// core, in world units, for an anchor whose frame published `geometry`.
+///
+/// [`ANCHOR_GRAB_THRESHOLD`] is screen pixels, so it is divided by zoom like
+/// every other hit target. Both clamps around it are WORLD-fixed, so each has
+/// to be stated in its own right:
+///
+/// - the floor is the core the frame paints. Without it, zooming past
+///   `ANCHOR_GRAB_THRESHOLD / core_half` leaves the box narrower than the dot
+///   on screen, and a press well inside the dot falls through to the canvas
+///   gesture behind it.
+/// - the cap keeps the square's CORNER - hence `FRAC_1_SQRT_2` - off orbit 0.
+///   The core is offered a press before any cable zone, so a square reaching
+///   the innermost ring would take every press meant for the innermost wrap.
+///   Same shape as `resize_grip_zone`, which caps a screen-sized grip by the
+///   node it sits on.
+///
+/// The cap is applied last, so it wins where the two disagree, which is only
+/// when a host styles `core_size` above `sqrt(2) * orbit_offset` - a core
+/// already painted over its own innermost ring. Losing the floor costs the core
+/// its own reach; losing the cap costs the wrap its gesture entirely, since
+/// route detach has no other entry.
+fn core_grab_half(geometry: AnchorGeometry, zoom: f32) -> f32 {
+    (ANCHOR_GRAB_THRESHOLD / zoom)
+        .max(geometry.core_half())
+        .min(geometry.orbit_radius(0) * std::f32::consts::FRAC_1_SQRT_2)
+}
+
 /// Resolves a [`FocusTarget`] to a world-space AABB using live layout, or
 /// `None` for an unknown/empty target -- a no-op per the design (no camera
 /// change, no `on_pan`): an unresolvable id is skipped, `All`/`Selection`
 /// with nothing to union is empty, `Nodes`/`Edges` union whatever resolves.
-fn resolve_focus_target<N, P, E, UI, Message, Renderer>(
-    graph: &NodeGraph<'_, N, P, UI, Message, Renderer, E>,
+fn resolve_focus_target<N, P, E, A, UI, Message, Renderer>(
+    graph: &NodeGraph<'_, N, P, E, A, UI, Message, Renderer>,
     layout: Layout<'_>,
     state: &NodeGraphState,
-    target: &FocusTarget<N, E>,
+    target: &FocusTarget<N, E, A>,
 ) -> Option<WorldRect>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
     E: EdgeId + 'static,
+    A: AnchorId + 'static,
     UI: Clone + 'static,
     Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
@@ -1843,32 +2626,63 @@ where
         Some(WorldRect::new(origin, WorldSize::new(b.width, b.height)))
     };
     let union_of = |rects: &mut dyn Iterator<Item = WorldRect>| rects.reduce(|a, b| a.union(&b));
-    // An edge's frame target is the union of its two endpoint nodes' bounds
-    // (seeing a connection means seeing both ends it connects); either
-    // endpoint failing to resolve skips the whole edge.
+    let anchor_geometry = state.anchor_geometry.borrow();
+    // An anchor has no child layout of its own, so its position is already the
+    // world point, and what it occupies is the ring the frame draws around it.
+    let ring_rect = |anchor: usize, orbit: u8| -> Option<WorldRect> {
+        let center = graph.anchors.get(anchor)?.position;
+        let radius = anchor_geometry
+            .get(anchor)
+            .copied()
+            .unwrap_or_default()
+            .orbit_radius(orbit);
+        Some(WorldRect::new(
+            WorldPoint::new(center.x - radius, center.y - radius),
+            WorldSize::new(radius * 2.0, radius * 2.0),
+        ))
+    };
+    let rings = graph.anchor_rings(None);
+    // The outermost ring an anchor carries bounds it; one carrying no edge at
+    // all still bounds at orbit 0, the ring a bare core sits inside.
+    let anchor_rect = |index: usize| -> Option<WorldRect> {
+        let orbit = u8::try_from(rings.get(index)?.saturating_sub(1)).unwrap_or(u8::MAX);
+        ring_rect(index, orbit)
+    };
+    let by_node = |id: &N| -> Option<WorldRect> { graph.node_index(id).and_then(node_rect) };
+    let by_anchor = |id: &A| -> Option<WorldRect> { graph.anchor_index(id).and_then(&anchor_rect) };
+    // An edge's frame target is the union of its two endpoint nodes' bounds and
+    // every anchor it wraps (seeing a connection means seeing where it runs);
+    // either endpoint failing to resolve skips the whole edge.
     let edge_rect = |id: &E| -> Option<WorldRect> {
-        let edge = graph.edges.iter().find(|edge| edge.id == *id)?;
-        let (from, to) = (&edge.from, &edge.to);
-        let a = node_rect(graph.node_index(&from.node_id)?)?;
-        let b = node_rect(graph.node_index(&to.node_id)?)?;
-        Some(a.union(&b))
+        let index = graph.edges.iter().position(|edge| edge.id == *id)?;
+        let edge = &graph.edges[index];
+        let a = node_rect(graph.node_index(&edge.from.node_id)?)?;
+        let b = node_rect(graph.node_index(&edge.to.node_id)?)?;
+        Some(
+            graph
+                .resolved_route(index)
+                .into_iter()
+                .filter_map(&anchor_rect)
+                .fold(a.union(&b), |whole, ring| whole.union(&ring)),
+        )
     };
 
     match target {
-        FocusTarget::All => union_of(&mut (0..graph.nodes.len()).filter_map(node_rect)),
+        FocusTarget::All => union_of(
+            &mut (0..graph.nodes.len())
+                .filter_map(node_rect)
+                .chain((0..graph.anchors.len()).filter_map(&anchor_rect)),
+        ),
         FocusTarget::Selection => union_of(
             &mut graph
                 .resolved_selection(state)
                 .into_iter()
                 .filter_map(node_rect),
         ),
-        FocusTarget::Node(id) => graph.node_index(id).and_then(node_rect),
-        FocusTarget::Nodes(ids) => union_of(
-            &mut ids
-                .iter()
-                .filter_map(|id| graph.node_index(id))
-                .filter_map(node_rect),
-        ),
+        FocusTarget::Node(id) => by_node(id),
+        FocusTarget::Nodes(ids) => union_of(&mut ids.iter().filter_map(&by_node)),
+        FocusTarget::Anchor(id) => by_anchor(id),
+        FocusTarget::Anchors(ids) => union_of(&mut ids.iter().filter_map(&by_anchor)),
         FocusTarget::Edge(id) => edge_rect(id),
         FocusTarget::Edges(ids) => union_of(&mut ids.iter().filter_map(edge_rect)),
         FocusTarget::Rect(rect) => Some((*rect).into_euclid()),
@@ -1890,8 +2704,8 @@ where
 /// `excluded_edge` is the edge currently being re-routed (its endpoints), left out
 /// of the occupancy check so it can be dropped back onto its own input. Pass `None`
 /// when starting a fresh edge.
-fn compute_valid_targets<N, P, UI, Message, Renderer, E>(
-    graph: &NodeGraph<'_, N, P, UI, Message, Renderer, E>,
+fn compute_valid_targets<N, P, E, A, UI, Message, Renderer>(
+    graph: &NodeGraph<'_, N, P, E, A, UI, Message, Renderer>,
     tree: &Tree,
     layout: Layout<'_>,
     from_node: usize,
@@ -1902,6 +2716,7 @@ where
     N: NodeId + 'static,
     P: PinId + 'static,
     E: EdgeId + 'static,
+    A: AnchorId + 'static,
     UI: Clone + 'static,
     Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
@@ -1987,8 +2802,8 @@ where
     valid_targets
 }
 
-/// The positional index, anchors and side of pin `pin_id` on node `node_index`,
-/// read out of the laid-out tree.
+/// The positional index, anchors, side and direction of pin `pin_id` on node
+/// `node_index`, read out of the laid-out tree.
 ///
 /// The index is the pin's position in `find_pins` walk order, which is also the
 /// `pin_index` the drag states store. `None` when the node index is out of
@@ -2002,13 +2817,13 @@ fn pin_by_id<P: PinId + 'static, UI: 'static>(
     layout: Layout<'_>,
     node_index: usize,
     pin_id: &P,
-) -> Option<(usize, (Point, Point), PinSide)> {
+) -> Option<(usize, (Point, Point), PinSide, PinDirection)> {
     let node_tree = node_trees.get(node_index)?;
     let node_layout = layout.children().nth(node_index)?;
     find_pins::<P, UI>(node_tree, node_layout)
         .iter()
         .find(|(_, state, _)| state.pin_id == *pin_id)
-        .map(|(index, state, anchors)| (*index, *anchors, state.side))
+        .map(|(index, state, anchors)| (*index, *anchors, state.side, state.direction))
 }
 
 /// Creates a selection rectangle from two layout-absolute corner points
@@ -2031,173 +2846,92 @@ fn rects_intersect(a: &Rectangle, b: &Rectangle) -> bool {
     a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y
 }
 
-/// Minimum distance from a point to a cubic bezier, via uniform flattening.
-///
-/// 32 segments keep the flattening error far below the 10px cut threshold
-/// for edge-scale curves; no allocation.
-fn point_to_bezier_distance(point: Point, p0: Point, p1: Point, p2: Point, p3: Point) -> f32 {
-    const SEGMENTS: u32 = 32;
-    let mut prev = p0;
-    let mut min_dist = f32::MAX;
-    for i in 1..=SEGMENTS {
-        let t = i as f32 / SEGMENTS as f32;
-        let it = 1.0 - t;
-        let a = it * it * it;
-        let b = 3.0 * it * it * t;
-        let c = 3.0 * it * t * t;
-        let d = t * t * t;
-        let cur = Point::new(
-            a * p0.x + b * p1.x + c * p2.x + d * p3.x,
-            a * p0.y + b * p1.y + c * p2.y + d * p3.y,
-        );
-        min_dist = min_dist.min(point_to_line_distance(point, prev, cur));
-        prev = cur;
-    }
-    min_dist
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::node_graph::DEFAULT_ORBIT_OFFSET;
+    use std::f32::consts::{FRAC_1_SQRT_2, SQRT_2};
 
-/// Calculates the distance from a point to a line segment
-fn point_to_line_distance(point: Point, line_start: Point, line_end: Point) -> f32 {
-    let dx = line_end.x - line_start.x;
-    let dy = line_end.y - line_start.y;
-    let line_length_sq = dx * dx + dy * dy;
+    /// Zooms spanning the range the camera clamps to, plus the crossover the
+    /// core floor exists for.
+    const ZOOMS: [f32; 9] = [0.1, 0.5, 0.9, 1.0, 2.0, 7.0 / 3.0, 3.0, 5.0, 10.0];
 
-    if line_length_sq < 0.001 {
-        // Line segment is essentially a point
-        return ((point.x - line_start.x).powi(2) + (point.y - line_start.y).powi(2)).sqrt();
+    /// A press anywhere inside the core the frame paints grabs it, at every
+    /// zoom.
+    ///
+    /// The screen-pixel threshold and the world-fixed core cross at
+    /// `ANCHOR_GRAB_THRESHOLD / core_half`, zoom 7/3 for the default 6 unit
+    /// core. Above that an unfloored box is narrower than the dot on screen: at
+    /// zoom 10 it would span 1.4 world units against the core's 6, so a press
+    /// two thirds of the way from the centre to the core's edge would fall
+    /// through to the canvas gesture behind it.
+    #[test]
+    fn the_core_grab_box_covers_the_painted_core() {
+        let geometry = AnchorGeometry::default();
+        for zoom in ZOOMS {
+            let half = core_grab_half(geometry, zoom);
+            assert!(
+                half >= geometry.core_half(),
+                "at zoom {zoom} the core grab box reaches {half} against a core \
+                 reaching {}: a press inside the dot would open a selection box",
+                geometry.core_half(),
+            );
+        }
     }
 
-    // Calculate projection of point onto line
-    let t = ((point.x - line_start.x) * dx + (point.y - line_start.y) * dy) / line_length_sq;
-    let t = t.clamp(0.0, 1.0);
-
-    // Find closest point on line segment
-    let closest_x = line_start.x + t * dx;
-    let closest_y = line_start.y + t * dy;
-
-    // Return distance from point to closest point on line
-    ((point.x - closest_x).powi(2) + (point.y - closest_y).powi(2)).sqrt()
-}
-
-/// Checks if a line segment intersects a cubic bezier curve.
-/// Uses analytical solution by substituting bezier into line equation.
-fn line_intersects_bezier(
-    line_start: Point,
-    line_end: Point,
-    p0: Point,
-    p1: Point,
-    p2: Point,
-    p3: Point,
-) -> bool {
-    // Line in implicit form: ax + by + c = 0
-    let a = line_end.y - line_start.y;
-    let b = line_start.x - line_end.x;
-    let c = line_end.x * line_start.y - line_start.x * line_end.y;
-
-    // Evaluate line equation at bezier control points
-    let d0 = a * p0.x + b * p0.y + c;
-    let d1 = a * p1.x + b * p1.y + c;
-    let d2 = a * p2.x + b * p2.y + c;
-    let d3 = a * p3.x + b * p3.y + c;
-
-    // Coefficients of cubic polynomial: at³ + bt² + ct + d = 0
-    // Derived from substituting bezier B(t) into line equation
-    let coef_a = -d0 + 3.0 * d1 - 3.0 * d2 + d3;
-    let coef_b = 3.0 * d0 - 6.0 * d1 + 3.0 * d2;
-    let coef_c = -3.0 * d0 + 3.0 * d1;
-    let coef_d = d0;
-
-    // Find roots of the cubic polynomial
-    let roots = solve_cubic(coef_a, coef_b, coef_c, coef_d);
-
-    // Check if any root in [0, 1] produces a point within the line segment
-    let line_len_sq = (line_end.x - line_start.x).powi(2) + (line_end.y - line_start.y).powi(2);
-
-    for t in roots {
-        if (0.0..=1.0).contains(&t) {
-            // Evaluate bezier at this t
-            let mt = 1.0 - t;
-            let mt2 = mt * mt;
-            let mt3 = mt2 * mt;
-            let t2 = t * t;
-            let t3 = t2 * t;
-
-            let bx = mt3 * p0.x + 3.0 * mt2 * t * p1.x + 3.0 * mt * t2 * p2.x + t3 * p3.x;
-            let by = mt3 * p0.y + 3.0 * mt2 * t * p1.y + 3.0 * mt * t2 * p2.y + t3 * p3.y;
-
-            // Check if this point is within the line segment bounds
-            let dx = bx - line_start.x;
-            let dy = by - line_start.y;
-            let proj = dx * (line_end.x - line_start.x) + dy * (line_end.y - line_start.y);
-
-            if proj >= 0.0 && proj <= line_len_sq {
-                return true;
+    /// The grab box stays clear of orbit 0 at every zoom and radius a host can
+    /// produce, corner included.
+    ///
+    /// The two quantities scale OPPOSITELY: the box is a screen-pixel threshold
+    /// divided by zoom, so it grows as the camera pulls back, while the ring is
+    /// a world radius that does not. A box touching the ring would take every
+    /// press meant for the innermost wrap, because the core is offered a press
+    /// first.
+    #[test]
+    fn the_core_grab_box_never_reaches_orbit_zero() {
+        for zoom in ZOOMS {
+            for orbit_offset in [4.0, DEFAULT_ORBIT_OFFSET, 40.0] {
+                let geometry = AnchorGeometry {
+                    orbit_offset,
+                    ..AnchorGeometry::default()
+                };
+                let corner = core_grab_half(geometry, zoom) * SQRT_2;
+                assert!(
+                    corner <= orbit_offset + 1e-4,
+                    "at zoom {zoom} with orbit 0 at {orbit_offset} the core grab \
+                     box reaches {corner}: a press on the innermost wrap would \
+                     grab the core instead",
+                );
             }
         }
     }
-    false
-}
 
-/// Solves cubic equation ax³ + bx² + cx + d = 0.
-/// Returns up to 3 real roots.
-fn solve_cubic(a: f32, b: f32, c: f32, d: f32) -> Vec<f32> {
-    const EPSILON: f32 = 1e-6;
-
-    // Handle degenerate cases
-    if a.abs() < EPSILON {
-        // Quadratic: bx² + cx + d = 0
-        if b.abs() < EPSILON {
-            // Linear: cx + d = 0
-            if c.abs() < EPSILON {
-                return vec![];
-            }
-            return vec![-d / c];
-        }
-        let disc = c * c - 4.0 * b * d;
-        if disc < 0.0 {
-            return vec![];
-        }
-        let sqrt_disc = disc.sqrt();
-        return vec![(-c + sqrt_disc) / (2.0 * b), (-c - sqrt_disc) / (2.0 * b)];
-    }
-
-    // Normalize: x³ + px² + qx + r = 0
-    let p = b / a;
-    let q = c / a;
-    let r = d / a;
-
-    // Substitute x = t - p/3 to get depressed cubic: t³ + pt + q = 0
-    let p_new = q - p * p / 3.0;
-    let q_new = 2.0 * p * p * p / 27.0 - p * q / 3.0 + r;
-
-    // Cardano's formula
-    let disc = q_new * q_new / 4.0 + p_new * p_new * p_new / 27.0;
-
-    let offset = -p / 3.0;
-
-    if disc > EPSILON {
-        // One real root
-        let sqrt_disc = disc.sqrt();
-        let u = (-q_new / 2.0 + sqrt_disc).cbrt();
-        let v = (-q_new / 2.0 - sqrt_disc).cbrt();
-        vec![u + v + offset]
-    } else if disc < -EPSILON {
-        // Three real roots (casus irreducibilis)
-        let m = (-p_new / 3.0).sqrt();
-        let theta = (-q_new / (2.0 * m * m * m)).acos() / 3.0;
-        let pi = std::f32::consts::PI;
-        vec![
-            2.0 * m * theta.cos() + offset,
-            2.0 * m * (theta + 2.0 * pi / 3.0).cos() + offset,
-            2.0 * m * (theta + 4.0 * pi / 3.0).cos() + offset,
-        ]
-    } else {
-        // Double or triple root
-        if q_new.abs() < EPSILON {
-            vec![offset]
-        } else {
-            let u = (-q_new / 2.0).cbrt();
-            vec![2.0 * u + offset, -u + offset]
+    /// Where the two clamps disagree the cap wins, so the innermost wrap keeps
+    /// its press and the core loses some of its own reach.
+    ///
+    /// They can only disagree on a core styled wider than `sqrt(2)` times its
+    /// orbit 0, which is a core already painted over its own innermost ring.
+    #[test]
+    fn the_orbit_cap_outranks_the_core_floor() {
+        let geometry = AnchorGeometry {
+            core_size: 40.0,
+            ..AnchorGeometry::default()
+        };
+        assert!(geometry.core_half() > geometry.orbit_radius(0) * FRAC_1_SQRT_2);
+        for zoom in ZOOMS {
+            let half = core_grab_half(geometry, zoom);
+            assert!(
+                half * SQRT_2 <= geometry.orbit_radius(0) + 1e-4,
+                "at zoom {zoom} a core overlapping its own orbit 0 pushed the \
+                 grab box corner to {}, past the ring at {}",
+                half * SQRT_2,
+                geometry.orbit_radius(0),
+            );
+            assert!(
+                half < geometry.core_half(),
+                "at zoom {zoom} the floor at {} beat the cap",
+                geometry.core_half(),
+            );
         }
     }
 }

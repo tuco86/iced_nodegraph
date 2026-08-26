@@ -1819,10 +1819,11 @@ impl Application {
             '_,
             NodeId,
             PinLabel,
+            EdgeId,
+            usize,
             ::std::any::TypeId,
             ApplicationMessage,
             iced::Renderer,
-            EdgeId,
         > = NodeGraph::default();
 
         ng = ng

@@ -36,11 +36,12 @@ use std::time::Duration;
 
 use iced_widget::core::{Element, Length, Padding, Point, Rectangle, Size, Theme, Vector};
 
-use crate::ids::{EdgeId, NodeId, PinId};
-use crate::node_pin::{PinEnd, PinInfo};
+use self::widget::edge_path;
+use crate::ids::{AnchorId, EdgeId, NodeId, PinId};
+use crate::node_pin::{PinDirection, PinEnd, PinInfo};
 use crate::style::{
-    CuttingToolStyle, EdgeStatus, EdgeStyle, GraphStyle, NodeStatus, NodeStyle, PinStatus,
-    PinStyle, SelectionBoxStyle,
+    AnchorStatus, AnchorStyle, CuttingToolStyle, EdgeCurve, EdgeStatus, EdgeStyle, GraphStyle,
+    NodeStatus, NodeStyle, PinStatus, PinStyle, SelectionBoxStyle,
 };
 
 /// Pin click detection threshold, in screen pixels: divided by zoom before
@@ -54,6 +55,67 @@ pub(crate) const PIN_CLICK_THRESHOLD: f32 = 8.0;
 /// Edge-cut click distance, in screen pixels, scaled by 1/zoom at the
 /// comparison site like [`PIN_CLICK_THRESHOLD`].
 pub(crate) const EDGE_CUT_THRESHOLD: f32 = 10.0;
+
+/// Radius of an anchor's orbit 0, in world units.
+///
+/// The interaction path has no theme, so it cannot resolve an anchor's own
+/// `AnchorStyle`; it falls back to this until a frame has been drawn and the
+/// resolved radii are available. `style::defaults` builds its default from the
+/// same constants, so the fallback and the default agree.
+///
+/// Sized against the core it encircles rather than against the node: the core
+/// is a 6 unit dot, so this clears its edge by 8 units - close enough to read
+/// as belonging to the anchor, and clear of the square
+/// [`ANCHOR_GRAB_THRESHOLD`] opens around the core (see
+/// `the_core_grab_box_never_reaches_orbit_zero`).
+pub(crate) const DEFAULT_ORBIT_OFFSET: f32 = 11.0;
+
+/// Additional radius per orbit, in world units. See [`DEFAULT_ORBIT_OFFSET`].
+///
+/// Wide enough that two wraps read as separate strands at zoom 1 without the
+/// outermost orbit of a busy anchor swallowing its surroundings.
+pub(crate) const DEFAULT_ORBIT_SPACING: f32 = 6.0;
+
+/// Side length of an anchor's core, in world units.
+///
+/// The interaction path has no theme, so it cannot resolve an anchor's own
+/// `AnchorStyle`; it falls back to this until a frame has been drawn and the
+/// resolved size is available, exactly like [`DEFAULT_ORBIT_OFFSET`].
+/// `style::defaults` builds its default from this constant, so the fallback and
+/// the default agree.
+///
+/// A 6 unit dot: `Shape::rounded_box` centres on the local origin, so the core
+/// reaches 3 units either side of the anchor's position.
+pub(crate) const DEFAULT_CORE_SIZE: f32 = 6.0;
+
+/// Anchor-core grab distance, in screen pixels, scaled by 1/zoom at the
+/// comparison site like [`PIN_CLICK_THRESHOLD`].
+///
+/// The hit target, not the drawn size, and clamped from BOTH sides at the
+/// comparison site. It is floored at the core's own half-extent, or zooming in
+/// would shrink the box inside the dot the user can see and a press within the
+/// core would fall through to the canvas. It is capped so the square's corner
+/// cannot reach orbit 0, or a press meant for the innermost wrap would grab the
+/// core instead. The cap is applied last and wins: a host that styles a core
+/// wider than `sqrt(2)` times its orbit 0 has painted a core overlapping its own
+/// innermost ring, and the widget will not answer that by making the ring
+/// unpressable.
+pub(crate) const ANCHOR_GRAB_THRESHOLD: f32 = 7.0;
+
+/// Cable grab distance for the mid-run and end zones, in screen pixels, scaled
+/// by 1/zoom at the comparison sites like [`PIN_CLICK_THRESHOLD`].
+///
+/// The same distance as [`EDGE_CUT_THRESHOLD`], deliberately: both answer "is
+/// the cursor on this cable", so a cable you can cut is a cable you can grab.
+/// A tighter corridor here makes a press that misses by a pixel or two fall
+/// through to the canvas gesture behind it, which reads as the cable refusing
+/// to be picked up rather than as a miss.
+pub(crate) const EDGE_GRAB_THRESHOLD: f32 = EDGE_CUT_THRESHOLD;
+
+/// Arc length of a cable's end zone, in screen pixels scaled by 1/zoom:
+/// pressing the cable within this distance of an endpoint grabs that END
+/// (unplugging it) rather than the run in between.
+pub(crate) const EDGE_END_GRAB_LENGTH: f32 = 24.0;
 
 /// Side of a resizable node's bottom-right grip, in screen pixels, scaled by
 /// 1/zoom at the use sites like [`PIN_CLICK_THRESHOLD`]. The draw path and the
@@ -84,6 +146,9 @@ pub(crate) type PinStyleFn<'a, P, UI> = Box<
 /// freshly dragged edge has no status. Used by [`NodeGraph::dragging_edge_style`].
 pub(crate) type DragEdgeStyleFn<'a, P, UI> =
     Box<dyn Fn(&Theme, PinInfo<'_, P, UI>) -> EdgeStyle + 'a>;
+/// Per-anchor style callback: theme + status -> resolved style. Used by
+/// [`Anchor`].
+pub(crate) type AnchorStyleFn<'a> = Box<dyn Fn(&Theme, AnchorStatus) -> AnchorStyle + 'a>;
 
 /// A node to push onto the graph: id, position, content element, an optional
 /// per-node style closure, and an optional closure styling all of its pins.
@@ -201,14 +266,19 @@ impl<'a, N, P, UI, Message, Renderer> Node<'a, N, P, UI, Message, Renderer> {
     }
 }
 
-/// An edge to push onto the graph: a user id, endpoint pin references, and an
-/// optional per-edge status-driven style closure. Build with [`edge`] +
-/// [`Edge::style`], then add via [`NodeGraph::push_edge`]. The id is the user's
-/// own (e.g. a database key); it travels with the edge, symmetric to [`node`].
-pub struct Edge<'a, N, P, E, UI> {
+/// An edge to push onto the graph: a user id, endpoint pin references, the
+/// anchors it wraps on the way, and an optional per-edge status-driven style
+/// closure. Build with [`edge`] + [`Edge::route`]/[`Edge::style`], then add via
+/// [`NodeGraph::push_edge`]. The id is the user's own (e.g. a database key); it
+/// travels with the edge, symmetric to [`node`].
+pub struct Edge<'a, N, P, E, A, UI> {
     pub(super) id: E,
     pub(super) from: PinRef<N, P>,
     pub(super) to: PinRef<N, P>,
+    /// The anchors this edge is routed through, as the host authored them. Not
+    /// a drawing order: the widget derives the order, the wrap side and the
+    /// orbit each frame, so this is a set the host may keep in any order.
+    pub(super) route: Vec<A>,
     pub(super) style: Option<EdgeStyleFn<'a, P, UI>>,
 }
 
@@ -216,11 +286,16 @@ pub struct Edge<'a, N, P, E, UI> {
 ///
 /// The id comes last so the common no-id case reads cleanly via the `edge!`
 /// macro: `edge!(from, to)` expands to `edge(from, to, ())`.
-pub fn edge<'a, N, P, E, UI>(from: PinRef<N, P>, to: PinRef<N, P>, id: E) -> Edge<'a, N, P, E, UI> {
+pub fn edge<'a, N, P, E, A, UI>(
+    from: PinRef<N, P>,
+    to: PinRef<N, P>,
+    id: E,
+) -> Edge<'a, N, P, E, A, UI> {
     Edge {
         id,
         from,
         to,
+        route: Vec::new(),
         style: None,
     }
 }
@@ -230,7 +305,7 @@ pub fn edge<'a, N, P, E, UI>(from: PinRef<N, P>, to: PinRef<N, P>, id: E) -> Edg
 /// ```rust
 /// use iced_nodegraph::{Edge, PinRef, edge};
 ///
-/// # type E<'a, Id> = Edge<'a, u32, u32, Id, ()>;
+/// # type E<'a, Id> = Edge<'a, u32, u32, Id, usize, ()>;
 /// let default_id: E<'_, ()> = edge!(PinRef::new(0, 0), PinRef::new(1, 0));
 /// let explicit_id: E<'_, u8> = edge!(PinRef::new(0, 0), PinRef::new(1, 0), 7);
 /// ```
@@ -244,7 +319,7 @@ macro_rules! edge {
     };
 }
 
-impl<'a, N, P, E, UI> Edge<'a, N, P, E, UI> {
+impl<'a, N, P, E, A, UI> Edge<'a, N, P, E, A, UI> {
     /// Sets the per-edge style closure: theme, [`EdgeStatus`], and both endpoint
     /// [`PinInfo`]s in draw order (start = output side, end = input side) ->
     /// resolved style.
@@ -255,13 +330,266 @@ impl<'a, N, P, E, UI> Edge<'a, N, P, E, UI> {
         self.style = Some(Box::new(f));
         self
     }
+
+    /// Sets the anchors this edge wraps.
+    ///
+    /// Order is irrelevant: the widget derives the visiting order from where the
+    /// anchors lie along the run between the two pins, the wrap direction from
+    /// the arc the cable lays down, and the ring each cable takes at each anchor
+    /// from the angular intervals its neighbours subtend there, refined by
+    /// counting the crossings a candidate order actually produces. How many
+    /// edges share an anchor decides only how many rings it shows, not which
+    /// cable rides which. An id naming neither an anchor nor anything at all is
+    /// skipped, and a repeated id counts once.
+    pub fn route(mut self, anchors: impl IntoIterator<Item = A>) -> Self {
+        self.route = anchors.into_iter().collect();
+        self
+    }
+}
+
+/// An anchor to push onto the graph: id, position, and an optional per-anchor
+/// style closure.
+///
+/// Build with [`anchor`] + [`Anchor::style`], then add via
+/// [`NodeGraph::push_anchor`]. Anchors carry their own id type `A`, are their
+/// own collection and are never a widget-tree element: an edge names the
+/// anchors it wraps through [`Edge::route`], and the widget lays the cable
+/// tangent to one orbit of each.
+#[allow(missing_debug_implementations)]
+pub struct Anchor<'a, A> {
+    pub(super) id: A,
+    pub(super) position: Point,
+    pub(super) style: Option<AnchorStyleFn<'a>>,
+}
+
+/// Creates an [`Anchor`] with default (theme) styling.
+pub fn anchor<'a, A>(id: A, position: Point) -> Anchor<'a, A> {
+    Anchor {
+        id,
+        position,
+        style: None,
+    }
+}
+
+impl<'a, A> Anchor<'a, A> {
+    /// Sets the per-anchor style closure: receives the theme and the anchor's
+    /// [`AnchorStatus`], returns the resolved style.
+    pub fn style(mut self, f: impl Fn(&Theme, AnchorStatus) -> AnchorStyle + 'a) -> Self {
+        self.style = Some(Box::new(f));
+        self
+    }
 }
 
 pub(crate) mod camera;
 pub(crate) mod euclid;
 pub(crate) mod input;
+pub(crate) mod orbits;
 pub(crate) mod state;
 pub(crate) mod widget;
+
+/// A pin resolved for this frame: where it is and which way its side faces.
+///
+/// The output of a caller's endpoint resolver. The widget's two halves work in
+/// different coordinate spaces (layout-absolute for drawing, world for input),
+/// and this is where they meet; `direction` is what orients a cable
+/// output-first.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct Station {
+    pub point: [f32; 2],
+    pub side: u32,
+    pub direction: Option<PinDirection>,
+}
+
+/// One edge's topology lowered to the hop chain it draws as.
+///
+/// The single walk from graph topology to cable geometry: drawing, cutting,
+/// hit-testing and hover all read this, so what a gesture aims at is what the
+/// frame put on screen.
+#[derive(Debug)]
+pub(super) struct CableGeometry<'e, N, P> {
+    /// Index into `NodeGraph::edges`.
+    pub edge: usize,
+    /// The stations to build, output pin first.
+    pub hops: Vec<edge_path::Hop>,
+    /// Hop index -> the `(anchor index, orbit)` that hop wraps, for every wrap
+    /// hop in `hops`. A phantom wrap contributes no entry: it names no anchor
+    /// the host owns.
+    pub rings: Vec<(usize, (usize, u8))>,
+    /// Both endpoint pins, oriented output -> input like `hops`.
+    pub ends: (&'e PinRef<N, P>, &'e PinRef<N, P>),
+}
+
+/// A wrap inserted into one edge's route for the duration of a route drag, so
+/// the previewed cable runs where the committed one will.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct RoutePhantom {
+    /// The edge being re-routed, as an index into `NodeGraph::edges`.
+    pub edge: usize,
+    /// An anchor dropped from the preview because a detach was published for
+    /// it. Held until the host applies that detach, so the cable does not snap
+    /// back to the anchor for one frame.
+    pub exclude: Option<usize>,
+    pub kind: PhantomKind,
+}
+
+impl RoutePhantom {
+    /// The route edit this preview stands for, as
+    /// [`anchor_rings`](NodeGraph::anchor_rings) must count it.
+    ///
+    /// One derivation for both halves of the widget, so the orbit `draw`
+    /// previews and the ring `update` measures against cannot disagree.
+    pub fn pending(&self) -> PendingRoute {
+        PendingRoute {
+            edge: self.edge,
+            attach: match self.kind {
+                PhantomKind::Snap { anchor } => Some(anchor),
+                // A ring at the cursor belongs to no anchor, so it takes no
+                // orbit from one.
+                PhantomKind::At { .. } => None,
+            },
+            detach: self.exclude,
+        }
+    }
+}
+
+/// A route drag's edit to the host's routes, before the host has applied it.
+///
+/// Folded into the occupancy the frame derives so a drag predicts the orbit the
+/// round trip will produce rather than the one at the end of the list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct PendingRoute {
+    /// The edge the drag holds, as an index into `NodeGraph::edges`.
+    pub edge: usize,
+    /// The anchor the drag has attached it to.
+    pub attach: Option<usize>,
+    /// The anchor the drag has pulled it off.
+    pub detach: Option<usize>,
+}
+
+/// What the phantom wrap is laid tangent to.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum PhantomKind {
+    /// A ring at the cursor, unattached: the drag has not snapped to anything.
+    At { center: [f32; 2], radius: f32 },
+    /// The orbit offered by a snapped anchor. Inserted only when the host's own
+    /// route does not already carry that anchor, so it self-corrects once the
+    /// attach round-trips.
+    Snap { anchor: usize },
+}
+
+/// One cable resolved as far as it can be before an orbit is chosen: its two
+/// pins and the wraps in visiting order.
+struct CablePlan<'e, N, P> {
+    edge: usize,
+    head: Station,
+    tail: Station,
+    ends: (&'e PinRef<N, P>, &'e PinRef<N, P>),
+    wraps: Vec<WrapPlan>,
+}
+
+impl<N, P> CablePlan<'_, N, P> {
+    /// The hop chain this cable draws as, given a ring per wrap.
+    ///
+    /// Called once per candidate arrangement during the orbit search and once
+    /// more for the arrangement that wins, so the hop chain and the rings a
+    /// candidate was judged on are the ones that ship - identical by
+    /// construction, not by agreement between two walks.
+    ///
+    /// The PATH built from that chain can still differ on the draw side, which
+    /// resolves this frame's `EdgeCurve` for the stroke while the search measures
+    /// against the curve the last frame published. A host switching a curve
+    /// therefore settles the ring assignment one frame later, and the first
+    /// frame of all measures against the default.
+    ///
+    /// The second half is the ring each wrap hop landed on, by hop index, which
+    /// only this walk knows: a wrap whose circle does not resolve contributes no
+    /// hop and so shifts every index after it.
+    fn chain(
+        &self,
+        orbits: &[u8],
+        ring: &dyn Fn(usize, u8) -> Option<edge_path::Orbit>,
+    ) -> (Vec<edge_path::Hop>, Vec<(usize, (usize, u8))>) {
+        let mut hops = Vec::with_capacity(self.wraps.len() + 2);
+        let mut rings = Vec::with_capacity(self.wraps.len());
+        hops.push(edge_path::Hop::Pin {
+            point: self.head.point,
+            side: self.head.side,
+        });
+        for (at, wrap) in self.wraps.iter().enumerate() {
+            let orbit = orbits.get(at).copied().unwrap_or(0);
+            let circle = match (wrap.anchor, wrap.radius) {
+                (_, Some(radius)) => Some(edge_path::Orbit {
+                    center: wrap.center,
+                    radius,
+                }),
+                (Some(anchor), None) => ring(anchor, orbit),
+                (None, None) => None,
+            };
+            let Some(circle) = circle else { continue };
+            if let Some(anchor) = wrap.anchor {
+                rings.push((hops.len(), (anchor, orbit)));
+            }
+            hops.push(edge_path::Hop::Wrap { orbit: circle });
+        }
+        hops.push(edge_path::Hop::Pin {
+            point: self.tail.point,
+            side: self.tail.side,
+        });
+        (hops, rings)
+    }
+
+    /// The anchors both cables wrap, in the order this one reaches them.
+    ///
+    /// Two cables can only be moved relative to one another by a ring choice
+    /// where they meet, so this is what decides whether a pair is worth
+    /// measuring at all. Visiting order rather than index order, because
+    /// CONSECUTIVE entries are the stretches the pair actually flies together:
+    /// two anchors with a third shared one between them are not one corridor but
+    /// two, and the band spanning them adds nothing the two halves do not
+    /// already cover.
+    fn shared_anchors(&self, other: &Self) -> Vec<usize> {
+        self.wraps
+            .iter()
+            .filter_map(|wrap| wrap.anchor)
+            .filter(|anchor| other.wraps.iter().any(|wrap| wrap.anchor == Some(*anchor)))
+            .collect()
+    }
+}
+
+/// One wrap before its radius is known.
+struct WrapPlan {
+    /// The anchor it belongs to, or `None` for a ring held at the cursor, which
+    /// belongs to no anchor and so takes no orbit from one.
+    anchor: Option<usize>,
+    center: [f32; 2],
+    /// Set only for a cursor ring, whose radius is given rather than assigned.
+    radius: Option<f32>,
+    /// The angular interval its neighbours subtend at the anchor, the key its
+    /// orbit is assigned by.
+    span: f32,
+}
+
+/// The angle between a wrap's two neighbouring stations, seen from the anchor
+/// centre, folded into `[0, PI]`.
+///
+/// An interval, NOT the arc the cable lays down - the two are anti-correlated.
+/// The tangents sit `acos(r / d)` off each neighbour's bearing, so with
+/// `A = acos(r / d_prev) + acos(r / d_next)` the realized arc is
+/// `folded(delta - A)`: the cable whose neighbours subtend the LEAST goes
+/// furthest round the ring.
+///
+/// The interval is what orders two cables, and it is deliberately what is
+/// measured here. Where two cables enter an anchor from the same side and leave
+/// to the same side, their intervals NEST, and the contained one belongs inside:
+/// seat it outside and its legs have to cut across the other cable twice. That
+/// question is settled by the intervals alone, which is why this reads only the
+/// centre and the two neighbours - and so is known before any radius is, which
+/// is what lets it choose one.
+fn wrap_span(center: [f32; 2], prev: [f32; 2], next: [f32; 2]) -> f32 {
+    let bearing = |p: [f32; 2]| (p[1] - center[1]).atan2(p[0] - center[0]);
+    let delta = (bearing(next) - bearing(prev)).rem_euclid(std::f32::consts::TAU);
+    delta.min(std::f32::consts::TAU - delta)
+}
 
 /// Shared per-frame rendering context for all primitives.
 #[derive(Debug, Clone, Copy)]
@@ -315,6 +643,8 @@ pub struct GraphInfo {
     pub pins: Counts,
     /// Edge counts.
     pub edges: Counts,
+    /// Anchor counts.
+    pub anchors: Counts,
     /// Per-operation CPU timings, in stack order.
     pub timings: Vec<OpTiming>,
     /// SDF draw entries submitted this frame.
@@ -394,21 +724,26 @@ impl<N: Clone, P: Clone> PinRef<N, P> {
 /// world rect); the widget resolves them to a world AABB from its live
 /// layout in `update()` -- the app never computes node bounds itself.
 #[derive(Clone, Debug)]
-pub enum FocusTarget<N, E = ()> {
-    /// Every node in the graph.
+pub enum FocusTarget<N, E = (), A = usize> {
+    /// Every node and anchor in the graph.
     All,
     /// The current selection ([`Node::selected`] or internal click/box-select
     /// state). An empty selection is a no-op, mirroring Blender's "View
-    /// Selected".
+    /// Selected". Anchors are never selected, so they never appear here.
     Selection,
     /// A single node by id.
     Node(N),
     /// The union of several nodes' bounds.
     Nodes(Vec<N>),
-    /// The union of an edge's two endpoint nodes' bounds (seeing a
-    /// connection means seeing both ends it connects).
+    /// A single anchor by id, framed to its outermost ring.
+    Anchor(A),
+    /// The union of several anchors' bounds.
+    Anchors(Vec<A>),
+    /// The union of an edge's two endpoint nodes' bounds and every anchor it
+    /// routes through (seeing a connection means seeing what it connects and
+    /// where it goes).
     Edge(E),
-    /// The union of several edges' endpoint nodes' bounds.
+    /// The union of several edges' endpoints and anchors.
     Edges(Vec<E>),
     /// An explicit world-space rectangle -- the `fitBounds` escape hatch for
     /// targets the widget cannot resolve on its own.
@@ -497,32 +832,41 @@ impl Easing {
 /// the callbacks and styles that apply to them.
 ///
 /// # Type Parameters
+///
+/// The four id types come first, in the order `N`, `P`, `E`, `A`; the rendering
+/// parameters follow. Every one is defaulted, but Rust defaults are positional,
+/// so naming `Renderer` means spelling the ids ahead of it.
+///
 /// - `N`: node id type (defaults to `usize`)
 /// - `P`: pin id type (defaults to `usize`)
+/// - `E`: edge id type (defaults to `()`, "this edge has no id")
+/// - `A`: routing-anchor id type (defaults to `usize`)
 /// - `UI`: per-pin user payload surfaced to `pin_style`/`can_connect`
 ///   (defaults to `()`)
 /// - `Message`: application message type
 /// - `Renderer`: iced renderer type
-/// - `E`: edge id type (defaults to `()`, "this edge has no id")
 ///
 /// There is no theme parameter: the widget styles against
 /// [`iced_widget::core::Theme`] because every `default_*_style` reads that
 /// theme's palette.
 ///
-/// Bring your own id types by implementing [`NodeId`], [`PinId`] and [`EdgeId`].
+/// Bring your own id types by implementing [`NodeId`], [`PinId`], [`EdgeId`]
+/// and [`AnchorId`].
 #[allow(missing_debug_implementations)]
 pub struct NodeGraph<
     'a,
     N = usize,
     P = usize,
+    E = (),
+    A = usize,
     UI = (),
     Message = (),
     Renderer = iced_widget::renderer::Renderer,
-    E = (),
 > where
     N: NodeId,
     P: PinId,
     E: EdgeId,
+    A: AnchorId,
 {
     pub(super) size: Size<Length>,
     /// Nodes in push order, which is also their initial z-order.
@@ -530,9 +874,16 @@ pub struct NodeGraph<
     /// Id -> index map: O(1) `node_index` lookups and deterministic duplicate
     /// detection in `push_node` (first push wins).
     pub(super) node_lookup: HashMap<N, usize>,
+    /// Anchors in push order. Cables wrap them, but they are laid out and drawn
+    /// entirely by the graph, so they form their own collection (see
+    /// [`Anchor`]).
+    pub(super) anchors: Vec<Anchor<'a, A>>,
+    /// Id -> index map, the anchor counterpart of `node_lookup`. Its own id
+    /// space: an anchor id never has to avoid a node's.
+    pub(super) anchor_lookup: HashMap<A, usize>,
     /// Edges in push order. Endpoint pin ids are resolved to positional pin
     /// indices at draw time, since only the laid-out widget tree knows them.
-    pub(super) edges: Vec<Edge<'a, N, P, E, UI>>,
+    pub(super) edges: Vec<Edge<'a, N, P, E, A, UI>>,
     pub(super) graph_style: Option<Box<dyn Fn(&Theme) -> GraphStyle + 'a>>,
     pub(super) on_connect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>>,
     pub(super) on_disconnect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>>,
@@ -540,6 +891,19 @@ pub struct NodeGraph<
     /// Grip-resize report, the size counterpart to `on_move`. Only nodes marked
     /// [`Node::resizable`] carry a grip, and only while this is wired.
     pub(super) on_resize: Option<Box<dyn Fn(N, Size) -> Message + 'a>>,
+    /// Anchor-move report, the anchor counterpart of `on_move`. Reports the new
+    /// world position outright rather than a delta, mirroring `on_resize`.
+    pub(super) on_anchor_move: Option<Box<dyn Fn(A, Point) -> Message + 'a>>,
+    /// An anchor the user asked for by grabbing a cable mid-run, reported with
+    /// the edge it belongs on and the world position of the release.
+    pub(super) on_anchor_create: Option<Box<dyn Fn(E, Point) -> Message + 'a>>,
+    /// An anchor an edge should now wrap.
+    pub(super) on_route_attach: Option<Box<dyn Fn(E, A) -> Message + 'a>>,
+    /// An anchor an edge should stop wrapping.
+    pub(super) on_route_detach: Option<Box<dyn Fn(E, A) -> Message + 'a>>,
+    /// An anchor the user asked to remove. The host also owns stripping it out
+    /// of every route that named it.
+    pub(super) on_anchor_delete: Option<Box<dyn Fn(A) -> Message + 'a>>,
     pub(super) on_select: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
     pub(super) on_clone: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
     pub(super) on_delete: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
@@ -574,7 +938,7 @@ pub struct NodeGraph<
     /// [`focus`](Self::focus): a nonce (`seq`), what to frame, and how.
     /// Deduped against `state.last_focus_seq`, mirroring the `view` /
     /// `last_synced_view` pattern just above.
-    pub(super) focus: Option<(u64, FocusTarget<N, E>, FocusOptions)>,
+    pub(super) focus: Option<(u64, FocusTarget<N, E, A>, FocusOptions)>,
     /// Connection validation. When set it is authoritative in
     /// `compute_valid_targets`; otherwise
     /// [`default_can_connect`](crate::connection::default_can_connect) applies.
@@ -585,23 +949,31 @@ pub struct NodeGraph<
     pub(super) keymap: input::Keymap,
 }
 
-impl<N, P, UI, Message, Renderer, E> Default for NodeGraph<'_, N, P, UI, Message, Renderer, E>
+impl<N, P, E, A, UI, Message, Renderer> Default for NodeGraph<'_, N, P, E, A, UI, Message, Renderer>
 where
     N: NodeId,
     P: PinId,
     E: EdgeId,
+    A: AnchorId,
 {
     fn default() -> Self {
         Self {
             size: Size::new(Length::Fill, Length::Fill),
             nodes: Vec::new(),
             node_lookup: HashMap::new(),
+            anchors: Vec::new(),
+            anchor_lookup: HashMap::new(),
             edges: Vec::new(),
             graph_style: None,
             on_connect: None,
             on_disconnect: None,
             on_move: None,
             on_resize: None,
+            on_anchor_move: None,
+            on_anchor_create: None,
+            on_route_attach: None,
+            on_route_detach: None,
+            on_anchor_delete: None,
             on_select: None,
             on_clone: None,
             on_delete: None,
@@ -622,11 +994,12 @@ where
     }
 }
 
-impl<'a, N, P, UI, Message, Renderer, E> NodeGraph<'a, N, P, UI, Message, Renderer, E>
+impl<'a, N, P, E, A, UI, Message, Renderer> NodeGraph<'a, N, P, E, A, UI, Message, Renderer>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
     E: EdgeId + 'static,
+    A: AnchorId + 'static,
 {
     /// Sets the host-controlled camera (world position + zoom).
     ///
@@ -653,32 +1026,49 @@ where
     /// committing through [`on_pan`](Self::on_pan) like any other camera
     /// change. An unknown id or empty selection is a no-op: no camera
     /// change, no `on_pan`.
-    pub fn focus(mut self, seq: u64, target: FocusTarget<N, E>, opts: FocusOptions) -> Self {
+    pub fn focus(mut self, seq: u64, target: FocusTarget<N, E, A>, opts: FocusOptions) -> Self {
         self.focus = Some((seq, target, opts));
         self
     }
 
     /// Adds a node, styled by the theme unless the builder overrides it.
     ///
-    /// Node ids must be unique: a duplicate push is ignored (the first node with
-    /// the id wins) and debug builds assert on it. Prefer a stable id from your
-    /// data (a DB key, `uuid::Uuid`, a typed newtype) over a hand-managed
-    /// counter.
+    /// Node ids must be unique among nodes. Anchors have their own id space, so
+    /// a node id never has to avoid one. A duplicate push is ignored (the first
+    /// push with the id wins) and debug builds assert on it. Prefer a stable id
+    /// from your data (a DB key, `uuid::Uuid`, a typed newtype) over a
+    /// hand-managed counter.
     pub fn push_node(&mut self, node: Node<'a, N, P, UI, Message, Renderer>) {
-        match self.node_lookup.entry(node.id.clone()) {
-            std::collections::hash_map::Entry::Occupied(_) => {
-                debug_assert!(
-                    false,
-                    "duplicate node id {:?}: node ids must be unique; \
-                     the duplicate push is ignored (first wins)",
-                    node.id,
-                );
-            }
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(self.nodes.len());
-                self.nodes.push(node);
-            }
+        if self.node_lookup.contains_key(&node.id) {
+            debug_assert!(
+                false,
+                "duplicate node id {:?}: the duplicate push is ignored (first wins)",
+                node.id,
+            );
+            return;
         }
+        self.node_lookup.insert(node.id.clone(), self.nodes.len());
+        self.nodes.push(node);
+    }
+
+    /// Adds an anchor: a routing waypoint the cables named in
+    /// [`Edge::route`] wrap, never a widget-tree element.
+    ///
+    /// Anchor ids are their own space, numbered from zero whatever the nodes
+    /// use, and follow the same rule as [`push_node`](Self::push_node): unique,
+    /// first push wins, debug builds assert on a collision.
+    pub fn push_anchor(&mut self, anchor: Anchor<'a, A>) {
+        if self.anchor_lookup.contains_key(&anchor.id) {
+            debug_assert!(
+                false,
+                "duplicate anchor id {:?}: the duplicate push is ignored (first wins)",
+                anchor.id,
+            );
+            return;
+        }
+        self.anchor_lookup
+            .insert(anchor.id.clone(), self.anchors.len());
+        self.anchors.push(anchor);
     }
 
     /// Adds an edge, styled by the theme unless the builder overrides it.
@@ -686,7 +1076,7 @@ where
     /// The widget normalizes orientation when drawing and reporting, so the
     /// output pin is always the edge start (output -> input) regardless of the
     /// order given here.
-    pub fn push_edge(&mut self, edge: Edge<'a, N, P, E, UI>) {
+    pub fn push_edge(&mut self, edge: Edge<'a, N, P, E, A, UI>) {
         self.edges.push(edge);
     }
 
@@ -698,6 +1088,377 @@ where
     /// The node index of a user node id.
     pub(super) fn node_index(&self, id: &N) -> Option<usize> {
         self.node_lookup.get(id).copied()
+    }
+
+    /// The anchor index of a user id, or `None` when the id names a node or
+    /// nothing at all.
+    pub(super) fn anchor_index(&self, id: &A) -> Option<usize> {
+        self.anchor_lookup.get(id).copied()
+    }
+
+    /// One edge's [`route`](Edge::route) as anchor indices: ids resolved
+    /// through `anchor_lookup`, unknown ids dropped, repeats collapsed to
+    /// their first occurrence.
+    ///
+    /// Order is the host's authoring order, which only matters as the
+    /// tie-breaker when the run gives no ordering at all (see
+    /// [`edge_hops`](Self::edge_hops)).
+    pub(super) fn resolved_route(&self, edge: usize) -> Vec<usize> {
+        let Some(edge) = self.edges.get(edge) else {
+            return Vec::new();
+        };
+        let mut out: Vec<usize> = Vec::with_capacity(edge.route.len());
+        for id in &edge.route {
+            if let Some(index) = self.anchor_index(id)
+                && !out.contains(&index)
+            {
+                out.push(index);
+            }
+        }
+        out
+    }
+
+    /// How many rings each anchor shows: the number of edges routed through it,
+    /// indexed by anchor index.
+    ///
+    /// A count, not an order. Which cable rides which ring is decided in
+    /// [`orbits::assign`] from the angular intervals its neighbours subtend plus
+    /// a measured crossing search; this answers only how many there are, which
+    /// is what bounds an anchor's drawn extent and how far a route drag can
+    /// reach it.
+    ///
+    /// `pending` folds in a route drag's edit before the host has applied it, so
+    /// the ring the drag measures against is the one the frame draws rather than
+    /// the one the graph carried before the gesture started.
+    ///
+    /// An anchor is capped at `u8::MAX + 1` rings, since an orbit index is a
+    /// `u8`; the surplus is not counted and so not drawn.
+    ///
+    /// Counted off the ROUTES the host authored, not off the cables that get
+    /// built: [`edge_hops`](Self::edge_hops) drops an edge whose endpoint pin
+    /// this frame's content does not contain, and such an edge still counts a
+    /// ring here. An anchor named only by dropped edges therefore draws a ring
+    /// no cable rides, and a route drag reaches it one ring wide. The
+    /// disagreement is only ever in that direction - the cables seated at an
+    /// anchor are a subset of the rings counted for it - so no cable is ever
+    /// placed on a ring the hit test does not know about. Closing it needs a
+    /// pin resolver at every caller, which `resolve_focus_target` does not
+    /// have.
+    pub(super) fn anchor_rings(&self, pending: Option<PendingRoute>) -> Vec<usize> {
+        const MOST: usize = u8::MAX as usize + 1;
+        let mut rings = vec![0usize; self.anchors.len()];
+        let dropped = |edge: usize, anchor: usize| {
+            pending.is_some_and(|p| p.edge == edge && p.detach == Some(anchor))
+        };
+        let mut count = |anchor: usize| {
+            if let Some(rings) = rings.get_mut(anchor) {
+                debug_assert!(
+                    *rings < MOST,
+                    "anchor {anchor} carries more than {MOST} edges; the surplus is not drawn",
+                );
+                *rings = rings.saturating_add(1).min(MOST);
+            }
+        };
+        for edge in 0..self.edges.len() {
+            let route = self.resolved_route(edge);
+            for anchor in &route {
+                if !dropped(edge, *anchor) {
+                    count(*anchor);
+                }
+            }
+            if let Some(pending) = pending
+                && pending.edge == edge
+                && let Some(anchor) = pending.attach
+                && !route.contains(&anchor)
+            {
+                count(anchor);
+            }
+        }
+        rings
+    }
+
+    /// Every edge lowered to the hop chain it draws as, resolved through the
+    /// caller's own coordinate space.
+    ///
+    /// `pin` resolves an endpoint (returning `None` drops the whole edge, since
+    /// a cable with one end missing has nowhere to run); `ring` resolves an
+    /// orbit's circle, which the draw path takes from the resolved
+    /// [`AnchorStyle`] and the interaction path from the radii the last frame
+    /// published; `curve` gives the shape an edge's legs take, which the orbit
+    /// search needs because it judges a candidate by building it.
+    ///
+    /// Two derivations, in this order:
+    ///
+    /// The visiting order: each anchor's centre is projected onto the straight
+    /// run between the two pins and the wraps are taken in ascending
+    /// projection, so a cable passes its anchors in the order it actually
+    /// reaches them. A run of zero length leaves nothing to project onto, and
+    /// the authored order stands.
+    ///
+    /// The orbit, in [`orbits::assign`]: which ring each cable takes at each
+    /// anchor. Cables sharing an anchor nest by how far each wraps it, shortest
+    /// innermost, and where a pair also shares a second anchor - so flies the
+    /// corridor between them - candidate orders are built and their crossings
+    /// counted, keeping whichever measurably crosses least.
+    pub(super) fn edge_hops(
+        &self,
+        pin: &dyn Fn(&PinRef<N, P>) -> Option<Station>,
+        ring: &dyn Fn(usize, u8) -> Option<edge_path::Orbit>,
+        curve: &dyn Fn(usize) -> EdgeCurve,
+        phantom: Option<&RoutePhantom>,
+    ) -> Vec<CableGeometry<'_, N, P>> {
+        // Resolve every cable's stations and visiting order first. Nothing here
+        // needs a radius, which is what lets the orbit be decided afterwards
+        // from the whole picture rather than one edge at a time.
+        let mut plans: Vec<CablePlan<'_, N, P>> = Vec::with_capacity(self.edges.len());
+        for (index, edge) in self.edges.iter().enumerate() {
+            let (Some(a), Some(b)) = (pin(&edge.from), pin(&edge.to)) else {
+                continue;
+            };
+            // Output first, so gradient, arrow and flow follow the data-flow
+            // direction however the edge was authored or dragged. Two ends
+            // claiming the same direction leave nothing to order by.
+            let is_output = |s: &Station| matches!(s.direction, Some(PinDirection::Output));
+            let head_is_from = is_output(&a) || !is_output(&b);
+            let ((head, head_ref), (tail, tail_ref)) = if head_is_from {
+                ((a, &edge.from), (b, &edge.to))
+            } else {
+                ((b, &edge.to), (a, &edge.from))
+            };
+
+            let phantom = phantom.filter(|p| p.edge == index);
+            let route = self.resolved_route(index);
+            let mut wraps: Vec<WrapPlan> = Vec::with_capacity(route.len() + 1);
+            for &anchor in &route {
+                if phantom.and_then(|p| p.exclude) == Some(anchor) {
+                    continue;
+                }
+                // Orbit 0 only to read the centre: an anchor's orbits are
+                // concentric, so every one of them has it.
+                if let Some(circle) = ring(anchor, 0) {
+                    wraps.push(WrapPlan {
+                        anchor: Some(anchor),
+                        center: circle.center,
+                        radius: None,
+                        span: 0.0,
+                    });
+                }
+            }
+            if let Some(phantom) = phantom {
+                match phantom.kind {
+                    PhantomKind::At { center, radius } => wraps.push(WrapPlan {
+                        anchor: None,
+                        center,
+                        radius: Some(radius),
+                        span: 0.0,
+                    }),
+                    // Already in the host's route: the attach has round-tripped
+                    // and the real wrap above is the one to draw.
+                    PhantomKind::Snap { anchor } if !route.contains(&anchor) => {
+                        if let Some(circle) = ring(anchor, 0) {
+                            wraps.push(WrapPlan {
+                                anchor: Some(anchor),
+                                center: circle.center,
+                                radius: None,
+                                span: 0.0,
+                            });
+                        }
+                    }
+                    PhantomKind::Snap { .. } => {}
+                }
+            }
+
+            let run = [tail.point[0] - head.point[0], tail.point[1] - head.point[1]];
+            let len2 = run[0] * run[0] + run[1] * run[1];
+            if len2 >= 1e-6 {
+                let projection = |c: &[f32; 2]| {
+                    ((c[0] - head.point[0]) * run[0] + (c[1] - head.point[1]) * run[1]) / len2
+                };
+                wraps.sort_by(|a, b| {
+                    projection(&a.center)
+                        .total_cmp(&projection(&b.center))
+                        .then(
+                            a.anchor
+                                .unwrap_or(usize::MAX)
+                                .cmp(&b.anchor.unwrap_or(usize::MAX)),
+                        )
+                });
+            }
+            // Each wrap's span needs its NEIGHBOURS, so it is read once the
+            // visiting order is settled.
+            for i in 0..wraps.len() {
+                let prev = if i == 0 {
+                    head.point
+                } else {
+                    wraps[i - 1].center
+                };
+                let next = wraps.get(i + 1).map_or(tail.point, |w| w.center);
+                wraps[i].span = wrap_span(wraps[i].center, prev, next);
+            }
+
+            plans.push(CablePlan {
+                edge: index,
+                head,
+                tail,
+                ends: (head_ref, tail_ref),
+                wraps,
+            });
+        }
+
+        // The orbits come from the whole picture at once: an anchor's order is
+        // not separable from its neighbours', because two cables flying the same
+        // stretch from one anchor to the next stay apart only while their
+        // nesting agrees at both ends.
+        let wraps: Vec<Vec<orbits::Wrap>> = plans
+            .iter()
+            .map(|plan| {
+                plan.wraps
+                    .iter()
+                    .map(|wrap| orbits::Wrap {
+                        anchor: wrap.anchor,
+                        span: wrap.span,
+                    })
+                    .collect()
+            })
+            .collect();
+        // How many rings each anchor shows, which is how far out its geometry
+        // reaches - the bound a crossing has to clear to count as being in the
+        // open space between two anchors rather than at a wrap.
+        let mut rings_at = vec![0u8; self.anchors.len()];
+        for wraps in &wraps {
+            for wrap in wraps {
+                if let Some(anchor) = wrap.anchor
+                    && let Some(count) = rings_at.get_mut(anchor)
+                {
+                    *count = count.saturating_add(1);
+                }
+            }
+        }
+        let contested = orbits::contested(&wraps, self.anchors.len());
+        // Only pairs sharing TWO anchors can cross in a corridor, and a corridor
+        // crossing is the only thing measured, so those pairs are the whole
+        // search space. A pair meeting at one anchor is settled by containment.
+        //
+        // The bands a pair's crossings are judged against depend on the anchors
+        // it shares and how many rings each of those shows, neither of which a
+        // candidate can change, so they are built once here rather than per
+        // measurement.
+        let mut corridors: Vec<(usize, usize, Vec<edge_path::Corridor>)> = Vec::new();
+        // No contested anchor means no pair shares two, so the scan below would
+        // find nothing. Skipping it keeps a graph of unrouted cables off an
+        // all-pairs walk it can never learn anything from.
+        let riding: Vec<usize> = if contested.is_empty() {
+            Vec::new()
+        } else {
+            (0..plans.len())
+                .filter(|&slot| {
+                    wraps[slot]
+                        .iter()
+                        .filter(|wrap| wrap.anchor.is_some())
+                        .count()
+                        > 1
+                })
+                .collect()
+        };
+        for (at, &one) in riding.iter().enumerate() {
+            for &other in &riding[at + 1..] {
+                let (plan, partner) = (&plans[one], &plans[other]);
+                let shared = plan.shared_anchors(partner);
+                if shared.len() < 2 {
+                    continue;
+                }
+                let reach = |anchor: usize| {
+                    ring(
+                        anchor,
+                        rings_at.get(anchor).copied().unwrap_or(1).saturating_sub(1),
+                    )
+                };
+                let mut bands = Vec::new();
+                for leg in shared.windows(2) {
+                    if let (Some(from), Some(to)) = (reach(leg[0]), reach(leg[1])) {
+                        bands.push(edge_path::Corridor { from, to });
+                    }
+                }
+                if !bands.is_empty() {
+                    corridors.push((one, other, bands));
+                }
+            }
+        }
+        let mut movable: Vec<usize> = corridors
+            .iter()
+            .flat_map(|&(one, other, _)| [one, other])
+            .collect();
+        movable.sort_unstable();
+        movable.dedup();
+        // A candidate costs one build per movable cable plus one crossing count
+        // per band, which is what the search's budget is measured in.
+        let per_candidate = movable.len()
+            + corridors
+                .iter()
+                .map(|(_, _, bands)| bands.len())
+                .sum::<usize>();
+        // What a candidate arrangement actually does, built and counted rather
+        // than predicted: whether two cables cross along a corridor also depends
+        // on which way each wraps each end, and that is chosen by the geometry
+        // from the radii, so it is not knowable before the rings are.
+        let mut cost = |arrangement: &[Vec<u8>]| {
+            let flattened: Vec<(usize, Vec<[f32; 2]>)> = movable
+                .iter()
+                .map(|&slot| {
+                    let (hops, _) = plans[slot].chain(&arrangement[slot], ring);
+                    let path = edge_path::build(&hops, &curve(plans[slot].edge)).path;
+                    (slot, edge_path::polyline(&path))
+                })
+                .collect();
+            let chords = |slot: usize| {
+                flattened
+                    .binary_search_by_key(&slot, |&(at, _)| at)
+                    .ok()
+                    .map(|at| flattened[at].1.as_slice())
+            };
+            let mut crossings = 0;
+            for (one, other, bands) in &corridors {
+                let (Some(first), Some(second)) = (chords(*one), chords(*other)) else {
+                    continue;
+                };
+                crossings += edge_path::crossings_between_flattened(first, second, bands);
+            }
+            crossings
+        };
+        let assigned = orbits::assign(
+            &wraps,
+            self.anchors.len(),
+            &contested,
+            orbits::budget(movable.len(), per_candidate),
+            &mut cost,
+        );
+
+        plans
+            .iter()
+            .enumerate()
+            .map(|(slot, plan)| {
+                let (hops, rings) = plan.chain(&assigned[slot], ring);
+                CableGeometry {
+                    edge: plan.edge,
+                    hops,
+                    rings,
+                    ends: plan.ends,
+                }
+            })
+            .collect()
+    }
+
+    /// The anchors a route drag on `edge` may snap to.
+    ///
+    /// Every anchor the edge does not already wrap, plus `detached` - the one a
+    /// wrap grab just pulled off. That one stays eligible because the detach may
+    /// not have round-tripped yet, and a drag that cannot put an anchor back
+    /// where it came from would be a trap.
+    pub(super) fn route_snap_eligible(&self, edge: usize, detached: Option<usize>) -> Vec<usize> {
+        let route = self.resolved_route(edge);
+        (0..self.anchors.len())
+            .filter(|a| !route.contains(a) || detached == Some(*a))
+            .collect()
     }
 
     /// The selection the host marked on its nodes.
@@ -836,7 +1597,7 @@ where
     ///
     /// # #[derive(Debug, Clone)]
     /// # enum Message {}
-    /// # let ng: NodeGraph<'_, usize, usize, (), Message> = NodeGraph::default();
+    /// # let ng: NodeGraph<'_, usize, usize, (), usize, (), Message> = NodeGraph::default();
     /// let ng = ng
     ///     .can_connect(|from, to| default_can_connect(from, to) && from.info() == to.info());
     /// ```
@@ -935,6 +1696,81 @@ where
         self
     }
 
+    /// Sets a callback for an anchor dragged to a new position.
+    ///
+    /// Reports the anchor's id and its new world position - the position
+    /// outright, not a delta, because an anchor is a single point rather than a
+    /// group. Fires once, on release; a motionless press and release is a click
+    /// and reports nothing.
+    ///
+    /// Required for anchor dragging, the same gating [`on_move`](Self::on_move)
+    /// has: anchor positions live in the host, so without a handler the drag
+    /// would snap back on release. Without it the core is neither grabbable nor
+    /// pointed at.
+    pub fn on_anchor_move(mut self, f: impl Fn(A, Point) -> Message + 'a) -> Self {
+        self.on_anchor_move = Some(Box::new(f));
+        self
+    }
+
+    /// Sets a callback for an anchor the user created by grabbing a cable.
+    ///
+    /// Reports the edge the grab started on and the world position the drag
+    /// released at. The host mints the anchor's id, pushes it via
+    /// [`push_anchor`](Self::push_anchor), and adds that id to the edge's
+    /// [`route`](Edge::route) - the widget cannot invent an id in the host's id
+    /// space.
+    ///
+    /// Together with [`on_route_attach`](Self::on_route_attach) and
+    /// [`on_route_detach`](Self::on_route_detach) this gates the cable's
+    /// mid-run and wrap grab zones: all three must be set before a press on a
+    /// cable does anything but fall through.
+    ///
+    /// Requires the edges to carry ids. `E` defaults to `()`, and the `edge!`
+    /// macro leaves it there, so every report would name the same edge and the
+    /// host could not tell which cable was grabbed - build a routable edge with
+    /// [`edge(from, to, id)`](edge) instead. The same applies to
+    /// `on_route_attach` and `on_route_detach`.
+    pub fn on_anchor_create(mut self, f: impl Fn(E, Point) -> Message + 'a) -> Self {
+        self.on_anchor_create = Some(Box::new(f));
+        self
+    }
+
+    /// Sets a callback for an edge that should start wrapping an anchor.
+    ///
+    /// Fires on SNAP during a route drag, not on release, like
+    /// [`on_connect`](Self::on_connect): one drag can attach and detach several
+    /// times. The host adds the anchor id to that edge's
+    /// [`route`](Edge::route).
+    pub fn on_route_attach(mut self, f: impl Fn(E, A) -> Message + 'a) -> Self {
+        self.on_route_attach = Some(Box::new(f));
+        self
+    }
+
+    /// Sets a callback for an edge that should stop wrapping an anchor.
+    ///
+    /// The counterpart of [`on_route_attach`](Self::on_route_attach), fired
+    /// when a route drag leaves the anchor it was snapped to, and by a
+    /// pan-button click on the wrap itself. The host removes the anchor id from
+    /// that edge's [`route`](Edge::route).
+    pub fn on_route_detach(mut self, f: impl Fn(E, A) -> Message + 'a) -> Self {
+        self.on_route_detach = Some(Box::new(f));
+        self
+    }
+
+    /// Sets a callback for an anchor the user asked to remove.
+    ///
+    /// The host drops the anchor and strips its id out of every
+    /// [`route`](Edge::route) that named it; an id left in a route simply
+    /// resolves to nothing and is skipped, so a partial application degrades
+    /// rather than breaks.
+    ///
+    /// Required for the delete gesture: without a handler a pan-button press on
+    /// an anchor core is an ordinary pan.
+    pub fn on_anchor_delete(mut self, f: impl Fn(A) -> Message + 'a) -> Self {
+        self.on_anchor_delete = Some(Box::new(f));
+        self
+    }
+
     /// Sets a callback for when the selection changes.
     ///
     /// The callback receives the list of currently selected node IDs.
@@ -989,12 +1825,17 @@ where
 
     /// Reports the start of a drag, naming what it moves.
     ///
-    /// This and [`on_drag_update`](Self::on_drag_update) /
-    /// [`on_drag_end`](Self::on_drag_end) bracket every drag exactly once, and
-    /// fire in addition to the commit-on-release callbacks. They exist for hosts
-    /// that mirror an in-progress drag somewhere else - a collaborative session,
-    /// an inspector - and nothing is gated on them: omitting all three changes no
-    /// behaviour.
+    /// Fires for the drags [`DragInfo`] can name, in addition to the
+    /// commit-on-release callbacks. It exists for hosts that mirror an
+    /// in-progress drag somewhere else - a collaborative session, an inspector -
+    /// and nothing is gated on it: omitting it changes no behaviour.
+    ///
+    /// It does NOT pair with [`on_drag_end`](Self::on_drag_end) one for one. A
+    /// canvas pan reports neither; an anchor drag, a route drag and a pan-button
+    /// click on a core or a wrap report only the end, because `DragInfo` has no
+    /// variant that names an anchor or a route. A host that brackets work across
+    /// a drag must key the opening on `DragInfo` and tolerate a close it never
+    /// opened.
     pub fn on_drag_start(mut self, f: impl Fn(DragInfo<N, P>) -> Message + 'a) -> Self {
         self.on_drag_start = Some(Box::new(f));
         self
@@ -1008,10 +1849,13 @@ where
         self
     }
 
-    /// Reports that the drag ended, whether it committed or was discarded.
+    /// Reports that a drag ended, whether it committed or was discarded.
     ///
-    /// Also fires when a drag is cancelled (a second touch contact, say), so it
-    /// is the reliable place to clear whatever `on_drag_start` set up.
+    /// Fires on every transition back to idle, including a cancel (a second
+    /// touch contact, say) and including drags that reported no start - see
+    /// [`on_drag_start`](Self::on_drag_start). So it is the reliable place to
+    /// notice that the widget is no longer dragging, and the wrong place to
+    /// assume a matching start.
     pub fn on_drag_end(mut self, f: impl Fn() -> Message + 'a) -> Self {
         self.on_drag_end = Some(Box::new(f));
         self
@@ -1066,5 +1910,661 @@ where
         self.nodes
             .iter_mut()
             .map(|node| (node.position, &mut node.element))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A graph whose ids are all `usize`, so a node, an anchor and an edge can
+    /// be told apart by value in a failure message.
+    type Graph<'a> =
+        NodeGraph<'a, usize, usize, usize, usize, (), (), iced_widget::renderer::Renderer>;
+
+    /// Node 0 carries the output at the origin, node 1 the input 400 to the
+    /// right, so the run is the positive x axis and a projection is just an x
+    /// coordinate.
+    fn station(pin: &PinRef<usize, usize>) -> Option<Station> {
+        match pin.node_id {
+            0 => Some(Station {
+                point: [0.0, 0.0],
+                side: 1,
+                direction: Some(PinDirection::Output),
+            }),
+            1 => Some(Station {
+                point: [400.0, 0.0],
+                side: 3,
+                direction: Some(PinDirection::Input),
+            }),
+            _ => None,
+        }
+    }
+
+    /// Every edge on the default curve, which is what a host that never styles
+    /// one gets.
+    fn curve(_edge: usize) -> EdgeCurve {
+        EdgeCurve::default()
+    }
+
+    /// Rings of a fixed radius, so a test reads the ORDER of the wraps rather
+    /// than their size.
+    fn ring<'g>(graph: &'g Graph<'g>) -> impl Fn(usize, u8) -> Option<edge_path::Orbit> + 'g {
+        move |anchor, _orbit| {
+            let position = graph.anchors.get(anchor)?.position;
+            Some(edge_path::Orbit {
+                center: [position.x, position.y],
+                radius: 16.0,
+            })
+        }
+    }
+
+    /// Rings whose radius encodes the orbit index, so a test can read WHICH
+    /// orbit a wrap was given rather than only where it sits.
+    fn indexed_ring<'g>(
+        graph: &'g Graph<'g>,
+    ) -> impl Fn(usize, u8) -> Option<edge_path::Orbit> + 'g {
+        move |anchor, orbit| {
+            let position = graph.anchors.get(anchor)?.position;
+            Some(edge_path::Orbit {
+                center: [position.x, position.y],
+                radius: 100.0 + orbit as f32,
+            })
+        }
+    }
+
+    /// The orbit index each wrap was given, read back out of `indexed_ring`.
+    fn wrap_orbits(hops: &[edge_path::Hop]) -> Vec<u8> {
+        hops.iter()
+            .filter_map(|hop| match hop {
+                edge_path::Hop::Wrap { orbit } => Some((orbit.radius - 100.0) as u8),
+                edge_path::Hop::Pin { .. } => None,
+            })
+            .collect()
+    }
+
+    /// Cables whose geometry gives no reason to prefer one over the other fall
+    /// back to edge index, and a snapped drag previews the orbit that tie will
+    /// hand it.
+    ///
+    /// Every cable here runs between the SAME two pins, so every span is equal
+    /// and only the index is left to order by. A drag onto an anchor that
+    /// already carries a higher-indexed edge is therefore inserted ahead of it
+    /// and both cables move. Predicting the free slot past the last instead
+    /// would preview the cable on a ring it will not sit on.
+    #[test]
+    fn a_snap_phantom_takes_the_orbit_the_tie_gives() {
+        // The dragged edge is the HIGHEST index: tie order and free slot agree.
+        let mut trailing = graph_with_anchors(&[(10, 200.0)]);
+        trailing.push_edge(edge(pin_ref(0), pin_ref(1), 0).route([10]));
+        trailing.push_edge(edge(pin_ref(0), pin_ref(1), 1).route([10]));
+        trailing.push_edge(edge(pin_ref(0), pin_ref(1), 2));
+        let phantom = RoutePhantom {
+            edge: 2,
+            exclude: None,
+            kind: PhantomKind::Snap { anchor: 0 },
+        };
+        assert_eq!(trailing.anchor_rings(Some(phantom.pending())), vec![3]);
+        let ring = indexed_ring(&trailing);
+        let cables = trailing.edge_hops(&station, &ring, &curve, Some(&phantom));
+        assert_eq!(wrap_orbits(&cables[0].hops), vec![0]);
+        assert_eq!(wrap_orbits(&cables[1].hops), vec![1]);
+        assert_eq!(wrap_orbits(&cables[2].hops), vec![2]);
+
+        // The dragged edge is the LOWEST index: it takes orbit 0 and pushes the
+        // resident cable outward. This is the case a free-slot prediction gets
+        // wrong, and it is the one the drag then measures its unsnap against.
+        let mut leading = graph_with_anchors(&[(10, 200.0)]);
+        leading.push_edge(edge(pin_ref(0), pin_ref(1), 0));
+        leading.push_edge(edge(pin_ref(0), pin_ref(1), 1).route([10]));
+        let phantom = RoutePhantom {
+            edge: 0,
+            exclude: None,
+            kind: PhantomKind::Snap { anchor: 0 },
+        };
+        assert_eq!(
+            leading.anchor_rings(Some(phantom.pending())),
+            vec![2],
+            "the pending attach is counted before the host applies it",
+        );
+        let ring = indexed_ring(&leading);
+        let cables = leading.edge_hops(&station, &ring, &curve, Some(&phantom));
+        assert_eq!(
+            wrap_orbits(&cables[0].hops),
+            vec![0],
+            "the dragged cable previews on the orbit the tie earns it",
+        );
+        assert_eq!(
+            wrap_orbits(&cables[1].hops),
+            vec![1],
+            "the resident cable previews where the attach will push it",
+        );
+    }
+
+    /// Two cables through one anchor take the ring the geometry asks for: the
+    /// one that wraps LESS sits inside.
+    ///
+    /// Nested angular intervals are the case that matters, and the common one:
+    /// two cables that enter an anchor from the same side and leave to the same
+    /// side have one interval containing the other. Put the wider wrap on the
+    /// inner ring and its legs have to cut across the narrower cable twice, for
+    /// no reason - the same two cables nested the other way round do not cross
+    /// at all. Push order knows nothing about that, so here it disagrees.
+    #[test]
+    fn nested_wraps_put_the_narrower_cable_inside() {
+        // Both cables pass above the anchor, the second one closer, so the
+        // first's angular interval contains the second's: 157 degrees against
+        // 90, around the same centre.
+        let stations = |pin: &PinRef<usize, usize>| {
+            let (point, side, direction) = match pin.node_id {
+                0 => ([-100.0, -20.0], 1, PinDirection::Output),
+                1 => ([100.0, -20.0], 3, PinDirection::Input),
+                2 => ([-100.0, -100.0], 1, PinDirection::Output),
+                3 => ([100.0, -100.0], 3, PinDirection::Input),
+                _ => return None,
+            };
+            Some(Station {
+                point,
+                side,
+                direction: Some(direction),
+            })
+        };
+
+        let mut graph = Graph::default();
+        graph.push_anchor(anchor(10, Point::new(0.0, 0.0)));
+        // The WIDER cable is pushed first, so push order asks for the crossing.
+        graph.push_edge(edge(pin_ref(0), pin_ref(1), 0).route([10]));
+        graph.push_edge(edge(pin_ref(2), pin_ref(3), 1).route([10]));
+
+        let ring = indexed_ring(&graph);
+        let cables = graph.edge_hops(&stations, &ring, &curve, None);
+        assert_eq!(
+            wrap_orbits(&cables[1].hops),
+            vec![0],
+            "the narrower wrap belongs on the inner ring",
+        );
+        assert_eq!(
+            wrap_orbits(&cables[0].hops),
+            vec![1],
+            "the wider wrap goes around the narrower one, not through it",
+        );
+    }
+
+    /// The centre of every wrap hop, in the order the cable meets them.
+    fn wrap_centers(hops: &[edge_path::Hop]) -> Vec<[f32; 2]> {
+        hops.iter()
+            .filter_map(|hop| match hop {
+                edge_path::Hop::Wrap { orbit } => Some(orbit.center),
+                edge_path::Hop::Pin { .. } => None,
+            })
+            .collect()
+    }
+
+    fn pin_ref(node: usize) -> PinRef<usize, usize> {
+        PinRef::new(node, 0)
+    }
+
+    /// Two anchors and an edge routed through both, wired to `station`'s pins.
+    fn graph_with_anchors(positions: &[(usize, f32)]) -> Graph<'static> {
+        let mut graph = Graph::default();
+        for &(id, x) in positions {
+            graph.push_anchor(anchor(id, Point::new(x, 0.0)));
+        }
+        graph
+    }
+
+    /// The visiting order is geometry, not authoring order: the host may keep a
+    /// route in any order at all, and the cable still passes its anchors in the
+    /// order it reaches them.
+    #[test]
+    fn wraps_are_visited_in_projection_order() {
+        let mut graph = graph_with_anchors(&[(10, 300.0), (11, 100.0), (12, 200.0)]);
+        graph.push_edge(edge(pin_ref(0), pin_ref(1), 0).route([10, 11, 12]));
+
+        let ring = ring(&graph);
+        let cables = graph.edge_hops(&station, &ring, &curve, None);
+
+        assert_eq!(cables.len(), 1);
+        assert_eq!(
+            wrap_centers(&cables[0].hops),
+            vec![[100.0, 0.0], [200.0, 0.0], [300.0, 0.0]],
+            "wraps should run along the pin-to-pin run, whatever order they were authored in"
+        );
+    }
+
+    /// A cable arriving from the input side is turned round before the
+    /// projection is taken, so the same scene reads the same either way.
+    #[test]
+    fn an_input_first_edge_is_oriented_before_ordering() {
+        let mut graph = graph_with_anchors(&[(10, 300.0), (11, 100.0)]);
+        graph.push_edge(edge(pin_ref(1), pin_ref(0), 0).route([10, 11]));
+
+        let ring = ring(&graph);
+        let cables = graph.edge_hops(&station, &ring, &curve, None);
+
+        assert_eq!(
+            wrap_centers(&cables[0].hops),
+            vec![[100.0, 0.0], [300.0, 0.0]]
+        );
+        assert_eq!(
+            (cables[0].ends.0.node_id, cables[0].ends.1.node_id),
+            (0, 1),
+            "the output pin heads the cable however the edge was authored"
+        );
+    }
+
+    /// One orbit takes one edge: the edges through an anchor fill its orbits in
+    /// push order, so no two cables share a ring.
+    #[test]
+    fn edges_through_one_anchor_take_successive_orbits() {
+        let mut graph = graph_with_anchors(&[(10, 200.0)]);
+        graph.push_edge(edge(pin_ref(0), pin_ref(1), 0).route([10]));
+        graph.push_edge(edge(pin_ref(0), pin_ref(1), 1).route([10]));
+
+        assert_eq!(graph.anchor_rings(None), vec![2]);
+
+        let ring = ring(&graph);
+        let cables = graph.edge_hops(&station, &ring, &curve, None);
+
+        let orbits: Vec<u8> = cables
+            .iter()
+            .flat_map(|cable| cable.rings.iter().map(|(_, (_, orbit))| *orbit))
+            .collect();
+        assert_eq!(orbits, vec![0, 1]);
+    }
+
+    /// A route is a set of anchors, so a repeat is one wrap and an id naming
+    /// nothing is no wrap at all. A host mid-edit must not be able to make the
+    /// widget draw a cable through the same ring twice.
+    #[test]
+    fn a_route_dedupes_and_drops_unknown_ids() {
+        let mut graph = graph_with_anchors(&[(10, 200.0)]);
+        graph.push_edge(edge(pin_ref(0), pin_ref(1), 0).route([10, 999, 10]));
+
+        assert_eq!(graph.resolved_route(0), vec![0]);
+        assert_eq!(graph.anchor_rings(None), vec![1]);
+    }
+
+    /// A node id names a node, not an anchor, even though the two share one id
+    /// space - so routing through a node id draws nothing rather than wrapping
+    /// the node.
+    #[test]
+    fn a_node_id_in_a_route_resolves_to_no_wrap() {
+        let mut graph = graph_with_anchors(&[(10, 200.0)]);
+        graph.push_edge(edge(pin_ref(0), pin_ref(1), 0).route([10]));
+        assert_eq!(graph.anchor_index(&10), Some(0));
+        assert_eq!(graph.anchor_index(&0), None);
+        assert_eq!(graph.resolved_route(0), vec![0]);
+    }
+
+    /// The anchor a detach was just published for stays reachable, so a drag can
+    /// put it back where it came from before the host has caught up.
+    #[test]
+    fn a_detached_anchor_stays_snap_eligible() {
+        let mut graph = graph_with_anchors(&[(10, 100.0), (11, 200.0)]);
+        graph.push_edge(edge(pin_ref(0), pin_ref(1), 0).route([10]));
+
+        assert_eq!(graph.route_snap_eligible(0, None), vec![1]);
+        assert_eq!(graph.route_snap_eligible(0, Some(0)), vec![0, 1]);
+    }
+
+    /// An unrouted edge is the plain two-station cable, which is what keeps a
+    /// graph with no anchors drawing exactly as it did without the feature.
+    #[test]
+    fn an_unrouted_edge_lowers_to_two_pins() {
+        let mut graph = Graph::default();
+        graph.push_edge(edge(pin_ref(0), pin_ref(1), 0));
+
+        let ring = ring(&graph);
+        let cables = graph.edge_hops(&station, &ring, &curve, None);
+
+        assert_eq!(cables[0].hops.len(), 2);
+        assert!(wrap_centers(&cables[0].hops).is_empty());
+        assert!(cables[0].rings.is_empty());
+    }
+
+    /// A phantom wrap is ordered by the same projection as a real one, so the
+    /// preview runs where the committed cable will.
+    #[test]
+    fn a_phantom_wrap_is_ordered_like_a_real_one() {
+        let mut graph = graph_with_anchors(&[(10, 300.0)]);
+        graph.push_edge(edge(pin_ref(0), pin_ref(1), 0).route([10]));
+
+        let ring = ring(&graph);
+        let phantom = RoutePhantom {
+            edge: 0,
+            exclude: None,
+            kind: PhantomKind::At {
+                center: [100.0, 0.0],
+                radius: 16.0,
+            },
+        };
+        let cables = graph.edge_hops(&station, &ring, &curve, Some(&phantom));
+
+        assert_eq!(
+            wrap_centers(&cables[0].hops),
+            vec![[100.0, 0.0], [300.0, 0.0]]
+        );
+        assert_eq!(
+            cables[0].rings,
+            vec![(2, (0, 0))],
+            "only the host's own wrap names an anchor; the phantom names none"
+        );
+    }
+
+    /// An anchor a detach was published for leaves the preview at once, so the
+    /// cable does not snap back to it for the frame the host takes to apply.
+    #[test]
+    fn an_excluded_anchor_leaves_the_preview() {
+        let mut graph = graph_with_anchors(&[(10, 300.0)]);
+        graph.push_edge(edge(pin_ref(0), pin_ref(1), 0).route([10]));
+
+        let ring = ring(&graph);
+        let phantom = RoutePhantom {
+            edge: 0,
+            exclude: Some(0),
+            kind: PhantomKind::At {
+                center: [100.0, 0.0],
+                radius: 16.0,
+            },
+        };
+        let cables = graph.edge_hops(&station, &ring, &curve, Some(&phantom));
+
+        assert_eq!(wrap_centers(&cables[0].hops), vec![[100.0, 0.0]]);
+        assert!(cables[0].rings.is_empty());
+    }
+
+    /// A snap phantom stands for a real anchor at a real orbit, so it names one
+    /// where a ring held at the cursor does not. It stands down once the host's
+    /// route carries the anchor itself and the committed wrap takes over.
+    #[test]
+    fn a_snap_phantom_stands_down_once_the_route_carries_it() {
+        let mut graph = graph_with_anchors(&[(10, 200.0)]);
+        graph.push_edge(edge(pin_ref(0), pin_ref(1), 0));
+
+        let offered_ring = ring(&graph);
+        let phantom = RoutePhantom {
+            edge: 0,
+            exclude: None,
+            kind: PhantomKind::Snap { anchor: 0 },
+        };
+        let previewed = graph.edge_hops(&station, &offered_ring, &curve, Some(&phantom));
+        assert_eq!(wrap_centers(&previewed[0].hops), vec![[200.0, 0.0]]);
+        assert_eq!(
+            previewed[0].rings,
+            vec![(1, (0, 0))],
+            "an offered ring still names the anchor it is offered by"
+        );
+
+        let mut applied = graph_with_anchors(&[(10, 200.0)]);
+        applied.push_edge(edge(pin_ref(0), pin_ref(1), 0).route([10]));
+        let applied_ring = ring(&applied);
+        let cables = applied.edge_hops(&station, &applied_ring, &curve, Some(&phantom));
+        assert_eq!(wrap_centers(&cables[0].hops), vec![[200.0, 0.0]]);
+        assert_eq!(cables[0].rings, vec![(1, (0, 0))]);
+    }
+
+    /// A run of no length leaves nothing to project onto, so the authored order
+    /// is all there is to go on.
+    #[test]
+    fn a_degenerate_run_keeps_the_authored_order() {
+        let mut graph = graph_with_anchors(&[(10, 300.0), (11, 100.0)]);
+        graph.push_edge(edge(pin_ref(2), pin_ref(2), 0).route([10, 11]));
+
+        let collapsed = |_: &PinRef<usize, usize>| {
+            Some(Station {
+                point: [50.0, 50.0],
+                side: 1,
+                direction: Some(PinDirection::Output),
+            })
+        };
+        let ring = ring(&graph);
+        let cables = graph.edge_hops(&collapsed, &ring, &curve, None);
+
+        assert_eq!(
+            wrap_centers(&cables[0].hops),
+            vec![[300.0, 0.0], [100.0, 0.0]]
+        );
+    }
+
+    /// An endpoint the frame cannot resolve drops the whole cable: half a cable
+    /// is not a thing to draw.
+    #[test]
+    fn an_unresolvable_endpoint_drops_the_edge() {
+        let mut graph = Graph::default();
+        graph.push_edge(edge(pin_ref(0), pin_ref(7), 0));
+
+        let ring = ring(&graph);
+        assert!(graph.edge_hops(&station, &ring, &curve, None).is_empty());
+    }
+
+    /// A real corridor is cleared: two cables that fly the stretch between two
+    /// anchors come out not crossing along it, where containment alone crosses.
+    ///
+    /// The scene is the shape the styling demo shows. Both cables wrap both
+    /// anchors, and both turn one way at the first and the other at the second -
+    /// an S through the corridor, so each rides the CROSSED tangent between the
+    /// rings. That is the case where matching ring order is the arrangement that
+    /// crosses, and the assignment cannot know it without building: the wrap
+    /// direction is chosen by the geometry from the radii. So this asserts on
+    /// crossings counted off the built paths, which is also what the search
+    /// itself minimises.
+    ///
+    /// Both halves matter. Clearing the corridor is the feature; containment
+    /// crossing is what proves the scene is a genuine conflict rather than one
+    /// the seed already happened to solve.
+    #[test]
+    fn a_crossed_tangent_corridor_comes_out_clear() {
+        const A: [f32; 2] = [300.0, 300.0];
+        const B: [f32; 2] = [550.0, 300.0];
+        // Two sources left of the first anchor, two sinks right of the second,
+        // at different heights so the pair has a reason to nest either way.
+        let stations = |pin: &PinRef<usize, usize>| {
+            let (point, side, direction) = match pin.node_id {
+                0 => ([260.0, 193.0], 1, PinDirection::Output),
+                1 => ([600.0, 463.0], 3, PinDirection::Input),
+                2 => ([260.0, 215.0], 1, PinDirection::Output),
+                3 => ([600.0, 323.0], 3, PinDirection::Input),
+                _ => return None,
+            };
+            Some(Station {
+                point,
+                side,
+                direction: Some(direction),
+            })
+        };
+
+        let mut graph = Graph::default();
+        graph.push_anchor(anchor(10, Point::new(A[0], A[1])));
+        graph.push_anchor(anchor(11, Point::new(B[0], B[1])));
+        graph.push_edge(edge(pin_ref(0), pin_ref(1), 0).route([10, 11]));
+        graph.push_edge(edge(pin_ref(2), pin_ref(3), 1).route([10, 11]));
+
+        // The shipped radii, so the rings sit where a host sees them.
+        let rings = |anchor: usize, orbit: u8| {
+            let position = graph.anchors.get(anchor)?.position;
+            Some(edge_path::Orbit {
+                center: [position.x, position.y],
+                radius: DEFAULT_ORBIT_OFFSET + orbit as f32 * DEFAULT_ORBIT_SPACING,
+            })
+        };
+
+        // Crossings along the corridor for one arrangement, measured the way the
+        // search measures them.
+        let corridor_crossings = |arrangement: &[Vec<u8>]| {
+            let cables = graph.edge_hops(&stations, &rings, &curve, None);
+            let paths: Vec<edge_path::EdgePath> = cables
+                .iter()
+                .enumerate()
+                .map(|(slot, cable)| {
+                    let mut hops = cable.hops.clone();
+                    for (&(hop, (_, _)), &orbit) in cable.rings.iter().zip(&arrangement[slot]) {
+                        if let edge_path::Hop::Wrap { orbit: circle } = &mut hops[hop] {
+                            circle.radius =
+                                DEFAULT_ORBIT_OFFSET + orbit as f32 * DEFAULT_ORBIT_SPACING;
+                        }
+                    }
+                    edge_path::build(&hops, &EdgeCurve::default()).path
+                })
+                .collect();
+            let band = |anchor: usize| rings(anchor, 1).expect("two cables per anchor");
+            let bands = [edge_path::Corridor {
+                from: band(0),
+                to: band(1),
+            }];
+            edge_path::crossings_between(&paths[0], &paths[1], &bands)
+        };
+
+        let chosen: Vec<Vec<u8>> = graph
+            .edge_hops(&stations, &rings, &curve, None)
+            .iter()
+            .map(|cable| cable.rings.iter().map(|&(_, (_, orbit))| orbit).collect())
+            .collect();
+        assert_eq!(
+            corridor_crossings(&chosen),
+            0,
+            "the corridor still crosses at {chosen:?}",
+        );
+        assert!(
+            corridor_crossings(&[vec![0, 0], vec![1, 1]]) > 0,
+            "matching ring order does not cross here, so the scene proves nothing",
+        );
+    }
+
+    /// The styling demo's own scene comes out clear, and needs more than the
+    /// obvious exchange to get there.
+    ///
+    /// Three cables on each anchor: one pair flies the corridor between them and
+    /// a third cable wraps each end on its own way elsewhere. Containment seats
+    /// the pair to disagree across the corridor, so it crosses. What makes this
+    /// worth a test of its own is that the seed is a PLATEAU: exchanging the two
+    /// adjacent rings the pair sits on leaves the count at one, and only
+    /// exchanging a non-adjacent pair - moving the uninvolved third cable out of
+    /// the way - reaches a clear corridor. A search confined to adjacent rings
+    /// stalls here with the crossing still on screen.
+    #[test]
+    fn a_three_cable_corridor_comes_out_clear() {
+        let stations = |pin: &PinRef<usize, usize>| {
+            let (point, side, direction) = match pin.node_id {
+                0 => ([260.0, 193.3], 1, PinDirection::Output),
+                1 => ([350.0, 243.3], 3, PinDirection::Input),
+                2 => ([510.0, 243.3], 1, PinDirection::Output),
+                3 => ([600.0, 193.3], 3, PinDirection::Input),
+                4 => ([600.0, 463.3], 3, PinDirection::Input),
+                5 => ([280.0, 103.3], 1, PinDirection::Output),
+                6 => ([600.0, 323.3], 3, PinDirection::Input),
+                _ => return None,
+            };
+            Some(Station {
+                point,
+                side,
+                direction: Some(direction),
+            })
+        };
+        let mut graph = Graph::default();
+        graph.push_anchor(anchor(10, Point::new(300.0, 300.0)));
+        graph.push_anchor(anchor(11, Point::new(550.0, 300.0)));
+        graph.push_edge(edge(pin_ref(0), pin_ref(1), 0).route([10]));
+        graph.push_edge(edge(pin_ref(2), pin_ref(3), 1).route([11]));
+        graph.push_edge(edge(pin_ref(0), pin_ref(4), 2).route([10, 11]));
+        graph.push_edge(edge(pin_ref(5), pin_ref(6), 3).route([10, 11]));
+
+        let rings = |anchor: usize, orbit: u8| {
+            let position = graph.anchors.get(anchor)?.position;
+            Some(edge_path::Orbit {
+                center: [position.x, position.y],
+                radius: DEFAULT_ORBIT_OFFSET + orbit as f32 * DEFAULT_ORBIT_SPACING,
+            })
+        };
+        let corridor_crossings =
+            |arrangement: &[Vec<u8>]| corridor_count(&graph, &stations, &rings, arrangement);
+
+        let chosen: Vec<Vec<u8>> = graph
+            .edge_hops(&stations, &rings, &curve, None)
+            .iter()
+            .map(|cable| cable.rings.iter().map(|&(_, (_, orbit))| orbit).collect())
+            .collect();
+        assert_eq!(
+            corridor_crossings(&chosen),
+            0,
+            "the corridor still crosses at {chosen:?}",
+        );
+        // Containment: at the first anchor the pair sits 2 and 1, at the second 1
+        // and 2, so it disagrees across the corridor.
+        let containment = vec![vec![0], vec![0], vec![2, 1], vec![1, 2]];
+        assert!(
+            corridor_crossings(&containment) > 0,
+            "containment does not cross here, so the scene proves nothing",
+        );
+        // Exchanging only the pair's own two rings stays on the plateau.
+        assert!(
+            corridor_crossings(&[vec![0], vec![0], vec![1, 1], vec![2, 2]]) > 0,
+            "the adjacent exchange already clears this, so the scene does not \
+             need the wider neighbourhood it exists to justify",
+        );
+    }
+
+    /// Crossings along a corridor for one arrangement, counted the way the
+    /// assignment counts them.
+    fn corridor_count(
+        graph: &Graph<'_>,
+        stations: &dyn Fn(&PinRef<usize, usize>) -> Option<Station>,
+        rings: &dyn Fn(usize, u8) -> Option<edge_path::Orbit>,
+        arrangement: &[Vec<u8>],
+    ) -> usize {
+        let cables = graph.edge_hops(stations, rings, &curve, None);
+        let paths: Vec<edge_path::EdgePath> = cables
+            .iter()
+            .enumerate()
+            .map(|(slot, cable)| {
+                let mut hops = cable.hops.clone();
+                for (&(hop, _), &orbit) in cable.rings.iter().zip(&arrangement[slot]) {
+                    if let edge_path::Hop::Wrap { orbit: circle } = &mut hops[hop] {
+                        circle.radius = DEFAULT_ORBIT_OFFSET + orbit as f32 * DEFAULT_ORBIT_SPACING;
+                    }
+                }
+                edge_path::build(&hops, &EdgeCurve::default()).path
+            })
+            .collect();
+        let rings_at: Vec<u8> = (0..graph.anchors.len())
+            .map(|anchor| {
+                u8::try_from(
+                    (0..graph.edges.len())
+                        .filter(|&edge| graph.resolved_route(edge).contains(&anchor))
+                        .count(),
+                )
+                .unwrap_or(u8::MAX)
+            })
+            .collect();
+        let mut count = 0;
+        for (i, first) in paths.iter().enumerate() {
+            for (j, second) in paths.iter().enumerate().skip(i + 1) {
+                let mut shared: Vec<usize> = graph
+                    .resolved_route(i)
+                    .into_iter()
+                    .filter(|a| graph.resolved_route(j).contains(a))
+                    .collect();
+                shared.sort_unstable();
+                if shared.len() < 2 {
+                    continue;
+                }
+                let reach = |anchor: usize| {
+                    rings(
+                        anchor,
+                        rings_at.get(anchor).copied().unwrap_or(1).saturating_sub(1),
+                    )
+                };
+                let mut bands = Vec::new();
+                for (at, &from) in shared.iter().enumerate() {
+                    for &to in &shared[at + 1..] {
+                        if let (Some(from), Some(to)) = (reach(from), reach(to)) {
+                            bands.push(edge_path::Corridor { from, to });
+                        }
+                    }
+                }
+                count += edge_path::crossings_between(first, second, &bands);
+            }
+        }
+        count
     }
 }

@@ -35,6 +35,38 @@ use crate::drawable::{Drawable, DrawableType, Segment};
 /// and more `eval_segment` calls in the fragment's per-pixel min-reduction.
 const CUBIC_ARC_TOL: f32 = 0.1;
 
+/// Shortest segment worth emitting, in local units.
+///
+/// A shorter one carries no direction. The GPU primitive stores a segment as
+/// its `start`/`end` pair plus a curvature, and reads `heading` only for a
+/// deliberate junction point (`Segment::point`, whose caller supplies the
+/// interior bisector), so a span the endpoints cannot resolve is encoded as a
+/// junction facing heading zero and paints a spur off the contour.
+///
+/// Every producer answers to it: the two straight steps
+/// ([`ShapeBuilder::line`], [`ShapeBuilder::line_to`]) against their length,
+/// the two arcs ([`ShapeBuilder::arc`], [`ShapeBuilder::arc_to`]) against the
+/// arc length they would lay down, the arc-spline pieces of a cubic against
+/// their own, and [`ShapeBuilder::close`] against the gap left between the
+/// cursor and the contour start.
+///
+/// Skipping such a segment changes no geometry: the neighbours already meet at
+/// the point it would have occupied, and it contributes nothing to the
+/// cumulative arc length a dash or flow pattern phases over.
+const MIN_SEGMENT: f32 = 1e-4;
+
+/// Whether an arc of `radius` sweeping `sweep` radians is too small to emit.
+///
+/// A non-positive radius is a sharp corner (a rounded box with a zero corner
+/// radius, or a cable wrapping an anchor whose orbit offset is zero) and has no
+/// arc at all; `from_center_arc` asserts a positive radius, so encoding one
+/// would trip that invariant. Above zero the arc still collapses once its
+/// length falls under [`MIN_SEGMENT`]: its endpoints land within the tolerance
+/// the encoding resolves a point at, leaving curvature and heading both zero.
+fn arc_below_floor(radius: f32, sweep: f32) -> bool {
+    radius <= 0.0 || radius * sweep.abs() < MIN_SEGMENT
+}
+
 /// Geometry construction namespace.
 pub struct Curve;
 
@@ -172,7 +204,15 @@ impl ShapeBuilder {
     // --- Turtle API ---
 
     /// Move forward by `length` in the current heading direction.
+    ///
+    /// A length below [`MIN_SEGMENT`] moves nothing and emits no segment, the
+    /// straight-line twin of [`arc`](Self::arc) turning in place on a
+    /// non-positive radius. A rounded rectangle whose corner radius fills its
+    /// half-extent asks for exactly this on all four sides.
     pub fn line(mut self, length: f32) -> Self {
+        if length.abs() < MIN_SEGMENT {
+            return self;
+        }
         let dir = self.heading_vec();
         let end = self.cursor + dir * length;
         self.segments.push(ShapeSegment::Line {
@@ -185,12 +225,11 @@ impl ShapeBuilder {
 
     /// Arc forward. Positive sweep = clockwise (center to the RIGHT).
     /// Single exact arc segment, no approximation.
+    ///
+    /// An arc under the [`MIN_SEGMENT`] floor turns the heading by `sweep` in
+    /// place and emits nothing, leaving the cursor where it is.
     pub fn arc(mut self, radius: f32, sweep: f32) -> Self {
-        // A non-positive radius is a sharp corner (e.g. a rounded box with a
-        // zero corner radius): turn in place by `sweep` and emit no segment.
-        // Emitting a zero-radius arc would trip `from_center_arc`'s positive-
-        // radius invariant downstream.
-        if radius <= 0.0 {
+        if arc_below_floor(radius, sweep) {
             self.heading += sweep;
             return self;
         }
@@ -224,12 +263,17 @@ impl ShapeBuilder {
     // be mixed and the running arc length stays continuous either way.
 
     /// Straight segment from the cursor to `end`, which becomes the new cursor.
+    ///
+    /// A step shorter than [`MIN_SEGMENT`] leaves the cursor and the heading
+    /// where they are and emits nothing, so a path whose consecutive points
+    /// coincide is the path without them.
     pub fn line_to(mut self, end: impl Into<[f32; 2]>) -> Self {
         let end = Vec2::from(end.into());
         let dir = end - self.cursor;
-        if dir.length_squared() > 1e-10 {
-            self.heading = heading_from_dir(dir);
+        if dir.length() < MIN_SEGMENT {
+            return self;
         }
+        self.heading = heading_from_dir(dir);
         self.segments.push(ShapeSegment::Line {
             a: self.cursor,
             b: end,
@@ -241,7 +285,16 @@ impl ShapeBuilder {
     /// Arc around `center` with explicit `radius` and `sweep` radians. The
     /// start angle comes from the running cursor, so a caller never restates
     /// where the arc begins.
+    ///
+    /// An arc under the [`MIN_SEGMENT`] floor turns the heading by `sweep` in
+    /// place and emits nothing, leaving the cursor where it is - the same step
+    /// [`arc`](Self::arc) takes, so a cable wrap the routing shrinks to nothing
+    /// drops out of the path instead of encoding a directionless point.
     pub fn arc_to(mut self, center: impl Into<[f32; 2]>, radius: f32, sweep: f32) -> Self {
+        if arc_below_floor(radius, sweep) {
+            self.heading += sweep;
+            return self;
+        }
         let center = Vec2::from(center.into());
         let start_offset = self.cursor - center;
         let start_angle = start_offset.y.atan2(start_offset.x);
@@ -286,9 +339,12 @@ impl ShapeBuilder {
     // --- Finalize ---
 
     /// Close the contour. Fillable.
+    ///
+    /// A gap under the [`MIN_SEGMENT`] floor needs no closing segment: the
+    /// contour already ends where it began, as far as the encoding can tell.
     pub fn close(mut self) -> Drawable {
         let gap = self.cursor.distance(self.start);
-        if gap > 1e-4 {
+        if gap >= MIN_SEGMENT {
             self.segments.push(ShapeSegment::Line {
                 a: self.cursor,
                 b: self.start,
@@ -353,6 +409,13 @@ impl ShapeBuilder {
                 }
                 ShapeSegment::CubicBezier { p0, p1, p2, p3 } => {
                     for piece in cubic_to_arcs(*p0, *p1, *p2, *p3, CUBIC_ARC_TOL) {
+                        // A piece under the floor is the same directionless
+                        // span a straight step or an arc is refused for. A
+                        // cubic within tolerance of a chord of no length fits
+                        // as exactly one such piece.
+                        if piece.length() < MIN_SEGMENT {
+                            continue;
+                        }
                         match piece {
                             ArcPiece::Line { start, end, length } => {
                                 gpu_segments.push(Segment::line(
@@ -448,7 +511,178 @@ fn signed_area(segments: &[ShapeSegment]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::segment::POINT_EPS;
+    use crate::shape::{PathSeg, Shape};
     use std::f32::consts::PI;
+
+    /// A rounded rectangle whose corner radius fills its half-extent is a
+    /// circle, and its four sides have nothing left to draw.
+    ///
+    /// A zero-length side must not reach the GPU: a straight segment there
+    /// carries no direction, and the primitive reads `heading` for a
+    /// zero-length span, so one emitted anyway paints a spur pointing at the
+    /// builder's zero heading rather than nothing at all.
+    #[test]
+    fn a_fully_rounded_box_emits_no_zero_length_sides() {
+        let r = 3.0;
+        let d = Curve::rounded_rect_with_radii([0.0, 0.0], [r, r], [r; 4]);
+        for seg in &d.segments {
+            assert!(
+                seg.start.distance(seg.end) > 0.0,
+                "a zero-length segment reached the GPU: {seg:?}"
+            );
+            // Four quarter turns and nothing else, so what is left describes
+            // the circle the radii asked for.
+            for p in [seg.start, seg.end] {
+                assert!(
+                    (p.length() - r).abs() < 1e-3,
+                    "{p:?} is not on the circle of radius {r}"
+                );
+            }
+        }
+    }
+
+    /// The guard is a floor on segment length, not a special case for rounded
+    /// boxes: a path that revisits its own cursor skips the step instead of
+    /// emitting a directionless one.
+    #[test]
+    fn a_repeated_path_point_emits_no_segment() {
+        let plain = Curve::shape([0.0, 0.0], 0.0)
+            .line_to([10.0, 0.0])
+            .line_to([10.0, 10.0])
+            .end();
+        let doubled = Curve::shape([0.0, 0.0], 0.0)
+            .line_to([10.0, 0.0])
+            .line_to([10.0, 0.0])
+            .line_to([10.0, 10.0])
+            .end();
+        assert_eq!(plain.segments.len(), doubled.segments.len());
+        assert!(
+            (plain.total_arc_length - doubled.total_arc_length).abs() < 1e-4,
+            "a skipped step must not change the length a dash phases over"
+        );
+    }
+
+    /// No segment reaching the GPU may be too short to carry a direction: the
+    /// primitive reads `heading` for a zero-length span and the builder has no
+    /// interior bisector to put there, so one emitted anyway paints a spur off
+    /// the contour at heading zero.
+    fn assert_no_directionless_segment(d: &Drawable) {
+        for seg in &d.segments {
+            assert!(
+                seg.start.distance(seg.end) > POINT_EPS,
+                "a directionless segment reached the GPU: {seg:?}"
+            );
+        }
+    }
+
+    /// `AnchorStyle::orbit_radius` is `orbit_offset + k * orbit_spacing` and
+    /// nothing floors `orbit_offset`, so a host style can hand a cable wrap a
+    /// zero radius. `Orbit::attachment` then returns the centre for both
+    /// tangent points and the arc has no geometry at all, so the coordinate API
+    /// must turn in place on it exactly as the turtle API does rather than
+    /// encode a circle of radius zero.
+    #[test]
+    fn a_zero_radius_path_arc_turns_in_place() {
+        let d = Shape::path(
+            [0.0, 0.0],
+            [
+                PathSeg::Line { to: [10.0, 0.0] },
+                PathSeg::Arc {
+                    center: [10.0, 0.0],
+                    radius: 0.0,
+                    sweep: FRAC_PI_2,
+                },
+                PathSeg::Line { to: [10.0, 10.0] },
+            ],
+        )
+        .evaluate();
+        assert_no_directionless_segment(&d);
+        assert_eq!(
+            d.segments.len(),
+            2,
+            "the two straight runs, and nothing for the radius-free arc"
+        );
+    }
+
+    /// The floor is on the arc a wrap lays down, not only on its radius:
+    /// `edge_path::build` selects the smaller of the two hands' sweeps, so a
+    /// wrap that barely turns arrives with a full radius and a product below
+    /// what the endpoint + curvature encoding can resolve. Both bands are
+    /// covered: below `POINT_EPS` the endpoints collapse outright, and between
+    /// there and [`MIN_SEGMENT`] the arc is shorter than any straight step the
+    /// builder would keep.
+    #[test]
+    fn a_path_arc_shorter_than_the_floor_emits_nothing() {
+        let radius = 20.0;
+        for arc_len in [POINT_EPS * 0.5, MIN_SEGMENT * 0.5] {
+            let d = Shape::path(
+                [0.0, 0.0],
+                [
+                    PathSeg::Line { to: [10.0, 0.0] },
+                    PathSeg::Arc {
+                        center: [10.0, 20.0],
+                        radius,
+                        sweep: arc_len / radius,
+                    },
+                ],
+            )
+            .evaluate();
+            assert_no_directionless_segment(&d);
+            assert_eq!(
+                d.segments.len(),
+                1,
+                "an arc {arc_len} long is under the floor and is not a segment"
+            );
+        }
+    }
+
+    /// Whether `close` still owes the contour a closing segment is the same
+    /// question `line_to` answers about a step, against the same threshold. So
+    /// walking back to the start explicitly and letting `close` do it produce
+    /// the same contour at every gap, and the threshold is where it bites.
+    #[test]
+    fn close_and_line_to_share_one_threshold() {
+        for gap in [MIN_SEGMENT * 0.5, MIN_SEGMENT, MIN_SEGMENT * 2.0] {
+            let walk = || {
+                Curve::shape([0.0, 0.0], 0.0)
+                    .line_to([10.0, 0.0])
+                    .line_to([10.0, 10.0])
+                    .line_to([gap, 0.0])
+            };
+            let implicit = walk().close();
+            let explicit = walk().line_to([0.0, 0.0]).close();
+            assert_eq!(
+                implicit.segments.len(),
+                explicit.segments.len(),
+                "gap {gap}: `close` and `line_to` disagree on whether it is a segment"
+            );
+            let expected = if gap < MIN_SEGMENT { 3 } else { 4 };
+            assert_eq!(
+                implicit.segments.len(),
+                expected,
+                "gap {gap} against a floor of {MIN_SEGMENT}"
+            );
+        }
+    }
+
+    /// The arc-spline lowering answers to the floor too. A cubic whose control
+    /// points all coincide is within tolerance of its own chord, so it fits as
+    /// one `ArcPiece::Line` of zero length - the spur again, by a different
+    /// route into `Segment::line`.
+    #[test]
+    fn a_degenerate_cubic_emits_no_zero_length_line() {
+        let d = Curve::shape([0.0, 0.0], 0.0)
+            .line_to([10.0, 0.0])
+            .bezier_to([10.0, 0.0], [10.0, 0.0], [10.0, 0.0])
+            .end();
+        assert_no_directionless_segment(&d);
+        assert_eq!(
+            d.segments.len(),
+            1,
+            "only the straight run before the cubic"
+        );
+    }
 
     /// The widget clamps camera zoom to this; screen error is `tol * zoom`, so
     /// the maximum is where the arc-spline approximation is most visible.
@@ -595,7 +829,7 @@ mod tests {
     fn rect_perimeter() {
         let d = Curve::rounded_rect_with_radii([0.0, 0.0], [50.0, 30.0], [0.0; 4]);
         assert!(d.is_closed());
-        assert_near(d.total_arc_length(), 320.0, 1.0, "rect perimeter");
+        assert_near(d.total_arc_length, 320.0, 1.0, "rect perimeter");
     }
 
     #[test]
@@ -777,14 +1011,14 @@ mod tests {
     fn test_single_line() {
         let d = Curve::line([0.0, 0.0], [10.0, 0.0]);
         assert_eq!(d.segment_count(), 1);
-        assert_near(d.total_arc_length(), 10.0, 0.001, "line length");
+        assert_near(d.total_arc_length, 10.0, 0.001, "line length");
     }
 
     #[test]
     fn test_single_bezier() {
         let d = Curve::bezier([0.0, 0.0], [10.0, 0.0], [20.0, 0.0], [30.0, 0.0]);
         assert_eq!(d.segment_count(), 1);
-        assert_near(d.total_arc_length(), 30.0, 0.5, "bezier length");
+        assert_near(d.total_arc_length, 30.0, 0.5, "bezier length");
     }
 
     #[test]

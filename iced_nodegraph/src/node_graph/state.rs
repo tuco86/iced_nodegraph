@@ -13,6 +13,8 @@ use super::Easing;
 use super::GraphInfo;
 use super::camera::Camera2D;
 use super::euclid::{IntoEuclid, LayoutPoint, WorldPoint};
+use super::{DEFAULT_CORE_SIZE, DEFAULT_ORBIT_OFFSET, DEFAULT_ORBIT_SPACING};
+use crate::style::EdgeCurve;
 use iced_widget::core::{Layout, Padding, Point, Size, keyboard, touch};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -45,15 +47,16 @@ pub(super) struct CameraTween {
     pub(super) easing: Easing,
 }
 
-/// What the pointer is currently dragging, with the anchor captured at press.
+/// What the pointer is currently dragging, with the point captured at press.
 ///
-/// The anchors live in two spaces, and which one a variant uses follows the
-/// cursor it was captured from. Panning is driven by the raw screen cursor
-/// (`Camera2D::screen_to_world`), so its anchor is a [`WorldPoint`]. Every
-/// other gesture hit-tests against child layouts, so its anchor is the
-/// layout-absolute [`LayoutPoint`] the camera hands the child walk. The two
-/// differ by the viewport origin, which cancels in the deltas these anchors
-/// are consumed as.
+/// The captured points live in two spaces, and which one a variant uses follows
+/// the cursor its delta is taken against. Panning and anchor moves measure
+/// against the raw screen cursor mapped through [`Camera2D::screen_to_world`],
+/// so their captured points are [`WorldPoint`]s. Every other gesture measures
+/// against the layout-absolute cursor the camera hands the child walk, so its
+/// captured point is a [`LayoutPoint`]. The two spaces differ by the viewport
+/// origin, so a variant's captured point has to share the space of the cursor
+/// it is subtracted from or that origin survives into the delta.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) enum Dragging {
     #[default]
@@ -95,6 +98,79 @@ pub(crate) enum Dragging {
         trail: Vec<LayoutPoint>,
         pending_cuts: HashSet<usize>,
     },
+    /// Moving one anchor. `origin` is a [`WorldPoint`] because the preview
+    /// subtracts it from the raw screen cursor mapped through
+    /// [`Camera2D::screen_to_world`]; a layout-space origin would leave the
+    /// viewport origin in the offset, and the preview would sit that far off
+    /// the cursor.
+    Anchor { anchor: usize, origin: WorldPoint },
+    /// Re-routing one edge with a phantom anchor held at the cursor. `detached`
+    /// is the anchor a wrap grab pulled off: hidden from the preview until the
+    /// host applies the detach, and always snap-eligible so the drag can put it
+    /// straight back.
+    Route {
+        edge: usize,
+        detached: Option<usize>,
+    },
+    /// A route drag snapped onto an anchor. The attachment is already
+    /// published, so releasing here commits nothing further.
+    RouteOver {
+        edge: usize,
+        anchor: usize,
+        detached: Option<usize>,
+    },
+    /// A pan-button press over something clickable, before it is known which
+    /// it is: travel turns it into a pan seeded at the press point, a release
+    /// without travel commits the click.
+    PressPending {
+        origin_world: WorldPoint,
+        origin_screen: Point,
+        target: PressTarget,
+    },
+}
+
+/// What a [`Dragging::PressPending`] would click if it never travels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PressTarget {
+    AnchorCore { anchor: usize },
+    Wrap { edge: usize, anchor: usize },
+}
+
+/// The geometry `draw` last resolved for one anchor: the core it fills and the
+/// radii it lays cables tangent to.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct AnchorGeometry {
+    /// Side length of the core, in world units. The core is centred on the
+    /// anchor position, so it reaches `core_size / 2` in every direction.
+    pub(super) core_size: f32,
+    /// Radius of orbit 0.
+    pub(super) orbit_offset: f32,
+    /// Additional radius per orbit.
+    pub(super) orbit_spacing: f32,
+}
+
+impl Default for AnchorGeometry {
+    /// The same values `style::defaults` builds its own anchor style from, for
+    /// anchors no frame has resolved a style for yet.
+    fn default() -> Self {
+        Self {
+            core_size: DEFAULT_CORE_SIZE,
+            orbit_offset: DEFAULT_ORBIT_OFFSET,
+            orbit_spacing: DEFAULT_ORBIT_SPACING,
+        }
+    }
+}
+
+impl AnchorGeometry {
+    /// How far the core reaches from the anchor position along either axis.
+    pub(super) fn core_half(&self) -> f32 {
+        self.core_size * 0.5
+    }
+
+    /// Radius of orbit `orbit`.
+    pub(super) fn orbit_radius(&self, orbit: u8) -> f32 {
+        self.orbit_offset + orbit as f32 * self.orbit_spacing
+    }
 }
 
 #[derive(Debug)]
@@ -118,6 +194,30 @@ pub(super) struct NodeGraphState {
     /// Contains (node_index, pin_index) pairs that are valid connection targets.
     /// Only populated during Edge/EdgeOver dragging states.
     pub(super) valid_drop_targets: HashSet<(usize, usize)>,
+    /// Per-anchor core size and orbit radii as last resolved in `draw`, indexed
+    /// by anchor index. Anchors no frame has reached are absent, and readers
+    /// fall back to [`AnchorGeometry::default`].
+    ///
+    /// These come off `AnchorStyle`, which needs the theme - and `update` has
+    /// none - so the geometry travels one frame behind, like `last_info`. One
+    /// frame behind is one frame STALE here, not merely late: `draw` resolves
+    /// each anchor's style at that anchor's live `AnchorStatus`, and
+    /// `core_size`/`orbit_offset`/`orbit_spacing` are public fields a host may
+    /// set per status, so a host that widens a valid target's orbits moves
+    /// these values for as long as the drag lasts, and the interaction path
+    /// reads the frame before each change.
+    pub(super) anchor_geometry: RefCell<Vec<AnchorGeometry>>,
+    /// The [`EdgeCurve`] each edge was last drawn with, indexed by edge index.
+    ///
+    /// As long as the edge list of the frame that WROTE it, which need not be
+    /// the frame reading it: the host owns the edge list, so a frame that
+    /// pushes an edge reads a vector indexed for the previous one. That is what
+    /// both readers' `.get(edge).copied().unwrap_or_default()` covers.
+    ///
+    /// Resolving an edge style needs the theme, and only `draw` has one, so the
+    /// curve arrives here a frame late. Edges `draw` never reached - an
+    /// endpoint pin that did not resolve - hold [`EdgeCurve::default`].
+    pub(super) edge_curves: RefCell<Vec<EdgeCurve>>,
     /// Last host-provided view (`view()`) that we synced into `camera`. Lets us
     /// tell apart "host pushed a new camera" (sync needed) from "internal pan/zoom
     /// changed the camera but the matching `on_pan` has not yet round-tripped
@@ -141,6 +241,14 @@ pub(super) struct NodeGraphState {
     /// Set during draw() when any SDF primitive has active animations.
     /// Read during update() to drive continuous redraws via shell.request_redraw().
     pub(super) sdf_animated: Cell<bool>,
+    /// Whether the last cursor position was somewhere the hover feedback draws
+    /// something.
+    ///
+    /// A hover has no state of its own - `draw` resolves it from the same
+    /// geometry it strokes - but it does need a FRAME to be drawn in, and a
+    /// cursor move over an idle graph asks for none. This is what says one is
+    /// owed, including on the move that LEAVES the zone and has to clear it.
+    pub(super) hover_zone: Cell<bool>,
     /// Latest per-frame diagnostics, written during draw() and taken during
     /// update() to publish via the `on_info` callback (one frame behind).
     pub(super) last_info: RefCell<Option<GraphInfo>>,
@@ -171,11 +279,14 @@ impl Default for NodeGraphState {
             selection_baseline: None,
             modifiers: keyboard::Modifiers::default(),
             valid_drop_targets: HashSet::new(),
+            anchor_geometry: RefCell::new(Vec::new()),
+            edge_curves: RefCell::new(Vec::new()),
             last_synced_view: None,
             camera_tween: None,
             last_focus_seq: None,
             last_redraw: None,
             sdf_animated: Cell::new(false),
+            hover_zone: Cell::new(false),
             last_info: RefCell::new(None),
             node_z: HashMap::new(),
             z_counter: 0,

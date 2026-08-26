@@ -15,11 +15,13 @@
 use iced::widget::{container, text};
 use iced::{Element, Length, Point, Size, Theme, Vector};
 use iced::{keyboard, mouse};
-use iced_nodegraph::{DragInfo, NodeGraph, PinRef, edge, node, pin};
+use iced_nodegraph::{
+    AnchorStatus, DragInfo, NodeGraph, PinRef, anchor, default_anchor_style, edge, node, pin,
+};
 use iced_test::Simulator;
 
 type Renderer = iced::Renderer;
-type Graph = NodeGraph<'static, usize, usize, (), Msg, Renderer>;
+type Graph = NodeGraph<'static, usize, usize, (), usize, (), Msg, Renderer>;
 type Pin = PinRef<usize, usize>;
 
 /// Captures every interaction callback the graph can emit.
@@ -38,6 +40,12 @@ enum Msg {
     DragEnd,
     Button,
     Input(String),
+    EdgeDelete(Vec<usize>),
+    AnchorMove(usize, Point),
+    AnchorCreated(usize, Point),
+    RouteAttached(usize, usize),
+    RouteDetached(usize, usize),
+    AnchorDeleted(usize),
 }
 
 const NODE_W: f32 = 60.0;
@@ -564,11 +572,12 @@ fn cutting_an_edge_reports_its_host_id() {
         Cut(Vec<&'static str>),
     }
 
-    let mut ng: NodeGraph<'_, usize, usize, (), M, Renderer, &'static str> = NodeGraph::default()
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .on_disconnect(M::Disconnect)
-        .on_edge_delete(M::Cut);
+    let mut ng: NodeGraph<'_, usize, usize, &'static str, usize, (), M, Renderer> =
+        NodeGraph::default()
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .on_disconnect(M::Disconnect)
+            .on_edge_delete(M::Cut);
     ng.push_node(node(
         0usize,
         OUT_POS,
@@ -1037,9 +1046,10 @@ fn backspace_in_focused_text_input_does_not_delete_node() {
 }
 
 // ---------------------------------------------------------------------------
-// Duplicate node id: debug-build guard. `node_index` resolves to the first
-// match, so a duplicate renders one node twice and behaves undefined. Edges
-// need no such guard: they carry no id and are addressed by index.
+// Shared node/anchor id space: debug-build guard. `node_index`/`anchor_index`
+// resolve to the first match, so a duplicate renders one element twice and
+// behaves undefined. Edges need no such guard: they carry no id and are
+// addressed by index.
 // ---------------------------------------------------------------------------
 
 #[cfg(debug_assertions)]
@@ -1054,6 +1064,24 @@ fn push_node_rejects_duplicate_id_in_debug() {
     };
     ng.push_node(node(7usize, Point::new(0.0, 0.0), body()));
     ng.push_node(node(7usize, Point::new(50.0, 50.0), body()));
+}
+
+/// A node and an anchor may carry the same id: the two are separate id spaces,
+/// so a host numbering anchors from zero never has to know what its nodes use.
+#[test]
+fn a_node_and_an_anchor_may_share_a_number() {
+    let mut ng: Graph = NodeGraph::default();
+    ng.push_node(node(
+        7usize,
+        Point::new(0.0, 0.0),
+        container(text("n"))
+            .width(Length::Fixed(NODE_W))
+            .height(Length::Fixed(NODE_H)),
+    ));
+    ng.push_anchor(anchor(7usize, Point::new(120.0, 120.0)));
+
+    let ui = Simulator::new(Element::from(ng));
+    let _ = ui.into_messages();
 }
 
 // ---------------------------------------------------------------------------
@@ -1596,4 +1624,895 @@ fn body_drag_on_a_resizable_node_still_moves_it() {
         (delta.x - 50.0).abs() < 0.5 && (delta.y - 20.0).abs() < 0.5,
         "node should move by (50, 20), got {delta:?}",
     );
+}
+
+// ---------------------------------------------------------------------------
+// Anchor dragging. An anchor is a grabbable object of the graph itself, and
+// like every other gesture the widget only REPORTS the result - it never moves
+// the anchor.
+// ---------------------------------------------------------------------------
+
+/// The camera a scene is viewed through together with the widget origin it is
+/// drawn at: the two terms of the mapping a press has to aim through,
+/// `screen = origin + (world + position) * zoom`.
+#[derive(Debug, Clone, Copy)]
+struct View {
+    position: Point,
+    zoom: f32,
+    origin: Vector,
+}
+
+impl View {
+    /// The default camera at the window origin, where a world point IS its
+    /// screen pixel.
+    const IDENTITY: Self = Self {
+        position: Point::ORIGIN,
+        zoom: 1.0,
+        origin: Vector::ZERO,
+    };
+
+    /// The same camera read through a graph drawn `TOOLBAR` px down the window.
+    const fn below_toolbar(self) -> Self {
+        Self {
+            position: self.position,
+            zoom: self.zoom,
+            origin: Vector::new(0.0, TOOLBAR),
+        }
+    }
+
+    /// The screen pixel this view draws `world` at.
+    fn screen(self, world: Point) -> Point {
+        Point::new(
+            self.origin.x + (world.x + self.position.x) * self.zoom,
+            self.origin.y + (world.y + self.position.y) * self.zoom,
+        )
+    }
+}
+
+/// Half scale: a screen-pixel threshold divided by zoom reaches twice as far
+/// into the world as it does at zoom 1, while a ring radius and a cable's arc
+/// length stay where they are.
+const HALF_SCALE: View = View {
+    position: Point::ORIGIN,
+    zoom: 0.5,
+    origin: Vector::ZERO,
+};
+
+/// Double scale, panned, so neither term of the mapping is the identity.
+const DOUBLE_SCALE: View = View {
+    position: Point::new(-100.0, -100.0),
+    zoom: 2.0,
+    origin: Vector::ZERO,
+};
+
+/// The cameras every anchor and route gesture is replayed under. Zoom 1 is the
+/// one point where a threshold divided by zoom and a world-fixed radius agree,
+/// so a gesture pinned only there is pinned nowhere.
+const OFF_UNIT_VIEWS: [View; 2] = [HALF_SCALE, DOUBLE_SCALE];
+
+/// A press this far off an anchor's core, in world units: inside the core's
+/// grab box at every zoom these tests use, and off centre enough that a report
+/// carrying the anchor's own position can be told from one carrying the
+/// cursor's.
+const CORE_NUDGE: Vector = Vector::new(2.0, 1.0);
+
+/// Radius of an anchor's innermost orbit, read from the style the widget
+/// resolves it from. Every anchor in these scenes carries at most one edge, so
+/// orbit 0 is the only ring in play.
+fn orbit_0() -> f32 {
+    default_anchor_style(&Theme::Dark, AnchorStatus::Idle).orbit_offset
+}
+
+/// The anchor a routed cable in these scenes wraps.
+const ANCHOR_A: usize = 7;
+/// A second anchor, off the cable: nothing reaches it until a route drag
+/// carries the cursor there.
+const ANCHOR_B: usize = 8;
+
+/// A graph whose only content is one anchor, its move gesture wired.
+fn graph_with_anchor(view: View, at: Point) -> Element<'static, Msg, Theme, Renderer> {
+    let mut ng: Graph = NodeGraph::default()
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .view(view.position, view.zoom)
+        .on_anchor_move(Msg::AnchorMove);
+    ng.push_anchor(anchor(ANCHOR_A, at));
+    ng.into()
+}
+
+/// The drag reports the world position the anchor ended up at, outright rather
+/// than as a delta, so a host that lost a frame still lands where the cursor is.
+///
+/// The press sits OFF the core's centre: the report is the anchor's own
+/// position plus the cursor's travel, and a press on the centre could not tell
+/// that apart from a report of the drop point.
+#[test]
+fn dragging_an_anchor_reports_its_new_position() {
+    let at = Point::new(200.0, 150.0);
+    let travel = Vector::new(60.0, 40.0);
+    let mut ui = Simulator::new(graph_with_anchor(View::IDENTITY, at));
+    drag(&mut ui, at + CORE_NUDGE, at + CORE_NUDGE + travel);
+
+    assert_eq!(messages(ui), vec![Msg::AnchorMove(ANCHOR_A, at + travel)]);
+}
+
+/// A press and release without motion is a click, not a move - the same rule
+/// node dragging follows, so a plain click never dirties host state.
+#[test]
+fn clicking_an_anchor_reports_no_move() {
+    let at = Point::new(200.0, 150.0);
+    let mut ui = Simulator::new(graph_with_anchor(View::IDENTITY, at));
+    click(&mut ui, at);
+
+    let msgs = messages(ui);
+    assert!(
+        !msgs.iter().any(|m| matches!(m, Msg::AnchorMove(..))),
+        "a motionless click reported a move: {msgs:?}",
+    );
+}
+
+/// The grab is gated on `on_anchor_move` being wired: without it the press
+/// falls through to the selection box rather than starting a drag the host
+/// could never apply.
+#[test]
+fn an_anchor_is_not_grabbable_without_the_callback() {
+    let at = Point::new(200.0, 150.0);
+    let mut ng: Graph = NodeGraph::default()
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .on_select(Msg::Select);
+    ng.push_anchor(anchor(ANCHOR_A, at));
+    let mut ui = Simulator::new(Element::from(ng));
+    drag(&mut ui, at, Point::new(260.0, 190.0));
+
+    let msgs = messages(ui);
+    assert!(
+        !msgs.iter().any(|m| matches!(m, Msg::AnchorMove(..))),
+        "an anchor moved without a handler to report it to: {msgs:?}",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Route gestures. An edge connects two pins and carries the anchors it wraps;
+// every gesture below edits that route, and every one of them only REPORTS.
+//
+// The scene: node 0's Right/Output pin at `out_anchor()` = (160, 115), node 1's
+// Left/Input pin at `route_in_anchor()` = (500, 115). Both bezier control
+// points of the unrouted cable lie on y = 115, so the bare cable IS the
+// straight 340 px segment between the pins; `bare_mid()` sits 170 along it,
+// clear of the 24 px end zone at either end.
+//
+// Routed through the anchor at `A_AT`, the cable leaves that line and runs
+// tangent to orbit 0 instead, wrapping the side of the ring AWAY from the
+// pin-to-pin run. `wrap_point()` - the lowest point of that circle - therefore
+// lies on the arc the cable draws, `orbit_0()` px from the core it belongs to.
+// ---------------------------------------------------------------------------
+
+/// The graph shape the route scenes need: edge ids are `usize`, so an edge is
+/// named by the index it was pushed at.
+type RouteGraph = NodeGraph<'static, usize, usize, usize, usize, (), Msg, Renderer>;
+
+/// The id of the one edge a route scene carries.
+const ROUTE_EDGE: usize = 0;
+
+/// The input node of the route scene, far enough from the output that the cable
+/// has a mid-run between the two end zones.
+const ROUTE_IN_POS: Point = Point::new(500.0, 100.0);
+
+/// Anchor A, 85 px below the bare cable: far enough that the wrap and the
+/// straight run are never the same press.
+const A_AT: Point = Point::new(330.0, 200.0);
+/// Anchor B, well clear of the cable.
+const B_AT: Point = Point::new(330.0, 400.0);
+
+fn route_in_anchor() -> Point {
+    Point::new(ROUTE_IN_POS.x, ROUTE_IN_POS.y + NODE_H / 2.0)
+}
+
+/// The midpoint of the bare cable's straight run.
+fn bare_mid() -> Point {
+    Point::new((out_anchor().x + route_in_anchor().x) / 2.0, out_anchor().y)
+}
+
+/// Where a cable routed through the anchor at `at` wraps it.
+fn wrap_point(at: Point) -> Point {
+    Point::new(at.x, at.y + orbit_0())
+}
+
+/// Fills `ng` with the route scene, read through `view`: node 0's output pin,
+/// node 1's input pin, one anchor per entry of `anchors`, and edge
+/// [`ROUTE_EDGE`] between the two pins routed through `route`.
+fn route_scene(
+    ng: RouteGraph,
+    view: View,
+    anchors: &[(usize, Point)],
+    route: &[usize],
+) -> Element<'static, Msg, Theme, Renderer> {
+    let mut ng = ng.view(view.position, view.zoom);
+    ng.push_node(node(
+        0usize,
+        OUT_POS,
+        pin!(Right, 0usize, pin_body::<_>(), Output),
+    ));
+    ng.push_node(node(
+        1usize,
+        ROUTE_IN_POS,
+        pin!(Left, 0usize, pin_body::<_>(), Input),
+    ));
+    for &(id, at) in anchors {
+        ng.push_anchor(anchor(id, at));
+    }
+    ng.push_edge(
+        edge(PinRef::new(0, 0), PinRef::new(1, 0), ROUTE_EDGE).route(route.iter().copied()),
+    );
+    ng.into()
+}
+
+/// All three route-drag callbacks wired - the gating the mid-run and wrap zones
+/// ask for before they are live at all.
+fn routing_graph() -> RouteGraph {
+    NodeGraph::default()
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .on_anchor_create(Msg::AnchorCreated)
+        .on_route_attach(Msg::RouteAttached)
+        .on_route_detach(Msg::RouteDetached)
+}
+
+fn pan_press() -> iced::Event {
+    iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right))
+}
+fn pan_release() -> iced::Event {
+    iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right))
+}
+
+/// A grab of the cable's run puts a new anchor where the drag ends: the widget
+/// mints nothing itself, it names the edge and the world point and lets the
+/// host decide what the anchor is called.
+#[test]
+fn grabbing_a_cable_mid_run_creates_an_anchor_on_release() {
+    let mut ui = Simulator::new(route_scene(routing_graph(), View::IDENTITY, &[], &[]));
+    let dropped_at = Point::new(330.0, 400.0);
+    drag(&mut ui, bare_mid(), dropped_at);
+
+    assert_eq!(
+        messages(ui),
+        vec![Msg::AnchorCreated(ROUTE_EDGE, dropped_at)],
+    );
+}
+
+/// Attaching is plug behaviour: the moment the drag reaches an anchor's snap
+/// distance the attachment is published, so the host's own route is what the
+/// next frame draws. Release commits nothing further.
+#[test]
+fn a_route_drag_snaps_onto_an_anchor_immediately() {
+    let snapped = || {
+        let mut ui = Simulator::new(route_scene(
+            routing_graph(),
+            View::IDENTITY,
+            &[(ANCHOR_B, B_AT)],
+            &[],
+        ));
+        ui.point_at(bare_mid());
+        ui.simulate([moved(bare_mid()), press()]);
+        ui.point_at(B_AT);
+        ui.simulate([moved(B_AT)]);
+        ui
+    };
+
+    assert_eq!(
+        messages(snapped()),
+        vec![Msg::RouteAttached(ROUTE_EDGE, ANCHOR_B)],
+        "the attachment must be published on snap, not held back for the release",
+    );
+
+    let mut released = snapped();
+    released.simulate([release()]);
+    assert_eq!(
+        messages(released),
+        vec![Msg::RouteAttached(ROUTE_EDGE, ANCHOR_B)],
+        "releasing on the anchor must add nothing: it is already attached",
+    );
+}
+
+/// Leaving the ring again reports the detachment while the drag is still in
+/// flight, the mirror of the snap - a drag that only committed on release could
+/// not be talked out of an anchor it brushed past.
+#[test]
+fn leaving_the_anchor_detaches_again() {
+    let mut ui = Simulator::new(route_scene(
+        routing_graph(),
+        View::IDENTITY,
+        &[(ANCHOR_B, B_AT)],
+        &[],
+    ));
+    ui.point_at(bare_mid());
+    ui.simulate([moved(bare_mid()), press()]);
+    ui.point_at(B_AT);
+    ui.simulate([moved(B_AT)]);
+    let away = Point::new(B_AT.x, B_AT.y - 100.0);
+    ui.point_at(away);
+    ui.simulate([moved(away)]);
+
+    assert_eq!(
+        messages(ui),
+        vec![
+            Msg::RouteAttached(ROUTE_EDGE, ANCHOR_B),
+            Msg::RouteDetached(ROUTE_EDGE, ANCHOR_B),
+        ],
+    );
+}
+
+/// A grab at the wrap holds the anchor rather than dropping it: the cable comes
+/// off only once the cursor is past the unsnap distance, so a hand that shakes
+/// while pressing leaves the route exactly as it was.
+#[test]
+fn a_wrap_grab_detaches_only_past_the_unsnap_threshold() {
+    let wrap = wrap_point(A_AT);
+    let scene = || {
+        route_scene(
+            routing_graph(),
+            View::IDENTITY,
+            &[(ANCHOR_A, A_AT)],
+            &[ANCHOR_A],
+        )
+    };
+
+    let mut wiggled = Simulator::new(scene());
+    // 13 units outside orbit 0, and so 2 short of the UNSNAP_THRESHOLD of 15
+    // the ring has to be left by: a shrunken threshold lets go right here.
+    let nudge = Point::new(A_AT.x, A_AT.y + orbit_0() + 13.0);
+    wiggled.point_at(wrap);
+    wiggled.simulate([moved(wrap), press()]);
+    wiggled.point_at(nudge);
+    wiggled.simulate([moved(nudge), release()]);
+    assert_eq!(
+        messages(wiggled),
+        Vec::<Msg>::new(),
+        "a wrap grab that never left the ring must keep the anchor",
+    );
+
+    let mut pulled = Simulator::new(scene());
+    let away = Point::new(A_AT.x, A_AT.y + 300.0);
+    pulled.point_at(wrap);
+    pulled.simulate([moved(wrap), press()]);
+    pulled.point_at(away);
+    pulled.simulate([moved(away), release()]);
+    assert_eq!(
+        messages(pulled),
+        vec![
+            Msg::RouteDetached(ROUTE_EDGE, ANCHOR_A),
+            Msg::AnchorCreated(ROUTE_EDGE, away),
+        ],
+        "pulling the cable off must report the detachment, then the anchor the \
+         release leaves behind",
+    );
+}
+
+/// The pan button both pans and clicks, and travel is what tells them apart: a
+/// click on a core deletes the anchor and pans nothing, a drag from the same
+/// press pans from that very point and deletes nothing.
+#[test]
+fn a_click_of_the_pan_button_on_a_core_deletes() {
+    let scene = || {
+        route_scene(
+            routing_graph()
+                .on_anchor_delete(Msg::AnchorDeleted)
+                .on_pan(Msg::Camera),
+            View::IDENTITY,
+            &[(ANCHOR_A, A_AT)],
+            &[ANCHOR_A],
+        )
+    };
+
+    let mut clicked = Simulator::new(scene());
+    clicked.point_at(A_AT);
+    clicked.simulate([moved(A_AT), pan_press(), pan_release()]);
+    assert_eq!(
+        messages(clicked),
+        vec![Msg::AnchorDeleted(ANCHOR_A)],
+        "a travel-free pan-button click on a core deletes it and pans nothing",
+    );
+
+    let mut dragged = Simulator::new(scene());
+    let to = Point::new(A_AT.x + 60.0, A_AT.y);
+    dragged.point_at(A_AT);
+    dragged.simulate([moved(A_AT), pan_press()]);
+    dragged.point_at(to);
+    dragged.simulate([moved(to), pan_release()]);
+    assert_eq!(
+        messages(dragged),
+        vec![Msg::Camera(Point::new(60.0, 0.0), 1.0)],
+        "a pan-button press that travelled is a pan seeded at the press point, \
+         and never a delete",
+    );
+}
+
+/// The same click on a wrap takes that one cable off the anchor, leaving the
+/// anchor and every other cable through it alone.
+#[test]
+fn a_click_of_the_pan_button_on_a_wrap_detaches() {
+    let mut ui = Simulator::new(route_scene(
+        routing_graph().on_pan(Msg::Camera),
+        View::IDENTITY,
+        &[(ANCHOR_A, A_AT)],
+        &[ANCHOR_A],
+    ));
+    let wrap = wrap_point(A_AT);
+    ui.point_at(wrap);
+    ui.simulate([moved(wrap), pan_press(), pan_release()]);
+
+    assert_eq!(
+        messages(ui),
+        vec![Msg::RouteDetached(ROUTE_EDGE, ANCHOR_A)],
+        "a pan-button click on a wrap detaches that cable and pans nothing",
+    );
+}
+
+/// An unwired zone is INERT, not merely silent: the press has to reach whatever
+/// is behind the cable, which on empty canvas is the selection box.
+#[test]
+fn route_gestures_without_callbacks_fall_through() {
+    let ng: RouteGraph = NodeGraph::default()
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .on_drag_start(Msg::DragStart);
+    let mut ui = Simulator::new(route_scene(ng, View::IDENTITY, &[], &[]));
+    let at = bare_mid();
+    ui.point_at(at);
+    ui.simulate([moved(at), press()]);
+
+    assert_eq!(
+        messages(ui),
+        vec![Msg::DragStart(DragInfo::SelectionBox {
+            start_x: at.x,
+            start_y: at.y,
+        })],
+        "the mid-run zone must not swallow a press it has no callback for",
+    );
+}
+
+/// One edge is one cable: two cables sharing an anchor are two connections, and
+/// a cut through one reports exactly that one - by its host id, with the other
+/// left wired.
+#[test]
+fn cutting_a_routed_cable_kills_one_edge() {
+    let mut ng: RouteGraph = NodeGraph::default()
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .on_disconnect(Msg::Disconnect)
+        .on_edge_delete(Msg::EdgeDelete);
+    let shared = Point::new(330.0, 300.0);
+    for (id, at) in [(0usize, OUT_POS), (2usize, Point::new(OUT_POS.x, 500.0))] {
+        ng.push_node(node(id, at, pin!(Right, 0usize, pin_body::<_>(), Output)));
+    }
+    for (id, at) in [
+        (1usize, ROUTE_IN_POS),
+        (3usize, Point::new(ROUTE_IN_POS.x, 500.0)),
+    ] {
+        ng.push_node(node(id, at, pin!(Left, 0usize, pin_body::<_>(), Input)));
+    }
+    ng.push_anchor(anchor(ANCHOR_A, shared));
+    ng.push_edge(edge(PinRef::new(0, 0), PinRef::new(1, 0), 0usize).route([ANCHOR_A]));
+    ng.push_edge(edge(PinRef::new(2, 0), PinRef::new(3, 0), 1usize).route([ANCHOR_A]));
+
+    let mut ui = Simulator::new(Element::from(ng));
+    // 100 px along the upper cable, where it has already left the straight run
+    // toward the shared anchor but is still 147 px from the lower one.
+    let on_upper_cable = Point::new(228.0, 160.0);
+    ui.point_at(on_upper_cable);
+    ui.simulate([
+        iced::Event::Keyboard(keyboard::Event::ModifiersChanged(cmd())),
+        moved(on_upper_cable),
+    ]);
+    ui.simulate([press(), release()]);
+
+    assert_eq!(
+        messages(ui),
+        vec![
+            Msg::Disconnect(PinRef::new(0, 0), PinRef::new(1, 0)),
+            Msg::EdgeDelete(vec![0]),
+        ],
+        "a cut through one routed cable must take that edge and only that edge",
+    );
+}
+
+/// A busy anchor takes a second cable on its next free orbit, and takes it
+/// DURING the drag like every other snap.
+///
+/// The occupied case is its own test because the ring the drag is measured
+/// against is not the anchor's innermost one: orbit 0 already carries a cable,
+/// so the second cable is offered orbit 1 and snaps at that larger radius.
+#[test]
+fn a_route_drag_snaps_onto_an_occupied_anchor() {
+    let scene = || {
+        let mut ng = routing_graph();
+        ng.push_node(node(
+            0usize,
+            OUT_POS,
+            pin!(Right, 0usize, pin_body::<_>(), Output),
+        ));
+        ng.push_node(node(
+            1usize,
+            ROUTE_IN_POS,
+            pin!(Left, 0usize, pin_body::<_>(), Input),
+        ));
+        ng.push_node(node(
+            2usize,
+            Point::new(OUT_POS.x, 500.0),
+            pin!(Right, 0usize, pin_body::<_>(), Output),
+        ));
+        ng.push_node(node(
+            3usize,
+            Point::new(ROUTE_IN_POS.x, 500.0),
+            pin!(Left, 0usize, pin_body::<_>(), Input),
+        ));
+        ng.push_anchor(anchor(ANCHOR_A, A_AT));
+        // Edge 0 already wraps A, so A is singly occupied.
+        ng.push_edge(edge(PinRef::new(0, 0), PinRef::new(1, 0), 0usize).route([ANCHOR_A]));
+        // Edge 1 runs well below and is unrouted.
+        ng.push_edge(edge(PinRef::new(2, 0), PinRef::new(3, 0), 1usize));
+        Element::from(ng)
+    };
+    // The lower cable's mid-run, and the core of the busy anchor.
+    let lower_mid = Point::new(bare_mid().x, 515.0);
+
+    let mut ui = Simulator::new(scene());
+    ui.point_at(lower_mid);
+    ui.simulate([moved(lower_mid), press()]);
+    ui.point_at(A_AT);
+    ui.simulate([moved(A_AT)]);
+
+    assert_eq!(
+        messages(ui),
+        vec![Msg::RouteAttached(1, ANCHOR_A)],
+        "a second cable must attach on snap, not wait for the release",
+    );
+}
+
+/// A cable pulled off one anchor can be put straight onto another.
+///
+/// The detached anchor stays snap-eligible so the drag can also put it back,
+/// and that must not stop a DIFFERENT anchor from taking it.
+#[test]
+fn a_detached_cable_can_be_attached_to_another_anchor() {
+    let mut ui = Simulator::new(route_scene(
+        routing_graph(),
+        View::IDENTITY,
+        &[(ANCHOR_A, A_AT), (ANCHOR_B, B_AT)],
+        &[ANCHOR_A],
+    ));
+    let wrap = wrap_point(A_AT);
+    ui.point_at(wrap);
+    ui.simulate([moved(wrap), press()]);
+    // Off A by more than the unsnap distance, clear of both anchors.
+    let between = Point::new(A_AT.x, (A_AT.y + B_AT.y) / 2.0);
+    ui.point_at(between);
+    ui.simulate([moved(between)]);
+    // Onto B.
+    ui.point_at(B_AT);
+    ui.simulate([moved(B_AT)]);
+
+    assert_eq!(
+        messages(ui),
+        vec![
+            Msg::RouteDetached(ROUTE_EDGE, ANCHOR_A),
+            Msg::RouteAttached(ROUTE_EDGE, ANCHOR_B),
+        ],
+        "a cable pulled off one anchor must be able to land on another",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The same gestures at other zooms. Every threshold a press is resolved
+// against is a screen-pixel distance divided by zoom, so it lands in world
+// units and GROWS without bound as the camera pulls back, while the ring radius
+// and the arc length it competes with stay where they are. Zoom 1 is the one
+// point where the two agree, so a gesture pinned only there is pinned nowhere.
+//
+// The gesture itself is unchanged: the press aims at the SCREEN pixel the view
+// draws the target at, and the messages are the ones zoom 1 publishes.
+// ---------------------------------------------------------------------------
+
+/// A world point clear of every node, cable and anchor of the route scene, and
+/// on screen under each view these tests use.
+const CLEAR_OF_EVERYTHING: Point = Point::new(330.0, 300.0);
+
+/// Pulled back until the raw end-zone budget (`EDGE_END_GRAB_LENGTH`, 24
+/// screen px) covers 192 world units at either end of the 340 unit cable, so
+/// the two ends would meet in the middle and leave no run to grab.
+const EIGHTH_SCALE: View = View {
+    position: Point::ORIGIN,
+    zoom: 0.125,
+    origin: Vector::ZERO,
+};
+
+/// The wrap is grabbed by its RING, which is world-fixed: a press on it has to
+/// reach the cable at every zoom rather than being swallowed by whatever zone
+/// grew over it.
+///
+/// The anchor's own move gesture is wired, so the core is a live competitor for
+/// the press - and a core that took it would drag the anchor away instead of
+/// taking the cable off it.
+#[test]
+fn a_wrap_grab_detaches_at_any_zoom() {
+    for view in OFF_UNIT_VIEWS {
+        let zoom = view.zoom;
+        let mut ui = Simulator::new(route_scene(
+            routing_graph().on_anchor_move(Msg::AnchorMove),
+            view,
+            &[(ANCHOR_A, A_AT)],
+            &[ANCHOR_A],
+        ));
+        drag(
+            &mut ui,
+            view.screen(wrap_point(A_AT)),
+            view.screen(CLEAR_OF_EVERYTHING),
+        );
+
+        assert_eq!(
+            messages(ui),
+            vec![
+                Msg::RouteDetached(ROUTE_EDGE, ANCHOR_A),
+                Msg::AnchorCreated(ROUTE_EDGE, CLEAR_OF_EVERYTHING),
+            ],
+            "the wrap must take the press and report the detach at zoom {zoom}",
+        );
+    }
+}
+
+/// The pan-button click on a wrap, with the anchor's own delete wired: a press
+/// the core swallowed does not merely go quiet, it deletes the anchor the click
+/// was meant to take one cable off.
+#[test]
+fn a_pan_button_click_on_a_wrap_detaches_at_any_zoom() {
+    for view in OFF_UNIT_VIEWS {
+        let zoom = view.zoom;
+        let mut ui = Simulator::new(route_scene(
+            routing_graph()
+                .on_anchor_delete(Msg::AnchorDeleted)
+                .on_pan(Msg::Camera),
+            view,
+            &[(ANCHOR_A, A_AT)],
+            &[ANCHOR_A],
+        ));
+        let wrap = view.screen(wrap_point(A_AT));
+        ui.point_at(wrap);
+        ui.simulate([moved(wrap), pan_press(), pan_release()]);
+
+        assert_eq!(
+            messages(ui),
+            vec![Msg::RouteDetached(ROUTE_EDGE, ANCHOR_A)],
+            "the click must detach that cable and leave the anchor at zoom {zoom}",
+        );
+    }
+}
+
+/// The core stays grabbable at every zoom, and the press is off centre, so the
+/// report has to carry the anchor's own position plus the cursor's travel.
+#[test]
+fn an_anchor_core_is_grabbable_at_any_zoom() {
+    let at = Point::new(200.0, 150.0);
+    let travel = Vector::new(60.0, 40.0);
+    for view in OFF_UNIT_VIEWS {
+        let zoom = view.zoom;
+        let mut ui = Simulator::new(graph_with_anchor(view, at));
+        drag(
+            &mut ui,
+            view.screen(at + CORE_NUDGE),
+            view.screen(at + CORE_NUDGE + travel),
+        );
+
+        assert_eq!(
+            messages(ui),
+            vec![Msg::AnchorMove(ANCHOR_A, at + travel)],
+            "the core must grab and report the same move at zoom {zoom}",
+        );
+    }
+}
+
+/// The run between the two end zones is grabbable at every zoom, [`EIGHTH_SCALE`]
+/// included: an end zone that outgrew the cable would take the press for an
+/// unplug and create nothing.
+#[test]
+fn a_cable_mid_run_creates_an_anchor_at_any_zoom() {
+    for view in [HALF_SCALE, DOUBLE_SCALE, EIGHTH_SCALE] {
+        let zoom = view.zoom;
+        let mut ui = Simulator::new(route_scene(routing_graph(), view, &[], &[]));
+        drag(
+            &mut ui,
+            view.screen(bare_mid()),
+            view.screen(CLEAR_OF_EVERYTHING),
+        );
+
+        assert_eq!(
+            messages(ui),
+            vec![Msg::AnchorCreated(ROUTE_EDGE, CLEAR_OF_EVERYTHING)],
+            "the cable's run must take the press and name the anchor at zoom {zoom}",
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Anchors at a non-zero widget origin. An anchor is drawn by the graph itself
+// rather than laid out as a child, so nothing carries the widget's origin for
+// it: the hit test has to fold it in the same way `draw` does, or the dot the
+// user aims at and the target that answers are `TOOLBAR` px apart. Nodes are
+// immune - their layout bounds already carry the origin - which is why every
+// other test here, sitting at the window origin, cannot see the difference.
+//
+// The scene puts a fixed-height element above the graph, so anchor 9 at world
+// (230, 300) is DRAWN at (230, 400).
+// ---------------------------------------------------------------------------
+
+/// Height of the element above the graph.
+const TOOLBAR: f32 = 100.0;
+/// The edge and anchor of the off-origin scene.
+const OFFSET_EDGE: usize = 7;
+const OFFSET_ANCHOR: usize = 9;
+/// World position of the off-origin scene's anchor.
+const OFFSET_ANCHOR_AT: Point = Point::new(230.0, 300.0);
+
+/// The view the off-origin scene is read through at zoom 1: the toolbar is part
+/// of the mapping, so a world point lands `TOOLBAR` px down the window.
+const OFFSET_VIEW: View = View::IDENTITY.below_toolbar();
+
+/// Where a world point of the off-origin scene lands on screen at zoom 1.
+fn drawn_at(world: Point) -> Point {
+    OFFSET_VIEW.screen(world)
+}
+
+/// Output 0:0 -> input 1:0 as edge [`OFFSET_EDGE`] routed through `route`, plus
+/// anchor [`OFFSET_ANCHOR`], read through `view`, with the whole graph pushed
+/// down by a toolbar.
+fn offset_scene(view: View, route: &[usize]) -> Element<'static, Msg, Theme, Renderer> {
+    use iced::widget::column;
+
+    let mut ng: RouteGraph = NodeGraph::default()
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .view(view.position, view.zoom)
+        .on_select(Msg::Select)
+        .on_pan(Msg::Camera)
+        .on_anchor_move(Msg::AnchorMove)
+        .on_anchor_create(Msg::AnchorCreated)
+        .on_anchor_delete(Msg::AnchorDeleted)
+        .on_route_attach(Msg::RouteAttached)
+        .on_route_detach(Msg::RouteDetached);
+    ng.push_node(node(
+        0usize,
+        OUT_POS,
+        pin!(Right, 0usize, pin_body::<_>(), Output),
+    ));
+    ng.push_node(node(
+        1usize,
+        IN_POS,
+        pin!(Left, 0usize, pin_body::<_>(), Input),
+    ));
+    ng.push_anchor(anchor(OFFSET_ANCHOR, OFFSET_ANCHOR_AT));
+    ng.push_edge(edge(PinRef::new(0, 0), PinRef::new(1, 0), OFFSET_EDGE).route(route.to_vec()));
+    column![
+        container(text(""))
+            .width(Length::Fill)
+            .height(Length::Fixed(TOOLBAR)),
+        ng
+    ]
+    .into()
+}
+
+/// The core is drawn at world plus widget origin, so that is where it has to be
+/// grabbable - and what it reports is still a world position, because that is
+/// what the host stores: the anchor's own coordinates plus the cursor's travel,
+/// which a press on the core's centre could not tell from the drop point.
+#[test]
+fn an_anchor_core_is_grabbable_where_it_is_drawn() {
+    let travel = Vector::new(50.0, 40.0);
+    let press_at = OFFSET_ANCHOR_AT + CORE_NUDGE;
+    let mut ui = Simulator::new(offset_scene(OFFSET_VIEW, &[]));
+    drag(&mut ui, drawn_at(press_at), drawn_at(press_at + travel));
+
+    let msgs = messages(ui);
+    assert!(
+        msgs.contains(&Msg::AnchorMove(OFFSET_ANCHOR, OFFSET_ANCHOR_AT + travel)),
+        "the drawn core must grab and report a world position: {msgs:?}",
+    );
+}
+
+/// And nowhere else: an anchor that answers a press `TOOLBAR` px above its dot
+/// is a target the user cannot see.
+#[test]
+fn nothing_is_grabbable_at_the_unshifted_world_position() {
+    let mut ui = Simulator::new(offset_scene(OFFSET_VIEW, &[]));
+    drag(&mut ui, OFFSET_ANCHOR_AT, Point::new(280.0, 340.0));
+
+    let msgs = messages(ui);
+    assert!(
+        !msgs.iter().any(|m| matches!(m, Msg::AnchorMove(..))),
+        "the anchor must not answer where it is not drawn: {msgs:?}",
+    );
+}
+
+/// The pan-button click runs through the same core hit test the drag does.
+#[test]
+fn a_pan_button_click_on_the_drawn_core_deletes_it() {
+    let mut ui = Simulator::new(offset_scene(OFFSET_VIEW, &[]));
+    let drawn = drawn_at(OFFSET_ANCHOR_AT);
+    ui.point_at(drawn);
+    ui.simulate([moved(drawn), pan_press(), pan_release()]);
+
+    let msgs = messages(ui);
+    assert!(
+        msgs.contains(&Msg::AnchorDeleted(OFFSET_ANCHOR)),
+        "the drawn core must take the delete click: {msgs:?}",
+    );
+}
+
+/// `on_anchor_create` reports a WORLD position - the host stores it as an
+/// anchor position - so the widget origin has to be folded back out of it.
+#[test]
+fn a_created_anchor_is_reported_in_world_space() {
+    let mut ui = Simulator::new(offset_scene(OFFSET_VIEW, &[]));
+    let mid_run = drawn_at(Point::new(230.0, out_anchor().y));
+    drag(&mut ui, mid_run, drawn_at(Point::new(500.0, 400.0)));
+
+    let msgs = messages(ui);
+    assert!(
+        msgs.contains(&Msg::AnchorCreated(OFFSET_EDGE, Point::new(500.0, 400.0))),
+        "a created anchor is reported where the host would store it: {msgs:?}",
+    );
+}
+
+/// The wrap arc is drawn around the anchor's drawn position, so that is where
+/// the wrap is grabbed - and pulling it that far off has to report the detach.
+#[test]
+fn a_wrap_is_grabbable_where_it_is_drawn() {
+    let mut ui = Simulator::new(offset_scene(OFFSET_VIEW, &[OFFSET_ANCHOR]));
+    let ring_bottom = drawn_at(wrap_point(OFFSET_ANCHOR_AT));
+    drag(&mut ui, ring_bottom, drawn_at(Point::new(600.0, 500.0)));
+
+    let msgs = messages(ui);
+    assert!(
+        msgs.contains(&Msg::RouteDetached(OFFSET_EDGE, OFFSET_ANCHOR)),
+        "the drawn wrap must take the press and report the anchor it came off: {msgs:?}",
+    );
+    assert!(
+        !msgs.iter().any(|m| matches!(m, Msg::Select(_))),
+        "the wrap took the press, so no selection box opened: {msgs:?}",
+    );
+    assert!(
+        !msgs.iter().any(|m| matches!(m, Msg::AnchorMove(..))),
+        "the wrap took the press, so the core never moved: {msgs:?}",
+    );
+}
+
+/// The origin and the zoom compose: the wrap of an off-origin graph is grabbed
+/// where the two together draw it, and the gesture reports the same detach it
+/// does at zoom 1.
+#[test]
+fn a_wrap_is_grabbable_where_it_is_drawn_at_any_zoom() {
+    for camera in OFF_UNIT_VIEWS {
+        let view = camera.below_toolbar();
+        let zoom = view.zoom;
+        let dropped_at = Point::new(400.0, 400.0);
+        let mut ui = Simulator::new(offset_scene(view, &[OFFSET_ANCHOR]));
+        drag(
+            &mut ui,
+            view.screen(wrap_point(OFFSET_ANCHOR_AT)),
+            view.screen(dropped_at),
+        );
+
+        let msgs = messages(ui);
+        assert!(
+            msgs.contains(&Msg::RouteDetached(OFFSET_EDGE, OFFSET_ANCHOR)),
+            "the drawn wrap must report the detach at zoom {zoom}: {msgs:?}",
+        );
+        assert!(
+            msgs.contains(&Msg::AnchorCreated(OFFSET_EDGE, dropped_at)),
+            "the pulled-off cable must leave an anchor at zoom {zoom}: {msgs:?}",
+        );
+        assert!(
+            !msgs.iter().any(|m| matches!(m, Msg::AnchorMove(..))),
+            "the wrap took the press, so the core never moved at zoom {zoom}: {msgs:?}",
+        );
+    }
 }

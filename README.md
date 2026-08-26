@@ -94,13 +94,29 @@ cargo run --release -p demo_500_nodes
 | Clone selection | Ctrl+D (web: Alt+D) | - |
 | Delete selection | Delete / Backspace (web: Delete) | - |
 | Cut edges | Ctrl+click an edge, or Ctrl+drag across edges | - |
+| Add routing anchor | Drag a cable mid-run | Same |
+| Re-route | Drag a cable where it wraps an anchor | Same |
+| Attach to anchor | Drop either drag onto an anchor | Same |
+| Detach from anchor | Right-click a cable's wrap | - |
+| Delete anchor | Right-click an anchor's core | - |
+| Move anchor | Drag an anchor's core | Same |
 
 Ctrl is Cmd on macOS. On the web, clone avoids `Ctrl/Cmd+D` (the browser's
 bookmark shortcut) and delete drops the `Backspace` alternative (legacy
 back-navigation). Every binding is host-rebindable through
 `NodeGraph::keymap` - see the `Keymap` type. Connections snap while dragging
 near a compatible pin - like plugging in a cable - rather than on mouse
-release, and compatible targets pulse during the drag.
+release, and compatible targets pulse during the drag. A route attaches and
+detaches the same way, during the drag rather than on release.
+
+Anchor delete and detach ride the pan button as a travel-free click, so a
+right-DRAG starting on an anchor still pans; they follow a rebound
+`pan_button`. The routing gestures need `on_anchor_create`, `on_route_attach`
+and `on_route_detach` wired, anchor delete needs `on_anchor_delete`, and moving
+an anchor needs `on_anchor_move` - which also gates the core's hover highlight
+and the grab cursor, so a host wiring delete but not move gets a working delete
+on a core that never lights up. An unwired gesture leaves its zone inert rather
+than reporting into the void.
 
 ## How it works
 

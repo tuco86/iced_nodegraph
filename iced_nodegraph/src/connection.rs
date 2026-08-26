@@ -12,7 +12,7 @@
 //!
 //! # #[derive(Debug, Clone)]
 //! # enum Message {}
-//! # let mut ng: NodeGraph<'_, usize, usize, (), Message> = NodeGraph::default();
+//! # let mut ng: NodeGraph<'_, usize, usize, (), usize, (), Message> = NodeGraph::default();
 //! // Keep every built-in rule, add a payload check:
 //! ng = ng.can_connect(|from, to| default_can_connect(from, to) && from.info() == to.info());
 //!

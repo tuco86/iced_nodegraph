@@ -132,7 +132,7 @@
 //! # struct MyNode { id: usize, pos: Point }
 //! # let nodes = [MyNode { id: 0, pos: Point::ORIGIN }];
 //! # let is_working = |_: usize| true;
-//! # let mut ng: NodeGraph<'_, usize, usize, (), Message> = NodeGraph::default();
+//! # let mut ng: NodeGraph<'_, usize, usize, (), usize, (), Message> = NodeGraph::default();
 //! for n in &nodes {
 //!     let working = is_working(n.id);
 //!     ng.push_node(node(n.id, n.pos, text("body")).style(move |theme, status| {
@@ -186,16 +186,19 @@
 //! recommended on the web.
 pub use connection::{default_can_connect, direction_ok, input_not_occupied, not_same_node};
 pub use content::{EdgeRadii, node_footer, node_header};
-pub use ids::{EdgeId, NodeId, PinId};
+pub use ids::{AnchorId, EdgeId, NodeId, PinId};
 pub use node_graph::{
-    Counts, DragInfo, Easing, Edge, FocusAnimation, FocusOptions, FocusTarget, GraphInfo, Node,
-    NodeGraph, OpTiming, PinRef, edge,
+    Anchor, Counts, DragInfo, Easing, Edge, FocusAnimation, FocusOptions, FocusTarget, GraphInfo,
+    Node, NodeGraph, OpTiming, PinRef, anchor, edge,
     input::{ComboKey, KeyAction, KeyCombo, Keymap},
     node,
     widget::node_graph,
 };
 pub use node_pin::{NodePin, PinDirection, PinEnd, PinInfo, PinSide, node_pin};
 pub use style::{
+    // Anchor status and style (concrete; override via struct-update over the default)
+    AnchorStatus,
+    AnchorStyle,
     // Unified color type for style fields
     ColorQuad,
     CuttingToolStyle,
@@ -214,6 +217,7 @@ pub use style::{
     // Tiling background (grid/dots/...) for GraphStyle
     TilingBackground,
     TilingKind,
+    default_anchor_style,
     default_cutting_tool_style,
     default_edge_style,
     default_node_style,

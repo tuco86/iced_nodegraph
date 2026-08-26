@@ -29,6 +29,7 @@ dependency direction: `demos/* -> iced_nodegraph -> iced_nodegraph_sdf`.
   There is one GPU primitive: the circular arc.
 - **`iced_nodegraph`** - the widget. `node_graph/mod.rs` holds the builder DSL
   and value types, `node_graph/state.rs` the only state that survives a frame,
+  `node_graph/orbits.rs` the ring each cable takes at each anchor it wraps,
   `node_graph/widget.rs` (plus `widget/draw.rs` and `widget/update.rs`) the
   iced `Widget` impl, and `style/*` the flat style structs.
 - **`demos/*`** - hello_world, styling, interaction, 500_nodes, shader_editor,

@@ -12,6 +12,7 @@
 
 use iced_widget::core::{Color, Theme};
 
+mod anchor;
 mod defaults;
 mod edge;
 mod node;
@@ -20,9 +21,10 @@ mod ramp;
 mod roles;
 mod sdf;
 
+pub use anchor::AnchorStyle;
 pub use defaults::{
-    default_cutting_tool_style, default_edge_style, default_node_style, default_pin_style,
-    default_selection_box_style,
+    default_anchor_style, default_cutting_tool_style, default_edge_style, default_node_style,
+    default_pin_style, default_selection_box_style,
 };
 pub use edge::EdgeStyle;
 pub use node::NodeStyle;
@@ -73,6 +75,23 @@ pub enum EdgeStatus {
     Idle,
     /// Edge is pending deletion (during edge cutting)
     PendingCut,
+}
+
+/// What an anchor is doing this frame, for its style closure to key off.
+///
+/// Hover and drop-target feedback only. An anchor cannot be selected: selection
+/// rides on [`Node::selected`](crate::Node::selected) and an anchor has no such
+/// builder, so there is no state a `Selected` variant could ever report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AnchorStatus {
+    /// Nothing is happening to it.
+    #[default]
+    Idle,
+    /// The cursor is over the anchor's core.
+    Hovered,
+    /// A route drag is in flight and this anchor is one of the anchors it may
+    /// attach to.
+    ValidTarget,
 }
 
 /// Edge path curve type determining the shape of the connection.

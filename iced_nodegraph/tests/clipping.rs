@@ -86,7 +86,7 @@ impl<'a, Message: 'a> From<ViewportRecorder> for Element<'a, Message, Theme, Rec
 // ---------------------------------------------------------------------------
 
 /// The graph these tests drive: one recorder node, no host state, fake renderer.
-type Graph = NodeGraph<'static, usize, usize, (), (), Recorder>;
+type Graph = NodeGraph<'static, usize, usize, (), usize, (), (), Recorder>;
 
 fn build_graph_with_recorder(
     graph_w: f32,
