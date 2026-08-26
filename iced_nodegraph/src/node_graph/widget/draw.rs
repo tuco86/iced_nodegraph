@@ -5,7 +5,10 @@
 //! Appearance decisions (which layers a style expands into) live in
 //! [`crate::style`]; this module owns placement, culling and batching.
 
+use super::update::{CableHit, CableZone};
 use super::*;
+use crate::node_graph::state::AnchorGeometry;
+use crate::style::EdgeCurve;
 use iced_widget::core::{Border, Shadow};
 
 /// Half-extent of a [`PinShape::Square`](crate::PinShape::Square) indicator, as
@@ -15,6 +18,18 @@ use iced_widget::core::{Border, Shadow};
 /// so swapping a pin's shape changes its outline, not how heavy it looks next to
 /// its neighbours.
 const SQUARE_HALF_EXTENT: f32 = 0.886_226_9;
+
+/// Alpha multiplier for the one empty orbit ring an anchor offers.
+///
+/// Visible enough to aim at, quiet enough that an idle anchor does not read as
+/// having a cable on it.
+const FREE_SHELL_OPACITY: f32 = 0.45;
+
+/// How much wider than its cable the hover glow is stroked.
+const GLOW_WIDTH_FACTOR: f32 = 3.0;
+
+/// Alpha of the hover glow around the cable stretch under the cursor.
+const GLOW_ALPHA: f32 = 0.45;
 
 /// Intersects a shape's screen bounds with the widget's layout rectangle.
 ///
@@ -111,60 +126,16 @@ fn world_bbox_to_screen_bounds(
     ]
 }
 
-/// Construct the open `Shape` for an edge based on curve type and pin sides. The
-/// geometry is in the widget's layout-absolute space (edges are ephemeral, never
-/// deduped), so callers push it with a zero placement.
-fn edge_shape(
-    start: &LayoutPoint,
-    end: &LayoutPoint,
-    start_side: u32,
-    end_side: u32,
-    curve: &crate::style::EdgeCurve,
-) -> Shape {
-    let p0 = [start.x, start.y];
-    let p1 = [end.x, end.y];
-
-    match curve {
-        crate::style::EdgeCurve::Line => Shape::line(p0, p1),
-        _ => {
-            // Bezier: compute control points from pin tangent directions
-            let dir_from = pin_side_direction(start_side);
-            let dir_to = pin_side_direction(end_side);
-            let l = adaptive_bezier_length(p0, p1);
-            let cp0 = [p0[0] + dir_from[0] * l, p0[1] + dir_from[1] * l];
-            let cp1 = [p1[0] + dir_to[0] * l, p1[1] + dir_to[1] * l];
-            Shape::bezier(p0, cp0, cp1, p1)
-        }
-    }
+/// Whether an edge's shadow is both visible and displaced, and therefore needs
+/// its own geometry rather than a clone of the stroke.
+fn edge_shadow_is_offset(style: &EdgeStyle) -> bool {
+    style.shadow_blur > 0.0
+        && (style.shadow_color.near_start.a > 0.0 || style.shadow_color.near_end.a > 0.0)
+        && style.shadow_offset != (0.0, 0.0)
 }
 
-/// Build the stroke `Shape` for an edge plus its shadow shape.
-///
-/// The shadow shares the stroke geometry, shifted by `style.shadow.offset` when
-/// non-zero (otherwise it is a clone of the stroke shape).
-fn edge_shapes(
-    start: &LayoutPoint,
-    end: &LayoutPoint,
-    start_side: u32,
-    end_side: u32,
-    style: &EdgeStyle,
-) -> (Shape, Shape) {
-    let shape = edge_shape(start, end, start_side, end_side, &style.curve);
-    let has_shadow = style.shadow_blur > 0.0
-        && (style.shadow_color.near_start.a > 0.0 || style.shadow_color.near_end.a > 0.0);
-    let shadow_shape = if has_shadow && style.shadow_offset != (0.0, 0.0) {
-        let (ox, oy) = style.shadow_offset;
-        let s_start = LayoutPoint::new(start.x + ox, start.y + oy);
-        let s_end = LayoutPoint::new(end.x + ox, end.y + oy);
-        edge_shape(&s_start, &s_end, start_side, end_side, &style.curve)
-    } else {
-        shape.clone()
-    };
-    (shape, shadow_shape)
-}
-
-/// Push the SDF layers of `style` for an edge onto `batch`, choosing the stroke
-/// or shadow shape per layer. Edge geometry is world-space, so placement is zero.
+/// Pushes the SDF layers of `style` onto `batch`, choosing the stroke or shadow
+/// shape per layer. Edge geometry is layout-absolute, so placement is zero.
 /// Layer order and styling live in [`EdgeStyle::sdf_layers`].
 fn push_edge_layers(
     batch: &mut SdfPrimitive,
@@ -204,6 +175,19 @@ fn resolve_edge_style<P: PinId + 'static, UI>(
     match (style_fn, start, end) {
         (Some(f), Some(s), Some(e)) => f(theme, status, s, e),
         _ => crate::style::default_edge_style(theme, status),
+    }
+}
+
+/// Resolves an anchor's style: the per-anchor callback, or the built-in
+/// default.
+fn resolve_anchor_style(
+    style_fn: Option<&AnchorStyleFn<'_>>,
+    theme: &Theme,
+    status: AnchorStatus,
+) -> AnchorStyle {
+    match style_fn {
+        Some(f) => f(theme, status),
+        None => default_anchor_style(theme, status),
     }
 }
 
@@ -279,11 +263,12 @@ fn pin_cutout_params<P: PinId + 'static, UI>(
     cuts
 }
 
-impl<N, P, UI, Message, Renderer, E> NodeGraph<'_, N, P, UI, Message, Renderer, E>
+impl<N, P, E, A, UI, Message, Renderer> NodeGraph<'_, N, P, E, A, UI, Message, Renderer>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
     E: EdgeId + 'static,
+    A: AnchorId + 'static,
     UI: Clone + 'static,
     Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
@@ -554,15 +539,148 @@ where
             .collect();
         let t_after_geom = Instant::now();
 
-        // ========================================
+        // Anchors resolve once per frame, before any cable is built:
+        // `orbit_offset`/`orbit_spacing` are the radii the paths below are laid
+        // tangent to, so the style has to exist first. Host positions are
+        // world-space; edge endpoints in this pass are layout-absolute, so fold
+        // the viewport origin in here and nowhere else.
+        //
+        // A drag in flight is previewed here, so the cables attached to the
+        // anchor follow it live: their tangent points are recomputed from this
+        // centre every frame.
+        let anchor_drag = match state.dragging {
+            Dragging::Anchor { anchor, origin } => cursor.position().map(|p| {
+                (
+                    anchor,
+                    camera.screen_to_world().transform_point(p.into_euclid()) - origin,
+                )
+            }),
+            _ => None,
+        };
+        let anchor_layouts: Vec<[f32; 2]> = self
+            .anchors
+            .iter()
+            .enumerate()
+            .map(|(index, anchor)| {
+                let mut p = camera.world_to_layout(anchor.position.into_euclid());
+                if let Some((dragged, offset)) = anchor_drag
+                    && dragged == index
+                {
+                    p += LayoutVector::new(offset.x, offset.y);
+                }
+                [p.x, p.y]
+            })
+            .collect();
+        let phantom = match &state.dragging {
+            Dragging::Route { edge, detached } => cursor.position().map(|p| {
+                let center = cursor_layout(p);
+                RoutePhantom {
+                    edge: *edge,
+                    exclude: *detached,
+                    kind: PhantomKind::At {
+                        center: [center.x, center.y],
+                        radius: default_anchor_style(theme, AnchorStatus::Idle).orbit_radius(0),
+                    },
+                }
+            }),
+            Dragging::RouteOver {
+                edge,
+                anchor,
+                detached,
+            } => Some(RoutePhantom {
+                edge: *edge,
+                exclude: *detached,
+                kind: PhantomKind::Snap { anchor: *anchor },
+            }),
+            _ => None,
+        };
+        // Derived through the drag's own pending edit, so the ring a preview
+        // draws and the ring the interaction path measures against are the same
+        // circle.
+        let rings = self.anchor_rings(phantom.as_ref().map(RoutePhantom::pending));
+
+        // Feedback before the gesture: the anchor a press would act on renders
+        // hovered, and the cable stretch under the cursor glows below.
+        //
+        // The hit tests read the orbit radii the LAST frame published, because
+        // this frame's come from the very styles the hover decides. They differ
+        // only on a frame where the host changed an anchor style.
+        let hover_at = match state.dragging {
+            Dragging::None => cursor.position_over(layout.bounds()).map(cursor_layout),
+            _ => None,
+        };
+        let cable_hit: Option<CableHit> =
+            hover_at.and_then(|at| self.cable_hit_at(tree, layout, at));
+        let hovered_anchor = hover_at
+            .and_then(|at| self.anchor_core_at(tree, at))
+            .or_else(|| {
+                cable_hit.as_ref().and_then(|hit| match &hit.zone {
+                    CableZone::Wrap { anchor, .. } => Some(*anchor),
+                    CableZone::End { .. } | CableZone::Run { .. } => None,
+                })
+            });
+        let route_drag = match &state.dragging {
+            Dragging::Route { edge, detached } => Some((*edge, *detached, None)),
+            Dragging::RouteOver {
+                edge,
+                anchor,
+                detached,
+            } => Some((*edge, *detached, Some(*anchor))),
+            _ => None,
+        };
+        let snap_eligible = route_drag
+            .map(|(edge, detached, _)| self.route_snap_eligible(edge, detached))
+            .unwrap_or_default();
+        // The anchor a snapped route drag is currently attached to.
+        let snapped_anchor = route_drag.and_then(|(_, _, anchor)| anchor);
+        let anchor_styles: Vec<AnchorStyle> = self
+            .anchors
+            .iter()
+            .enumerate()
+            .map(|(index, anchor)| {
+                let status = if snap_eligible.contains(&index) {
+                    AnchorStatus::ValidTarget
+                } else if hovered_anchor == Some(index) {
+                    AnchorStatus::Hovered
+                } else {
+                    AnchorStatus::Idle
+                };
+                resolve_anchor_style(anchor.style.as_ref(), theme, status)
+            })
+            .collect();
+        // Hand the resolved core and radii to the interaction path, which has no
+        // theme to resolve them from itself.
+        state.anchor_geometry.replace(
+            anchor_styles
+                .iter()
+                .map(|style| AnchorGeometry {
+                    core_size: style.core_size,
+                    orbit_offset: style.orbit_offset,
+                    orbit_spacing: style.orbit_spacing,
+                })
+                .collect(),
+        );
+
+        let phantom_visual = match &state.dragging {
+            Dragging::Route { .. } => cursor.position().map(|p| {
+                let center = cursor_layout(p);
+                (
+                    [center.x, center.y],
+                    default_anchor_style(theme, AnchorStatus::Hovered),
+                )
+            }),
+            _ => None,
+        };
+
         // Graph background: ONE batched SDF draw under all nodes. Within a single
         // SDF primitive the FIRST-pushed entry composites in FRONT (the cull
         // sorts slots ascending by push index and the fragment blends them
-        // front-to-back), so entries are pushed FRONT-TO-BACK here: edge strokes
-        // (z2, top), then all shadows (z1, edge + node), then the grid (z0,
-        // bottom). Folding the grid, every node shadow and every edge into one
-        // primitive collapses the whole below-nodes layer into a single
-        // fullscreen fragment pass. Pushing ALL strokes before ANY shadow keeps
+        // front-to-back), so entries are pushed FRONT-TO-BACK here: anchors
+        // (z3, top), edge strokes (z2), all shadows (z1, edge + node), then the
+        // grid (z0, bottom). Folding the grid, every node
+        // shadow, every edge and every anchor into one primitive collapses the
+        // whole below-nodes layer into a single fullscreen fragment pass.
+        // Pushing ALL strokes before ANY shadow keeps
         // every edge line above every shadow. The node bodies (Layer 4) paint
         // over all of it. The grid is not marked cacheable: it shares this draw
         // with the dynamic shadows and edges, so the static-background texture
@@ -581,9 +699,32 @@ where
         // while the shading cost it would save is already bounded by the
         // shader's per-tile segment cull and the primitive's own scissor.
         // ========================================
+        // The hover glow is deliberately NOT part of `bg_layer`: its slice
+        // window tracks the cursor, so folding it in would change the batch's
+        // geometry hash on every mouse-move frame and re-upload every biarc,
+        // grid tile and node shadow with it - a strictly larger rebuild than
+        // the selection-click case the batch is arranged to avoid. It rides
+        // above the background instead, like the dragged-edge preview.
+        let mut hover_glow: Option<(Shape, Style)> = None;
         let bg_layer = {
-            let mut bg = SdfPrimitive::with_capacity(self.nodes.len() + self.edges.len() * 4 + 1);
-
+            let occupied_rings: usize = rings.iter().sum();
+            // One dimmed shell per anchor the drag could still take. The anchor
+            // it already sits on offers none, and `snap_eligible` is empty
+            // without a route drag.
+            let offered_rings = snap_eligible
+                .iter()
+                .filter(|anchor| snapped_anchor != Some(**anchor))
+                .count();
+            let phantom_layers = if phantom_visual.is_some() { 3 } else { 0 };
+            let mut bg = SdfPrimitive::with_capacity(
+                self.nodes.len()
+                    + self.edges.len() * 4
+                    + self.anchors.len() * 3
+                    + occupied_rings
+                    + offered_rings
+                    + phantom_layers
+                    + 1,
+            );
             // Edge layers split by geometry: strokes (z2) collected to push first
             // (front), shadows (z1) collected to push behind them. Each edge's own
             // layer order is preserved within each group.
@@ -594,71 +735,101 @@ where
             let mut edge_strokes: Vec<(Shape, Style)> = Vec::with_capacity(self.edges.len() * 2);
             let mut edge_shadows: Vec<(Shape, Style)> = Vec::with_capacity(self.edges.len());
 
-            for (edge_idx, edge) in self.edges.iter().enumerate() {
-                let Edge {
-                    from,
-                    to,
-                    style: edge_style_fn,
-                    ..
-                } = edge;
-                let Some(from_node_idx) = self.node_index(&from.node_id) else {
-                    continue;
-                };
-                let Some(to_node_idx) = self.node_index(&to.node_id) else {
-                    continue;
-                };
-                let from_offset = compute_node_offset(from_node_idx);
-                let to_offset = compute_node_offset(to_node_idx);
-
-                let from_pins = &node_pins[from_node_idx];
-                let Some((_, from_pin_state, (from_pin_pos, _))) = from_pins
+            let pin = |pin: &PinRef<N, P>| -> Option<Station> {
+                let node_idx = self.node_index(&pin.node_id)?;
+                let (_, pin_state, (pin_pos, _)) = node_pins[node_idx]
                     .iter()
-                    .find(|(_, state, _)| state.pin_id == from.pin_id)
-                else {
-                    continue;
-                };
-
-                let to_pins = &node_pins[to_node_idx];
-                let Some((_, to_pin_state, (to_pin_pos, _))) = to_pins
+                    .find(|(_, state, _)| state.pin_id == pin.pin_id)?;
+                let point =
+                    (pin_pos.into_euclid().to_vector() + compute_node_offset(node_idx)).to_point();
+                Some(Station {
+                    point: [point.x, point.y],
+                    side: pin_state.side.into(),
+                    direction: Some(pin_state.direction),
+                })
+            };
+            let ring = |anchor: usize, orbit: u8| -> Option<edge_path::Orbit> {
+                Some(edge_path::Orbit {
+                    center: *anchor_layouts.get(anchor)?,
+                    radius: anchor_styles.get(anchor)?.orbit_radius(orbit),
+                })
+            };
+            let end_info = |pin: &PinRef<N, P>| -> Option<PinInfo<'_, P, UI>> {
+                let node_idx = self.node_index(&pin.node_id)?;
+                let (_, pin_state, _) = node_pins[node_idx]
                     .iter()
-                    .find(|(_, state, _)| state.pin_id == to.pin_id)
-                else {
-                    continue;
-                };
+                    .find(|(_, state, _)| state.pin_id == pin.pin_id)?;
+                pin_info::<P, UI>(pin_state)
+            };
+            let hit_edge = cable_hit.as_ref().map(|hit| match &hit.zone {
+                CableZone::End { edge, .. }
+                | CableZone::Wrap { edge, .. }
+                | CableZone::Run { edge } => *edge,
+            });
 
-                let from_pos = (from_pin_pos.into_euclid().to_vector() + from_offset).to_point();
-                let to_pos = (to_pin_pos.into_euclid().to_vector() + to_offset).to_point();
-                let from_side: u32 = from_pin_state.side.into();
-                let to_side: u32 = to_pin_state.side.into();
-                let from_info = pin_info::<P, UI>(from_pin_state);
-                let to_info = pin_info::<P, UI>(to_pin_state);
-
-                // Normalize orientation so the OUTPUT pin is the edge start
-                // (output -> input). Gradient, arrow and flow then follow the
-                // data-flow direction regardless of which side was dragged from.
-                let swap = !matches!(from_pin_state.direction, PinDirection::Output)
-                    && matches!(to_pin_state.direction, PinDirection::Output);
-                let (start_pos, end_pos, start_side, end_side, start_info, end_info) = if swap {
-                    (to_pos, from_pos, to_side, from_side, to_info, from_info)
-                } else {
-                    (from_pos, to_pos, from_side, to_side, from_info, to_info)
-                };
-
-                let edge_status = if pending_cuts.is_some_and(|cuts| cuts.contains(&edge_idx)) {
+            // `edge_hops` skips any edge whose endpoint pin does not resolve, so
+            // the published curves are placed BY edge index, not appended in
+            // iteration order; a skipped edge keeps the default.
+            let mut edge_curves = vec![EdgeCurve::default(); self.edges.len()];
+            // The orbit assignment builds candidate arrangements to count their
+            // crossings, so it needs each leg's shape - and it reads the curve
+            // the LAST frame published rather than one resolved here. The style
+            // closure takes the two endpoint `PinInfo`s in ORIENTED order and
+            // that orientation is derived inside `edge_hops`, so resolving ahead
+            // of the call would either duplicate the derivation or hand it the
+            // wrong order; and the hit test reads this same vector, which is
+            // what makes the ring order it measures against the ring order that
+            // gets stroked. A host switching an edge's curve therefore settles
+            // the ring assignment one frame later. The stroke itself still uses
+            // this frame's resolved curve. The borrow ends with this block, well
+            // before the vector is replaced below.
+            let cables = {
+                let published = state.edge_curves.borrow();
+                let curve = |edge: usize| published.get(edge).copied().unwrap_or_default();
+                self.edge_hops(&pin, &ring, &curve, phantom.as_ref())
+            };
+            for geometry in cables {
+                let edge = &self.edges[geometry.edge];
+                let edge_status = if pending_cuts.is_some_and(|cuts| cuts.contains(&geometry.edge))
+                {
                     EdgeStatus::PendingCut
                 } else {
                     EdgeStatus::Idle
                 };
                 let edge_style = resolve_edge_style(
-                    edge_style_fn.as_ref(),
+                    edge.style.as_ref(),
                     theme,
                     edge_status,
-                    start_info,
-                    end_info,
+                    end_info(geometry.ends.0),
+                    end_info(geometry.ends.1),
                 );
 
-                let (shape, shadow_shape) =
-                    edge_shapes(&start_pos, &end_pos, start_side, end_side, &edge_style);
+                let built = edge_path::build(&geometry.hops, &edge_style.curve);
+                edge_curves[geometry.edge] = edge_style.curve;
+                if hit_edge == Some(geometry.edge)
+                    && let Some(hit) = cable_hit.as_ref()
+                {
+                    let glow_path = built.path.slice(hit.window.0, hit.window.1);
+                    if !glow_path.segs.is_empty() {
+                        hover_glow = Some((
+                            glow_path.into_shape(),
+                            Style::quad_stroke(
+                                &edge_style.stroke_color.with_opacity(GLOW_ALPHA),
+                                Pattern::solid(edge_style.pattern.thickness * GLOW_WIDTH_FACTOR),
+                            ),
+                        ));
+                    }
+                }
+                let shape = built.path.into_shape();
+                // Translation commutes with the path construction, so shifting
+                // the finished cable is the same geometry as building it from
+                // shifted endpoints.
+                let shadow_shape = if edge_shadow_is_offset(&edge_style) {
+                    let (ox, oy) = edge_style.shadow_offset;
+                    shape.clone().translate([ox, oy])
+                } else {
+                    shape.clone()
+                };
 
                 // Collect this edge's layers by geometry; both groups are pushed
                 // in z order after the loop.
@@ -673,14 +844,104 @@ where
                     }
                 }
             }
+            // Hand the resolved curves to the hit test and to next frame's orbit
+            // assignment, neither of which has a theme to resolve a style with.
+            state.edge_curves.replace(edge_curves);
+
+            // z3: anchor cores and orbit rings, in front of the cables wrapping
+            // them (the node bodies of Layer 4 still cover both). The core is an
+            // axis-aligned rounded box: the SDF has no rotate op, so a diamond
+            // would need a primitive that does not exist.
+            if let Some((center, style)) = &phantom_visual {
+                if style.ring_width > 0.0 {
+                    let ring = Shape::circle(style.orbit_radius(0)).translate(*center);
+                    bg.push(
+                        &ring,
+                        &Style::quad_stroke(&style.ring_color, Pattern::solid(style.ring_width)),
+                        [0.0, 0.0],
+                    );
+                }
+                let core = Shape::rounded_box([style.core_size; 2], [style.core_radius; 4])
+                    .translate(*center);
+                bg.push(
+                    &core,
+                    &Style::quad_band(&style.core_color, -1e6, 0.0),
+                    [0.0, 0.0],
+                );
+                if style.core_border_width > 0.0 {
+                    bg.push(
+                        &core,
+                        &Style::quad_band(&style.core_border_color, -1e6, 0.0)
+                            .expand(style.core_border_width),
+                        [0.0, 0.0],
+                    );
+                }
+            }
+            for (anchor_idx, style) in anchor_styles.iter().enumerate() {
+                let center = anchor_layouts[anchor_idx];
+
+                if style.ring_width > 0.0 {
+                    let occupied = rings.get(anchor_idx).copied().unwrap_or(0);
+                    for orbit in 0..occupied {
+                        let Ok(orbit) = u8::try_from(orbit) else {
+                            break;
+                        };
+                        let ring = Shape::circle(style.orbit_radius(orbit)).translate(center);
+                        bg.push(
+                            &ring,
+                            &Style::quad_stroke(
+                                &style.ring_color,
+                                Pattern::solid(style.ring_width),
+                            ),
+                            [0.0, 0.0],
+                        );
+                    }
+                    // An anchor the drag could still take shows the ring the
+                    // cable would land on, dimmed and one step outside every
+                    // ring it already carries. The anchor the drag is ALREADY on
+                    // gets none: `pending` folds the drag into that anchor's
+                    // occupancy, so the loop above has just stroked the very
+                    // ring the cable rides.
+                    if snapped_anchor != Some(anchor_idx)
+                        && snap_eligible.contains(&anchor_idx)
+                        && let Ok(offered) = u8::try_from(occupied)
+                    {
+                        let ring = Shape::circle(style.orbit_radius(offered)).translate(center);
+                        bg.push(
+                            &ring,
+                            &Style::quad_stroke(
+                                &style.ring_color.with_opacity(FREE_SHELL_OPACITY),
+                                Pattern::solid(style.ring_width),
+                            ),
+                            [0.0, 0.0],
+                        );
+                    }
+                }
+
+                let core = Shape::rounded_box([style.core_size; 2], [style.core_radius; 4])
+                    .translate(center);
+                bg.push(
+                    &core,
+                    &Style::quad_band(&style.core_color, -1e6, 0.0),
+                    [0.0, 0.0],
+                );
+                if style.core_border_width > 0.0 {
+                    bg.push(
+                        &core,
+                        &Style::quad_band(&style.core_border_color, -1e6, 0.0)
+                            .expand(style.core_border_width),
+                        [0.0, 0.0],
+                    );
+                }
+            }
 
             // z2: edge strokes (frontmost in the background layer).
             for (shape, style) in &edge_strokes {
                 bg.push(shape, style, [0.0, 0.0]);
             }
 
-            // z1: shadows behind the strokes - edge shadows, then node shadows
-            // (same plane; both above the grid and below every edge line).
+            // z1: shadows behind the strokes - edge layers, then node shadows
+            // (all above the grid and below every edge line).
             for (shape, style) in &edge_shadows {
                 bg.push(shape, style, [0.0, 0.0]);
             }
@@ -748,6 +1009,33 @@ where
             });
         }
 
+        // Hover glow: its own small primitive above the background, so a cursor
+        // move re-uploads one sliced stroke instead of the whole batch. It
+        // therefore paints OVER the cable rather than under it, which is not a
+        // visible change: the glow carries the stroke's own color, so the line
+        // gains a wash of itself and no hue shift.
+        if let Some((shape, style)) = &hover_glow {
+            let wo = layout.bounds().position();
+            let (cx, cy) = layer_camera(
+                render_context.camera_position,
+                render_context.camera_zoom,
+                wo,
+                layout.bounds(),
+            );
+            let mut glow_batch = SdfPrimitive::new();
+            glow_batch.push(shape, style, [0.0, 0.0]);
+            renderer.with_layer(layout.bounds(), |renderer| {
+                draw_sdf(
+                    renderer,
+                    &state.sdf_animated,
+                    layout.bounds(),
+                    glow_batch
+                        .camera(cx, cy, render_context.camera_zoom)
+                        .time(render_context.time),
+                );
+            });
+        }
+
         // Dragging edge (single primitive, only during interaction). Kept as its
         // own draw above the background but below the nodes, matching its prior
         // z-position; it is never folded into the background batch.
@@ -793,9 +1081,25 @@ where
                     } else {
                         (start_pos, end_pos, from_side, cursor_side)
                     };
-
-                let (shape, shadow_shape) =
-                    edge_shapes(&start_pos, &end_pos, start_side, end_side, &drag_edge_style);
+                let hops = [
+                    edge_path::Hop::Pin {
+                        point: [start_pos.x, start_pos.y],
+                        side: start_side,
+                    },
+                    edge_path::Hop::Pin {
+                        point: [end_pos.x, end_pos.y],
+                        side: end_side,
+                    },
+                ];
+                let shape = edge_path::build(&hops, &drag_edge_style.curve)
+                    .path
+                    .into_shape();
+                let shadow_shape = if edge_shadow_is_offset(&drag_edge_style) {
+                    let (ox, oy) = drag_edge_style.shadow_offset;
+                    shape.clone().translate([ox, oy])
+                } else {
+                    shape.clone()
+                };
 
                 let mut drag_batch = SdfPrimitive::new();
                 push_edge_layers(&mut drag_batch, &shape, &shadow_shape, &drag_edge_style);
@@ -1281,6 +1585,37 @@ where
                     pins_in += pin_count;
                 }
             }
+            // An anchor's footprint is its core, grown to the outermost occupied
+            // orbit. Offered rings are transient interaction feedback, not graph
+            // contents counted by the diagnostics.
+            let anchor_in_view: Vec<bool> = (0..self.anchors.len())
+                .map(|index| {
+                    let style = &anchor_styles[index];
+                    let half = rings[index]
+                        .checked_sub(1)
+                        .and_then(|orbit| u8::try_from(orbit).ok())
+                        .map_or(style.core_size * 0.5, |orbit| {
+                            style.orbit_radius(orbit) + style.ring_width
+                        });
+                    let center = anchor_layouts[index];
+                    let bb = world_bbox_to_screen_bounds(
+                        center[0] - half,
+                        center[1] - half,
+                        center[0] + half,
+                        center[1] + half,
+                        0.0,
+                        &render_context,
+                    );
+                    Rectangle {
+                        x: bb[0],
+                        y: bb[1],
+                        width: bb[2],
+                        height: bb[3],
+                    }
+                    .intersects(&viewport)
+                })
+                .collect();
+            let anchors_in = anchor_in_view.iter().filter(|in_view| **in_view).count();
             let edges_in = self
                 .edges
                 .iter()
@@ -1300,6 +1635,7 @@ where
                 nodes: counts(node_geoms.len(), nodes_in),
                 pins: counts(pins_total, pins_in),
                 edges: counts(self.edges.len(), edges_in),
+                anchors: counts(self.anchors.len(), anchors_in),
                 timings: vec![
                     OpTiming {
                         label: "geometry",
@@ -1333,5 +1669,168 @@ where
             };
             state.last_info.replace(Some(info));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use iced_wgpu::core::widget::Widget;
+    use iced_widget::core::{Background, Color, Element, Transformation, image};
+
+    use crate::style::EdgeStyle;
+    use crate::{PinDirection, PinRef, PinSide, default_edge_style, node, node_pin};
+
+    /// Satisfies the renderer bounds [`NodeGraph`] imposes and keeps nothing:
+    /// what these tests read is widget state, not renderer output.
+    #[derive(Debug)]
+    struct NullRenderer;
+
+    impl renderer::Renderer for NullRenderer {
+        fn start_layer(&mut self, _bounds: Rectangle) {}
+        fn end_layer(&mut self) {}
+        fn start_transformation(&mut self, _transformation: Transformation) {}
+        fn end_transformation(&mut self) {}
+        fn fill_quad(&mut self, _quad: renderer::Quad, _background: impl Into<Background>) {}
+        fn reset(&mut self, _new_bounds: Rectangle) {}
+        fn allocate_image(
+            &mut self,
+            _handle: &image::Handle,
+            _callback: impl FnOnce(Result<image::Allocation, image::Error>) + Send + 'static,
+        ) {
+        }
+    }
+
+    impl iced_wgpu::primitive::Renderer for NullRenderer {
+        fn draw_primitive(&mut self, _bounds: Rectangle, _primitive: impl iced_wgpu::Primitive) {}
+    }
+
+    /// A pin needs an element to wrap; nothing here depends on which.
+    struct Blank;
+
+    impl<Message> Widget<Message, Theme, NullRenderer> for Blank {
+        fn size(&self) -> Size<Length> {
+            Size::new(Length::Fixed(8.0), Length::Fixed(8.0))
+        }
+
+        fn layout(
+            &mut self,
+            _tree: &mut Tree,
+            _renderer: &NullRenderer,
+            limits: &layout::Limits,
+        ) -> layout::Node {
+            layout::Node::new(limits.resolve(Length::Fixed(8.0), Length::Fixed(8.0), Size::ZERO))
+        }
+
+        fn draw(
+            &self,
+            _tree: &Tree,
+            _renderer: &mut NullRenderer,
+            _theme: &Theme,
+            _style: &renderer::Style,
+            _layout: layout::Layout<'_>,
+            _cursor: mouse::Cursor,
+            _viewport: &Rectangle,
+        ) {
+        }
+    }
+
+    impl<'a, Message: 'a> From<Blank> for Element<'a, Message, Theme, NullRenderer> {
+        fn from(blank: Blank) -> Self {
+            Element::new(blank)
+        }
+    }
+
+    fn styled_edge(
+        from: PinRef<usize, usize>,
+        to: PinRef<usize, usize>,
+        curve: EdgeCurve,
+    ) -> Edge<'static, usize, usize, (), usize, ()> {
+        edge!(from, to).style(move |theme, status, _from, _to| EdgeStyle {
+            curve,
+            ..default_edge_style(theme, status)
+        })
+    }
+
+    /// `draw` resolves the theme-dependent curve per edge; the interaction path
+    /// and the orbit assignment have no theme, so both read what `draw`
+    /// published. `edge_hops` yields only the edges whose endpoint pins resolve,
+    /// so the vector has to be keyed by edge index rather than filled in
+    /// iteration order. Both ways an endpoint fails to resolve are here: edge 0
+    /// names a pin id its node does not own, edge 2 names a node that was never
+    /// pushed, and the two survivors around them carry different curves.
+    #[test]
+    fn draw_publishes_every_edge_curve_by_edge_index() {
+        const SIZE: Size = Size {
+            width: 400.0,
+            height: 300.0,
+        };
+
+        let mut graph: NodeGraph<'static, usize, usize, (), usize, (), (), NullRenderer> =
+            NodeGraph::default()
+                .width(Length::Fixed(SIZE.width))
+                .height(Length::Fixed(SIZE.height));
+        graph.push_node(node(
+            0usize,
+            Point::new(20.0, 40.0),
+            node_pin(PinSide::Right, 0usize, Blank).direction(PinDirection::Output),
+        ));
+        graph.push_node(node(
+            1usize,
+            Point::new(220.0, 40.0),
+            node_pin(PinSide::Left, 1usize, Blank).direction(PinDirection::Input),
+        ));
+
+        graph.push_edge(styled_edge(
+            PinRef::new(0, 9usize),
+            PinRef::new(1, 1usize),
+            EdgeCurve::Line,
+        ));
+        graph.push_edge(styled_edge(
+            PinRef::new(0, 0usize),
+            PinRef::new(1, 1usize),
+            EdgeCurve::Line,
+        ));
+        graph.push_edge(styled_edge(
+            PinRef::new(7, 0usize),
+            PinRef::new(1, 1usize),
+            EdgeCurve::Line,
+        ));
+        graph.push_edge(styled_edge(
+            PinRef::new(0, 0usize),
+            PinRef::new(1, 1usize),
+            EdgeCurve::BezierCubic,
+        ));
+
+        let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, NullRenderer>);
+        let mut renderer = NullRenderer;
+        let layout_node =
+            graph.layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, SIZE));
+        graph.draw(
+            &tree,
+            &mut renderer,
+            &Theme::Dark,
+            &renderer::Style {
+                text_color: Color::BLACK,
+            },
+            layout::Layout::new(&layout_node),
+            mouse::Cursor::Unavailable,
+            &Rectangle::new(Point::ORIGIN, SIZE),
+        );
+
+        let state = tree.state.downcast_ref::<NodeGraphState>();
+        let curves = state.edge_curves.borrow();
+        assert_eq!(
+            curves.as_slice(),
+            [
+                EdgeCurve::default(),
+                EdgeCurve::Line,
+                EdgeCurve::default(),
+                EdgeCurve::BezierCubic
+            ],
+            "edges 0 and 2 never resolved, so they keep the default; edges 1 and \
+             3 keep the curve they were drawn with, at their own index",
+        );
     }
 }

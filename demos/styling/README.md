@@ -1,11 +1,14 @@
 # Demo: styling
 
-Node style presets and live per-node style editing.
+Node style presets, live per-node style editing, and the routing-anchor
+lifecycle.
 
 This demo shows how a host application owns node appearance in `iced_nodegraph`:
 it keeps a fully resolved `NodeStyle` per node in its own model, hands it back
 from the node's `.style()` closure, and edits it from a side panel while the
-graph stays interactive.
+graph stays interactive. It is also the reference host for routing anchors: the
+widget derives every cable's geometry, and this application owns the anchors and
+the routes.
 
 The whole application lives in `src/lib.rs` (the native `main.rs` and the WASM
 entry point both call into it); `src/nodes/mod.rs` builds the node content.
@@ -31,10 +34,26 @@ entry point both call into it); `src/nodes/mod.rs` builds the node content.
   hand-styled node highlights like every other node.
 - **Grid background**: a `TilingBackground::grid` layer over
   `GraphStyle::from_theme(theme)`.
+- **Routing anchors**: two anchors sit under the Transform node with three
+  cables on each; two of those come from different inputs and run through both
+  anchors, so the stretch from the first anchor to the second carries a pair.
+  The pair wraps the two anchors in opposite orders of tightness, so their ring
+  order is the one thing neither anchor can settle by itself: candidate ring
+  orders are built and measured and the one that crosses least is kept, so
+  cables that fly the stretch between two anchors keep to their own side of it.
+  The host holds `anchors: Vec<(usize, Point)>` and a `route: Vec<usize>` per
+  edge, and applies `on_anchor_create` / `on_anchor_move` / `on_anchor_delete` /
+  `on_route_attach` / `on_route_detach`. Anchors have their own id space, so they
+  are minted from zero and `next_anchor` never has to know what the nodes use.
+- **Anchor garbage collection**: `drop_unused_anchors` removes any anchor no
+  route names any more, so detaching an anchor's last cable makes it disappear.
+  The library keeps an anchor as long as the host pushes it; "last cable out,
+  anchor out" is this application's policy, not the widget's.
 
 ## Demo Graph
 
-Four nodes, wired Input -> Transform -> Output, with a detached comment node:
+Six nodes: Input -> Transform -> Output Result, a comment node fed from the
+input, and a second source feeding a second sink:
 
 | Node | Preset |
 |------|--------|
@@ -42,6 +61,31 @@ Four nodes, wired Input -> Transform -> Output, with a detached comment node:
 | 1 Transform | Process |
 | 2 Output Result | Output |
 | 3 Note: This is a comment | Comment |
+| 4 Output Log | Output |
+| 5 Aux Input | Input |
+
+Plus two anchors under the Transform node: A is id 100 at (300, 300), B is id
+101 at (550, 300). Edge 0 (Input -> Transform) routes through A, edge 1
+(Transform -> Output Result) through B, and edges 2 (Input -> Note) and 3
+(Aux Input -> Output Log) through A and then B. So each anchor carries three
+cables on three rings, and the stretch between A and B carries two of them.
+
+Those two are the scene: at A edge 3's angular interval - the angle its two
+neighbours subtend at the anchor centre - is contained in edge 2's, and at B it
+is the other way round. An anchor deciding on its own seats the contained
+interval inside, so it would seat the two one way at A and the other way at B
+and cross them between the anchors. They do not cross there: candidate ring
+orders are built and measured and the one that crosses least is kept, so cables
+that fly the stretch between two anchors keep to their own side of it. Edge 0 is
+where that shows at A. Its interval is the smallest of A's three, so containment
+seats it innermost - and interval and arc being anti-correlated, it is also the
+cable that goes furthest round its ring. It ends up on the widest of the three
+rings anyway, because the exchange that cleared the corridor displaced it.
+Nothing weighed edge 0: a candidate only ever builds the cables that share two
+anchors, and edge 0 wraps one, so its ring is fallout from the pair's fix rather
+than a price paid for it. Every anchor lies between the pins of every cable that
+wraps it, and every cable meets its anchors in increasing x, so nothing doubles
+back.
 
 ## Controls
 
@@ -52,6 +96,10 @@ Four nodes, wired Input -> Transform -> Output, with a detached comment node:
   the left and one output pin on the right.
 - **Scroll** to zoom, **right-drag** to pan. The root
   [README](../../README.md#controls) has the full default control table.
+- **Drag a cable mid-run** to place a new anchor where you release it;
+  **drag a cable at its wrap** to pull it off that anchor. **Right-click** an
+  anchor's core to delete it, or a wrap to detach just that cable. **Drag** a
+  core to move it. A right-DRAG still pans, wherever it starts.
 
 The 280px control panel is wrapped in `opaque`, so pointer events over it do not
 reach the graph underneath.
@@ -74,7 +122,9 @@ result next to the rustdoc output in `target/doc/demo_styling/pkg/`.
 ## Library API Exercised
 
 `NodeGraph` with `on_connect` / `on_disconnect` / `on_move` / `on_select` /
-`graph_style`, `node(..).selected(..).style(..).pin_style(..)`, `edge(..)`,
-`PinRef`, `NodeStyle`, `PinStyle`, `GraphStyle`,
-`TilingBackground`, `Pattern`, `NodeStatus`, `PinStatus`, `PinDirection`,
-`PinInfo`, `default_pin_style`, `node_header`, and the `pin!` macro.
+`on_anchor_move` / `on_anchor_create` / `on_anchor_delete` / `on_route_attach` /
+`on_route_detach` / `graph_style`, `node(..).selected(..).style(..).pin_style(..)`,
+`edge(..).route(..)`, `anchor(..)`, `NodeGraph::push_anchor`, `PinRef`,
+`NodeStyle`, `PinStyle`, `GraphStyle`, `TilingBackground`, `Pattern`,
+`NodeStatus`, `PinStatus`, `PinDirection`, `PinInfo`, `default_pin_style`,
+`node_header`, and the `pin!` macro.

@@ -50,26 +50,29 @@ use iced_widget::core::{Element, Event, Length, Point, Rectangle, Size, Theme, V
 use web_time::Instant;
 
 use super::{
-    Counts, DragInfo, Edge, GraphInfo, MIN_NODE_SIZE, NodeGraph, OpTiming, RESIZE_GRIP_SIDE,
-    RenderContext,
+    ANCHOR_GRAB_THRESHOLD, CableGeometry, Counts, DragInfo, EDGE_END_GRAB_LENGTH,
+    EDGE_GRAB_THRESHOLD, Edge, GraphInfo, MIN_NODE_SIZE, NodeGraph, OpTiming, PendingRoute,
+    PhantomKind, RESIZE_GRIP_SIDE, RenderContext, RoutePhantom, Station,
     euclid::{IntoIced, LayoutVector},
-    state::{CameraTween, Dragging, NodeGraphState, z_render_indices},
+    state::{CameraTween, Dragging, NodeGraphState, PressTarget, z_render_indices},
 };
-use super::{EdgeStyleFn, NodeStyleFn, PinStyleFn};
+use super::{AnchorStyleFn, EdgeStyleFn, NodeStyleFn, PinStyleFn};
 use crate::{
     PinDirection, PinRef, PinSide,
-    ids::{EdgeId, NodeId, PinId},
+    ids::{AnchorId, EdgeId, NodeId, PinId},
     node_graph::euclid::{IntoEuclid, LayoutPoint, ScreenPoint, WorldPoint},
     node_pin::{NodePinState, PinEnd, PinInfo},
     style::{
-        EdgeGeometry, EdgeStatus, EdgeStyle, GraphStyle, NodeStatus, NodeStyle, PinStatus,
-        PinStyle, TilingKind, default_cutting_tool_style, default_selection_box_style,
+        AnchorStatus, AnchorStyle, EdgeGeometry, EdgeStatus, EdgeStyle, GraphStyle, NodeStatus,
+        NodeStyle, PinStatus, PinStyle, TilingKind, default_anchor_style,
+        default_cutting_tool_style, default_selection_box_style,
     },
 };
 use iced_nodegraph_sdf::{Pattern, SdfPrimitive, Shape, Style, Tiling};
 
 mod camera_overlay;
 mod draw;
+pub(super) mod edge_path;
 pub(crate) mod update;
 
 use camera_overlay::CameraOverlay;
@@ -104,12 +107,13 @@ fn pin_side_direction(side: u32) -> [f32; 2] {
     }
 }
 
-impl<N, P, UI, Message, Renderer, E> iced_wgpu::core::Widget<Message, Theme, Renderer>
-    for NodeGraph<'_, N, P, UI, Message, Renderer, E>
+impl<N, P, E, A, UI, Message, Renderer> iced_wgpu::core::Widget<Message, Theme, Renderer>
+    for NodeGraph<'_, N, P, E, A, UI, Message, Renderer>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
     E: EdgeId + 'static,
+    A: AnchorId + 'static,
     UI: Clone + 'static,
     Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
@@ -268,8 +272,8 @@ where
     }
 
     /// The cursor the graph claims, in precedence order: an in-flight gesture,
-    /// then a node's resize grip, then whatever the topmost node under the
-    /// cursor reports for its own content.
+    /// then a node's resize grip or content, then an anchor core or cable below
+    /// the nodes.
     ///
     /// Recursion is gated on node bounds instead of forwarded to every child:
     /// only one cursor can win, so an occluded node must not claim it. The
@@ -289,9 +293,13 @@ where
         // grip or node bounds left behind: the drag is still going.
         match &state.dragging {
             Dragging::Resize { .. } => return mouse::Interaction::ResizingDiagonallyDown,
-            Dragging::Graph(_) | Dragging::Node { .. } | Dragging::GroupMove(_) => {
-                return mouse::Interaction::Grabbing;
-            }
+            Dragging::Graph(_)
+            | Dragging::Node { .. }
+            | Dragging::GroupMove(_)
+            | Dragging::Anchor { .. }
+            | Dragging::Route { .. }
+            | Dragging::RouteOver { .. }
+            | Dragging::PressPending { .. } => return mouse::Interaction::Grabbing,
             Dragging::Edge { .. }
             | Dragging::EdgeOver { .. }
             | Dragging::EdgeCutting { .. }
@@ -352,23 +360,31 @@ where
                         renderer,
                     );
                 }
-                mouse::Interaction::None
+                let at: LayoutPoint = position.into_euclid();
+                if self.anchor_core_at(tree, at).is_some()
+                    || self.cable_hit_at(tree, layout, at).is_some()
+                {
+                    mouse::Interaction::Grab
+                } else {
+                    mouse::Interaction::None
+                }
             },
         )
     }
 }
 
-impl<'a, N, P, UI, Message, Renderer, E> From<NodeGraph<'a, N, P, UI, Message, Renderer, E>>
+impl<'a, N, P, E, A, UI, Message, Renderer> From<NodeGraph<'a, N, P, E, A, UI, Message, Renderer>>
     for Element<'a, Message, Theme, Renderer>
 where
     N: NodeId + 'static,
     P: PinId + 'static,
     E: EdgeId + 'static,
+    A: AnchorId + 'static,
     UI: Clone + 'static,
     Renderer: iced_wgpu::core::renderer::Renderer + 'a + iced_wgpu::primitive::Renderer,
     Message: 'static,
 {
-    fn from(graph: NodeGraph<'a, N, P, UI, Message, Renderer, E>) -> Self {
+    fn from(graph: NodeGraph<'a, N, P, E, A, UI, Message, Renderer>) -> Self {
         Element::new(graph)
     }
 }
@@ -376,8 +392,9 @@ where
 /// Creates a new NodeGraph with default usize-based IDs and no pin user info.
 ///
 /// For custom types, use
-/// `NodeGraph::<N, P, UI, Message, Renderer, E>::default()`.
-pub fn node_graph<'a, Message, Renderer>() -> NodeGraph<'a, usize, usize, (), Message, Renderer>
+/// `NodeGraph::<N, P, E, A, UI, Message, Renderer>::default()`.
+pub fn node_graph<'a, Message, Renderer>()
+-> NodeGraph<'a, usize, usize, (), usize, (), Message, Renderer>
 where
     Renderer: iced_wgpu::core::renderer::Renderer,
 {

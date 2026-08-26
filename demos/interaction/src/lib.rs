@@ -446,7 +446,7 @@ impl App {
         let theme = self.theme();
 
         let registry = self.pin_registry.clone();
-        let mut ng: ::iced_nodegraph::NodeGraph<usize, usize, ::std::any::TypeId, _, _> =
+        let mut ng: ::iced_nodegraph::NodeGraph<usize, usize, (), usize, ::std::any::TypeId, _, _> =
             ::iced_nodegraph::NodeGraph::default()
                 .can_connect(move |from, to| {
                     // Live snap feedback: reject self-loops, direction conflicts and

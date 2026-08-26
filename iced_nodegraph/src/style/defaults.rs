@@ -44,8 +44,8 @@ use iced_widget::core::{Color, Theme};
 
 use super::roles::Roles;
 use super::{
-    CuttingToolStyle, EdgeCurve, EdgeStatus, EdgeStyle, NodeStatus, NodeStyle, PinShape, PinStatus,
-    PinStyle, SelectionBoxStyle, ramp,
+    AnchorStatus, AnchorStyle, CuttingToolStyle, EdgeCurve, EdgeStatus, EdgeStyle, NodeStatus,
+    NodeStyle, PinShape, PinStatus, PinStyle, SelectionBoxStyle, ramp,
 };
 
 /// Corner radius of a node body, in world units.
@@ -182,6 +182,62 @@ pub fn default_pin_style(theme: &Theme, status: PinStatus) -> PinStyle {
             border_width: PIN_CUTOUT_RADIUS - PIN_RADIUS,
             // The cutout is geometry: holding it across statuses keeps one node
             // silhouette in the shape cache instead of one per drag state.
+            ..base
+        },
+    }
+}
+
+/// Complete theme-derived anchor style.
+///
+/// The core is furniture, not a mark: a 6 unit dot on the node recipe (body
+/// fill, border silhouette), because it is a thing you grab rather than a thing
+/// you aim at, while an occupied orbit's ring takes the wire color because it is
+/// the path a cable runs on. `Selected` mirrors the node's accent border, and
+/// `ValidTarget` mirrors the pin's `success`-derived valid color, so the three
+/// accents keep meaning exactly one thing each across the whole widget.
+///
+/// `orbit_offset`/`orbit_spacing` are geometry, not paint: they are the radii
+/// cables are laid tangent to, resolved before the path is built, so changing
+/// them reshapes the cable rather than recoloring it. Orbit 0 stands 8 units
+/// clear of the core's edge, and the spacing is wide enough that two wraps read
+/// as separate strands at zoom 1.
+pub fn default_anchor_style(theme: &Theme, status: AnchorStatus) -> AnchorStyle {
+    let roles = Roles::of(theme);
+
+    let base = AnchorStyle {
+        core_size: crate::node_graph::DEFAULT_CORE_SIZE,
+        core_radius: 3.0,
+        core_color: roles.body.into(),
+        core_border_color: roles.border.into(),
+        core_border_width: 1.0,
+        orbit_offset: crate::node_graph::DEFAULT_ORBIT_OFFSET,
+        orbit_spacing: crate::node_graph::DEFAULT_ORBIT_SPACING,
+        ring_color: Color {
+            a: 0.35,
+            ..roles.wire
+        }
+        .into(),
+        ring_width: 1.0,
+    };
+
+    match status {
+        AnchorStatus::Idle => base,
+        AnchorStatus::Hovered => AnchorStyle {
+            core_border_color: Color {
+                a: 0.6,
+                ..roles.accent
+            }
+            .into(),
+            core_border_width: 1.5,
+            ..base
+        },
+        AnchorStatus::ValidTarget => AnchorStyle {
+            core_color: roles.valid.into(),
+            ring_color: Color {
+                a: 0.7,
+                ..roles.valid
+            }
+            .into(),
             ..base
         },
     }

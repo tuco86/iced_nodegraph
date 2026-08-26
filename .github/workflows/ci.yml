@@ -85,6 +85,8 @@ jobs:
       # the software Vulkan driver. Running them in parallel oversubscribes the
       # runner's few CPU cores and can make a device poll exceed its timeout, so
       # serialize them - lavapipe handles one device at a time reliably.
+      - name: Test (iced_nodegraph, search-quality sweep)
+        run: cargo test -p iced_nodegraph --lib -- --ignored
       - name: Test (iced_nodegraph_sdf, serialized GPU tests)
         run: cargo test -p iced_nodegraph_sdf -- --test-threads=1
 

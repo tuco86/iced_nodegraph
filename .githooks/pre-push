@@ -15,6 +15,11 @@ cargo clippy -p iced_nodegraph -p iced_nodegraph_sdf --all-targets -- -D warning
 echo "pre-push: ICED_TEST_BACKEND=tiny-skia cargo test -p iced_nodegraph"
 ICED_TEST_BACKEND=tiny-skia cargo test -p iced_nodegraph
 
+# The orbit search-quality sweep, ignored by default so it stays off the inner
+# loop (it alone was 93% of the lib suite's wall time).
+echo "pre-push: cargo test -p iced_nodegraph --lib -- --ignored"
+cargo test -p iced_nodegraph --lib -- --ignored
+
 # The SDF pixel tests each spin up a full wgpu device; serialize them like CI.
 echo "pre-push: cargo test -p iced_nodegraph_sdf -- --test-threads=1"
 cargo test -p iced_nodegraph_sdf -- --test-threads=1

@@ -24,7 +24,10 @@ use iced::touch;
 use iced::{Background, Color, Element, Length, Point, Rectangle, Size, Theme, Vector};
 use iced_wgpu::core::clipboard;
 
-use iced_nodegraph::{Easing, FocusAnimation, FocusOptions, FocusTarget, NodeGraph, node};
+use iced_nodegraph::{
+    AnchorStatus, Easing, FocusAnimation, FocusOptions, FocusTarget, NodeGraph, PinRef, anchor,
+    default_anchor_style, edge, node,
+};
 
 mod common;
 
@@ -73,7 +76,7 @@ impl<'a, Message: 'a> From<ContentProbe> for Element<'a, Message, Theme, Recorde
 
 /// The graph shape every case here builds: default ids, no pin payload, the
 /// recording renderer.
-type Graph<Msg> = NodeGraph<'static, usize, usize, (), Msg, Recorder>;
+type Graph<Msg> = NodeGraph<'static, usize, usize, (), usize, (), Msg, Recorder>;
 
 /// Lays out a single-node graph, places it at `widget_origin`, applies the
 /// given camera (zoom, world position), draws it, and returns the recorded
@@ -1697,4 +1700,199 @@ fn tween_converges_under_simulated_iced_redraw_loop() {
         target.0,
     );
     assert!((final_zoom - target.1).abs() < 1e-4);
+}
+
+// ---------------------------------------------------------------------------
+// Anchors in a fit. An anchor is no layout child, so its extent is the circle
+// an orbit describes - and only the widget knows those radii, since they come
+// out of a style closure. `FocusTarget::Rect` is the oracle throughout: it
+// runs the same fit math through the public escape hatch, so a test can pin
+// WHICH rect was framed without restating how a rect becomes a camera.
+// ---------------------------------------------------------------------------
+
+const ANCHOR_ID: usize = 9;
+const ANCHOR_AT: Point = Point::new(900.0, 600.0);
+/// The two nodes a routed cable runs between, and the size `ContentProbe` lays
+/// out to.
+const FIT_NODE_A: Point = Point::new(10.0, 10.0);
+const FIT_NODE_B: Point = Point::new(120.0, 10.0);
+const PROBE_SIZE: Size = Size::new(40.0, 20.0);
+
+fn jump() -> FocusOptions {
+    FocusOptions {
+        animation: None,
+        ..FocusOptions::default()
+    }
+}
+
+/// The world bounds of an anchor's `orbit` ring, from the default style the
+/// widget falls back to before a first draw has published radii.
+fn ring_bounds(center: Point, orbit: u8) -> Rectangle {
+    let radius = default_anchor_style(&Theme::Dark, AnchorStatus::Idle).orbit_radius(orbit);
+    Rectangle::new(
+        Point::new(center.x - radius, center.y - radius),
+        Size::new(2.0 * radius, 2.0 * radius),
+    )
+}
+
+/// The world bounds of a `ContentProbe` node at `at`.
+fn node_bounds(at: Point) -> Rectangle {
+    Rectangle::new(at, PROBE_SIZE)
+}
+
+fn union(a: Rectangle, b: Rectangle) -> Rectangle {
+    let x = a.x.min(b.x);
+    let y = a.y.min(b.y);
+    Rectangle::new(
+        Point::new(x, y),
+        Size::new(
+            (a.x + a.width).max(b.x + b.width) - x,
+            (a.y + a.height).max(b.y + b.height) - y,
+        ),
+    )
+}
+
+/// Feeds one event to a graph the caller filled itself. [`run_events`] always
+/// pushes two nodes, and a graph made of anchors alone is exactly the case a
+/// node-bounds-only fit gets wrong.
+fn committed_fit(mut graph: Graph<(Point, f32)>) -> Option<(Point, f32)> {
+    let mut tree = Tree::new(&graph as &dyn Widget<(Point, f32), Theme, Recorder>);
+    let renderer = Recorder::detached();
+    let layout_node = graph.layout(
+        &mut tree,
+        &renderer,
+        &layout::Limits::new(Size::ZERO, Size::new(1024.0, 768.0)),
+    );
+    let layout = Layout::new(&layout_node);
+    let viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
+
+    let mut msgs: Vec<(Point, f32)> = Vec::new();
+    let mut clipboard = clipboard::Null;
+    let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
+    graph.update(
+        &mut tree,
+        &iced::Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::ORIGIN,
+        }),
+        layout,
+        mouse::Cursor::Unavailable,
+        &renderer,
+        &mut clipboard,
+        &mut shell,
+        &viewport,
+    );
+    drop(shell);
+    msgs.into_iter().next()
+}
+
+fn focused(target: FocusTarget<usize>) -> Graph<(Point, f32)> {
+    NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .on_pan(|position, zoom| (position, zoom))
+        .focus(1, target, jump())
+}
+
+fn assert_same_fit(fit: (Point, f32), expected: (Point, f32), what: &str) {
+    assert!(
+        (fit.0.x - expected.0.x).abs() < 1e-2
+            && (fit.0.y - expected.0.y).abs() < 1e-2
+            && (fit.1 - expected.1).abs() < 1e-4,
+        "{what}: fitted {fit:?}, expected {expected:?}",
+    );
+}
+
+#[test]
+fn frame_all_resolves_a_graph_made_of_anchors() {
+    // Nothing but an anchor is still content. Framing only layout children
+    // makes `Home` a silent no-op here - no camera change, no `on_pan` - on a
+    // graph that plainly has something to show.
+    let mut graph = focused(FocusTarget::All);
+    graph.push_anchor(anchor(ANCHOR_ID, ANCHOR_AT));
+    let fit = committed_fit(graph).expect("an anchor is content: All must resolve it");
+
+    let expected = committed_fit(focused(FocusTarget::Rect(ring_bounds(ANCHOR_AT, 0))))
+        .expect("the Rect escape hatch must commit a fit");
+    assert_same_fit(fit, expected, "an unattached anchor frames its one ring");
+}
+
+#[test]
+fn frame_all_widens_to_reach_an_anchor_outside_the_nodes() {
+    // The anchor sits well past both nodes, so including it must force the
+    // camera to pull back. Equal zoom would mean the anchor was cropped out.
+    let mut anchored = focused(FocusTarget::All);
+    anchored.push_anchor(anchor(ANCHOR_ID, ANCHOR_AT));
+
+    let cursor = || {
+        (
+            iced::Event::Mouse(mouse::Event::CursorMoved {
+                position: Point::ORIGIN,
+            }),
+            mouse::Cursor::Unavailable,
+        )
+    };
+    let with = *run_events(anchored, &[cursor()])
+        .first()
+        .expect("All must commit a fit");
+    let without = *run_events(focused(FocusTarget::All), &[cursor()])
+        .first()
+        .expect("All must commit a fit");
+
+    assert!(
+        with.1 < without.1,
+        "an anchor beyond the nodes must widen the fit: {with:?} vs {without:?}",
+    );
+}
+
+#[test]
+fn focusing_an_anchor_frames_its_ring() {
+    // Anchors have their own id space and their own focus target; `Anchor` is
+    // how a host names one, and it must resolve rather than silently no-op.
+    let mut graph = focused(FocusTarget::Anchor(ANCHOR_ID));
+    graph.push_anchor(anchor(ANCHOR_ID, ANCHOR_AT));
+    let fit = committed_fit(graph).expect("an anchor id must resolve");
+
+    let expected = committed_fit(focused(FocusTarget::Rect(ring_bounds(ANCHOR_AT, 0))))
+        .expect("the Rect escape hatch must commit a fit");
+    assert_same_fit(fit, expected, "focusing an anchor by id frames its ring");
+}
+
+#[test]
+fn focusing_a_node_never_reaches_an_anchor() {
+    // The two id spaces are separate, so the same integer means different
+    // things to `Node` and `Anchor`. An id only an anchor carries is unknown to
+    // `Node`, which makes it a no-op - the camera must not commit a fit, and it
+    // must NOT quietly frame the anchor instead.
+    let mut graph = focused(FocusTarget::Node(ANCHOR_ID));
+    graph.push_anchor(anchor(ANCHOR_ID, ANCHOR_AT));
+
+    assert!(
+        committed_fit(graph).is_none(),
+        "a node target must not resolve through the anchor map",
+    );
+}
+
+#[test]
+fn focusing_a_routed_cable_frames_its_anchor() {
+    // Seeing a connection means seeing where it RUNS, and a routed cable does
+    // not run between its pins: the anchor here sits far outside both endpoint
+    // nodes, so framing the endpoints alone leaves the cable's whole detour off
+    // screen.
+    let mut graph = focused(FocusTarget::Edge(()));
+    graph.push_node(node(0_usize, FIT_NODE_A, Element::from(ContentProbe)));
+    graph.push_node(node(1_usize, FIT_NODE_B, Element::from(ContentProbe)));
+    graph.push_anchor(anchor(ANCHOR_ID, ANCHOR_AT));
+    graph.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)).route([ANCHOR_ID]));
+    let fit = committed_fit(graph).expect("a routed edge must resolve");
+
+    let expected = committed_fit(focused(FocusTarget::Rect(union(
+        union(node_bounds(FIT_NODE_A), node_bounds(FIT_NODE_B)),
+        ring_bounds(ANCHOR_AT, 0),
+    ))))
+    .expect("the Rect escape hatch must commit a fit");
+    assert_same_fit(
+        fit,
+        expected,
+        "a routed cable frames both pins and every ring it wraps",
+    );
 }

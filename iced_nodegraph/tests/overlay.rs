@@ -164,6 +164,11 @@ impl<'a> From<PlainLeaf> for Element<'a, (), Theme, Recorder> {
 
 const VIEWPORT: Size = Size::new(1024.0, 768.0);
 
+/// The graph shape these tests drive: default ids, recording renderer. Named
+/// because the ids come first in `NodeGraph`'s parameter list, so reaching
+/// `Recorder` means spelling all four of them.
+type RecordedGraph = NodeGraph<'static, usize, usize, (), usize, (), (), Recorder>;
+
 /// Lays out a single-node graph at `origin` with the given camera, runs one
 /// no-op update so `view()` syncs into the widget camera, and returns the parts
 /// needed to drive `overlay()`.
@@ -174,12 +179,8 @@ fn graph_with_node(
     camera_zoom: f32,
     element: Element<'static, (), Theme, Recorder>,
     renderer: &Recorder,
-) -> (
-    NodeGraph<'static, usize, usize, (), (), Recorder>,
-    Tree,
-    layout::Node,
-) {
-    let mut graph: NodeGraph<'static, usize, usize, (), (), Recorder> = NodeGraph::default()
+) -> (RecordedGraph, Tree, layout::Node) {
+    let mut graph: RecordedGraph = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
         .view(camera_pos, camera_zoom);

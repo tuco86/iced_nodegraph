@@ -223,17 +223,20 @@ impl App {
 
         // The graph is parameterized over `Port` as its pin payload (`UI`), so it
         // cannot use the `node_graph()` helper (which fixes `UI = ()`).
-        let mut ng: NodeGraph<usize, usize, Port, Message, iced::Renderer> = NodeGraph::default()
-            .on_move(|delta, ids| Message::Moved { delta, ids })
-            .on_connect(|from, to| Message::Connected { from, to })
-            .on_disconnect(|from, to| Message::Disconnected { from, to })
-            // Authoritative: opposite directions and matching port type.
-            .can_connect(|from, to| from.direction() != to.direction() && from.info() == to.info())
-            // The dragged edge (one loose end) takes the held pin's color.
-            .dragging_edge_style(|theme, pin| EdgeStyle {
-                stroke_color: edge_stroke(*pin.info(), *pin.info()),
-                ..default_edge_style(theme, EdgeStatus::Idle)
-            });
+        let mut ng: NodeGraph<usize, usize, (), usize, Port, Message, iced::Renderer> =
+            NodeGraph::default()
+                .on_move(|delta, ids| Message::Moved { delta, ids })
+                .on_connect(|from, to| Message::Connected { from, to })
+                .on_disconnect(|from, to| Message::Disconnected { from, to })
+                // Authoritative: opposite directions and matching port type.
+                .can_connect(|from, to| {
+                    from.direction() != to.direction() && from.info() == to.info()
+                })
+                // The dragged edge (one loose end) takes the held pin's color.
+                .dragging_edge_style(|theme, pin| EdgeStyle {
+                    stroke_color: edge_stroke(*pin.info(), *pin.info()),
+                    ..default_edge_style(theme, EdgeStatus::Idle)
+                });
 
         ng.push_node(gate(
             VALUE,

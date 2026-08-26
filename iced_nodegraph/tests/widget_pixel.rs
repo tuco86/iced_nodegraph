@@ -39,13 +39,14 @@ fn render_one_node() -> Option<Vec<[u8; 4]>> {
     let renderer = &mut *guard;
 
     // Camera centred so the node (world origin) lands mid-viewport at zoom 1.
-    let mut graph: NodeGraph<'static, usize, usize, (), (), Renderer> = NodeGraph::default()
-        .width(Length::Fixed(W as f32))
-        .height(Length::Fixed(H as f32))
-        .view(
-            Point::new(W as f32 * 0.5 - 40.0, H as f32 * 0.5 - 20.0),
-            1.0,
-        );
+    let mut graph: NodeGraph<'static, usize, usize, (), usize, (), (), Renderer> =
+        NodeGraph::default()
+            .width(Length::Fixed(W as f32))
+            .height(Length::Fixed(H as f32))
+            .view(
+                Point::new(W as f32 * 0.5 - 40.0, H as f32 * 0.5 - 20.0),
+                1.0,
+            );
     graph.push_node(node(
         0_usize,
         Point::new(0.0, 0.0),
@@ -192,10 +193,11 @@ fn zoomout_grid_missing_nodes_at(scale: f32, frames: u32, cam: Point, zoom: f32)
     let mut px: Vec<[u8; 4]> = Vec::new();
     for _ in 0..frames.max(1) {
         // Rebuild the view each frame, exactly as a live app does.
-        let mut graph: NodeGraph<'static, usize, usize, (), (), Renderer> = NodeGraph::default()
-            .width(Length::Fixed(GW as f32))
-            .height(Length::Fixed(GH as f32))
-            .view(cam, zoom);
+        let mut graph: NodeGraph<'static, usize, usize, (), usize, (), (), Renderer> =
+            NodeGraph::default()
+                .width(Length::Fixed(GW as f32))
+                .height(Length::Fixed(GH as f32))
+                .view(cam, zoom);
         for (id, &(tlx, tly)) in lattice.iter().enumerate() {
             let (wx, wy) = world_of(tlx, tly);
             graph.push_node(
@@ -360,10 +362,11 @@ fn offscreen_node_does_not_desync_later_nodes() {
     let mut worlds = vec![(700.0_f32, 120.0_f32)];
     worlds.extend_from_slice(&visible);
 
-    let mut graph: NodeGraph<'static, usize, usize, (), (), Renderer> = NodeGraph::default()
-        .width(Length::Fixed(GW as f32))
-        .height(Length::Fixed(GH as f32))
-        .view(cam, zoom);
+    let mut graph: NodeGraph<'static, usize, usize, (), usize, (), (), Renderer> =
+        NodeGraph::default()
+            .width(Length::Fixed(GW as f32))
+            .height(Length::Fixed(GH as f32))
+            .view(cam, zoom);
     for (id, &(wx, wy)) in worlds.iter().enumerate() {
         graph.push_node(
             node(
@@ -500,13 +503,14 @@ fn render_node_selection(selected: bool) -> Option<Vec<[u8; 4]>> {
     let mut guard = shared()?;
     let renderer = &mut *guard;
 
-    let mut graph: NodeGraph<'static, usize, usize, (), (), Renderer> = NodeGraph::default()
-        .width(Length::Fixed(W as f32))
-        .height(Length::Fixed(H as f32))
-        .view(
-            Point::new(W as f32 * 0.5 - 40.0, H as f32 * 0.5 - 20.0),
-            1.0,
-        );
+    let mut graph: NodeGraph<'static, usize, usize, (), usize, (), (), Renderer> =
+        NodeGraph::default()
+            .width(Length::Fixed(W as f32))
+            .height(Length::Fixed(H as f32))
+            .view(
+                Point::new(W as f32 * 0.5 - 40.0, H as f32 * 0.5 - 20.0),
+                1.0,
+            );
     // A realistically sized body: the halo is judged relative to the node, and a
     // bare text label is an order of magnitude smaller than a real node.
     graph.push_node(
@@ -572,10 +576,11 @@ fn render_pin_shape(shape: iced_nodegraph::PinShape) -> Option<Vec<[u8; 4]>> {
     let mut guard = shared()?;
     let renderer = &mut *guard;
 
-    let mut graph: NodeGraph<'static, usize, usize, (), (), Renderer> = NodeGraph::default()
-        .width(Length::Fixed(W as f32))
-        .height(Length::Fixed(H as f32))
-        .view(Point::ORIGIN, 1.0);
+    let mut graph: NodeGraph<'static, usize, usize, (), usize, (), (), Renderer> =
+        NodeGraph::default()
+            .width(Length::Fixed(W as f32))
+            .height(Length::Fixed(H as f32))
+            .view(Point::ORIGIN, 1.0);
     graph.push_node(
         node(
             0_usize,
@@ -687,5 +692,615 @@ fn every_pin_shape_draws_its_own_silhouette() {
         square_fill > 0.93,
         "Square filled {square_fill:.3} of its bounding box; a square covers about 1.0 - \
          it is being drawn as a disc",
+    );
+}
+
+/// Which routing scene to render: no anchor at all, an anchor no cable wraps, a
+/// cable routed through that anchor, that cable with the anchor held mid-drag,
+/// or with the cursor resting on the cable's grabbable output end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RouteScene {
+    Bare,
+    Anchored,
+    Wrapped,
+    Dragging,
+    HoveringEnd,
+}
+
+/// Render two pin-carrying nodes joined by one edge, with an anchor placed well
+/// below the direct pin-to-pin line and, in the routed scenes, named in that
+/// edge's route.
+///
+/// Each node's content is one 60x50 pin body, so its pin anchor sits at the
+/// middle of the side it is on: node 0's Right/output pin at world (60, 25) and
+/// node 1's Left/input pin at (200, 25). `view()` offsets world by (20, 20) at
+/// zoom 1, so those are screen (80, 45) and (220, 45).
+fn render_routed_edge(scene: RouteScene) -> Option<Vec<[u8; 4]>> {
+    use iced::widget::container;
+    use iced_nodegraph::{PinDirection, PinRef, PinSide, anchor, edge, node_pin};
+
+    let mut guard = shared()?;
+    let renderer = &mut *guard;
+
+    const ANCHOR: usize = 9;
+
+    let mut graph: NodeGraph<'static, usize, usize, (), usize, (), (), Renderer> =
+        NodeGraph::default()
+            .width(Length::Fixed(W as f32))
+            .height(Length::Fixed(H as f32))
+            .view(Point::new(20.0, 20.0), 1.0)
+            .on_connect(|_, _| ())
+            .on_anchor_move(|_id, _position| ());
+
+    let pin_body = || {
+        container(text("p"))
+            .width(Length::Fixed(60.0))
+            .height(Length::Fixed(50.0))
+    };
+    graph.push_node(node(
+        0usize,
+        Point::new(0.0, 0.0),
+        Element::from(node_pin(PinSide::Right, 0usize, pin_body()).direction(PinDirection::Output)),
+    ));
+    graph.push_node(node(
+        1usize,
+        Point::new(200.0, 0.0),
+        Element::from(node_pin(PinSide::Left, 0usize, pin_body()).direction(PinDirection::Input)),
+    ));
+
+    let routed = matches!(
+        scene,
+        RouteScene::Wrapped | RouteScene::Dragging | RouteScene::HoveringEnd
+    );
+    let route: Vec<usize> = if routed { vec![ANCHOR] } else { Vec::new() };
+    graph
+        .push_edge(edge(PinRef::new(0usize, 0usize), PinRef::new(1usize, 0usize), ()).route(route));
+    if scene != RouteScene::Bare {
+        graph.push_anchor(anchor(ANCHOR, Point::new(115.0, 160.0)));
+    }
+
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Renderer>);
+    let layout_node = graph.layout(
+        &mut tree,
+        &*renderer,
+        &layout::Limits::new(Size::ZERO, Size::new(W as f32, H as f32)),
+    );
+    let layout = Layout::new(&layout_node);
+    let viewport_rect = Rectangle::new(Point::ORIGIN, Size::new(W as f32, H as f32));
+
+    let mut msgs: Vec<()> = Vec::new();
+    let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
+    let mut clipboard = clipboard::Null;
+    let mut feed = |graph: &mut NodeGraph<'static, usize, usize, (), usize, (), (), Renderer>,
+                    tree: &mut Tree,
+                    event: iced::Event,
+                    cursor: mouse::Cursor| {
+        graph.update(
+            tree,
+            &event,
+            layout,
+            cursor,
+            &*renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport_rect,
+        );
+    };
+    feed(
+        &mut graph,
+        &mut tree,
+        iced::Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(-1.0, -1.0),
+        }),
+        mouse::Cursor::Unavailable,
+    );
+
+    let mut cursor = mouse::Cursor::Unavailable;
+    if scene == RouteScene::HoveringEnd {
+        // 20 px along the cable from the output pin: inside the 24 px end zone
+        // a press would unplug, and 16 px clear of the pin itself.
+        let on_end = GLOW_HOVER;
+        feed(
+            &mut graph,
+            &mut tree,
+            iced::Event::Mouse(mouse::Event::CursorMoved { position: on_end }),
+            mouse::Cursor::Available(on_end),
+        );
+        cursor = mouse::Cursor::Available(on_end);
+    }
+    // Grab the anchor and hold the cursor elsewhere WITHOUT releasing, so the
+    // frame shows the in-flight preview rather than a committed move.
+    if scene == RouteScene::Dragging {
+        let grab = Point::new(135.0, 180.0);
+        let held = Point::new(95.0, 130.0);
+        for (event, at) in [
+            (
+                iced::Event::Mouse(mouse::Event::CursorMoved { position: grab }),
+                grab,
+            ),
+            (
+                iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                grab,
+            ),
+            (
+                iced::Event::Mouse(mouse::Event::CursorMoved { position: held }),
+                held,
+            ),
+        ] {
+            feed(&mut graph, &mut tree, event, mouse::Cursor::Available(at));
+        }
+        cursor = mouse::Cursor::Available(held);
+    }
+
+    graph.draw(
+        &tree,
+        renderer,
+        &Theme::Dark,
+        &renderer::Style {
+            text_color: Color::WHITE,
+        },
+        layout,
+        cursor,
+        &viewport_rect,
+    );
+
+    let bytes = renderer.screenshot(
+        &Viewport::with_physical_size(Size::new(W, H), 1.0),
+        Color::TRANSPARENT,
+    );
+    Some(bytes.as_chunks::<4>().0.to_vec())
+}
+
+/// Renders the scene with `route` applied to the edge, optionally after driving
+/// a route drag from the cable's mid-run onto the anchor.
+///
+/// `route` is what the HOST has caught up to, so an empty route with a drag in
+/// flight is the frame between the widget publishing the attachment and the
+/// host applying it - the frame the preview has to carry alone.
+fn render_route_drag(route: &[usize], drag: bool) -> Option<Vec<[u8; 4]>> {
+    use iced::widget::container;
+    use iced_nodegraph::{PinDirection, PinRef, PinSide, anchor, edge, node_pin};
+
+    let mut guard = shared()?;
+    let renderer = &mut *guard;
+
+    const ANCHOR: usize = 9;
+
+    let mut graph: NodeGraph<'static, usize, usize, usize, usize, (), (), Renderer> =
+        NodeGraph::default()
+            .width(Length::Fixed(W as f32))
+            .height(Length::Fixed(H as f32))
+            .view(Point::new(20.0, 20.0), 1.0)
+            .on_anchor_create(|_, _| ())
+            .on_route_attach(|_, _| ())
+            .on_route_detach(|_, _| ());
+
+    let pin_body = || {
+        container(text("p"))
+            .width(Length::Fixed(60.0))
+            .height(Length::Fixed(50.0))
+    };
+    graph.push_node(node(
+        0usize,
+        Point::new(0.0, 0.0),
+        Element::from(node_pin(PinSide::Right, 0usize, pin_body()).direction(PinDirection::Output)),
+    ));
+    graph.push_node(node(
+        1usize,
+        Point::new(200.0, 0.0),
+        Element::from(node_pin(PinSide::Left, 0usize, pin_body()).direction(PinDirection::Input)),
+    ));
+    graph.push_anchor(anchor(ANCHOR, Point::new(115.0, 160.0)));
+    graph.push_edge(
+        edge(
+            PinRef::new(0usize, 0usize),
+            PinRef::new(1usize, 0usize),
+            0usize,
+        )
+        .route(route.to_vec()),
+    );
+
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Renderer>);
+    let layout_node = graph.layout(
+        &mut tree,
+        &*renderer,
+        &layout::Limits::new(Size::ZERO, Size::new(W as f32, H as f32)),
+    );
+    let layout = Layout::new(&layout_node);
+    let viewport_rect = Rectangle::new(Point::ORIGIN, Size::new(W as f32, H as f32));
+
+    let mut msgs: Vec<()> = Vec::new();
+    let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
+    let mut clipboard = clipboard::Null;
+    let mut cursor = mouse::Cursor::Unavailable;
+    // One event before anything else, so `update` syncs `view()` into the
+    // camera and picks up the viewport origin. Without it a frame that feeds no
+    // events is drawn from an unsynced camera and lands offset from one that
+    // does - which would read as a geometry difference.
+    graph.update(
+        &mut tree,
+        &iced::Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(-1.0, -1.0),
+        }),
+        layout,
+        mouse::Cursor::Unavailable,
+        &*renderer,
+        &mut clipboard,
+        &mut shell,
+        &viewport_rect,
+    );
+    if drag {
+        // Grab the bare cable's mid-run, then hold the cursor on the anchor's
+        // core without releasing.
+        let mid = Point::new(150.0, 45.0);
+        let core = Point::new(135.0, 180.0);
+        for (event, at) in [
+            (
+                iced::Event::Mouse(mouse::Event::CursorMoved { position: mid }),
+                mid,
+            ),
+            (
+                iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                mid,
+            ),
+            (
+                iced::Event::Mouse(mouse::Event::CursorMoved { position: core }),
+                core,
+            ),
+        ] {
+            graph.update(
+                &mut tree,
+                &event,
+                layout,
+                mouse::Cursor::Available(at),
+                &*renderer,
+                &mut clipboard,
+                &mut shell,
+                &viewport_rect,
+            );
+        }
+        cursor = mouse::Cursor::Available(core);
+    }
+
+    graph.draw(
+        &tree,
+        renderer,
+        &Theme::Dark,
+        &renderer::Style {
+            text_color: Color::WHITE,
+        },
+        layout,
+        cursor,
+        &viewport_rect,
+    );
+
+    let bytes = renderer.screenshot(
+        &Viewport::with_physical_size(Size::new(W, H), 1.0),
+        Color::TRANSPARENT,
+    );
+    Some(bytes.as_chunks::<4>().0.to_vec())
+}
+
+/// Drives the wrap-grab gesture across frames: grab the cable where it wraps
+/// the anchor, pull it off, then put it back on the core.
+///
+/// The graph is rebuilt from a fresh route at each step over one surviving
+/// `Tree`, so the host can be seen catching up with the detach - or not.
+/// `after_detach` is its route once the detach has been reported,
+/// `at_reattach` its route on the frame the drag snaps back on. The returned
+/// pixels are that last frame.
+fn render_regrab(after_detach: &[usize], at_reattach: &[usize]) -> Option<Vec<[u8; 4]>> {
+    use iced::widget::container;
+    use iced_nodegraph::{PinDirection, PinRef, PinSide, anchor, edge, node_pin};
+
+    let mut guard = shared()?;
+    let renderer = &mut *guard;
+
+    const ANCHOR: usize = 9;
+
+    let scene = |route: &[usize]| {
+        let mut graph: NodeGraph<'static, usize, usize, usize, usize, (), (), Renderer> =
+            NodeGraph::default()
+                .width(Length::Fixed(W as f32))
+                .height(Length::Fixed(H as f32))
+                .view(Point::new(20.0, 20.0), 1.0)
+                .on_anchor_create(|_, _| ())
+                .on_route_attach(|_, _| ())
+                .on_route_detach(|_, _| ());
+        let pin_body = || {
+            container(text("p"))
+                .width(Length::Fixed(60.0))
+                .height(Length::Fixed(50.0))
+        };
+        graph.push_node(node(
+            0usize,
+            Point::new(0.0, 0.0),
+            Element::from(
+                node_pin(PinSide::Right, 0usize, pin_body()).direction(PinDirection::Output),
+            ),
+        ));
+        graph.push_node(node(
+            1usize,
+            Point::new(200.0, 0.0),
+            Element::from(
+                node_pin(PinSide::Left, 0usize, pin_body()).direction(PinDirection::Input),
+            ),
+        ));
+        graph.push_anchor(anchor(ANCHOR, Point::new(115.0, 160.0)));
+        graph.push_edge(
+            edge(
+                PinRef::new(0usize, 0usize),
+                PinRef::new(1usize, 0usize),
+                0usize,
+            )
+            .route(route.to_vec()),
+        );
+        graph
+    };
+
+    let wrap = Point::new(135.0, 191.0);
+    let away = Point::new(135.0, 240.0);
+    let core = Point::new(135.0, 180.0);
+    // Route in force for each step, and the event driving it.
+    let steps: [(&[usize], iced::Event, Point); 4] = [
+        (
+            &[ANCHOR],
+            iced::Event::Mouse(mouse::Event::CursorMoved { position: wrap }),
+            wrap,
+        ),
+        (
+            &[ANCHOR],
+            iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            wrap,
+        ),
+        (
+            &[ANCHOR],
+            iced::Event::Mouse(mouse::Event::CursorMoved { position: away }),
+            away,
+        ),
+        (
+            after_detach,
+            iced::Event::Mouse(mouse::Event::CursorMoved { position: core }),
+            core,
+        ),
+    ];
+
+    let mut graph = scene(&[ANCHOR]);
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Renderer>);
+    let layout_node = graph.layout(
+        &mut tree,
+        &*renderer,
+        &layout::Limits::new(Size::ZERO, Size::new(W as f32, H as f32)),
+    );
+    let layout = Layout::new(&layout_node);
+    let viewport_rect = Rectangle::new(Point::ORIGIN, Size::new(W as f32, H as f32));
+    let mut msgs: Vec<()> = Vec::new();
+    let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
+    let mut clipboard = clipboard::Null;
+
+    for (route, event, at) in steps {
+        let mut g = scene(route);
+        tree.diff(&g as &dyn Widget<(), Theme, Renderer>);
+        g.update(
+            &mut tree,
+            &event,
+            layout,
+            mouse::Cursor::Available(at),
+            &*renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport_rect,
+        );
+    }
+
+    // The frame the user is looking at: snapped back on, host at `at_reattach`.
+    let final_graph = scene(at_reattach);
+    tree.diff(&final_graph as &dyn Widget<(), Theme, Renderer>);
+    final_graph.draw(
+        &tree,
+        renderer,
+        &Theme::Dark,
+        &renderer::Style {
+            text_color: Color::WHITE,
+        },
+        layout,
+        mouse::Cursor::Available(core),
+        &viewport_rect,
+    );
+    let bytes = renderer.screenshot(
+        &Viewport::with_physical_size(Size::new(W, H), 1.0),
+        Color::TRANSPARENT,
+    );
+    let _ = &mut graph;
+    Some(bytes.as_chunks::<4>().0.to_vec())
+}
+
+/// A snapped route drag previews the cable it is about to commit.
+///
+/// The widget publishes the attachment on snap, so for at least one frame it
+/// renders a route the host has not applied yet. That frame must already draw
+/// the cable where the committed frame draws it, and must NOT still be drawing
+/// the straight bare cable. The anchor's own rings are excluded from the
+/// comparison: an offered orbit legitimately becomes an occupied one.
+#[test]
+fn a_snapped_route_preview_draws_the_cable_it_will_commit() {
+    let Some(previewed) = render_route_drag(&[], true) else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    // The end state, drawn without any drag in flight: what the preview is
+    // promising the user they will get.
+    let committed = render_route_drag(&[9], false).expect("adapter present");
+    let bare = render_route_drag(&[], false).expect("adapter present");
+    // Pull the cable off the anchor and put it straight back on. Empty
+    // `at_reattach` is the frame before the host applies the re-attachment;
+    // naming the anchor there is every frame after it has, which is the whole
+    // rest of the drag - and the case where the drag's own record of what it
+    // detached must not outrank being snapped to it.
+    let regrabbed_pending = render_regrab(&[], &[]).expect("adapter present");
+    let regrabbed_applied = render_regrab(&[], &[9]).expect("adapter present");
+
+    // The anchor's core sits at screen (135, 180); its outermost drawn ring is
+    // well inside 40 px of it.
+    const CX: u32 = 135;
+    const CY: u32 = 180;
+    const R: u32 = 40;
+    let outside_the_anchor = |a: &[[u8; 4]], b: &[[u8; 4]]| {
+        let mut count = 0;
+        for y in 0..H {
+            for x in 0..W {
+                let near = x.abs_diff(CX) <= R && y.abs_diff(CY) <= R;
+                if !near && a[(y * W + x) as usize] != b[(y * W + x) as usize] {
+                    count += 1;
+                }
+            }
+        }
+        count
+    };
+
+    let pc = outside_the_anchor(&previewed, &committed);
+    let pb = outside_the_anchor(&previewed, &bare);
+    let cb = outside_the_anchor(&committed, &bare);
+    eprintln!("previewed vs committed: {pc}, previewed vs bare: {pb}, committed vs bare: {cb}");
+
+    assert_eq!(
+        pc, 0,
+        "the previewed cable runs somewhere the committed one does not",
+    );
+    assert!(
+        pb > 200,
+        "the preview still draws the straight bare cable: the snapped wrap is missing",
+    );
+
+    // Putting the cable back on the anchor it was just pulled off must preview
+    // exactly like any other snap, whether or not the host has applied the
+    // re-attachment yet. Once it has, the drag's record of what it detached
+    // names the very anchor it is snapped to: read as an exclusion, that
+    // suppresses the real wrap while the offered one is skipped as "already
+    // routed", and the cable draws as if it had never been grabbed.
+    for (label, frame) in [
+        ("host pending", &regrabbed_pending),
+        ("host applied", &regrabbed_applied),
+    ] {
+        let vs_committed = outside_the_anchor(frame, &committed);
+        let vs_bare = outside_the_anchor(frame, &bare);
+        eprintln!("re-grabbed ({label}): vs committed {vs_committed}, vs bare {vs_bare}");
+        assert_eq!(
+            vs_committed, 0,
+            "re-attaching to the anchor it was pulled off ({label}) draws a \
+             different cable than committing it does",
+        );
+        assert!(
+            vs_bare > 200,
+            "re-attaching to the anchor it was pulled off ({label}) draws the \
+             straight bare cable: the wrap is missing",
+        );
+    }
+}
+
+/// The screen point the glow test hovers: 20 px along the cable from node 0's
+/// output pin, which leaves the pin at (80, 45) heading right.
+const GLOW_HOVER: Point = Point::new(95.7, 48.1);
+
+/// Pixels differing between two frames inside the screen rect
+/// `x0..=x1` by `y0..=y1`.
+fn diff_in(a: &[[u8; 4]], b: &[[u8; 4]], x0: u32, y0: u32, x1: u32, y1: u32) -> usize {
+    let mut count = 0;
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            let i = (y * W + x) as usize;
+            if a[i] != b[i] {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+/// Routing is a rendering contract, not bookkeeping. Four frames pin it:
+/// pushing an anchor has to change the framebuffer (its core reaches the GPU
+/// even with no cable on it), and naming that anchor in an edge's route has to
+/// change it again - the cable leaves the direct curve to wrap the ring the
+/// anchor now carries.
+///
+/// Comparing `Anchored` against `Wrapped` isolates the routing: the anchor is in
+/// both, so every differing pixel belongs to the cable and its new ring. The
+/// fourth frame holds a grab in flight - no release, nothing committed - and
+/// must still move both the core and the cable hanging off it, because a drag
+/// you cannot see is a drag that feels broken.
+#[test]
+fn full_widget_renders_routed_edge_and_anchor() {
+    let Some(bare) = render_routed_edge(RouteScene::Bare) else {
+        eprintln!("no GPU adapter - skipping full_widget_renders_routed_edge_and_anchor");
+        return;
+    };
+    let anchored = render_routed_edge(RouteScene::Anchored).expect("GPU was available");
+    let routed = render_routed_edge(RouteScene::Wrapped).expect("GPU was available");
+
+    for (label, px) in [
+        ("bare", &bare),
+        ("anchored", &anchored),
+        ("routed", &routed),
+    ] {
+        let distinct: std::collections::HashSet<[u8; 4]> = px.iter().copied().collect();
+        assert!(
+            distinct.len() > 3,
+            "{label} frame is near-uniform ({} distinct colours): nothing rendered",
+            distinct.len(),
+        );
+    }
+
+    let diff = |a: &[[u8; 4]], b: &[[u8; 4]]| a.iter().zip(b).filter(|(x, y)| x != y).count();
+
+    let anchor_px = diff(&bare, &anchored);
+    assert!(
+        anchor_px > 20,
+        "pushing an anchor changed only {anchor_px} pixels: the core did not draw",
+    );
+
+    let cable_px = diff(&anchored, &routed);
+    assert!(
+        cable_px > 400,
+        "routing the edge changed only {cable_px} pixels: the anchor did not bend the cable",
+    );
+
+    let dragging = render_routed_edge(RouteScene::Dragging).expect("GPU was available");
+    let preview_px = diff(&routed, &dragging);
+    assert!(
+        preview_px > 400,
+        "holding the anchor mid-drag changed only {preview_px} pixels: the preview is missing",
+    );
+}
+
+/// Hovering a cable's grabbable end has to reach the framebuffer - the feedback
+/// IS the pixels - and it has to mark THAT end only.
+///
+/// The glow is the stretch a press would take hold of, so a whole-cable
+/// highlight is a different promise: the far end, whose own end zone a press
+/// there would grab instead, must come out of the hover untouched.
+#[test]
+fn a_hovered_cable_end_glows() {
+    let Some(idle) = render_routed_edge(RouteScene::Wrapped) else {
+        eprintln!("no GPU adapter - skipping a_hovered_cable_end_glows");
+        return;
+    };
+    let hovered = render_routed_edge(RouteScene::HoveringEnd).expect("GPU was available");
+
+    // The hovered end zone runs from the output pin at (80, 45) to (98.3, 49.4);
+    // this box holds it clear of node 0's body, which ends at x = 80.
+    let near = diff_in(&idle, &hovered, 82, 38, 130, 58);
+    // The end zone at the other end runs from (202.2, 49.1) to the input pin at
+    // (220, 45); node 1's body starts at x = 220.
+    let far = diff_in(&idle, &hovered, 195, 38, 218, 58);
+
+    assert!(
+        near > 40,
+        "hovering the cable's output end changed only {near} pixels there: \
+         the glow is missing",
+    );
+    assert_eq!(
+        far, 0,
+        "the far end changed too: the glow marks the whole cable instead of the \
+         stretch the press would take",
     );
 }

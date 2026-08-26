@@ -354,7 +354,7 @@ impl Application {
     }
 
     fn view(&self) -> iced::Element<'_, ApplicationMessage> {
-        let mut ng: ::iced_nodegraph::NodeGraph<usize, usize, ::std::any::TypeId, _, _> =
+        let mut ng: ::iced_nodegraph::NodeGraph<usize, usize, (), usize, ::std::any::TypeId, _, _> =
             ::iced_nodegraph::NodeGraph::default()
                 .on_connect(|from, to| ApplicationMessage::EdgeConnected { from, to })
                 .on_disconnect(|from, to| ApplicationMessage::EdgeDisconnected { from, to })

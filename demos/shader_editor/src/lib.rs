@@ -378,13 +378,20 @@ impl Application {
 
     fn view(&self) -> Element<'_, Message> {
         // Build node graph
-        let mut graph: ::iced_nodegraph::NodeGraph<usize, usize, ::std::any::TypeId, _, _> =
-            ::iced_nodegraph::NodeGraph::default()
-                .on_connect(|from, to| Message::EdgeConnected { from, to })
-                .on_move(|delta, indices| Message::NodesMoved { delta, indices })
-                .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })
-                .on_select(Message::SelectionChanged)
-                .on_pan(|position, zoom| Message::CameraChanged { position, zoom });
+        let mut graph: ::iced_nodegraph::NodeGraph<
+            usize,
+            usize,
+            (),
+            usize,
+            ::std::any::TypeId,
+            _,
+            _,
+        > = ::iced_nodegraph::NodeGraph::default()
+            .on_connect(|from, to| Message::EdgeConnected { from, to })
+            .on_move(|delta, indices| Message::NodesMoved { delta, indices })
+            .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })
+            .on_select(Message::SelectionChanged)
+            .on_pan(|position, zoom| Message::CameraChanged { position, zoom });
 
         // Add all shader graph nodes
         for (node_idx, node) in self.shader_graph.nodes.iter().enumerate() {

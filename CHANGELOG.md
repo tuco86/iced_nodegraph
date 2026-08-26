@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **`GraphInfo` gained an `anchors: Counts` field.** Every field is `pub` and
+  the struct is not `#[non_exhaustive]`, so a host that builds one with a struct
+  literal - the only way to seed it, since there is no constructor and no
+  `Default` - stops compiling until it names the new field. `cargo semver-checks`
+  classifies this as major (`constructible_struct_adds_field`).
+
+- **Anchors carry their own id type, and the id parameters now come first.**
+  `NodeGraph`, `Edge` and `FocusTarget` gained an anchor-id parameter
+  `A: AnchorId`, and `FocusTarget` gained `Anchor` and `Anchors` variants. The
+  four ids read in one order everywhere they appear - `N`, `P`, `E`, `A` - with
+  the rendering parameters after them:
+
+  ```text
+  NodeGraph<'a, N, P, E, A, UI, Message, Renderer>
+  Edge<'a, N, P, E, A, UI>
+  FocusTarget<N, E, A>
+  ```
+
+  Previously `E` sat last on `NodeGraph` but third on `Edge`, because it had
+  been appended for compatibility when edge ids were added. Every positional
+  spelling therefore moves. `NodeGraph`'s parameters are all still defaulted,
+  but Rust defaults are positional, so a host that names `Renderer` must now
+  spell the ids ahead of it:
+  `NodeGraph<'_, usize, usize, (), usize, (), Msg, MyRenderer>`. Factoring a
+  `type` alias is usually the better answer.
+
+  `A` cannot be defaulted on `Edge`, since a default may not precede `UI`, so
+  `Edge` requires five parameters. `FocusTarget::Node` no longer resolves an
+  anchor id - `FocusTarget::Anchor` does - and a host matching `FocusTarget`
+  exhaustively must handle the two new variants.
+
+  `cargo semver-checks` reports five breaks here and does NOT report the
+  `NodeGraph` reorder: the parameter count is unchanged and every one is still
+  defaulted, so the tool cannot see that a position changed meaning. The
+  compiler can - an old spelling binds `UI` into the `E` slot and fails
+  `E: EdgeId` - so the break is loud at the call site rather than silent.
+
 - **`iced_nodegraph_sdf` authors geometry through `Shape` alone.** `Curve`,
   `ShapeBuilder` and the `boolean` module are no longer public, and
   `Segment`, `DrawableType` and `TilingType` are crate-private. They were an
@@ -49,6 +86,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   out, both plain `(Point, f32)`.
 
 ### Added
+
+- **Routing anchors.** An edge still connects exactly two pins and now also
+  carries the anchors it wraps on the way: `Edge::route(anchors)`, plus
+  `anchor(id, position)` and `NodeGraph::push_anchor`. Anchors carry their own id
+  type, `A: AnchorId`, so a host numbers them from zero whatever its nodes use.
+  An id naming nothing is skipped and a repeat counts once, so a host mid-edit
+  degrades rather than breaks.
+
+  Nothing about a route is authored beyond the set of anchors. The widget
+  derives the rest every frame: the visiting order from where each anchor lies
+  along the run between the two pins, the wrap direction from the arc the cable
+  actually lays down, and the ring each cable takes at each anchor.
+
+  That last one is chosen by counting, not by rule. An anchor with `n` cables
+  shows `n` concentric rings, and which cable sits on which decides whether
+  cables cross - including out in the open between two anchors a pair flies
+  together, which is the worst place to spend a crossing. It is not a function
+  of ring order alone: it also depends on which way each cable wraps each end,
+  and that is picked by the geometry from the radii, so it cannot be known
+  before the rings are. Candidates are therefore built and the crossings inside
+  their corridors counted: a corridor is the band between two consecutive shared
+  anchors, between the two centres and clear of both anchors' outermost ring,
+  since a crossing inside a ring is at the wrap rather than out in the run.
+  Containment seeds the search - cables at an anchor are ordered by the angular
+  interval their neighbours subtend there, smallest interval innermost, so where
+  two cables' intervals nest the contained one sits inside and their legs do not
+  cut across each other - and rings are exchanged while that measurably helps,
+  within a work ceiling set by the frame budget. Minimising crossings over a
+  graph is NP-hard, so this is a bounded search and not a solver: it is never
+  worse than containment alone, a pure function of the frame, and on a sweep of
+  1111 corridor layouts it reaches the best reachable arrangement in 975 and
+  improves on containment in 728 of the 849 that cross. A graph whose cables
+  each wrap at most one anchor can produce no corridor and pays nothing.
+
+  One edge is one cable is one stroke, so a dash or flow pattern phases over the
+  whole run, a cut kills exactly one edge, and each edge resolves its own style.
+  An edge with an empty route is the same single tangent-bezier leg as before.
+
+  The gestures report through five new callbacks - `on_anchor_create`,
+  `on_anchor_move`, `on_anchor_delete`, `on_route_attach`, `on_route_detach` -
+  and the host applies all of them, including whether an anchor outlives its
+  last cable. Dragging a cable mid-run places an anchor, dragging it at a wrap
+  pulls it off, and a route attaches and detaches during the drag like a pin
+  connection does. `AnchorStyle` and `default_anchor_style` style the core and
+  the orbit radii, and `AnchorStatus` carries the hover and drop-target
+  feedback. `FocusTarget` frames anchors too: `All` covers them, `Anchor` and
+  `Anchors` name them, and an edge's rect includes every anchor it routes
+  through. See `demos/styling` for the full lifecycle.
 
 - **`Shape::path`**: one open multi-segment stroke as a single drawable, built
   from a start point plus `PathSeg::{Line, Arc, Bezier}` in absolute
@@ -386,6 +471,36 @@ selected-node look moved into `default_node_style`, leaving `GraphStyle` as what
 its name says: the canvas.
 
 ### Fixed
+
+- **A contour no longer emits zero-length straight segments.**
+  `ShapeBuilder::line` and `line_to` now refuse a step below `1e-4`, matching the
+  guards `arc` and `close` already carried. A rounded rectangle whose corner
+  radius fills its half-extent - the way to ask for a circle or a pill - asked
+  for exactly that on all four sides, and a zero-length segment is encoded with
+  no heading where the GPU reads one, so it painted a spur off the shape.
+  Skipping it changes no geometry: the neighbours already meet at the point it
+  would have occupied.
+
+- **Hovering a cable no longer re-uploads the whole background.** The hover
+  glow is sliced from the cable at `arc_len +/- half`, so its shape moves with
+  the cursor; it was pushed into the one batched background primitive whose
+  entry set is deliberately kept input-independent, so `prepare` can reuse the
+  compiled buffers. Every mouse-move frame within grab distance of a cable
+  therefore changed that batch's geometry hash and re-evaluated the grid
+  tiling, every edge biarc, every node shadow and every anchor ring - a larger
+  rebuild than the selection-click case the batch is arranged to avoid, and a
+  far more frequent one. The glow is now its own small primitive above the
+  background, like the dragged-edge preview. It paints over the cable rather
+  than under it, which is not a visible change: the glow carries the stroke's
+  own color, so the line gains a wash of itself and no hue shift.
+
+- **A cable is hit-tested against the curve it was drawn with.** `draw` built
+  each cable with the edge's resolved `EdgeCurve` while the interaction path
+  built with `EdgeCurve::default()`, because resolving an edge style needs a
+  theme and `update` has none. For any edge a host styled `EdgeCurve::Line`, the
+  press thresholds and the hover glow window were measured on a different shape
+  than the one on screen. `NodeGraphState` now carries the curve each edge was
+  last drawn with and both paths read it.
 
 - **A touch pan drifted by the widget's screen offset.** The press captured its
   anchor in the widget's layout-absolute space while the release compared

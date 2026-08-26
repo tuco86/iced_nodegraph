@@ -45,7 +45,7 @@ fn render_edge_grid() -> Option<Vec<[u8; 4]>> {
     let (sx, sy) = (90.0f32, 80.0f32);
     let zoom = (GW as f32 / (cols as f32 * sx)).min(GH as f32 / (rows as f32 * sy)) * 0.92;
 
-    let mut graph: iced_nodegraph::NodeGraph<'static, usize, usize, (), (), Renderer> =
+    let mut graph: iced_nodegraph::NodeGraph<'static, usize, usize, (), usize, (), (), Renderer> =
         iced_nodegraph::NodeGraph::default()
             .width(Length::Fixed(GW as f32))
             .height(Length::Fixed(GH as f32))
@@ -277,7 +277,7 @@ fn render_minimal_edges() -> Option<Vec<[u8; 4]>> {
         Point::new(440.0, 320.0),
     ];
 
-    let mut graph: iced_nodegraph::NodeGraph<'static, usize, usize, (), (), Renderer> =
+    let mut graph: iced_nodegraph::NodeGraph<'static, usize, usize, (), usize, (), (), Renderer> =
         iced_nodegraph::NodeGraph::default()
             .width(Length::Fixed(GW as f32))
             .height(Length::Fixed(GH as f32))
