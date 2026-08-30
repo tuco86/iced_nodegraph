@@ -125,6 +125,11 @@ wasm check CI does not run.
   tests exhaust the device and the run segfaults or hangs about half the
   time. They assert messages, not pixels. The pixel oracles build
   `iced_wgpu::Renderer` directly and are unaffected.)
+- `cargo test -p iced_nodegraph --lib -- --ignored` (the orbit search-quality
+  sweep, ~15s over 1111 layouts. It is `#[ignore]`d because it alone was 93% of
+  the lib suite's wall time and what it measures is the search's quality
+  distribution, not whether the geometry is correct - the other 165 lib tests
+  cover that in about a second. CI runs it as its own step.)
 - `cargo test -p iced_nodegraph_sdf -- --test-threads=1` (the pixel tests each
   spin up a wgpu device; parallel runs oversubscribe the GPU)
 - `cargo check --workspace` (the demos compile nowhere else)
