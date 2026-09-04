@@ -1,46 +1,12 @@
-//! # Interaction Demo
-//!
-//! Demonstrates connection validation with typed pins, directional flow,
-//! and user feedback messages.
-//!
-//! ## Interactive Demo
-//!
-//! <link rel="stylesheet" href="pkg/demo.css">
-//! <div id="demo-container">
-//!   <div id="demo-loading">
-//!     <div class="demo-spinner"></div>
-//!     <p>Loading demo...</p>
-//!   </div>
-//!   <div id="demo-canvas-container"></div>
-//!   <div id="demo-error">
-//!     <strong>Failed to load demo.</strong> WebGPU required.
-//!   </div>
-//! </div>
-//! <script type="module" src="pkg/demo-loader.js"></script>
-//!
-//! ## Controls
-//!
-//! - **Drag from pins** - Create connections between nodes
-//! - **Drag nodes** - Move nodes around the canvas
-//! - **Scroll** - Zoom in/out
-//! - **Right-drag** - Pan the canvas
-//! - **Ctrl/Cmd+L** - Select all (rebound from Ctrl/Cmd+A via `keymap`)
-//!
-//! ## Connection Rules
-//!
-//! - Output pins connect to Input pins (directional)
-//! - Bidirectional pins connect to any direction
-//! - Type-compatible pins only (Integer, Float, String, Boolean, Any)
-//! - Integer implicitly converts to Float
-//! - Single-connection pins reject additional connections
+#![doc = include_str!("../README.md")]
+#![doc = r#"<link rel="stylesheet" href="../gallery/pkg/demo.css"><script type="module" src="../gallery/pkg/demo-loader.js"></script>"#]
 
 mod content;
-pub mod screenshot;
 
 use content::simple_node;
-use demo_common::NodeContentStyle;
+use demo_common::{Demo, NodeContentStyle};
 use iced::{
-    Color, Element, Length, Point, Subscription, Theme, Vector,
+    Color, Element, Length, Point, Theme, Vector,
     alignment::Horizontal,
     widget::{Space, button, column, container, row, scrollable, text},
 };
@@ -48,17 +14,7 @@ use iced_nodegraph::{
     Ids, KeyCombo, Keymap, PinInfo as NgPinInfo, PinRef, PinStatus, PinStyle, default_pin_style,
     edge, node, pin,
 };
-use screenshot::{ScreenshotHelper, ScreenshotMessage};
 use std::collections::{HashMap, HashSet};
-
-#[cfg(feature = "wasm")]
-use wasm_bindgen::prelude::*;
-
-#[cfg(feature = "wasm")]
-#[wasm_bindgen(start)]
-pub fn wasm_init() {
-    console_error_panic_hook::set_once();
-}
 
 /// The id vocabulary of this demo: indexed nodes and pins, unidentified edges,
 /// and a `TypeId` pin payload carrying the data type of each pin.
@@ -193,13 +149,6 @@ enum Message {
     ClearAll,
     Reset,
     ToggleRules,
-    Screenshot(ScreenshotMessage),
-}
-
-impl From<ScreenshotMessage> for Message {
-    fn from(msg: ScreenshotMessage) -> Self {
-        Message::Screenshot(msg)
-    }
 }
 
 struct App {
@@ -210,25 +159,9 @@ struct App {
     feedback: Vec<String>,
     show_rules: bool,
     theme: Theme,
-    screenshot: ScreenshotHelper,
 }
 
 impl App {
-    fn new() -> (Self, iced::Task<Message>) {
-        let mut app = Self {
-            edges: Vec::new(),
-            node_positions: Self::default_positions(),
-            pin_registry: HashMap::new(),
-            selected_nodes: HashSet::new(),
-            feedback: vec!["Drag between pins to connect nodes.".into()],
-            show_rules: false,
-            theme: Theme::Dark,
-            screenshot: ScreenshotHelper::from_args(),
-        };
-        app.register_pins();
-        (app, iced::Task::none())
-    }
-
     fn default_positions() -> HashMap<usize, Point> {
         let mut m = HashMap::new();
         m.insert(0, Point::new(50.0, 120.0));
@@ -380,10 +313,27 @@ impl App {
             to_info.pin_type.name()
         ))
     }
+}
+
+impl demo_common::Demo for App {
+    type Message = Message;
+
+    fn boot() -> (Self, iced::Task<Message>) {
+        let mut app = Self {
+            edges: Vec::new(),
+            node_positions: Self::default_positions(),
+            pin_registry: HashMap::new(),
+            selected_nodes: HashSet::new(),
+            feedback: vec!["Drag between pins to connect nodes.".into()],
+            show_rules: false,
+            theme: Theme::Dark,
+        };
+        app.register_pins();
+        (app, iced::Task::none())
+    }
 
     fn update(&mut self, message: Message) -> iced::Task<Message> {
         match message {
-            Message::Screenshot(msg) => return self.screenshot.update(msg),
             Message::EdgeConnected { from, to } => match self.validate_connection(&from, &to) {
                 Ok(msg) => {
                     self.edges.push((from, to));
@@ -445,10 +395,6 @@ impl App {
             self.feedback.drain(0..self.feedback.len() - 50);
         }
         iced::Task::none()
-    }
-
-    fn subscription(&self) -> Subscription<Message> {
-        self.screenshot.subscription().map(Message::Screenshot)
     }
 
     fn theme(&self) -> Theme {
@@ -597,7 +543,17 @@ impl App {
             .height(Length::Fill)
             .into()
     }
+}
 
+/// Boots this demo for the gallery.
+pub fn scene() -> (
+    Box<dyn demo_common::Scene>,
+    iced::Task<demo_common::SceneMessage>,
+) {
+    demo_common::erase::<App>()
+}
+
+impl App {
     fn rules_panel(&self) -> Element<'_, Message> {
         let rules = column![
             text("Connection Rules").size(14),
@@ -805,30 +761,14 @@ fn right_pin<'a, Message: Clone + 'a>(
 }
 
 pub fn main() -> iced::Result {
-    #[cfg(feature = "wasm")]
-    let window_settings = iced::window::Settings {
-        platform_specific: iced::window::settings::PlatformSpecific {
-            target: Some(String::from("demo-canvas-container")),
-        },
-        ..Default::default()
-    };
-
-    #[cfg(not(feature = "wasm"))]
     let window_settings = iced::window::Settings {
         size: iced::Size::new(1100.0, 750.0),
         ..Default::default()
     };
 
-    iced::application(App::new, App::update, App::view)
-        .subscription(App::subscription)
+    iced::application(App::boot, App::update, App::view)
         .theme(App::theme)
         .title("Interaction Demo - Connection Validation")
         .window(window_settings)
         .run()
-}
-
-#[cfg(feature = "wasm")]
-#[wasm_bindgen]
-pub fn run_demo() {
-    let _ = main();
 }

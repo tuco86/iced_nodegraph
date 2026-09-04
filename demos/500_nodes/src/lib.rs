@@ -1,52 +1,13 @@
-//! # 500 Node Benchmark Demo
-//!
-//! Large-scale node graph demonstrating performance with 500+ nodes.
-//! Simulates a procedural shader/material graph with multiple processing stages.
-//!
-//! ## Interactive Demo
-//!
-//! <link rel="stylesheet" href="pkg/demo.css">
-//! <div id="demo-container">
-//!   <div id="demo-loading">
-//!     <div class="demo-spinner"></div>
-//!     <p>Loading demo...</p>
-//!   </div>
-//!   <div id="demo-canvas-container"></div>
-//!   <div id="demo-error">
-//!     <strong>Failed to load demo.</strong> WebGPU required.
-//!   </div>
-//! </div>
-//! <script type="module" src="pkg/demo-loader.js"></script>
-//!
-//! ## Controls
-//!
-//! - **Scroll** - Zoom in/out (zoom out to see all 500 nodes)
-//! - **Right-drag** - Pan the canvas
-//! - **Drag nodes** - Move individual nodes
-//! - **Stats toggle** (top right) - show/hide the live timing panel; while
-//!   hidden the demo renders no frames between interactions
-//!
-//! ## About This Benchmark
-//!
-//! This demo generates a procedural shader graph with 500 nodes arranged in stages:
-//! input sources, noise generators, vector operations, math operations,
-//! texture sampling, blending, and material outputs.
+#![doc = include_str!("../README.md")]
+#![doc = r#"<link rel="stylesheet" href="../gallery/pkg/demo.css"><script type="module" src="../gallery/pkg/demo-loader.js"></script>"#]
 
 mod graph;
 mod nodes;
 
-#[cfg(feature = "wasm")]
-use wasm_bindgen::prelude::*;
-
-#[cfg(feature = "wasm")]
-#[wasm_bindgen(start)]
-pub fn wasm_init() {
-    console_error_panic_hook::set_once();
-}
-
+use demo_common::Demo;
 use graph::generate_procedural_graph;
 use iced::{
-    Color, Element, Length, Point, Rectangle, Subscription, Theme, Vector, mouse,
+    Color, Element, Length, Point, Rectangle, Subscription, Task, Theme, Vector, mouse,
     widget::{canvas, column, container, opaque, row, stack, text, toggler},
 };
 use iced_nodegraph::{
@@ -117,34 +78,19 @@ fn env_flag(key: &str) -> bool {
 }
 
 pub fn main() -> iced::Result {
-    #[cfg(target_arch = "wasm32")]
-    let window_settings = iced::window::Settings {
-        platform_specific: iced::window::settings::PlatformSpecific {
-            target: Some(String::from("demo-canvas-container")),
-        },
-        ..Default::default()
-    };
-
-    #[cfg(not(target_arch = "wasm32"))]
     let window_settings = iced::window::Settings::default();
 
     // `NG_SCALE` is the fragment-count axis: physical pixels - and with them
     // the SDF pipeline's fragment work - scale with `scale^2`. iced's own
     // default is 1.0, so an unset knob leaves behaviour unchanged.
     let scale: f32 = env_var("NG_SCALE").unwrap_or(1.0);
-    iced::application(Application::new, Application::update, Application::view)
+    iced::application(Application::boot, Application::update, Application::view)
         .subscription(Application::subscription)
         .title("500 Node Benchmark - iced_nodegraph")
         .theme(Application::theme)
         .window(window_settings)
         .scale_factor(move |_| scale)
         .run()
-}
-
-#[cfg(feature = "wasm")]
-#[wasm_bindgen]
-pub fn run_demo() {
-    let _ = main();
 }
 
 #[derive(Debug, Clone)]
@@ -244,12 +190,14 @@ impl Default for Application {
     }
 }
 
-impl Application {
-    fn new() -> Self {
-        Self::default()
+impl demo_common::Demo for Application {
+    type Message = ApplicationMessage;
+
+    fn boot() -> (Self, Task<ApplicationMessage>) {
+        (Self::default(), Task::none())
     }
 
-    fn update(&mut self, message: ApplicationMessage) {
+    fn update(&mut self, message: ApplicationMessage) -> Task<ApplicationMessage> {
         match message {
             ApplicationMessage::EdgeConnected { from, to } => {
                 self.edges.push((from, to));
@@ -309,57 +257,8 @@ impl Application {
                 }
             }
         }
-    }
 
-    /// Prints one `NG_REPORT` line: the frame-interval summary plus the GPU
-    /// work and memory counters from [`GraphInfo`].
-    ///
-    /// Intervals are VSYNC-CAPPED, so the absolute value is meaningless while
-    /// the renderer keeps up. The signal is the configuration at which the
-    /// interval LEAVES the vsync floor, and how it grows past it.
-    fn print_report(&mut self) {
-        let Some(i) = self.latest_info.as_ref() else {
-            return;
-        };
-        if self.reports == 0 {
-            println!(
-                "NG_REPORT: frame intervals are vsync-capped - read the point at which \
-                 mean/p95 leave the vsync floor, not the absolute value."
-            );
-            println!(
-                "frames  mean ms  p95 ms  draws  shaded Mpx  evals M  fine max  dropped  \
-                 gpu MiB  index MiB  upload KiB  traffic KiB  cull_skipped"
-            );
-        }
-        let mut sorted: Vec<f32> = self.intervals.iter().copied().collect();
-        sorted.sort_by(f32::total_cmp);
-        let n = sorted.len();
-        let mean = if n == 0 {
-            0.0
-        } else {
-            sorted.iter().sum::<f32>() / n as f32
-        };
-        let p95 = sorted
-            .get((n as f32 * 0.95) as usize)
-            .or(sorted.last())
-            .copied()
-            .unwrap_or(0.0);
-        const MIB: f64 = 1024.0 * 1024.0;
-        println!(
-            "{n:>6}  {mean:>7.2}  {p95:>6.2}  {:>5}  {:>10.2}  {:>7.2}  {:>8}  {:>7}  \
-             {:>7.2}  {:>9.2}  {:>10.1}  {:>11.1}  {}",
-            i.sdf_draws,
-            i.sdf_shaded_px as f64 / 1e6,
-            i.sdf_segment_evals as f64 / 1e6,
-            i.sdf_fine_slots_max,
-            i.sdf_fine_evicted_tiles,
-            i.sdf_gpu_bytes as f64 / MIB,
-            i.sdf_index_bytes as f64 / MIB,
-            i.sdf_upload_bytes as f64 / 1024.0,
-            i.sdf_index_traffic_bytes as f64 / 1024.0,
-            i.sdf_cull_skipped,
-        );
-        self.reports += 1;
+        Task::none()
     }
 
     fn theme(&self) -> Theme {
@@ -435,6 +334,72 @@ impl Application {
         .into()
     }
 
+    fn subscription(&self) -> Subscription<ApplicationMessage> {
+        // The widget self-drives redraws while anything animates; no frame clock needed.
+        Subscription::none()
+    }
+}
+
+/// Boots this demo for the gallery.
+pub fn scene() -> (
+    Box<dyn demo_common::Scene>,
+    iced::Task<demo_common::SceneMessage>,
+) {
+    demo_common::erase::<Application>()
+}
+
+impl Application {
+    /// Prints one `NG_REPORT` line: the frame-interval summary plus the GPU
+    /// work and memory counters from [`GraphInfo`].
+    ///
+    /// Intervals are VSYNC-CAPPED, so the absolute value is meaningless while
+    /// the renderer keeps up. The signal is the configuration at which the
+    /// interval LEAVES the vsync floor, and how it grows past it.
+    fn print_report(&mut self) {
+        let Some(i) = self.latest_info.as_ref() else {
+            return;
+        };
+        if self.reports == 0 {
+            println!(
+                "NG_REPORT: frame intervals are vsync-capped - read the point at which \
+                 mean/p95 leave the vsync floor, not the absolute value."
+            );
+            println!(
+                "frames  mean ms  p95 ms  draws  shaded Mpx  evals M  fine max  dropped  \
+                 gpu MiB  index MiB  upload KiB  traffic KiB  cull_skipped"
+            );
+        }
+        let mut sorted: Vec<f32> = self.intervals.iter().copied().collect();
+        sorted.sort_by(f32::total_cmp);
+        let n = sorted.len();
+        let mean = if n == 0 {
+            0.0
+        } else {
+            sorted.iter().sum::<f32>() / n as f32
+        };
+        let p95 = sorted
+            .get((n as f32 * 0.95) as usize)
+            .or(sorted.last())
+            .copied()
+            .unwrap_or(0.0);
+        const MIB: f64 = 1024.0 * 1024.0;
+        println!(
+            "{n:>6}  {mean:>7.2}  {p95:>6.2}  {:>5}  {:>10.2}  {:>7.2}  {:>8}  {:>7}  \
+             {:>7.2}  {:>9.2}  {:>10.1}  {:>11.1}  {}",
+            i.sdf_draws,
+            i.sdf_shaded_px as f64 / 1e6,
+            i.sdf_segment_evals as f64 / 1e6,
+            i.sdf_fine_slots_max,
+            i.sdf_fine_evicted_tiles,
+            i.sdf_gpu_bytes as f64 / MIB,
+            i.sdf_index_bytes as f64 / MIB,
+            i.sdf_upload_bytes as f64 / 1024.0,
+            i.sdf_index_traffic_bytes as f64 / 1024.0,
+            i.sdf_cull_skipped,
+        );
+        self.reports += 1;
+    }
+
     fn stats_panel(&self) -> Element<'_, ApplicationMessage> {
         let palette = self.current_theme.extended_palette();
 
@@ -508,11 +473,6 @@ impl Application {
         .width(Length::Fixed(248.0));
 
         container(body).style(panel_style).into()
-    }
-
-    fn subscription(&self) -> Subscription<ApplicationMessage> {
-        // The widget self-drives redraws while anything animates; no frame clock needed.
-        Subscription::none()
     }
 }
 

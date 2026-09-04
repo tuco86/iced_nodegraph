@@ -7,24 +7,15 @@ license.workspace = true
 publish = false
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [[bin]]
 name = "shader_editor"
 path = "src/main.rs"
 doc = false
 
-# `wasm-pack build --features wasm` (build_docs.sh) is the only consumer: it
-# turns on the browser entry points and embeds a font, since a browser has no
-# system fonts to detect.
-[features]
-default = []
-wasm = ["console_error_panic_hook", "iced/fira-sans", "wasm-bindgen"]
-
 [dependencies]
+demo_common.workspace = true
 iced = { workspace = true, features = ["wgpu", "crisp", "thread-pool", "linux-theme-detection", "x11", "wayland"] }
 iced_nodegraph.workspace = true
 iced_palette.workspace = true
-
-console_error_panic_hook = { workspace = true, optional = true }
-wasm-bindgen = { workspace = true, optional = true }
