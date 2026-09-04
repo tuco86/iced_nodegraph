@@ -1,0 +1,56 @@
+/* Embedded demo figures.
+ *
+ * The still image is drawn at its logical size (900x600) and never scaled, so
+ * up to a 900px frame it is a 1:1 crop of what the live canvas renders at zoom
+ * 1. `SIZE` in demos/gallery/src/bin/screenshots.rs mirrors these numbers. */
+
+.demo-embed {
+  margin: 2em 0;
+}
+
+.demo-frame {
+  position: relative;
+  width: 100%;
+  max-width: 900px;
+  height: 600px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #1e1e2e;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.demo-embed.compact .demo-frame {
+  height: 420px;
+}
+
+.demo-frame > a {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+
+.demo-frame img {
+  display: block;
+  width: 900px;
+  height: 600px;
+  max-width: none;
+  object-fit: none;
+  object-position: left top;
+}
+
+.demo-frame .demo-mount,
+.demo-frame canvas {
+  position: absolute !important;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+  display: block !important;
+  z-index: 2;
+  pointer-events: auto !important;
+}
+
+.demo-embed figcaption {
+  font-size: 0.8rem;
+  color: #a6adc8;
+  margin-top: 0.4em;
+}

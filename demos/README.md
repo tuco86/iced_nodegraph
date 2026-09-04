@@ -44,6 +44,12 @@ sockets, and a compiler that validates the graph and generates WGSL.
 
 **Run:** `cargo run -p demo_shader_editor`
 
+### [gallery](./gallery/)
+
+Not a demo of its own: the single WASM module every embedded demo on the
+documentation site runs in, and the native screenshot tool that renders their
+still images.
+
 ## Diagnosing GPU cost
 
 The `500_nodes` demo doubles as a GPU-cost reporter. `iced_wgpu` 0.14 hardcodes
@@ -123,15 +129,12 @@ cd demos/hello_world
 cargo run
 ```
 
-The `interaction` demo owns a `ScreenshotHelper` for the
-`--screenshot <path.png>` CLI flag used in documentation captures. Wiring it up
-is per demo (state field, `Message` variant, `update` arm, subscription);
-`interaction` is the only demo that currently supports the flag, and shows the
-full pattern:
-
-```bash
-cargo run -p demo_interaction --bin interaction -- --screenshot shot.png
-```
+The demo pages and the documentation site are built by `./build_docs.sh`. It
+renders rustdoc, then runs
+`cargo run -p demo_gallery --bin gallery_screenshots -- <dir>`, which writes
+each scene headlessly to `<dir>/<scene>.png` at 900x600 logical pixels and 2x
+scale, and finally `wasm-pack`s `demos/gallery` - the single WASM module all
+embeds share - into `target/doc/gallery/pkg/`.
 
 ## Demo Structure
 
@@ -140,8 +143,8 @@ demos/<demo_name>/
 |-- Cargo.toml           # Demo-specific dependencies
 |-- README.md            # Demo documentation
 `-- src/
-    |-- main.rs          # Native entry point
-    |-- lib.rs           # Application logic (shared with the WASM target)
+    |-- main.rs          # Runs the application natively
+    |-- lib.rs           # Application logic, implements `demo_common::Demo`
     `-- ...              # Demo-specific modules
 ```
 

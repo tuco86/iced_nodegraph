@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>iced_nodegraph</title>
+    <meta
+      name="description"
+      content="A node graph editor widget for iced, with live browser demos."
+    />
+    <link
+      rel="icon"
+      href="https://raw.githubusercontent.com/tuco86/iced_nodegraph/main/assets/logo/logo.svg"
+    />
+    <link rel="stylesheet" href="site.css" />
+    <link rel="stylesheet" href="gallery/pkg/demo.css" />
+    <script type="module" src="gallery/pkg/demo-loader.js"></script>
+  </head>
+  <body>
+    <header>
+      <img
+        src="https://raw.githubusercontent.com/tuco86/iced_nodegraph/main/assets/logo/logo.svg"
+        alt="iced_nodegraph logo"
+      />
+      <div class="header-text">
+        <h1>iced_nodegraph</h1>
+        <p>A node graph editor widget for iced</p>
+      </div>
+      <nav class="header-links">
+        <a href="https://crates.io/crates/iced_nodegraph">crates.io</a>
+        <a href="https://docs.rs/iced_nodegraph">docs.rs</a>
+        <a href="https://github.com/tuco86/iced_nodegraph">GitHub</a>
+      </nav>
+    </header>
+
+    <main>
+      <figure class="demo-embed" data-scene="hello_world">
+        <div class="demo-frame">
+          <a href="demo_hello_world/index.html">
+            <img
+              src="gallery/hello_world.png"
+              alt="The hello_world demo: an email workflow graph with four connected nodes"
+            />
+          </a>
+        </div>
+        <figcaption>
+          Runs live when scrolled into view (WebGPU, Chrome recommended); a
+          still image otherwise. Click the canvas for keyboard input.
+        </figcaption>
+      </figure>
+
+      <h2>Start here</h2>
+      <ol class="start-here">
+        <li>
+          <a href="iced_nodegraph/index.html#quick-start">Quick Start</a>
+          <span>
+            &ndash; nodes, pins and one edge inside a <code>view</code>, with
+            the callbacks that report intent.
+          </span>
+        </li>
+        <li>
+          <a href="iced_nodegraph/index.html#what-the-host-owns"
+            >What the host owns</a
+          >
+          <span>
+            &ndash; the widget is stateless between frames and never mutates
+            your data model.
+          </span>
+        </li>
+        <li>
+          <a href="iced_nodegraph/index.html#ids">Ids</a>
+          <span>
+            &ndash; nodes, pins, edges and anchors carry your own id types, and
+            a pin can carry a payload.
+          </span>
+        </li>
+        <li>
+          <a href="iced_nodegraph/index.html#styling">Styling</a>
+          <span>
+            &ndash; node, edge and pin styles are flat concrete structs,
+            overridden with struct-update over a theme-derived default.
+          </span>
+        </li>
+        <li>
+          <a href="iced_nodegraph/index.html#interaction">Interaction</a>
+          <span>
+            &ndash; connections behave like physical plugs: a dragged edge snaps
+            to a compatible pin and reports the connection immediately.
+          </span>
+        </li>
+        <li>
+          <a href="iced_nodegraph/index.html#coordinates">Coordinates</a>
+          <span>
+            &ndash; screen space and world space are distinct euclid types, so
+            mixing them is a compile error.
+          </span>
+        </li>
+      </ol>
+
+      <h2>Demos</h2>
+      <ul class="cards">
+        <li class="card">
+          <img
+            src="gallery/hello_world.png"
+            alt="The hello_world demo: an email workflow graph with four connected nodes"
+          />
+          <div class="card-body">
+            <h3>hello_world</h3>
+            <p>
+              The most feature-complete demo. A pre-built workflow graph with a
+              command palette (Cmd/Ctrl+Space), 22 theme presets, live
+              style-config nodes, selection, clone, delete, group move, edge
+              cutting, and native persistence.
+            </p>
+            <div class="card-links">
+              <a href="demo_hello_world/index.html">Open</a>
+              <a
+                href="https://github.com/tuco86/iced_nodegraph/tree/main/demos/hello_world"
+                >Source</a
+              >
+            </div>
+          </div>
+        </li>
+        <li class="card">
+          <img
+            src="gallery/styling.png"
+            alt="The styling demo: four preset-styled nodes with routing anchors and the style control panel"
+          />
+          <div class="card-body">
+            <h3>styling</h3>
+            <p>
+              Visual customization and theming. Node presets, theme switching,
+              and live style controls (corner radius, opacity, border width)
+              applied to the selection.
+            </p>
+            <div class="card-links">
+              <a href="demo_styling/index.html">Open</a>
+              <a
+                href="https://github.com/tuco86/iced_nodegraph/tree/main/demos/styling"
+                >Source</a
+              >
+            </div>
+          </div>
+        </li>
+        <li class="card">
+          <img
+            src="gallery/interaction.png"
+            alt="The interaction demo: typed pins with valid and rejected connections"
+          />
+          <div class="card-body">
+            <h3>interaction</h3>
+            <p>
+              Typed pin connection validation: input-only, output-only, and
+              bidirectional pins; type compatibility; single-connection and
+              duplicate rules; self-loop rejection; and live snap feedback.
+            </p>
+            <div class="card-links">
+              <a href="demo_interaction/index.html">Open</a>
+              <a
+                href="https://github.com/tuco86/iced_nodegraph/tree/main/demos/interaction"
+                >Source</a
+              >
+            </div>
+          </div>
+        </li>
+        <li class="card">
+          <img
+            src="gallery/500_nodes.png"
+            alt="The 500_nodes demo: a procedurally generated graph of 500 nodes and 640 edges"
+          />
+          <div class="card-body">
+            <h3>500_nodes</h3>
+            <p>
+              Performance benchmark with a procedurally generated graph of 500+
+              nodes. A toggleable stats overlay reports per-frame op timings and
+              node/pin/edge counts with cull rates.
+            </p>
+            <div class="card-links">
+              <a href="demo_500_nodes/index.html">Open</a>
+              <a
+                href="https://github.com/tuco86/iced_nodegraph/tree/main/demos/500_nodes"
+                >Source</a
+              >
+            </div>
+          </div>
+        </li>
+        <li class="card">
+          <img
+            src="gallery/shader_editor.png"
+            alt="The shader_editor demo: a WGSL node graph and its compiled preview"
+          />
+          <div class="card-body">
+            <h3>shader_editor</h3>
+            <p>
+              Visual WGSL shader graph with a category-grouped command palette,
+              typed sockets, and a compiler that validates the graph and
+              generates WGSL.
+            </p>
+            <div class="card-links">
+              <a href="demo_shader_editor/index.html">Open</a>
+              <a
+                href="https://github.com/tuco86/iced_nodegraph/tree/main/demos/shader_editor"
+                >Source</a
+              >
+            </div>
+          </div>
+        </li>
+      </ul>
+
+      <h2>Reference</h2>
+      <ul>
+        <li>
+          <a href="iced_nodegraph/index.html">iced_nodegraph</a> &ndash; the
+          widget API.
+        </li>
+        <li>
+          <a href="iced_nodegraph_sdf/index.html">iced_nodegraph_sdf</a> &ndash;
+          the signed-distance-field renderer.
+        </li>
+        <li>
+          <a
+            href="https://github.com/tuco86/iced_nodegraph/blob/main/iced_nodegraph_sdf/ARCHITECTURE.md"
+            >Renderer architecture</a
+          >
+        </li>
+        <li>
+          <a
+            href="https://github.com/tuco86/iced_nodegraph/blob/main/CHANGELOG.md"
+            >Changelog</a
+          >
+        </li>
+      </ul>
+    </main>
+
+    <footer>
+      Live demos need WebGPU (Chrome/Chromium recommended; no WebGL fallback).
+      MIT license.
+    </footer>
+  </body>
+</html>

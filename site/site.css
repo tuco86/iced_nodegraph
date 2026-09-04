@@ -1,0 +1,138 @@
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  padding: 0 1.5rem 4rem;
+  background: #1e1e2e;
+  color: #cdd6f4;
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+  line-height: 1.6;
+}
+
+main,
+header {
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+a {
+  color: #89b4fa;
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 2.5rem 0 1rem;
+}
+
+header img {
+  width: 64px;
+  height: 64px;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 2rem;
+}
+
+header p {
+  margin: 0;
+  color: #a6adc8;
+}
+
+.header-text {
+  flex: 1 1 20rem;
+}
+
+.header-links {
+  display: flex;
+  gap: 1rem;
+}
+
+h2 {
+  margin-top: 3rem;
+  border-bottom: 1px solid #45475a;
+  padding-bottom: 0.3rem;
+}
+
+ol.start-here li {
+  margin-bottom: 0.6rem;
+}
+
+ol.start-here span {
+  color: #a6adc8;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1.5rem;
+  padding: 0;
+  list-style: none;
+}
+
+.card {
+  background: #181825;
+  border: 1px solid #313244;
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.card img {
+  width: 100%;
+  aspect-ratio: 3 / 2;
+  object-fit: cover;
+  object-position: left top;
+  display: block;
+  background: #1e1e2e;
+}
+
+.card-body {
+  padding: 0.9rem 1rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex: 1;
+}
+
+.card-body h3 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.card-body p {
+  margin: 0;
+  flex: 1;
+  font-size: 0.9rem;
+  color: #a6adc8;
+}
+
+.card-links {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.9rem;
+}
+
+footer {
+  max-width: 1000px;
+  margin: 4rem auto 0;
+  padding-top: 1rem;
+  border-top: 1px solid #45475a;
+  color: #a6adc8;
+  font-size: 0.9rem;
+}

@@ -44,7 +44,17 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Build documentation and WASM demos
+      # The gallery renders each demo scene to a PNG through wgpu and needs a
+      # GPU adapter. The runner has none, so provide Mesa's software Vulkan
+      # driver (lavapipe); wgpu's Vulkan backend then finds it headlessly.
+      - name: Install software Vulkan (lavapipe)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers libvulkan1 vulkan-tools
+        env:
+          DEBIAN_FRONTEND: noninteractive
+
+      - name: Build documentation and the demo gallery
         run: ./build_docs.sh
 
       - name: Create .nojekyll file
