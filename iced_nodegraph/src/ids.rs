@@ -1,105 +1,86 @@
-//! Id traits for user-defined node, pin and edge identification.
+//! The id vocabulary of one application's graph.
 //!
-//! Nodes, pins and edges carry the user's own id type directly. These traits
-//! collect the bounds the widget needs on those types: `Clone + Eq + Hash` to
-//! look them up and compare them, `Debug` for the duplicate-id assertion, and
-//! `Send + Sync` because an id travels in a `Message`.
+//! Nodes, pins, edges and anchors carry the host's own id types, and a pin can
+//! carry a payload. [`Ids`] bundles those five types so a graph names them once,
+//! on a marker type, instead of on every widget, builder and callback. [`Id`]
+//! is the bound each id type has to meet; it is implemented for every type that
+//! can be cloned, compared, hashed, printed and sent, so a newtype, an enum or a
+//! `uuid::Uuid` needs no impl at all.
 //!
-//! Blanket impls cover the integer, `String` and `&'static str` cases. For any
-//! other type - a newtype, an enum, a `uuid::Uuid` - write the one-line impl
-//! yourself.
+//! [`Indexed`] is the built-in vocabulary: `usize` for nodes, pins and anchors,
+//! no edge id and no pin payload. A graph over it needs no type annotation.
+//!
+//! ```rust
+//! use std::any::TypeId;
+//!
+//! use iced_nodegraph::Ids;
+//!
+//! #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+//! enum NodeKind {
+//!     Source,
+//!     Sink,
+//! }
+//!
+//! #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+//! struct AppIds;
+//!
+//! impl Ids for AppIds {
+//!     type NodeId = NodeKind;
+//!     type PinId = &'static str;
+//!     type EdgeId = u64;
+//!     type AnchorId = usize;
+//!     type Payload = TypeId;
+//! }
+//! ```
 
 use std::fmt::Debug;
 use std::hash::Hash;
 
-/// Trait for user-defined node identifiers.
+/// The bound every node, pin, edge and anchor id meets.
 ///
-/// Implement this trait on your own types to use them as node IDs:
-/// ```rust
-/// use iced_nodegraph::NodeId;
-///
-/// #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-/// enum MyNodeId {
-///     Input,
-///     Process,
-///     Output,
-/// }
-///
-/// impl NodeId for MyNodeId {}
-/// ```
-pub trait NodeId: Clone + Eq + Hash + Debug + Send + Sync {}
+/// Implemented for every type that satisfies the supertraits: `Clone + Eq +
+/// Hash` for lookups and comparison, `Debug` for the duplicate-id assertion,
+/// `Send + Sync + 'static` because an id travels in a `Message`.
+pub trait Id: Clone + Eq + Hash + Debug + Send + Sync + 'static {}
 
-/// Trait for user-defined pin identifiers.
-///
-/// Pins are identified within the context of a node, so you typically
-/// use a per-node-type enum:
-/// ```rust
-/// use iced_nodegraph::PinId;
-///
-/// #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-/// enum MathNodePins {
-///     InputA,
-///     InputB,
-///     Output,
-/// }
-///
-/// impl PinId for MathNodePins {}
-/// ```
-pub trait PinId: Clone + Eq + Hash + Debug + Send + Sync {}
+impl<T: Clone + Eq + Hash + Debug + Send + Sync + 'static> Id for T {}
 
-/// Trait for user-defined edge identifiers.
+/// The id and payload types of one graph, named once on a marker type.
 ///
-/// Edges carry their own id (e.g. a database key), symmetric to nodes:
-/// ```rust
-/// use iced_nodegraph::EdgeId;
+/// The marker is a unit struct the host declares; the supertraits let every
+/// type generic over it derive `Clone`, `PartialEq`, `Hash` and `Debug`. Name it
+/// once when building the graph (`NodeGraph::<AppIds, _, _>::new()`) and in the
+/// messages that carry a [`PinRef`](crate::PinRef); everything else infers.
 ///
-/// #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-/// struct MyEdgeId(u64);
-///
-/// impl EdgeId for MyEdgeId {}
-/// ```
-pub trait EdgeId: Clone + Eq + Hash + Debug + Send + Sync {}
+/// `EdgeId` is `()` for a host whose edges carry no identity of their own.
+/// `Payload` rides on each pin through [`NodePin::info`](crate::NodePin::info)
+/// and is handed back to [`Node::pin_style`](crate::Node::pin_style) and
+/// [`NodeGraph::can_connect`](crate::NodeGraph::can_connect); `()` when pins
+/// carry none. A pin's `PinId` and `Payload` types must match the graph's:
+/// the pin is found in the widget tree by that pair, and a mismatch is a
+/// debug-build assertion at the first layout.
+pub trait Ids: Copy + Eq + Hash + Debug + Send + Sync + 'static {
+    /// Identifies a node; unique among the graph's nodes.
+    type NodeId: Id;
+    /// Identifies a pin within its node.
+    type PinId: Id;
+    /// Identifies an edge; `()` when edges carry no id.
+    type EdgeId: Id;
+    /// Identifies a routing anchor; its own id space, independent of nodes.
+    type AnchorId: Id;
+    /// Per-pin payload surfaced to `pin_style` and `can_connect`.
+    type Payload: Clone + 'static;
+}
 
-/// Trait for user-defined routing-anchor identifiers.
-///
-/// An anchor's id space is its own: it never has to avoid a node's ids, so a
-/// host is free to number anchors from zero whatever its nodes use.
-///
-/// ```rust
-/// use iced_nodegraph::AnchorId;
-///
-/// #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-/// struct MyAnchorId(u64);
-///
-/// impl AnchorId for MyAnchorId {}
-/// ```
-pub trait AnchorId: Clone + Eq + Hash + Debug + Send + Sync {}
+/// The built-in vocabulary: `usize` node, pin and anchor ids, no edge id, no
+/// pin payload. The default `I` of every generic type in this crate.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Indexed;
 
-impl NodeId for usize {}
-impl PinId for usize {}
-impl EdgeId for usize {}
-impl AnchorId for usize {}
-
-impl NodeId for u32 {}
-impl PinId for u32 {}
-impl EdgeId for u32 {}
-impl AnchorId for u32 {}
-
-impl NodeId for u64 {}
-impl PinId for u64 {}
-impl EdgeId for u64 {}
-impl AnchorId for u64 {}
-
-impl NodeId for String {}
-impl PinId for String {}
-impl EdgeId for String {}
-impl AnchorId for String {}
-
-impl NodeId for &'static str {}
-impl PinId for &'static str {}
-impl EdgeId for &'static str {}
-impl AnchorId for &'static str {}
-
-// `()` is the default edge id: "this edge has no id". Nodes and pins always need
-// a real id, so `()` implements only `EdgeId`.
-impl EdgeId for () {}
+impl Ids for Indexed {
+    type NodeId = usize;
+    type PinId = usize;
+    type EdgeId = ();
+    type AnchorId = usize;
+    type Payload = ();
+}

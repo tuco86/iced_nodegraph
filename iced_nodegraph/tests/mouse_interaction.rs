@@ -28,7 +28,7 @@ use iced::{Element, Length, Point, Rectangle, Size, Theme, Vector, window};
 use iced_wgpu::core::clipboard;
 
 use iced_nodegraph::{
-    AnchorStatus, NodeGraph, PinRef, anchor, default_anchor_style, edge, node, pin,
+    AnchorStatus, Indexed, NodeGraph, PinRef, anchor, default_anchor_style, edge, node, pin,
 };
 
 mod common;
@@ -97,10 +97,10 @@ const PROBE_SIZE: Size = Size::new(40.0, 20.0);
 const VIEWPORT: Size = Size::new(1024.0, 768.0);
 const GRAPH_SIZE: Size = Size::new(400.0, 400.0);
 
-type Graph = NodeGraph<'static, usize, usize, (), usize, (), (), Recorder>;
+type Graph = NodeGraph<'static, Indexed, (), Recorder>;
 
 /// A one-node graph placed at `origin` under the given camera, primed by one
-/// no-op update so `view()` has synced into the widget camera.
+/// no-op update so `camera()` has synced into the widget camera.
 fn graph_with_probe(
     origin: Vector,
     node_world: Point,
@@ -112,8 +112,8 @@ fn graph_with_probe(
     let mut graph: Graph = NodeGraph::default()
         .width(Length::Fixed(GRAPH_SIZE.width))
         .height(Length::Fixed(GRAPH_SIZE.height))
-        .view(camera_pos, camera_zoom);
-    graph.push_node(node(
+        .camera(camera_pos, camera_zoom);
+    graph = graph.push_node(node(
         0usize,
         node_world,
         Element::from(InteractionProbe { cursor_seen }),
@@ -126,7 +126,7 @@ fn graph_with_probe(
         &layout::Limits::new(Size::ZERO, VIEWPORT),
     );
 
-    // One update syncs `view()` into the widget camera (the host value differs
+    // One update syncs `camera()` into the widget camera (the host value differs
     // from the unset last-synced value); the event itself is a no-op, and the
     // cursor is parked off-widget so no gesture starts.
     let layout = Layout::with_offset(origin, &layout_node);
@@ -346,8 +346,8 @@ fn a_text_input_in_a_node_asks_for_the_text_cursor() {
     let mut graph: Graph = NodeGraph::default()
         .width(Length::Fixed(GRAPH_SIZE.width))
         .height(Length::Fixed(GRAPH_SIZE.height))
-        .view(Point::ORIGIN, zoom);
-    graph.push_node(node(
+        .camera(Point::ORIGIN, zoom);
+    graph = graph.push_node(node(
         0usize,
         world,
         Element::from(iced_widget::text_input::<(), Theme, Recorder>("", "hello").on_input(|_| ())),
@@ -429,7 +429,7 @@ fn pin_body() -> iced::widget::Container<'static, (), Theme, Recorder> {
 }
 
 /// One cable routed through one anchor under the given camera, primed by a
-/// no-op update so `view()` has synced into the widget camera. `wired` decides
+/// no-op update so `camera()` has synced into the widget camera. `wired` decides
 /// whether the anchor and route gestures exist at all.
 fn graph_with_cable(
     renderer: &Recorder,
@@ -440,7 +440,7 @@ fn graph_with_cable(
     let mut graph: Graph = NodeGraph::default()
         .width(Length::Fixed(GRAPH_SIZE.width))
         .height(Length::Fixed(GRAPH_SIZE.height))
-        .view(camera_pos, camera_zoom);
+        .camera(camera_pos, camera_zoom);
     if wired {
         graph = graph
             .on_anchor_move(|_, _| ())
@@ -448,18 +448,18 @@ fn graph_with_cable(
             .on_route_attach(|_, _| ())
             .on_route_detach(|_, _| ());
     }
-    graph.push_node(node(
+    graph = graph.push_node(node(
         0usize,
         CABLE_NODE_A,
         pin!(Right, 0usize, pin_body(), Output),
     ));
-    graph.push_node(node(
+    graph = graph.push_node(node(
         1usize,
         CABLE_NODE_B,
         pin!(Left, 0usize, pin_body(), Input),
     ));
-    graph.push_anchor(anchor(CABLE_ANCHOR, CABLE_ANCHOR_AT));
-    graph.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)).route([CABLE_ANCHOR]));
+    graph = graph.push_anchor(anchor(CABLE_ANCHOR, CABLE_ANCHOR_AT));
+    graph = graph.push_edge(edge((), PinRef::new(0, 0), PinRef::new(1, 0)).route([CABLE_ANCHOR]));
 
     let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Recorder>);
     let layout_node = graph.layout(

@@ -16,9 +16,16 @@
 //! every field is a plain value.
 //!
 use iced_nodegraph_sdf::Pattern;
-use iced_widget::core::Color;
+use iced_widget::core::{Color, Theme};
 
-use super::ColorQuad;
+use super::defaults::default_node_style;
+use super::roles::Roles;
+use super::{ColorQuad, NodeStatus, ramp};
+
+/// How far a preset pulls the body toward its hue: a shade more than the
+/// selection tint, so a preset still reads as its kind next to a selected
+/// neighbour, and small enough that hosted content stays readable on it.
+const PRESET_TINT: f32 = 0.18;
 
 /// Visual style for a node.
 ///
@@ -58,85 +65,63 @@ pub struct NodeStyle {
 }
 
 impl NodeStyle {
-    /// Input node preset (blue tint).
-    pub fn input() -> Self {
-        Self::preset(
-            Color::from_rgb(0.15, 0.20, 0.30),
-            Color::from_rgb(0.30, 0.45, 0.70),
-            1.5,
-            6.0,
-            0.85,
-            Color::from_rgba(0.0, 0.0, 0.0, 0.3),
-            8.0,
-            (4.0, 4.0),
-        )
+    /// Input node preset: [`default_node_style`] tinted toward the theme's
+    /// `primary`. Use it as a style directly: `.style(NodeStyle::input)`.
+    pub fn input(theme: &Theme, status: NodeStatus) -> Self {
+        Self::tinted(theme, status, theme.extended_palette().primary.base.color)
     }
 
-    /// Process node preset (green tint).
-    pub fn process() -> Self {
-        Self::preset(
-            Color::from_rgb(0.18, 0.28, 0.18),
-            Color::from_rgb(0.35, 0.60, 0.35),
-            1.5,
-            4.0,
-            0.80,
-            Color::from_rgba(0.0, 0.0, 0.0, 0.3),
-            8.0,
-            (4.0, 4.0),
-        )
+    /// Process node preset: [`default_node_style`] tinted toward the theme's
+    /// `success`.
+    pub fn process(theme: &Theme, status: NodeStatus) -> Self {
+        Self::tinted(theme, status, theme.extended_palette().success.base.color)
     }
 
-    /// Output node preset (orange tint).
-    pub fn output() -> Self {
-        Self::preset(
-            Color::from_rgb(0.30, 0.22, 0.15),
-            Color::from_rgb(0.75, 0.55, 0.30),
-            2.0,
-            8.0,
-            0.85,
-            Color::from_rgba(0.0, 0.0, 0.0, 0.4),
-            16.0,
-            (6.0, 8.0),
-        )
+    /// Output node preset: [`default_node_style`] tinted toward the theme's
+    /// `warning`.
+    pub fn output(theme: &Theme, status: NodeStatus) -> Self {
+        Self::tinted(theme, status, theme.extended_palette().warning.base.color)
     }
 
-    /// Comment node preset (subtle gray, no shadow).
-    pub fn comment() -> Self {
-        Self::preset(
-            Color::from_rgba(0.20, 0.20, 0.22, 0.5),
-            Color::from_rgba(0.40, 0.40, 0.44, 0.5),
-            1.0,
-            3.0,
-            0.60,
-            Color::TRANSPARENT,
-            0.0,
-            (0.0, 0.0),
-        )
-    }
-
-    /// Builds a resolved node style from solid fill/border colors plus shadow.
-    #[allow(clippy::too_many_arguments)]
-    fn preset(
-        fill: Color,
-        border: Color,
-        border_width: f32,
-        corner_radius: f32,
-        opacity: f32,
-        shadow: Color,
-        shadow_distance: f32,
-        shadow_offset: (f32, f32),
-    ) -> Self {
+    /// Comment node preset: a translucent body flush with the canvas, a
+    /// dashed border and no shadow, so it reads as an annotation rather than
+    /// an object. Selection feedback comes through as in the default.
+    pub fn comment(theme: &Theme, status: NodeStatus) -> Self {
+        let roles = Roles::of(theme);
+        let base = default_node_style(theme, status);
+        let border_pattern = match status {
+            NodeStatus::Idle => Pattern::dashed(1.0, 6.0, 4.0),
+            NodeStatus::Selected => Pattern::dashed(2.0, 6.0, 4.0),
+        };
         Self {
-            fill_color: ColorQuad::solid(fill),
-            corner_radius,
-            opacity,
-            border_color: ColorQuad::solid(border),
-            border_pattern: Pattern::solid(border_width),
-            border_outline_width: 0.0,
-            border_outline_color: ColorQuad::solid(Color::TRANSPARENT),
-            shadow_color: shadow,
-            shadow_distance,
-            shadow_offset,
+            fill_color: Color {
+                a: 0.6,
+                ..roles.canvas
+            }
+            .into(),
+            border_pattern,
+            shadow_color: Color::TRANSPARENT,
+            shadow_distance: 0.0,
+            shadow_offset: (0.0, 0.0),
+            ..base
+        }
+    }
+
+    /// The default with its body and idle border pulled toward `hue`. A
+    /// selected node keeps the default's accent border and halo, so the
+    /// preset colors the kind and the theme colors the selection.
+    fn tinted(theme: &Theme, status: NodeStatus, hue: Color) -> Self {
+        let roles = Roles::of(theme);
+        let hue = roles.legible(hue);
+        let base = default_node_style(theme, status);
+        let fill_color = ColorQuad::solid(ramp::blend(roles.body, hue, PRESET_TINT));
+        match status {
+            NodeStatus::Idle => Self {
+                fill_color,
+                border_color: hue.into(),
+                ..base
+            },
+            NodeStatus::Selected => Self { fill_color, ..base },
         }
     }
 }

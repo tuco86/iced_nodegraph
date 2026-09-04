@@ -1,6 +1,6 @@
 //! A small live logic playground built on iced_nodegraph.
 //!
-//! Every pin carries a `Port` payload (the graph's `UI` type parameter), which
+//! Every pin carries a `Port` payload (the graph's `Ids::Payload`), which
 //! drives three things: the node colors its pins by that payload, each edge
 //! derives its gradient from the ports it connects (read via `PinInfo::info()`
 //! in the edge `style` closure), and `can_connect` only joins an output to an
@@ -27,8 +27,8 @@ fn main() -> iced::Result {
         .run()
 }
 
-/// The per-pin payload carried through the graph as its `UI` type. It drives
-/// pin color and connection compatibility.
+/// The per-pin payload carried through the graph as its `Ids::Payload`. It
+/// drives pin color and connection compatibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Port {
     Number,
@@ -63,8 +63,20 @@ impl Value {
     }
 }
 
-/// A connection endpoint with the default `usize` node and pin ids.
-type Pin = PinRef<usize, usize>;
+/// The graph's id vocabulary: `usize` node and pin ids, `Port` on every pin.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct LogicIds;
+
+impl Ids for LogicIds {
+    type NodeId = usize;
+    type PinId = usize;
+    type EdgeId = ();
+    type AnchorId = usize;
+    type Payload = Port;
+}
+
+/// A connection endpoint.
+type Pin = PinRef<LogicIds>;
 
 // Node ids.
 const VALUE: usize = 0; // slider  -> Number out (pin 0)
@@ -126,8 +138,8 @@ fn edge_stroke(start: Port, end: Port) -> ColorQuad {
 /// pin styling; the pin itself carries no style.
 fn pin_style(
     theme: &Theme,
-    pin: &PinInfo<'_, usize, Port>,
-    _other: Option<&PinInfo<'_, usize, Port>>,
+    pin: &PinInfo<'_, LogicIds>,
+    _other: Option<&PinInfo<'_, LogicIds>>,
     status: PinStatus,
 ) -> PinStyle {
     PinStyle {
@@ -141,7 +153,7 @@ fn gate<'a>(
     id: usize,
     pos: Point,
     body: impl Into<Element<'a, Message>>,
-) -> Node<'a, usize, usize, Port, Message, iced::Renderer> {
+) -> Node<'a, LogicIds, Message, iced::Renderer> {
     node(id, pos, container(body).width(150.0)).pin_style(pin_style)
 }
 
@@ -221,111 +233,100 @@ impl App {
         let process_bg = pal.success.base.color;
         let output_bg = pal.secondary.base.color;
 
-        // The graph is parameterized over `Port` as its pin payload (`UI`), so it
-        // cannot use the `node_graph()` helper (which fixes `UI = ()`).
-        let mut ng: NodeGraph<usize, usize, (), usize, Port, Message, iced::Renderer> =
-            NodeGraph::default()
-                .on_move(|delta, ids| Message::Moved { delta, ids })
-                .on_connect(|from, to| Message::Connected { from, to })
-                .on_disconnect(|from, to| Message::Disconnected { from, to })
-                // Authoritative: opposite directions and matching port type.
-                .can_connect(|from, to| {
-                    from.direction() != to.direction() && from.info() == to.info()
-                })
-                // The dragged edge (one loose end) takes the held pin's color.
-                .dragging_edge_style(|theme, pin| EdgeStyle {
-                    stroke_color: edge_stroke(*pin.info(), *pin.info()),
-                    ..default_edge_style(theme, EdgeStatus::Idle)
-                });
-
-        ng.push_node(gate(
-            VALUE,
-            p[VALUE],
-            framed(
-                "Value",
-                input_bg,
-                column![
-                    slider(-1.0..=1.0, self.value, Message::Value).step(0.01_f32),
-                    text(format!("{:.2}", self.value)).size(11),
-                    pin!(Right, 0usize, text("n"), Output, Port::Number),
-                ]
-                .spacing(4),
-            ),
-        ));
-
-        ng.push_node(gate(
-            SWITCH,
-            p[SWITCH],
-            framed(
-                "Switch",
-                input_bg,
-                column![
-                    checkbox(self.switch).on_toggle(Message::Switch),
-                    pin!(Right, 0usize, text("b"), Output, Port::Bool),
-                ]
-                .spacing(4),
-            ),
-        ));
-
-        ng.push_node(gate(
-            GT0,
-            p[GT0],
-            framed(
-                ">0",
-                process_bg,
-                column![
-                    pin!(Left, 0usize, text("x"), Input, Port::Number),
-                    pin!(Right, 1usize, text("out"), Output, Port::Bool),
-                ]
-                .spacing(4),
-            ),
-        ));
-
-        ng.push_node(gate(
-            AND,
-            p[AND],
-            framed(
-                "AND",
-                process_bg,
-                column![
-                    pin!(Left, 0usize, text("a"), Input, Port::Bool),
-                    pin!(Left, 1usize, text("b"), Input, Port::Bool),
-                    pin!(Right, 2usize, text("out"), Output, Port::Bool),
-                ]
-                .spacing(4),
-            ),
-        ));
-
         let lit = self.input(LAMP, 0, 8).map(Value::as_bool).unwrap_or(false);
         let lamp = if lit {
             Color::from_rgb(0.95, 0.85, 0.20)
         } else {
             Color::from_rgb(0.40, 0.40, 0.40)
         };
-        ng.push_node(gate(
-            LAMP,
-            p[LAMP],
-            framed(
-                "Lamp",
-                output_bg,
-                column![
-                    pin!(Left, 0usize, text("in"), Input, Port::Bool),
-                    text("\u{25CF}").size(22).color(lamp),
-                ]
-                .spacing(4),
-            ),
-        ));
 
-        for &(from, to) in &self.edges {
+        // The pins carry `Port`, so the graph is over `LogicIds` rather than
+        // the `Indexed` vocabulary `node_graph()` builds.
+        NodeGraph::<LogicIds, _, _>::new()
+            .on_move(|delta, ids| Message::Moved { delta, ids })
+            .on_connect(|from, to| Message::Connected { from, to })
+            .on_disconnect(|from, to| Message::Disconnected { from, to })
+            // Authoritative: opposite directions and matching port type.
+            .can_connect(|from, to| from.direction() != to.direction() && from.info() == to.info())
+            // The dragged edge (one loose end) takes the held pin's color.
+            .dragging_edge_style(|theme, pin| EdgeStyle {
+                stroke_color: edge_stroke(*pin.info(), *pin.info()),
+                ..default_edge_style(theme, EdgeStatus::Idle)
+            })
+            .push_node(gate(
+                VALUE,
+                p[VALUE],
+                framed(
+                    "Value",
+                    input_bg,
+                    column![
+                        slider(-1.0..=1.0, self.value, Message::Value).step(0.01_f32),
+                        text(format!("{:.2}", self.value)).size(11),
+                        pin!(Right, 0usize, text("n"), Output, Port::Number),
+                    ]
+                    .spacing(4),
+                ),
+            ))
+            .push_node(gate(
+                SWITCH,
+                p[SWITCH],
+                framed(
+                    "Switch",
+                    input_bg,
+                    column![
+                        checkbox(self.switch).on_toggle(Message::Switch),
+                        pin!(Right, 0usize, text("b"), Output, Port::Bool),
+                    ]
+                    .spacing(4),
+                ),
+            ))
+            .push_node(gate(
+                GT0,
+                p[GT0],
+                framed(
+                    ">0",
+                    process_bg,
+                    column![
+                        pin!(Left, 0usize, text("x"), Input, Port::Number),
+                        pin!(Right, 1usize, text("out"), Output, Port::Bool),
+                    ]
+                    .spacing(4),
+                ),
+            ))
+            .push_node(gate(
+                AND,
+                p[AND],
+                framed(
+                    "AND",
+                    process_bg,
+                    column![
+                        pin!(Left, 0usize, text("a"), Input, Port::Bool),
+                        pin!(Left, 1usize, text("b"), Input, Port::Bool),
+                        pin!(Right, 2usize, text("out"), Output, Port::Bool),
+                    ]
+                    .spacing(4),
+                ),
+            ))
+            .push_node(gate(
+                LAMP,
+                p[LAMP],
+                framed(
+                    "Lamp",
+                    output_bg,
+                    column![
+                        pin!(Left, 0usize, text("in"), Input, Port::Bool),
+                        text("\u{25CF}").size(22).color(lamp),
+                    ]
+                    .spacing(4),
+                ),
+            ))
             // Each edge derives its gradient from the two connected pins' ports.
-            ng.push_edge(
-                edge!(from, to).style(|theme, status, start, end| EdgeStyle {
+            .edges(self.edges.iter().map(|&(from, to)| {
+                edge((), from, to).style(|theme, status, start, end| EdgeStyle {
                     stroke_color: edge_stroke(*start.info(), *end.info()),
                     ..default_edge_style(theme, status)
-                }),
-            );
-        }
-
-        ng.into()
+                })
+            }))
+            .into()
     }
 }

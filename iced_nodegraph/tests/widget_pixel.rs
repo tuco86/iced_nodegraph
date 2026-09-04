@@ -31,6 +31,16 @@ use iced_wgpu::graphics::Viewport;
 
 const W: u32 = 320;
 const H: u32 = 240;
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct RouteIds;
+
+impl iced_nodegraph::Ids for RouteIds {
+    type NodeId = usize;
+    type PinId = usize;
+    type EdgeId = usize;
+    type AnchorId = usize;
+    type Payload = ();
+}
 
 /// Render a one-node graph (node carries hosted text content) to RGBA pixels.
 /// Returns `None` if no GPU is available.
@@ -39,15 +49,14 @@ fn render_one_node() -> Option<Vec<[u8; 4]>> {
     let renderer = &mut *guard;
 
     // Camera centred so the node (world origin) lands mid-viewport at zoom 1.
-    let mut graph: NodeGraph<'static, usize, usize, (), usize, (), (), Renderer> =
-        NodeGraph::default()
-            .width(Length::Fixed(W as f32))
-            .height(Length::Fixed(H as f32))
-            .view(
-                Point::new(W as f32 * 0.5 - 40.0, H as f32 * 0.5 - 20.0),
-                1.0,
-            );
-    graph.push_node(node(
+    let mut graph: NodeGraph<'static, iced_nodegraph::Indexed, (), Renderer> = NodeGraph::default()
+        .width(Length::Fixed(W as f32))
+        .height(Length::Fixed(H as f32))
+        .camera(
+            Point::new(W as f32 * 0.5 - 40.0, H as f32 * 0.5 - 20.0),
+            1.0,
+        );
+    graph = graph.push_node(node(
         0_usize,
         Point::new(0.0, 0.0),
         Element::from(text("Hi")),
@@ -62,7 +71,7 @@ fn render_one_node() -> Option<Vec<[u8; 4]>> {
     let layout = Layout::new(&layout_node);
     let viewport_rect = Rectangle::new(Point::ORIGIN, Size::new(W as f32, H as f32));
 
-    // One update syncs the controlled `view()` into the widget camera.
+    // One update syncs the controlled `camera()` into the widget camera.
     let mut msgs: Vec<()> = Vec::new();
     let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
     let mut clipboard = clipboard::Null;
@@ -192,15 +201,15 @@ fn zoomout_grid_missing_nodes_at(scale: f32, frames: u32, cam: Point, zoom: f32)
     let viewport_rect = Rectangle::new(Point::ORIGIN, Size::new(GW as f32, GH as f32));
     let mut px: Vec<[u8; 4]> = Vec::new();
     for _ in 0..frames.max(1) {
-        // Rebuild the view each frame, exactly as a live app does.
-        let mut graph: NodeGraph<'static, usize, usize, (), usize, (), (), Renderer> =
+        // Rebuild the camera each frame, exactly as a live app does.
+        let mut graph: NodeGraph<'static, iced_nodegraph::Indexed, (), Renderer> =
             NodeGraph::default()
                 .width(Length::Fixed(GW as f32))
                 .height(Length::Fixed(GH as f32))
-                .view(cam, zoom);
+                .camera(cam, zoom);
         for (id, &(tlx, tly)) in lattice.iter().enumerate() {
             let (wx, wy) = world_of(tlx, tly);
-            graph.push_node(
+            graph = graph.push_node(
                 node(
                     id,
                     Point::new(wx, wy),
@@ -362,13 +371,12 @@ fn offscreen_node_does_not_desync_later_nodes() {
     let mut worlds = vec![(700.0_f32, 120.0_f32)];
     worlds.extend_from_slice(&visible);
 
-    let mut graph: NodeGraph<'static, usize, usize, (), usize, (), (), Renderer> =
-        NodeGraph::default()
-            .width(Length::Fixed(GW as f32))
-            .height(Length::Fixed(GH as f32))
-            .view(cam, zoom);
+    let mut graph: NodeGraph<'static, iced_nodegraph::Indexed, (), Renderer> = NodeGraph::default()
+        .width(Length::Fixed(GW as f32))
+        .height(Length::Fixed(GH as f32))
+        .camera(cam, zoom);
     for (id, &(wx, wy)) in worlds.iter().enumerate() {
-        graph.push_node(
+        graph = graph.push_node(
             node(
                 id,
                 Point::new(wx, wy),
@@ -503,17 +511,16 @@ fn render_node_selection(selected: bool) -> Option<Vec<[u8; 4]>> {
     let mut guard = shared()?;
     let renderer = &mut *guard;
 
-    let mut graph: NodeGraph<'static, usize, usize, (), usize, (), (), Renderer> =
-        NodeGraph::default()
-            .width(Length::Fixed(W as f32))
-            .height(Length::Fixed(H as f32))
-            .view(
-                Point::new(W as f32 * 0.5 - 40.0, H as f32 * 0.5 - 20.0),
-                1.0,
-            );
+    let mut graph: NodeGraph<'static, iced_nodegraph::Indexed, (), Renderer> = NodeGraph::default()
+        .width(Length::Fixed(W as f32))
+        .height(Length::Fixed(H as f32))
+        .camera(
+            Point::new(W as f32 * 0.5 - 40.0, H as f32 * 0.5 - 20.0),
+            1.0,
+        );
     // A realistically sized body: the halo is judged relative to the node, and a
     // bare text label is an order of magnitude smaller than a real node.
-    graph.push_node(
+    graph = graph.push_node(
         node(
             0_usize,
             Point::new(0.0, 0.0),
@@ -576,12 +583,11 @@ fn render_pin_shape(shape: iced_nodegraph::PinShape) -> Option<Vec<[u8; 4]>> {
     let mut guard = shared()?;
     let renderer = &mut *guard;
 
-    let mut graph: NodeGraph<'static, usize, usize, (), usize, (), (), Renderer> =
-        NodeGraph::default()
-            .width(Length::Fixed(W as f32))
-            .height(Length::Fixed(H as f32))
-            .view(Point::ORIGIN, 1.0);
-    graph.push_node(
+    let mut graph: NodeGraph<'static, iced_nodegraph::Indexed, (), Renderer> = NodeGraph::default()
+        .width(Length::Fixed(W as f32))
+        .height(Length::Fixed(H as f32))
+        .camera(Point::ORIGIN, 1.0);
+    graph = graph.push_node(
         node(
             0_usize,
             Point::new(90.0, 70.0),
@@ -713,7 +719,7 @@ enum RouteScene {
 ///
 /// Each node's content is one 60x50 pin body, so its pin anchor sits at the
 /// middle of the side it is on: node 0's Right/output pin at world (60, 25) and
-/// node 1's Left/input pin at (200, 25). `view()` offsets world by (20, 20) at
+/// node 1's Left/input pin at (200, 25). `camera()` offsets world by (20, 20) at
 /// zoom 1, so those are screen (80, 45) and (220, 45).
 fn render_routed_edge(scene: RouteScene) -> Option<Vec<[u8; 4]>> {
     use iced::widget::container;
@@ -724,25 +730,24 @@ fn render_routed_edge(scene: RouteScene) -> Option<Vec<[u8; 4]>> {
 
     const ANCHOR: usize = 9;
 
-    let mut graph: NodeGraph<'static, usize, usize, (), usize, (), (), Renderer> =
-        NodeGraph::default()
-            .width(Length::Fixed(W as f32))
-            .height(Length::Fixed(H as f32))
-            .view(Point::new(20.0, 20.0), 1.0)
-            .on_connect(|_, _| ())
-            .on_anchor_move(|_id, _position| ());
+    let mut graph: NodeGraph<'static, iced_nodegraph::Indexed, (), Renderer> = NodeGraph::default()
+        .width(Length::Fixed(W as f32))
+        .height(Length::Fixed(H as f32))
+        .camera(Point::new(20.0, 20.0), 1.0)
+        .on_connect(|_, _| ())
+        .on_anchor_move(|_id, _position| ());
 
     let pin_body = || {
         container(text("p"))
             .width(Length::Fixed(60.0))
             .height(Length::Fixed(50.0))
     };
-    graph.push_node(node(
+    graph = graph.push_node(node(
         0usize,
         Point::new(0.0, 0.0),
         Element::from(node_pin(PinSide::Right, 0usize, pin_body()).direction(PinDirection::Output)),
     ));
-    graph.push_node(node(
+    graph = graph.push_node(node(
         1usize,
         Point::new(200.0, 0.0),
         Element::from(node_pin(PinSide::Left, 0usize, pin_body()).direction(PinDirection::Input)),
@@ -753,10 +758,10 @@ fn render_routed_edge(scene: RouteScene) -> Option<Vec<[u8; 4]>> {
         RouteScene::Wrapped | RouteScene::Dragging | RouteScene::HoveringEnd
     );
     let route: Vec<usize> = if routed { vec![ANCHOR] } else { Vec::new() };
-    graph
-        .push_edge(edge(PinRef::new(0usize, 0usize), PinRef::new(1usize, 0usize), ()).route(route));
+    graph = graph
+        .push_edge(edge((), PinRef::new(0usize, 0usize), PinRef::new(1usize, 0usize)).route(route));
     if scene != RouteScene::Bare {
-        graph.push_anchor(anchor(ANCHOR, Point::new(115.0, 160.0)));
+        graph = graph.push_anchor(anchor(ANCHOR, Point::new(115.0, 160.0)));
     }
 
     let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Renderer>);
@@ -771,7 +776,7 @@ fn render_routed_edge(scene: RouteScene) -> Option<Vec<[u8; 4]>> {
     let mut msgs: Vec<()> = Vec::new();
     let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
     let mut clipboard = clipboard::Null;
-    let mut feed = |graph: &mut NodeGraph<'static, usize, usize, (), usize, (), (), Renderer>,
+    let mut feed = |graph: &mut NodeGraph<'static, iced_nodegraph::Indexed, (), Renderer>,
                     tree: &mut Tree,
                     event: iced::Event,
                     cursor: mouse::Cursor| {
@@ -866,36 +871,35 @@ fn render_route_drag(route: &[usize], drag: bool) -> Option<Vec<[u8; 4]>> {
 
     const ANCHOR: usize = 9;
 
-    let mut graph: NodeGraph<'static, usize, usize, usize, usize, (), (), Renderer> =
-        NodeGraph::default()
-            .width(Length::Fixed(W as f32))
-            .height(Length::Fixed(H as f32))
-            .view(Point::new(20.0, 20.0), 1.0)
-            .on_anchor_create(|_, _| ())
-            .on_route_attach(|_, _| ())
-            .on_route_detach(|_, _| ());
+    let mut graph: NodeGraph<'static, RouteIds, (), Renderer> = NodeGraph::default()
+        .width(Length::Fixed(W as f32))
+        .height(Length::Fixed(H as f32))
+        .camera(Point::new(20.0, 20.0), 1.0)
+        .on_anchor_create(|_, _| ())
+        .on_route_attach(|_, _| ())
+        .on_route_detach(|_, _| ());
 
     let pin_body = || {
         container(text("p"))
             .width(Length::Fixed(60.0))
             .height(Length::Fixed(50.0))
     };
-    graph.push_node(node(
+    graph = graph.push_node(node(
         0usize,
         Point::new(0.0, 0.0),
         Element::from(node_pin(PinSide::Right, 0usize, pin_body()).direction(PinDirection::Output)),
     ));
-    graph.push_node(node(
+    graph = graph.push_node(node(
         1usize,
         Point::new(200.0, 0.0),
         Element::from(node_pin(PinSide::Left, 0usize, pin_body()).direction(PinDirection::Input)),
     ));
-    graph.push_anchor(anchor(ANCHOR, Point::new(115.0, 160.0)));
-    graph.push_edge(
+    graph = graph.push_anchor(anchor(ANCHOR, Point::new(115.0, 160.0)));
+    graph = graph.push_edge(
         edge(
+            0usize,
             PinRef::new(0usize, 0usize),
             PinRef::new(1usize, 0usize),
-            0usize,
         )
         .route(route.to_vec()),
     );
@@ -913,7 +917,7 @@ fn render_route_drag(route: &[usize], drag: bool) -> Option<Vec<[u8; 4]>> {
     let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
     let mut clipboard = clipboard::Null;
     let mut cursor = mouse::Cursor::Unavailable;
-    // One event before anything else, so `update` syncs `view()` into the
+    // One event before anything else, so `update` syncs `camera()` into the
     // camera and picks up the viewport origin. Without it a frame that feeds no
     // events is drawn from an unsynced camera and lands offset from one that
     // does - which would read as a geometry difference.
@@ -999,39 +1003,38 @@ fn render_regrab(after_detach: &[usize], at_reattach: &[usize]) -> Option<Vec<[u
     const ANCHOR: usize = 9;
 
     let scene = |route: &[usize]| {
-        let mut graph: NodeGraph<'static, usize, usize, usize, usize, (), (), Renderer> =
-            NodeGraph::default()
-                .width(Length::Fixed(W as f32))
-                .height(Length::Fixed(H as f32))
-                .view(Point::new(20.0, 20.0), 1.0)
-                .on_anchor_create(|_, _| ())
-                .on_route_attach(|_, _| ())
-                .on_route_detach(|_, _| ());
+        let mut graph: NodeGraph<'static, RouteIds, (), Renderer> = NodeGraph::default()
+            .width(Length::Fixed(W as f32))
+            .height(Length::Fixed(H as f32))
+            .camera(Point::new(20.0, 20.0), 1.0)
+            .on_anchor_create(|_, _| ())
+            .on_route_attach(|_, _| ())
+            .on_route_detach(|_, _| ());
         let pin_body = || {
             container(text("p"))
                 .width(Length::Fixed(60.0))
                 .height(Length::Fixed(50.0))
         };
-        graph.push_node(node(
+        graph = graph.push_node(node(
             0usize,
             Point::new(0.0, 0.0),
             Element::from(
                 node_pin(PinSide::Right, 0usize, pin_body()).direction(PinDirection::Output),
             ),
         ));
-        graph.push_node(node(
+        graph = graph.push_node(node(
             1usize,
             Point::new(200.0, 0.0),
             Element::from(
                 node_pin(PinSide::Left, 0usize, pin_body()).direction(PinDirection::Input),
             ),
         ));
-        graph.push_anchor(anchor(ANCHOR, Point::new(115.0, 160.0)));
-        graph.push_edge(
+        graph = graph.push_anchor(anchor(ANCHOR, Point::new(115.0, 160.0)));
+        graph = graph.push_edge(
             edge(
+                0usize,
                 PinRef::new(0usize, 0usize),
                 PinRef::new(1usize, 0usize),
-                0usize,
             )
             .route(route.to_vec()),
         );

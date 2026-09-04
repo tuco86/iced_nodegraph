@@ -67,17 +67,30 @@ use iced::{
     widget::{button, column, container, opaque, pick_list, row, slider, stack, text},
 };
 use iced_nodegraph::{
-    GraphStyle, NodeStatus, NodeStyle, Pattern, PinDirection, PinInfo, PinRef, PinStatus, PinStyle,
-    TilingBackground, anchor, default_node_style, default_pin_style, edge, node,
+    GraphStyle, Ids, NodeStatus, NodeStyle, Pattern, PinDirection, PinInfo, PinRef, PinStatus,
+    PinStyle, TilingBackground, anchor, default_graph_style, default_pin_style, edge, node,
 };
 use nodes::styled_node;
 use std::collections::HashSet;
 
+/// Id vocabulary of this demo: usize node, pin, edge and anchor ids, and a
+/// `TypeId` pin payload naming the data kind a pin carries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct StylingIds;
+
+impl Ids for StylingIds {
+    type NodeId = usize;
+    type PinId = usize;
+    type EdgeId = usize;
+    type AnchorId = usize;
+    type Payload = ::std::any::TypeId;
+}
+
 /// Pin style for the styling demo: blue inputs, orange outputs.
 fn styling_pin_style(
     theme: &Theme,
-    pin: &PinInfo<'_, usize, ::std::any::TypeId>,
-    _other: Option<&PinInfo<'_, usize, ::std::any::TypeId>>,
+    pin: &PinInfo<'_, StylingIds>,
+    _other: Option<&PinInfo<'_, StylingIds>>,
     status: PinStatus,
 ) -> PinStyle {
     let color = match pin.direction() {
@@ -129,12 +142,12 @@ pub fn run_demo() {
 enum Message {
     // Graph events
     EdgeConnected {
-        from: PinRef<usize, usize>,
-        to: PinRef<usize, usize>,
+        from: PinRef<StylingIds>,
+        to: PinRef<StylingIds>,
     },
     EdgeDisconnected {
-        from: PinRef<usize, usize>,
-        to: PinRef<usize, usize>,
+        from: PinRef<StylingIds>,
+        to: PinRef<StylingIds>,
     },
     SelectionChanged(Vec<usize>),
     NodesMoved {
@@ -200,6 +213,16 @@ impl NodePreset {
         NodePreset::Output,
         NodePreset::Comment,
     ];
+
+    /// The library preset this variant names, resolved for a theme and status.
+    fn style(self, theme: &Theme, status: NodeStatus) -> NodeStyle {
+        match self {
+            NodePreset::Input => NodeStyle::input(theme, status),
+            NodePreset::Process => NodeStyle::process(theme, status),
+            NodePreset::Output => NodeStyle::output(theme, status),
+            NodePreset::Comment => NodeStyle::comment(theme, status),
+        }
+    }
 }
 
 /// One edge the host owns: a minted id, its two pins, and the anchors it wraps.
@@ -216,9 +239,64 @@ impl NodePreset {
 #[derive(Debug, Clone)]
 struct EdgeModel {
     id: usize,
-    from: PinRef<usize, usize>,
-    to: PinRef<usize, usize>,
+    from: PinRef<StylingIds>,
+    to: PinRef<StylingIds>,
     route: Vec<usize>,
+}
+
+/// The style fields the sliders drive, held per node.
+///
+/// A preset is a function of theme and status, so a node keeps the preset it
+/// was given plus these overrides and both resolve in the node's style
+/// closure.
+#[derive(Debug, Clone, Copy)]
+struct NodeOverrides {
+    corner_radius: f32,
+    opacity: f32,
+    border_width: f32,
+}
+
+impl NodeOverrides {
+    /// The values every node starts on.
+    const START: Self = Self {
+        corner_radius: 5.0,
+        opacity: 0.75,
+        border_width: 1.5,
+    };
+
+    /// `base` with the slider-driven fields replaced. Only the border's
+    /// thickness is a slider, so a preset's dash pattern survives.
+    fn apply(self, base: NodeStyle) -> NodeStyle {
+        NodeStyle {
+            corner_radius: self.corner_radius,
+            opacity: self.opacity,
+            border_pattern: Pattern {
+                thickness: self.border_width,
+                ..base.border_pattern
+            },
+            ..base
+        }
+    }
+}
+
+/// One node the host owns: where it sits, what it is called, and the preset
+/// plus overrides its style resolves from.
+struct StyledNode {
+    position: Point,
+    name: String,
+    preset: NodePreset,
+    overrides: NodeOverrides,
+}
+
+impl StyledNode {
+    fn new(position: Point, name: &str, preset: NodePreset) -> Self {
+        Self {
+            position,
+            name: name.to_string(),
+            preset,
+            overrides: NodeOverrides::START,
+        }
+    }
 }
 
 struct Application {
@@ -231,15 +309,10 @@ struct Application {
     /// The next anchor id to mint. Only ever grows, so a deleted anchor's id is
     /// never handed to a different anchor.
     next_anchor: usize,
-    nodes: Vec<(Point, String, NodeStyle)>,
+    nodes: Vec<StyledNode>,
     current_theme: Theme,
     selected_node: Option<usize>,
     graph_selection: HashSet<usize>,
-
-    // Control panel state
-    corner_radius: f32,
-    opacity: f32,
-    border_width: f32,
 }
 
 impl Default for Application {
@@ -296,43 +369,24 @@ impl Default for Application {
             anchors: vec![(0, Point::new(300.0, 300.0)), (1, Point::new(550.0, 300.0))],
             next_anchor: 2,
             nodes: vec![
-                (
-                    Point::new(100.0, 150.0),
-                    "Input Data".to_string(),
-                    NodeStyle::input(),
-                ),
-                (
-                    Point::new(350.0, 200.0),
-                    "Transform".to_string(),
-                    NodeStyle::process(),
-                ),
-                (
+                StyledNode::new(Point::new(100.0, 150.0), "Input Data", NodePreset::Input),
+                StyledNode::new(Point::new(350.0, 200.0), "Transform", NodePreset::Process),
+                StyledNode::new(
                     Point::new(600.0, 150.0),
-                    "Output Result".to_string(),
-                    NodeStyle::output(),
+                    "Output Result",
+                    NodePreset::Output,
                 ),
-                (
+                StyledNode::new(
                     Point::new(600.0, 420.0),
-                    "Note: This is a comment".to_string(),
-                    NodeStyle::comment(),
+                    "Note: This is a comment",
+                    NodePreset::Comment,
                 ),
-                (
-                    Point::new(600.0, 280.0),
-                    "Output Log".to_string(),
-                    NodeStyle::output(),
-                ),
-                (
-                    Point::new(120.0, 60.0),
-                    "Aux Input".to_string(),
-                    NodeStyle::input(),
-                ),
+                StyledNode::new(Point::new(600.0, 280.0), "Output Log", NodePreset::Output),
+                StyledNode::new(Point::new(120.0, 60.0), "Aux Input", NodePreset::Input),
             ],
             current_theme: Theme::CatppuccinFrappe,
             selected_node: Some(0),
             graph_selection: HashSet::new(),
-            corner_radius: 5.0,
-            opacity: 0.75,
-            border_width: 1.5,
         }
     }
 }
@@ -410,47 +464,35 @@ impl Application {
             }
             Message::NodesMoved { delta, indices } => {
                 for idx in indices {
-                    if let Some((pos, _, _)) = self.nodes.get_mut(idx) {
-                        pos.x += delta.x;
-                        pos.y += delta.y;
+                    if let Some(styled) = self.nodes.get_mut(idx) {
+                        styled.position.x += delta.x;
+                        styled.position.y += delta.y;
                     }
                 }
             }
             Message::CornerRadiusChanged(value) => {
-                self.corner_radius = value;
-                self.apply_style_to_selected();
+                if let Some(overrides) = self.selected_overrides_mut() {
+                    overrides.corner_radius = value;
+                }
             }
             Message::OpacityChanged(value) => {
-                self.opacity = value;
-                self.apply_style_to_selected();
+                if let Some(overrides) = self.selected_overrides_mut() {
+                    overrides.opacity = value;
+                }
             }
             Message::BorderWidthChanged(value) => {
-                self.border_width = value;
-                self.apply_style_to_selected();
+                if let Some(overrides) = self.selected_overrides_mut() {
+                    overrides.border_width = value;
+                }
             }
             Message::SelectNode(index) => {
                 self.selected_node = Some(index);
-                // Load the selected node's style into controls
-                if let Some((_, _, style)) = self.nodes.get(index) {
-                    self.corner_radius = style.corner_radius;
-                    self.opacity = style.opacity;
-                    self.border_width = style.border_pattern.thickness;
-                }
             }
             Message::ApplyPreset(preset) => {
-                if let Some(index) = self.selected_node {
-                    let new_style = match preset {
-                        NodePreset::Input => NodeStyle::input(),
-                        NodePreset::Process => NodeStyle::process(),
-                        NodePreset::Output => NodeStyle::output(),
-                        NodePreset::Comment => NodeStyle::comment(),
-                    };
-                    if let Some((_, _, style)) = self.nodes.get_mut(index) {
-                        *style = new_style.clone();
-                        self.corner_radius = new_style.corner_radius;
-                        self.opacity = new_style.opacity;
-                        self.border_width = new_style.border_pattern.thickness;
-                    }
+                if let Some(index) = self.selected_node
+                    && let Some(styled) = self.nodes.get_mut(index)
+                {
+                    styled.preset = preset;
                 }
             }
             Message::ChangeTheme(theme) => {
@@ -474,14 +516,20 @@ impl Application {
         self.anchors.retain(|(id, _)| routed.contains(id));
     }
 
-    fn apply_style_to_selected(&mut self) {
-        if let Some(index) = self.selected_node
-            && let Some((_, _, style)) = self.nodes.get_mut(index)
-        {
-            style.corner_radius = self.corner_radius;
-            style.opacity = self.opacity;
-            style.border_pattern = Pattern::solid(self.border_width);
-        }
+    /// The slider values of the selected node, or the starting values when no
+    /// node is selected.
+    fn selected_overrides(&self) -> NodeOverrides {
+        self.selected_node
+            .and_then(|index| self.nodes.get(index))
+            .map(|styled| styled.overrides)
+            .unwrap_or(NodeOverrides::START)
+    }
+
+    fn selected_overrides_mut(&mut self) -> Option<&mut NodeOverrides> {
+        let index = self.selected_node?;
+        self.nodes
+            .get_mut(index)
+            .map(|styled| &mut styled.overrides)
     }
 
     fn view(&self) -> Element<'_, Message> {
@@ -522,9 +570,9 @@ impl Application {
 
         let title = text("Style Controls").size(18).color(text_color);
 
-        let selected_label = if let Some(index) = self.selected_node {
-            let name = &self.nodes[index].1;
-            text(format!("Selected: {}", name))
+        let selected = self.selected_node.and_then(|index| self.nodes.get(index));
+        let selected_label = if let Some(styled) = selected {
+            text(format!("Selected: {} ({})", styled.name, styled.preset))
                 .size(14)
                 .color(text_color)
         } else {
@@ -536,9 +584,9 @@ impl Application {
             self.nodes
                 .iter()
                 .enumerate()
-                .map(|(i, (_, name, _))| {
+                .map(|(i, styled)| {
                     let is_selected = self.selected_node == Some(i);
-                    button(text(name.clone()).size(12))
+                    button(text(styled.name.clone()).size(12))
                         .on_press(Message::SelectNode(i))
                         .style(move |theme: &Theme, status| {
                             if is_selected {
@@ -555,12 +603,17 @@ impl Application {
         .spacing(5)
         .into();
 
-        // Style sliders
+        // Style sliders, driving the selected node's overrides
+        let overrides = self.selected_overrides();
         let corner_slider = column![
             text("Corner Radius").size(12).color(text_color),
             row![
-                slider(0.0..=20.0, self.corner_radius, Message::CornerRadiusChanged),
-                text(format!("{:.1}", self.corner_radius))
+                slider(
+                    0.0..=20.0,
+                    overrides.corner_radius,
+                    Message::CornerRadiusChanged
+                ),
+                text(format!("{:.1}", overrides.corner_radius))
                     .size(12)
                     .color(text_color),
             ]
@@ -571,8 +624,8 @@ impl Application {
         let opacity_slider = column![
             text("Opacity").size(12).color(text_color),
             row![
-                slider(0.1..=1.0, self.opacity, Message::OpacityChanged).step(0.05_f32),
-                text(format!("{:.2}", self.opacity))
+                slider(0.1..=1.0, overrides.opacity, Message::OpacityChanged).step(0.05_f32),
+                text(format!("{:.2}", overrides.opacity))
                     .size(12)
                     .color(text_color),
             ]
@@ -583,8 +636,13 @@ impl Application {
         let border_slider = column![
             text("Border Width").size(12).color(text_color),
             row![
-                slider(0.5..=5.0, self.border_width, Message::BorderWidthChanged).step(0.5_f32),
-                text(format!("{:.1}", self.border_width))
+                slider(
+                    0.5..=5.0,
+                    overrides.border_width,
+                    Message::BorderWidthChanged
+                )
+                .step(0.5_f32),
+                text(format!("{:.1}", overrides.border_width))
                     .size(12)
                     .color(text_color),
             ]
@@ -655,17 +713,9 @@ impl Application {
     fn build_graph(&self) -> Element<'_, Message> {
         let theme = &self.current_theme;
 
-        // The edge id parameter is `usize`: each edge carries a minted id, so
+        // `StylingIds::EdgeId` is `usize`: each edge carries a minted id, so
         // the anchor callbacks name one that survives a removal elsewhere.
-        let mut ng: ::iced_nodegraph::NodeGraph<
-            usize,
-            usize,
-            usize,
-            usize,
-            ::std::any::TypeId,
-            _,
-            _,
-        > = ::iced_nodegraph::NodeGraph::default()
+        ::iced_nodegraph::NodeGraph::<StylingIds, _, _>::new()
             .on_connect(|from, to| Message::EdgeConnected { from, to })
             .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })
             .on_move(|delta, indices| Message::NodesMoved { delta, indices })
@@ -684,45 +734,34 @@ impl Application {
                         1.0,
                         iced::Color { a: 0.5, ..line },
                     )),
-                    ..GraphStyle::from_theme(theme)
+                    ..default_graph_style(theme)
                 }
-            });
-
-        for (index, (position, name, style)) in self.nodes.iter().enumerate() {
-            // The demo stores a fully resolved style per node; the callback
-            // returns it and layers the selection feedback on top when selected.
-            let node_style = style.clone();
-            ng.push_node(
-                node(index, *position, styled_node(name, style, theme))
-                    .selected(self.graph_selection.contains(&index))
-                    .style(move |theme, status| {
-                        let mut resolved = node_style.clone();
-                        if status == NodeStatus::Selected {
-                            // Take the library's selection feedback verbatim, so a
-                            // hand-styled node highlights like every other node.
-                            let sel = default_node_style(theme, status);
-                            resolved.border_color = sel.border_color;
-                            resolved.border_pattern = sel.border_pattern;
-                            resolved.border_outline_width = sel.border_outline_width;
-                            resolved.border_outline_color = sel.border_outline_color;
-                            resolved.opacity = sel.opacity;
-                        }
-                        resolved
-                    })
-                    .pin_style(styling_pin_style),
-            );
-        }
-
-        // Anchors before edges only for readability; the widget resolves ids
-        // through its own lookups, so push order between the two is free.
-        for &(id, position) in &self.anchors {
-            ng.push_anchor(anchor(id, position));
-        }
-
-        for model in &self.edges {
-            ng.push_edge(edge(model.from, model.to, model.id).route(model.route.iter().copied()));
-        }
-
-        ng.into()
+            })
+            .nodes(self.nodes.iter().enumerate().map(|(index, styled)| {
+                let preset = styled.preset;
+                let overrides = styled.overrides;
+                // The hosted content mirrors the idle style, so the title bar
+                // takes the body's hue and the node's geometry.
+                let idle = overrides.apply(preset.style(theme, NodeStatus::Idle));
+                node(
+                    index,
+                    styled.position,
+                    styled_node(&styled.name, &idle, theme),
+                )
+                .selected(self.graph_selection.contains(&index))
+                .style(move |theme, status| overrides.apply(preset.style(theme, status)))
+                .pin_style(styling_pin_style)
+            }))
+            // Anchors before edges only for readability; the widget resolves
+            // ids through its own lookups, so the order between the two is free.
+            .anchors(
+                self.anchors
+                    .iter()
+                    .map(|&(id, position)| anchor(id, position)),
+            )
+            .edges(self.edges.iter().map(|model| {
+                edge(model.id, model.from, model.to).route(model.route.iter().copied())
+            }))
+            .into()
     }
 }

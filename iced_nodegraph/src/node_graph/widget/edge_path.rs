@@ -3011,18 +3011,21 @@ mod tests {
     /// the visiting order the projection gives is not a coin toss.
     const GATE_ORDER: f32 = 0.04;
 
-    /// A graph whose node, anchor and edge ids are all `usize`, so a failure
-    /// message names the piece it means by value.
-    type GateGraph<'a> = crate::node_graph::NodeGraph<
-        'a,
-        usize,
-        usize,
-        usize,
-        usize,
-        (),
-        (),
-        iced_widget::renderer::Renderer,
-    >;
+    /// A vocabulary whose node, anchor and edge ids are all `usize`, so a
+    /// failure message names the piece it means by value.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    struct GateIds;
+
+    impl crate::Ids for GateIds {
+        type NodeId = usize;
+        type PinId = usize;
+        type EdgeId = usize;
+        type AnchorId = usize;
+        type Payload = ();
+    }
+
+    type GateGraph<'a> =
+        crate::node_graph::NodeGraph<'a, GateIds, (), iced_widget::renderer::Renderer>;
 
     /// A linear congruential generator, so a whole scene is named by one integer
     /// and rebuilt from it.
@@ -3447,22 +3450,22 @@ mod tests {
         let cables = scene.cables.len();
         let mut graph = GateGraph::default();
         for (index, center) in scene.anchors.iter().enumerate() {
-            graph.push_anchor(crate::node_graph::anchor(
+            graph = graph.push_anchor(crate::node_graph::anchor(
                 GATE_ANCHOR_ID + index,
                 Point::new(center[0], center[1]),
             ));
         }
         for cable in 0..cables {
-            graph.push_edge(
+            graph = graph.push_edge(
                 crate::node_graph::edge(
+                    cable,
                     PinRef::new(2 * cable, 0),
                     PinRef::new(2 * cable + 1, 0),
-                    cable,
                 )
                 .route((0..anchors).map(|anchor| GATE_ANCHOR_ID + anchor)),
             );
         }
-        let station = |pin: &PinRef<usize, usize>| -> Option<Station> {
+        let station = |pin: &PinRef<GateIds>| -> Option<Station> {
             let ends = scene.cables.get(pin.node_id / 2)?;
             Some(if pin.node_id.is_multiple_of(2) {
                 Station {

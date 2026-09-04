@@ -419,9 +419,9 @@ impl Camera2D {
     /// Computes the target `(position, zoom)` that fits `world_aabb` inside
     /// `viewport` (layout size, screen px), honoring per-side padding and
     /// zoom bounds from `opts`. Pure and side-effect free -- the single
-    /// source of the fit math; both [`NodeGraph::focus`](super::NodeGraph::focus)
-    /// and the keymap frame actions resolve a target to a [`WorldRect`] and
-    /// call this, and so do its unit tests.
+    /// source of the fit math; both the [`focus`](crate::focus) task and the
+    /// keymap frame actions resolve a target to a [`WorldRect`] and call this,
+    /// and so do its unit tests.
     ///
     /// `viewport_origin` falls out of the derivation entirely (the returned
     /// `position` is world-relative, independent of where the widget sits
@@ -514,7 +514,7 @@ impl Camera2D {
     /// A tween whose zoom does not change falls back to a plain center lerp,
     /// so a pure pan travels straight at constant speed with no zoom-out
     /// detour. `e >= 1.0` returns the endpoints verbatim: that value is what
-    /// the host stores and echoes back through `view()`, so it must not be
+    /// the host stores and echoes back through `camera()`, so it must not be
     /// f32's approach to the target.
     pub(crate) fn tween_step(
         start_center: WorldPoint,

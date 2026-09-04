@@ -14,11 +14,11 @@
 //!
 //! There is no event enum: each interaction has its own `Fn -> Message` setter
 //! (`on_connect`, `on_move`, `on_resize`, `on_select`, `on_clone`, `on_delete`,
-//! `on_pan`, `on_info`). Nothing is applied locally: selection comes back per
-//! node through
-//! [`Node::selected`] and the camera through [`NodeGraph::view`], so the host is
-//! always the source of truth. `on_drag_start`/`on_drag_update`/`on_drag_end`
-//! expose a drag while it happens, for hosts that mirror it elsewhere.
+//! `on_camera`, `on_info`). Nothing is applied locally: selection comes back
+//! per node through [`Node::selected`] and the camera through
+//! [`NodeGraph::camera`], so the host is always the source of truth.
+//! `on_drag_start`/`on_drag_update`/`on_drag_end` expose a drag while it
+//! happens, for hosts that mirror it elsewhere.
 //!
 //! # Styling
 //!
@@ -34,10 +34,12 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-use iced_widget::core::{Element, Length, Padding, Point, Rectangle, Size, Theme, Vector};
+use iced_widget::core::widget::Id as WidgetId;
+use iced_widget::core::{Element, Length, Point, Size, Theme, Vector};
 
+use self::focus::{FocusOptions, FocusTarget};
 use self::widget::edge_path;
-use crate::ids::{AnchorId, EdgeId, NodeId, PinId};
+use crate::ids::{Ids, Indexed};
 use crate::node_pin::{PinDirection, PinEnd, PinInfo};
 use crate::style::{
     AnchorStatus, AnchorStyle, CuttingToolStyle, EdgeCurve, EdgeStatus, EdgeStyle, GraphStyle,
@@ -133,19 +135,17 @@ pub(crate) type NodeStyleFn<'a> = Box<dyn Fn(&Theme, NodeStatus) -> NodeStyle + 
 /// Per-edge style callback: theme + status + both endpoint pin infos (in draw
 /// order: start = output side, end = input side) -> resolved style. Used by
 /// [`Edge`].
-pub(crate) type EdgeStyleFn<'a, P, UI> =
-    Box<dyn Fn(&Theme, EdgeStatus, PinInfo<'_, P, UI>, PinInfo<'_, P, UI>) -> EdgeStyle + 'a>;
+pub(crate) type EdgeStyleFn<'a, I> =
+    Box<dyn Fn(&Theme, EdgeStatus, PinInfo<'_, I>, PinInfo<'_, I>) -> EdgeStyle + 'a>;
 /// Per-node pin style callback: theme + this pin's info + the other endpoint's
 /// info (the drag source during an edge drag, else `None`) + status -> resolved
 /// pin style. The node styles all of its pins (pins carry no style of their
 /// own). Used by [`Node::pin_style`].
-pub(crate) type PinStyleFn<'a, P, UI> = Box<
-    dyn Fn(&Theme, &PinInfo<'_, P, UI>, Option<&PinInfo<'_, P, UI>>, PinStatus) -> PinStyle + 'a,
->;
+pub(crate) type PinStyleFn<'a, I> =
+    Box<dyn Fn(&Theme, &PinInfo<'_, I>, Option<&PinInfo<'_, I>>, PinStatus) -> PinStyle + 'a>;
 /// Drag-edge style callback: theme + the source pin's info -> resolved style. A
 /// freshly dragged edge has no status. Used by [`NodeGraph::dragging_edge_style`].
-pub(crate) type DragEdgeStyleFn<'a, P, UI> =
-    Box<dyn Fn(&Theme, PinInfo<'_, P, UI>) -> EdgeStyle + 'a>;
+pub(crate) type DragEdgeStyleFn<'a, I> = Box<dyn Fn(&Theme, PinInfo<'_, I>) -> EdgeStyle + 'a>;
 /// Per-anchor style callback: theme + status -> resolved style. Used by
 /// [`Anchor`].
 pub(crate) type AnchorStyleFn<'a> = Box<dyn Fn(&Theme, AnchorStatus) -> AnchorStyle + 'a>;
@@ -155,22 +155,22 @@ pub(crate) type AnchorStyleFn<'a> = Box<dyn Fn(&Theme, AnchorStatus) -> AnchorSt
 /// Build with [`node`] + [`Node::style`]/[`Node::pin_style`], then add via
 /// [`NodeGraph::push_node`]. Looks like its own widget even though the body and
 /// pins are drawn by the graph.
-pub struct Node<'a, N, P, UI, Message, Renderer> {
-    pub(super) id: N,
+pub struct Node<'a, I: Ids = Indexed, Message = (), Renderer = iced_widget::renderer::Renderer> {
+    pub(super) id: I::NodeId,
     pub(super) position: Point,
     pub(super) element: Element<'a, Message, Theme, Renderer>,
     pub(super) selected: bool,
     pub(super) resizable: bool,
     pub(super) style: Option<NodeStyleFn<'a>>,
-    pub(super) pin_style: Option<PinStyleFn<'a, P, UI>>,
+    pub(super) pin_style: Option<PinStyleFn<'a, I>>,
 }
 
 /// Creates a [`Node`] with default (theme) styling.
-pub fn node<'a, N, P, UI, Message, Renderer>(
-    id: N,
+pub fn node<'a, I: Ids, Message, Renderer>(
+    id: I::NodeId,
     position: Point,
     element: impl Into<Element<'a, Message, Theme, Renderer>>,
-) -> Node<'a, N, P, UI, Message, Renderer> {
+) -> Node<'a, I, Message, Renderer> {
     Node {
         id,
         position,
@@ -182,18 +182,18 @@ pub fn node<'a, N, P, UI, Message, Renderer>(
     }
 }
 
-impl<'a, N, P, UI, Message, Renderer> Node<'a, N, P, UI, Message, Renderer> {
+impl<'a, I: Ids, Message, Renderer> Node<'a, I, Message, Renderer> {
     /// Sets the per-node style closure: receives the theme and the node's
     /// [`NodeStatus`], returns the resolved style. Layer over the built-in
     /// default:
     /// ```rust,no_run
     /// use iced::{widget::text, Color, Point};
-    /// use iced_nodegraph::{NodeStyle, default_node_style, node};
+    /// use iced_nodegraph::{Indexed, Node, NodeStyle, default_node_style, node};
     ///
     /// # #[derive(Debug, Clone)]
     /// # enum Message {}
     /// # let (pos, el) = (Point::ORIGIN, text("body"));
-    /// let n = node::<_, usize, (), Message, iced::Renderer>(0, pos, el)
+    /// let n: Node<'_, Indexed, Message, iced::Renderer> = node(0, pos, el)
     ///     .style(|theme, status| NodeStyle {
     ///         fill_color: Color::WHITE.into(),
     ///         ..default_node_style(theme, status)
@@ -245,13 +245,13 @@ impl<'a, N, P, UI, Message, Renderer> Node<'a, N, P, UI, Message, Renderer> {
     /// the pin's [`PinStatus`], returns the resolved pin style.
     /// ```rust,no_run
     /// use iced::{widget::text, Color, Point};
-    /// use iced_nodegraph::{PinStyle, default_pin_style, node};
+    /// use iced_nodegraph::{Indexed, Node, PinStyle, default_pin_style, node};
     ///
     /// # #[derive(Debug, Clone)]
     /// # enum Message {}
     /// # let (pos, el) = (Point::ORIGIN, text("body"));
     /// # fn color_for(_: &()) -> Color { Color::WHITE }
-    /// let n = node::<_, usize, (), Message, iced::Renderer>(0, pos, el)
+    /// let n: Node<'_, Indexed, Message, iced::Renderer> = node(0, pos, el)
     ///     .pin_style(|theme, pin, _other, status| PinStyle {
     ///         color: color_for(pin.info()).into(),
     ///         ..default_pin_style(theme, status)
@@ -259,7 +259,7 @@ impl<'a, N, P, UI, Message, Renderer> Node<'a, N, P, UI, Message, Renderer> {
     /// ```
     pub fn pin_style(
         mut self,
-        f: impl Fn(&Theme, &PinInfo<'_, P, UI>, Option<&PinInfo<'_, P, UI>>, PinStatus) -> PinStyle + 'a,
+        f: impl Fn(&Theme, &PinInfo<'_, I>, Option<&PinInfo<'_, I>>, PinStatus) -> PinStyle + 'a,
     ) -> Self {
         self.pin_style = Some(Box::new(f));
         self
@@ -271,26 +271,28 @@ impl<'a, N, P, UI, Message, Renderer> Node<'a, N, P, UI, Message, Renderer> {
 /// closure. Build with [`edge`] + [`Edge::route`]/[`Edge::style`], then add via
 /// [`NodeGraph::push_edge`]. The id is the user's own (e.g. a database key); it
 /// travels with the edge, symmetric to [`node`].
-pub struct Edge<'a, N, P, E, A, UI> {
-    pub(super) id: E,
-    pub(super) from: PinRef<N, P>,
-    pub(super) to: PinRef<N, P>,
+pub struct Edge<'a, I: Ids = Indexed> {
+    pub(super) id: I::EdgeId,
+    pub(super) from: PinRef<I>,
+    pub(super) to: PinRef<I>,
     /// The anchors this edge is routed through, as the host authored them. Not
     /// a drawing order: the widget derives the order, the wrap side and the
     /// orbit each frame, so this is a set the host may keep in any order.
-    pub(super) route: Vec<A>,
-    pub(super) style: Option<EdgeStyleFn<'a, P, UI>>,
+    pub(super) route: Vec<I::AnchorId>,
+    pub(super) style: Option<EdgeStyleFn<'a, I>>,
 }
 
 /// Creates an [`Edge`] with the given id and default (theme) styling.
 ///
-/// The id comes last so the common no-id case reads cleanly via the `edge!`
-/// macro: `edge!(from, to)` expands to `edge(from, to, ())`.
-pub fn edge<'a, N, P, E, A, UI>(
-    from: PinRef<N, P>,
-    to: PinRef<N, P>,
-    id: E,
-) -> Edge<'a, N, P, E, A, UI> {
+/// The id comes first, as in [`node`]. For a vocabulary whose `EdgeId` is `()`
+/// that reads `edge((), from, to)`.
+///
+/// ```rust
+/// use iced_nodegraph::{Edge, Indexed, PinRef, edge};
+///
+/// let e: Edge<'_, Indexed> = edge((), PinRef::new(0, 0), PinRef::new(1, 0));
+/// ```
+pub fn edge<'a, I: Ids>(id: I::EdgeId, from: PinRef<I>, to: PinRef<I>) -> Edge<'a, I> {
     Edge {
         id,
         from,
@@ -300,32 +302,13 @@ pub fn edge<'a, N, P, E, A, UI>(
     }
 }
 
-/// Builds an [`Edge`], defaulting the id to `()` when omitted.
-///
-/// ```rust
-/// use iced_nodegraph::{Edge, PinRef, edge};
-///
-/// # type E<'a, Id> = Edge<'a, u32, u32, Id, usize, ()>;
-/// let default_id: E<'_, ()> = edge!(PinRef::new(0, 0), PinRef::new(1, 0));
-/// let explicit_id: E<'_, u8> = edge!(PinRef::new(0, 0), PinRef::new(1, 0), 7);
-/// ```
-#[macro_export]
-macro_rules! edge {
-    ($from:expr, $to:expr $(,)?) => {
-        $crate::edge($from, $to, ())
-    };
-    ($from:expr, $to:expr, $id:expr $(,)?) => {
-        $crate::edge($from, $to, $id)
-    };
-}
-
-impl<'a, N, P, E, A, UI> Edge<'a, N, P, E, A, UI> {
+impl<'a, I: Ids> Edge<'a, I> {
     /// Sets the per-edge style closure: theme, [`EdgeStatus`], and both endpoint
     /// [`PinInfo`]s in draw order (start = output side, end = input side) ->
     /// resolved style.
     pub fn style(
         mut self,
-        f: impl Fn(&Theme, EdgeStatus, PinInfo<'_, P, UI>, PinInfo<'_, P, UI>) -> EdgeStyle + 'a,
+        f: impl Fn(&Theme, EdgeStatus, PinInfo<'_, I>, PinInfo<'_, I>) -> EdgeStyle + 'a,
     ) -> Self {
         self.style = Some(Box::new(f));
         self
@@ -341,7 +324,7 @@ impl<'a, N, P, E, A, UI> Edge<'a, N, P, E, A, UI> {
     /// edges share an anchor decides only how many rings it shows, not which
     /// cable rides which. An id naming neither an anchor nor anything at all is
     /// skipped, and a repeated id counts once.
-    pub fn route(mut self, anchors: impl IntoIterator<Item = A>) -> Self {
+    pub fn route(mut self, anchors: impl IntoIterator<Item = I::AnchorId>) -> Self {
         self.route = anchors.into_iter().collect();
         self
     }
@@ -351,19 +334,19 @@ impl<'a, N, P, E, A, UI> Edge<'a, N, P, E, A, UI> {
 /// style closure.
 ///
 /// Build with [`anchor`] + [`Anchor::style`], then add via
-/// [`NodeGraph::push_anchor`]. Anchors carry their own id type `A`, are their
-/// own collection and are never a widget-tree element: an edge names the
-/// anchors it wraps through [`Edge::route`], and the widget lays the cable
-/// tangent to one orbit of each.
+/// [`NodeGraph::push_anchor`]. Anchors have their own id space, are their own
+/// collection and are never a widget-tree element: an edge names the anchors
+/// it wraps through [`Edge::route`], and the widget lays the cable tangent to
+/// one orbit of each.
 #[allow(missing_debug_implementations)]
-pub struct Anchor<'a, A> {
-    pub(super) id: A,
+pub struct Anchor<'a, I: Ids = Indexed> {
+    pub(super) id: I::AnchorId,
     pub(super) position: Point,
     pub(super) style: Option<AnchorStyleFn<'a>>,
 }
 
 /// Creates an [`Anchor`] with default (theme) styling.
-pub fn anchor<'a, A>(id: A, position: Point) -> Anchor<'a, A> {
+pub fn anchor<'a, I: Ids>(id: I::AnchorId, position: Point) -> Anchor<'a, I> {
     Anchor {
         id,
         position,
@@ -371,7 +354,7 @@ pub fn anchor<'a, A>(id: A, position: Point) -> Anchor<'a, A> {
     }
 }
 
-impl<'a, A> Anchor<'a, A> {
+impl<'a, I: Ids> Anchor<'a, I> {
     /// Sets the per-anchor style closure: receives the theme and the anchor's
     /// [`AnchorStatus`], returns the resolved style.
     pub fn style(mut self, f: impl Fn(&Theme, AnchorStatus) -> AnchorStyle + 'a) -> Self {
@@ -382,6 +365,7 @@ impl<'a, A> Anchor<'a, A> {
 
 pub(crate) mod camera;
 pub(crate) mod euclid;
+pub(crate) mod focus;
 pub(crate) mod input;
 pub(crate) mod orbits;
 pub(crate) mod state;
@@ -406,7 +390,7 @@ pub(super) struct Station {
 /// hit-testing and hover all read this, so what a gesture aims at is what the
 /// frame put on screen.
 #[derive(Debug)]
-pub(super) struct CableGeometry<'e, N, P> {
+pub(super) struct CableGeometry<'e, I: Ids> {
     /// Index into `NodeGraph::edges`.
     pub edge: usize,
     /// The stations to build, output pin first.
@@ -416,7 +400,7 @@ pub(super) struct CableGeometry<'e, N, P> {
     /// the host owns.
     pub rings: Vec<(usize, (usize, u8))>,
     /// Both endpoint pins, oriented output -> input like `hops`.
-    pub ends: (&'e PinRef<N, P>, &'e PinRef<N, P>),
+    pub ends: (&'e PinRef<I>, &'e PinRef<I>),
 }
 
 /// A wrap inserted into one edge's route for the duration of a route drag, so
@@ -479,15 +463,15 @@ pub(super) enum PhantomKind {
 
 /// One cable resolved as far as it can be before an orbit is chosen: its two
 /// pins and the wraps in visiting order.
-struct CablePlan<'e, N, P> {
+struct CablePlan<'e, I: Ids> {
     edge: usize,
     head: Station,
     tail: Station,
-    ends: (&'e PinRef<N, P>, &'e PinRef<N, P>),
+    ends: (&'e PinRef<I>, &'e PinRef<I>),
     wraps: Vec<WrapPlan>,
 }
 
-impl<N, P> CablePlan<'_, N, P> {
+impl<I: Ids> CablePlan<'_, I> {
     /// The hop chain this cable draws as, given a ring per wrap.
     ///
     /// Called once per candidate arrangement during the orbit search and once
@@ -634,7 +618,7 @@ pub struct OpTiming {
 /// volume, not GPU time.
 ///
 /// Reported one frame behind: the values are measured during `draw` and
-/// delivered on the next redraw, mirroring the controlled `on_pan` pattern.
+/// delivered on the next redraw, mirroring the controlled `on_camera` pattern.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GraphInfo {
     /// Node counts (total / in view / culled).
@@ -681,150 +665,48 @@ pub struct GraphInfo {
 /// Identifies what an in-progress drag is moving. Delivered to the
 /// [`on_drag_start`](NodeGraph::on_drag_start) callback so the app can observe a
 /// drag live (e.g. to broadcast it), alongside the commit-on-drop callbacks.
-///
-/// Ids are the user's own node/pin id types (`N`/`P`), matching the rest of the
-/// callback API (e.g. [`PinRef`]); both default to `usize`.
 #[derive(Debug, Clone, PartialEq)]
-pub enum DragInfo<N = usize, P = usize> {
+pub enum DragInfo<I: Ids = Indexed> {
     /// Dragging a single node.
-    Node { node_id: N },
+    Node { node_id: I::NodeId },
     /// Dragging a group of selected nodes.
-    Group { node_ids: Vec<N> },
+    Group { node_ids: Vec<I::NodeId> },
     /// Dragging an edge from a pin (the source node and pin).
-    Edge { from_node: N, from_pin: P },
+    Edge {
+        from_node: I::NodeId,
+        from_pin: I::PinId,
+    },
     /// A selection box, anchored at this world-space corner.
     SelectionBox { start_x: f32, start_y: f32 },
 }
 
-/// Type-safe reference to a pin: a `node_id` paired with a `pin_id`, generic over
-/// your id types.
+/// Type-safe reference to a pin: a `node_id` paired with a `pin_id`, over the
+/// graph's [`Ids`].
 ///
 /// The fields are public by design. `PinRef` is a transparent id pair with no
 /// invariants to uphold: any node/pin id combination is structurally valid, and
 /// whether two pins may actually connect is decided elsewhere (e.g. via
 /// [`can_connect`](NodeGraph::can_connect)). Build it with a struct literal or
 /// [`PinRef::new`], and match or destructure it freely.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PinRef<N, P> {
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PinRef<I: Ids = Indexed> {
     /// The node's user id.
-    pub node_id: N,
+    pub node_id: I::NodeId,
     /// The pin's user id within its node.
-    pub pin_id: P,
+    pub pin_id: I::PinId,
 }
 
-impl<N: Clone, P: Clone> PinRef<N, P> {
+impl<I: Ids> Copy for PinRef<I>
+where
+    I::NodeId: Copy,
+    I::PinId: Copy,
+{
+}
+
+impl<I: Ids> PinRef<I> {
     /// Creates a pin reference from a node id and a pin id.
-    pub fn new(node_id: N, pin_id: P) -> Self {
+    pub fn new(node_id: I::NodeId, pin_id: I::PinId) -> Self {
         Self { node_id, pin_id }
-    }
-}
-
-/// Programmatic focus target for [`NodeGraph::focus`]: what the camera
-/// should frame. The app only names ids (or `All`/`Selection`/an explicit
-/// world rect); the widget resolves them to a world AABB from its live
-/// layout in `update()` -- the app never computes node bounds itself.
-#[derive(Clone, Debug)]
-pub enum FocusTarget<N, E = (), A = usize> {
-    /// Every node and anchor in the graph.
-    All,
-    /// The current selection ([`Node::selected`] or internal click/box-select
-    /// state). An empty selection is a no-op, mirroring Blender's "View
-    /// Selected". Anchors are never selected, so they never appear here.
-    Selection,
-    /// A single node by id.
-    Node(N),
-    /// The union of several nodes' bounds.
-    Nodes(Vec<N>),
-    /// A single anchor by id, framed to its outermost ring.
-    Anchor(A),
-    /// The union of several anchors' bounds.
-    Anchors(Vec<A>),
-    /// The union of an edge's two endpoint nodes' bounds and every anchor it
-    /// routes through (seeing a connection means seeing what it connects and
-    /// where it goes).
-    Edge(E),
-    /// The union of several edges' endpoints and anchors.
-    Edges(Vec<E>),
-    /// An explicit world-space rectangle -- the `fitBounds` escape hatch for
-    /// targets the widget cannot resolve on its own.
-    Rect(Rectangle),
-}
-
-/// Options for [`NodeGraph::focus`] and the keymap frame actions: padding,
-/// zoom bounds, and the optional tween.
-#[derive(Clone, Debug)]
-pub struct FocusOptions {
-    /// Per-side screen-px padding around the fitted bounds.
-    pub padding: Padding,
-    /// Extra lower zoom bound, intersected with the camera's own zoom floor.
-    /// `None` leaves only that floor in effect.
-    pub min_zoom: Option<f32>,
-    /// Extra upper zoom bound, intersected with the camera's own zoom
-    /// ceiling. Defaults to `Some(1.0)` so focusing a single small node fits
-    /// it at native size instead of zooming in arbitrarily far.
-    pub max_zoom: Option<f32>,
-    /// Tween toward the target instead of jumping. `None` jumps immediately.
-    pub animation: Option<FocusAnimation>,
-}
-
-impl Default for FocusOptions {
-    fn default() -> Self {
-        Self {
-            padding: Padding::new(40.0),
-            min_zoom: None,
-            max_zoom: Some(1.0),
-            animation: Some(FocusAnimation::default()),
-        }
-    }
-}
-
-/// The tween a [`FocusOptions::animation`] runs: duration plus easing curve.
-#[derive(Clone, Copy, Debug)]
-pub struct FocusAnimation {
-    /// How long the camera takes to reach the target. A zero duration
-    /// behaves like `animation: None` (an immediate jump).
-    pub duration: Duration,
-    /// The easing curve driving the interpolation.
-    pub easing: Easing,
-}
-
-impl Default for FocusAnimation {
-    fn default() -> Self {
-        Self {
-            duration: Duration::from_millis(300),
-            easing: Easing::EaseInOutCubic,
-        }
-    }
-}
-
-/// Easing curve for a [`FocusAnimation`], applied to the tween's normalized
-/// progress `t` in `[0, 1]`.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Easing {
-    /// No easing: constant velocity.
-    Linear,
-    /// Slow start and end, fast middle. The default -- matches tldraw's
-    /// camera animation curve.
-    EaseInOutCubic,
-    /// Fast start, slow end.
-    EaseOutCubic,
-}
-
-impl Easing {
-    /// Applies the curve to `t`, clamped to `[0, 1]`.
-    pub fn apply(self, t: f32) -> f32 {
-        let t = t.clamp(0.0, 1.0);
-        match self {
-            Easing::Linear => t,
-            Easing::EaseInOutCubic => {
-                if t < 0.5 {
-                    4.0 * t * t * t
-                } else {
-                    1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
-                }
-            }
-            Easing::EaseOutCubic => 1.0 - (1.0 - t).powi(3),
-        }
     }
 }
 
@@ -833,97 +715,81 @@ impl Easing {
 ///
 /// # Type Parameters
 ///
-/// The four id types come first, in the order `N`, `P`, `E`, `A`; the rendering
-/// parameters follow. Every one is defaulted, but Rust defaults are positional,
-/// so naming `Renderer` means spelling the ids ahead of it.
-///
-/// - `N`: node id type (defaults to `usize`)
-/// - `P`: pin id type (defaults to `usize`)
-/// - `E`: edge id type (defaults to `()`, "this edge has no id")
-/// - `A`: routing-anchor id type (defaults to `usize`)
-/// - `UI`: per-pin user payload surfaced to `pin_style`/`can_connect`
-///   (defaults to `()`)
+/// - `I`: the graph's [`Ids`] - node, pin, edge and anchor id types plus the
+///   per-pin payload, named once on a marker type. Defaults to [`Indexed`].
 /// - `Message`: application message type
 /// - `Renderer`: iced renderer type
+///
+/// `I` cannot be inferred from the ids pushed into the graph (an associated
+/// type does not identify its trait impl), so a graph over custom ids names
+/// it once: `NodeGraph::<AppIds, _, _>::new()`. `Message` and `Renderer` infer
+/// from the callbacks and the `Element` the graph becomes.
 ///
 /// There is no theme parameter: the widget styles against
 /// [`iced_widget::core::Theme`] because every `default_*_style` reads that
 /// theme's palette.
-///
-/// Bring your own id types by implementing [`NodeId`], [`PinId`], [`EdgeId`]
-/// and [`AnchorId`].
 #[allow(missing_debug_implementations)]
-pub struct NodeGraph<
-    'a,
-    N = usize,
-    P = usize,
-    E = (),
-    A = usize,
-    UI = (),
-    Message = (),
-    Renderer = iced_widget::renderer::Renderer,
-> where
-    N: NodeId,
-    P: PinId,
-    E: EdgeId,
-    A: AnchorId,
+pub struct NodeGraph<'a, I: Ids = Indexed, Message = (), Renderer = iced_widget::renderer::Renderer>
 {
     pub(super) size: Size<Length>,
+    /// Set by [`id`](Self::id); what a [`focus`](crate::focus) task addresses.
+    pub(super) id: Option<WidgetId>,
     /// Nodes in push order, which is also their initial z-order.
-    pub(super) nodes: Vec<Node<'a, N, P, UI, Message, Renderer>>,
+    pub(super) nodes: Vec<Node<'a, I, Message, Renderer>>,
     /// Id -> index map: O(1) `node_index` lookups and deterministic duplicate
     /// detection in `push_node` (first push wins).
-    pub(super) node_lookup: HashMap<N, usize>,
+    pub(super) node_lookup: HashMap<I::NodeId, usize>,
     /// Anchors in push order. Cables wrap them, but they are laid out and drawn
     /// entirely by the graph, so they form their own collection (see
     /// [`Anchor`]).
-    pub(super) anchors: Vec<Anchor<'a, A>>,
+    pub(super) anchors: Vec<Anchor<'a, I>>,
     /// Id -> index map, the anchor counterpart of `node_lookup`. Its own id
     /// space: an anchor id never has to avoid a node's.
-    pub(super) anchor_lookup: HashMap<A, usize>,
+    pub(super) anchor_lookup: HashMap<I::AnchorId, usize>,
     /// Edges in push order. Endpoint pin ids are resolved to positional pin
     /// indices at draw time, since only the laid-out widget tree knows them.
-    pub(super) edges: Vec<Edge<'a, N, P, E, A, UI>>,
+    pub(super) edges: Vec<Edge<'a, I>>,
     pub(super) graph_style: Option<Box<dyn Fn(&Theme) -> GraphStyle + 'a>>,
-    pub(super) on_connect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>>,
-    pub(super) on_disconnect: Option<Box<dyn Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a>>,
-    pub(super) on_move: Option<Box<dyn Fn(Vector, Vec<N>) -> Message + 'a>>,
+    pub(super) on_connect: Option<Box<dyn Fn(PinRef<I>, PinRef<I>) -> Message + 'a>>,
+    pub(super) on_disconnect: Option<Box<dyn Fn(PinRef<I>, PinRef<I>) -> Message + 'a>>,
+    pub(super) on_move: Option<Box<dyn Fn(Vector, Vec<I::NodeId>) -> Message + 'a>>,
     /// Grip-resize report, the size counterpart to `on_move`. Only nodes marked
     /// [`Node::resizable`] carry a grip, and only while this is wired.
-    pub(super) on_resize: Option<Box<dyn Fn(N, Size) -> Message + 'a>>,
+    pub(super) on_resize: Option<Box<dyn Fn(I::NodeId, Size) -> Message + 'a>>,
     /// Anchor-move report, the anchor counterpart of `on_move`. Reports the new
     /// world position outright rather than a delta, mirroring `on_resize`.
-    pub(super) on_anchor_move: Option<Box<dyn Fn(A, Point) -> Message + 'a>>,
+    pub(super) on_anchor_move: Option<Box<dyn Fn(I::AnchorId, Point) -> Message + 'a>>,
     /// An anchor the user asked for by grabbing a cable mid-run, reported with
     /// the edge it belongs on and the world position of the release.
-    pub(super) on_anchor_create: Option<Box<dyn Fn(E, Point) -> Message + 'a>>,
+    pub(super) on_anchor_create: Option<Box<dyn Fn(I::EdgeId, Point) -> Message + 'a>>,
     /// An anchor an edge should now wrap.
-    pub(super) on_route_attach: Option<Box<dyn Fn(E, A) -> Message + 'a>>,
+    pub(super) on_route_attach: Option<Box<dyn Fn(I::EdgeId, I::AnchorId) -> Message + 'a>>,
     /// An anchor an edge should stop wrapping.
-    pub(super) on_route_detach: Option<Box<dyn Fn(E, A) -> Message + 'a>>,
+    pub(super) on_route_detach: Option<Box<dyn Fn(I::EdgeId, I::AnchorId) -> Message + 'a>>,
     /// An anchor the user asked to remove. The host also owns stripping it out
     /// of every route that named it.
-    pub(super) on_anchor_delete: Option<Box<dyn Fn(A) -> Message + 'a>>,
-    pub(super) on_select: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
-    pub(super) on_clone: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
-    pub(super) on_delete: Option<Box<dyn Fn(Vec<N>) -> Message + 'a>>,
+    pub(super) on_anchor_delete: Option<Box<dyn Fn(I::AnchorId) -> Message + 'a>>,
+    pub(super) on_select: Option<Box<dyn Fn(Vec<I::NodeId>) -> Message + 'a>>,
+    pub(super) on_clone: Option<Box<dyn Fn(Vec<I::NodeId>) -> Message + 'a>>,
+    pub(super) on_delete: Option<Box<dyn Fn(Vec<I::NodeId>) -> Message + 'a>>,
     /// Edges destroyed by the cutting tool, named by their user ids. The
     /// id-carrying counterpart to `on_disconnect` for the two paths where the
     /// widget holds a host-supplied edge.
-    pub(super) on_edge_delete: Option<Box<dyn Fn(Vec<E>) -> Message + 'a>>,
+    pub(super) on_edge_delete: Option<Box<dyn Fn(Vec<I::EdgeId>) -> Message + 'a>>,
     /// Live drag callbacks: fire continuously during a drag, alongside the
     /// commit-on-drop `on_move`. Observing a drag as it happens (to broadcast
     /// it, say) is the app's concern, so the widget only reports it.
-    pub(super) on_drag_start: Option<Box<dyn Fn(DragInfo<N, P>) -> Message + 'a>>,
+    pub(super) on_drag_start: Option<Box<dyn Fn(DragInfo<I>) -> Message + 'a>>,
     pub(super) on_drag_update: Option<Box<dyn Fn(Point) -> Message + 'a>>,
     pub(super) on_drag_end: Option<Box<dyn Fn() -> Message + 'a>>,
-    /// Commit callback for pan/zoom, the counterpart to [`view`](Self::view).
-    pub(super) on_pan: Option<Box<dyn Fn(Point, f32) -> Message + 'a>>,
+    /// Commit callback for the camera, the counterpart to
+    /// [`camera`](Self::camera).
+    pub(super) on_camera: Option<Box<dyn Fn(Point, f32) -> Message + 'a>>,
     /// Per-frame diagnostics callback.
     pub(super) on_info: Option<Box<dyn Fn(GraphInfo) -> Message + 'a>>,
     /// Style for the edge being dragged (theme -> resolved style). The graph
     /// injects the source pin's color for inheriting (TRANSPARENT) stroke ends.
-    pub(super) dragging_edge_style: Option<DragEdgeStyleFn<'a, P, UI>>,
+    pub(super) dragging_edge_style: Option<DragEdgeStyleFn<'a, I>>,
     /// Box-selection rectangle style; [`default_selection_box_style`] applies when
     /// unset.
     pub(super) selection_box_style: Option<Box<dyn Fn(&Theme) -> SelectionBoxStyle + 'a>>,
@@ -931,34 +797,23 @@ pub struct NodeGraph<
     pub(super) cutting_tool_style: Option<Box<dyn Fn(&Theme) -> CuttingToolStyle + 'a>>,
     /// Host-controlled camera (world position + zoom). The widget syncs its
     /// internal camera to this whenever the host changes it, while still running
-    /// pan/zoom interaction internally and committing via `on_pan`. Mirrors the
-    /// [`Node::selected`] / `on_select` pattern for selection.
-    pub(super) view: Option<(Point, f32)>,
-    /// Declarative programmatic focus/frame request set via
-    /// [`focus`](Self::focus): a nonce (`seq`), what to frame, and how.
-    /// Deduped against `state.last_focus_seq`, mirroring the `view` /
-    /// `last_synced_view` pattern just above.
-    pub(super) focus: Option<(u64, FocusTarget<N, E, A>, FocusOptions)>,
+    /// pan/zoom interaction internally and committing via `on_camera`. Mirrors
+    /// the [`Node::selected`] / `on_select` pattern for selection.
+    pub(super) camera: Option<(Point, f32)>,
     /// Connection validation. When set it is authoritative in
     /// `compute_valid_targets`; otherwise
     /// [`default_can_connect`](crate::connection::default_can_connect) applies.
-    pub(super) can_connect:
-        Option<Box<dyn Fn(PinEnd<'_, N, P, UI>, PinEnd<'_, N, P, UI>) -> bool + 'a>>,
+    pub(super) can_connect: Option<Box<dyn Fn(PinEnd<'_, I>, PinEnd<'_, I>) -> bool + 'a>>,
     /// Key and pointer bindings; platform defaults unless overridden via
     /// [`keymap`](Self::keymap).
     pub(super) keymap: input::Keymap,
 }
 
-impl<N, P, E, A, UI, Message, Renderer> Default for NodeGraph<'_, N, P, E, A, UI, Message, Renderer>
-where
-    N: NodeId,
-    P: PinId,
-    E: EdgeId,
-    A: AnchorId,
-{
+impl<I: Ids, Message, Renderer> Default for NodeGraph<'_, I, Message, Renderer> {
     fn default() -> Self {
         Self {
             size: Size::new(Length::Fill, Length::Fill),
+            id: None,
             nodes: Vec::new(),
             node_lookup: HashMap::new(),
             anchors: Vec::new(),
@@ -981,53 +836,44 @@ where
             on_drag_start: None,
             on_drag_update: None,
             on_drag_end: None,
-            on_pan: None,
+            on_camera: None,
             on_info: None,
             dragging_edge_style: None,
             selection_box_style: None,
             cutting_tool_style: None,
-            view: None,
-            focus: None,
+            camera: None,
             can_connect: None,
             keymap: input::Keymap::default(),
         }
     }
 }
 
-impl<'a, N, P, E, A, UI, Message, Renderer> NodeGraph<'a, N, P, E, A, UI, Message, Renderer>
-where
-    N: NodeId + 'static,
-    P: PinId + 'static,
-    E: EdgeId + 'static,
-    A: AnchorId + 'static,
-{
+impl<'a, I: Ids, Message, Renderer> NodeGraph<'a, I, Message, Renderer> {
+    /// Creates an empty graph that fills its container.
+    ///
+    /// `I` is named here when it is not [`Indexed`]:
+    /// `NodeGraph::<AppIds, _, _>::new()`. [`node_graph`](crate::node_graph)
+    /// is the shorthand for the indexed vocabulary.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the widget id a [`focus`](crate::focus) task addresses.
+    pub fn id(mut self, id: impl Into<WidgetId>) -> Self {
+        self.id = Some(id.into());
+        self
+    }
+
     /// Sets the host-controlled camera (world position + zoom).
     ///
     /// The widget snaps its camera to this whenever the host changes the value,
     /// while still running pan/zoom interaction internally and committing through
-    /// [`on_pan`](Self::on_pan). This is the controlled-component counterpart to
-    /// `on_pan`, exactly like [`Node::selected`] is to `on_select`: feed back what
-    /// `on_pan` reports and the view stays in sync; push a new value (e.g. a reset
-    /// to origin) and the view snaps there.
-    pub fn view(mut self, position: Point, zoom: f32) -> Self {
-        self.view = Some((position, zoom));
-        self
-    }
-
-    /// Declarative programmatic focus/frame request. `seq` is a monotonic
-    /// nonce: the widget performs the fit the first time it sees a new
-    /// `seq` and dedupes on repeats -- the immediate-mode substitute for
-    /// "call `fitView()` once". Bump `seq` to re-trigger the same focus
-    /// action (e.g. re-clicking a "focus node" button).
-    ///
-    /// The app only names a [`FocusTarget`] (ids, `All`/`Selection`, or an
-    /// explicit [`FocusTarget::Rect`]); the widget resolves it to a world
-    /// AABB from its live layout in `update()` and fits the camera to it,
-    /// committing through [`on_pan`](Self::on_pan) like any other camera
-    /// change. An unknown id or empty selection is a no-op: no camera
-    /// change, no `on_pan`.
-    pub fn focus(mut self, seq: u64, target: FocusTarget<N, E, A>, opts: FocusOptions) -> Self {
-        self.focus = Some((seq, target, opts));
+    /// [`on_camera`](Self::on_camera). This is the controlled-component
+    /// counterpart to `on_camera`, exactly like [`Node::selected`] is to
+    /// `on_select`: feed back what `on_camera` reports and the view stays in
+    /// sync; push a new value (e.g. a reset to origin) and the view snaps there.
+    pub fn camera(mut self, position: Point, zoom: f32) -> Self {
+        self.camera = Some((position, zoom));
         self
     }
 
@@ -1038,17 +884,24 @@ where
     /// push with the id wins) and debug builds assert on it. Prefer a stable id
     /// from your data (a DB key, `uuid::Uuid`, a typed newtype) over a
     /// hand-managed counter.
-    pub fn push_node(&mut self, node: Node<'a, N, P, UI, Message, Renderer>) {
+    pub fn push_node(mut self, node: Node<'a, I, Message, Renderer>) -> Self {
         if self.node_lookup.contains_key(&node.id) {
             debug_assert!(
                 false,
                 "duplicate node id {:?}: the duplicate push is ignored (first wins)",
                 node.id,
             );
-            return;
+            return self;
         }
         self.node_lookup.insert(node.id.clone(), self.nodes.len());
         self.nodes.push(node);
+        self
+    }
+
+    /// Adds every node of an iterator, as [`push_node`](Self::push_node) would
+    /// one by one.
+    pub fn nodes(self, nodes: impl IntoIterator<Item = Node<'a, I, Message, Renderer>>) -> Self {
+        nodes.into_iter().fold(self, Self::push_node)
     }
 
     /// Adds an anchor: a routing waypoint the cables named in
@@ -1057,18 +910,25 @@ where
     /// Anchor ids are their own space, numbered from zero whatever the nodes
     /// use, and follow the same rule as [`push_node`](Self::push_node): unique,
     /// first push wins, debug builds assert on a collision.
-    pub fn push_anchor(&mut self, anchor: Anchor<'a, A>) {
+    pub fn push_anchor(mut self, anchor: Anchor<'a, I>) -> Self {
         if self.anchor_lookup.contains_key(&anchor.id) {
             debug_assert!(
                 false,
                 "duplicate anchor id {:?}: the duplicate push is ignored (first wins)",
                 anchor.id,
             );
-            return;
+            return self;
         }
         self.anchor_lookup
             .insert(anchor.id.clone(), self.anchors.len());
         self.anchors.push(anchor);
+        self
+    }
+
+    /// Adds every anchor of an iterator, as [`push_anchor`](Self::push_anchor)
+    /// would one by one.
+    pub fn anchors(self, anchors: impl IntoIterator<Item = Anchor<'a, I>>) -> Self {
+        anchors.into_iter().fold(self, Self::push_anchor)
     }
 
     /// Adds an edge, styled by the theme unless the builder overrides it.
@@ -1076,23 +936,31 @@ where
     /// The widget normalizes orientation when drawing and reporting, so the
     /// output pin is always the edge start (output -> input) regardless of the
     /// order given here.
-    pub fn push_edge(&mut self, edge: Edge<'a, N, P, E, A, UI>) {
+    pub fn push_edge(mut self, edge: Edge<'a, I>) -> Self {
         self.edges.push(edge);
+        self
+    }
+
+    /// Adds every edge of an iterator, as [`push_edge`](Self::push_edge) would
+    /// one by one.
+    pub fn edges(mut self, edges: impl IntoIterator<Item = Edge<'a, I>>) -> Self {
+        self.edges.extend(edges);
+        self
     }
 
     /// The user node id at a node index.
-    pub(super) fn node_id_at(&self, index: usize) -> Option<&N> {
+    pub(super) fn node_id_at(&self, index: usize) -> Option<&I::NodeId> {
         self.nodes.get(index).map(|node| &node.id)
     }
 
     /// The node index of a user node id.
-    pub(super) fn node_index(&self, id: &N) -> Option<usize> {
+    pub(super) fn node_index(&self, id: &I::NodeId) -> Option<usize> {
         self.node_lookup.get(id).copied()
     }
 
     /// The anchor index of a user id, or `None` when the id names a node or
     /// nothing at all.
-    pub(super) fn anchor_index(&self, id: &A) -> Option<usize> {
+    pub(super) fn anchor_index(&self, id: &I::AnchorId) -> Option<usize> {
         self.anchor_lookup.get(id).copied()
     }
 
@@ -1202,15 +1070,15 @@ where
     /// counted, keeping whichever measurably crosses least.
     pub(super) fn edge_hops(
         &self,
-        pin: &dyn Fn(&PinRef<N, P>) -> Option<Station>,
+        pin: &dyn Fn(&PinRef<I>) -> Option<Station>,
         ring: &dyn Fn(usize, u8) -> Option<edge_path::Orbit>,
         curve: &dyn Fn(usize) -> EdgeCurve,
         phantom: Option<&RoutePhantom>,
-    ) -> Vec<CableGeometry<'_, N, P>> {
+    ) -> Vec<CableGeometry<'_, I>> {
         // Resolve every cable's stations and visiting order first. Nothing here
         // needs a radius, which is what lets the orbit be decided afterwards
         // from the whole picture rather than one edge at a time.
-        let mut plans: Vec<CablePlan<'_, N, P>> = Vec::with_capacity(self.edges.len());
+        let mut plans: Vec<CablePlan<'_, I>> = Vec::with_capacity(self.edges.len());
         for (index, edge) in self.edges.iter().enumerate() {
             let (Some(a), Some(b)) = (pin(&edge.from), pin(&edge.to)) else {
                 continue;
@@ -1494,12 +1362,12 @@ where
     }
 
     /// `selection` as user node ids in push order.
-    pub(super) fn selection_ids(&self, selection: &HashSet<usize>) -> Vec<N> {
+    pub(super) fn selection_ids(&self, selection: &HashSet<usize>) -> Vec<I::NodeId> {
         self.node_ids_at(&Self::selection_indices(selection))
     }
 
     /// The user node ids at the given node indices, skipping unknown indices.
-    pub(super) fn node_ids_at(&self, indices: &[usize]) -> Vec<N> {
+    pub(super) fn node_ids_at(&self, indices: &[usize]) -> Vec<I::NodeId> {
         indices
             .iter()
             .filter_map(|&index| self.node_id_at(index).cloned())
@@ -1571,7 +1439,7 @@ where
     /// the pin's info (e.g. a port-typed color) for both ends of the loose edge.
     pub fn dragging_edge_style(
         mut self,
-        f: impl Fn(&Theme, PinInfo<'_, P, UI>) -> EdgeStyle + 'a,
+        f: impl Fn(&Theme, PinInfo<'_, I>) -> EdgeStyle + 'a,
     ) -> Self {
         self.dragging_edge_style = Some(Box::new(f));
         self
@@ -1597,7 +1465,7 @@ where
     ///
     /// # #[derive(Debug, Clone)]
     /// # enum Message {}
-    /// # let ng: NodeGraph<'_, usize, usize, (), usize, (), Message> = NodeGraph::default();
+    /// # let ng: NodeGraph<'_, iced_nodegraph::Indexed, Message> = NodeGraph::new();
     /// let ng = ng
     ///     .can_connect(|from, to| default_can_connect(from, to) && from.info() == to.info());
     /// ```
@@ -1608,10 +1476,7 @@ where
     ///
     /// When not set, the widget applies `default_can_connect` (direction, not-same-
     /// node, one-edge-per-input).
-    pub fn can_connect(
-        mut self,
-        f: impl Fn(PinEnd<'_, N, P, UI>, PinEnd<'_, N, P, UI>) -> bool + 'a,
-    ) -> Self {
+    pub fn can_connect(mut self, f: impl Fn(PinEnd<'_, I>, PinEnd<'_, I>) -> bool + 'a) -> Self {
         self.can_connect = Some(Box::new(f));
         self
     }
@@ -1650,7 +1515,7 @@ where
     ///
     /// Required to start an edge drag: without this callback, pressing a pin selects
     /// its node instead (a dropped edge could not be persisted anyway).
-    pub fn on_connect(mut self, f: impl Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a) -> Self {
+    pub fn on_connect(mut self, f: impl Fn(PinRef<I>, PinRef<I>) -> Message + 'a) -> Self {
         self.on_connect = Some(Box::new(f));
         self
     }
@@ -1659,7 +1524,7 @@ where
     ///
     /// Like [`on_connect`](Self::on_connect), the pair is normalized output-first
     /// (`from` = output, `to` = input).
-    pub fn on_disconnect(mut self, f: impl Fn(PinRef<N, P>, PinRef<N, P>) -> Message + 'a) -> Self {
+    pub fn on_disconnect(mut self, f: impl Fn(PinRef<I>, PinRef<I>) -> Message + 'a) -> Self {
         self.on_disconnect = Some(Box::new(f));
         self
     }
@@ -1674,7 +1539,7 @@ where
     /// Required for node dragging: node positions live in the host, so without this
     /// callback a drag has nowhere to land and the widget keeps nodes stationary
     /// (selection still works).
-    pub fn on_move(mut self, f: impl Fn(Vector, Vec<N>) -> Message + 'a) -> Self {
+    pub fn on_move(mut self, f: impl Fn(Vector, Vec<I::NodeId>) -> Message + 'a) -> Self {
         self.on_move = Some(Box::new(f));
         self
     }
@@ -1691,7 +1556,7 @@ where
     /// grip could only report into the void, so no grip is drawn or hit-tested
     /// and the corner drags the node like the rest of its body - the same
     /// gating [`on_move`](Self::on_move) has.
-    pub fn on_resize(mut self, f: impl Fn(N, Size) -> Message + 'a) -> Self {
+    pub fn on_resize(mut self, f: impl Fn(I::NodeId, Size) -> Message + 'a) -> Self {
         self.on_resize = Some(Box::new(f));
         self
     }
@@ -1707,7 +1572,7 @@ where
     /// has: anchor positions live in the host, so without a handler the drag
     /// would snap back on release. Without it the core is neither grabbable nor
     /// pointed at.
-    pub fn on_anchor_move(mut self, f: impl Fn(A, Point) -> Message + 'a) -> Self {
+    pub fn on_anchor_move(mut self, f: impl Fn(I::AnchorId, Point) -> Message + 'a) -> Self {
         self.on_anchor_move = Some(Box::new(f));
         self
     }
@@ -1725,12 +1590,10 @@ where
     /// mid-run and wrap grab zones: all three must be set before a press on a
     /// cable does anything but fall through.
     ///
-    /// Requires the edges to carry ids. `E` defaults to `()`, and the `edge!`
-    /// macro leaves it there, so every report would name the same edge and the
-    /// host could not tell which cable was grabbed - build a routable edge with
-    /// [`edge(from, to, id)`](edge) instead. The same applies to
-    /// `on_route_attach` and `on_route_detach`.
-    pub fn on_anchor_create(mut self, f: impl Fn(E, Point) -> Message + 'a) -> Self {
+    /// Requires the edges to carry ids: with `EdgeId = ()` every report would
+    /// name the same edge and the host could not tell which cable was grabbed.
+    /// The same applies to `on_route_attach` and `on_route_detach`.
+    pub fn on_anchor_create(mut self, f: impl Fn(I::EdgeId, Point) -> Message + 'a) -> Self {
         self.on_anchor_create = Some(Box::new(f));
         self
     }
@@ -1741,7 +1604,7 @@ where
     /// [`on_connect`](Self::on_connect): one drag can attach and detach several
     /// times. The host adds the anchor id to that edge's
     /// [`route`](Edge::route).
-    pub fn on_route_attach(mut self, f: impl Fn(E, A) -> Message + 'a) -> Self {
+    pub fn on_route_attach(mut self, f: impl Fn(I::EdgeId, I::AnchorId) -> Message + 'a) -> Self {
         self.on_route_attach = Some(Box::new(f));
         self
     }
@@ -1752,7 +1615,7 @@ where
     /// when a route drag leaves the anchor it was snapped to, and by a
     /// pan-button click on the wrap itself. The host removes the anchor id from
     /// that edge's [`route`](Edge::route).
-    pub fn on_route_detach(mut self, f: impl Fn(E, A) -> Message + 'a) -> Self {
+    pub fn on_route_detach(mut self, f: impl Fn(I::EdgeId, I::AnchorId) -> Message + 'a) -> Self {
         self.on_route_detach = Some(Box::new(f));
         self
     }
@@ -1766,7 +1629,7 @@ where
     ///
     /// Required for the delete gesture: without a handler a pan-button press on
     /// an anchor core is an ordinary pan.
-    pub fn on_anchor_delete(mut self, f: impl Fn(A) -> Message + 'a) -> Self {
+    pub fn on_anchor_delete(mut self, f: impl Fn(I::AnchorId) -> Message + 'a) -> Self {
         self.on_anchor_delete = Some(Box::new(f));
         self
     }
@@ -1784,7 +1647,7 @@ where
     /// matching nodes with [`Node::selected`]. A changed marked set overrides the
     /// widget's working value; an unchanged one leaves it alone, so a host frame
     /// that has not caught up yet cannot undo an interaction.
-    pub fn on_select(mut self, f: impl Fn(Vec<N>) -> Message + 'a) -> Self {
+    pub fn on_select(mut self, f: impl Fn(Vec<I::NodeId>) -> Message + 'a) -> Self {
         self.on_select = Some(Box::new(f));
         self
     }
@@ -1793,7 +1656,7 @@ where
     ///
     /// The callback receives the list of node IDs to clone.
     /// The application is responsible for creating the actual clones.
-    pub fn on_clone(mut self, f: impl Fn(Vec<N>) -> Message + 'a) -> Self {
+    pub fn on_clone(mut self, f: impl Fn(Vec<I::NodeId>) -> Message + 'a) -> Self {
         self.on_clone = Some(Box::new(f));
         self
     }
@@ -1802,7 +1665,7 @@ where
     ///
     /// The callback receives the list of node IDs to delete.
     /// The application is responsible for removing the nodes from its data model.
-    pub fn on_delete(mut self, f: impl Fn(Vec<N>) -> Message + 'a) -> Self {
+    pub fn on_delete(mut self, f: impl Fn(Vec<I::NodeId>) -> Message + 'a) -> Self {
         self.on_delete = Some(Box::new(f));
         self
     }
@@ -1818,7 +1681,7 @@ where
     ///
     /// Mirrors [`on_delete`](Self::on_delete) for nodes: one batched call per cut
     /// gesture.
-    pub fn on_edge_delete(mut self, f: impl Fn(Vec<E>) -> Message + 'a) -> Self {
+    pub fn on_edge_delete(mut self, f: impl Fn(Vec<I::EdgeId>) -> Message + 'a) -> Self {
         self.on_edge_delete = Some(Box::new(f));
         self
     }
@@ -1836,7 +1699,7 @@ where
     /// variant that names an anchor or a route. A host that brackets work across
     /// a drag must key the opening on `DragInfo` and tolerate a close it never
     /// opened.
-    pub fn on_drag_start(mut self, f: impl Fn(DragInfo<N, P>) -> Message + 'a) -> Self {
+    pub fn on_drag_start(mut self, f: impl Fn(DragInfo<I>) -> Message + 'a) -> Self {
         self.on_drag_start = Some(Box::new(f));
         self
     }
@@ -1861,14 +1724,14 @@ where
         self
     }
 
-    /// Sets the commit callback for pan/zoom.
+    /// Sets the commit callback for the camera.
     ///
     /// Fires with the new camera position and zoom when the user finishes a pan
-    /// drag or zooms (zoom shifts position too, so both report together). Store
-    /// the value and feed it back via [`view`](Self::view) to keep the controlled
-    /// camera in sync.
-    pub fn on_pan(mut self, f: impl Fn(Point, f32) -> Message + 'a) -> Self {
-        self.on_pan = Some(Box::new(f));
+    /// drag, zooms (zoom shifts position too, so both report together), or a
+    /// [`focus`](crate::focus) task lands. Store the value and feed it back via
+    /// [`camera`](Self::camera) to keep the controlled camera in sync.
+    pub fn on_camera(mut self, f: impl Fn(Point, f32) -> Message + 'a) -> Self {
+        self.on_camera = Some(Box::new(f));
         self
     }
 
@@ -1917,15 +1780,25 @@ where
 mod tests {
     use super::*;
 
-    /// A graph whose ids are all `usize`, so a node, an anchor and an edge can
-    /// be told apart by value in a failure message.
-    type Graph<'a> =
-        NodeGraph<'a, usize, usize, usize, usize, (), (), iced_widget::renderer::Renderer>;
+    /// A vocabulary whose ids are all `usize`, so a node, an anchor and an edge
+    /// can be told apart by value in a failure message.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    struct AllUsize;
+
+    impl Ids for AllUsize {
+        type NodeId = usize;
+        type PinId = usize;
+        type EdgeId = usize;
+        type AnchorId = usize;
+        type Payload = ();
+    }
+
+    type Graph<'a> = NodeGraph<'a, AllUsize, (), iced_widget::renderer::Renderer>;
 
     /// Node 0 carries the output at the origin, node 1 the input 400 to the
     /// right, so the run is the positive x axis and a projection is just an x
     /// coordinate.
-    fn station(pin: &PinRef<usize, usize>) -> Option<Station> {
+    fn station(pin: &PinRef<AllUsize>) -> Option<Station> {
         match pin.node_id {
             0 => Some(Station {
                 point: [0.0, 0.0],
@@ -1996,9 +1869,9 @@ mod tests {
     fn a_snap_phantom_takes_the_orbit_the_tie_gives() {
         // The dragged edge is the HIGHEST index: tie order and free slot agree.
         let mut trailing = graph_with_anchors(&[(10, 200.0)]);
-        trailing.push_edge(edge(pin_ref(0), pin_ref(1), 0).route([10]));
-        trailing.push_edge(edge(pin_ref(0), pin_ref(1), 1).route([10]));
-        trailing.push_edge(edge(pin_ref(0), pin_ref(1), 2));
+        trailing = trailing.push_edge(edge(0, pin_ref(0), pin_ref(1)).route([10]));
+        trailing = trailing.push_edge(edge(1, pin_ref(0), pin_ref(1)).route([10]));
+        trailing = trailing.push_edge(edge(2, pin_ref(0), pin_ref(1)));
         let phantom = RoutePhantom {
             edge: 2,
             exclude: None,
@@ -2015,8 +1888,8 @@ mod tests {
         // resident cable outward. This is the case a free-slot prediction gets
         // wrong, and it is the one the drag then measures its unsnap against.
         let mut leading = graph_with_anchors(&[(10, 200.0)]);
-        leading.push_edge(edge(pin_ref(0), pin_ref(1), 0));
-        leading.push_edge(edge(pin_ref(0), pin_ref(1), 1).route([10]));
+        leading = leading.push_edge(edge(0, pin_ref(0), pin_ref(1)));
+        leading = leading.push_edge(edge(1, pin_ref(0), pin_ref(1)).route([10]));
         let phantom = RoutePhantom {
             edge: 0,
             exclude: None,
@@ -2055,7 +1928,7 @@ mod tests {
         // Both cables pass above the anchor, the second one closer, so the
         // first's angular interval contains the second's: 157 degrees against
         // 90, around the same centre.
-        let stations = |pin: &PinRef<usize, usize>| {
+        let stations = |pin: &PinRef<AllUsize>| {
             let (point, side, direction) = match pin.node_id {
                 0 => ([-100.0, -20.0], 1, PinDirection::Output),
                 1 => ([100.0, -20.0], 3, PinDirection::Input),
@@ -2071,10 +1944,10 @@ mod tests {
         };
 
         let mut graph = Graph::default();
-        graph.push_anchor(anchor(10, Point::new(0.0, 0.0)));
+        graph = graph.push_anchor(anchor(10, Point::new(0.0, 0.0)));
         // The WIDER cable is pushed first, so push order asks for the crossing.
-        graph.push_edge(edge(pin_ref(0), pin_ref(1), 0).route([10]));
-        graph.push_edge(edge(pin_ref(2), pin_ref(3), 1).route([10]));
+        graph = graph.push_edge(edge(0, pin_ref(0), pin_ref(1)).route([10]));
+        graph = graph.push_edge(edge(1, pin_ref(2), pin_ref(3)).route([10]));
 
         let ring = indexed_ring(&graph);
         let cables = graph.edge_hops(&stations, &ring, &curve, None);
@@ -2100,7 +1973,7 @@ mod tests {
             .collect()
     }
 
-    fn pin_ref(node: usize) -> PinRef<usize, usize> {
+    fn pin_ref(node: usize) -> PinRef<AllUsize> {
         PinRef::new(node, 0)
     }
 
@@ -2108,7 +1981,7 @@ mod tests {
     fn graph_with_anchors(positions: &[(usize, f32)]) -> Graph<'static> {
         let mut graph = Graph::default();
         for &(id, x) in positions {
-            graph.push_anchor(anchor(id, Point::new(x, 0.0)));
+            graph = graph.push_anchor(anchor(id, Point::new(x, 0.0)));
         }
         graph
     }
@@ -2119,7 +1992,7 @@ mod tests {
     #[test]
     fn wraps_are_visited_in_projection_order() {
         let mut graph = graph_with_anchors(&[(10, 300.0), (11, 100.0), (12, 200.0)]);
-        graph.push_edge(edge(pin_ref(0), pin_ref(1), 0).route([10, 11, 12]));
+        graph = graph.push_edge(edge(0, pin_ref(0), pin_ref(1)).route([10, 11, 12]));
 
         let ring = ring(&graph);
         let cables = graph.edge_hops(&station, &ring, &curve, None);
@@ -2137,7 +2010,7 @@ mod tests {
     #[test]
     fn an_input_first_edge_is_oriented_before_ordering() {
         let mut graph = graph_with_anchors(&[(10, 300.0), (11, 100.0)]);
-        graph.push_edge(edge(pin_ref(1), pin_ref(0), 0).route([10, 11]));
+        graph = graph.push_edge(edge(0, pin_ref(1), pin_ref(0)).route([10, 11]));
 
         let ring = ring(&graph);
         let cables = graph.edge_hops(&station, &ring, &curve, None);
@@ -2158,8 +2031,8 @@ mod tests {
     #[test]
     fn edges_through_one_anchor_take_successive_orbits() {
         let mut graph = graph_with_anchors(&[(10, 200.0)]);
-        graph.push_edge(edge(pin_ref(0), pin_ref(1), 0).route([10]));
-        graph.push_edge(edge(pin_ref(0), pin_ref(1), 1).route([10]));
+        graph = graph.push_edge(edge(0, pin_ref(0), pin_ref(1)).route([10]));
+        graph = graph.push_edge(edge(1, pin_ref(0), pin_ref(1)).route([10]));
 
         assert_eq!(graph.anchor_rings(None), vec![2]);
 
@@ -2179,7 +2052,7 @@ mod tests {
     #[test]
     fn a_route_dedupes_and_drops_unknown_ids() {
         let mut graph = graph_with_anchors(&[(10, 200.0)]);
-        graph.push_edge(edge(pin_ref(0), pin_ref(1), 0).route([10, 999, 10]));
+        graph = graph.push_edge(edge(0, pin_ref(0), pin_ref(1)).route([10, 999, 10]));
 
         assert_eq!(graph.resolved_route(0), vec![0]);
         assert_eq!(graph.anchor_rings(None), vec![1]);
@@ -2191,7 +2064,7 @@ mod tests {
     #[test]
     fn a_node_id_in_a_route_resolves_to_no_wrap() {
         let mut graph = graph_with_anchors(&[(10, 200.0)]);
-        graph.push_edge(edge(pin_ref(0), pin_ref(1), 0).route([10]));
+        graph = graph.push_edge(edge(0, pin_ref(0), pin_ref(1)).route([10]));
         assert_eq!(graph.anchor_index(&10), Some(0));
         assert_eq!(graph.anchor_index(&0), None);
         assert_eq!(graph.resolved_route(0), vec![0]);
@@ -2202,7 +2075,7 @@ mod tests {
     #[test]
     fn a_detached_anchor_stays_snap_eligible() {
         let mut graph = graph_with_anchors(&[(10, 100.0), (11, 200.0)]);
-        graph.push_edge(edge(pin_ref(0), pin_ref(1), 0).route([10]));
+        graph = graph.push_edge(edge(0, pin_ref(0), pin_ref(1)).route([10]));
 
         assert_eq!(graph.route_snap_eligible(0, None), vec![1]);
         assert_eq!(graph.route_snap_eligible(0, Some(0)), vec![0, 1]);
@@ -2213,7 +2086,7 @@ mod tests {
     #[test]
     fn an_unrouted_edge_lowers_to_two_pins() {
         let mut graph = Graph::default();
-        graph.push_edge(edge(pin_ref(0), pin_ref(1), 0));
+        graph = graph.push_edge(edge(0, pin_ref(0), pin_ref(1)));
 
         let ring = ring(&graph);
         let cables = graph.edge_hops(&station, &ring, &curve, None);
@@ -2228,7 +2101,7 @@ mod tests {
     #[test]
     fn a_phantom_wrap_is_ordered_like_a_real_one() {
         let mut graph = graph_with_anchors(&[(10, 300.0)]);
-        graph.push_edge(edge(pin_ref(0), pin_ref(1), 0).route([10]));
+        graph = graph.push_edge(edge(0, pin_ref(0), pin_ref(1)).route([10]));
 
         let ring = ring(&graph);
         let phantom = RoutePhantom {
@@ -2257,7 +2130,7 @@ mod tests {
     #[test]
     fn an_excluded_anchor_leaves_the_preview() {
         let mut graph = graph_with_anchors(&[(10, 300.0)]);
-        graph.push_edge(edge(pin_ref(0), pin_ref(1), 0).route([10]));
+        graph = graph.push_edge(edge(0, pin_ref(0), pin_ref(1)).route([10]));
 
         let ring = ring(&graph);
         let phantom = RoutePhantom {
@@ -2280,7 +2153,7 @@ mod tests {
     #[test]
     fn a_snap_phantom_stands_down_once_the_route_carries_it() {
         let mut graph = graph_with_anchors(&[(10, 200.0)]);
-        graph.push_edge(edge(pin_ref(0), pin_ref(1), 0));
+        graph = graph.push_edge(edge(0, pin_ref(0), pin_ref(1)));
 
         let offered_ring = ring(&graph);
         let phantom = RoutePhantom {
@@ -2297,7 +2170,7 @@ mod tests {
         );
 
         let mut applied = graph_with_anchors(&[(10, 200.0)]);
-        applied.push_edge(edge(pin_ref(0), pin_ref(1), 0).route([10]));
+        applied = applied.push_edge(edge(0, pin_ref(0), pin_ref(1)).route([10]));
         let applied_ring = ring(&applied);
         let cables = applied.edge_hops(&station, &applied_ring, &curve, Some(&phantom));
         assert_eq!(wrap_centers(&cables[0].hops), vec![[200.0, 0.0]]);
@@ -2309,9 +2182,9 @@ mod tests {
     #[test]
     fn a_degenerate_run_keeps_the_authored_order() {
         let mut graph = graph_with_anchors(&[(10, 300.0), (11, 100.0)]);
-        graph.push_edge(edge(pin_ref(2), pin_ref(2), 0).route([10, 11]));
+        graph = graph.push_edge(edge(0, pin_ref(2), pin_ref(2)).route([10, 11]));
 
-        let collapsed = |_: &PinRef<usize, usize>| {
+        let collapsed = |_: &PinRef<AllUsize>| {
             Some(Station {
                 point: [50.0, 50.0],
                 side: 1,
@@ -2332,7 +2205,7 @@ mod tests {
     #[test]
     fn an_unresolvable_endpoint_drops_the_edge() {
         let mut graph = Graph::default();
-        graph.push_edge(edge(pin_ref(0), pin_ref(7), 0));
+        graph = graph.push_edge(edge(0, pin_ref(0), pin_ref(7)));
 
         let ring = ring(&graph);
         assert!(graph.edge_hops(&station, &ring, &curve, None).is_empty());
@@ -2359,7 +2232,7 @@ mod tests {
         const B: [f32; 2] = [550.0, 300.0];
         // Two sources left of the first anchor, two sinks right of the second,
         // at different heights so the pair has a reason to nest either way.
-        let stations = |pin: &PinRef<usize, usize>| {
+        let stations = |pin: &PinRef<AllUsize>| {
             let (point, side, direction) = match pin.node_id {
                 0 => ([260.0, 193.0], 1, PinDirection::Output),
                 1 => ([600.0, 463.0], 3, PinDirection::Input),
@@ -2375,10 +2248,10 @@ mod tests {
         };
 
         let mut graph = Graph::default();
-        graph.push_anchor(anchor(10, Point::new(A[0], A[1])));
-        graph.push_anchor(anchor(11, Point::new(B[0], B[1])));
-        graph.push_edge(edge(pin_ref(0), pin_ref(1), 0).route([10, 11]));
-        graph.push_edge(edge(pin_ref(2), pin_ref(3), 1).route([10, 11]));
+        graph = graph.push_anchor(anchor(10, Point::new(A[0], A[1])));
+        graph = graph.push_anchor(anchor(11, Point::new(B[0], B[1])));
+        graph = graph.push_edge(edge(0, pin_ref(0), pin_ref(1)).route([10, 11]));
+        graph = graph.push_edge(edge(1, pin_ref(2), pin_ref(3)).route([10, 11]));
 
         // The shipped radii, so the rings sit where a host sees them.
         let rings = |anchor: usize, orbit: u8| {
@@ -2444,7 +2317,7 @@ mod tests {
     /// stalls here with the crossing still on screen.
     #[test]
     fn a_three_cable_corridor_comes_out_clear() {
-        let stations = |pin: &PinRef<usize, usize>| {
+        let stations = |pin: &PinRef<AllUsize>| {
             let (point, side, direction) = match pin.node_id {
                 0 => ([260.0, 193.3], 1, PinDirection::Output),
                 1 => ([350.0, 243.3], 3, PinDirection::Input),
@@ -2462,12 +2335,12 @@ mod tests {
             })
         };
         let mut graph = Graph::default();
-        graph.push_anchor(anchor(10, Point::new(300.0, 300.0)));
-        graph.push_anchor(anchor(11, Point::new(550.0, 300.0)));
-        graph.push_edge(edge(pin_ref(0), pin_ref(1), 0).route([10]));
-        graph.push_edge(edge(pin_ref(2), pin_ref(3), 1).route([11]));
-        graph.push_edge(edge(pin_ref(0), pin_ref(4), 2).route([10, 11]));
-        graph.push_edge(edge(pin_ref(5), pin_ref(6), 3).route([10, 11]));
+        graph = graph.push_anchor(anchor(10, Point::new(300.0, 300.0)));
+        graph = graph.push_anchor(anchor(11, Point::new(550.0, 300.0)));
+        graph = graph.push_edge(edge(0, pin_ref(0), pin_ref(1)).route([10]));
+        graph = graph.push_edge(edge(1, pin_ref(2), pin_ref(3)).route([11]));
+        graph = graph.push_edge(edge(2, pin_ref(0), pin_ref(4)).route([10, 11]));
+        graph = graph.push_edge(edge(3, pin_ref(5), pin_ref(6)).route([10, 11]));
 
         let rings = |anchor: usize, orbit: u8| {
             let position = graph.anchors.get(anchor)?.position;
@@ -2508,7 +2381,7 @@ mod tests {
     /// assignment counts them.
     fn corridor_count(
         graph: &Graph<'_>,
-        stations: &dyn Fn(&PinRef<usize, usize>) -> Option<Station>,
+        stations: &dyn Fn(&PinRef<AllUsize>) -> Option<Station>,
         rings: &dyn Fn(usize, u8) -> Option<edge_path::Orbit>,
         arrangement: &[Vec<u8>],
     ) -> usize {

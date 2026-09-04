@@ -4,22 +4,24 @@ Node style presets, live per-node style editing, and the routing-anchor
 lifecycle.
 
 This demo shows how a host application owns node appearance in `iced_nodegraph`:
-it keeps a fully resolved `NodeStyle` per node in its own model, hands it back
-from the node's `.style()` closure, and edits it from a side panel while the
-graph stays interactive. It is also the reference host for routing anchors: the
-widget derives every cable's geometry, and this application owns the anchors and
-the routes.
+it keeps a style preset and a few override values per node in its own model,
+resolves them into a `NodeStyle` from the node's `.style()` closure, and edits
+the overrides from a side panel while the graph stays interactive. It is also
+the reference host for routing anchors: the widget derives every cable's
+geometry, and this application owns the anchors and the routes.
 
 The whole application lives in `src/lib.rs` (the native `main.rs` and the WASM
 entry point both call into it); `src/nodes/mod.rs` builds the node content.
 
 ## Features
 
-- **Style presets**: `NodeStyle::input()`, `process()`, `output()`, and
-  `comment()` applied to the selected node from the "Apply Preset" buttons.
+- **Style presets**: `NodeStyle::input`, `process`, `output` and `comment`,
+  each a function of theme and status, picked for the selected node from the
+  "Apply Preset" buttons.
 - **Live style controls**: sliders for corner radius (0-20), opacity
-  (0.1-1.0), and border width (0.5-5.0, written as `Pattern::solid(width)`).
-  Each change rewrites the stored `NodeStyle` of the selected node.
+  (0.1-1.0), and border width (0.5-5.0, the border pattern's thickness). Each
+  change writes the selected node's overrides, which the style closure lays
+  over the resolved preset.
 - **Theme switching**: a `pick_list` over ten iced themes (Dark, Light, both
   Catppuccin variants, Dracula, Nord, both Solarized, both Gruvbox). The
   starting theme is CatppuccinFrappe.
@@ -28,12 +30,11 @@ entry point both call into it); `src/nodes/mod.rs` builds the node content.
 - **Content follows style**: `determine_content_style` picks the title-bar
   preset from the node's fill color and reuses the node's own corner radius and
   border thickness, so the header geometry matches the body.
-- **Selection feedback**: when a node's status is `NodeStatus::Selected`, the
-  style closure copies the accent border, halo ring and opacity from
-  `default_node_style(theme, NodeStatus::Selected)` onto the stored style, so a
-  hand-styled node highlights like every other node.
+- **Selection feedback**: every preset builds on
+  `default_node_style(theme, status)`, so a `NodeStatus::Selected` node takes
+  the accent border and halo ring and highlights like every other node.
 - **Grid background**: a `TilingBackground::grid` layer over
-  `GraphStyle::from_theme(theme)`.
+  `default_graph_style(theme)`.
 - **Routing anchors**: two anchors sit under the Transform node with three
   cables on each; two of those come from different inputs and run through both
   anchors, so the stretch from the first anchor to the second carries a pair.
@@ -64,8 +65,8 @@ input, and a second source feeding a second sink:
 | 4 Output Log | Output |
 | 5 Aux Input | Input |
 
-Plus two anchors under the Transform node: A is id 100 at (300, 300), B is id
-101 at (550, 300). Edge 0 (Input -> Transform) routes through A, edge 1
+Plus two anchors under the Transform node: A is id 0 at (300, 300), B is id
+1 at (550, 300). Edge 0 (Input -> Transform) routes through A, edge 1
 (Transform -> Output Result) through B, and edges 2 (Input -> Note) and 3
 (Aux Input -> Output Log) through A and then B. So each anchor carries three
 cables on three rings, and the stretch between A and B carries two of them.
@@ -90,7 +91,7 @@ back.
 ## Controls
 
 - **Click a node button** in the right panel to pick the node the sliders and
-  presets act on. Its current style is loaded into the sliders.
+  presets act on. The sliders show that node's overrides.
 - **Drag a node** (or a selection) in the canvas to move it.
 - **Drag from a pin** to another pin to connect; each node has one input pin on
   the left and one output pin on the right.
@@ -123,8 +124,9 @@ result next to the rustdoc output in `target/doc/demo_styling/pkg/`.
 
 `NodeGraph` with `on_connect` / `on_disconnect` / `on_move` / `on_select` /
 `on_anchor_move` / `on_anchor_create` / `on_anchor_delete` / `on_route_attach` /
-`on_route_detach` / `graph_style`, `node(..).selected(..).style(..).pin_style(..)`,
-`edge(..).route(..)`, `anchor(..)`, `NodeGraph::push_anchor`, `PinRef`,
+`on_route_detach` / `graph_style`, the bulk adders `nodes(..)` / `anchors(..)` /
+`edges(..)`, `node(..).selected(..).style(..).pin_style(..)`,
+`edge(..).route(..)`, `anchor(..)`, `Ids` with a custom marker, `PinRef`,
 `NodeStyle`, `PinStyle`, `GraphStyle`, `TilingBackground`, `Pattern`,
 `NodeStatus`, `PinStatus`, `PinDirection`, `PinInfo`, `default_pin_style`,
-`node_header`, and the `pin!` macro.
+`default_graph_style`, and the `pin!` macro.

@@ -3,6 +3,7 @@
 //! Uses a custom 58-character alphabet that excludes visually ambiguous characters
 //! (0/O, 1/l/I) for better readability and copy-paste reliability.
 
+use iced_nodegraph::Ids;
 use nanoid::nanoid;
 
 /// Custom alphabet: 57 chars, URL-safe, no ambiguous characters (0/O, 1/l/I excluded).
@@ -28,6 +29,20 @@ pub type EdgeId = String;
 /// Type alias for pin labels (unique within a node).
 /// Uses &'static str for compile-time pin labels defined as constants.
 pub type PinLabel = &'static str;
+
+/// The demo's id vocabulary for [`iced_nodegraph`]: nanoid strings for nodes
+/// and edges, `&'static str` pin labels, and a [`std::any::TypeId`] per pin as
+/// the data-type marker connections are validated against.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct HelloIds;
+
+impl Ids for HelloIds {
+    type NodeId = NodeId;
+    type PinId = PinLabel;
+    type EdgeId = EdgeId;
+    type AnchorId = usize;
+    type Payload = std::any::TypeId;
+}
 
 /// An edge in memory: the two endpoints it wires, by node id and pin label.
 ///

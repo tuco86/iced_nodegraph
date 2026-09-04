@@ -72,18 +72,17 @@ fn render_theme(theme: &Theme) -> Option<Vec<[u8; 4]>> {
     let mut guard = shared()?;
     let renderer = &mut *guard;
 
-    let mut graph: NodeGraph<'static, usize, usize, (), usize, (), (), Renderer> =
-        NodeGraph::default()
-            .width(Length::Fixed(CW as f32))
-            .height(Length::Fixed(CH as f32))
-            .view(Point::ORIGIN, 1.0);
+    let mut graph: NodeGraph<'static, iced_nodegraph::Indexed, (), Renderer> = NodeGraph::default()
+        .width(Length::Fixed(CW as f32))
+        .height(Length::Fixed(CH as f32))
+        .camera(Point::ORIGIN, 1.0);
 
-    graph.push_node(node(
+    graph = graph.push_node(node(
         0_usize,
         Point::new(20.0, 24.0),
         node_body(theme.to_string(), &[], &["out"]),
     ));
-    graph.push_node(
+    graph = graph.push_node(
         node(
             1_usize,
             Point::new(238.0, 46.0),
@@ -91,14 +90,14 @@ fn render_theme(theme: &Theme) -> Option<Vec<[u8; 4]>> {
         )
         .selected(true),
     );
-    graph.push_node(node(
+    graph = graph.push_node(node(
         2_usize,
         Point::new(126.0, 170.0),
         node_body("Output".into(), &["a", "b"], &[]),
     ));
 
-    graph.push_edge(edge!(PinRef::new(0, 10_usize), PinRef::new(1, 0_usize)));
-    graph.push_edge(edge!(PinRef::new(1, 10_usize), PinRef::new(2, 0_usize)));
+    graph = graph.push_edge(edge((), PinRef::new(0, 10_usize), PinRef::new(1, 0_usize)));
+    graph = graph.push_edge(edge((), PinRef::new(1, 10_usize), PinRef::new(2, 0_usize)));
 
     let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Renderer>);
     let layout_node = graph.layout(

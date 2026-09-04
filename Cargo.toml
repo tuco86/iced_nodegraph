@@ -38,6 +38,7 @@ demo_common = { path = "demos/common" }
 iced = { version = "0.14", default-features = false }
 iced_widget = "0.14"
 iced_wgpu = "0.14"
+iced_runtime = "0.14"
 iced_test = "0.14"
 
 # 0.1.1 is the first release that does not depend on the `iced` umbrella crate.

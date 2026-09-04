@@ -22,12 +22,12 @@
 //!
 //! ```rust,no_run
 //! use iced::{widget::text, Color, Point};
-//! use iced_nodegraph::{NodeStyle, default_node_style, node};
+//! use iced_nodegraph::{Indexed, Node, NodeStyle, default_node_style, node};
 //!
 //! # #[derive(Debug, Clone)]
 //! # enum Message {}
 //! # let (pos, body) = (Point::ORIGIN, text("body"));
-//! node::<_, usize, (), Message, iced::Renderer>(0, pos, body)
+//! let n: Node<'_, Indexed, Message, iced::Renderer> = node(0, pos, body)
 //!     .style(|theme, status| NodeStyle {
 //!         fill_color: Color::WHITE.into(),      // user override wins
 //!         ..default_node_style(theme, status)   // theme base + status fills the rest
@@ -44,8 +44,9 @@ use iced_widget::core::{Color, Theme};
 
 use super::roles::Roles;
 use super::{
-    AnchorStatus, AnchorStyle, CuttingToolStyle, EdgeCurve, EdgeStatus, EdgeStyle, NodeStatus,
-    NodeStyle, PinShape, PinStatus, PinStyle, SelectionBoxStyle, ramp,
+    AnchorStatus, AnchorStyle, CuttingToolStyle, EdgeCurve, EdgeStatus, EdgeStyle, GraphStyle,
+    NodeStatus, NodeStyle, PinShape, PinStatus, PinStyle, SelectionBoxStyle, TilingBackground,
+    ramp,
 };
 
 /// Corner radius of a node body, in world units.
@@ -305,6 +306,21 @@ pub fn default_cutting_tool_style(theme: &Theme) -> CuttingToolStyle {
     CuttingToolStyle {
         color: Roles::of(theme).danger,
         width: 3.0,
+    }
+}
+
+/// Theme-derived canvas: the theme's window background untouched, and a grid
+/// one perceptual elevation step above it - the same ladder node bodies ride
+/// on, so canvas, grid and node read as one material at three depths.
+///
+/// The grid is opaque rather than a translucent wash: an alpha over the canvas
+/// makes the line's weight depend on what it happens to cross, and nothing
+/// crosses an infinite plane predictably.
+pub fn default_graph_style(theme: &Theme) -> GraphStyle {
+    let roles = Roles::of(theme);
+    GraphStyle {
+        background_color: roles.canvas,
+        tiling: Some(TilingBackground::grid(40.0, 1.0, roles.grid)),
     }
 }
 

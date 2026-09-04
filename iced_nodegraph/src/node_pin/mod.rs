@@ -1,16 +1,17 @@
-//! Pin widget for node graph connection points.
+//! The [`NodePin`] widget: a connection point inside a node's content.
 //!
-//! This module provides the [`NodePin`] widget that wraps content and acts as
-//! a connection point for edges. Pins are placed within nodes and can be
-//! connected to other pins via dragging.
+//! A pin is an invisible wrapper around any element (usually a label). The
+//! graph finds every pin in a node's widget tree, draws its indicator on the
+//! node border, and lets the user drag edges between pins.
 //!
 //! ## Usage
 //!
-//! Pins are typically created using the [`pin!`] macro for convenience:
+//! [`node_pin`] is the builder; [`pin!`] is the shorthand for the common
+//! shapes:
 //!
 //! ```rust
 //! use iced::widget::text;
-//! use iced_nodegraph::{NodePin, pin};
+//! use iced_nodegraph::{NodePin, PinDirection, PinSide, node_pin, pin};
 //!
 //! #[derive(Clone)]
 //! enum MyKind {
@@ -20,18 +21,27 @@
 //! # #[derive(Debug, Clone)]
 //! # enum Message {}
 //! # type Pin<'a, UI> = NodePin<'a, u32, UI, Message, iced::Renderer>;
-//! // Simple pin with just a label
 //! let input: Pin<'_, ()> = pin!(Left, 0, text("Input"), Input);
-//!
-//! // Pin with a user-defined payload
 //! let output: Pin<'_, MyKind> = pin!(Right, 1, text("Output"), Output, MyKind::Audio);
+//! let same: Pin<'_, MyKind> = node_pin(PinSide::Right, 1, text("Output"))
+//!     .direction(PinDirection::Output)
+//!     .info(MyKind::Audio);
 //! ```
+//!
+//! A pin's id type and payload type must be the graph's
+//! [`Ids::PinId`](crate::Ids::PinId) and [`Ids::Payload`](crate::Ids::Payload):
+//! the pin is type-erased into the node's content, so the graph finds it by
+//! that pair. A pin of another type is a debug-build assertion at the first
+//! layout and is ignored in release builds.
 //!
 //! ## Pin Properties
 //!
-//! - [`PinSide`] - Which edge of the node the pin attaches to (Left, Right, Top, Bottom)
-//! - [`PinDirection`] - Whether the pin is an input or output
-//! - User info - Optional user-defined payload via [`NodePin::info`]
+//! - [`PinSide`] - which edge of the node the pin attaches to, or `Row` for a
+//!   pin spanning the node
+//! - [`PinDirection`] - input, output or both
+//! - Payload - an optional user value via [`NodePin::info`], surfaced to
+//!   [`Node::pin_style`](crate::Node::pin_style) and
+//!   [`NodeGraph::can_connect`](crate::NodeGraph::can_connect)
 //!
 //! ## Connection Behavior
 //!
@@ -42,12 +52,16 @@
 //!   [`default_pin_style`](crate::default_pin_style) paints in the theme's
 //!   success color with a halo filling its cutout
 
-use crate::ids::PinId;
+use std::any::{Any, type_name};
+
 use iced_wgpu::core::{
     Clipboard, Layout, Shell, Widget, layout, mouse, renderer,
     widget::{Tree, tree},
 };
 use iced_widget::core::{Element, Event, Length, Point, Rectangle, Size, Theme};
+
+use crate::ids::{Id, Ids};
+
 /// Default pin size when no content widget is provided.
 const DEFAULT_PIN_SIZE: Size = Size::new(50.0, 20.0);
 
@@ -65,7 +79,8 @@ pub enum PinSide {
     Top = 2,
     /// Pin on the bottom edge, edges exit downward.
     Bottom = 3,
-    /// Pin placed in a row layout. Edges exit to the right (same as `Right`).
+    /// Pin spanning the node: an edge may attach on either the left or the
+    /// right border, whichever is nearer its other end.
     Row = 4,
 }
 
@@ -78,26 +93,26 @@ impl From<PinSide> for u32 {
 /// Direction of data flow for a pin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PinDirection {
+    /// Accepts edges only.
     Input,
+    /// Emits edges only.
     Output,
+    /// Connects to any pin.
     #[default]
     Both,
 }
 
 /// Read-only view of a pin's semantic info, passed to a node's `pin_style`
-/// closure so it can style each pin by direction, user info, or id. The pin
+/// closure so it can style each pin by direction, payload, or id. The pin
 /// itself carries no style; the owning node decides how its pins look.
-///
-/// `UI` is the user-defined per-pin payload set via [`NodePin::info`]; it
-/// defaults to `()` for pins that carry none.
-pub struct PinInfo<'a, P, UI = ()> {
+pub struct PinInfo<'a, I: Ids> {
     direction: PinDirection,
-    pin_id: &'a P,
-    info: &'a UI,
+    pin_id: &'a I::PinId,
+    info: &'a I::Payload,
 }
 
-impl<'a, P, UI> PinInfo<'a, P, UI> {
-    pub(crate) fn new(direction: PinDirection, pin_id: &'a P, info: &'a UI) -> Self {
+impl<'a, I: Ids> PinInfo<'a, I> {
+    pub(crate) fn new(direction: PinDirection, pin_id: &'a I::PinId, info: &'a I::Payload) -> Self {
         Self {
             direction,
             pin_id,
@@ -111,46 +126,44 @@ impl<'a, P, UI> PinInfo<'a, P, UI> {
     }
 
     /// The pin's user id.
-    pub fn pin_id(&self) -> &P {
+    pub fn pin_id(&self) -> &I::PinId {
         self.pin_id
     }
 
-    /// The pin's user-defined payload set via [`NodePin::info`].
-    pub fn info(&self) -> &UI {
+    /// The pin's payload set via [`NodePin::info`].
+    pub fn info(&self) -> &I::Payload {
         self.info
     }
 }
 
 /// Read-only view of one endpoint of a candidate connection, passed to
 /// [`NodeGraph::can_connect`](crate::NodeGraph::can_connect). Bundles the pin's
-/// node id, pin id, direction and user payload.
-///
-/// `UI` is the user-defined per-pin payload; it defaults to `()`.
-pub struct PinEnd<'a, N, P, UI = ()> {
-    node_id: &'a N,
-    pin_id: &'a P,
+/// node id, pin id, direction and payload.
+pub struct PinEnd<'a, I: Ids> {
+    node_id: &'a I::NodeId,
+    pin_id: &'a I::PinId,
     direction: PinDirection,
-    info: &'a UI,
+    info: &'a I::Payload,
     is_occupied: bool,
 }
 
-// Hand-written so `PinEnd` stays `Copy` for any `N`/`P`/`UI` (it only holds shared
-// references); a derive would add spurious `N: Copy`/`P: Copy`/`UI: Copy` bounds and
-// stop `can_connect` helpers from passing it to several predicates by value.
-impl<N, P, UI> Clone for PinEnd<'_, N, P, UI> {
+// Hand-written so `PinEnd` stays `Copy` for any `I` (it only holds shared
+// references); a derive would demand `Copy` of the ids and stop `can_connect`
+// helpers from passing it to several predicates by value.
+impl<I: Ids> Clone for PinEnd<'_, I> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<N, P, UI> Copy for PinEnd<'_, N, P, UI> {}
+impl<I: Ids> Copy for PinEnd<'_, I> {}
 
-impl<'a, N, P, UI> PinEnd<'a, N, P, UI> {
+impl<'a, I: Ids> PinEnd<'a, I> {
     pub(crate) fn new(
-        node_id: &'a N,
-        pin_id: &'a P,
+        node_id: &'a I::NodeId,
+        pin_id: &'a I::PinId,
         direction: PinDirection,
-        info: &'a UI,
+        info: &'a I::Payload,
         is_occupied: bool,
     ) -> Self {
         Self {
@@ -163,12 +176,12 @@ impl<'a, N, P, UI> PinEnd<'a, N, P, UI> {
     }
 
     /// The id of the node this pin belongs to.
-    pub fn node_id(&self) -> &N {
+    pub fn node_id(&self) -> &I::NodeId {
         self.node_id
     }
 
     /// The pin's user id.
-    pub fn pin_id(&self) -> &P {
+    pub fn pin_id(&self) -> &I::PinId {
         self.pin_id
     }
 
@@ -177,8 +190,8 @@ impl<'a, N, P, UI> PinEnd<'a, N, P, UI> {
         self.direction
     }
 
-    /// The pin's user-defined payload set via [`NodePin::info`].
-    pub fn info(&self) -> &UI {
+    /// The pin's payload set via [`NodePin::info`].
+    pub fn info(&self) -> &I::Payload {
         self.info
     }
 
@@ -192,34 +205,31 @@ impl<'a, N, P, UI> PinEnd<'a, N, P, UI> {
     }
 }
 
-/// A transparent wrapper used as a marker within `NodeGraph`.
+/// A connection point inside a node's content: an invisible wrapper that
+/// marks where the graph draws a pin and where an edge attaches.
 ///
-/// Generic over `P` (the pin identifier type, e.g. `String`, enum, UUID) and
-/// `UI` (the user-defined per-pin payload surfaced to `pin_style`/`can_connect`,
-/// defaults to `()`).
+/// `P` is the pin id type and `UI` the payload type; both are inferred from
+/// the values given and must equal the graph's `Ids::PinId` / `Ids::Payload`.
 pub struct NodePin<'a, P, UI, Message, Renderer>
 where
-    P: PinId,
+    P: Id,
     Renderer: renderer::Renderer,
 {
-    /// Which side of the node the pin sits on.
-    pub side: PinSide,
-    /// Whether the pin is an input, an output, or both.
-    pub direction: PinDirection,
-    /// The pin's user id, unique within its node.
-    pub pin_id: P,
-    /// User-defined per-pin payload, surfaced to `pin_style` / `can_connect`.
-    pub user_info: UI,
-    /// The widget drawn as the pin's label/content.
-    pub content: Element<'a, Message, Theme, Renderer>,
+    side: PinSide,
+    direction: PinDirection,
+    pin_id: P,
+    user_info: UI,
+    content: Element<'a, Message, Theme, Renderer>,
     interactions_disabled: bool,
 }
 
 impl<'a, P, Message, Renderer> NodePin<'a, P, (), Message, Renderer>
 where
-    P: PinId,
+    P: Id,
     Renderer: renderer::Renderer,
 {
+    /// Creates a pin on `side` with the given id wrapping `content`. Direction
+    /// is [`PinDirection::Both`] and the payload `()` until set.
     pub fn new(
         side: PinSide,
         pin_id: P,
@@ -238,20 +248,23 @@ where
 
 impl<'a, P, UI, Message, Renderer> NodePin<'a, P, UI, Message, Renderer>
 where
-    P: PinId,
+    P: Id,
     Renderer: renderer::Renderer,
 {
+    /// Sets whether the pin accepts edges, emits them, or both.
     pub fn direction(mut self, direction: PinDirection) -> Self {
         self.direction = direction;
         self
     }
 
-    /// Attaches a user-defined payload to this pin, surfaced to the node's
-    /// `pin_style` closure and the graph's `can_connect` closure as `UI`.
+    /// Attaches a payload to this pin, surfaced to the node's `pin_style`
+    /// closure and the graph's `can_connect` closure.
     ///
-    /// Changing the payload type also changes the pin's `UI` type parameter.
+    /// Changing the payload type also changes the pin's `UI` type parameter,
+    /// which must equal the graph's `Ids::Payload`.
     ///
-    /// # Example
+    /// # Examples
+    ///
     /// ```rust
     /// use iced::widget::text;
     /// use iced_nodegraph::{NodePin, pin};
@@ -290,12 +303,12 @@ where
 
 /// Internal state for a NodePin widget.
 ///
-/// Generic over `P` (the pin id) and `UI` (the user payload). Within one graph
-/// all pins share the same `P` and `UI`, so `find_pins` matches a single
-/// `tree::Tag`. The pin id is stored directly: matching an edge endpoint is exact
-/// equality, and recovering the user's id is just a borrow (no type erasure).
+/// Generic over `P` (the pin id) and `UI` (the payload). Within one graph all
+/// pins share the same pair, so `find_pins` downcasts to a single concrete
+/// `NodePinState`. The pin id is stored directly: matching an edge endpoint is
+/// exact equality, and recovering the user's id is just a borrow.
 #[derive(Debug, Clone)]
-pub(super) struct NodePinState<P, UI> {
+pub(crate) struct NodePinState<P, UI> {
     /// The user's pin id.
     pub pin_id: P,
     pub side: PinSide,
@@ -303,32 +316,66 @@ pub(super) struct NodePinState<P, UI> {
     pub position: Point,
     /// When true, pin cannot be dragged from or dropped onto
     pub interactions_disabled: bool,
-    /// User-defined per-pin payload, surfaced to pin_style / can_connect.
+    /// The payload, surfaced to pin_style / can_connect.
     pub user_info: UI,
+}
+
+/// The tree state every pin registers, whatever its `P` and `UI`.
+///
+/// One tag for all pins lets the graph tell a pin of the wrong type from no
+/// pin at all: it downcasts the boxed state to its own `NodePinState` and
+/// reports the type name of anything else.
+pub(crate) struct PinSlot {
+    state: Box<dyn Any>,
+    type_name: &'static str,
+}
+
+impl PinSlot {
+    fn new<P: 'static, UI: 'static>(state: NodePinState<P, UI>) -> Self {
+        Self {
+            state: Box::new(state),
+            type_name: type_name::<NodePinState<P, UI>>(),
+        }
+    }
+
+    /// The pin state, when it is a `NodePinState<P, UI>`.
+    pub(crate) fn get<P: 'static, UI: 'static>(&self) -> Option<&NodePinState<P, UI>> {
+        self.state.downcast_ref()
+    }
+
+    /// The type name of the state held, for the mismatch assertion.
+    pub(crate) fn type_name(&self) -> &'static str {
+        self.type_name
+    }
+
+    fn get_mut<P: 'static, UI: 'static>(&mut self) -> &mut NodePinState<P, UI> {
+        self.state
+            .downcast_mut()
+            .expect("a pin's tree state is the state it registered")
+    }
 }
 
 impl<'a, P, UI, Message, Renderer> Widget<Message, Theme, Renderer>
     for NodePin<'a, P, UI, Message, Renderer>
 where
-    P: PinId + 'static,
+    P: Id,
     UI: Clone + 'static,
     Renderer: renderer::Renderer + 'a,
     Message: 'a,
 {
     fn tag(&self) -> tree::Tag {
-        // Same tag for all pins sharing P and UI - enables consistent pin finding
-        tree::Tag::of::<NodePinState<P, UI>>()
+        tree::Tag::of::<PinSlot>()
     }
 
     fn state(&self) -> tree::State {
-        tree::State::new(NodePinState {
+        tree::State::new(PinSlot::new(NodePinState {
             pin_id: self.pin_id.clone(),
             side: self.side,
             direction: self.direction,
             position: Point::new(0.0, 0.0),
             interactions_disabled: self.interactions_disabled,
             user_info: self.user_info.clone(),
-        })
+        }))
     }
 
     fn size(&self) -> Size<Length> {
@@ -369,7 +416,7 @@ where
         viewport: &Rectangle,
     ) {
         {
-            let state = tree.state.downcast_mut::<NodePinState<P, UI>>();
+            let state = tree.state.downcast_mut::<PinSlot>().get_mut::<P, UI>();
             state.pin_id = self.pin_id.clone();
             state.side = self.side;
             state.direction = self.direction;
@@ -456,7 +503,7 @@ where
 impl<'a, P, UI, Message, Renderer> From<NodePin<'a, P, UI, Message, Renderer>>
     for Element<'a, Message, Theme, Renderer>
 where
-    P: PinId + 'static,
+    P: Id,
     UI: Clone + 'static,
     Renderer: renderer::Renderer + 'a,
     Message: 'a,
@@ -466,28 +513,26 @@ where
     }
 }
 
+/// Creates a [`NodePin`] on `side` with the given id wrapping `content`.
 pub fn node_pin<'a, P, Message, Renderer>(
     side: PinSide,
     pin_id: P,
     content: impl Into<Element<'a, Message, Theme, Renderer>>,
 ) -> NodePin<'a, P, (), Message, Renderer>
 where
-    P: PinId,
-    Renderer: iced_wgpu::core::renderer::Renderer,
+    P: Id,
+    Renderer: renderer::Renderer,
 {
     NodePin::new(side, pin_id, content)
 }
 
-/// Macro for creating pins with concise syntax.
-///
-/// The pin widget is an invisible wrapper that marks where a connection point
-/// should be placed. The content element (typically a text label) is passed through.
-///
-/// # Examples
+/// Shorthand for [`node_pin`] with the side and direction named bare.
 ///
 /// Pins carry no style of their own; the owning node colors and shapes them via
 /// [`Node::pin_style`](crate::Node::pin_style), keyed on the pin's direction,
-/// user info or id.
+/// payload or id.
+///
+/// # Examples
 ///
 /// ```rust
 /// use iced::widget::text;
@@ -501,18 +546,18 @@ where
 /// # #[derive(Debug, Clone)]
 /// # enum Message {}
 /// # type Pin<'a, UI> = NodePin<'a, &'static str, UI, Message, iced::Renderer>;
-/// // Full syntax: side, pin_id, content, direction, user info
+/// // Full syntax: side, pin_id, content, direction, payload
 /// let full: Pin<'_, MyKind> = pin!(Right, "output", text("output"), Output, MyKind::Email);
 ///
 /// // With direction only (connects to anything)
 /// let directed: Pin<'_, ()> = pin!(Right, "data", text("data"), Output);
 ///
-/// // Minimal (side, pin_id, content only, defaults: Both direction, no info)
+/// // Minimal (side, pin_id, content only, defaults: Both direction, no payload)
 /// let minimal: Pin<'_, ()> = pin!(Right, "data", text("data"));
 /// ```
 #[macro_export]
 macro_rules! pin {
-    // With user info: side, pin_id, content, direction, info
+    // With payload: side, pin_id, content, direction, info
     ($side:ident, $pin_id:expr, $content:expr, $dir:ident, $info:expr) => {
         $crate::node_pin($crate::PinSide::$side, $pin_id, $content)
             .direction($crate::PinDirection::$dir)
@@ -570,10 +615,23 @@ mod tests {
             node_pin(PinSide::Left, 7usize, text_input("", "b")).into();
         tree.diff(&after);
 
-        assert_eq!(tree.tag, tree::Tag::of::<NodePinState<usize, ()>>());
-        assert_eq!(
-            tree.state.downcast_ref::<NodePinState<usize, ()>>().pin_id,
-            7
-        );
+        assert_eq!(tree.tag, tree::Tag::of::<PinSlot>());
+        let slot = tree.state.downcast_ref::<PinSlot>();
+        assert_eq!(slot.get::<usize, ()>().map(|s| s.pin_id), Some(7));
+    }
+
+    /// Every pin shares one tag, so a pin of another id type lands on the same
+    /// slot and is recognisable as the wrong pin rather than as no pin.
+    #[test]
+    fn a_pin_of_another_type_is_told_apart_by_its_slot() {
+        let pin: Element<'_, (), Theme, iced::Renderer> =
+            node_pin(PinSide::Left, "named", text("a")).into();
+        let tree = Tree::new(&pin);
+
+        assert_eq!(tree.tag, tree::Tag::of::<PinSlot>());
+        let slot = tree.state.downcast_ref::<PinSlot>();
+        assert!(slot.get::<usize, ()>().is_none());
+        assert!(slot.get::<&'static str, ()>().is_some());
+        assert!(slot.type_name().contains("NodePinState"));
     }
 }

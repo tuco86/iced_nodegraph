@@ -10,7 +10,7 @@
 //! draws itself: [`GraphStyle`] for the canvas, [`SelectionBoxStyle`] for the
 //! selection box, [`CuttingToolStyle`] for the edge-cutting trail.
 
-use iced_widget::core::{Color, Theme};
+use iced_widget::core::Color;
 
 mod anchor;
 mod defaults;
@@ -23,8 +23,8 @@ mod sdf;
 
 pub use anchor::AnchorStyle;
 pub use defaults::{
-    default_anchor_style, default_cutting_tool_style, default_edge_style, default_node_style,
-    default_pin_style, default_selection_box_style,
+    default_anchor_style, default_cutting_tool_style, default_edge_style, default_graph_style,
+    default_node_style, default_pin_style, default_selection_box_style,
 };
 pub use edge::EdgeStyle;
 pub use node::NodeStyle;
@@ -178,61 +178,16 @@ impl TilingBackground {
 
 /// The canvas: background color and the optional tiling drawn over it.
 ///
-/// The transient overlays have their own types ([`SelectionBoxStyle`],
-/// [`CuttingToolStyle`]), so this is only what is always on screen.
+/// The theme-derived base is [`default_graph_style`]; override it with
+/// [`NodeGraph::graph_style`](crate::NodeGraph::graph_style). The transient
+/// overlays have their own types ([`SelectionBoxStyle`], [`CuttingToolStyle`]),
+/// so this is only what is always on screen.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GraphStyle {
     /// Background color for the canvas.
     pub background_color: Color,
     /// Optional tiling drawn over `background_color` (grid, dots, ...).
     pub tiling: Option<TilingBackground>,
-}
-
-/// A theme-free canvas: a neutral dark plane with no tiling.
-///
-/// The starting point for a host that sets its canvas itself
-/// (`GraphStyle { background_color: mine, ..Default::default() }`). Anything
-/// that should follow the application's theme uses
-/// [`from_theme`](GraphStyle::from_theme) instead - that is where the palette
-/// mapping lives, and it is what the widget draws when no closure is set.
-impl Default for GraphStyle {
-    fn default() -> Self {
-        Self {
-            background_color: Color::from_rgb(0.08, 0.08, 0.09),
-            tiling: None,
-        }
-    }
-}
-
-impl GraphStyle {
-    /// Sets the canvas background color.
-    pub fn background_color(mut self, color: Color) -> Self {
-        self.background_color = color;
-        self
-    }
-
-    /// Sets a tiling background (grid, dots, ...) drawn over `background_color`.
-    pub fn tiling(mut self, tiling: TilingBackground) -> Self {
-        self.tiling = Some(tiling);
-        self
-    }
-
-    /// The graph chrome derived from an iced theme: the canvas is the theme's
-    /// window background untouched, and the grid one perceptual elevation step
-    /// above it - the same ladder node bodies ride on, so canvas, grid and node
-    /// read as one material at three depths.
-    ///
-    /// The grid is opaque rather than a translucent wash: an alpha over the
-    /// canvas makes the line's weight depend on what it happens to cross, and
-    /// nothing crosses an infinite plane predictably.
-    pub fn from_theme(theme: &Theme) -> Self {
-        let roles = roles::Roles::of(theme);
-
-        Self {
-            background_color: roles.canvas,
-            tiling: Some(TilingBackground::grid(40.0, 1.0, roles.grid)),
-        }
-    }
 }
 
 /// Style of the selection box the widget draws while dragging over empty canvas.

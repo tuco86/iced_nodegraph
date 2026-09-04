@@ -17,7 +17,7 @@ use iced::advanced::{Layout, layout, mouse, renderer};
 use iced::{Color, Element, Length, Point, Rectangle, Size, Theme, Vector};
 use iced_wgpu::core::clipboard;
 
-use iced_nodegraph::{NodeGraph, node};
+use iced_nodegraph::{Indexed, NodeGraph, node};
 
 mod common;
 
@@ -86,7 +86,7 @@ impl<'a, Message: 'a> From<ViewportRecorder> for Element<'a, Message, Theme, Rec
 // ---------------------------------------------------------------------------
 
 /// The graph these tests drive: one recorder node, no host state, fake renderer.
-type Graph = NodeGraph<'static, usize, usize, (), usize, (), (), Recorder>;
+type Graph = NodeGraph<'static, Indexed, (), Recorder>;
 
 fn build_graph_with_recorder(
     graph_w: f32,
@@ -109,7 +109,7 @@ fn build_graph_with_recorder(
     let mut graph: Graph = NodeGraph::default()
         .width(Length::Fixed(graph_w))
         .height(Length::Fixed(graph_h));
-    graph.push_node(node(0_usize, node_world_pos, Element::from(recorder)));
+    graph = graph.push_node(node(0_usize, node_world_pos, Element::from(recorder)));
     (graph, on_draw, on_update, on_clip)
 }
 
@@ -221,7 +221,7 @@ fn run_update_with_cursor(graph_w: f32, graph_h: f32, cursor: mouse::Cursor) -> 
     let mut base_graph: Graph = NodeGraph::default()
         .width(Length::Fixed(graph_w))
         .height(Length::Fixed(graph_h));
-    base_graph.push_node(node(
+    base_graph = base_graph.push_node(node(
         0_usize,
         Point::new(0.0, 0.0),
         Element::<(), _, _>::from(EmptyLeaf),
@@ -229,7 +229,7 @@ fn run_update_with_cursor(graph_w: f32, graph_h: f32, cursor: mouse::Cursor) -> 
 
     let camera_changed = Rc::new(Cell::new(false));
     let cc = camera_changed.clone();
-    let mut graph = base_graph.on_pan(move |_pos, _zoom| cc.set(true));
+    let mut graph = base_graph.on_camera(move |_pos, _zoom| cc.set(true));
 
     let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Recorder>);
     let renderer = Recorder::detached();

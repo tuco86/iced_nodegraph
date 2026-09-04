@@ -12,7 +12,7 @@
 //!
 //! # #[derive(Debug, Clone)]
 //! # enum Message {}
-//! # let mut ng: NodeGraph<'_, usize, usize, (), usize, (), Message> = NodeGraph::default();
+//! # let mut ng: NodeGraph<'_, iced_nodegraph::Indexed, Message> = NodeGraph::new();
 //! // Keep every built-in rule, add a payload check:
 //! ng = ng.can_connect(|from, to| default_can_connect(from, to) && from.info() == to.info());
 //!
@@ -20,11 +20,12 @@
 //! ng = ng.can_connect(direction_ok);
 //! ```
 
+use crate::ids::Ids;
 use crate::node_pin::{PinDirection, PinEnd};
 
 /// Returns `true` if the two pin directions are compatible: `Output` to `Input`
 /// (either order) or any pairing involving `Both`.
-pub fn direction_ok<N, P, UI>(from: PinEnd<'_, N, P, UI>, to: PinEnd<'_, N, P, UI>) -> bool {
+pub fn direction_ok<I: Ids>(from: PinEnd<'_, I>, to: PinEnd<'_, I>) -> bool {
     matches!(
         (from.direction(), to.direction()),
         (PinDirection::Both, _)
@@ -36,10 +37,7 @@ pub fn direction_ok<N, P, UI>(from: PinEnd<'_, N, P, UI>, to: PinEnd<'_, N, P, U
 
 /// Returns `true` if the two pins live on different nodes, rejecting a node wiring
 /// back into itself.
-pub fn not_same_node<N, P, UI>(from: PinEnd<'_, N, P, UI>, to: PinEnd<'_, N, P, UI>) -> bool
-where
-    N: PartialEq,
-{
+pub fn not_same_node<I: Ids>(from: PinEnd<'_, I>, to: PinEnd<'_, I>) -> bool {
     from.node_id() != to.node_id()
 }
 
@@ -49,7 +47,7 @@ where
 /// fires `on_connect` on every snap. Inputs are single-slot; `Output` and `Both`
 /// pins fan out and always pass. The edge currently being dragged does not count as
 /// occupying, so re-routing a connection back onto its own input still works.
-pub fn input_not_occupied<N, P, UI>(to: PinEnd<'_, N, P, UI>) -> bool {
+pub fn input_not_occupied<I: Ids>(to: PinEnd<'_, I>) -> bool {
     !(matches!(to.direction(), PinDirection::Input) && to.is_occupied())
 }
 
@@ -61,10 +59,7 @@ pub fn input_not_occupied<N, P, UI>(to: PinEnd<'_, N, P, UI>) -> bool {
 /// `ng.can_connect(|from, to| default_can_connect(from, to) && my_check(from, to))`.
 /// To allow a second edge per input (replace-on-drop), omit this and use
 /// `direction_ok`/`not_same_node` directly, deduplicating by input in `on_connect`.
-pub fn default_can_connect<N, P, UI>(from: PinEnd<'_, N, P, UI>, to: PinEnd<'_, N, P, UI>) -> bool
-where
-    N: PartialEq,
-{
+pub fn default_can_connect<I: Ids>(from: PinEnd<'_, I>, to: PinEnd<'_, I>) -> bool {
     direction_ok(from, to) && not_same_node(from, to) && input_not_occupied(to)
 }
 
@@ -76,7 +71,7 @@ mod tests {
         node: &'static usize,
         dir: PinDirection,
         occupied: bool,
-    ) -> PinEnd<'static, usize, usize> {
+    ) -> PinEnd<'static, crate::Indexed> {
         // Pin id and payload are irrelevant to these predicates.
         PinEnd::new(node, &0, dir, &(), occupied)
     }

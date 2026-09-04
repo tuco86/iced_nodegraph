@@ -15,36 +15,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Default` - stops compiling until it names the new field. `cargo semver-checks`
   classifies this as major (`constructible_struct_adds_field`).
 
-- **Anchors carry their own id type, and the id parameters now come first.**
-  `NodeGraph`, `Edge` and `FocusTarget` gained an anchor-id parameter
-  `A: AnchorId`, and `FocusTarget` gained `Anchor` and `Anchors` variants. The
-  four ids read in one order everywhere they appear - `N`, `P`, `E`, `A` - with
-  the rendering parameters after them:
+- **The id types are one `Ids` marker instead of five type parameters.**
+  `NodeGraph<'a, N, P, E, A, UI, Message, Renderer>` is now
+  `NodeGraph<'a, I, Message, Renderer>` with `I: Ids`, a trait whose
+  associated types name the node, pin, edge and anchor ids and the per-pin
+  payload once, on a unit marker the host declares:
 
-  ```text
-  NodeGraph<'a, N, P, E, A, UI, Message, Renderer>
-  Edge<'a, N, P, E, A, UI>
-  FocusTarget<N, E, A>
+  ```rust
+  #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+  struct AppIds;
+  impl Ids for AppIds {
+      type NodeId = u64; type PinId = &'static str; type EdgeId = u64;
+      type AnchorId = usize; type Payload = ();
+  }
   ```
 
-  Previously `E` sat last on `NodeGraph` but third on `Edge`, because it had
-  been appended for compatibility when edge ids were added. Every positional
-  spelling therefore moves. `NodeGraph`'s parameters are all still defaulted,
-  but Rust defaults are positional, so a host that names `Renderer` must now
-  spell the ids ahead of it:
-  `NodeGraph<'_, usize, usize, (), usize, (), Msg, MyRenderer>`. Factoring a
-  `type` alias is usually the better answer.
+  `Node`, `Edge`, `Anchor`, `PinRef`, `PinEnd`, `PinInfo`, `DragInfo` and
+  `FocusTarget` take the same single parameter. `Indexed` (`usize` ids, no
+  edge id, no payload) is the default everywhere and what `node_graph()`
+  builds; any other vocabulary is named once, on the graph
+  (`NodeGraph::<AppIds, _, _>::new()`) and in the messages that carry a
+  `PinRef<AppIds>`, and every builder and callback infers it from there. The
+  motivation is inference: the payload type was never inferable (a pin is
+  type-erased into its node's content) and the anchor and edge ids only when
+  one was pushed, so every host spelled all seven parameters out. Id literals
+  now infer from the vocabulary too, so `node(0, ..)` needs no `0usize`.
 
-  `A` cannot be defaulted on `Edge`, since a default may not precede `UI`, so
-  `Edge` requires five parameters. `FocusTarget::Node` no longer resolves an
-  anchor id - `FocusTarget::Anchor` does - and a host matching `FocusTarget`
-  exhaustively must handle the two new variants.
+  The marker traits `NodeId`, `PinId`, `EdgeId` and `AnchorId` are gone. Their
+  bounds were identical; the single `Id` trait that replaces them is
+  blanket-implemented for every `Clone + Eq + Hash + Debug + Send + Sync +
+  'static` type, so a newtype, an enum or a `uuid::Uuid` needs no impl at all.
 
-  `cargo semver-checks` reports five breaks here and does NOT report the
-  `NodeGraph` reorder: the parameter count is unchanged and every one is still
-  defaulted, so the tool cannot see that a position changed meaning. The
-  compiler can - an old spelling binds `UI` into the `E` slot and fails
-  `E: EdgeId` - so the break is loud at the call site rather than silent.
+  `NodePin` keeps its own `P` and `UI` parameters, inferred from the literals
+  it is built with, because it is type-erased before the graph sees it. A pin
+  whose pair is not the graph's `Ids::PinId` / `Ids::Payload` used to vanish
+  silently; it is now a debug-build assertion at the first layout, naming both
+  types, and is skipped in release builds.
+
+- **`edge(id, from, to)`: the id comes first, as in `node`, and the `edge!`
+  macro is gone.** The macro existed only to default the id to `()`; with the
+  vocabulary fixed on the graph that case is `edge((), from, to)`.
+
+- **`push_node`, `push_edge` and `push_anchor` consume and return the graph**,
+  like `Column::push`, and `nodes(iter)`, `edges(iter)` and `anchors(iter)`
+  add in bulk, like `Column::extend`. A `view` is one expression again, and
+  the graph's type is inferred from it rather than annotated on a `let mut`.
+  `NodeGraph::new()` is added beside `Default`.
+
+- **`NodeGraph::view` is `camera` and `on_pan` is `on_camera`.** `view` read
+  as the iced `view` function next to it, and `on_pan` also fired on zoom and
+  on a programmatic fit. The signatures are unchanged.
+
+- **Programmatic focus is a `Task`, not a nonce.** `NodeGraph::focus(seq,
+  target, opts)` and the host-side sequence counter are gone. Give the graph
+  an id with `NodeGraph::id` and run `iced_nodegraph::focus(id, target, opts)
+  -> Task<Message>` from `update`, the same shape as `text_input::focus` and
+  `scrollable::scroll_to`. The graph resolves the target against its live
+  layout when the operation reaches it and starts the fit on its next update,
+  committing through `on_camera` as before. `focus_operation` exposes the
+  underlying `widget::Operation` for hosts that run operations themselves.
+  The crate depends on `iced_runtime` for `Task`; it is already in every
+  iced application's tree.
+
+- **The style presets take `(theme, status)` and derive from the palette.**
+  `NodeStyle::input`, `process`, `output` and `comment`, and
+  `EdgeStyle::data_flow`, `error`, `disabled`, `highlighted` and `debug`, have
+  the same shape as the `default_*_style` functions, so they drop straight into
+  `.style(NodeStyle::input)` like iced's `button::success`. They were
+  hard-coded dark colors that ignored the theme and lost the selected and
+  pending-cut feedback; now the node presets tint the default toward the
+  theme's `primary`, `success` and `warning`, and the edge presets keep the
+  default's cut feedback. A host that stored a preset as a value stores which
+  preset instead and resolves it in the style closure.
+
+- **`GraphStyle` follows the one styling convention.** `GraphStyle::from_theme`
+  is `default_graph_style(theme)`, and the theme-free `Default` impl and the
+  `background_color` / `tiling` builder methods are gone: override the two
+  public fields with struct-update over the default, as for every other style.
+
+- **`NodePin`'s fields are private.** `side`, `direction`, `pin_id`,
+  `user_info` and `content` were `pub` on a widget whose builder methods set
+  them; the builder is the API.
 
 - **`iced_nodegraph_sdf` authors geometry through `Shape` alone.** `Curve`,
   `ShapeBuilder` and the `boolean` module are no longer public, and
@@ -82,7 +133,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `zoom`, `layer_transformation`, `draw_with`, `update_with`,
   `cursor_screen_to_layout`) were plainly callable. What no caller could ever
   obtain is the camera the widget actually uses: it lives in private widget
-  state. The host's camera API is, and was, `NodeGraph::view` in and `on_pan`
+  state. The host's camera API is `NodeGraph::camera` in and `on_camera`
   out, both plain `(Point, f32)`.
 
 ### Added
@@ -90,7 +141,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Routing anchors.** An edge still connects exactly two pins and now also
   carries the anchors it wraps on the way: `Edge::route(anchors)`, plus
   `anchor(id, position)` and `NodeGraph::push_anchor`. Anchors carry their own id
-  type, `A: AnchorId`, so a host numbers them from zero whatever its nodes use.
+  type, `Ids::AnchorId`, so a host numbers them from zero whatever its nodes use.
   An id naming nothing is skipped and a repeat counts once, so a host mid-edit
   degrades rather than breaks.
 
@@ -146,17 +197,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   moves (`line_to`/`arc_to`/`bezier_to`) and the open finalizer (`end`) to the
   crate-private contour builder, which until now emitted closed contours only;
   a path is therefore never a fillable shape.
-- **Fit-to-view focus.** `NodeGraph::focus(seq, target, opts)` frames content
-  declaratively: the app names a `FocusTarget` (`All`, `Selection`, node or
-  edge ids, or an explicit world `Rect`) and the widget resolves it to a world
-  AABB from live layout, so the host never computes node bounds. `seq` is a
-  nonce - the fit runs once per new value and dedupes on repeats, the
-  immediate-mode substitute for calling `fitView()` once. `FocusOptions`
-  carries per-side padding, optional zoom bounds (`max_zoom` defaults to
-  `Some(1.0)`, so focusing one small node fits it at native size) and the
-  tween. The keymap gains `frame_all` (`Home`) and `frame_selection` (`f`),
-  both gated on `on_pan` like every other camera change. An unknown id or an
-  empty selection is a no-op.
+- **Fit-to-view focus.** `iced_nodegraph::focus(id, target, opts)` returns a
+  `Task` that frames content in the graph carrying `NodeGraph::id`: the app
+  names a `FocusTarget` (`All`, `Selection`, node, anchor or edge ids, or an
+  explicit world `Rect`) and the widget resolves it to a world AABB from live
+  layout, so the host never computes node bounds. `FocusOptions` carries
+  per-side padding, optional zoom bounds (`max_zoom` defaults to `Some(1.0)`,
+  so focusing one small node fits it at native size) and the tween. The keymap
+  gains `frame_all` (`Home`) and `frame_selection` (`f`), both gated on
+  `on_camera` like every other camera change. An unknown id or an empty
+  selection is a no-op.
 
   The camera travels one perceptual path rather than two ramps: zoom
   interpolates geometrically (apparent size is linear in `log(zoom)`, so the
@@ -226,8 +276,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   0.5x-2x resolution (it tracks geometry), sort 254.2 us and rising with
   resolution (it tracks tiles) - so the scatter is 15% of index-build time.
 
-- `NodeGraph::on_edge_delete(Vec<E>)` reports the edges the cutting tool
-  destroyed, named by the ids the host passed to `edge!`. Until now the edge id
+- `NodeGraph::on_edge_delete(Vec<EdgeId>)` reports the edges the cutting tool
+  destroyed, named by the ids the host passed to `edge`. Until now the edge id
   went in and never came back out, so a host keyed by edge id had to recover it
   by matching the endpoint pair - `demos/hello_world` did exactly that. This is
   the only path where the widget holds a host-supplied edge: `on_disconnect`

@@ -59,13 +59,14 @@ use super::{
 use super::{AnchorStyleFn, EdgeStyleFn, NodeStyleFn, PinStyleFn};
 use crate::{
     PinDirection, PinRef, PinSide,
-    ids::{AnchorId, EdgeId, NodeId, PinId},
+    ids::{Ids, Indexed},
     node_graph::euclid::{IntoEuclid, LayoutPoint, ScreenPoint, WorldPoint},
-    node_pin::{NodePinState, PinEnd, PinInfo},
+    node_graph::focus::FocusRequest,
+    node_pin::{NodePinState, PinEnd, PinInfo, PinSlot},
     style::{
-        AnchorStatus, AnchorStyle, EdgeGeometry, EdgeStatus, EdgeStyle, GraphStyle, NodeStatus,
-        NodeStyle, PinStatus, PinStyle, TilingKind, default_anchor_style,
-        default_cutting_tool_style, default_selection_box_style,
+        AnchorStatus, AnchorStyle, EdgeGeometry, EdgeStatus, EdgeStyle, NodeStatus, NodeStyle,
+        PinStatus, PinStyle, TilingKind, default_anchor_style, default_cutting_tool_style,
+        default_selection_box_style,
     },
 };
 use iced_nodegraph_sdf::{Pattern, SdfPrimitive, Shape, Style, Tiling};
@@ -107,14 +108,10 @@ fn pin_side_direction(side: u32) -> [f32; 2] {
     }
 }
 
-impl<N, P, E, A, UI, Message, Renderer> iced_wgpu::core::Widget<Message, Theme, Renderer>
-    for NodeGraph<'_, N, P, E, A, UI, Message, Renderer>
+impl<I, Message, Renderer> iced_wgpu::core::Widget<Message, Theme, Renderer>
+    for NodeGraph<'_, I, Message, Renderer>
 where
-    N: NodeId + 'static,
-    P: PinId + 'static,
-    E: EdgeId + 'static,
-    A: AnchorId + 'static,
-    UI: Clone + 'static,
+    I: Ids,
     Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
     fn tag(&self) -> tree::Tag {
@@ -189,15 +186,30 @@ where
         renderer: &Renderer,
         operation: &mut dyn widget::Operation,
     ) {
-        for (((_, element), node_tree), node_layout) in self
-            .elements_iter_mut()
-            .zip(&mut tree.children)
-            .zip(layout.children())
-        {
-            element
-                .as_widget_mut()
-                .operate(node_tree, node_layout, renderer, operation);
+        // A `focus` task addressed to this graph leaves its request in the
+        // slot. The target is resolved against this layout now and the fit
+        // starts on the next update, which is where a shell to commit
+        // through exists.
+        let mut slot: Option<FocusRequest<I>> = None;
+        operation.custom(self.id.as_ref(), layout.bounds(), &mut slot);
+        if let Some(request) = slot {
+            let state = tree.state.downcast_mut::<NodeGraphState>();
+            state.pending_focus =
+                update::resolve_focus_target(self, layout, state, &request.target)
+                    .map(|world_aabb| (world_aabb, request.options));
         }
+
+        operation.traverse(&mut |operation| {
+            for (((_, element), node_tree), node_layout) in self
+                .elements_iter_mut()
+                .zip(&mut tree.children)
+                .zip(layout.children())
+            {
+                element
+                    .as_widget_mut()
+                    .operate(node_tree, node_layout, renderer, operation);
+            }
+        });
     }
 
     fn overlay<'b>(
@@ -373,32 +385,27 @@ where
     }
 }
 
-impl<'a, N, P, E, A, UI, Message, Renderer> From<NodeGraph<'a, N, P, E, A, UI, Message, Renderer>>
+impl<'a, I, Message, Renderer> From<NodeGraph<'a, I, Message, Renderer>>
     for Element<'a, Message, Theme, Renderer>
 where
-    N: NodeId + 'static,
-    P: PinId + 'static,
-    E: EdgeId + 'static,
-    A: AnchorId + 'static,
-    UI: Clone + 'static,
+    I: Ids,
     Renderer: iced_wgpu::core::renderer::Renderer + 'a + iced_wgpu::primitive::Renderer,
     Message: 'static,
 {
-    fn from(graph: NodeGraph<'a, N, P, E, A, UI, Message, Renderer>) -> Self {
+    fn from(graph: NodeGraph<'a, I, Message, Renderer>) -> Self {
         Element::new(graph)
     }
 }
 
-/// Creates a new NodeGraph with default usize-based IDs and no pin user info.
+/// Creates an empty graph over the [`Indexed`] vocabulary: `usize` node, pin
+/// and anchor ids, no edge ids, no pin payload.
 ///
-/// For custom types, use
-/// `NodeGraph::<N, P, E, A, UI, Message, Renderer>::default()`.
-pub fn node_graph<'a, Message, Renderer>()
--> NodeGraph<'a, usize, usize, (), usize, (), Message, Renderer>
+/// For any other vocabulary name it once: `NodeGraph::<AppIds, _, _>::new()`.
+pub fn node_graph<'a, Message, Renderer>() -> NodeGraph<'a, Indexed, Message, Renderer>
 where
     Renderer: iced_wgpu::core::renderer::Renderer,
 {
-    NodeGraph::default()
+    NodeGraph::new()
 }
 
 /// A pin as found in the laid-out widget tree: its positional index within the
@@ -406,38 +413,51 @@ where
 ///
 /// The index is the pin's position in `find_pins` walk order, which is the
 /// `pin_index` the [`Dragging`] states carry.
-pub(super) type PinLayout<'a, P, UI> = (usize, &'a NodePinState<P, UI>, (Point, Point));
+pub(super) type PinLayout<'a, I> = (
+    usize,
+    &'a NodePinState<<I as Ids>::PinId, <I as Ids>::Payload>,
+    (Point, Point),
+);
 
 /// Every pin in a node's subtree, in depth-first layout order.
 ///
-/// Within one graph all pins share the same `P` and `UI`, so the `tree::Tag`
-/// match resolves a single concrete `NodePinState<P, UI>`.
-fn find_pins<'a, P: 'static, UI: 'static>(
-    tree: &'a Tree,
-    layout: Layout<'a>,
-) -> Vec<PinLayout<'a, P, UI>> {
+/// Every pin registers the same [`PinSlot`] tag; the slot's state is the
+/// pin's own `NodePinState<PinId, Payload>`. A pin over other types is a
+/// debug-build assertion and is skipped in release builds, where it would
+/// otherwise be indistinguishable from a node without pins.
+fn find_pins<'a, I: Ids>(tree: &'a Tree, layout: Layout<'a>) -> Vec<PinLayout<'a, I>> {
     let mut flat = Vec::new();
     let mut pin_index = 0;
-    inner_find_pins::<P, UI>(&mut flat, &mut pin_index, layout, tree);
+    inner_find_pins::<I>(&mut flat, &mut pin_index, layout, tree);
     flat
 }
 
-fn inner_find_pins<'a, P: 'static, UI: 'static>(
-    flat: &mut Vec<PinLayout<'a, P, UI>>,
+fn inner_find_pins<'a, I: Ids>(
+    flat: &mut Vec<PinLayout<'a, I>>,
     pin_index: &mut usize,
     node_layout: Layout<'a>,
     pin_tree: &'a Tree,
 ) {
-    if pin_tree.tag == tree::Tag::of::<NodePinState<P, UI>>() {
-        let pin_state = pin_tree.state.downcast_ref::<NodePinState<P, UI>>();
-        let node_bounds = node_layout.bounds();
-        let pin_positions = pin_positions(pin_state, node_bounds);
-        flat.push((*pin_index, pin_state, pin_positions));
-        *pin_index += 1;
+    if pin_tree.tag == tree::Tag::of::<PinSlot>() {
+        let slot = pin_tree.state.downcast_ref::<PinSlot>();
+        match slot.get::<I::PinId, I::Payload>() {
+            Some(pin_state) => {
+                let node_bounds = node_layout.bounds();
+                let pin_positions = pin_positions(pin_state, node_bounds);
+                flat.push((*pin_index, pin_state, pin_positions));
+                *pin_index += 1;
+            }
+            None => debug_assert!(
+                false,
+                "pin state {} inside a graph over {}: a pin's id and payload types must be the graph's Ids::PinId and Ids::Payload",
+                slot.type_name(),
+                std::any::type_name::<NodePinState<I::PinId, I::Payload>>(),
+            ),
+        }
     }
 
     for child_tree in &pin_tree.children {
-        inner_find_pins::<P, UI>(flat, pin_index, node_layout, child_tree);
+        inner_find_pins::<I>(flat, pin_index, node_layout, child_tree);
     }
 }
 
@@ -446,12 +466,12 @@ fn inner_find_pins<'a, P: 'static, UI: 'static>(
 /// normalization (`swap` in `draw`), so the endpoints reported to
 /// `on_connect`/`on_disconnect` match the visual data-flow direction. Order is
 /// only swapped when `from` is a non-output and `to` is an output.
-fn orient_connection<N, P>(
+fn orient_connection<I: Ids>(
     from_dir: PinDirection,
     to_dir: PinDirection,
-    from: PinRef<N, P>,
-    to: PinRef<N, P>,
-) -> (PinRef<N, P>, PinRef<N, P>) {
+    from: PinRef<I>,
+    to: PinRef<I>,
+) -> (PinRef<I>, PinRef<I>) {
     let swap = !matches!(from_dir, PinDirection::Output) && matches!(to_dir, PinDirection::Output);
     if swap { (to, from) } else { (from, to) }
 }
@@ -535,14 +555,14 @@ mod grip_tests {
 #[cfg(test)]
 mod orient_tests {
     use super::orient_connection;
-    use crate::PinRef;
     use crate::node_pin::PinDirection;
+    use crate::{Indexed, PinRef};
 
     // A drag from an output pin to an input pin keeps (output, input) order.
     #[test]
     fn output_to_input_keeps_order() {
-        let out = PinRef::new(0usize, 0usize);
-        let inp = PinRef::new(1usize, 0usize);
+        let out = PinRef::<Indexed>::new(0, 0);
+        let inp = PinRef::new(1, 0);
         let (from, to) = orient_connection(PinDirection::Output, PinDirection::Input, out, inp);
         assert_eq!(from, PinRef::new(0, 0));
         assert_eq!(to, PinRef::new(1, 0));
@@ -552,8 +572,8 @@ mod orient_tests {
     // so on_connect reports the same pair regardless of drag direction.
     #[test]
     fn input_to_output_is_flipped() {
-        let inp = PinRef::new(1usize, 0usize);
-        let out = PinRef::new(0usize, 0usize);
+        let inp = PinRef::<Indexed>::new(1, 0);
+        let out = PinRef::new(0, 0);
         let (from, to) = orient_connection(PinDirection::Input, PinDirection::Output, inp, out);
         assert_eq!(from, PinRef::new(0, 0));
         assert_eq!(to, PinRef::new(1, 0));
@@ -563,8 +583,8 @@ mod orient_tests {
     // pair is swapped.
     #[test]
     fn both_keeps_drag_order() {
-        let a = PinRef::new(0usize, 0usize);
-        let b = PinRef::new(1usize, 0usize);
+        let a = PinRef::<Indexed>::new(0, 0);
+        let b = PinRef::new(1, 0);
         let (from, to) = orient_connection(PinDirection::Both, PinDirection::Both, a, b);
         assert_eq!(from, PinRef::new(0, 0));
         assert_eq!(to, PinRef::new(1, 0));

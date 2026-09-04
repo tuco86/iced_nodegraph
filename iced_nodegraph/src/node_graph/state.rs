@@ -9,10 +9,10 @@
 //! only selection value kept here is `pending_selection`, the reported-but-not-
 //! yet-applied working copy, guarded by `selection_baseline`.
 
-use super::Easing;
 use super::GraphInfo;
 use super::camera::Camera2D;
-use super::euclid::{IntoEuclid, LayoutPoint, WorldPoint};
+use super::euclid::{IntoEuclid, LayoutPoint, WorldPoint, WorldRect};
+use super::focus::{Easing, FocusOptions};
 use super::{DEFAULT_CORE_SIZE, DEFAULT_ORBIT_OFFSET, DEFAULT_ORBIT_SPACING};
 use crate::style::EdgeCurve;
 use iced_widget::core::{Layout, Padding, Point, Size, keyboard, touch};
@@ -20,8 +20,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use web_time::Instant;
 
-/// In-flight camera animation started by
-/// [`NodeGraph::focus`](super::NodeGraph::focus) or a keymap frame action
+/// In-flight camera animation started by a
+/// [`focus`](crate::focus) task or a keymap frame action
 /// (`Home`/`f`), advanced once per `RedrawRequested` frame in `update()`.
 /// Center-based interpolation with geometric zoom; `position` is
 /// recomputed each frame from `center`/`zoom` via
@@ -29,9 +29,9 @@ use web_time::Instant;
 /// at tween start, so the focused content stays centered throughout.
 ///
 /// Arbitration: user input aborts a running tween; the tween in turn
-/// suppresses the routine `view()` sync while it runs, except for an
-/// explicit app override that pushes a `view()` differing from the
-/// tween's own last emission (see the `view()`-sync block in `update.rs`).
+/// suppresses the routine `camera()` sync while it runs, except for an
+/// explicit app override that pushes a `camera()` differing from the
+/// tween's own last emission (see the `camera()`-sync block in `update.rs`).
 #[derive(Debug, Clone, Copy)]
 pub(super) struct CameraTween {
     pub(super) start_center: WorldPoint,
@@ -218,18 +218,19 @@ pub(super) struct NodeGraphState {
     /// curve arrives here a frame late. Edges `draw` never reached - an
     /// endpoint pin that did not resolve - hold [`EdgeCurve::default`].
     pub(super) edge_curves: RefCell<Vec<EdgeCurve>>,
-    /// Last host-provided view (`view()`) that we synced into `camera`. Lets us
-    /// tell apart "host pushed a new camera" (sync needed) from "internal pan/zoom
-    /// changed the camera but the matching `on_pan` has not yet round-tripped
-    /// back into `view`" (syncing would clobber it). Selection needs no such
-    /// guard: it is not state here at all, it travels on each [`Node`].
-    pub(super) last_synced_view: Option<(Point, f32)>,
-    /// In-flight camera tween started by `NodeGraph::focus` or a keymap
-    /// frame action. `None` when the camera is not currently animating.
+    /// Last host-provided camera (`camera()`) that we synced into `camera`.
+    /// Lets us tell apart "host pushed a new camera" (sync needed) from
+    /// "internal pan/zoom changed the camera but the matching `on_camera` has
+    /// not yet round-tripped back into `camera()`" (syncing would clobber it).
+    /// Selection needs no such guard: it is not state here at all, it travels
+    /// on each [`Node`].
+    pub(super) last_synced_camera: Option<(Point, f32)>,
+    /// In-flight camera tween started by a [`focus`](crate::focus) task or a
+    /// keymap frame action. `None` when the camera is not currently animating.
     pub(super) camera_tween: Option<CameraTween>,
-    /// Last `seq` from `NodeGraph::focus` that was processed (fit performed
-    /// or resolved to a no-op). Nonce dedup, mirroring `last_synced_view`.
-    pub(super) last_focus_seq: Option<u64>,
+    /// A [`focus`](crate::focus) request resolved to its world bounds during
+    /// `operate`, waiting for the next `update` to start the fit.
+    pub(super) pending_focus: Option<(WorldRect, FocusOptions)>,
     /// Timestamp of the last `RedrawRequested` event the focus tween advanced
     /// against, distinct from `last_update` (which times every animation).
     /// Two jobs: it derives the tween's delta from the redraw event's OWN
@@ -281,9 +282,9 @@ impl Default for NodeGraphState {
             valid_drop_targets: HashSet::new(),
             anchor_geometry: RefCell::new(Vec::new()),
             edge_curves: RefCell::new(Vec::new()),
-            last_synced_view: None,
+            last_synced_camera: None,
             camera_tween: None,
-            last_focus_seq: None,
+            pending_focus: None,
             last_redraw: None,
             sdf_animated: Cell::new(false),
             hover_zone: Cell::new(false),

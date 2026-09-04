@@ -52,26 +52,40 @@ the renderer. Regenerate with `cargo doc --workspace --no-deps --open`.
   drag, z-order, touch) survives, and it is keyed by *node index* - a transient
   per-frame identity derived from the host's push order, not by the user's node
   id. `node_lookup` is the single id-to-index map, and the identity boundary is
-  the public API: outside it, ids (`N`, `P`, `E`, `PinRef`); inside it, indices.
+  the public API: outside it, ids (`I::NodeId`, `I::PinId`, `I::EdgeId`,
+  `PinRef<I>`); inside it, indices.
+- **The id vocabulary is one marker.** Every user type - the four ids and the
+  pin payload - is an associated type of one `Ids` impl (`Indexed` by
+  default), named once on the graph and in the host's messages. A generic
+  parameter per id is what forced every host to spell seven parameters, since
+  the payload is never inferable (a pin is type-erased into its node) and the
+  anchor and edge ids only when one is pushed. `NodePin` is the one type that
+  stays generic over `P` and `UI` for that same reason; the graph finds it by
+  that pair through the shared `PinSlot` tag and asserts on a mismatch in
+  debug builds.
 - **Host input arrives where the state lives.** Selection rides on each node
-  (`Node::selected`), the camera on `NodeGraph::view`. A graph-level setter for
-  per-node state is the wrong shape: it needs an id-to-index step, which needs the
-  nodes, which silently makes the call order load-bearing - `selection()` did
-  exactly that and never worked in any demo.
+  (`Node::selected`), the camera on `NodeGraph::camera`. A graph-level setter
+  for per-node state is the wrong shape: it needs an id-to-index step, which
+  needs the nodes, which silently makes the call order load-bearing -
+  `selection()` did exactly that and never worked in any demo.
+- **One-shot actions are iced `Task`s, not props.** Framing the camera is
+  `iced_nodegraph::focus(id, target, opts)` over `NodeGraph::id`, the shape of
+  `text_input::focus` and `scrollable::scroll_to`. A prop cannot express
+  "once": it would need a nonce, and host state that exists only to be bumped.
 - **A working copy is compared against the host, never against itself.** The
   widget holds the selection it reported (`pending_selection`) so a burst of
   clicks composes and rendering agrees with what a delete acts on. It drops that
   value when the *host's* marked set changes (`selection_baseline`), not when its
   own does - comparing against itself would let a host frame that has not caught
-  up undo a fresh interaction. Same shape as the `view` / `last_synced_view`
-  guard for the camera.
+  up undo a fresh interaction. Same shape as the `camera` /
+  `last_synced_camera` guard for the camera.
 - **Screen and world coordinates are distinct types.** `ScreenPoint` and
   `WorldPoint` are separate euclid spaces; convert only through `Camera2D`
   (`screen_to_world` for input, `layer_transformation` for rendering) and the
   `IntoIced` / `IntoEuclid` traits in `node_graph/euclid.rs`. Never coerce one
   into the other with a raw `Point`. `Camera2D` and the euclid spaces are
-  crate-internal: the host's camera API is `NodeGraph::view` in and `on_pan`
-  out, both plain `(Point, f32)`.
+  crate-internal: the host's camera API is `NodeGraph::camera` in and
+  `on_camera` out, both plain `(Point, f32)`.
 - **The renderer never fails a frame.** When SDF work does not fit, it is
   dropped and counted in `SdfStats` rather than erroring.
 

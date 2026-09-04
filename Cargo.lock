@@ -1643,6 +1643,7 @@ dependencies = [
  "euclid",
  "iced",
  "iced_nodegraph_sdf",
+ "iced_runtime",
  "iced_test",
  "iced_wgpu",
  "iced_widget",

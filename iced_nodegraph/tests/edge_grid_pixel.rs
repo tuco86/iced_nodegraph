@@ -45,11 +45,11 @@ fn render_edge_grid() -> Option<Vec<[u8; 4]>> {
     let (sx, sy) = (90.0f32, 80.0f32);
     let zoom = (GW as f32 / (cols as f32 * sx)).min(GH as f32 / (rows as f32 * sy)) * 0.92;
 
-    let mut graph: iced_nodegraph::NodeGraph<'static, usize, usize, (), usize, (), (), Renderer> =
+    let mut graph: iced_nodegraph::NodeGraph<'static, iced_nodegraph::Indexed, (), Renderer> =
         iced_nodegraph::NodeGraph::default()
             .width(Length::Fixed(GW as f32))
             .height(Length::Fixed(GH as f32))
-            .view(
+            .camera(
                 Point::new(
                     GW as f32 * 0.5 / zoom - cols as f32 * sx * 0.5,
                     GH as f32 * 0.5 / zoom - rows as f32 * sy * 0.5,
@@ -73,7 +73,7 @@ fn render_edge_grid() -> Option<Vec<[u8; 4]>> {
             .width(Length::Fixed(70.0))
             .height(Length::Fixed(60.0))
             .into();
-        graph.push_node(node(i, Point::new(c * sx, r * sy), content));
+        graph = graph.push_node(node(i, Point::new(c * sx, r * sy), content));
     }
 
     // Heavy fan-out like the demo: many targets share a FEW source output pins,
@@ -86,8 +86,8 @@ fn render_edge_grid() -> Option<Vec<[u8; 4]>> {
         if to == from {
             continue;
         }
-        graph.push_edge(
-            edge!(PinRef::new(from, 0usize), PinRef::new(to, 1usize)).style(
+        graph = graph.push_edge(
+            edge((), PinRef::new(from, 0usize), PinRef::new(to, 1usize)).style(
                 |theme, status, _from, _to| EdgeStyle {
                     stroke_color: ColorQuad::solid(Color::from_rgb(0.0, 1.0, 0.0)),
                     ..default_edge_style(theme, status)
@@ -277,11 +277,11 @@ fn render_minimal_edges() -> Option<Vec<[u8; 4]>> {
         Point::new(440.0, 320.0),
     ];
 
-    let mut graph: iced_nodegraph::NodeGraph<'static, usize, usize, (), usize, (), (), Renderer> =
+    let mut graph: iced_nodegraph::NodeGraph<'static, iced_nodegraph::Indexed, (), Renderer> =
         iced_nodegraph::NodeGraph::default()
             .width(Length::Fixed(GW as f32))
             .height(Length::Fixed(GH as f32))
-            .view(Point::new(0.0, 0.0), 1.0);
+            .camera(Point::new(0.0, 0.0), 1.0);
 
     for (i, p) in positions.iter().enumerate() {
         // NO text content - to test whether interleaved text rendering triggers the
@@ -298,16 +298,18 @@ fn render_minimal_edges() -> Option<Vec<[u8; 4]>> {
             .width(Length::Fixed(70.0))
             .height(Length::Fixed(60.0))
             .into();
-        graph.push_node(node(i, *p, content));
+        graph = graph.push_node(node(i, *p, content));
     }
     // node0 -> node1 (horizontal), node0 -> node3 (diagonal long), node2 -> node1 (diagonal).
     for &(f, t) in &[(0usize, 1usize), (0, 3), (2, 1)] {
-        graph.push_edge(edge!(PinRef::new(f, 0usize), PinRef::new(t, 1usize)).style(
-            |theme, status, _from, _to| EdgeStyle {
-                stroke_color: ColorQuad::solid(Color::from_rgb(0.0, 1.0, 0.0)),
-                ..default_edge_style(theme, status)
-            },
-        ));
+        graph = graph.push_edge(
+            edge((), PinRef::new(f, 0usize), PinRef::new(t, 1usize)).style(
+                |theme, status, _from, _to| EdgeStyle {
+                    stroke_color: ColorQuad::solid(Color::from_rgb(0.0, 1.0, 0.0)),
+                    ..default_edge_style(theme, status)
+                },
+            ),
+        );
     }
 
     let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Renderer>);

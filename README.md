@@ -39,26 +39,27 @@ cargo add iced --features wgpu
 use iced_nodegraph::prelude::*;
 use iced::{Element, Point};
 
-fn view(&self) -> Element<Message> {
-    let mut ng = node_graph()
+fn view(&self) -> Element<'_, Message> {
+    node_graph()
         .on_connect(|from, to| Message::Connected(from, to))
-        .on_move(|delta, node_ids| Message::Moved(delta, node_ids));
-
-    // A node is an id, a position, and any iced widget as content.
-    ng.push_node(node(0, Point::new(200.0, 150.0), my_node_widget()));
-    ng.push_node(node(1, Point::new(525.0, 175.0), another_node()));
-
-    // An edge connects two pins, addressed as (node id, pin id).
-    ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)));
-
-    ng.into()
+        .on_move(|delta, node_ids| Message::Moved(delta, node_ids))
+        // A node is an id, a position, and any iced widget as content.
+        .push_node(node(0, Point::new(200.0, 150.0), my_node_widget()))
+        .push_node(node(1, Point::new(525.0, 175.0), another_node()))
+        // An edge connects two pins, addressed as (node id, pin id).
+        .push_edge(edge((), PinRef::new(0, 0), PinRef::new(1, 0)))
+        .into()
 }
 ```
 
-`node(..)` and `edge!(..)` are builders: chain `.style(..)` for per-node and
-per-edge looks, starting from presets like `NodeStyle::input()` or
-`EdgeStyle::error()`. The [crate docs](https://docs.rs/iced_nodegraph) cover
-styling, connection validation, and the callback contract in detail.
+`node(..)` and `edge(..)` are builders: chain `.style(..)` for per-node and
+per-edge looks, starting from presets like `NodeStyle::input` or
+`EdgeStyle::error` that derive from the theme like iced's `button::success`.
+Ids are yours: name the node, pin, edge and anchor id types once on an
+[`Ids`](https://docs.rs/iced_nodegraph/latest/iced_nodegraph/trait.Ids.html)
+marker (`usize` everywhere by default). The
+[crate docs](https://docs.rs/iced_nodegraph) cover styling, connection
+validation, and the callback contract in detail.
 
 ## Demos
 

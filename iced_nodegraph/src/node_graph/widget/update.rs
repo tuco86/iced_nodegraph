@@ -64,13 +64,9 @@ struct UpdateCtx<'a, 'b, 'm, Message> {
     shell: &'a mut Shell<'m, Message>,
 }
 
-impl<N, P, E, A, UI, Message, Renderer> NodeGraph<'_, N, P, E, A, UI, Message, Renderer>
+impl<I, Message, Renderer> NodeGraph<'_, I, Message, Renderer>
 where
-    N: NodeId + 'static,
-    P: PinId + 'static,
-    E: EdgeId + 'static,
-    A: AnchorId + 'static,
-    UI: Clone + 'static,
+    I: Ids,
     Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
     /// Signature mirrors the corresponding `Widget` trait method it backs.
@@ -88,21 +84,21 @@ where
     ) {
         let state = tree.state.downcast_mut::<NodeGraphState>();
 
-        // Sync the host-controlled view (`view()`) into the camera, but only when
-        // the host changed it since we last synced. Comparing against the live
-        // camera would also fire while the user is mid pan/zoom (before the
-        // matching `on_pan` round-trips back into `view`), clobbering the
-        // interaction with a stale value. Same race-avoidance as selection.
-        if let Some(view) = self.view
-            && state.last_synced_view != Some(view)
+        // Sync the host-controlled camera (`camera()`) into the state, but only
+        // when the host changed it since we last synced. Comparing against the
+        // live camera would also fire while the user is mid pan/zoom (before
+        // the matching `on_camera` round-trips back into `camera`), clobbering
+        // the interaction with a stale value. Same race-avoidance as selection.
+        if let Some(camera) = self.camera
+            && state.last_synced_camera != Some(camera)
         {
-            let (position, zoom) = view;
+            let (position, zoom) = camera;
             state.camera =
                 Camera2D::with_zoom_and_position(zoom, WorldPoint::new(position.x, position.y));
-            state.last_synced_view = Some(view);
-            // An explicit view() the running tween did not just emit is an
+            state.last_synced_camera = Some(camera);
+            // An explicit camera() the running tween did not just emit is an
             // app override: it wins and cancels the tween (arbitration rule:
-            // explicit view() > user input > running tween > routine sync).
+            // explicit camera() > user input > running tween > routine sync).
             // A no-op when no tween is running.
             state.camera_tween = None;
         }
@@ -133,22 +129,16 @@ where
         let selection = self.resolved_selection(state);
         let z_indices = z_render_indices(state, self.nodes.len(), |i| selection.contains(&i));
 
-        // Declarative programmatic focus (`NodeGraph::focus`): resolve the
-        // target from live layout and perform the fit exactly once per new
-        // `seq` (nonce dedup), mirroring the `view()` / `last_synced_view`
-        // pattern above. Unlike the keymap frame actions below this is not
-        // gated on `on_pan`: an uncontrolled graph (no `view()`/`on_pan`
-        // round trip) can still use `.focus()` to frame content once, since
-        // the camera lives in `state` regardless of whether the host
-        // observes it (`begin_focus` only *publishes* through `on_pan` when
-        // a handler is set).
-        if let Some((seq, target, opts)) = &self.focus
-            && state.last_focus_seq != Some(*seq)
-        {
-            state.last_focus_seq = Some(*seq);
-            if let Some(world_aabb) = resolve_focus_target(self, layout, state, target) {
-                self.begin_focus(state, world_aabb, layout.bounds().size(), opts, shell);
-            }
+        // A `focus` task the operate pass resolved against the layout (see
+        // `Widget::operate`): start the fit here, where a shell exists to
+        // commit through. Unlike the keymap frame actions below this is not
+        // gated on `on_camera`: an uncontrolled graph (no `camera()` /
+        // `on_camera` round trip) can still be framed, since the camera lives
+        // in `state` regardless of whether the host observes it
+        // (`begin_focus` only *publishes* through `on_camera` when a handler
+        // is set).
+        if let Some((world_aabb, opts)) = state.pending_focus.take() {
+            self.begin_focus(state, world_aabb, layout.bounds().size(), &opts, shell);
         }
 
         // Update time for animations
@@ -169,7 +159,7 @@ where
                 shell.request_redraw();
             }
             // Publish the stashed GraphInfo (set during draw) one frame behind,
-            // mirroring the controlled on_pan pattern. A host showing live
+            // mirroring the controlled on_camera pattern. A host showing live
             // diagnostics needs a steady frame stream, so keep redraws flowing.
             if let Some(handler) = self.on_info.as_ref() {
                 if let Some(info) = state.last_info.borrow_mut().take() {
@@ -182,8 +172,8 @@ where
             // interpolation with geometric zoom, position recomputed each
             // frame from the frozen viewport/padding via the fit formula so
             // the focused content stays centered throughout. Commits
-            // through `on_pan` every frame and keeps `last_synced_view` in
-            // step with what it just emitted, so the view()-sync above
+            // through `on_camera` every frame and keeps `last_synced_camera`
+            // in step with what it just emitted, so the camera()-sync above
             // neither fights it (routine sync suppressed) nor clobbers it
             // once done (arbitration rules above).
             //
@@ -199,9 +189,9 @@ where
             // for every pass) up to three times while a pass keeps
             // invalidating layout, and advancing/publishing again there
             // would both warp the tween's clock (near-zero elapsed) and
-            // publish a second `on_pan` whose value disagrees with
-            // `last_synced_view` in the low f32 bits -- which the
-            // view()-sync block above would then mistake for an app
+            // publish a second `on_camera` whose value disagrees with
+            // `last_synced_camera` in the low f32 bits -- which the
+            // camera()-sync block above would then mistake for an app
             // override and snap the camera back, aborting the tween.
             let is_reentrant_redraw = state.last_redraw == Some(*redraw_at);
             let redraw_delta = state
@@ -247,11 +237,11 @@ where
                 state.camera = Camera2D::with_zoom_and_position(zoom, position)
                     .with_viewport_origin(viewport_origin);
 
-                let view = (Point::new(position.x, position.y), zoom);
-                if let Some(handler) = self.on_pan.as_ref() {
-                    shell.publish(handler(view.0, view.1));
+                let camera = (Point::new(position.x, position.y), zoom);
+                if let Some(handler) = self.on_camera.as_ref() {
+                    shell.publish(handler(camera.0, camera.1));
                 }
-                state.last_synced_view = Some(view);
+                state.last_synced_camera = Some(camera);
 
                 if t < 1.0 {
                     shell.request_redraw();
@@ -291,7 +281,8 @@ where
                 }
                 Some(KeyAction::SelectAll) => {
                     state.pending_selection = Some((0..self.nodes.len()).collect());
-                    let selected: Vec<N> = self.nodes.iter().map(|node| node.id.clone()).collect();
+                    let selected: Vec<I::NodeId> =
+                        self.nodes.iter().map(|node| node.id.clone()).collect();
                     if let Some(handler) = self.on_select.as_ref() {
                         shell.publish(handler(selected));
                     }
@@ -336,7 +327,7 @@ where
             state.camera = state.camera.zoom_at(cursor_pos, zoom_delta);
 
             // Commit the new camera (zoom shifts position too).
-            if let Some(handler) = self.on_pan.as_ref() {
+            if let Some(handler) = self.on_camera.as_ref() {
                 let pos = state.camera.position();
                 shell.publish(handler(Point::new(pos.x, pos.y), state.camera.zoom()));
             }
@@ -527,7 +518,7 @@ where
 
                     // Frame-all / frame-selection: same after-children
                     // dispatch position as DeleteSelection (a focused text
-                    // input consumes Home/f first). Gated on on_pan (like
+                    // input consumes Home/f first). Gated on on_camera (like
                     // Clone on on_clone): without a handler the fit cannot
                     // be committed, so the key falls through unconsumed
                     // instead of being silently swallowed. Event capture
@@ -541,7 +532,7 @@ where
                         modifiers,
                         ..
                     }) = event
-                        && self.on_pan.as_ref().is_some()
+                        && self.on_camera.as_ref().is_some()
                     {
                         let frame_target =
                             match self.keymap.key_action(key, *physical_key, *modifiers) {
@@ -598,7 +589,7 @@ where
     /// `ButtonPressed(Left)`/`CursorMoved`/`ButtonReleased` with an
     /// `Available` cursor at the contact point); a press on empty space pans
     /// instead of opening a selection box (see `start_selection_box_or_cut`). Two fingers
-    /// pinch-zoom and pan the camera directly, committing through `on_pan`
+    /// pinch-zoom and pan the camera directly, committing through `on_camera`
     /// like wheel zoom, and return `None`.
     fn apply_touch(
         &self,
@@ -681,7 +672,7 @@ where
                     state.camera = state.camera.move_by(pan);
 
                     // Commit continuously, mirroring wheel zoom.
-                    if let Some(handler) = self.on_pan.as_ref() {
+                    if let Some(handler) = self.on_camera.as_ref() {
                         let pos = state.camera.position();
                         shell.publish(handler(Point::new(pos.x, pos.y), state.camera.zoom()));
                     }
@@ -814,7 +805,7 @@ where
                 state.camera = state.camera.move_by(offset);
 
                 // Commit the new camera position on pan release.
-                if let Some(handler) = self.on_pan.as_ref() {
+                if let Some(handler) = self.on_camera.as_ref() {
                     let pos = state.camera.position();
                     shell.publish(handler(Point::new(pos.x, pos.y), state.camera.zoom()));
                 }
@@ -1016,16 +1007,15 @@ where
                     let snap_threshold = SNAP_THRESHOLD / state.camera.zoom();
 
                     // Extract from_pin_id while iterating (need access to tree.children)
-                    let mut from_pin_id: Option<P> = None;
+                    let mut from_pin_id: Option<I::PinId> = None;
                     let mut from_dir: Option<PinDirection> = None;
-                    let mut target_info: Option<(usize, usize, P, PinDirection)> = None;
+                    let mut target_info: Option<(usize, usize, I::PinId, PinDirection)> = None;
 
                     // Check all pins for proximity and validity (use SNAP_THRESHOLD to enter)
                     for (node_index, (node_layout, node_tree)) in
                         layout.children().zip(&tree.children).enumerate()
                     {
-                        for (pin_index, pin_state, (a, b)) in
-                            find_pins::<P, UI>(node_tree, node_layout)
+                        for (pin_index, pin_state, (a, b)) in find_pins::<I>(node_tree, node_layout)
                         {
                             // Extract from_pin_id when we find the source pin
                             if node_index == from_node && pin_index == from_pin {
@@ -1125,16 +1115,15 @@ where
                     let unsnap_threshold = UNSNAP_THRESHOLD / state.camera.zoom();
                     // Extract pin IDs and check distance in one pass through tree.children
                     let mut still_over_pin = false;
-                    let mut from_pin_id: Option<P> = None;
-                    let mut to_pin_id: Option<P> = None;
+                    let mut from_pin_id: Option<I::PinId> = None;
+                    let mut to_pin_id: Option<I::PinId> = None;
                     let mut from_dir: Option<PinDirection> = None;
                     let mut to_dir: Option<PinDirection> = None;
 
                     for (node_index, (node_layout, node_tree)) in
                         layout.children().zip(&tree.children).enumerate()
                     {
-                        for (pin_index, pin_state, (a, b)) in
-                            find_pins::<P, UI>(node_tree, node_layout)
+                        for (pin_index, pin_state, (a, b)) in find_pins::<I>(node_tree, node_layout)
                         {
                             // Extract from_pin_id
                             if node_index == from_node && pin_index == from_pin {
@@ -1600,8 +1589,8 @@ where
         // Owned snapshot: the helpers below re-borrow the tree mutably
         // (state downcast, compute_valid_targets), so borrowed pin states
         // cannot stay alive across those calls.
-        let pins: Vec<(usize, P, bool, (Point, Point))> =
-            find_pins::<P, UI>(node_tree, node_layout)
+        let pins: Vec<(usize, I::PinId, bool, (Point, Point))> =
+            find_pins::<I>(node_tree, node_layout)
                 .into_iter()
                 .map(|(i, s, pos)| (i, s.pin_id.clone(), s.interactions_disabled, pos))
                 .collect();
@@ -1698,14 +1687,14 @@ where
     fn try_start_unplug(
         &self,
         ctx: &mut UpdateCtx<'_, '_, '_, Message>,
-        anchor: &PinRef<N, P>,
-        edge: (&PinRef<N, P>, &PinRef<N, P>),
+        anchor: &PinRef<I>,
+        edge: (&PinRef<I>, &PinRef<I>),
         grabbed: (usize, usize),
     ) -> bool {
         let Some(anchor_node_idx) = self.node_index(&anchor.node_id) else {
             return false;
         };
-        let Some(anchor_pin_idx) = pin_by_id::<P, UI>(
+        let Some(anchor_pin_idx) = pin_by_id::<I>(
             &ctx.tree.children,
             ctx.layout,
             anchor_node_idx,
@@ -1745,8 +1734,8 @@ where
         ctx: &mut UpdateCtx<'_, '_, '_, Message>,
         node_index: usize,
         pin_index: usize,
-        pin_id: &P,
-        node_id: &N,
+        pin_id: &I::PinId,
+        node_id: &I::NodeId,
         cursor_position: Point,
     ) -> bool {
         if self.on_connect.as_ref().is_none() {
@@ -2067,7 +2056,7 @@ where
                         }
                     }
                 }
-                // Nothing panned, so no `on_pan`. `on_drag_end` still fires:
+                // Nothing panned, so no `on_camera`. `on_drag_end` still fires:
                 // this is a `Dragging::* -> None` transition like any other, and
                 // a host that collects orphaned anchors when a gesture finishes
                 // would otherwise never hear that this one did.
@@ -2103,11 +2092,11 @@ where
         &self,
         tree: &Tree,
         layout: Layout<'_>,
-    ) -> Vec<(CableGeometry<'_, N, P>, edge_path::Built)> {
-        let pin = |pin: &PinRef<N, P>| -> Option<Station> {
+    ) -> Vec<(CableGeometry<'_, I>, edge_path::Built)> {
+        let pin = |pin: &PinRef<I>| -> Option<Station> {
             let node_index = self.node_index(&pin.node_id)?;
             let (_, (point, _), side, direction) =
-                pin_by_id::<P, UI>(&tree.children, layout, node_index, &pin.pin_id)?;
+                pin_by_id::<I>(&tree.children, layout, node_index, &pin.pin_id)?;
             Some(Station {
                 point: [point.x, point.y],
                 side: side.into(),
@@ -2139,7 +2128,7 @@ where
         tree: &Tree,
         layout: Layout<'_>,
         edge: usize,
-    ) -> Option<(&PinRef<N, P>, &PinRef<N, P>)> {
+    ) -> Option<(&PinRef<I>, &PinRef<I>)> {
         self.cable_geometry(tree, layout)
             .into_iter()
             .find(|(geometry, _)| geometry.edge == edge)
@@ -2208,7 +2197,7 @@ where
     fn cable_zone_of(
         &self,
         tree: &Tree,
-        geometry: &CableGeometry<'_, N, P>,
+        geometry: &CableGeometry<'_, I>,
         built: &edge_path::Built,
         cursor: LayoutPoint,
     ) -> Option<(CableHit, f32)> {
@@ -2449,7 +2438,7 @@ where
                     return false;
                 };
                 let Some((near_pin, ..)) =
-                    pin_by_id::<P, UI>(&ctx.tree.children, ctx.layout, near_node, &near.pin_id)
+                    pin_by_id::<I>(&ctx.tree.children, ctx.layout, near_node, &near.pin_id)
                 else {
                     return false;
                 };
@@ -2518,7 +2507,7 @@ where
     /// Starts a fit toward `world_aabb`: a tween when `opts.animation` is
     /// set with a positive duration, otherwise an immediate jump. Replaces
     /// any running tween (new focus/frame always wins, arbitration rule 1).
-    /// The jump commits through `on_pan` immediately, like any other camera
+    /// The jump commits through `on_camera` immediately, like any other camera
     /// change; the tween commits once per `RedrawRequested` frame (see the
     /// tween-advance block in `update_impl`).
     fn begin_focus(
@@ -2541,7 +2530,7 @@ where
             state.camera_tween = None;
             state.camera = Camera2D::with_zoom_and_position(end_zoom, end_position)
                 .with_viewport_origin(viewport_origin);
-            if let Some(handler) = self.on_pan.as_ref() {
+            if let Some(handler) = self.on_camera.as_ref() {
                 shell.publish(handler(
                     Point::new(end_position.x, end_position.y),
                     end_zoom,
@@ -2600,20 +2589,16 @@ fn core_grab_half(geometry: AnchorGeometry, zoom: f32) -> f32 {
 
 /// Resolves a [`FocusTarget`] to a world-space AABB using live layout, or
 /// `None` for an unknown/empty target -- a no-op per the design (no camera
-/// change, no `on_pan`): an unresolvable id is skipped, `All`/`Selection`
+/// change, no `on_camera`): an unresolvable id is skipped, `All`/`Selection`
 /// with nothing to union is empty, `Nodes`/`Edges` union whatever resolves.
-fn resolve_focus_target<N, P, E, A, UI, Message, Renderer>(
-    graph: &NodeGraph<'_, N, P, E, A, UI, Message, Renderer>,
+pub(super) fn resolve_focus_target<I, Message, Renderer>(
+    graph: &NodeGraph<'_, I, Message, Renderer>,
     layout: Layout<'_>,
     state: &NodeGraphState,
-    target: &FocusTarget<N, E, A>,
+    target: &FocusTarget<I>,
 ) -> Option<WorldRect>
 where
-    N: NodeId + 'static,
-    P: PinId + 'static,
-    E: EdgeId + 'static,
-    A: AnchorId + 'static,
-    UI: Clone + 'static,
+    I: Ids,
     Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
     // Node layout bounds are layout-absolute (`viewport_origin + world`,
@@ -2648,12 +2633,14 @@ where
         let orbit = u8::try_from(rings.get(index)?.saturating_sub(1)).unwrap_or(u8::MAX);
         ring_rect(index, orbit)
     };
-    let by_node = |id: &N| -> Option<WorldRect> { graph.node_index(id).and_then(node_rect) };
-    let by_anchor = |id: &A| -> Option<WorldRect> { graph.anchor_index(id).and_then(&anchor_rect) };
+    let by_node =
+        |id: &I::NodeId| -> Option<WorldRect> { graph.node_index(id).and_then(node_rect) };
+    let by_anchor =
+        |id: &I::AnchorId| -> Option<WorldRect> { graph.anchor_index(id).and_then(&anchor_rect) };
     // An edge's frame target is the union of its two endpoint nodes' bounds and
     // every anchor it wraps (seeing a connection means seeing where it runs);
     // either endpoint failing to resolve skips the whole edge.
-    let edge_rect = |id: &E| -> Option<WorldRect> {
+    let edge_rect = |id: &I::EdgeId| -> Option<WorldRect> {
         let index = graph.edges.iter().position(|edge| edge.id == *id)?;
         let edge = &graph.edges[index];
         let a = node_rect(graph.node_index(&edge.from.node_id)?)?;
@@ -2704,20 +2691,16 @@ where
 /// `excluded_edge` is the edge currently being re-routed (its endpoints), left out
 /// of the occupancy check so it can be dropped back onto its own input. Pass `None`
 /// when starting a fresh edge.
-fn compute_valid_targets<N, P, E, A, UI, Message, Renderer>(
-    graph: &NodeGraph<'_, N, P, E, A, UI, Message, Renderer>,
+fn compute_valid_targets<I, Message, Renderer>(
+    graph: &NodeGraph<'_, I, Message, Renderer>,
     tree: &Tree,
     layout: Layout<'_>,
     from_node: usize,
     from_pin: usize,
-    excluded_edge: Option<(&PinRef<N, P>, &PinRef<N, P>)>,
+    excluded_edge: Option<(&PinRef<I>, &PinRef<I>)>,
 ) -> std::collections::HashSet<(usize, usize)>
 where
-    N: NodeId + 'static,
-    P: PinId + 'static,
-    E: EdgeId + 'static,
-    A: AnchorId + 'static,
-    UI: Clone + 'static,
+    I: Ids,
     Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
     let mut valid_targets = std::collections::HashSet::new();
@@ -2725,7 +2708,7 @@ where
     // Get the source pin state for validation.
     let from_pin_state = tree.children.get(from_node).and_then(|node_tree| {
         layout.children().nth(from_node).and_then(|node_layout| {
-            find_pins::<P, UI>(node_tree, node_layout)
+            find_pins::<I>(node_tree, node_layout)
                 .into_iter()
                 .nth(from_pin)
                 .map(|(_, state, _)| state.clone())
@@ -2741,7 +2724,7 @@ where
     // Pins already holding an edge, consulted by `input_not_occupied`. The edge
     // currently being dragged (when re-routing an existing connection) is excluded,
     // so its own input still reads as free and can be dropped back onto.
-    let occupied: std::collections::HashSet<(&N, &P)> = graph
+    let occupied: std::collections::HashSet<(&I::NodeId, &I::PinId)> = graph
         .edges
         .iter()
         .filter(|edge| excluded_edge != Some((&edge.from, &edge.to)))
@@ -2752,12 +2735,13 @@ where
             ]
         })
         .collect();
-    let is_occupied = |node_id: &N, pin_id: &P| occupied.contains(&(node_id, pin_id));
+    let is_occupied =
+        |node_id: &I::NodeId, pin_id: &I::PinId| occupied.contains(&(node_id, pin_id));
 
     // Iterate all pins in all nodes
     for (node_index, (node_layout, node_tree)) in layout.children().zip(&tree.children).enumerate()
     {
-        for (pin_index, pin_state, _) in find_pins::<P, UI>(node_tree, node_layout) {
+        for (pin_index, pin_state, _) in find_pins::<I>(node_tree, node_layout) {
             // Skip source pin
             if node_index == from_node && pin_index == from_pin {
                 continue;
@@ -2812,15 +2796,15 @@ where
 ///
 /// Takes `tree.children` rather than the `Tree`, so a caller mid-interaction
 /// can hold its `tree.state` borrow across the lookup.
-fn pin_by_id<P: PinId + 'static, UI: 'static>(
+fn pin_by_id<I: Ids>(
     node_trees: &[Tree],
     layout: Layout<'_>,
     node_index: usize,
-    pin_id: &P,
+    pin_id: &I::PinId,
 ) -> Option<(usize, (Point, Point), PinSide, PinDirection)> {
     let node_tree = node_trees.get(node_index)?;
     let node_layout = layout.children().nth(node_index)?;
-    find_pins::<P, UI>(node_tree, node_layout)
+    find_pins::<I>(node_tree, node_layout)
         .iter()
         .find(|(_, state, _)| state.pin_id == *pin_id)
         .map(|(index, state, anchors)| (*index, *anchors, state.side, state.direction))

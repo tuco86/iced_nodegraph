@@ -14,10 +14,11 @@
 //! `width` 0, shadow `blur` 0 or color alpha 0.
 //!
 use iced_nodegraph_sdf::Pattern;
-use iced_widget::core::Color;
+use iced_widget::core::{Color, Theme};
 
-use super::ColorQuad;
-use super::EdgeCurve;
+use super::defaults::default_edge_style;
+use super::roles::Roles;
+use super::{ColorQuad, EdgeCurve, EdgeStatus, ramp};
 
 /// Visual style for an edge.
 #[derive(Debug, Clone, PartialEq)]
@@ -62,75 +63,76 @@ pub struct EdgeStyle {
 }
 
 impl EdgeStyle {
-    /// Plain stroke baseline: no outline, border, or shadow; bezier path.
-    fn stroke(color: ColorQuad, pattern: Pattern) -> Self {
-        let none = ColorQuad::solid(Color::TRANSPARENT);
-        Self {
-            stroke_color: color,
-            pattern,
-            stroke_outline_width: 0.0,
-            stroke_outline_color: none,
-            border_color: none,
-            border_width: 0.0,
-            border_gap: 0.5,
-            border_outline_width: 0.0,
-            border_outline_color: none,
-            border_background: none,
-            shadow_color: none,
-            shadow_expand: 0.0,
-            shadow_blur: 0.0,
-            shadow_offset: (0.0, 0.0),
-            curve: EdgeCurve::BezierCubic,
-        }
+    /// Data-flow preset: a slightly heavier stroke in the theme's `primary`.
+    /// Use it as a style directly: `.style(|t, s, _, _| EdgeStyle::data_flow(t, s))`.
+    pub fn data_flow(theme: &Theme, status: EdgeStatus) -> Self {
+        let roles = Roles::of(theme);
+        let hue = roles.legible(theme.extended_palette().primary.base.color);
+        Self::stroked(theme, status, hue, Pattern::solid(2.5))
     }
 
-    /// Data flow preset (blue, bezier).
-    pub fn data_flow() -> Self {
-        Self::stroke(
-            ColorQuad::solid(Color::from_rgb(0.3, 0.6, 1.0)),
-            Pattern::solid(2.5),
-        )
-    }
-
-    /// Error preset (red, marching ants, with border ring).
-    pub fn error() -> Self {
-        let red = Color::from_rgb(0.9, 0.2, 0.2);
-        let mut s = Self::stroke(
-            ColorQuad::solid(red),
+    /// Error preset: marching ants in the theme's `danger` with a border ring
+    /// of the same hue.
+    pub fn error(theme: &Theme, status: EdgeStatus) -> Self {
+        let hue = Roles::of(theme).danger;
+        let mut s = Self::stroked(
+            theme,
+            status,
+            hue,
             Pattern::dashed(2.0, 6.0, 4.0).flow(30.0),
         );
-        s.border_color = ColorQuad::solid(red);
+        s.border_color = hue.into();
         s.border_width = 1.0;
         s.border_gap = 0.5;
         s
     }
 
-    /// Disabled preset (gray, dashed).
-    pub fn disabled() -> Self {
-        Self::stroke(
-            ColorQuad::solid(Color::from_rgb(0.5, 0.5, 0.5)),
-            Pattern::dashed(1.5, 12.0, 6.0),
-        )
+    /// Disabled preset: a thin dash halfway between the canvas and the wire
+    /// color, so it recedes without vanishing.
+    pub fn disabled(theme: &Theme, status: EdgeStatus) -> Self {
+        let roles = Roles::of(theme);
+        let hue = ramp::blend(roles.canvas, roles.wire, 0.5);
+        Self::stroked(theme, status, hue, Pattern::dashed(1.5, 12.0, 6.0))
     }
 
-    /// Highlighted preset (bright yellow, with soft border ring).
-    pub fn highlighted() -> Self {
-        let yellow = Color::from_rgb(1.0, 0.8, 0.2);
-        let mut s = Self::stroke(ColorQuad::solid(yellow), Pattern::solid(3.0));
-        s.border_color = ColorQuad::solid(Color::from_rgba(1.0, 1.0, 1.0, 0.3));
+    /// Highlighted preset: a wide stroke in the theme's `warning` with a soft
+    /// ring in the pin color.
+    pub fn highlighted(theme: &Theme, status: EdgeStatus) -> Self {
+        let roles = Roles::of(theme);
+        let hue = roles.legible(theme.extended_palette().warning.base.color);
+        let mut s = Self::stroked(theme, status, hue, Pattern::solid(3.0));
+        s.border_color = Color {
+            a: 0.3,
+            ..roles.terminal
+        }
+        .into();
         s.border_width = 2.0;
         s.border_gap = 1.0;
         s
     }
 
-    /// Debug preset (dotted cyan, straight line).
-    pub fn debug() -> Self {
-        let mut s = Self::stroke(
-            ColorQuad::solid(Color::from_rgb(0.0, 1.0, 1.0)),
-            Pattern::dotted(8.0, 2.0),
-        );
+    /// Debug preset: the wire color dotted along a straight line.
+    pub fn debug(theme: &Theme, status: EdgeStatus) -> Self {
+        let hue = Roles::of(theme).wire;
+        let mut s = Self::stroked(theme, status, hue, Pattern::dotted(8.0, 2.0));
         s.curve = EdgeCurve::Line;
         s
+    }
+
+    /// [`default_edge_style`] with the idle stroke replaced by `hue` and
+    /// `pattern`. An edge marked for cutting keeps the default's `danger`
+    /// stroke, so the cutting feedback wins over the preset's hue.
+    fn stroked(theme: &Theme, status: EdgeStatus, hue: Color, pattern: Pattern) -> Self {
+        let base = default_edge_style(theme, status);
+        let stroke_color = match status {
+            EdgeStatus::Idle => ColorQuad::solid(hue),
+            EdgeStatus::PendingCut => base.stroke_color,
+        };
+        Self {
+            stroke_color,
+            pattern,
+            ..base
+        }
     }
 }
 
@@ -156,7 +158,7 @@ mod tests {
 
     #[test]
     fn sdf_layers_preserves_stroke_pattern() {
-        let mut s = EdgeStyle::data_flow();
+        let mut s = EdgeStyle::data_flow(&Theme::Dark, EdgeStatus::Idle);
         s.pattern = Pattern::dashed(2.0, 12.0, 6.0);
         let layers = s.sdf_layers();
         let stroke = &layers[0]; // stroke is the front layer

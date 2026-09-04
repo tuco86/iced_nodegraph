@@ -52,7 +52,7 @@ use iced::{
     window,
 };
 use iced_nodegraph::{
-    PinDirection, PinInfo, PinRef, PinSide, PinStatus, PinStyle, default_pin_style,
+    Ids, PinDirection, PinInfo, PinRef, PinSide, PinStatus, PinStyle, default_pin_style,
     edge as ng_edge, node as ng_node, node_pin,
 };
 use iced_palette::{
@@ -89,15 +89,28 @@ pub fn run_demo() {
     let _ = main();
 }
 
+/// The id vocabulary of this demo: indexed nodes and pins, unidentified edges,
+/// and a `TypeId` pin payload carrying the socket type of each pin.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct TypedIds;
+
+impl Ids for TypedIds {
+    type NodeId = usize;
+    type PinId = usize;
+    type EdgeId = ();
+    type AnchorId = usize;
+    type Payload = std::any::TypeId;
+}
+
 #[derive(Debug, Clone)]
 enum Message {
     EdgeConnected {
-        from: PinRef<usize, usize>,
-        to: PinRef<usize, usize>,
+        from: PinRef<TypedIds>,
+        to: PinRef<TypedIds>,
     },
     EdgeDisconnected {
-        from: PinRef<usize, usize>,
-        to: PinRef<usize, usize>,
+        from: PinRef<TypedIds>,
+        to: PinRef<TypedIds>,
     },
     SelectionChanged(Vec<usize>),
     NodesMoved {
@@ -129,7 +142,7 @@ struct Application {
     shader_graph: ShaderGraph,
     compiled_shader: Option<String>,
     compilation_error: Option<String>,
-    visual_edges: Vec<(PinRef<usize, usize>, PinRef<usize, usize>)>,
+    visual_edges: Vec<(PinRef<TypedIds>, PinRef<TypedIds>)>,
     current_theme: Theme,
     graph_selection: HashSet<usize>,
     // Command palette state
@@ -149,7 +162,7 @@ impl Application {
         // Convert shader graph connections to visual edges
         // NodeGraph widget uses flat pin indices: [input0, input1, ..., output0, output1, ...]
         // ShaderGraph uses separate indices: from_socket = output index, to_socket = input index
-        let visual_edges: Vec<(PinRef<usize, usize>, PinRef<usize, usize>)> = shader_graph
+        let visual_edges: Vec<(PinRef<TypedIds>, PinRef<TypedIds>)> = shader_graph
             .connections
             .iter()
             .filter_map(|conn| {
@@ -377,36 +390,29 @@ impl Application {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        // Build node graph
-        let mut graph: ::iced_nodegraph::NodeGraph<
-            usize,
-            usize,
-            (),
-            usize,
-            ::std::any::TypeId,
-            _,
-            _,
-        > = ::iced_nodegraph::NodeGraph::default()
+        let graph = ::iced_nodegraph::NodeGraph::<TypedIds, _, _>::new()
             .on_connect(|from, to| Message::EdgeConnected { from, to })
             .on_move(|delta, indices| Message::NodesMoved { delta, indices })
             .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })
             .on_select(Message::SelectionChanged)
-            .on_pan(|position, zoom| Message::CameraChanged { position, zoom });
-
-        // Add all shader graph nodes
-        for (node_idx, node) in self.shader_graph.nodes.iter().enumerate() {
-            let node_content = create_node_widget(&node.node_type, &self.current_theme);
-            graph.push_node(
-                ng_node(node_idx, node.position, node_content)
-                    .selected(self.graph_selection.contains(&node_idx))
-                    .pin_style(pin_style),
+            .on_camera(|position, zoom| Message::CameraChanged { position, zoom })
+            .nodes(
+                self.shader_graph
+                    .nodes
+                    .iter()
+                    .enumerate()
+                    .map(|(node_idx, node)| {
+                        let node_content = create_node_widget(&node.node_type, &self.current_theme);
+                        ng_node(node_idx, node.position, node_content)
+                            .selected(self.graph_selection.contains(&node_idx))
+                            .pin_style(pin_style)
+                    }),
+            )
+            .edges(
+                self.visual_edges
+                    .iter()
+                    .map(|(from, to)| ng_edge((), *from, *to)),
             );
-        }
-
-        // Add all edges
-        for (from, to) in &self.visual_edges {
-            graph.push_edge(ng_edge(*from, *to, ()));
-        }
 
         let graph_element: Element<Message> = graph.into();
 
@@ -607,8 +613,8 @@ fn create_node_widget<'a>(
 /// Colors a node's pins by their socket data-type marker.
 fn pin_style(
     theme: &Theme,
-    pin: &PinInfo<'_, usize, ::std::any::TypeId>,
-    _other: Option<&PinInfo<'_, usize, ::std::any::TypeId>>,
+    pin: &PinInfo<'_, TypedIds>,
+    _other: Option<&PinInfo<'_, TypedIds>>,
     status: PinStatus,
 ) -> PinStyle {
     use std::any::TypeId;

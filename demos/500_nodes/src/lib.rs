@@ -50,17 +50,30 @@ use iced::{
     widget::{canvas, column, container, opaque, row, stack, text, toggler},
 };
 use iced_nodegraph::{
-    Counts, GraphInfo, GraphStyle, PinInfo, PinRef, PinStatus, PinStyle, default_pin_style, edge,
-    node,
+    Counts, GraphInfo, GraphStyle, Ids, PinInfo, PinRef, PinStatus, PinStyle, default_graph_style,
+    default_pin_style, edge, node,
 };
 use nodes::NodeType;
 use web_time::Instant;
 
+/// The id vocabulary of this demo: indexed nodes and pins, unidentified edges,
+/// and a `TypeId` pin payload carrying the data type of each pin.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct TypedIds;
+
+impl Ids for TypedIds {
+    type NodeId = usize;
+    type PinId = usize;
+    type EdgeId = ();
+    type AnchorId = usize;
+    type Payload = std::any::TypeId;
+}
+
 /// Colors a node's pins by their data-type marker.
 fn pin_style(
     theme: &iced::Theme,
-    pin: &PinInfo<'_, usize, ::std::any::TypeId>,
-    _other: Option<&PinInfo<'_, usize, ::std::any::TypeId>>,
+    pin: &PinInfo<'_, TypedIds>,
+    _other: Option<&PinInfo<'_, TypedIds>>,
     status: PinStatus,
 ) -> PinStyle {
     use nodes::colors;
@@ -137,12 +150,12 @@ pub fn run_demo() {
 #[derive(Debug, Clone)]
 enum ApplicationMessage {
     EdgeConnected {
-        from: PinRef<usize, usize>,
-        to: PinRef<usize, usize>,
+        from: PinRef<TypedIds>,
+        to: PinRef<TypedIds>,
     },
     EdgeDisconnected {
-        from: PinRef<usize, usize>,
-        to: PinRef<usize, usize>,
+        from: PinRef<TypedIds>,
+        to: PinRef<TypedIds>,
     },
     SelectionChanged(Vec<usize>),
     NodesMoved {
@@ -163,7 +176,7 @@ enum ApplicationMessage {
 }
 
 struct Application {
-    edges: Vec<(PinRef<usize, usize>, PinRef<usize, usize>)>,
+    edges: Vec<(PinRef<TypedIds>, PinRef<TypedIds>)>,
     nodes: Vec<(Point, NodeType)>,
     current_theme: Theme,
     selected_nodes: HashSet<usize>,
@@ -354,13 +367,12 @@ impl Application {
     }
 
     fn view(&self) -> iced::Element<'_, ApplicationMessage> {
-        let mut ng: ::iced_nodegraph::NodeGraph<usize, usize, (), usize, ::std::any::TypeId, _, _> =
-            ::iced_nodegraph::NodeGraph::default()
-                .on_connect(|from, to| ApplicationMessage::EdgeConnected { from, to })
-                .on_disconnect(|from, to| ApplicationMessage::EdgeDisconnected { from, to })
-                .on_move(|delta, indices| ApplicationMessage::NodesMoved { delta, indices })
-                .on_select(ApplicationMessage::SelectionChanged)
-                .on_pan(|pos, zoom| ApplicationMessage::CameraReport { pos, zoom });
+        let mut ng = ::iced_nodegraph::NodeGraph::<TypedIds, _, _>::new()
+            .on_connect(|from, to| ApplicationMessage::EdgeConnected { from, to })
+            .on_disconnect(|from, to| ApplicationMessage::EdgeDisconnected { from, to })
+            .on_move(|delta, indices| ApplicationMessage::NodesMoved { delta, indices })
+            .on_select(ApplicationMessage::SelectionChanged)
+            .on_camera(|pos, zoom| ApplicationMessage::CameraReport { pos, zoom });
         // The `on_info` frame stream exists only while the stats panel is
         // shown: live per-frame diagnostics force continuous redraws, so with
         // the panel hidden the demo is fully idle between interactions.
@@ -372,23 +384,22 @@ impl Application {
         if self.no_grid {
             ng = ng.graph_style(|theme| GraphStyle {
                 tiling: None,
-                ..GraphStyle::from_theme(theme)
+                ..default_graph_style(theme)
             });
         }
 
-        // Add all nodes
-        for (index, (position, node_type)) in self.nodes.iter().enumerate() {
-            ng.push_node(
-                node(index, *position, node_type.create_node(&self.current_theme))
-                    .selected(self.selected_nodes.contains(&index))
-                    .pin_style(pin_style),
-            );
-        }
+        ng = ng.nodes(
+            self.nodes
+                .iter()
+                .enumerate()
+                .map(|(index, (position, node_type))| {
+                    node(index, *position, node_type.create_node(&self.current_theme))
+                        .selected(self.selected_nodes.contains(&index))
+                        .pin_style(pin_style)
+                }),
+        );
 
-        // Add all edges
-        for (from, to) in &self.edges {
-            ng.push_edge(edge!(*from, *to));
-        }
+        ng = ng.edges(self.edges.iter().map(|(from, to)| edge((), *from, *to)));
 
         // Top-right overlay: the toggle chip, plus the stats panel while shown.
         // `opaque` ensures the overlay claims wheel/click events for its own

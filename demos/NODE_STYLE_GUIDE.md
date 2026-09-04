@@ -169,11 +169,11 @@ Place input and output on the same row to save vertical space:
 ```rust
 column![
     row![
-        pin!(Left, text("a"), Input, "float", PIN_NUMBER),
+        pin!(Left, 0, text("a"), Input, TypeId::of::<Float>()),
         container(()).width(Fill),  // spacer
-        pin!(Right, text("sum"), Output, "float", PIN_NUMBER),
+        pin!(Right, 2, text("sum"), Output, TypeId::of::<Float>()),
     ],
-    pin!(Left, text("b"), Input, "float", PIN_NUMBER),
+    pin!(Left, 1, text("b"), Input, TypeId::of::<Float>()),
 ]
 ```
 
@@ -192,7 +192,7 @@ Wrap controls with pins instead of separate rows:
 ```rust
 row![
     slider_widget,
-    pin!(Right, value_display, Output, "float", PIN_NUMBER)
+    pin!(Right, 0, value_display, Output, TypeId::of::<Float>())
 ]
 ```
 

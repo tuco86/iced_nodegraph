@@ -49,15 +49,16 @@ use iced::{
 };
 use iced_nodegraph::{
     ColorQuad, CuttingToolStyle, EdgeStatus, EdgeStyle, FocusOptions, FocusTarget, PinRef,
-    SelectionBoxStyle, default_cutting_tool_style, default_edge_style, default_node_style,
-    default_pin_style, default_selection_box_style, edge as ng_edge, node as ng_node,
+    SelectionBoxStyle, default_cutting_tool_style, default_edge_style, default_graph_style,
+    default_node_style, default_pin_style, default_selection_box_style, edge as ng_edge,
+    node as ng_node,
 };
 use iced_nodegraph::{EdgeCurve, PinShape, TilingKind};
 use iced_palette::{
     Command, Shortcut, command, command_palette, find_matching_shortcut, focus_input,
     get_filtered_command_index, get_filtered_count, is_toggle_shortcut, navigate_down, navigate_up,
 };
-use ids::{EdgeData, EdgeId, NodeId, PinLabel, generate_edge_id, generate_node_id};
+use ids::{EdgeData, EdgeId, HelloIds, NodeId, PinLabel, generate_edge_id, generate_node_id};
 use nodes::{
     BoolToggleConfig, ColorQuadNode, ConfigNodeType, EdgeConfigInputs, EdgeSection, EdgeSections,
     FloatSliderConfig, GraphConfigInputs, InputNodeType, IntSliderConfig, MathNodeState,
@@ -125,12 +126,12 @@ pub fn run_demo() {
 #[derive(Debug, Clone)]
 enum ApplicationMessage {
     EdgeConnected {
-        from: PinRef<NodeId, PinLabel>,
-        to: PinRef<NodeId, PinLabel>,
+        from: PinRef<HelloIds>,
+        to: PinRef<HelloIds>,
     },
     EdgeDisconnected {
-        from: PinRef<NodeId, PinLabel>,
-        to: PinRef<NodeId, PinLabel>,
+        from: PinRef<HelloIds>,
+        to: PinRef<HelloIds>,
     },
     /// Edges the cutting tool destroyed, named by their own ids.
     EdgesCut(Vec<EdgeId>),
@@ -151,8 +152,7 @@ enum ApplicationMessage {
         position: Point,
         zoom: f32,
     },
-    /// Bumps the `.focus()` prop's nonce (see [`Application::focus_seq`]) so
-    /// the widget starts a fresh camera tween toward the fixed demo node.
+    /// Flies the camera to the fixed demo node.
     FocusNode,
     WindowResized(iced::Size),
     WindowMoved(Point),
@@ -274,6 +274,12 @@ fn pin_color_for(ty: std::any::TypeId) -> Color {
     }
 }
 
+/// The widget id of the demo's graph, addressed by the
+/// [`iced_nodegraph::focus`] task the "Focus node" command runs.
+fn graph_id() -> iced::widget::Id {
+    iced::widget::Id::new("graph")
+}
+
 /// Computed style overlays accumulated from connected config nodes. Each is a
 /// partial overlay resolved against the theme base at draw time.
 #[derive(Debug, Clone, Default)]
@@ -318,12 +324,6 @@ struct Application {
     camera_position: Point,
     /// Current camera zoom from NodeGraph
     camera_zoom: f32,
-    /// Monotonic nonce for the declarative `NodeGraph::focus()` prop. `0`
-    /// means "never requested", so `view()` omits `.focus()` entirely until
-    /// the "Focus node" command first fires; each further press increments
-    /// it so the widget's `last_focus_seq` dedup sees a new value and starts
-    /// another tween even when the target hasn't changed.
-    focus_seq: u64,
     /// Window position (x, y) for persistence
     window_position: Option<(i32, i32)>,
     /// Window size (width, height) for persistence
@@ -456,7 +456,6 @@ impl Default for Application {
             viewport_size: iced::Size::new(800.0, 600.0), // Default size
             camera_position: Point::ORIGIN,
             camera_zoom: 1.0,
-            focus_seq: 0,
             window_position: None,
             window_size: None,
             window_maximized: None,
@@ -1398,8 +1397,7 @@ impl Application {
                             ApplicationMessage::FocusNode => {
                                 self.command_palette_open = false;
                                 self.palette_view = PaletteView::Main;
-                                self.focus_seq += 1;
-                                Task::none()
+                                self.focus_first_node()
                             }
                             _ => Task::none(),
                         }
@@ -1439,10 +1437,7 @@ impl Application {
                 self.save_state();
                 Task::none()
             }
-            ApplicationMessage::FocusNode => {
-                self.focus_seq += 1;
-                Task::none()
-            }
+            ApplicationMessage::FocusNode => self.focus_first_node(),
             ApplicationMessage::WindowResized(size) => {
                 self.viewport_size = size;
                 self.window_size = Some((size.width as u32, size.height as u32));
@@ -1797,8 +1792,22 @@ impl Application {
         }
     }
 
+    /// Frames the first workflow node: the "Focus node" command's target, run
+    /// with the default eased tween. `Home` and `f` cover All and Selection;
+    /// this exercises [`FocusTarget::Node`].
+    fn focus_first_node(&self) -> Task<ApplicationMessage> {
+        match self.node_order.first() {
+            Some(target) => iced_nodegraph::focus(
+                graph_id(),
+                FocusTarget::<HelloIds>::Node(target.clone()),
+                FocusOptions::default(),
+            ),
+            None => Task::none(),
+        }
+    }
+
     fn view(&self) -> iced::Element<'_, ApplicationMessage> {
-        use iced_nodegraph::{NodeGraph, PinRef};
+        use iced_nodegraph::NodeGraph;
 
         // Use preview theme if active (for theme selection), otherwise current theme
         let theme = self
@@ -1815,42 +1824,28 @@ impl Application {
         // chain, layered over the theme-derived base each frame.
         let graph_overlay = self.computed_style.graph.clone();
 
-        let mut ng: NodeGraph<
-            '_,
-            NodeId,
-            PinLabel,
-            EdgeId,
-            usize,
-            ::std::any::TypeId,
-            ApplicationMessage,
-            iced::Renderer,
-        > = NodeGraph::default();
-
-        ng = ng
-            .on_connect(
-                |from: PinRef<NodeId, PinLabel>, to: PinRef<NodeId, PinLabel>| {
-                    ApplicationMessage::EdgeConnected { from, to }
-                },
-            )
-            .on_disconnect(
-                |from: PinRef<NodeId, PinLabel>, to: PinRef<NodeId, PinLabel>| {
-                    ApplicationMessage::EdgeDisconnected { from, to }
-                },
-            )
+        let mut ng: NodeGraph<'_, HelloIds, ApplicationMessage, iced::Renderer> = NodeGraph::new()
+            .id(graph_id())
+            .on_connect(|from: PinRef<HelloIds>, to: PinRef<HelloIds>| {
+                ApplicationMessage::EdgeConnected { from, to }
+            })
+            .on_disconnect(|from: PinRef<HelloIds>, to: PinRef<HelloIds>| {
+                ApplicationMessage::EdgeDisconnected { from, to }
+            })
             .on_edge_delete(ApplicationMessage::EdgesCut)
             .on_move(|delta, node_ids| ApplicationMessage::NodesMoved { delta, node_ids })
             .on_select(ApplicationMessage::SelectionChanged)
             .on_clone(ApplicationMessage::CloneNodes)
             .on_delete(ApplicationMessage::DeleteNodes)
-            .on_pan(|position, zoom| ApplicationMessage::CameraChanged { position, zoom })
-            .view(self.camera_position, self.camera_zoom)
+            .on_camera(|position, zoom| ApplicationMessage::CameraChanged { position, zoom })
+            .camera(self.camera_position, self.camera_zoom)
             // A connection is valid only between opposite directions (output ->
             // input) carrying the same data type (the pin's TypeId marker). Color
             // and ColorQuad share the `ColorData` marker, so a color pin accepts
             // both a picker and the ColorQuad builder; Vec2 only matches Vec2.
             .can_connect(|from, to| from.direction() != to.direction() && from.info() == to.info())
             // Per-node and per-edge styling flows through the `.style()` closures
-            // on the `node(..)` / `edge!(..)` builders; only graph-wide chrome is
+            // on the `node(..)` / `edge(..)` builders; only graph-wide chrome is
             // configured here.
             .selection_box_style(|theme| SelectionBoxStyle {
                 fill: iced::Color::from_rgba(0.3, 0.6, 1.0, 0.15),
@@ -1871,28 +1866,9 @@ impl Application {
             })
             .graph_style(move |theme| {
                 // With no GraphConfig connected the overlay is empty and this is
-                // exactly the widget's own default (`GraphStyle::from_theme`).
-                graph_overlay.resolve_over(iced_nodegraph::GraphStyle::from_theme(theme))
+                // exactly the widget's own default (`default_graph_style`).
+                graph_overlay.resolve_over(default_graph_style(theme))
             });
-
-        // "Focus node" command (fit-to-view smoke test): flies the camera to
-        // the first workflow node with the default `FocusOptions` (300ms
-        // EaseInOutCubic tween). `focus_seq == 0` means the command has never
-        // fired, so `.focus()` is omitted entirely -- the widget only sees a
-        // `Some` prop, and thus only fits, once the button has been pressed
-        // at least once. Each further press bumps `focus_seq`, which the
-        // widget dedups against its own `last_focus_seq` to start a new tween
-        // even though the target node hasn't changed (`Home`/`f` cover
-        // All/Selection; this exercises `FocusTarget::Node` instead).
-        if self.focus_seq > 0
-            && let Some(target_id) = self.node_order.first()
-        {
-            ng = ng.focus(
-                self.focus_seq,
-                FocusTarget::Node(target_id.clone()),
-                FocusOptions::default(),
-            );
-        }
 
         // Add all nodes from state (in order)
         for node_id in &self.node_order {
@@ -2081,7 +2057,7 @@ impl Application {
             // overlay (radius/shape/border from an ApplyToGraph chain), then the
             // status default fills the rest.
             let pin_overlay = self.computed_style.pin.clone();
-            ng.push_node(
+            ng = ng.push_node(
                 ng_node(node_id.clone(), *position, element)
                     .style(move |theme, status| {
                         overlay.resolve_over(default_node_style(theme, status))
@@ -2102,7 +2078,7 @@ impl Application {
                 let from = PinRef::new(edge_data.from_node.clone(), edge_data.from_pin);
                 let to = PinRef::new(edge_data.to_node.clone(), edge_data.to_pin);
                 let overlay = edge_overlay.clone();
-                ng.push_edge(ng_edge(from, to, edge_id.clone()).style(
+                ng = ng.push_edge(ng_edge(edge_id.clone(), from, to).style(
                     move |theme, status, start, end| {
                         // Edges follow their connected pins' data-type colors; the
                         // Edge Config overlay (if set) overrides the inherited stroke.
@@ -2825,7 +2801,7 @@ mod tests {
         // ColorPicker -> GraphConfig.background and TilingKind -> GraphConfig.tiling_kind,
         // then GraphConfig -> ApplyToGraph.graph. The computed graph overlay must
         // carry both, and resolve_over must install them onto the theme base.
-        use iced_nodegraph::{GraphStyle, TilingKind};
+        use iced_nodegraph::TilingKind;
 
         let mut app = Application::default();
         app.nodes.clear();
@@ -2942,7 +2918,7 @@ mod tests {
         let resolved = app
             .computed_style
             .graph
-            .resolve_over(GraphStyle::from_theme(&app.current_theme));
+            .resolve_over(iced_nodegraph::default_graph_style(&app.current_theme));
         assert_eq!(resolved.background_color, blue);
         assert_eq!(resolved.tiling.map(|t| t.kind), Some(TilingKind::Dots));
     }
@@ -3210,7 +3186,7 @@ mod tests {
 
     #[test]
     fn test_node_config_shadow_resolves() {
-        use iced_nodegraph::{ColorQuad, NodeStyle};
+        use iced_nodegraph::{ColorQuad, NodeStatus, NodeStyle};
 
         // A NodeConfig with shadow fields set must carry them through build()
         // (overlay) and resolve_over() (concrete style) unchanged.
@@ -3225,8 +3201,8 @@ mod tests {
         assert_eq!(overlay.shadow_distance, Some(12.0));
         assert_eq!(overlay.shadow_offset, Some((4.0, 6.0)));
 
-        // NodeStyle::comment() has no shadow; the overlay must install one.
-        let resolved = overlay.resolve_over(NodeStyle::comment());
+        // The comment preset carries no shadow; the overlay must install one.
+        let resolved = overlay.resolve_over(NodeStyle::comment(&Theme::Dark, NodeStatus::Idle));
         assert_eq!(resolved.shadow_color, Color::from_rgb(1.0, 0.0, 0.0));
         assert_eq!(resolved.shadow_distance, 12.0);
         assert_eq!(resolved.shadow_offset, (4.0, 6.0));

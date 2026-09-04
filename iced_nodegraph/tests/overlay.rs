@@ -21,7 +21,7 @@ use iced::advanced::{Layout, layout, mouse, overlay, renderer};
 use iced::{Background, Color, Element, Length, Point, Rectangle, Size, Theme, Vector};
 use iced_wgpu::core::clipboard;
 
-use iced_nodegraph::{NodeGraph, node};
+use iced_nodegraph::{Indexed, NodeGraph, node};
 
 mod common;
 
@@ -167,10 +167,10 @@ const VIEWPORT: Size = Size::new(1024.0, 768.0);
 /// The graph shape these tests drive: default ids, recording renderer. Named
 /// because the ids come first in `NodeGraph`'s parameter list, so reaching
 /// `Recorder` means spelling all four of them.
-type RecordedGraph = NodeGraph<'static, usize, usize, (), usize, (), (), Recorder>;
+type RecordedGraph = NodeGraph<'static, Indexed, (), Recorder>;
 
 /// Lays out a single-node graph at `origin` with the given camera, runs one
-/// no-op update so `view()` syncs into the widget camera, and returns the parts
+/// no-op update so `camera()` syncs into the widget camera, and returns the parts
 /// needed to drive `overlay()`.
 fn graph_with_node(
     origin: Vector,
@@ -183,8 +183,8 @@ fn graph_with_node(
     let mut graph: RecordedGraph = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
-        .view(camera_pos, camera_zoom);
-    graph.push_node(node(0usize, node_world, element));
+        .camera(camera_pos, camera_zoom);
+    graph = graph.push_node(node(0usize, node_world, element));
 
     let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Recorder>);
     let layout_node = graph.layout(
@@ -193,7 +193,7 @@ fn graph_with_node(
         &layout::Limits::new(Size::ZERO, VIEWPORT),
     );
 
-    // Sync `view()` into the widget camera (host value differs from the unset
+    // Sync `camera()` into the widget camera (host value differs from the unset
     // last-synced value); the event itself is a no-op. Mirrors the real
     // pipeline, where update() runs before overlay().
     let layout = Layout::with_offset(origin, &layout_node);

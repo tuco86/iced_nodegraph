@@ -165,12 +165,12 @@ fn resolve_node_style(
 }
 
 /// Resolves an edge's style: the per-edge callback, or the built-in default.
-fn resolve_edge_style<P: PinId + 'static, UI>(
-    style_fn: Option<&EdgeStyleFn<'_, P, UI>>,
+fn resolve_edge_style<I: Ids>(
+    style_fn: Option<&EdgeStyleFn<'_, I>>,
     theme: &Theme,
     status: EdgeStatus,
-    start: Option<PinInfo<'_, P, UI>>,
-    end: Option<PinInfo<'_, P, UI>>,
+    start: Option<PinInfo<'_, I>>,
+    end: Option<PinInfo<'_, I>>,
 ) -> EdgeStyle {
     match (style_fn, start, end) {
         (Some(f), Some(s), Some(e)) => f(theme, status, s, e),
@@ -192,7 +192,7 @@ fn resolve_anchor_style(
 }
 
 /// Builds the read-only [`PinInfo`] view onto a pin state.
-fn pin_info<'s, P, UI>(state: &'s NodePinState<P, UI>) -> Option<PinInfo<'s, P, UI>> {
+fn pin_info<'s, I: Ids>(state: &'s NodePinState<I::PinId, I::Payload>) -> Option<PinInfo<'s, I>> {
     Some(PinInfo::new(
         state.direction,
         &state.pin_id,
@@ -202,15 +202,15 @@ fn pin_info<'s, P, UI>(state: &'s NodePinState<P, UI>) -> Option<PinInfo<'s, P, 
 
 /// Resolves a pin's drawn style: theme base merged with the per-pin overlay,
 /// then the indicator fill color forced to the pin's `color`.
-fn resolve_pin_style<P: PinId + 'static, UI>(
-    pin_style_fn: Option<&PinStyleFn<'_, P, UI>>,
-    state: &NodePinState<P, UI>,
-    other: Option<&NodePinState<P, UI>>,
+fn resolve_pin_style<I: Ids>(
+    pin_style_fn: Option<&PinStyleFn<'_, I>>,
+    state: &NodePinState<I::PinId, I::Payload>,
+    other: Option<&NodePinState<I::PinId, I::Payload>>,
     theme: &Theme,
     status: PinStatus,
 ) -> PinStyle {
-    if let (Some(f), Some(this)) = (pin_style_fn, pin_info::<P, UI>(state)) {
-        let other_info = other.and_then(pin_info::<P, UI>);
+    if let (Some(f), Some(this)) = (pin_style_fn, pin_info::<I>(state)) {
+        let other_info = other.and_then(pin_info::<I>);
         f(theme, &this, other_info.as_ref(), status)
     } else {
         crate::style::default_pin_style(theme, status)
@@ -228,10 +228,10 @@ fn resolve_pin_style<P: PinId + 'static, UI>(
 /// Layout-absolute `(center, radius)` of each pin cutout - the single source for the
 /// recipe cuts (`ShapeExpr::Circle` at local offsets) that punch the pin holes,
 /// so the body and its shadow punch identical holes.
-fn pin_cutout_params<P: PinId + 'static, UI>(
-    pins: &[PinLayout<'_, P, UI>],
-    pin_style_fn: Option<&PinStyleFn<'_, P, UI>>,
-    other: Option<&NodePinState<P, UI>>,
+fn pin_cutout_params<I: Ids>(
+    pins: &[PinLayout<'_, I>],
+    pin_style_fn: Option<&PinStyleFn<'_, I>>,
+    other: Option<&NodePinState<I::PinId, I::Payload>>,
     theme: &Theme,
     offset: LayoutVector,
     mut is_valid_target: impl FnMut(usize) -> bool,
@@ -244,8 +244,7 @@ fn pin_cutout_params<P: PinId + 'static, UI>(
         } else {
             PinStatus::Idle
         };
-        let pin_style =
-            resolve_pin_style::<P, UI>(pin_style_fn, pin_state, other, theme, pin_status);
+        let pin_style = resolve_pin_style::<I>(pin_style_fn, pin_state, other, theme, pin_status);
         let cutout_r = pin_style.cutout_radius;
         if cutout_r <= 0.01 {
             continue;
@@ -263,13 +262,9 @@ fn pin_cutout_params<P: PinId + 'static, UI>(
     cuts
 }
 
-impl<N, P, E, A, UI, Message, Renderer> NodeGraph<'_, N, P, E, A, UI, Message, Renderer>
+impl<I, Message, Renderer> NodeGraph<'_, I, Message, Renderer>
 where
-    N: NodeId + 'static,
-    P: PinId + 'static,
-    E: EdgeId + 'static,
-    A: AnchorId + 'static,
-    UI: Clone + 'static,
+    I: Ids,
     Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
     /// Signature mirrors the corresponding `Widget` trait method it backs.
@@ -336,7 +331,7 @@ where
         let resolved_graph = if let Some(ref style_fn) = self.graph_style {
             style_fn(theme)
         } else {
-            GraphStyle::from_theme(theme)
+            crate::style::default_graph_style(theme)
         };
 
         // Check if we're edge dragging
@@ -358,16 +353,16 @@ where
         // Vec-allocating tree walk, and the drag preview, node geometry,
         // edge loop, foreground and info passes all need pin positions.
         // Indexed by node index; padded so lookups never go out of bounds.
-        let mut node_pins: Vec<Vec<PinLayout<'_, P, UI>>> = layout
+        let mut node_pins: Vec<Vec<PinLayout<'_, I>>> = layout
             .children()
             .zip(&tree.children)
-            .map(|(node_layout, node_tree)| find_pins::<P, UI>(node_tree, node_layout))
+            .map(|(node_layout, node_tree)| find_pins::<I>(node_tree, node_layout))
             .collect();
         node_pins.resize_with(self.nodes.len(), Vec::new);
 
         // The pin an edge drag started from, surfaced as `other` to pin_style so
         // candidate pins can react to what is being dragged toward them.
-        let drag_source: Option<NodePinState<P, UI>> = match state.dragging {
+        let drag_source: Option<NodePinState<I::PinId, I::Payload>> = match state.dragging {
             Dragging::Edge {
                 from_node,
                 from_pin,
@@ -735,7 +730,7 @@ where
             let mut edge_strokes: Vec<(Shape, Style)> = Vec::with_capacity(self.edges.len() * 2);
             let mut edge_shadows: Vec<(Shape, Style)> = Vec::with_capacity(self.edges.len());
 
-            let pin = |pin: &PinRef<N, P>| -> Option<Station> {
+            let pin = |pin: &PinRef<I>| -> Option<Station> {
                 let node_idx = self.node_index(&pin.node_id)?;
                 let (_, pin_state, (pin_pos, _)) = node_pins[node_idx]
                     .iter()
@@ -754,12 +749,12 @@ where
                     radius: anchor_styles.get(anchor)?.orbit_radius(orbit),
                 })
             };
-            let end_info = |pin: &PinRef<N, P>| -> Option<PinInfo<'_, P, UI>> {
+            let end_info = |pin: &PinRef<I>| -> Option<PinInfo<'_, I>> {
                 let node_idx = self.node_index(&pin.node_id)?;
                 let (_, pin_state, _) = node_pins[node_idx]
                     .iter()
                     .find(|(_, state, _)| state.pin_id == pin.pin_id)?;
-                pin_info::<P, UI>(pin_state)
+                pin_info::<I>(pin_state)
             };
             let hit_edge = cable_hit.as_ref().map(|hit| match &hit.zone {
                 CableZone::End { edge, .. }
@@ -1057,7 +1052,7 @@ where
 
                 let drag_edge_style = match (
                     self.dragging_edge_style.as_ref(),
-                    pin_info::<P, UI>(from_pin_state),
+                    pin_info::<I>(from_pin_state),
                 ) {
                     (Some(f), Some(info)) => f(theme, info),
                     _ => crate::style::default_edge_style(theme, EdgeStatus::Idle),
@@ -1680,7 +1675,7 @@ mod tests {
     use iced_widget::core::{Background, Color, Element, Transformation, image};
 
     use crate::style::EdgeStyle;
-    use crate::{PinDirection, PinRef, PinSide, default_edge_style, node, node_pin};
+    use crate::{PinDirection, PinRef, PinSide, default_edge_style, edge, node, node_pin};
 
     /// Satisfies the renderer bounds [`NodeGraph`] imposes and keeps nothing:
     /// what these tests read is widget state, not renderer output.
@@ -1742,12 +1737,8 @@ mod tests {
         }
     }
 
-    fn styled_edge(
-        from: PinRef<usize, usize>,
-        to: PinRef<usize, usize>,
-        curve: EdgeCurve,
-    ) -> Edge<'static, usize, usize, (), usize, ()> {
-        edge!(from, to).style(move |theme, status, _from, _to| EdgeStyle {
+    fn styled_edge(from: PinRef, to: PinRef, curve: EdgeCurve) -> Edge<'static> {
+        edge((), from, to).style(move |theme, status, _from, _to| EdgeStyle {
             curve,
             ..default_edge_style(theme, status)
         })
@@ -1767,41 +1758,39 @@ mod tests {
             height: 300.0,
         };
 
-        let mut graph: NodeGraph<'static, usize, usize, (), usize, (), (), NullRenderer> =
-            NodeGraph::default()
-                .width(Length::Fixed(SIZE.width))
-                .height(Length::Fixed(SIZE.height));
-        graph.push_node(node(
-            0usize,
-            Point::new(20.0, 40.0),
-            node_pin(PinSide::Right, 0usize, Blank).direction(PinDirection::Output),
-        ));
-        graph.push_node(node(
-            1usize,
-            Point::new(220.0, 40.0),
-            node_pin(PinSide::Left, 1usize, Blank).direction(PinDirection::Input),
-        ));
-
-        graph.push_edge(styled_edge(
-            PinRef::new(0, 9usize),
-            PinRef::new(1, 1usize),
-            EdgeCurve::Line,
-        ));
-        graph.push_edge(styled_edge(
-            PinRef::new(0, 0usize),
-            PinRef::new(1, 1usize),
-            EdgeCurve::Line,
-        ));
-        graph.push_edge(styled_edge(
-            PinRef::new(7, 0usize),
-            PinRef::new(1, 1usize),
-            EdgeCurve::Line,
-        ));
-        graph.push_edge(styled_edge(
-            PinRef::new(0, 0usize),
-            PinRef::new(1, 1usize),
-            EdgeCurve::BezierCubic,
-        ));
+        let mut graph: NodeGraph<'static, Indexed, (), NullRenderer> = NodeGraph::new()
+            .width(Length::Fixed(SIZE.width))
+            .height(Length::Fixed(SIZE.height))
+            .push_node(node(
+                0,
+                Point::new(20.0, 40.0),
+                node_pin(PinSide::Right, 0usize, Blank).direction(PinDirection::Output),
+            ))
+            .push_node(node(
+                1,
+                Point::new(220.0, 40.0),
+                node_pin(PinSide::Left, 1usize, Blank).direction(PinDirection::Input),
+            ))
+            .push_edge(styled_edge(
+                PinRef::new(0, 9),
+                PinRef::new(1, 1),
+                EdgeCurve::Line,
+            ))
+            .push_edge(styled_edge(
+                PinRef::new(0, 0),
+                PinRef::new(1, 1),
+                EdgeCurve::Line,
+            ))
+            .push_edge(styled_edge(
+                PinRef::new(7, 0),
+                PinRef::new(1, 1),
+                EdgeCurve::Line,
+            ))
+            .push_edge(styled_edge(
+                PinRef::new(0, 0),
+                PinRef::new(1, 1),
+                EdgeCurve::BezierCubic,
+            ));
 
         let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, NullRenderer>);
         let mut renderer = NullRenderer;

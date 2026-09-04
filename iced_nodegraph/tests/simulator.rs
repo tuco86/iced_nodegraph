@@ -16,13 +16,27 @@ use iced::widget::{container, text};
 use iced::{Element, Length, Point, Size, Theme, Vector};
 use iced::{keyboard, mouse};
 use iced_nodegraph::{
-    AnchorStatus, DragInfo, NodeGraph, PinRef, anchor, default_anchor_style, edge, node, pin,
+    AnchorStatus, DragInfo, Ids, NodeGraph, PinRef, anchor, default_anchor_style, edge, node, pin,
 };
 use iced_test::Simulator;
 
+/// The vocabulary every scene here shares: `usize` ids throughout, so an
+/// edge can be named by `on_edge_delete` and a message enum serves both the
+/// plain and the routed scenes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct SimIds;
+
+impl Ids for SimIds {
+    type NodeId = usize;
+    type PinId = usize;
+    type EdgeId = usize;
+    type AnchorId = usize;
+    type Payload = ();
+}
+
 type Renderer = iced::Renderer;
-type Graph = NodeGraph<'static, usize, usize, (), usize, (), Msg, Renderer>;
-type Pin = PinRef<usize, usize>;
+type Graph = NodeGraph<'static, SimIds, Msg, Renderer>;
+type Pin = PinRef<SimIds>;
 
 /// Captures every interaction callback the graph can emit.
 #[derive(Debug, Clone, PartialEq)]
@@ -35,7 +49,7 @@ enum Msg {
     Connect(Pin, Pin),
     Disconnect(Pin, Pin),
     Camera(Point, f32),
-    DragStart(DragInfo<usize, usize>),
+    DragStart(DragInfo<SimIds>),
     DragUpdate(Point),
     DragEnd,
     Button,
@@ -91,7 +105,7 @@ fn graph_of(
         let body = container(iced::widget::text("n"))
             .width(Length::Fixed(NODE_W))
             .height(Length::Fixed(NODE_H));
-        ng.push_node(
+        ng = ng.push_node(
             node(id, pos, body)
                 .selected(selected.contains(&id))
                 .resizable(resizable),
@@ -474,18 +488,18 @@ fn pin_graph(connect_ok: bool, seed_edge: bool) -> Element<'static, Msg, Theme, 
         .on_connect(Msg::Connect)
         .on_disconnect(Msg::Disconnect)
         .can_connect(move |_, _| connect_ok);
-    ng.push_node(node(
+    ng = ng.push_node(node(
         0usize,
         OUT_POS,
         pin!(Right, 0usize, pin_body::<_>(), Output),
     ));
-    ng.push_node(node(
+    ng = ng.push_node(node(
         1usize,
         IN_POS,
         pin!(Left, 0usize, pin_body::<_>(), Input),
     ));
     if seed_edge {
-        ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)));
+        ng = ng.push_edge(edge(0, PinRef::new(0, 0), PinRef::new(1, 0)));
     }
     ng.into()
 }
@@ -566,29 +580,39 @@ fn ctrl_click_on_edge_disconnects() {
 /// drag leaves a snapped pin, where no host edge exists.
 #[test]
 fn cutting_an_edge_reports_its_host_id() {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    struct WireIds;
+
+    impl Ids for WireIds {
+        type NodeId = usize;
+        type PinId = usize;
+        type EdgeId = &'static str;
+        type AnchorId = usize;
+        type Payload = ();
+    }
+
     #[derive(Debug, Clone, PartialEq)]
     enum M {
-        Disconnect(Pin, Pin),
+        Disconnect(PinRef<WireIds>, PinRef<WireIds>),
         Cut(Vec<&'static str>),
     }
 
-    let mut ng: NodeGraph<'_, usize, usize, &'static str, usize, (), M, Renderer> =
-        NodeGraph::default()
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .on_disconnect(M::Disconnect)
-            .on_edge_delete(M::Cut);
-    ng.push_node(node(
+    let mut ng: NodeGraph<'_, WireIds, M, Renderer> = NodeGraph::default()
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .on_disconnect(M::Disconnect)
+        .on_edge_delete(M::Cut);
+    ng = ng.push_node(node(
         0usize,
         OUT_POS,
         pin!(Right, 0usize, pin_body::<_>(), Output),
     ));
-    ng.push_node(node(
+    ng = ng.push_node(node(
         1usize,
         IN_POS,
         pin!(Left, 0usize, pin_body::<_>(), Input),
     ));
-    ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0), "wire-7"));
+    ng = ng.push_edge(edge("wire-7", PinRef::new(0, 0), PinRef::new(1, 0)));
 
     let mut ui = Simulator::new(Element::from(ng));
     let mid = Point::new((out_anchor().x + in_anchor().x) / 2.0, out_anchor().y);
@@ -614,8 +638,8 @@ fn camera_graph() -> Element<'static, Msg, Theme, Renderer> {
     let mut ng: Graph = NodeGraph::default()
         .width(Length::Fill)
         .height(Length::Fill)
-        .on_pan(Msg::Camera);
-    ng.push_node(node(
+        .on_camera(Msg::Camera);
+    ng = ng.push_node(node(
         0usize,
         Point::new(100.0, 100.0),
         container(text("n"))
@@ -743,22 +767,22 @@ fn rewire_graph() -> Element<'static, Msg, Theme, Renderer> {
         .height(Length::Fill)
         .on_connect(Msg::Connect)
         .on_disconnect(Msg::Disconnect);
-    ng.push_node(node(
+    ng = ng.push_node(node(
         0usize,
         OUT_POS,
         pin!(Right, 0usize, pin_body::<_>(), Output),
     ));
-    ng.push_node(node(
+    ng = ng.push_node(node(
         1usize,
         IN_POS,
         pin!(Left, 0usize, pin_body::<_>(), Input),
     ));
-    ng.push_node(node(
+    ng = ng.push_node(node(
         2usize,
         Point::new(IN_POS.x, 300.0),
         pin!(Left, 0usize, pin_body::<_>(), Input),
     ));
-    ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)));
+    ng = ng.push_edge(edge(0, PinRef::new(0, 0), PinRef::new(1, 0)));
     ng.into()
 }
 
@@ -829,22 +853,22 @@ fn default_rejects_second_edge_to_occupied_input() {
         .width(Length::Fill)
         .height(Length::Fill)
         .on_connect(Msg::Connect);
-    ng.push_node(node(
+    ng = ng.push_node(node(
         0usize,
         OUT_POS,
         pin!(Right, 0usize, pin_body::<_>(), Output),
     ));
-    ng.push_node(node(
+    ng = ng.push_node(node(
         1usize,
         IN_POS,
         pin!(Left, 0usize, pin_body::<_>(), Input),
     ));
-    ng.push_node(node(
+    ng = ng.push_node(node(
         2usize,
         Point::new(OUT_POS.x, 300.0),
         pin!(Right, 0usize, pin_body::<_>(), Output),
     ));
-    ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)));
+    ng = ng.push_edge(edge(0, PinRef::new(0, 0), PinRef::new(1, 0)));
     let mut ui = Simulator::new(Element::from(ng));
 
     let from = Point::new(OUT_POS.x + NODE_W, 300.0 + NODE_H / 2.0); // node 2 right pin
@@ -874,18 +898,18 @@ fn occlusion_graph() -> Element<'static, Msg, Theme, Renderer> {
         .on_disconnect(Msg::Disconnect)
         .on_select(Msg::Select)
         .on_move(Msg::Move);
-    ng.push_node(node(
+    ng = ng.push_node(node(
         0usize,
         OUT_POS,
         pin!(Right, 0usize, pin_body::<_>(), Output),
     ));
-    ng.push_node(node(
+    ng = ng.push_node(node(
         1usize,
         IN_POS,
         pin!(Left, 0usize, pin_body::<_>(), Input),
     ));
     // Cover node 1 input anchor (IN_POS.x, IN_POS.y + H/2) with a plain body.
-    ng.push_node(node(
+    ng = ng.push_node(node(
         2usize,
         Point::new(IN_POS.x - NODE_W / 2.0, IN_POS.y),
         container(text("cover"))
@@ -939,8 +963,8 @@ fn overlaid_graph() -> Element<'static, Msg, Theme, Renderer> {
     let mut ng: Graph = NodeGraph::default()
         .width(Length::Fill)
         .height(Length::Fill)
-        .on_pan(Msg::Camera);
-    ng.push_node(node(
+        .on_camera(Msg::Camera);
+    ng = ng.push_node(node(
         0usize,
         Point::new(100.0, 100.0),
         container(text("n"))
@@ -983,7 +1007,7 @@ fn click_on_button_in_node_routes_to_button_not_node() {
         .width(Length::Fill)
         .height(Length::Fill)
         .on_select(Msg::Select);
-    ng.push_node(node(
+    ng = ng.push_node(node(
         0usize,
         Point::new(100.0, 100.0),
         iced::widget::button(text("go"))
@@ -1016,7 +1040,7 @@ fn backspace_in_focused_text_input_does_not_delete_node() {
         .height(Length::Fill)
         .on_select(Msg::Select)
         .on_delete(Msg::Delete);
-    ng.push_node(node(
+    ng = ng.push_node(node(
         0usize,
         Point::new(100.0, 100.0),
         iced::widget::text_input("", "abc")
@@ -1056,14 +1080,14 @@ fn backspace_in_focused_text_input_does_not_delete_node() {
 #[test]
 #[should_panic(expected = "duplicate node id")]
 fn push_node_rejects_duplicate_id_in_debug() {
-    let mut ng: Graph = NodeGraph::default();
     let body = || {
         container(text("n"))
             .width(Length::Fixed(NODE_W))
             .height(Length::Fixed(NODE_H))
     };
-    ng.push_node(node(7usize, Point::new(0.0, 0.0), body()));
-    ng.push_node(node(7usize, Point::new(50.0, 50.0), body()));
+    let _: Graph = NodeGraph::default()
+        .push_node(node(7, Point::new(0.0, 0.0), body()))
+        .push_node(node(7, Point::new(50.0, 50.0), body()));
 }
 
 /// A node and an anchor may carry the same id: the two are separate id spaces,
@@ -1071,14 +1095,14 @@ fn push_node_rejects_duplicate_id_in_debug() {
 #[test]
 fn a_node_and_an_anchor_may_share_a_number() {
     let mut ng: Graph = NodeGraph::default();
-    ng.push_node(node(
+    ng = ng.push_node(node(
         7usize,
         Point::new(0.0, 0.0),
         container(text("n"))
             .width(Length::Fixed(NODE_W))
             .height(Length::Fixed(NODE_H)),
     ));
-    ng.push_anchor(anchor(7usize, Point::new(120.0, 120.0)));
+    ng = ng.push_anchor(anchor(7usize, Point::new(120.0, 120.0)));
 
     let ui = Simulator::new(Element::from(ng));
     let _ = ui.into_messages();
@@ -1097,13 +1121,13 @@ fn output_to_output_does_not_connect() {
         .width(Length::Fill)
         .height(Length::Fill)
         .on_connect(Msg::Connect);
-    ng.push_node(node(
+    ng = ng.push_node(node(
         0usize,
         OUT_POS,
         pin!(Right, 0usize, pin_body::<_>(), Output),
     ));
     // Second output pin, anchored at IN_POS left edge for an easy drag target.
-    ng.push_node(node(
+    ng = ng.push_node(node(
         1usize,
         IN_POS,
         pin!(Left, 0usize, pin_body::<_>(), Output),
@@ -1127,7 +1151,7 @@ fn cannot_connect_pin_to_itself() {
         .width(Length::Fill)
         .height(Length::Fill)
         .on_connect(Msg::Connect);
-    ng.push_node(node(
+    ng = ng.push_node(node(
         0usize,
         OUT_POS,
         pin!(Right, 0usize, pin_body::<_>(), Output),
@@ -1204,21 +1228,21 @@ fn zoomed_pin_graph(seed_edge: bool) -> Element<'static, Msg, Theme, Renderer> {
     let mut ng: Graph = NodeGraph::default()
         .width(Length::Fill)
         .height(Length::Fill)
-        .view(CAM_POS, CAM_ZOOM)
+        .camera(CAM_POS, CAM_ZOOM)
         .on_connect(Msg::Connect)
         .on_disconnect(Msg::Disconnect);
-    ng.push_node(node(
+    ng = ng.push_node(node(
         0usize,
         OUT_POS,
         pin!(Right, 0usize, pin_body::<_>(), Output),
     ));
-    ng.push_node(node(
+    ng = ng.push_node(node(
         1usize,
         IN_POS,
         pin!(Left, 0usize, pin_body::<_>(), Input),
     ));
     if seed_edge {
-        ng.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)));
+        ng = ng.push_edge(edge(0, PinRef::new(0, 0), PinRef::new(1, 0)));
     }
     ng.into()
 }
@@ -1291,7 +1315,7 @@ fn shift_click_deselects_already_selected_node() {
 // and they must bracket every drag exactly once.
 // ---------------------------------------------------------------------------
 
-fn drag_infos(msgs: &[Msg]) -> Vec<DragInfo<usize, usize>> {
+fn drag_infos(msgs: &[Msg]) -> Vec<DragInfo<SimIds>> {
     msgs.iter()
         .filter_map(|m| match m {
             Msg::DragStart(info) => Some(info.clone()),
@@ -1406,7 +1430,7 @@ fn snapshot_node_graph() -> Element<'static, Msg, Theme, Renderer> {
             ..Default::default()
         });
     // Centered: 1024x768 -> node spans (432,344)..(592,424).
-    ng.push_node(node(0usize, Point::new(432.0, 344.0), body));
+    ng = ng.push_node(node(0usize, Point::new(432.0, 344.0), body));
     ng.into()
 }
 
@@ -1471,12 +1495,12 @@ fn pin_press_without_on_connect_falls_through_to_selection() {
         .width(Length::Fill)
         .height(Length::Fill)
         .on_select(Msg::Select); // deliberately no on_connect
-    ng.push_node(node(
+    ng = ng.push_node(node(
         0usize,
         OUT_POS,
         pin!(Right, 0usize, pin_body::<_>(), Output),
     ));
-    ng.push_node(node(
+    ng = ng.push_node(node(
         1usize,
         IN_POS,
         pin!(Left, 0usize, pin_body::<_>(), Input),
@@ -1714,9 +1738,9 @@ fn graph_with_anchor(view: View, at: Point) -> Element<'static, Msg, Theme, Rend
     let mut ng: Graph = NodeGraph::default()
         .width(Length::Fill)
         .height(Length::Fill)
-        .view(view.position, view.zoom)
+        .camera(view.position, view.zoom)
         .on_anchor_move(Msg::AnchorMove);
-    ng.push_anchor(anchor(ANCHOR_A, at));
+    ng = ng.push_anchor(anchor(ANCHOR_A, at));
     ng.into()
 }
 
@@ -1761,7 +1785,7 @@ fn an_anchor_is_not_grabbable_without_the_callback() {
         .width(Length::Fill)
         .height(Length::Fill)
         .on_select(Msg::Select);
-    ng.push_anchor(anchor(ANCHOR_A, at));
+    ng = ng.push_anchor(anchor(ANCHOR_A, at));
     let mut ui = Simulator::new(Element::from(ng));
     drag(&mut ui, at, Point::new(260.0, 190.0));
 
@@ -1790,7 +1814,7 @@ fn an_anchor_is_not_grabbable_without_the_callback() {
 
 /// The graph shape the route scenes need: edge ids are `usize`, so an edge is
 /// named by the index it was pushed at.
-type RouteGraph = NodeGraph<'static, usize, usize, usize, usize, (), Msg, Renderer>;
+type RouteGraph = Graph;
 
 /// The id of the one edge a route scene carries.
 const ROUTE_EDGE: usize = 0;
@@ -1828,22 +1852,22 @@ fn route_scene(
     anchors: &[(usize, Point)],
     route: &[usize],
 ) -> Element<'static, Msg, Theme, Renderer> {
-    let mut ng = ng.view(view.position, view.zoom);
-    ng.push_node(node(
+    let mut ng = ng.camera(view.position, view.zoom);
+    ng = ng.push_node(node(
         0usize,
         OUT_POS,
         pin!(Right, 0usize, pin_body::<_>(), Output),
     ));
-    ng.push_node(node(
+    ng = ng.push_node(node(
         1usize,
         ROUTE_IN_POS,
         pin!(Left, 0usize, pin_body::<_>(), Input),
     ));
     for &(id, at) in anchors {
-        ng.push_anchor(anchor(id, at));
+        ng = ng.push_anchor(anchor(id, at));
     }
-    ng.push_edge(
-        edge(PinRef::new(0, 0), PinRef::new(1, 0), ROUTE_EDGE).route(route.iter().copied()),
+    ng = ng.push_edge(
+        edge(ROUTE_EDGE, PinRef::new(0, 0), PinRef::new(1, 0)).route(route.iter().copied()),
     );
     ng.into()
 }
@@ -1998,7 +2022,7 @@ fn a_click_of_the_pan_button_on_a_core_deletes() {
         route_scene(
             routing_graph()
                 .on_anchor_delete(Msg::AnchorDeleted)
-                .on_pan(Msg::Camera),
+                .on_camera(Msg::Camera),
             View::IDENTITY,
             &[(ANCHOR_A, A_AT)],
             &[ANCHOR_A],
@@ -2033,7 +2057,7 @@ fn a_click_of_the_pan_button_on_a_core_deletes() {
 #[test]
 fn a_click_of_the_pan_button_on_a_wrap_detaches() {
     let mut ui = Simulator::new(route_scene(
-        routing_graph().on_pan(Msg::Camera),
+        routing_graph().on_camera(Msg::Camera),
         View::IDENTITY,
         &[(ANCHOR_A, A_AT)],
         &[ANCHOR_A],
@@ -2084,17 +2108,17 @@ fn cutting_a_routed_cable_kills_one_edge() {
         .on_edge_delete(Msg::EdgeDelete);
     let shared = Point::new(330.0, 300.0);
     for (id, at) in [(0usize, OUT_POS), (2usize, Point::new(OUT_POS.x, 500.0))] {
-        ng.push_node(node(id, at, pin!(Right, 0usize, pin_body::<_>(), Output)));
+        ng = ng.push_node(node(id, at, pin!(Right, 0usize, pin_body::<_>(), Output)));
     }
     for (id, at) in [
         (1usize, ROUTE_IN_POS),
         (3usize, Point::new(ROUTE_IN_POS.x, 500.0)),
     ] {
-        ng.push_node(node(id, at, pin!(Left, 0usize, pin_body::<_>(), Input)));
+        ng = ng.push_node(node(id, at, pin!(Left, 0usize, pin_body::<_>(), Input)));
     }
-    ng.push_anchor(anchor(ANCHOR_A, shared));
-    ng.push_edge(edge(PinRef::new(0, 0), PinRef::new(1, 0), 0usize).route([ANCHOR_A]));
-    ng.push_edge(edge(PinRef::new(2, 0), PinRef::new(3, 0), 1usize).route([ANCHOR_A]));
+    ng = ng.push_anchor(anchor(ANCHOR_A, shared));
+    ng = ng.push_edge(edge(0usize, PinRef::new(0, 0), PinRef::new(1, 0)).route([ANCHOR_A]));
+    ng = ng.push_edge(edge(1usize, PinRef::new(2, 0), PinRef::new(3, 0)).route([ANCHOR_A]));
 
     let mut ui = Simulator::new(Element::from(ng));
     // 100 px along the upper cable, where it has already left the straight run
@@ -2127,31 +2151,31 @@ fn cutting_a_routed_cable_kills_one_edge() {
 fn a_route_drag_snaps_onto_an_occupied_anchor() {
     let scene = || {
         let mut ng = routing_graph();
-        ng.push_node(node(
+        ng = ng.push_node(node(
             0usize,
             OUT_POS,
             pin!(Right, 0usize, pin_body::<_>(), Output),
         ));
-        ng.push_node(node(
+        ng = ng.push_node(node(
             1usize,
             ROUTE_IN_POS,
             pin!(Left, 0usize, pin_body::<_>(), Input),
         ));
-        ng.push_node(node(
+        ng = ng.push_node(node(
             2usize,
             Point::new(OUT_POS.x, 500.0),
             pin!(Right, 0usize, pin_body::<_>(), Output),
         ));
-        ng.push_node(node(
+        ng = ng.push_node(node(
             3usize,
             Point::new(ROUTE_IN_POS.x, 500.0),
             pin!(Left, 0usize, pin_body::<_>(), Input),
         ));
-        ng.push_anchor(anchor(ANCHOR_A, A_AT));
+        ng = ng.push_anchor(anchor(ANCHOR_A, A_AT));
         // Edge 0 already wraps A, so A is singly occupied.
-        ng.push_edge(edge(PinRef::new(0, 0), PinRef::new(1, 0), 0usize).route([ANCHOR_A]));
+        ng = ng.push_edge(edge(0usize, PinRef::new(0, 0), PinRef::new(1, 0)).route([ANCHOR_A]));
         // Edge 1 runs well below and is unrouted.
-        ng.push_edge(edge(PinRef::new(2, 0), PinRef::new(3, 0), 1usize));
+        ng = ng.push_edge(edge(1usize, PinRef::new(2, 0), PinRef::new(3, 0)));
         Element::from(ng)
     };
     // The lower cable's mid-run, and the core of the busy anchor.
@@ -2271,7 +2295,7 @@ fn a_pan_button_click_on_a_wrap_detaches_at_any_zoom() {
         let mut ui = Simulator::new(route_scene(
             routing_graph()
                 .on_anchor_delete(Msg::AnchorDeleted)
-                .on_pan(Msg::Camera),
+                .on_camera(Msg::Camera),
             view,
             &[(ANCHOR_A, A_AT)],
             &[ANCHOR_A],
@@ -2371,26 +2395,27 @@ fn offset_scene(view: View, route: &[usize]) -> Element<'static, Msg, Theme, Ren
     let mut ng: RouteGraph = NodeGraph::default()
         .width(Length::Fill)
         .height(Length::Fill)
-        .view(view.position, view.zoom)
+        .camera(view.position, view.zoom)
         .on_select(Msg::Select)
-        .on_pan(Msg::Camera)
+        .on_camera(Msg::Camera)
         .on_anchor_move(Msg::AnchorMove)
         .on_anchor_create(Msg::AnchorCreated)
         .on_anchor_delete(Msg::AnchorDeleted)
         .on_route_attach(Msg::RouteAttached)
         .on_route_detach(Msg::RouteDetached);
-    ng.push_node(node(
+    ng = ng.push_node(node(
         0usize,
         OUT_POS,
         pin!(Right, 0usize, pin_body::<_>(), Output),
     ));
-    ng.push_node(node(
+    ng = ng.push_node(node(
         1usize,
         IN_POS,
         pin!(Left, 0usize, pin_body::<_>(), Input),
     ));
-    ng.push_anchor(anchor(OFFSET_ANCHOR, OFFSET_ANCHOR_AT));
-    ng.push_edge(edge(PinRef::new(0, 0), PinRef::new(1, 0), OFFSET_EDGE).route(route.to_vec()));
+    ng = ng.push_anchor(anchor(OFFSET_ANCHOR, OFFSET_ANCHOR_AT));
+    ng =
+        ng.push_edge(edge(OFFSET_EDGE, PinRef::new(0, 0), PinRef::new(1, 0)).route(route.to_vec()));
     column![
         container(text(""))
             .width(Length::Fill)

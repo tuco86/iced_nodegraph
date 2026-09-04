@@ -45,8 +45,8 @@ use iced::{
     widget::{Space, button, column, container, row, scrollable, text},
 };
 use iced_nodegraph::{
-    KeyCombo, Keymap, PinInfo as NgPinInfo, PinRef, PinStatus, PinStyle, default_pin_style, edge,
-    node, pin,
+    Ids, KeyCombo, Keymap, PinInfo as NgPinInfo, PinRef, PinStatus, PinStyle, default_pin_style,
+    edge, node, pin,
 };
 use screenshot::{ScreenshotHelper, ScreenshotMessage};
 use std::collections::{HashMap, HashSet};
@@ -58,6 +58,19 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen(start)]
 pub fn wasm_init() {
     console_error_panic_hook::set_once();
+}
+
+/// The id vocabulary of this demo: indexed nodes and pins, unidentified edges,
+/// and a `TypeId` pin payload carrying the data type of each pin.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct TypedIds;
+
+impl Ids for TypedIds {
+    type NodeId = usize;
+    type PinId = usize;
+    type EdgeId = ();
+    type AnchorId = usize;
+    type Payload = std::any::TypeId;
 }
 
 // -- Marker types for pin data_type matching --
@@ -129,8 +142,8 @@ enum PinDir {
 /// owning node styles them).
 fn pin_style(
     theme: &Theme,
-    pin: &NgPinInfo<'_, usize, ::std::any::TypeId>,
-    _other: Option<&NgPinInfo<'_, usize, ::std::any::TypeId>>,
+    pin: &NgPinInfo<'_, TypedIds>,
+    _other: Option<&NgPinInfo<'_, TypedIds>>,
     status: PinStatus,
 ) -> PinStyle {
     use std::any::TypeId;
@@ -165,12 +178,12 @@ struct PinInfo {
 #[derive(Debug, Clone)]
 enum Message {
     EdgeConnected {
-        from: PinRef<usize, usize>,
-        to: PinRef<usize, usize>,
+        from: PinRef<TypedIds>,
+        to: PinRef<TypedIds>,
     },
     EdgeDisconnected {
-        from: PinRef<usize, usize>,
-        to: PinRef<usize, usize>,
+        from: PinRef<TypedIds>,
+        to: PinRef<TypedIds>,
     },
     SelectionChanged(Vec<usize>),
     NodesMoved {
@@ -190,7 +203,7 @@ impl From<ScreenshotMessage> for Message {
 }
 
 struct App {
-    edges: Vec<(PinRef<usize, usize>, PinRef<usize, usize>)>,
+    edges: Vec<(PinRef<TypedIds>, PinRef<TypedIds>)>,
     node_positions: HashMap<usize, Point>,
     pin_registry: HashMap<(usize, usize), PinInfo>,
     selected_nodes: HashSet<usize>,
@@ -278,8 +291,8 @@ impl App {
 
     fn validate_connection(
         &self,
-        from: &PinRef<usize, usize>,
-        to: &PinRef<usize, usize>,
+        from: &PinRef<TypedIds>,
+        to: &PinRef<TypedIds>,
     ) -> Result<String, String> {
         let from_info = self
             .pin_registry
@@ -446,37 +459,36 @@ impl App {
         let theme = self.theme();
 
         let registry = self.pin_registry.clone();
-        let mut ng: ::iced_nodegraph::NodeGraph<usize, usize, (), usize, ::std::any::TypeId, _, _> =
-            ::iced_nodegraph::NodeGraph::default()
-                .can_connect(move |from, to| {
-                    // Live snap feedback: reject self-loops, direction conflicts and
-                    // type mismatches before the edge is committed on release.
-                    if from.node_id() == to.node_id() && from.pin_id() == to.pin_id() {
-                        return false;
+        let mut ng = ::iced_nodegraph::NodeGraph::<TypedIds, _, _>::new()
+            .can_connect(move |from, to| {
+                // Live snap feedback: reject self-loops, direction conflicts and
+                // type mismatches before the edge is committed on release.
+                if from.node_id() == to.node_id() && from.pin_id() == to.pin_id() {
+                    return false;
+                }
+                let from_info = registry.get(&(*from.node_id(), *from.pin_id()));
+                let to_info = registry.get(&(*to.node_id(), *to.pin_id()));
+                match (from_info, to_info) {
+                    (Some(f), Some(t)) => {
+                        let dir_ok = !matches!(
+                            (f.direction, t.direction),
+                            (PinDir::Input, PinDir::Input) | (PinDir::Output, PinDir::Output)
+                        );
+                        dir_ok && f.pin_type.is_compatible(t.pin_type)
                     }
-                    let from_info = registry.get(&(*from.node_id(), *from.pin_id()));
-                    let to_info = registry.get(&(*to.node_id(), *to.pin_id()));
-                    match (from_info, to_info) {
-                        (Some(f), Some(t)) => {
-                            let dir_ok = !matches!(
-                                (f.direction, t.direction),
-                                (PinDir::Input, PinDir::Input) | (PinDir::Output, PinDir::Output)
-                            );
-                            dir_ok && f.pin_type.is_compatible(t.pin_type)
-                        }
-                        _ => false,
-                    }
-                })
-                .on_connect(|from, to| Message::EdgeConnected { from, to })
-                .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })
-                .on_move(|delta, node_ids| Message::NodesMoved { delta, node_ids })
-                .on_select(Message::SelectionChanged)
-                // Rebound keymap: Select All lives on Cmd/Ctrl+L here to
-                // demonstrate host rebinding (see the rules panel).
-                .keymap(Keymap {
-                    select_all: Some(KeyCombo::command('l')),
-                    ..Keymap::default()
-                });
+                    _ => false,
+                }
+            })
+            .on_connect(|from, to| Message::EdgeConnected { from, to })
+            .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })
+            .on_move(|delta, node_ids| Message::NodesMoved { delta, node_ids })
+            .on_select(Message::SelectionChanged)
+            // Rebound keymap: Select All lives on Cmd/Ctrl+L here to
+            // demonstrate host rebinding (see the rules panel).
+            .keymap(Keymap {
+                select_all: Some(KeyCombo::command('l')),
+                ..Keymap::default()
+            });
 
         // Node 0: Number Generator
         let pos = self
@@ -484,8 +496,8 @@ impl App {
             .get(&0)
             .copied()
             .unwrap_or(Point::ORIGIN);
-        ng.push_node(
-            node(0usize, pos, self.number_generator_node(&theme))
+        ng = ng.push_node(
+            node(0, pos, self.number_generator_node(&theme))
                 .selected(self.selected_nodes.contains(&0))
                 .pin_style(pin_style),
         );
@@ -496,8 +508,8 @@ impl App {
             .get(&1)
             .copied()
             .unwrap_or(Point::ORIGIN);
-        ng.push_node(
-            node(1usize, pos, self.math_operations_node(&theme))
+        ng = ng.push_node(
+            node(1, pos, self.math_operations_node(&theme))
                 .selected(self.selected_nodes.contains(&1))
                 .pin_style(pin_style),
         );
@@ -508,8 +520,8 @@ impl App {
             .get(&2)
             .copied()
             .unwrap_or(Point::ORIGIN);
-        ng.push_node(
-            node(2usize, pos, self.type_converter_node(&theme))
+        ng = ng.push_node(
+            node(2, pos, self.type_converter_node(&theme))
                 .selected(self.selected_nodes.contains(&2))
                 .pin_style(pin_style),
         );
@@ -520,8 +532,8 @@ impl App {
             .get(&3)
             .copied()
             .unwrap_or(Point::ORIGIN);
-        ng.push_node(
-            node(3usize, pos, self.display_node(&theme))
+        ng = ng.push_node(
+            node(3, pos, self.display_node(&theme))
                 .selected(self.selected_nodes.contains(&3))
                 .pin_style(pin_style),
         );
@@ -532,16 +544,13 @@ impl App {
             .get(&4)
             .copied()
             .unwrap_or(Point::ORIGIN);
-        ng.push_node(
-            node(4usize, pos, self.bidirectional_hub_node(&theme))
+        ng = ng.push_node(
+            node(4, pos, self.bidirectional_hub_node(&theme))
                 .selected(self.selected_nodes.contains(&4))
                 .pin_style(pin_style),
         );
 
-        // Add edges
-        for (from, to) in &self.edges {
-            ng.push_edge(edge!(*from, *to));
-        }
+        ng = ng.edges(self.edges.iter().map(|(from, to)| edge((), *from, *to)));
 
         // Toolbar
         let toolbar = container(

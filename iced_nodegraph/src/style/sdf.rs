@@ -252,13 +252,15 @@ impl PinStyle {
 #[cfg(test)]
 mod shadow_tests {
     use super::NodeStyle;
+    use crate::style::NodeStatus;
+    use iced_widget::core::Theme;
 
     /// The shadow is one chain (no separate composited bands to seam): a solid
     /// core held below `-shadow_distance`, gradient to transparent at
     /// `+shadow_distance`, centred on the silhouette.
     #[test]
     fn shadow_fills_interior_and_fades_out() {
-        let style = NodeStyle::input();
+        let style = NodeStyle::input(&Theme::Dark, NodeStatus::Idle);
         let layers = style.shadow_sdf_layers(1.0);
 
         assert_eq!(layers.len(), 1, "shadow must be a single entry");

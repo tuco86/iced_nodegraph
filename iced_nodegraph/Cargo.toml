@@ -24,6 +24,8 @@ iced_wgpu.workspace = true
 # `renderer` (= iced_renderer, for the default `Renderer` type parameter).
 # WebGPU only - there is no WebGL fallback (see crate docs).
 iced_widget = { workspace = true, features = ["wgpu"] }
+# `Task` and `Action::widget`, for the one-shot camera operation (`focus`).
+iced_runtime.workspace = true
 web-time.workspace = true
 
 [dev-dependencies]

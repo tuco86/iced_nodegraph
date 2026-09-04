@@ -1,11 +1,11 @@
 //! The one place an iced [`Theme`] becomes node-graph colors.
 //!
-//! Every `default_*_style` and [`GraphStyle::from_theme`] reads its colors from
+//! Every `default_*_style` and [`default_graph_style`] reads its colors from
 //! [`Roles`], so the mapping is defined once for all themes instead of once per
 //! element. What each role means, and the ladder it sits on, is the contract; the
 //! constants below are the whole tuning surface.
 //!
-//! [`GraphStyle::from_theme`]: crate::GraphStyle::from_theme
+//! [`default_graph_style`]: crate::default_graph_style
 
 use iced_widget::core::{Color, Theme};
 
@@ -115,6 +115,13 @@ impl Roles {
             danger: ramp::separate(palette.danger.base.color, canvas, ACCENT_SEPARATION),
             is_dark: palette.is_dark,
         }
+    }
+
+    /// `hue` floored to the same separation from the canvas the accents get,
+    /// so a theme color a preset borrows reads against every canvas the way
+    /// the accents do.
+    pub fn legible(&self, hue: Color) -> Color {
+        ramp::separate(hue, self.canvas, ACCENT_SEPARATION)
     }
 }
 

@@ -18,32 +18,69 @@
 //! ## Quick Start
 //!
 //! ```rust,no_run
-//! use iced_nodegraph::{NodeGraph, PinRef, edge, node, node_graph};
+//! use iced_nodegraph::{PinRef, edge, node, node_graph};
 //! use iced::{Element, Theme, Point, Vector};
 //! use iced::widget::text;
 //! use iced_wgpu::Renderer;
 //!
 //! #[derive(Debug, Clone)]
 //! enum Message {
-//!     EdgeConnected { from: PinRef<usize, usize>, to: PinRef<usize, usize> },
+//!     EdgeConnected { from: PinRef, to: PinRef },
 //!     NodesMoved { delta: Vector, node_ids: Vec<usize> },
 //! }
 //!
-//! fn view(edges: &[(PinRef<usize, usize>, PinRef<usize, usize>)]) -> Element<'_, Message, Theme, Renderer> {
-//!     let mut ng = node_graph()
+//! fn view(edges: &[(PinRef, PinRef)]) -> Element<'_, Message, Theme, Renderer> {
+//!     node_graph()
 //!         .on_connect(|from, to| Message::EdgeConnected { from, to })
-//!         .on_move(|delta, node_ids| Message::NodesMoved { delta, node_ids });
-//!
-//!     ng.push_node(node(0, Point::new(100.0, 100.0), text("Node A")));
-//!     ng.push_node(node(1, Point::new(300.0, 100.0), text("Node B")));
-//!
-//!     for (from, to) in edges {
-//!         ng.push_edge(edge!(*from, *to));
-//!     }
-//!
-//!     ng.into()
+//!         .on_move(|delta, node_ids| Message::NodesMoved { delta, node_ids })
+//!         .push_node(node(0, Point::new(100.0, 100.0), text("Node A")))
+//!         .push_node(node(1, Point::new(300.0, 100.0), text("Node B")))
+//!         .edges(edges.iter().map(|(from, to)| edge((), *from, *to)))
+//!         .into()
 //! }
 //! ```
+//!
+//! ## Ids
+//!
+//! Nodes, pins, edges and anchors carry your own id types, and a pin can carry
+//! a payload. Those five types are named once, on a marker implementing
+//! [`Ids`]; [`Indexed`] (`usize` ids, no edge id, no payload) is the default
+//! and what [`node_graph`] builds. Any type that is
+//! `Clone + Eq + Hash + Debug + Send + Sync + 'static` is an id, so a newtype,
+//! an enum or a `uuid::Uuid` needs no impl.
+//!
+//! ```rust,no_run
+//! use iced_nodegraph::{Ids, NodeGraph, PinRef, node};
+//! use iced::{Element, Point};
+//! use iced::widget::text;
+//!
+//! #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+//! struct AppIds;
+//!
+//! impl Ids for AppIds {
+//!     type NodeId = u64;
+//!     type PinId = &'static str;
+//!     type EdgeId = u64;
+//!     type AnchorId = usize;
+//!     type Payload = ();
+//! }
+//!
+//! #[derive(Debug, Clone)]
+//! enum Message {
+//!     Connected(PinRef<AppIds>, PinRef<AppIds>),
+//! }
+//!
+//! fn view() -> Element<'static, Message> {
+//!     NodeGraph::<AppIds, _, _>::new()
+//!         .on_connect(Message::Connected)
+//!         .push_node(node(7, Point::ORIGIN, text("seven")))
+//!         .into()
+//! }
+//! ```
+//!
+//! The marker is the one type the compiler cannot infer, so it is named on the
+//! graph and in the messages that carry a [`PinRef`]; every builder and
+//! callback infers it from there.
 //!
 //! ## What the host owns
 //!
@@ -70,18 +107,21 @@
 //!   nodes with [`Node::selected`] on the next `view` and your value takes over
 //!   whenever it changes. Selection is a node property, so there is no ordering
 //!   to get right. The camera is the same story through
-//!   [`on_pan`](NodeGraph::on_pan) and [`view`](NodeGraph::view).
+//!   [`on_camera`](NodeGraph::on_camera) and [`camera`](NodeGraph::camera).
 //!
 //! ## Core types
 //!
-//! - [`PinRef`] addresses a pin as `(node_id, pin_id)`, generic over your id
-//!   types. It is the endpoint type in every connection callback.
+//! - [`PinRef`] addresses a pin as `(node_id, pin_id)` over your [`Ids`]. It is
+//!   the endpoint type in every connection callback.
 //! - [`PinEnd`] is the richer endpoint view (direction, occupancy, payload)
 //!   handed to [`can_connect`](NodeGraph::can_connect); [`PinInfo`] is the
 //!   per-pin view handed to the style closures.
 //! - The camera is not a type you hold: push pan and zoom in through
-//!   [`NodeGraph::view`] and read the user's back out through
-//!   [`on_pan`](NodeGraph::on_pan), both as a plain `(Point, f32)`.
+//!   [`NodeGraph::camera`] and read the user's back out through
+//!   [`on_camera`](NodeGraph::on_camera), both as a plain `(Point, f32)`. To
+//!   frame content programmatically, give the graph an
+//!   [`id`](NodeGraph::id) and run the [`focus`] task, as with
+//!   `text_input::focus` or `scrollable::scroll_to`.
 //! - [`Keymap`] holds the rebindable key and pointer bindings, with
 //!   platform-appropriate defaults.
 //! - [`GraphInfo`] carries per-frame diagnostics to
@@ -97,21 +137,23 @@
 //!
 //! ```rust,no_run
 //! use iced::{widget::text, Color, Point};
-//! use iced_nodegraph::{ColorQuad, NodeStyle, default_node_style, node};
+//! use iced_nodegraph::{ColorQuad, Indexed, Node, NodeStyle, default_node_style, node};
 //!
 //! # #[derive(Debug, Clone)]
 //! # enum Message {}
 //! # let (pos, body) = (Point::ORIGIN, text("body"));
-//! node::<_, usize, (), Message, iced::Renderer>(0, pos, body).style(|theme, status| NodeStyle {
+//! let n: Node<'_, Indexed, Message, iced::Renderer> = node(0, pos, body).style(|theme, status| NodeStyle {
 //!     fill_color: ColorQuad::solid(Color::from_rgb(0.2, 0.3, 0.5)),
 //!     ..default_node_style(theme, status)
 //! });
 //! ```
 //!
-//! Presets to reach for before hand-rolling a look: [`NodeStyle::input`],
-//! [`NodeStyle::process`], [`NodeStyle::output`]; [`EdgeStyle::error`],
+//! The presets have the same shape as the defaults, so they drop straight into
+//! `.style(..)`: [`NodeStyle::input`], [`NodeStyle::process`],
+//! [`NodeStyle::output`], [`NodeStyle::comment`]; [`EdgeStyle::error`],
 //! [`EdgeStyle::disabled`], [`EdgeStyle::highlighted`], [`EdgeStyle::data_flow`],
-//! [`EdgeStyle::debug`].
+//! [`EdgeStyle::debug`]. All derive from the theme's palette, like iced's own
+//! `button::success`.
 //!
 //! [`Pattern`] (re-exported from `iced_nodegraph_sdf`) controls every stroke:
 //! `Pattern::solid(width)`, `Pattern::dashed(width, dash, gap)`,
@@ -125,25 +167,24 @@
 //!
 //! ```rust,no_run
 //! use iced::{widget::text, Point};
-//! use iced_nodegraph::{NodeGraph, NodeStyle, Pattern, default_node_style, node};
+//! use iced_nodegraph::{NodeStyle, Pattern, default_node_style, node, node_graph};
 //!
 //! # #[derive(Debug, Clone)]
 //! # enum Message {}
 //! # struct MyNode { id: usize, pos: Point }
 //! # let nodes = [MyNode { id: 0, pos: Point::ORIGIN }];
 //! # let is_working = |_: usize| true;
-//! # let mut ng: NodeGraph<'_, usize, usize, (), usize, (), Message> = NodeGraph::default();
-//! for n in &nodes {
+//! let ng = node_graph::<Message, iced::Renderer>().nodes(nodes.iter().map(|n| {
 //!     let working = is_working(n.id);
-//!     ng.push_node(node(n.id, n.pos, text("body")).style(move |theme, status| {
+//!     node(n.id, n.pos, text("body")).style(move |theme, status| {
 //!         let base = default_node_style(theme, status);
 //!         if working {
 //!             NodeStyle { border_pattern: Pattern::dashed(2.0, 6.0, 4.0).flow(40.0), ..base }
 //!         } else {
 //!             base
 //!         }
-//!     }));
-//! }
+//!     })
+//! }));
 //! ```
 //!
 //! The chrome the widget draws itself follows the same closure-plus-default
@@ -186,10 +227,10 @@
 //! recommended on the web.
 pub use connection::{default_can_connect, direction_ok, input_not_occupied, not_same_node};
 pub use content::{EdgeRadii, node_footer, node_header};
-pub use ids::{AnchorId, EdgeId, NodeId, PinId};
+pub use ids::{Id, Ids, Indexed};
 pub use node_graph::{
-    Anchor, Counts, DragInfo, Easing, Edge, FocusAnimation, FocusOptions, FocusTarget, GraphInfo,
-    Node, NodeGraph, OpTiming, PinRef, anchor, edge,
+    Anchor, Counts, DragInfo, Edge, GraphInfo, Node, NodeGraph, OpTiming, PinRef, anchor, edge,
+    focus::{Easing, FocusAnimation, FocusOptions, FocusTarget, focus, focus_operation},
     input::{ComboKey, KeyAction, KeyCombo, Keymap},
     node,
     widget::node_graph,
@@ -220,6 +261,7 @@ pub use style::{
     default_anchor_style,
     default_cutting_tool_style,
     default_edge_style,
+    default_graph_style,
     default_node_style,
     default_pin_style,
     // Built-in status-driven default styles

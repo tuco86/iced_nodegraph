@@ -21,12 +21,13 @@ use iced::advanced::widget::{Tree, Widget};
 use iced::advanced::{Layout, layout, mouse, renderer};
 use iced::keyboard;
 use iced::touch;
+use iced::widget::Id;
 use iced::{Background, Color, Element, Length, Point, Rectangle, Size, Theme, Vector};
 use iced_wgpu::core::clipboard;
 
 use iced_nodegraph::{
-    AnchorStatus, Easing, FocusAnimation, FocusOptions, FocusTarget, NodeGraph, PinRef, anchor,
-    default_anchor_style, edge, node,
+    AnchorStatus, Easing, FocusAnimation, FocusOptions, FocusTarget, Indexed, NodeGraph, PinRef,
+    anchor, default_anchor_style, edge, focus_operation, node,
 };
 
 mod common;
@@ -76,7 +77,7 @@ impl<'a, Message: 'a> From<ContentProbe> for Element<'a, Message, Theme, Recorde
 
 /// The graph shape every case here builds: default ids, no pin payload, the
 /// recording renderer.
-type Graph<Msg> = NodeGraph<'static, usize, usize, (), usize, (), Msg, Recorder>;
+type Graph<Msg> = NodeGraph<'static, Indexed, Msg, Recorder>;
 
 /// Lays out a single-node graph, places it at `widget_origin`, applies the
 /// given camera (zoom, world position), draws it, and returns the recorded
@@ -90,8 +91,8 @@ fn draw_at_origin(
     let mut graph: Graph<()> = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
-        .view(camera_pos, camera_zoom);
-    graph.push_node(node(0_usize, node_world, Element::from(ContentProbe)));
+        .camera(camera_pos, camera_zoom);
+    graph = graph.push_node(node(0_usize, node_world, Element::from(ContentProbe)));
 
     let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Recorder>);
     let out = Rc::new(RefCell::new(Recorded::default()));
@@ -106,7 +107,7 @@ fn draw_at_origin(
     let layout = Layout::with_offset(widget_origin, &layout_node);
     let viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
 
-    // One update syncs `view()` into the widget camera (the host value differs
+    // One update syncs `camera()` into the widget camera (the host value differs
     // from the unset last-synced value); the event itself is a no-op here.
     let mut msgs: Vec<()> = Vec::new();
     let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
@@ -185,11 +186,11 @@ fn click_select(
     let mut graph: Graph<()> = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
-        .view(camera_pos, camera_zoom)
+        .camera(camera_pos, camera_zoom)
         .on_select(move |ids| {
             *sel.borrow_mut() = Some(ids);
         });
-    graph.push_node(node(0_usize, node_world, Element::from(ContentProbe)));
+    graph = graph.push_node(node(0_usize, node_world, Element::from(ContentProbe)));
 
     let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Recorder>);
     let out = Rc::new(RefCell::new(Recorded::default()));
@@ -207,7 +208,7 @@ fn click_select(
     let mut clipboard = clipboard::Null;
     let cursor = mouse::Cursor::Available(screen);
 
-    // First a CursorMoved so the widget syncs `view()` and tracks the cursor,
+    // First a CursorMoved so the widget syncs `camera()` and tracks the cursor,
     // then the press that performs the hit-test and selection.
     for event in [
         iced::Event::Mouse(mouse::Event::CursorMoved { position: screen }),
@@ -352,10 +353,10 @@ fn selection_box_primitives(
     let mut graph: Graph<()> = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
-        .view(Point::ORIGIN, camera_zoom)
+        .camera(Point::ORIGIN, camera_zoom)
         .on_select(|_ids| {});
     // Node far from the drag so the press opens a selection box, not a node click.
-    graph.push_node(node(
+    graph = graph.push_node(node(
         0_usize,
         Point::new(900.0, 900.0),
         Element::from(ContentProbe),
@@ -620,12 +621,12 @@ fn recipe_hash_is_stable_across_120_frames() {
     let mut graph: Graph<()> = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
-        .view(Point::ORIGIN, 1.0);
+        .camera(Point::ORIGIN, 1.0);
     for (i, p) in [(30.0, 40.0), (140.0, 90.0), (60.0, 220.0)]
         .into_iter()
         .enumerate()
     {
-        graph.push_node(node(i, Point::new(p.0, p.1), Element::from(ContentProbe)));
+        graph = graph.push_node(node(i, Point::new(p.0, p.1), Element::from(ContentProbe)));
     }
 
     let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Recorder>);
@@ -642,7 +643,7 @@ fn recipe_hash_is_stable_across_120_frames() {
         let out = Rc::new(RefCell::new(Recorded::default()));
         let mut renderer = Recorder::new(out.clone());
 
-        // A no-op cursor move per frame both syncs `view()` and lets the widget
+        // A no-op cursor move per frame both syncs `camera()` and lets the widget
         // advance its wall-clock animation time, so `time` genuinely varies
         // across the 120 frames while the geometry must not.
         let mut msgs: Vec<()> = Vec::new();
@@ -718,13 +719,13 @@ fn hosted_content_sandwiched_between_sdf_layers() {
     let mut graph: Graph<()> = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
-        .view(Point::ORIGIN, 1.0);
-    graph.push_node(node(
+        .camera(Point::ORIGIN, 1.0);
+    graph = graph.push_node(node(
         0_usize,
         Point::new(40.0, 40.0),
         Element::from(ContentProbe),
     ));
-    graph.push_node(node(
+    graph = graph.push_node(node(
         1_usize,
         Point::new(180.0, 180.0),
         Element::from(ContentProbe),
@@ -865,11 +866,11 @@ fn run_events_at<Msg: 'static>(
     selected: &[usize],
     events: &[(iced::Event, mouse::Cursor)],
 ) -> Vec<Msg> {
-    graph.push_node(
+    graph = graph.push_node(
         node(0_usize, Point::new(10.0, 10.0), Element::from(ContentProbe))
             .selected(selected.contains(&0)),
     );
-    graph.push_node(
+    graph = graph.push_node(
         node(
             1_usize,
             Point::new(120.0, 10.0),
@@ -998,7 +999,7 @@ fn rebound_pan_button_commits_a_pan() {
     let default_graph: Graph<(Point, f32)> = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
-        .on_pan(|position, zoom| (position, zoom));
+        .on_camera(|position, zoom| (position, zoom));
     let msgs = run_events(default_graph, &events(mouse::Button::Middle));
     assert!(
         msgs.is_empty(),
@@ -1014,7 +1015,7 @@ fn rebound_pan_button_commits_a_pan() {
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
         .keymap(keymap)
-        .on_pan(|position, zoom| (position, zoom));
+        .on_camera(|position, zoom| (position, zoom));
     let msgs = run_events(rebound_graph, &events(mouse::Button::Middle));
     assert_eq!(
         msgs.len(),
@@ -1064,7 +1065,7 @@ fn touch_drag_on_empty_space_pans_the_graph() {
     let graph: Graph<(Point, f32)> = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
-        .on_pan(|position, zoom| (position, zoom));
+        .on_camera(|position, zoom| (position, zoom));
 
     let msgs = run_events(
         graph,
@@ -1098,7 +1099,7 @@ fn touch_pan_at_nonzero_origin_commits_only_the_finger_travel() {
     let graph: Graph<(Point, f32)> = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
-        .on_pan(|position, zoom| (position, zoom));
+        .on_camera(|position, zoom| (position, zoom));
 
     let msgs = run_events_at(
         graph,
@@ -1166,7 +1167,7 @@ fn two_finger_pinch_zooms_the_camera() {
     let graph: Graph<(Point, f32)> = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
-        .on_pan(|position, zoom| (position, zoom));
+        .on_camera(|position, zoom| (position, zoom));
 
     let msgs = run_events(
         graph,
@@ -1237,8 +1238,9 @@ fn interaction_at(
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
         .on_resize(|_, _| ())
-        .view(camera_pos, camera_zoom);
-    graph.push_node(node(0_usize, Point::ORIGIN, Element::from(ContentProbe)).resizable(resizable));
+        .camera(camera_pos, camera_zoom);
+    graph = graph
+        .push_node(node(0_usize, Point::ORIGIN, Element::from(ContentProbe)).resizable(resizable));
 
     let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Recorder>);
     let renderer = Recorder::detached();
@@ -1250,7 +1252,7 @@ fn interaction_at(
     let layout = Layout::with_offset(widget_origin, &layout_node);
     let viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
 
-    // One update syncs `view()` into the widget camera and its viewport origin.
+    // One update syncs `camera()` into the widget camera and its viewport origin.
     let mut msgs: Vec<()> = Vec::new();
     let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
     let mut clipboard = clipboard::Null;
@@ -1310,24 +1312,23 @@ fn the_corner_of_a_non_resizable_node_reports_no_cursor() {
 }
 
 // ---------------------------------------------------------------------------
-// Fit-to-view: the `Home`/`f` keymap actions and the declarative `.focus()`
-// prop. Both resolve a `FocusTarget` against live layout and drive the camera
-// through the same fit math; the pure math is covered next to it in
-// `node_graph::camera`. What these pin is the widget path: what reaches
-// `on_pan`, and when nothing may.
+// Fit-to-view: the `Home`/`f` keymap actions resolve their targets against live
+// layout and drive the camera through the same fit math; the pure math is covered
+// next to it in `node_graph::camera`. What these pin is the widget path: what
+// reaches `on_camera`, and when nothing may.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn frame_all_keypress_emits_on_pan() {
-    // `Home` carries the same default `FocusOptions` as `.focus()` (a 300ms
-    // tween), so the press only starts the tween; the first `RedrawRequested`
-    // after it advances the tween and commits through `on_pan`. The message
+fn frame_all_keypress_emits_on_camera() {
+    // `Home` carries the default `FocusOptions` (a 300ms tween), so the press
+    // only starts the tween; the first `RedrawRequested` after it advances the
+    // tween and commits through `on_camera`.
     // count is deterministic even though the tick's camera value is
     // wall-clock timed.
     let graph: Graph<(Point, f32)> = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
-        .on_pan(|position, zoom| (position, zoom));
+        .on_camera(|position, zoom| (position, zoom));
 
     let msgs = run_events(
         graph,
@@ -1351,18 +1352,18 @@ fn frame_all_keypress_emits_on_pan() {
     assert_eq!(
         msgs.len(),
         1,
-        "Home must start a tween that commits exactly one on_pan on the next redraw: {msgs:?}"
+        "Home must start a tween that commits exactly one camera change on the next redraw: {msgs:?}"
     );
 }
 
 #[test]
 fn frame_selection_with_nothing_selected_is_a_noop() {
     // Bare `f` with an empty selection resolves no AABB: no camera change and
-    // no `on_pan`, mirroring Blender's "View Selected" on an empty pick.
+    // no `on_camera`, mirroring Blender's "View Selected" on an empty pick.
     let graph: Graph<(Point, f32)> = NodeGraph::default()
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
-        .on_pan(|position, zoom| (position, zoom));
+        .on_camera(|position, zoom| (position, zoom));
 
     let msgs = run_events(
         graph,
@@ -1378,8 +1379,8 @@ fn frame_selection_with_nothing_selected_is_a_noop() {
 }
 
 #[test]
-fn frame_all_without_on_pan_falls_through_unconsumed() {
-    // No `on_pan`: the widget cannot commit a fit, so `Home` must not be
+fn frame_all_without_on_camera_falls_through_unconsumed() {
+    // No `on_camera`: the widget cannot commit a fit, so `Home` must not be
     // swallowed - the same gating `CloneSelection` has without `on_clone`.
     let graph: Graph<()> = NodeGraph::default()
         .width(Length::Fixed(400.0))
@@ -1398,42 +1399,31 @@ fn frame_all_without_on_pan_falls_through_unconsumed() {
     );
     assert!(
         msgs.is_empty(),
-        "Home without on_pan must publish nothing: {msgs:?}"
+        "Home without a camera callback must publish nothing: {msgs:?}"
     );
 }
 
 #[test]
-fn focus_seq_dedups_and_new_seq_retriggers() {
-    // Deterministic jump path (`animation: None`): `.focus()` fits exactly once
-    // per new `seq`, however many rebuilds carry the same value, and fits again
-    // the moment `seq` changes - the same nonce discipline as
-    // `view()`/`last_synced_view`. Rebuilds a fresh `NodeGraph` per call while
-    // reusing one `Tree`, exactly as an app re-running `view()` every frame
-    // over persistent widget state.
-    let jump_opts = FocusOptions {
+fn focus_operation_commits_once_per_request() {
+    let options = FocusOptions {
         animation: None,
         ..FocusOptions::default()
     };
-    let build = |seq: u64| -> Graph<(Point, f32)> {
-        let mut graph = NodeGraph::default()
-            .width(Length::Fixed(400.0))
-            .height(Length::Fixed(400.0))
-            .on_pan(|position, zoom| (position, zoom))
-            .focus(seq, FocusTarget::All, jump_opts.clone());
-        graph.push_node(node(
+    let mut graph: Graph<(Point, f32)> = NodeGraph::default()
+        .id(Id::new("g"))
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .on_camera(|position, zoom| (position, zoom))
+        .push_node(node(
             0_usize,
             Point::new(10.0, 10.0),
             Element::from(ContentProbe),
-        ));
-        graph.push_node(node(
+        ))
+        .push_node(node(
             1_usize,
             Point::new(120.0, 10.0),
             Element::from(ContentProbe),
         ));
-        graph
-    };
-
-    let mut graph = build(1);
     let mut tree = Tree::new(&graph as &dyn Widget<(Point, f32), Theme, Recorder>);
     let renderer = Recorder::detached();
     let layout_node = graph.layout(
@@ -1443,39 +1433,47 @@ fn focus_seq_dedups_and_new_seq_retriggers() {
     );
     let layout = Layout::new(&layout_node);
     let viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
-    let mut clipboard = clipboard::Null;
     let no_op_event = iced::Event::Mouse(mouse::Event::CursorMoved {
         position: Point::ORIGIN,
     });
     let mut msgs: Vec<(Point, f32)> = Vec::new();
 
-    let mut send =
-        |graph: &mut Graph<(Point, f32)>, tree: &mut Tree, msgs: &mut Vec<(Point, f32)>| {
-            let mut shell = iced_wgpu::core::Shell::new(msgs);
-            graph.update(
-                tree,
-                &no_op_event,
-                layout,
-                mouse::Cursor::Unavailable,
-                &renderer,
-                &mut clipboard,
-                &mut shell,
-                &viewport,
-            );
-        };
+    let mut request = focus_operation(Id::new("g"), FocusTarget::<Indexed>::All, options.clone());
+    graph.operate(&mut tree, layout, &renderer, &mut request);
+
+    let send = |graph: &mut Graph<(Point, f32)>, tree: &mut Tree, msgs: &mut Vec<(Point, f32)>| {
+        let mut shell = iced_wgpu::core::Shell::new(msgs);
+        let mut clipboard = clipboard::Null;
+        graph.update(
+            tree,
+            &no_op_event,
+            layout,
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+    };
 
     send(&mut graph, &mut tree, &mut msgs);
-    assert_eq!(msgs.len(), 1, "seq 1 must fit once: {msgs:?}");
+    assert_eq!(msgs.len(), 1, "a focus request must commit once: {msgs:?}");
 
-    // Same seq again, rebuilt as a real app does every frame: deduped.
-    graph = build(1);
     send(&mut graph, &mut tree, &mut msgs);
-    assert_eq!(msgs.len(), 1, "repeating seq 1 must dedup: {msgs:?}");
+    assert_eq!(
+        msgs.len(),
+        1,
+        "an update without a request must not refit: {msgs:?}"
+    );
 
-    // New seq: fits again.
-    graph = build(2);
+    let mut request = focus_operation(Id::new("g"), FocusTarget::<Indexed>::All, options);
+    graph.operate(&mut tree, layout, &renderer, &mut request);
     send(&mut graph, &mut tree, &mut msgs);
-    assert_eq!(msgs.len(), 2, "seq 2 must re-trigger the fit: {msgs:?}");
+    assert_eq!(
+        msgs.len(),
+        2,
+        "a fresh focus request must re-trigger the fit: {msgs:?}"
+    );
 }
 
 /// Like [`run_events`], but also returns each event's resulting
@@ -1489,14 +1487,16 @@ fn focus_seq_dedups_and_new_seq_retriggers() {
 /// frame.
 fn run_events_collecting_redraw<Msg: 'static>(
     mut graph: Graph<Msg>,
+    target: FocusTarget<Indexed>,
+    options: FocusOptions,
     events: &[(iced::Event, mouse::Cursor)],
 ) -> (Vec<Msg>, Vec<iced::window::RedrawRequest>) {
-    graph.push_node(node(
+    graph = graph.push_node(node(
         0_usize,
         Point::new(10.0, 10.0),
         Element::from(ContentProbe),
     ));
-    graph.push_node(node(
+    graph = graph.push_node(node(
         1_usize,
         Point::new(120.0, 10.0),
         Element::from(ContentProbe),
@@ -1511,6 +1511,8 @@ fn run_events_collecting_redraw<Msg: 'static>(
     );
     let layout = Layout::new(&layout_node);
     let viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
+    let mut request = focus_operation(Id::new("g"), target, options);
+    graph.operate(&mut tree, layout, &renderer, &mut request);
 
     let mut msgs: Vec<Msg> = Vec::new();
     let mut requests = Vec::new();
@@ -1542,10 +1544,10 @@ fn reentrant_redraw_still_requests_the_next_frame() {
     // symptom: the camera advances exactly one tween step per triggering event
     // and then stops, creeping toward the target one keypress at a time.
     let graph: Graph<(Point, f32)> = NodeGraph::default()
+        .id(Id::new("g"))
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
-        .on_pan(|position, zoom| (position, zoom))
-        .focus(1, FocusTarget::All, FocusOptions::default());
+        .on_camera(|position, zoom| (position, zoom));
 
     // Two passes of ONE frame: the second is re-entrant (same `Instant`). The
     // default 300ms animation is nowhere near done after a single frame, so
@@ -1557,7 +1559,12 @@ fn reentrant_redraw_still_requests_the_next_frame() {
             mouse::Cursor::Unavailable,
         )
     };
-    let (msgs, requests) = run_events_collecting_redraw(graph, &[redraw(), redraw()]);
+    let (msgs, requests) = run_events_collecting_redraw(
+        graph,
+        FocusTarget::<Indexed>::All,
+        FocusOptions::default(),
+        &[redraw(), redraw()],
+    );
 
     assert_eq!(msgs.len(), 1, "only the first pass may publish: {msgs:?}");
     assert_eq!(
@@ -1579,27 +1586,24 @@ fn tween_converges_under_simulated_iced_redraw_loop() {
     // passes), then schedules the next frame ONLY if the LAST pass asked for
     // one. Reproducing that termination rule is the difference between "the
     // tween publishes a value" and "the tween actually animates".
+    let options = FocusOptions {
+        animation: Some(FocusAnimation {
+            duration: Duration::from_millis(300),
+            easing: Easing::EaseInOutCubic,
+        }),
+        ..FocusOptions::default()
+    };
     let mut graph: Graph<(Point, f32)> = NodeGraph::default()
+        .id(Id::new("g"))
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
-        .on_pan(|position, zoom| (position, zoom))
-        .focus(
-            1,
-            FocusTarget::All,
-            FocusOptions {
-                animation: Some(FocusAnimation {
-                    duration: Duration::from_millis(300),
-                    easing: Easing::EaseInOutCubic,
-                }),
-                ..FocusOptions::default()
-            },
-        );
-    graph.push_node(node(
+        .on_camera(|position, zoom| (position, zoom));
+    graph = graph.push_node(node(
         0_usize,
         Point::new(10.0, 10.0),
         Element::from(ContentProbe),
     ));
-    graph.push_node(node(
+    graph = graph.push_node(node(
         1_usize,
         Point::new(120.0, 10.0),
         Element::from(ContentProbe),
@@ -1614,6 +1618,8 @@ fn tween_converges_under_simulated_iced_redraw_loop() {
     );
     let layout = Layout::new(&layout_node);
     let viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
+    let mut request = focus_operation(Id::new("g"), FocusTarget::<Indexed>::All, options);
+    graph.operate(&mut tree, layout, &renderer, &mut request);
     let mut clipboard = clipboard::Null;
 
     let mut msgs: Vec<(Point, f32)> = Vec::new();
@@ -1669,19 +1675,17 @@ fn tween_converges_under_simulated_iced_redraw_loop() {
     // path (`animation: None`) commits that target through the same public
     // route in one message - ground truth without restating node geometry.
     let jump_graph: Graph<(Point, f32)> = NodeGraph::default()
+        .id(Id::new("g"))
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
-        .on_pan(|position, zoom| (position, zoom))
-        .focus(
-            1,
-            FocusTarget::All,
-            FocusOptions {
-                animation: None,
-                ..FocusOptions::default()
-            },
-        );
-    let target = *run_events(
+        .on_camera(|position, zoom| (position, zoom));
+    let target = *run_events_collecting_redraw(
         jump_graph,
+        FocusTarget::<Indexed>::All,
+        FocusOptions {
+            animation: None,
+            ..FocusOptions::default()
+        },
         &[(
             iced::Event::Mouse(mouse::Event::CursorMoved {
                 position: Point::ORIGIN,
@@ -1689,6 +1693,7 @@ fn tween_converges_under_simulated_iced_redraw_loop() {
             mouse::Cursor::Unavailable,
         )],
     )
+    .0
     .first()
     .expect("jump path must commit the fit target");
 
@@ -1752,10 +1757,15 @@ fn union(a: Rectangle, b: Rectangle) -> Rectangle {
     )
 }
 
-/// Feeds one event to a graph the caller filled itself. [`run_events`] always
-/// pushes two nodes, and a graph made of anchors alone is exactly the case a
-/// node-bounds-only fit gets wrong.
-fn committed_fit(mut graph: Graph<(Point, f32)>) -> Option<(Point, f32)> {
+/// Frames `target` in a graph the caller filled itself and returns the fit it
+/// committed: lay out, hand the graph the focus operation, feed one event so
+/// the pending fit starts. [`run_events`] always pushes two nodes, and a graph
+/// made of anchors alone is exactly the case a node-bounds-only fit gets
+/// wrong.
+fn committed_fit(
+    mut graph: Graph<(Point, f32)>,
+    target: FocusTarget<Indexed>,
+) -> Option<(Point, f32)> {
     let mut tree = Tree::new(&graph as &dyn Widget<(Point, f32), Theme, Recorder>);
     let renderer = Recorder::detached();
     let layout_node = graph.layout(
@@ -1765,6 +1775,9 @@ fn committed_fit(mut graph: Graph<(Point, f32)>) -> Option<(Point, f32)> {
     );
     let layout = Layout::new(&layout_node);
     let viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
+
+    let mut request = focus_operation(Id::new("g"), target, jump());
+    graph.operate(&mut tree, layout, &renderer, &mut request);
 
     let mut msgs: Vec<(Point, f32)> = Vec::new();
     let mut clipboard = clipboard::Null;
@@ -1785,12 +1798,26 @@ fn committed_fit(mut graph: Graph<(Point, f32)>) -> Option<(Point, f32)> {
     msgs.into_iter().next()
 }
 
-fn focused(target: FocusTarget<usize>) -> Graph<(Point, f32)> {
+/// An empty graph carrying the id the focus operations address, reporting
+/// every camera commit as its message.
+fn focusable() -> Graph<(Point, f32)> {
     NodeGraph::default()
+        .id(Id::new("g"))
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(400.0))
-        .on_pan(|position, zoom| (position, zoom))
-        .focus(1, target, jump())
+        .on_camera(|position, zoom| (position, zoom))
+}
+
+/// [`focusable`] with the two nodes [`run_events`] pushes, so a fit with and
+/// without extra content can be compared.
+fn focusable_with_nodes() -> Graph<(Point, f32)> {
+    focusable()
+        .push_node(node(0, Point::new(10.0, 10.0), Element::from(ContentProbe)))
+        .push_node(node(
+            1,
+            Point::new(120.0, 10.0),
+            Element::from(ContentProbe),
+        ))
 }
 
 fn assert_same_fit(fit: (Point, f32), expected: (Point, f32), what: &str) {
@@ -1805,13 +1832,13 @@ fn assert_same_fit(fit: (Point, f32), expected: (Point, f32), what: &str) {
 #[test]
 fn frame_all_resolves_a_graph_made_of_anchors() {
     // Nothing but an anchor is still content. Framing only layout children
-    // makes `Home` a silent no-op here - no camera change, no `on_pan` - on a
+    // makes `Home` a silent no-op here - no camera change, no `on_camera` - on a
     // graph that plainly has something to show.
-    let mut graph = focused(FocusTarget::All);
-    graph.push_anchor(anchor(ANCHOR_ID, ANCHOR_AT));
-    let fit = committed_fit(graph).expect("an anchor is content: All must resolve it");
+    let graph = focusable().push_anchor(anchor(ANCHOR_ID, ANCHOR_AT));
+    let fit =
+        committed_fit(graph, FocusTarget::All).expect("an anchor is content: All must resolve it");
 
-    let expected = committed_fit(focused(FocusTarget::Rect(ring_bounds(ANCHOR_AT, 0))))
+    let expected = committed_fit(focusable(), FocusTarget::Rect(ring_bounds(ANCHOR_AT, 0)))
         .expect("the Rect escape hatch must commit a fit");
     assert_same_fit(fit, expected, "an unattached anchor frames its one ring");
 }
@@ -1820,23 +1847,10 @@ fn frame_all_resolves_a_graph_made_of_anchors() {
 fn frame_all_widens_to_reach_an_anchor_outside_the_nodes() {
     // The anchor sits well past both nodes, so including it must force the
     // camera to pull back. Equal zoom would mean the anchor was cropped out.
-    let mut anchored = focused(FocusTarget::All);
-    anchored.push_anchor(anchor(ANCHOR_ID, ANCHOR_AT));
-
-    let cursor = || {
-        (
-            iced::Event::Mouse(mouse::Event::CursorMoved {
-                position: Point::ORIGIN,
-            }),
-            mouse::Cursor::Unavailable,
-        )
-    };
-    let with = *run_events(anchored, &[cursor()])
-        .first()
-        .expect("All must commit a fit");
-    let without = *run_events(focused(FocusTarget::All), &[cursor()])
-        .first()
-        .expect("All must commit a fit");
+    let anchored = focusable_with_nodes().push_anchor(anchor(ANCHOR_ID, ANCHOR_AT));
+    let with = committed_fit(anchored, FocusTarget::All).expect("All must commit a fit");
+    let without =
+        committed_fit(focusable_with_nodes(), FocusTarget::All).expect("All must commit a fit");
 
     assert!(
         with.1 < without.1,
@@ -1848,11 +1862,11 @@ fn frame_all_widens_to_reach_an_anchor_outside_the_nodes() {
 fn focusing_an_anchor_frames_its_ring() {
     // Anchors have their own id space and their own focus target; `Anchor` is
     // how a host names one, and it must resolve rather than silently no-op.
-    let mut graph = focused(FocusTarget::Anchor(ANCHOR_ID));
-    graph.push_anchor(anchor(ANCHOR_ID, ANCHOR_AT));
-    let fit = committed_fit(graph).expect("an anchor id must resolve");
+    let graph = focusable().push_anchor(anchor(ANCHOR_ID, ANCHOR_AT));
+    let fit =
+        committed_fit(graph, FocusTarget::Anchor(ANCHOR_ID)).expect("an anchor id must resolve");
 
-    let expected = committed_fit(focused(FocusTarget::Rect(ring_bounds(ANCHOR_AT, 0))))
+    let expected = committed_fit(focusable(), FocusTarget::Rect(ring_bounds(ANCHOR_AT, 0)))
         .expect("the Rect escape hatch must commit a fit");
     assert_same_fit(fit, expected, "focusing an anchor by id frames its ring");
 }
@@ -1863,11 +1877,10 @@ fn focusing_a_node_never_reaches_an_anchor() {
     // things to `Node` and `Anchor`. An id only an anchor carries is unknown to
     // `Node`, which makes it a no-op - the camera must not commit a fit, and it
     // must NOT quietly frame the anchor instead.
-    let mut graph = focused(FocusTarget::Node(ANCHOR_ID));
-    graph.push_anchor(anchor(ANCHOR_ID, ANCHOR_AT));
+    let graph = focusable().push_anchor(anchor(ANCHOR_ID, ANCHOR_AT));
 
     assert!(
-        committed_fit(graph).is_none(),
+        committed_fit(graph, FocusTarget::Node(ANCHOR_ID)).is_none(),
         "a node target must not resolve through the anchor map",
     );
 }
@@ -1878,17 +1891,20 @@ fn focusing_a_routed_cable_frames_its_anchor() {
     // not run between its pins: the anchor here sits far outside both endpoint
     // nodes, so framing the endpoints alone leaves the cable's whole detour off
     // screen.
-    let mut graph = focused(FocusTarget::Edge(()));
-    graph.push_node(node(0_usize, FIT_NODE_A, Element::from(ContentProbe)));
-    graph.push_node(node(1_usize, FIT_NODE_B, Element::from(ContentProbe)));
-    graph.push_anchor(anchor(ANCHOR_ID, ANCHOR_AT));
-    graph.push_edge(edge!(PinRef::new(0, 0), PinRef::new(1, 0)).route([ANCHOR_ID]));
-    let fit = committed_fit(graph).expect("a routed edge must resolve");
+    let graph = focusable()
+        .push_node(node(0, FIT_NODE_A, Element::from(ContentProbe)))
+        .push_node(node(1, FIT_NODE_B, Element::from(ContentProbe)))
+        .push_anchor(anchor(ANCHOR_ID, ANCHOR_AT))
+        .push_edge(edge((), PinRef::new(0, 0), PinRef::new(1, 0)).route([ANCHOR_ID]));
+    let fit = committed_fit(graph, FocusTarget::Edge(())).expect("a routed edge must resolve");
 
-    let expected = committed_fit(focused(FocusTarget::Rect(union(
-        union(node_bounds(FIT_NODE_A), node_bounds(FIT_NODE_B)),
-        ring_bounds(ANCHOR_AT, 0),
-    ))))
+    let expected = committed_fit(
+        focusable(),
+        FocusTarget::Rect(union(
+            union(node_bounds(FIT_NODE_A), node_bounds(FIT_NODE_B)),
+            ring_bounds(ANCHOR_AT, 0),
+        )),
+    )
     .expect("the Rect escape hatch must commit a fit");
     assert_same_fit(
         fit,

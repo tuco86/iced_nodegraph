@@ -1,18 +1,19 @@
 //! Common imports for building a node graph view.
 //!
 //! `use iced_nodegraph::prelude::*;` pulls in the vocabulary reached for in
-//! almost every `view()`: the builders, [`PinRef`], the pin and
+//! almost every `view()`: the builders, [`Ids`] and [`PinRef`], the pin and
 //! status types used by `style`/`can_connect` closures, the concrete style
 //! structs with their theme-derived `default_*` bases, and the node-content
 //! helpers. Graph-level configuration set once (`GraphStyle` and the overlay
 //! styles) is imported explicitly when opted into.
 
-// Builders: the entry point, the node/edge/pin constructors and the types they
-// return (named when writing helpers per node type), and the `pin!` macro.
+// Builders: the entry point, the node/edge/anchor/pin constructors and the
+// types they return (named when writing helpers per node type), and the `pin!`
+// macro.
 pub use crate::{Anchor, Edge, Node, anchor, edge, node, node_graph, node_pin, pin};
 
-// Core types named when wiring callbacks and edges.
-pub use crate::{NodeGraph, PinRef};
+// Core types named when declaring the id vocabulary, wiring callbacks and edges.
+pub use crate::{Ids, Indexed, NodeGraph, PinRef};
 
 // Pin and status vocabulary passed to `style` / `pin_style` / `can_connect` closures.
 pub use crate::{
@@ -22,8 +23,8 @@ pub use crate::{
 // Input rebinding: the keymap and its combo vocabulary.
 pub use crate::{ComboKey, KeyAction, KeyCombo, Keymap};
 
-// Programmatic camera focus: the `.focus()` target/options vocabulary.
-pub use crate::{Easing, FocusAnimation, FocusOptions, FocusTarget};
+// Programmatic camera framing: the `focus` task and its target/options vocabulary.
+pub use crate::{Easing, FocusAnimation, FocusOptions, FocusTarget, focus};
 
 // Composable `can_connect` predicates (compose `default_can_connect` to keep the
 // built-in rules when overriding validation).
