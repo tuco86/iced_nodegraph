@@ -161,6 +161,7 @@ pub struct Node<'a, I: Ids = Indexed, Message = (), Renderer = iced_widget::rend
     pub(super) element: Element<'a, Message, Theme, Renderer>,
     pub(super) selected: bool,
     pub(super) resizable: bool,
+    pub(super) frame: bool,
     pub(super) style: Option<NodeStyleFn<'a>>,
     pub(super) pin_style: Option<PinStyleFn<'a, I>>,
 }
@@ -177,6 +178,7 @@ pub fn node<'a, I: Ids, Message, Renderer>(
         element: element.into(),
         selected: false,
         resizable: false,
+        frame: false,
         style: None,
         pin_style: None,
     }
@@ -236,6 +238,22 @@ impl<'a, I: Ids, Message, Renderer> Node<'a, I, Message, Renderer> {
     /// dragging the node like any other part of its body.
     pub fn resizable(mut self, resizable: bool) -> Self {
         self.resizable = resizable;
+        self
+    }
+
+    /// Turns the node into a frame: a backdrop that carries the nodes it
+    /// encloses.
+    ///
+    /// A frame draws behind every non-frame node and loses any press a node
+    /// above it could take, so its body is grabbable only where nothing covers
+    /// it. Dragging it moves every node whose bounds lie fully inside the
+    /// frame's at the moment of the press - containment is recomputed each
+    /// time, so there is no membership to maintain on the host side.
+    ///
+    /// Frame contents ride along through [`on_move`](NodeGraph::on_move)
+    /// alongside the frame itself, which the host applies like any other move.
+    pub fn frame(mut self) -> Self {
+        self.frame = true;
         self
     }
 
@@ -807,6 +825,9 @@ pub struct NodeGraph<'a, I: Ids = Indexed, Message = (), Renderer = iced_widget:
     /// Key and pointer bindings; platform defaults unless overridden via
     /// [`keymap`](Self::keymap).
     pub(super) keymap: input::Keymap,
+    /// World-unit grid a node drag lands on; unset leaves a drag continuous.
+    /// Set through [`snap_grid`](Self::snap_grid).
+    pub(super) snap_grid: Option<f32>,
 }
 
 impl<I: Ids, Message, Renderer> Default for NodeGraph<'_, I, Message, Renderer> {
@@ -844,6 +865,7 @@ impl<I: Ids, Message, Renderer> Default for NodeGraph<'_, I, Message, Renderer> 
             camera: None,
             can_connect: None,
             keymap: input::Keymap::default(),
+            snap_grid: None,
         }
     }
 }
@@ -874,6 +896,21 @@ impl<'a, I: Ids, Message, Renderer> NodeGraph<'a, I, Message, Renderer> {
     /// sync; push a new value (e.g. a reset to origin) and the view snaps there.
     pub fn camera(mut self, position: Point, zoom: f32) -> Self {
         self.camera = Some((position, zoom));
+        self
+    }
+
+    /// Snaps a dragged node's origin to a `spacing`-wide world grid.
+    ///
+    /// The preview and the delta [`on_move`](Self::on_move) reports are the
+    /// same number, so a snapped drag lands where it was shown. The delta is
+    /// computed on the grabbed node and shared by everything the drag carries,
+    /// which keeps a group's relative layout intact - only the grabbed node
+    /// ends up exactly on the grid.
+    ///
+    /// Holding [`Keymap::snap_override`](crate::Keymap::snap_override) (Alt by
+    /// default) suspends the snap while it is held, mid-drag included.
+    pub fn snap_grid(mut self, spacing: f32) -> Self {
+        self.snap_grid = Some(spacing);
         self
     }
 

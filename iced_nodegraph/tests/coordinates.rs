@@ -801,6 +801,66 @@ fn hosted_content_sandwiched_between_sdf_layers() {
     );
 }
 
+#[test]
+fn a_frame_draws_behind_every_plain_node() {
+    // The frame is pushed LAST, so its z is the highest one; the render sort
+    // has to override that or a frame would cover what it is meant to sit
+    // behind (and take every press aimed at those nodes).
+    let mut graph: Graph<()> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .camera(Point::ORIGIN, 1.0);
+    graph = graph.push_node(node(
+        0_usize,
+        Point::new(40.0, 40.0),
+        Element::from(ContentProbe),
+    ));
+    graph = graph.push_node(
+        node(
+            1_usize,
+            Point::new(180.0, 180.0),
+            Element::from(ContentProbe),
+        )
+        .frame(),
+    );
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Recorder>);
+    let out = Rc::new(RefCell::new(Recorded::default()));
+    let mut renderer = Recorder::new(out.clone());
+    let layout_node = graph.layout(
+        &mut tree,
+        &renderer,
+        &layout::Limits::new(Size::ZERO, Size::new(1024.0, 768.0)),
+    );
+    let layout = Layout::with_offset(Vector::ZERO, &layout_node);
+    let viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
+    graph.draw(
+        &tree,
+        &mut renderer,
+        &Theme::Dark,
+        &renderer::Style {
+            text_color: Color::WHITE,
+        },
+        layout,
+        mouse::Cursor::Unavailable,
+        &viewport,
+    );
+
+    let rec = out.borrow();
+    // Each node's content quad sits at its world position, so the draw order of
+    // the two probes is readable off the event stream.
+    let content_at = |x: f32| {
+        content_event_indices(&rec.events)
+            .into_iter()
+            .find(|&i| matches!(rec.events[i], DrawEvent::Content(r) if r.x == x))
+            .unwrap_or_else(|| panic!("no content quad at x={x}: {:?}", rec.events))
+    };
+    assert!(
+        content_at(180.0) < content_at(40.0),
+        "the frame drew after the plain node: {:?}",
+        rec.events,
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Keymap wiring: the widget resolves keyboard shortcuts and the pan button
 // through `NodeGraph::keymap` (host-rebindable). Resolver-only coverage lives

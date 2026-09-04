@@ -203,6 +203,18 @@
 //! snapped keeps the connection, releasing while loose discards the drag. Treat
 //! these callbacks as live state, not a commit.
 //!
+//! [`NodeGraph::snap_grid`] puts a dragged node's origin on a world-unit grid.
+//! The preview and the delta [`on_move`](NodeGraph::on_move) reports are the
+//! same number, and holding [`Keymap::snap_override`] (Alt by default) suspends
+//! the snap for as long as it is held. A drag carrying several nodes shares one
+//! delta computed on the grabbed node, so a group keeps its internal layout.
+//!
+//! A node built with [`Node::frame`] is a backdrop: it renders behind every
+//! non-frame node, answers a press only where none of them covers the point,
+//! and carries the nodes fully inside its bounds along with it. Membership is
+//! resolved from the live layout at press time, so a node dropped into a frame
+//! is carried by the next drag and the host registers nothing.
+//!
 //! Rebindable bindings and their platform defaults are documented on [`Keymap`];
 //! the full control scheme including mouse and touch gestures is in the
 //! [repository README](https://github.com/tuco86/iced_nodegraph#controls).

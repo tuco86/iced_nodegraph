@@ -138,6 +138,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Grid snap while dragging.** `NodeGraph::snap_grid(spacing)` puts a dragged
+  node's origin on a world-unit grid; the preview and the delta `on_move`
+  reports are the same number. The delta is computed on the grabbed node and
+  shared by everything the drag carries, so a group keeps its internal layout.
+  Holding `Keymap::snap_override` (default Alt, read live each frame) suspends
+  the snap mid-drag. A graph without `snap_grid` is unchanged.
+
+- **Frames.** `Node::frame()` turns a node into a backdrop: it renders behind
+  every non-frame node, takes a press only where none of them covers the point,
+  and carries the nodes whose bounds lie fully inside its own. Containment is
+  resolved from the live layout at each press rather than remembered, so a node
+  dropped into a frame is carried by the next drag with nothing for the host to
+  register. Frame contents arrive in the same `on_move` report as the frame.
+
 - **Routing anchors.** An edge still connects exactly two pins and now also
   carries the anchors it wraps on the way: `Edge::route(anchors)`, plus
   `anchor(id, position)` and `NodeGraph::push_anchor`. Anchors carry their own id

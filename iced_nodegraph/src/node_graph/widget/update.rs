@@ -127,7 +127,12 @@ where
         state.ensure_z_entries(self.nodes.len());
         // One selection read per event, shared by every gate and payload below.
         let selection = self.resolved_selection(state);
-        let z_indices = z_render_indices(state, self.nodes.len(), |i| selection.contains(&i));
+        let z_indices = z_render_indices(
+            state,
+            self.nodes.len(),
+            |i| selection.contains(&i),
+            |i| self.nodes[i].frame,
+        );
 
         // A `focus` task the operate pass resolved against the layout (see
         // `Widget::operate`): start the fit here, where a shell exists to
@@ -410,8 +415,9 @@ where
                         Dragging::Graph(origin) => self.handle_graph_pan(&mut ctx, origin),
                         Dragging::Node {
                             node: node_index,
-                            origin,
-                        } => self.handle_node_drag(&mut ctx, node_index, origin),
+                            followers,
+                            ..
+                        } => self.handle_node_drag(&mut ctx, node_index, &followers),
                         Dragging::Anchor { anchor, origin } => {
                             self.handle_anchor_drag(&mut ctx, anchor, origin)
                         }
@@ -449,7 +455,9 @@ where
                         Dragging::SelectionBox(start, _current) => {
                             self.handle_selection_box(&mut ctx, start)
                         }
-                        Dragging::GroupMove(origin) => self.handle_group_move(&mut ctx, origin),
+                        Dragging::GroupMove {
+                            anchor, followers, ..
+                        } => self.handle_group_move(&mut ctx, anchor, &followers),
                     }
 
                     // Iterate top-first so the topmost node's child widgets get a
@@ -818,11 +826,15 @@ where
 
     /// Handles an in-progress single-node drag: reports the final offset on
     /// release (a motionless press+release is a click, not a move).
+    ///
+    /// `followers` ride along without being selected - the contents a frame
+    /// press collected - and share the grabbed node's delta, so the frame and
+    /// what it holds stay put relative to each other.
     fn handle_node_drag(
         &self,
         ctx: &mut UpdateCtx<'_, '_, '_, Message>,
         node_index: usize,
-        origin: LayoutPoint,
+        followers: &[usize],
     ) {
         let UpdateCtx {
             tree,
@@ -831,11 +843,11 @@ where
             shell,
             ..
         } = &mut *ctx;
-        let state = tree.state.downcast_mut::<NodeGraphState>();
         if let Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) = event {
+            let moved_indices = merged_indices(&[node_index], followers);
             if let Some(cursor_position) = world_cursor.position() {
-                let cursor_position = cursor_position.into_euclid();
-                let offset = cursor_position - origin;
+                let state = tree.state.downcast_ref::<NodeGraphState>();
+                let offset = drag_offset(state, self, node_index, cursor_position.into_euclid());
 
                 // A press+release without motion is a click, not
                 // a move: don't emit a spurious move (which would
@@ -843,18 +855,18 @@ where
                 // selection click). Only report an actual drag.
                 let moved = offset.x.abs() > f32::EPSILON || offset.y.abs() > f32::EPSILON;
 
-                // Translate internal index to user ID
-                if let Some(node_id) = self.node_id_at(node_index).cloned()
-                    && moved
+                let node_ids = self.node_ids_at(&moved_indices);
+                if moved
+                    && !node_ids.is_empty()
+                    && let Some(handler) = self.on_move.as_ref()
                 {
-                    // Call on_move handler if set
-                    if let Some(handler) = self.on_move.as_ref() {
-                        shell.publish(handler(offset.into_iced(), vec![node_id]));
-                    }
+                    shell.publish(handler(offset.into_iced(), node_ids));
                 }
             }
-            // Promote this node to the top of the z-order on drop.
-            state.promote_z(node_index);
+            let state = tree.state.downcast_mut::<NodeGraphState>();
+            // Promote what was dragged to the top of the z-order on drop; the
+            // render sort keeps a frame behind its contents regardless.
+            state.promote_z_many(&moved_indices);
             state.dragging = Dragging::None;
             // Emit drag end event
             if let Some(handler) = self.on_drag_end.as_ref() {
@@ -1439,8 +1451,16 @@ where
     }
 
     /// Handles an in-progress group move: reports one shared delta for every
-    /// selected node on release.
-    fn handle_group_move(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>, origin: LayoutPoint) {
+    /// selected node, plus the frame contents following them, on release.
+    ///
+    /// `anchor` is the node the press landed on, whose origin carries the grid
+    /// snap for the whole group.
+    fn handle_group_move(
+        &self,
+        ctx: &mut UpdateCtx<'_, '_, '_, Message>,
+        anchor: usize,
+        followers: &[usize],
+    ) {
         let UpdateCtx {
             tree,
             event,
@@ -1448,25 +1468,25 @@ where
             shell,
             ..
         } = &mut *ctx;
-        let state = tree.state.downcast_mut::<NodeGraphState>();
         match event {
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 shell.request_redraw();
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                let state = tree.state.downcast_ref::<NodeGraphState>();
                 // Complete group move - notify all selected nodes moved
-                let indices: Vec<usize> = Self::selection_indices(&self.resolved_selection(state));
+                let selected = Self::selection_indices(&self.resolved_selection(state));
+                let indices = merged_indices(&selected, followers);
                 if let Some(cursor_position) = world_cursor.position() {
-                    let cursor_position: LayoutPoint = cursor_position.into_euclid();
-                    let offset = cursor_position - origin;
+                    let offset = drag_offset(state, self, anchor, cursor_position.into_euclid());
 
                     // Translate internal indices to user IDs
                     let node_ids = self.node_ids_at(&indices);
-                    let delta = offset.into_iced();
                     if let Some(handler) = self.on_move.as_ref() {
-                        shell.publish(handler(delta, node_ids));
+                        shell.publish(handler(offset.into_iced(), node_ids));
                     }
                 }
+                let state = tree.state.downcast_mut::<NodeGraphState>();
                 // Promote moved nodes to the top of the z-order.
                 state.promote_z_many(&indices);
                 state.dragging = Dragging::None;
@@ -1791,6 +1811,44 @@ where
         true
     }
 
+    /// The nodes the frames among `pressed` carry: every node whose layout rect
+    /// lies fully inside a frame's, minus the frame itself and anything
+    /// `already_moving` reports (the selection a group move already covers).
+    ///
+    /// Containment is resolved here, at press time, and never stored - the
+    /// widget keeps no graph state between frames, so a node dropped into a
+    /// frame is carried by the next drag with nothing to register. Non-frame
+    /// entries in `pressed` contribute nothing, which is what makes an ordinary
+    /// node drag pay a single flag test.
+    fn frame_followers(
+        &self,
+        layout: Layout<'_>,
+        pressed: &[usize],
+        already_moving: impl Fn(usize) -> bool,
+    ) -> Vec<usize> {
+        let mut followers: Vec<usize> = Vec::new();
+        for &frame_index in pressed {
+            if !self.nodes.get(frame_index).is_some_and(|node| node.frame) {
+                continue;
+            }
+            let Some(frame_bounds) = layout.children().nth(frame_index).map(|l| l.bounds()) else {
+                continue;
+            };
+            for (index, node_layout) in layout.children().enumerate() {
+                if index == frame_index
+                    || already_moving(index)
+                    || followers.contains(&index)
+                    || !contains_rect(frame_bounds, node_layout.bounds())
+                {
+                    continue;
+                }
+                followers.push(index);
+            }
+        }
+        followers.sort_unstable();
+        followers
+    }
+
     /// Applies click-selection semantics for a node body press and starts the
     /// matching drag (`Node` or `GroupMove`, gated on `on_move` being wired).
     fn select_or_drag_node(
@@ -1799,7 +1857,13 @@ where
         node_index: usize,
         cursor_position: Point,
     ) {
-        let UpdateCtx { tree, shell, .. } = &mut *ctx;
+        let UpdateCtx {
+            tree,
+            layout,
+            shell,
+            ..
+        } = &mut *ctx;
+        let layout = *layout;
         let state = tree.state.downcast_mut::<NodeGraphState>();
         // The flags are last frame's selection, which is exactly the question
         // here: was this node already part of a selection when it was grabbed?
@@ -1844,7 +1908,12 @@ where
             if current.len() > 1 && already_selected {
                 // Multiple nodes selected, start group move
                 let selected = current.clone();
-                state.dragging = Dragging::GroupMove(cursor_position.into_euclid());
+                let followers = self.frame_followers(layout, &selected, |i| resolved.contains(&i));
+                state.dragging = Dragging::GroupMove {
+                    origin: cursor_position.into_euclid(),
+                    anchor: node_index,
+                    followers,
+                };
                 // Emit drag start event for group
                 if let Some(handler) = self.on_drag_start.as_ref() {
                     shell.publish(handler(DragInfo::Group {
@@ -1852,10 +1921,12 @@ where
                     }));
                 }
             } else {
-                // Single node drag
+                // Single node drag, carrying this frame's contents if it is one
+                let followers = self.frame_followers(layout, &[node_index], |_| false);
                 state.dragging = Dragging::Node {
                     node: node_index,
                     origin: cursor_position.into_euclid(),
+                    followers,
                 };
                 // Emit drag start event for single node
                 if let Some(handler) = self.on_drag_start.as_ref()
@@ -2828,6 +2899,125 @@ fn selection_rect_from_points(a: LayoutPoint, b: LayoutPoint) -> Rectangle {
 /// Checks if two rectangles intersect (have any overlapping area)
 fn rects_intersect(a: &Rectangle, b: &Rectangle) -> bool {
     a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y
+}
+
+/// Whether `outer` fully encloses `inner`, edges counting as inside.
+fn contains_rect(outer: Rectangle, inner: Rectangle) -> bool {
+    inner.x >= outer.x
+        && inner.y >= outer.y
+        && inner.x + inner.width <= outer.x + outer.width
+        && inner.y + inner.height <= outer.y + outer.height
+}
+
+/// The union of `a` and `b` as node indices in push order, deduped: the set
+/// `on_move` reports and the z-order promotes.
+fn merged_indices(a: &[usize], b: &[usize]) -> Vec<usize> {
+    let mut merged = Vec::with_capacity(a.len() + b.len());
+    merged.extend_from_slice(a);
+    merged.extend_from_slice(b);
+    merged.sort_unstable();
+    merged.dedup();
+    merged
+}
+
+/// Whether the in-flight drag carries `node_index`.
+///
+/// `is_selected` answers against the frame's resolved selection, which only a
+/// group move consults; callers pass the selection they already hold rather
+/// than resolving one per node.
+pub(super) fn drag_carries(
+    state: &NodeGraphState,
+    node_index: usize,
+    is_selected: impl Fn(usize) -> bool,
+) -> bool {
+    match &state.dragging {
+        Dragging::Node {
+            node, followers, ..
+        } => *node == node_index || followers.contains(&node_index),
+        Dragging::GroupMove { followers, .. } => {
+            is_selected(node_index) || followers.contains(&node_index)
+        }
+        _ => false,
+    }
+}
+
+/// The one shared delta of an in-flight node or group drag, in layout units,
+/// or `None` when the pointer is dragging something else.
+///
+/// Every node the drag carries moves by this exact vector, so a group keeps its
+/// internal layout and only the grabbed node lands on the snap grid.
+pub(super) fn drag_delta<I, Message, Renderer>(
+    state: &NodeGraphState,
+    graph: &NodeGraph<'_, I, Message, Renderer>,
+    cursor_layout: LayoutPoint,
+) -> Option<LayoutVector>
+where
+    I: Ids,
+{
+    let (origin, anchor) = match &state.dragging {
+        Dragging::Node { node, origin, .. } => (*origin, *node),
+        Dragging::GroupMove { origin, anchor, .. } => (*origin, *anchor),
+        _ => return None,
+    };
+    Some(snapped_delta(state, graph, anchor, cursor_layout - origin))
+}
+
+/// The layout-space offset the in-flight drag applies to `node_index` this
+/// frame: the shared drag delta if the drag carries it, zero otherwise.
+///
+/// The single answer to "where does this node sit right now", read by the draw
+/// preview and by the release handlers that publish `on_move`, so what the user
+/// sees and what the host is told cannot drift apart.
+pub(super) fn drag_offset<I, Message, Renderer>(
+    state: &NodeGraphState,
+    graph: &NodeGraph<'_, I, Message, Renderer>,
+    node_index: usize,
+    cursor_layout: LayoutPoint,
+) -> LayoutVector
+where
+    I: Ids,
+{
+    let Some(delta) = drag_delta(state, graph, cursor_layout) else {
+        return LayoutVector::zero();
+    };
+    // Only a group move needs the selection, so nothing else pays for it.
+    let selection = match state.dragging {
+        Dragging::GroupMove { .. } => graph.resolved_selection(state),
+        _ => HashSet::new(),
+    };
+    if drag_carries(state, node_index, |i| selection.contains(&i)) {
+        delta
+    } else {
+        LayoutVector::zero()
+    }
+}
+
+/// `raw` adjusted so the anchor node's world origin lands on the graph's snap
+/// grid; `raw` unchanged when no grid is set or the override modifier is held.
+///
+/// The modifier is read off the live state, so pressing or releasing it
+/// mid-drag takes effect on the next frame. Layout and world space differ only
+/// in origin, so a delta is the same vector in both and needs no conversion.
+fn snapped_delta<I, Message, Renderer>(
+    state: &NodeGraphState,
+    graph: &NodeGraph<'_, I, Message, Renderer>,
+    anchor: usize,
+    raw: LayoutVector,
+) -> LayoutVector
+where
+    I: Ids,
+{
+    let Some(spacing) = graph.snap_grid.filter(|s| *s > 0.0 && s.is_finite()) else {
+        return raw;
+    };
+    let Some(origin) = graph.nodes.get(anchor).map(|node| node.position) else {
+        return raw;
+    };
+    if state.modifiers.contains(graph.keymap.snap_override) {
+        return raw;
+    }
+    let snap = |from: f32, delta: f32| ((from + delta) / spacing).round() * spacing - from;
+    LayoutVector::new(snap(origin.x, raw.x), snap(origin.y, raw.y))
 }
 
 #[cfg(test)]

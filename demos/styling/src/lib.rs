@@ -62,9 +62,10 @@
 
 mod nodes;
 
+use demo_common::{NodeContentStyle, node_title_bar};
 use iced::{
-    Element, Length, Point, Subscription, Task, Theme, Vector,
-    widget::{button, column, container, opaque, pick_list, row, slider, stack, text},
+    Element, Length, Point, Rectangle, Size, Subscription, Task, Theme, Vector,
+    widget::{Space, button, column, container, opaque, pick_list, row, slider, stack, text},
 };
 use iced_nodegraph::{
     GraphStyle, Ids, NodeStatus, NodeStyle, Pattern, PinDirection, PinInfo, PinRef, PinStatus,
@@ -72,6 +73,10 @@ use iced_nodegraph::{
 };
 use nodes::styled_node;
 use std::collections::HashSet;
+
+/// Node id of the frame. Every other node is named by its index in `nodes`, so
+/// a sentinel outside that space keeps the two apart in `on_move`.
+const FRAME_NODE: usize = usize::MAX;
 
 /// Id vocabulary of this demo: usize node, pin, edge and anchor ids, and a
 /// `TypeId` pin payload naming the data kind a pin carries.
@@ -154,6 +159,7 @@ enum Message {
         delta: Vector,
         indices: Vec<usize>,
     },
+    FrameResized(Size),
 
     // Routing anchors
     AnchorCreated {
@@ -313,6 +319,9 @@ struct Application {
     current_theme: Theme,
     selected_node: Option<usize>,
     graph_selection: HashSet<usize>,
+    /// The frame behind the two input nodes, in world units. Host state like
+    /// every node's position: the widget only reports the drag and the grip.
+    frame: Rectangle,
 }
 
 impl Default for Application {
@@ -387,6 +396,7 @@ impl Default for Application {
             current_theme: Theme::CatppuccinFrappe,
             selected_node: Some(0),
             graph_selection: HashSet::new(),
+            frame: Rectangle::new(Point::new(60.0, 20.0), Size::new(270.0, 270.0)),
         }
     }
 }
@@ -464,11 +474,20 @@ impl Application {
             }
             Message::NodesMoved { delta, indices } => {
                 for idx in indices {
-                    if let Some(styled) = self.nodes.get_mut(idx) {
+                    if idx == FRAME_NODE {
+                        self.frame.x += delta.x;
+                        self.frame.y += delta.y;
+                    } else if let Some(styled) = self.nodes.get_mut(idx) {
                         styled.position.x += delta.x;
                         styled.position.y += delta.y;
                     }
                 }
+            }
+            // The frame is the only node carrying a grip, so the report can
+            // only be about its size.
+            Message::FrameResized(size) => {
+                self.frame.width = size.width;
+                self.frame.height = size.height;
             }
             Message::CornerRadiusChanged(value) => {
                 if let Some(overrides) = self.selected_overrides_mut() {
@@ -726,6 +745,7 @@ impl Application {
             .on_route_attach(|edge, anchor| Message::RouteAttached { edge, anchor })
             .on_route_detach(|edge, anchor| Message::RouteDetached { edge, anchor })
             .on_drag_end(|| Message::DragEnded)
+            .on_resize(|_, size| Message::FrameResized(size))
             .graph_style(|theme: &Theme| {
                 let line = theme.extended_palette().background.strong.color;
                 GraphStyle {
@@ -752,6 +772,11 @@ impl Application {
                 .style(move |theme, status| overrides.apply(preset.style(theme, status)))
                 .pin_style(styling_pin_style)
             }))
+            .push_node(
+                node(FRAME_NODE, self.frame.position(), self.frame_content())
+                    .frame()
+                    .resizable(true),
+            )
             // Anchors before edges only for readability; the widget resolves
             // ids through its own lookups, so the order between the two is free.
             .anchors(
@@ -763,5 +788,17 @@ impl Application {
                 edge(model.id, model.from, model.to).route(model.route.iter().copied())
             }))
             .into()
+    }
+
+    /// The frame's own content: a title bar over an empty body, laid out at the
+    /// size the host holds so the grip reports against what is drawn.
+    fn frame_content(&self) -> Element<'_, Message> {
+        container(column![
+            node_title_bar("Inputs", NodeContentStyle::comment(&self.current_theme)),
+            Space::new().width(Length::Fill).height(Length::Fill),
+        ])
+        .width(self.frame.width)
+        .height(self.frame.height)
+        .into()
     }
 }

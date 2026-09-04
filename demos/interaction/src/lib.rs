@@ -25,6 +25,7 @@
 //! - **Scroll** - Zoom in/out
 //! - **Right-drag** - Pan the canvas
 //! - **Ctrl/Cmd+L** - Select all (rebound from Ctrl/Cmd+A via `keymap`)
+//! - **Snap to grid** - Toolbar toggle; hold Alt to ignore it mid-drag
 //!
 //! ## Connection Rules
 //!
@@ -42,7 +43,7 @@ use demo_common::NodeContentStyle;
 use iced::{
     Color, Element, Length, Point, Subscription, Theme, Vector,
     alignment::Horizontal,
-    widget::{Space, button, column, container, row, scrollable, text},
+    widget::{Space, button, checkbox, column, container, row, scrollable, text},
 };
 use iced_nodegraph::{
     Ids, KeyCombo, Keymap, PinInfo as NgPinInfo, PinRef, PinStatus, PinStyle, default_pin_style,
@@ -72,6 +73,9 @@ impl Ids for TypedIds {
     type AnchorId = usize;
     type Payload = std::any::TypeId;
 }
+
+/// World-unit grid the "Snap to grid" toggle drags land on.
+const SNAP_SPACING: f32 = 40.0;
 
 // -- Marker types for pin data_type matching --
 
@@ -193,6 +197,7 @@ enum Message {
     ClearAll,
     Reset,
     ToggleRules,
+    ToggleSnap(bool),
     Screenshot(ScreenshotMessage),
 }
 
@@ -209,6 +214,7 @@ struct App {
     selected_nodes: HashSet<usize>,
     feedback: Vec<String>,
     show_rules: bool,
+    snap_to_grid: bool,
     theme: Theme,
     screenshot: ScreenshotHelper,
 }
@@ -222,6 +228,7 @@ impl App {
             selected_nodes: HashSet::new(),
             feedback: vec!["Drag between pins to connect nodes.".into()],
             show_rules: false,
+            snap_to_grid: false,
             theme: Theme::Dark,
             screenshot: ScreenshotHelper::from_args(),
         };
@@ -438,6 +445,9 @@ impl App {
             Message::ToggleRules => {
                 self.show_rules = !self.show_rules;
             }
+            Message::ToggleSnap(on) => {
+                self.snap_to_grid = on;
+            }
         }
 
         // Keep feedback log bounded
@@ -489,6 +499,9 @@ impl App {
                 select_all: Some(KeyCombo::command('l')),
                 ..Keymap::default()
             });
+        if self.snap_to_grid {
+            ng = ng.snap_grid(SNAP_SPACING);
+        }
 
         // Node 0: Number Generator
         let pos = self
@@ -563,6 +576,9 @@ impl App {
                     "Show Rules"
                 })
                 .on_press(Message::ToggleRules),
+                checkbox(self.snap_to_grid)
+                    .label("Snap to grid")
+                    .on_toggle(Message::ToggleSnap),
                 Space::new().width(Length::Fill),
                 text(format!("{} connections", self.edges.len())).size(13),
             ]
