@@ -1,8 +1,10 @@
 /* Embedded demo figures.
  *
- * The still image is drawn at its logical size (900x600) and never scaled, so
- * up to a 900px frame it is a 1:1 crop of what the live canvas renders at zoom
- * 1. `SIZE` in demos/gallery/src/bin/screenshots.rs mirrors these numbers. */
+ * The still is rendered at 900x600 logical pixels and 2x, so it is laid out at
+ * 900x600 CSS pixels: one CSS pixel is one logical pixel, the same mapping the
+ * live canvas uses, and a frame narrower or shorter than that crops the still
+ * exactly where the canvas would end. `SIZE` and `SCALE` in
+ * demos/gallery/src/bin/screenshots.rs mirror these numbers. */
 
 .demo-embed {
   margin: 2em 0;
@@ -34,8 +36,6 @@
   width: 900px;
   height: 600px;
   max-width: none;
-  object-fit: none;
-  object-position: left top;
 }
 
 .demo-frame .demo-mount,

@@ -25,12 +25,15 @@ mod native {
     use iced_runtime::user_interface::{self, UserInterface};
 
     /// Logical size of an embed; mirrors `.demo-frame` max-width and height in
-    /// `site/demo.css` so the still image is a 1:1 crop of the live canvas.
+    /// `site/demo.css`, which lays the still out at that size in CSS pixels so
+    /// it lands where the live canvas draws.
     const SIZE: Size = Size {
         width: 900.0,
         height: 600.0,
     };
 
+    /// Renders at 2x so the still stays sharp on a HiDPI display, where the
+    /// canvas has the same physical resolution.
     const SCALE: f32 = 2.0;
 
     pub fn run() -> Result<(), Box<dyn Error>> {
