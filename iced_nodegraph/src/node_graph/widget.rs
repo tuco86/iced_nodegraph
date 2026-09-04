@@ -307,7 +307,7 @@ where
             Dragging::Resize { .. } => return mouse::Interaction::ResizingDiagonallyDown,
             Dragging::Graph(_)
             | Dragging::Node { .. }
-            | Dragging::GroupMove(_)
+            | Dragging::GroupMove { .. }
             | Dragging::Anchor { .. }
             | Dragging::Route { .. }
             | Dragging::RouteOver { .. }
@@ -339,8 +339,12 @@ where
                     return mouse::Interaction::None;
                 };
                 let selection = self.resolved_selection(state);
-                let z_indices =
-                    z_render_indices(state, self.nodes.len(), |i| selection.contains(&i));
+                let z_indices = z_render_indices(
+                    state,
+                    self.nodes.len(),
+                    |i| selection.contains(&i),
+                    |i| self.nodes[i].frame,
+                );
                 // Top-first, like the press hit-test: a node covering another
                 // node's corner takes the cursor with it.
                 for &node_index in z_indices.iter().rev() {

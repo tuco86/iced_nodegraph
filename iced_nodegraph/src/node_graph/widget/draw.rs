@@ -5,7 +5,7 @@
 //! Appearance decisions (which layers a style expands into) live in
 //! [`crate::style`]; this module owns placement, culling and batching.
 
-use super::update::{CableHit, CableZone};
+use super::update::{CableHit, CableZone, drag_carries, drag_delta};
 use super::*;
 use crate::node_graph::state::AnchorGeometry;
 use crate::style::EdgeCurve;
@@ -291,7 +291,12 @@ where
         // One selection read per frame, shared by the z-order and every node's
         // status, so nothing can disagree about what is selected.
         let selection = self.resolved_selection(state);
-        let z_indices = z_render_indices(state, self.nodes.len(), |i| selection.contains(&i));
+        let z_indices = z_render_indices(
+            state,
+            self.nodes.len(),
+            |i| selection.contains(&i),
+            |i| self.nodes[i].frame,
+        );
 
         // Update time for animations
         let time = {
@@ -413,32 +418,16 @@ where
                     .transform_point(cursor_pos.into_euclid()),
             )
         };
+        // One delta per frame, shared by every node the drag carries, so the
+        // preview cannot disagree with the delta the release publishes.
+        let shared_delta = cursor
+            .position()
+            .and_then(|cursor_pos| drag_delta(state, self, cursor_layout(cursor_pos)));
         let compute_node_offset = |node_idx: usize| -> LayoutVector {
-            let mut offset = LayoutVector::zero();
-            let is_selected = selection.contains(&node_idx);
-
-            // Single node drag
-            if let (
-                Dragging::Node {
-                    node: drag_idx,
-                    origin,
-                },
-                Some(cursor_pos),
-            ) = (&state.dragging, cursor.position())
-                && *drag_idx == node_idx
-            {
-                offset = cursor_layout(cursor_pos) - *origin;
+            match shared_delta {
+                Some(delta) if drag_carries(state, node_idx, |i| selection.contains(&i)) => delta,
+                _ => LayoutVector::zero(),
             }
-
-            // Group move
-            if let (Dragging::GroupMove(origin), Some(cursor_pos)) =
-                (&state.dragging, cursor.position())
-                && is_selected
-            {
-                offset = cursor_layout(cursor_pos) - *origin;
-            }
-
-            offset
         };
 
         // ========================================

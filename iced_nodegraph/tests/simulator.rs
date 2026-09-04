@@ -77,19 +77,24 @@ fn graph_with_selected(
     nodes: &[(usize, Point)],
     selected: &[usize],
 ) -> Element<'static, Msg, Theme, Renderer> {
-    graph_of(nodes, selected, false)
+    graph_of(nodes, selected, false).into()
 }
 
 /// Like [`graph_with`], but every node carries a resize grip.
 fn resizable_graph(nodes: &[(usize, Point)]) -> Element<'static, Msg, Theme, Renderer> {
-    graph_of(nodes, &[], true)
+    graph_of(nodes, &[], true).into()
 }
 
-fn graph_of(
+/// Like [`graph_with_selected`], but node drags snap to a [`GRID`]-wide world
+/// grid.
+fn snap_graph(
     nodes: &[(usize, Point)],
     selected: &[usize],
-    resizable: bool,
 ) -> Element<'static, Msg, Theme, Renderer> {
+    graph_of(nodes, selected, false).snap_grid(GRID).into()
+}
+
+fn graph_of(nodes: &[(usize, Point)], selected: &[usize], resizable: bool) -> Graph {
     let mut ng: Graph = NodeGraph::default()
         .width(Length::Fill)
         .height(Length::Fill)
@@ -111,7 +116,7 @@ fn graph_of(
                 .resizable(resizable),
         );
     }
-    ng.into()
+    ng
 }
 
 /// Screen center of a node body whose top-left world position is `p`.
@@ -325,6 +330,131 @@ fn group_move_emits_move_with_delta_and_all_ids() {
         (delta.x - 30.0).abs() < 0.5 && (delta.y + 10.0).abs() < 0.5,
         "group delta should be (30, -10), got {delta:?}",
     );
+}
+
+// ---------------------------------------------------------------------------
+// Grid snap
+// ---------------------------------------------------------------------------
+
+/// Grid spacing [`snap_graph`] uses. The scenes below place nodes off the grid
+/// on purpose: a node already on it would pass every snap assertion by
+/// accident.
+const GRID: f32 = 40.0;
+
+/// The delta and the ids of the first `Move` in `msgs`.
+fn first_move(msgs: &[Msg]) -> (Vector, Vec<usize>) {
+    msgs.iter()
+        .find_map(|m| match m {
+            Msg::Move(delta, ids) => Some((*delta, sorted(ids.clone()))),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("expected a Move, got {msgs:?}"))
+}
+
+#[test]
+fn snapped_drag_reports_the_delta_that_lands_on_the_grid() {
+    let start = Point::new(100.0, 100.0);
+    let mut ui = Simulator::new(snap_graph(&[(0, start)], &[]));
+    // (100,100) + (50,20) = (150,120): the nearest grid origin is (160,120).
+    drag(
+        &mut ui,
+        center(start),
+        center(start) + Vector::new(50.0, 20.0),
+    );
+
+    let (delta, ids) = first_move(&messages(ui));
+    assert_eq!(ids, vec![0]);
+    assert_eq!((delta.x, delta.y), (60.0, 20.0), "got {delta:?}");
+}
+
+#[test]
+fn snap_override_modifier_reports_the_raw_delta() {
+    let start = Point::new(100.0, 100.0);
+    let mut ui = Simulator::new(snap_graph(&[(0, start)], &[]));
+    ui.simulate([iced::Event::Keyboard(keyboard::Event::ModifiersChanged(
+        keyboard::Modifiers::ALT,
+    ))]);
+    drag(
+        &mut ui,
+        center(start),
+        center(start) + Vector::new(50.0, 20.0),
+    );
+
+    let (delta, ids) = first_move(&messages(ui));
+    assert_eq!(ids, vec![0]);
+    assert_eq!((delta.x, delta.y), (50.0, 20.0), "got {delta:?}");
+}
+
+#[test]
+fn snapped_group_move_shares_the_grabbed_node_delta() {
+    // Only the grabbed node lands on the grid; its partner keeps the same
+    // relative offset, which is what one shared delta means.
+    let (a, b) = (Point::new(100.0, 100.0), Point::new(413.0, 100.0));
+    let mut ui = Simulator::new(snap_graph(&[(0, a), (1, b)], &[0, 1]));
+    drag(&mut ui, center(a), center(a) + Vector::new(50.0, 20.0));
+
+    let (delta, ids) = first_move(&messages(ui));
+    assert_eq!(ids, vec![0, 1]);
+    assert_eq!((delta.x, delta.y), (60.0, 20.0), "got {delta:?}");
+}
+
+// ---------------------------------------------------------------------------
+// Frames
+// ---------------------------------------------------------------------------
+
+const FRAME_ID: usize = 3;
+const INSIDE_ID: usize = 1;
+const OUTSIDE_ID: usize = 2;
+const FRAME_SIZE: Size = Size::new(400.0, 300.0);
+
+/// A 400x300 frame at the origin with one node inside it and one outside,
+/// the frame pushed LAST so it also carries the highest z: a press only reaches
+/// it where no node covers the point.
+fn frame_graph() -> Element<'static, Msg, Theme, Renderer> {
+    let mut ng = graph_of(
+        &[
+            (INSIDE_ID, Point::new(50.0, 50.0)),
+            (OUTSIDE_ID, Point::new(600.0, 600.0)),
+        ],
+        &[],
+        false,
+    );
+    let body = container(text("frame"))
+        .width(Length::Fixed(FRAME_SIZE.width))
+        .height(Length::Fixed(FRAME_SIZE.height));
+    ng = ng.push_node(node(FRAME_ID, Point::ORIGIN, body).frame());
+    ng.into()
+}
+
+#[test]
+fn dragging_a_frame_carries_the_nodes_inside_it() {
+    let mut ui = Simulator::new(frame_graph());
+    // (300,250) is inside the frame and clear of the node at (50,50).
+    let empty_area = Point::new(300.0, 250.0);
+    drag(&mut ui, empty_area, empty_area + Vector::new(30.0, 10.0));
+
+    let (delta, ids) = first_move(&messages(ui));
+    assert_eq!(
+        ids,
+        vec![INSIDE_ID, FRAME_ID],
+        "the frame must carry the node inside it and leave the one outside",
+    );
+    assert_eq!((delta.x, delta.y), (30.0, 10.0), "got {delta:?}");
+}
+
+#[test]
+fn pressing_a_node_inside_a_frame_drags_only_that_node() {
+    let mut ui = Simulator::new(frame_graph());
+    let from = center(Point::new(50.0, 50.0));
+    drag(&mut ui, from, from + Vector::new(30.0, 10.0));
+
+    let (delta, ids) = first_move(&messages(ui));
+    assert_eq!(
+        ids,
+        vec![INSIDE_ID],
+        "the node over the frame must take the press for itself",
+    );
+    assert_eq!((delta.x, delta.y), (30.0, 10.0), "got {delta:?}");
 }
 
 // ---------------------------------------------------------------------------

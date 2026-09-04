@@ -63,10 +63,21 @@ pub(crate) enum Dragging {
     None,
     /// Panning the canvas (right mouse button).
     Graph(WorldPoint),
-    /// Moving one unselected node.
-    Node { node: usize, origin: LayoutPoint },
-    /// Moving every selected node together.
-    GroupMove(LayoutPoint),
+    /// Moving one unselected node, plus the `followers` its press collected
+    /// (the contents of a dragged frame).
+    Node {
+        node: usize,
+        origin: LayoutPoint,
+        followers: Vec<usize>,
+    },
+    /// Moving every selected node together, plus `followers` - the contents of
+    /// the selected frames that are not themselves selected. `anchor` is the
+    /// pressed node, whose origin the grid snap is computed on.
+    GroupMove {
+        origin: LayoutPoint,
+        anchor: usize,
+        followers: Vec<usize>,
+    },
     /// Resizing one node by its bottom-right grip. `start` is the node's
     /// content size at press: the reported size is `start + cursor delta`, so
     /// the drag stays exact even though the node itself never changes size
@@ -335,21 +346,23 @@ impl NodeGraphState {
     }
 }
 
-/// Returns node indices in render order (back to front).
-/// Unselected nodes by z ascending, then selected nodes by z ascending.
-/// Reverse this iterator for top-first hit-test / event propagation.
+/// Returns node indices in render order (back to front): frames by z ascending,
+/// then unselected nodes by z ascending, then selected nodes by z ascending.
+/// Reverse this iterator for top-first hit-test / event propagation, which is
+/// what makes a frame lose every press a node over it could take.
 ///
-/// `is_selected` reads the flag off the host's [`Node`], since selection is not
-/// state this module owns.
+/// `is_selected` and `is_frame` read the flags off the host's [`Node`], since
+/// neither is state this module owns.
 pub(super) fn z_render_indices(
     state: &NodeGraphState,
     node_count: usize,
     is_selected: impl Fn(usize) -> bool,
+    is_frame: impl Fn(usize) -> bool,
 ) -> Vec<usize> {
     let mut indices: Vec<usize> = (0..node_count).collect();
     indices.sort_by_key(|&i| {
         let z = state.node_z.get(&i).copied().unwrap_or(0);
-        (is_selected(i), z)
+        (!is_frame(i), is_selected(i), z)
     });
     indices
 }
@@ -371,9 +384,14 @@ mod tests {
         let origin = LayoutPoint::new(10.0, 20.0);
 
         assert_ne!(Dragging::None, Dragging::Graph(world));
-        assert_ne!(Dragging::Graph(world), Dragging::Node { node: 0, origin });
+        let node_drag = Dragging::Node {
+            node: 0,
+            origin,
+            followers: Vec::new(),
+        };
+        assert_ne!(Dragging::Graph(world), node_drag);
         assert_ne!(
-            Dragging::Node { node: 0, origin },
+            node_drag,
             Dragging::Edge {
                 from_node: 0,
                 from_pin: 0,
@@ -398,16 +416,22 @@ mod tests {
     #[test]
     fn test_dragging_node_stores_index_and_origin() {
         let origin = Point2D::new(50.0, 75.0);
-        let dragging = Dragging::Node { node: 5, origin };
+        let dragging = Dragging::Node {
+            node: 5,
+            origin,
+            followers: vec![7],
+        };
 
         if let Dragging::Node {
             node: idx,
             origin: stored,
+            followers,
         } = dragging
         {
             assert_eq!(idx, 5);
             assert_eq!(stored.x, 50.0);
             assert_eq!(stored.y, 75.0);
+            assert_eq!(followers, vec![7]);
         } else {
             panic!("Expected Dragging::Node");
         }
@@ -456,11 +480,21 @@ mod tests {
     #[test]
     fn test_group_move_stores_origin() {
         let origin = Point2D::new(250.0, 350.0);
-        let dragging = Dragging::GroupMove(origin);
+        let dragging = Dragging::GroupMove {
+            origin,
+            anchor: 3,
+            followers: Vec::new(),
+        };
 
-        if let Dragging::GroupMove(stored) = dragging {
+        if let Dragging::GroupMove {
+            origin: stored,
+            anchor,
+            ..
+        } = dragging
+        {
             assert_eq!(stored.x, 250.0);
             assert_eq!(stored.y, 350.0);
+            assert_eq!(anchor, 3);
         } else {
             panic!("Expected Dragging::GroupMove");
         }
@@ -563,7 +597,7 @@ mod tests {
 
         // Make 1 most recently moved among unselected.
         state.promote_z(1);
-        let order = z_render_indices(&state, 4, |i| i == 3);
+        let order = z_render_indices(&state, 4, |i| i == 3, |_| false);
 
         // Selected goes last (on top). 3 must be at the end.
         assert_eq!(order.last(), Some(&3));
@@ -578,9 +612,21 @@ mod tests {
         let mut state = NodeGraphState::default();
         state.ensure_z_entries(3);
         // 2 is more recently assigned z, so it should render on top of 0.
-        let order = z_render_indices(&state, 3, |i| i == 0 || i == 2);
+        let order = z_render_indices(&state, 3, |i| i == 0 || i == 2, |_| false);
 
         // 1 (unselected) first, then 0 and 2 (selected, with 2 on top).
         assert_eq!(order, vec![1, 0, 2]);
+    }
+
+    #[test]
+    fn test_z_render_indices_frames_first() {
+        let mut state = NodeGraphState::default();
+        state.ensure_z_entries(3);
+        // Frame pushed last (highest z) and selected: still behind both
+        // non-frame nodes, so the reversed hit-test order reaches them first.
+        state.promote_z(2);
+        let order = z_render_indices(&state, 3, |i| i == 2, |i| i == 2);
+
+        assert_eq!(order, vec![2, 0, 1]);
     }
 }

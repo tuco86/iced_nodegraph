@@ -155,6 +155,15 @@ pub struct Keymap {
     /// [`Keymap::edge_cut_modifiers`] when both could apply to the same
     /// chord.
     pub multi_select_modifiers: Modifiers,
+    /// The modifier state that suspends [`NodeGraph::snap_grid`] while it is
+    /// held.
+    ///
+    /// Tested with [`Modifiers::contains`] on every frame of a drag, so
+    /// pressing or releasing it mid-drag takes effect immediately. Inert on a
+    /// graph with no snap grid.
+    ///
+    /// [`NodeGraph::snap_grid`]: crate::NodeGraph::snap_grid
+    pub snap_override: Modifiers,
 }
 
 impl Default for Keymap {
@@ -190,6 +199,7 @@ impl Default for Keymap {
             pan_button: mouse::Button::Right,
             edge_cut_modifiers: Modifiers::COMMAND,
             multi_select_modifiers: Modifiers::SHIFT,
+            snap_override: Modifiers::ALT,
         }
     }
 }
