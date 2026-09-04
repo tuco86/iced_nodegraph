@@ -3,6 +3,15 @@
 Node style presets, live per-node style editing, and the routing-anchor
 lifecycle.
 
+<figure class="demo-embed" data-scene="styling">
+  <div class="demo-frame">
+    <a href="https://tuco86.github.io/iced_nodegraph/demo_styling/index.html">
+      <img src="https://tuco86.github.io/iced_nodegraph/gallery/styling.png" alt="The styling demo: four preset-styled nodes with routing anchors and the style control panel">
+    </a>
+  </div>
+  <figcaption>Runs live when scrolled into view (WebGPU, Chrome recommended); a still image otherwise. Click the canvas for keyboard input.</figcaption>
+</figure>
+
 This demo shows how a host application owns node appearance in `iced_nodegraph`:
 it keeps a style preset and a few override values per node in its own model,
 resolves them into a `NodeStyle` from the node's `.style()` closure, and edits
@@ -10,8 +19,8 @@ the overrides from a side panel while the graph stays interactive. It is also
 the reference host for routing anchors: the widget derives every cable's
 geometry, and this application owns the anchors and the routes.
 
-The whole application lives in `src/lib.rs` (the native `main.rs` and the WASM
-entry point both call into it); `src/nodes/mod.rs` builds the node content.
+The whole application lives in `src/lib.rs` (the native `main.rs` calls into
+it); `src/nodes/mod.rs` builds the node content.
 
 ## Features
 
@@ -50,6 +59,11 @@ entry point both call into it); `src/nodes/mod.rs` builds the node content.
   route names any more, so detaching an anchor's last cable makes it disappear.
   The library keeps an anchor as long as the host pushes it; "last cable out,
   anchor out" is this application's policy, not the widget's.
+- **Frame**: a `Node::frame()` backdrop titled "Inputs" sits behind the two
+  input nodes. It renders behind every other node, takes a press only where
+  none of them covers the point, and carries the nodes fully inside it when
+  dragged. The host owns its rectangle and applies the reported move and the
+  grip's resize, the same as for any other node.
 
 ## Demo Graph
 
@@ -96,11 +110,17 @@ back.
 - **Drag from a pin** to another pin to connect; each node has one input pin on
   the left and one output pin on the right.
 - **Scroll** to zoom, **right-drag** to pan. The root
-  [README](../../README.md#controls) has the full default control table.
+  [README](https://github.com/tuco86/iced_nodegraph#controls) has the full
+  default control table.
 - **Drag a cable mid-run** to place a new anchor where you release it;
-  **drag a cable at its wrap** to pull it off that anchor. **Right-click** an
-  anchor's core to delete it, or a wrap to detach just that cable. **Drag** a
-  core to move it. A right-DRAG still pans, wherever it starts.
+  **drag a cable at its wrap** to pull it off that anchor. Dropping either drag
+  on an existing anchor attaches there during the drag, and every cable at that
+  anchor is reseated, the newcomer included - it can land on any ring, the
+  innermost among them. **Right-click** an anchor's core to delete it, or a wrap
+  to detach just that cable. **Drag** a core to move it. A right-DRAG still
+  pans, wherever it starts.
+- **Drag the "Inputs" frame** on any spot no node covers to move it and the
+  nodes inside it; **drag its bottom-right grip** to resize it.
 
 The 280px control panel is wrapped in `opaque`, so pointer events over it do not
 reach the graph underneath.
@@ -110,15 +130,6 @@ reach the graph underneath.
 ```bash
 cargo run -p demo_styling
 ```
-
-For the browser build:
-
-```bash
-wasm-pack build demos/styling --release --target web --features wasm
-```
-
-`build_docs.sh` (or `build_docs.ps1`) does this for every demo and drops the
-result next to the rustdoc output in `target/doc/demo_styling/pkg/`.
 
 ## Library API Exercised
 

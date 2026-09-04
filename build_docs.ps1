@@ -1,22 +1,23 @@
 #!/usr/bin/env pwsh
-# Build documentation and WASM demos
+# Build the documentation site
 #
 # This script:
 # 1. Generates rustdoc documentation for the workspace
-# 2. Copies shared static assets (CSS/JS) to each demo's doc folder
-# 3. Compiles each demo in demos/ to WebAssembly
-# 4. Places WASM output in target/doc/<demo_name>/pkg/ for embedding
+# 2. Renders one PNG per demo scene (the fallback every embed shows first)
+# 3. Compiles the gallery, the single WASM module all embeds share
+# 4. Copies the landing page and the embed assets into target/doc
 #
 # Requirements:
 #   - wasm-pack (install: cargo install wasm-pack)
 #   - wasm32-unknown-unknown target (install: rustup target add wasm32-unknown-unknown)
+#   - a WGPU-capable adapter for the screenshots
 #
 # Usage:
 #   .\build_docs.ps1
 #
 # Output locations:
-#   - target/doc/ (rustdoc documentation)
-#   - target/doc/demo_*/pkg/ (WASM binaries + static assets)
+#   - target/doc/index.html (landing page)
+#   - target/doc/gallery/ (screenshots and the WASM module in pkg/)
 
 $ErrorActionPreference = "Stop"
 
@@ -44,78 +45,53 @@ try {
     exit 1
 }
 
-# Step 2: Build WASM demos
-Write-Host "Building WASM demos..." -ForegroundColor Cyan
+# Step 2: Render the still image every embed shows until it is scrolled into
+# view. It is the only thing visitors without WebGPU ever see, so a failure
+# here is fatal.
+Write-Host "Rendering demo screenshots..." -ForegroundColor Cyan
 Write-Host ""
 
-$demos = @(
-    @{
-        Name = "demo_hello_world"
-        Path = "demos/hello_world"
-        OutName = "demo_hello_world"
-        HasWasmFeature = $true
-    },
-    @{
-        Name = "demo_interaction"
-        Path = "demos/interaction"
-        OutName = "demo_interaction"
-        HasWasmFeature = $true
-    },
-    @{
-        Name = "demo_styling"
-        Path = "demos/styling"
-        OutName = "demo_styling"
-        HasWasmFeature = $true
-    },
-    @{
-        Name = "demo_500_nodes"
-        Path = "demos/500_nodes"
-        OutName = "demo_500_nodes"
-        HasWasmFeature = $true
-    },
-    @{
-        Name = "demo_shader_editor"
-        Path = "demos/shader_editor"
-        OutName = "demo_shader_editor"
-        HasWasmFeature = $true
-    }
-)
+try {
+    cargo run -p demo_gallery --bin gallery_screenshots -- target/doc/gallery
 
-foreach ($demo in $demos) {
-    Write-Host "Building $($demo.Name)..." -ForegroundColor Yellow
-
-    # Create output directory in doc structure
-    $outDir = "target/doc/$($demo.OutName)/pkg"
-    New-Item -ItemType Directory -Force -Path $outDir | Out-Null
-
-    # Build command with optional wasm feature
-    $features = if ($demo.HasWasmFeature) { "--features wasm" } else { "" }
-    $prefix = if ($demo.OutDirPrefix) { $demo.OutDirPrefix } else { "../../" }
-    $buildCmd = "wasm-pack build $($demo.Path) --release --target web --out-dir $prefix$outDir --out-name $($demo.OutName) $features"
-
-    Write-Host "  $buildCmd" -ForegroundColor Gray
-
-    try {
-        Invoke-Expression $buildCmd
-
-        if ($LASTEXITCODE -ne 0) {
-            throw "Build failed with exit code $LASTEXITCODE"
-        }
-
-        # Copy static assets into pkg folder alongside WASM files
-        Copy-Item "demos/static/demo.css" -Destination $outDir
-        Copy-Item "demos/static/demo-loader.js" -Destination $outDir
-
-        Write-Host "  Built $($demo.Name)" -ForegroundColor Green
-    } catch {
-        Write-Host "  Failed to build $($demo.Name): $_" -ForegroundColor Red
-        exit 1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Screenshot rendering failed with exit code $LASTEXITCODE"
     }
 
+    Write-Host "Screenshots rendered" -ForegroundColor Green
     Write-Host ""
+} catch {
+    Write-Host "Failed to render screenshots: $_" -ForegroundColor Red
+    exit 1
 }
+
+# Step 3: Build the gallery WASM module
+Write-Host "Building the gallery WASM module..." -ForegroundColor Cyan
+Write-Host ""
+
+$buildCmd = "wasm-pack build demos/gallery --release --target web --out-dir ../../target/doc/gallery/pkg --out-name demo_gallery"
+Write-Host "  $buildCmd" -ForegroundColor DarkGray
+
+try {
+    wasm-pack build demos/gallery --release --target web --out-dir ../../target/doc/gallery/pkg --out-name demo_gallery
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Gallery build failed with exit code $LASTEXITCODE"
+    }
+
+    Write-Host "Gallery built" -ForegroundColor Green
+    Write-Host ""
+} catch {
+    Write-Host "Failed to build the gallery: $_" -ForegroundColor Red
+    exit 1
+}
+
+# Step 4: Site assets
+Write-Host "Copying site assets..." -ForegroundColor Yellow
+Copy-Item site/demo.css, site/demo-loader.js -Destination target/doc/gallery/pkg/
+Copy-Item site/index.html, site/site.css -Destination target/doc/
 
 Write-Host "Build complete!" -ForegroundColor Green
 Write-Host ""
-Write-Host "Documentation: target/doc/index.html"
-Write-Host "WASM demos:    target/doc/*/pkg/"
+Write-Host "Landing page: target/doc/index.html"
+Write-Host "Gallery:      target/doc/gallery/"

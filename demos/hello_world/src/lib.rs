@@ -1,40 +1,8 @@
 // `SpawnNode` carries a whole `NodeType`, whose config variants hold every
 // style field of a node, so the message enum is inherently lopsided.
 #![allow(clippy::large_enum_variant)]
-
-//! # Hello World Demo
-//!
-//! Basic node graph with command palette (Cmd/Ctrl+Space) for adding nodes and changing themes.
-//! Includes interactive style configuration nodes.
-//!
-//! ## Interactive Demo
-//!
-//! <link rel="stylesheet" href="pkg/demo.css">
-//! <div id="demo-container">
-//!   <div id="demo-loading">
-//!     <div class="demo-spinner"></div>
-//!     <p>Loading demo...</p>
-//!   </div>
-//!   <div id="demo-canvas-container"></div>
-//!   <div id="demo-error">
-//!     <strong>Failed to load demo.</strong> WebGPU required.
-//!   </div>
-//! </div>
-//! <script type="module" src="pkg/demo-loader.js"></script>
-//!
-//! ## Controls
-//!
-//! - **Cmd/Ctrl+Space** - Open command palette
-//! - **Drag nodes** - Move nodes around the canvas
-//! - **Drag from pins** - Create connections between nodes
-//! - **Ctrl/Cmd+click edges** - Cut connections
-//! - **Scroll** - Zoom in/out
-//! - **Right-drag** - Pan the canvas
-//!
-//! ## Style Configuration
-//!
-//! Add input nodes (sliders, color pickers) and connect them to config nodes
-//! to dynamically adjust the graph's appearance.
+#![doc = include_str!("../README.md")]
+#![doc = r#"<link rel="stylesheet" href="../gallery/pkg/demo.css"><script type="module" src="../gallery/pkg/demo-loader.js"></script>"#]
 
 mod ids;
 mod nodes;
@@ -42,6 +10,9 @@ mod nodes;
 mod persistence;
 mod style_overlay;
 
+// The trait methods are named directly only by the native `main`.
+#[cfg(not(target_arch = "wasm32"))]
+use demo_common::Demo;
 use iced::{
     Color, Event, Length, Point, Subscription, Task, Theme, Vector, event, keyboard,
     widget::{container, opaque, stack, text},
@@ -72,25 +43,12 @@ use nodes::{
 use std::collections::{HashMap, HashSet};
 use style_overlay::{EdgeOverlay, GraphOverlay, NodeOverlay, PinOverlay};
 
-#[cfg(feature = "wasm")]
-use wasm_bindgen::prelude::*;
-
-#[cfg(feature = "wasm")]
-#[wasm_bindgen(start)]
-pub fn wasm_init() {
-    console_error_panic_hook::set_once();
-}
-
+/// Runs the demo natively, restoring the persisted graph and window geometry.
+///
+/// The gallery boots the pristine scene through [`Demo::boot`] instead, so this
+/// entry point and the `persistence` module it needs are native-only.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn main() -> iced::Result {
-    #[cfg(target_arch = "wasm32")]
-    let window_settings = iced::window::Settings {
-        platform_specific: iced::window::settings::PlatformSpecific {
-            target: Some(String::from("demo-canvas-container")),
-        },
-        ..Default::default()
-    };
-
-    #[cfg(not(target_arch = "wasm32"))]
     let window_settings = {
         // Try to load saved window settings
         let (position, size, maximized) = persistence::load_state()
@@ -109,18 +67,16 @@ pub fn main() -> iced::Result {
         }
     };
 
-    iced::application(Application::new, Application::update, Application::view)
-        .subscription(Application::subscription)
-        .title("Hello World - iced_nodegraph Demo")
-        .theme(Application::theme)
-        .window(window_settings)
-        .run()
-}
-
-#[cfg(feature = "wasm")]
-#[wasm_bindgen]
-pub fn run_demo() {
-    let _ = main();
+    iced::application(
+        Application::new_persisted,
+        Application::update,
+        Application::view,
+    )
+    .subscription(Application::subscription)
+    .title("Hello World - iced_nodegraph Demo")
+    .theme(Application::theme)
+    .window(window_settings)
+    .run()
 }
 
 #[derive(Debug, Clone)]
@@ -464,9 +420,9 @@ impl Default for Application {
 }
 
 impl Application {
-    fn new() -> Self {
+    #[cfg(not(target_arch = "wasm32"))]
+    fn new_persisted() -> Self {
         // Try to load saved state, fall back to default
-        #[cfg(not(target_arch = "wasm32"))]
         {
             match persistence::load_state() {
                 Ok(saved) => {
@@ -1191,6 +1147,14 @@ impl Application {
         // Clear pending configs after application
         self.pending_configs.clear();
     }
+}
+
+impl demo_common::Demo for Application {
+    type Message = ApplicationMessage;
+
+    fn boot() -> (Self, Task<ApplicationMessage>) {
+        (Self::default(), Task::none())
+    }
 
     fn update(&mut self, message: ApplicationMessage) -> Task<ApplicationMessage> {
         match message {
@@ -1716,96 +1680,6 @@ impl Application {
             .clone()
     }
 
-    fn get_main_commands_with_shortcuts() -> Vec<Command<ApplicationMessage>> {
-        vec![
-            command("add_node", "Add Node")
-                .description("Add a new node to the graph")
-                .shortcut(Shortcut::cmd('n'))
-                .action(ApplicationMessage::ExecuteShortcut("add_node".to_string())),
-            command("change_theme", "Change Theme")
-                .description("Switch to a different color theme")
-                .shortcut(Shortcut::cmd('t'))
-                .action(ApplicationMessage::ExecuteShortcut(
-                    "change_theme".to_string(),
-                )),
-            command("export_state", "Export State")
-                .description("Export graph state to file for Claude")
-                .shortcut(Shortcut::cmd('e'))
-                .action(ApplicationMessage::ExecuteShortcut(
-                    "export_state".to_string(),
-                )),
-        ]
-    }
-
-    fn get_available_themes() -> Vec<Theme> {
-        vec![
-            Theme::Dark,
-            Theme::Light,
-            Theme::Dracula,
-            Theme::Nord,
-            Theme::SolarizedLight,
-            Theme::SolarizedDark,
-            Theme::GruvboxLight,
-            Theme::GruvboxDark,
-            Theme::CatppuccinLatte,
-            Theme::CatppuccinFrappe,
-            Theme::CatppuccinMacchiato,
-            Theme::CatppuccinMocha,
-            Theme::TokyoNight,
-            Theme::TokyoNightStorm,
-            Theme::TokyoNightLight,
-            Theme::KanagawaWave,
-            Theme::KanagawaDragon,
-            Theme::KanagawaLotus,
-            Theme::Moonfly,
-            Theme::Nightfly,
-            Theme::Oxocarbon,
-            Theme::Ferra,
-        ]
-    }
-
-    fn get_theme_name(theme: &Theme) -> &'static str {
-        match theme {
-            Theme::Dark => "Dark",
-            Theme::Light => "Light",
-            Theme::Dracula => "Dracula",
-            Theme::Nord => "Nord",
-            Theme::SolarizedLight => "Solarized Light",
-            Theme::SolarizedDark => "Solarized Dark",
-            Theme::GruvboxLight => "Gruvbox Light",
-            Theme::GruvboxDark => "Gruvbox Dark",
-            Theme::CatppuccinLatte => "Catppuccin Latte",
-            Theme::CatppuccinFrappe => "Catppuccin Frappe",
-            Theme::CatppuccinMacchiato => "Catppuccin Macchiato",
-            Theme::CatppuccinMocha => "Catppuccin Mocha",
-            Theme::TokyoNight => "Tokyo Night",
-            Theme::TokyoNightStorm => "Tokyo Night Storm",
-            Theme::TokyoNightLight => "Tokyo Night Light",
-            Theme::KanagawaWave => "Kanagawa Wave",
-            Theme::KanagawaDragon => "Kanagawa Dragon",
-            Theme::KanagawaLotus => "Kanagawa Lotus",
-            Theme::Moonfly => "Moonfly",
-            Theme::Nightfly => "Nightfly",
-            Theme::Oxocarbon => "Oxocarbon",
-            Theme::Ferra => "Ferra",
-            _ => "Unknown",
-        }
-    }
-
-    /// Frames the first workflow node: the "Focus node" command's target, run
-    /// with the default eased tween. `Home` and `f` cover All and Selection;
-    /// this exercises [`FocusTarget::Node`].
-    fn focus_first_node(&self) -> Task<ApplicationMessage> {
-        match self.node_order.first() {
-            Some(target) => iced_nodegraph::focus(
-                graph_id(),
-                FocusTarget::<HelloIds>::Node(target.clone()),
-                FocusOptions::default(),
-            ),
-            None => Task::none(),
-        }
-    }
-
     fn view(&self) -> iced::Element<'_, ApplicationMessage> {
         use iced_nodegraph::NodeGraph;
 
@@ -2124,6 +1998,121 @@ impl Application {
             .into()
     }
 
+    fn subscription(&self) -> Subscription<ApplicationMessage> {
+        Subscription::batch(vec![
+            event::listen_with(handle_keyboard_event),
+            event::listen_with(|event, _, _| match event {
+                Event::Window(window::Event::Resized(size)) => {
+                    Some(ApplicationMessage::WindowResized(size))
+                }
+                Event::Window(window::Event::Moved(position)) => {
+                    Some(ApplicationMessage::WindowMoved(position))
+                }
+                _ => None,
+            }),
+        ])
+    }
+}
+
+/// Boots this demo for the gallery.
+pub fn scene() -> (
+    Box<dyn demo_common::Scene>,
+    iced::Task<demo_common::SceneMessage>,
+) {
+    demo_common::erase::<Application>()
+}
+
+impl Application {
+    fn get_main_commands_with_shortcuts() -> Vec<Command<ApplicationMessage>> {
+        vec![
+            command("add_node", "Add Node")
+                .description("Add a new node to the graph")
+                .shortcut(Shortcut::cmd('n'))
+                .action(ApplicationMessage::ExecuteShortcut("add_node".to_string())),
+            command("change_theme", "Change Theme")
+                .description("Switch to a different color theme")
+                .shortcut(Shortcut::cmd('t'))
+                .action(ApplicationMessage::ExecuteShortcut(
+                    "change_theme".to_string(),
+                )),
+            command("export_state", "Export State")
+                .description("Export graph state to file for Claude")
+                .shortcut(Shortcut::cmd('e'))
+                .action(ApplicationMessage::ExecuteShortcut(
+                    "export_state".to_string(),
+                )),
+        ]
+    }
+
+    fn get_available_themes() -> Vec<Theme> {
+        vec![
+            Theme::Dark,
+            Theme::Light,
+            Theme::Dracula,
+            Theme::Nord,
+            Theme::SolarizedLight,
+            Theme::SolarizedDark,
+            Theme::GruvboxLight,
+            Theme::GruvboxDark,
+            Theme::CatppuccinLatte,
+            Theme::CatppuccinFrappe,
+            Theme::CatppuccinMacchiato,
+            Theme::CatppuccinMocha,
+            Theme::TokyoNight,
+            Theme::TokyoNightStorm,
+            Theme::TokyoNightLight,
+            Theme::KanagawaWave,
+            Theme::KanagawaDragon,
+            Theme::KanagawaLotus,
+            Theme::Moonfly,
+            Theme::Nightfly,
+            Theme::Oxocarbon,
+            Theme::Ferra,
+        ]
+    }
+
+    fn get_theme_name(theme: &Theme) -> &'static str {
+        match theme {
+            Theme::Dark => "Dark",
+            Theme::Light => "Light",
+            Theme::Dracula => "Dracula",
+            Theme::Nord => "Nord",
+            Theme::SolarizedLight => "Solarized Light",
+            Theme::SolarizedDark => "Solarized Dark",
+            Theme::GruvboxLight => "Gruvbox Light",
+            Theme::GruvboxDark => "Gruvbox Dark",
+            Theme::CatppuccinLatte => "Catppuccin Latte",
+            Theme::CatppuccinFrappe => "Catppuccin Frappe",
+            Theme::CatppuccinMacchiato => "Catppuccin Macchiato",
+            Theme::CatppuccinMocha => "Catppuccin Mocha",
+            Theme::TokyoNight => "Tokyo Night",
+            Theme::TokyoNightStorm => "Tokyo Night Storm",
+            Theme::TokyoNightLight => "Tokyo Night Light",
+            Theme::KanagawaWave => "Kanagawa Wave",
+            Theme::KanagawaDragon => "Kanagawa Dragon",
+            Theme::KanagawaLotus => "Kanagawa Lotus",
+            Theme::Moonfly => "Moonfly",
+            Theme::Nightfly => "Nightfly",
+            Theme::Oxocarbon => "Oxocarbon",
+            Theme::Ferra => "Ferra",
+            _ => "Unknown",
+        }
+    }
+
+    /// Frames the first workflow node: the "Focus node" command's target, run
+    /// with the default eased tween. `Home` and `f` cover All and Selection;
+    /// this exercises [`FocusTarget::Node`].
+    fn focus_first_node(&self) -> Task<ApplicationMessage> {
+        match self.node_order.first() {
+            Some(target) => iced_nodegraph::focus(
+                graph_id(),
+                FocusTarget::<HelloIds>::Node(target.clone()),
+                FocusOptions::default(),
+            ),
+            None => Task::none(),
+        }
+    }
+
     fn build_palette_commands(&self) -> (&'static str, Vec<Command<ApplicationMessage>>) {
         match &self.palette_view {
             PaletteView::Main => {
@@ -2379,21 +2368,6 @@ impl Application {
             }
             _ => ("Command Palette", vec![]),
         }
-    }
-
-    fn subscription(&self) -> Subscription<ApplicationMessage> {
-        Subscription::batch(vec![
-            event::listen_with(handle_keyboard_event),
-            event::listen_with(|event, _, _| match event {
-                Event::Window(window::Event::Resized(size)) => {
-                    Some(ApplicationMessage::WindowResized(size))
-                }
-                Event::Window(window::Event::Moved(position)) => {
-                    Some(ApplicationMessage::WindowMoved(position))
-                }
-                _ => None,
-            }),
-        ])
     }
 }
 

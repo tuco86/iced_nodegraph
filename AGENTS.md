@@ -33,7 +33,8 @@ dependency direction: `demos/* -> iced_nodegraph -> iced_nodegraph_sdf`.
   `node_graph/widget.rs` (plus `widget/draw.rs` and `widget/update.rs`) the
   iced `Widget` impl, and `style/*` the flat style structs.
 - **`demos/*`** - hello_world, styling, interaction, 500_nodes, shader_editor,
-  and the shared `demo_common` crate.
+  the shared `demo_common` crate, and `gallery`, the one wasm module and the
+  screenshot tool behind the documentation site.
 - **`benches/`** - `iced_nodegraph_bench`, the criterion harness, kept out of
   the library crates so their `cargo test` does not compile criterion.
 
@@ -382,5 +383,6 @@ WebGPU only - there is no WebGL fallback.
 - **Safari**: untested.
 
 Build the browser demos with `./build_docs.sh` (or `build_docs.ps1`): it
-generates rustdoc, then `wasm-pack`s each demo into
-`target/doc/<demo>/pkg/` alongside the shared static assets.
+generates rustdoc, renders one still image per demo scene, and `wasm-pack`s
+`demos/gallery` - the single module every embed shares - into
+`target/doc/gallery/pkg/` alongside the landing page and the embed assets.

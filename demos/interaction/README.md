@@ -2,12 +2,21 @@
 
 Connection validation with typed, directional pins.
 
+<figure class="demo-embed" data-scene="interaction">
+  <div class="demo-frame">
+    <a href="https://tuco86.github.io/iced_nodegraph/demo_interaction/index.html">
+      <img src="https://tuco86.github.io/iced_nodegraph/gallery/interaction.png" alt="The interaction demo: typed pins with valid and rejected connections">
+    </a>
+  </div>
+  <figcaption>Runs live when scrolled into view (WebGPU, Chrome recommended); a still image otherwise. Click the canvas for keyboard input.</figcaption>
+</figure>
+
 This demo shows how to enforce connection rules in `iced_nodegraph`: directional
 data flow, type compatibility, single-connection constraints, duplicate and
 self-loop rejection, and live snap feedback while dragging an edge.
 
-The whole application lives in `src/lib.rs` (the native `main.rs` and the WASM
-entry point both call into it).
+The whole application lives in `src/lib.rs`: `main.rs` runs it as a desktop
+window, and the gallery boots it in the browser through `demo_common::Demo`.
 
 ## Features
 
@@ -25,6 +34,8 @@ entry point both call into it).
 - **Selection and group move**: nodes can be selected and dragged as a group.
 - **Feedback log and rules panel**: every accepted or rejected attempt is logged;
   toggle the rules reference with "Show Rules".
+- **Snap to grid**: the toolbar toggle puts every node drag on a 40-unit world
+  grid; holding Alt ignores it for as long as it is held.
 
 ## Demo Graph
 
@@ -45,8 +56,10 @@ entry point both call into it).
   Ctrl/Cmd+A through `NodeGraph::keymap`.
 - **Clear All** removes every connection; **Reset** restores the initial graph;
   **Show Rules** toggles the rules reference.
+- **Snap to grid** toggles the 40-unit drag grid; **Alt** ignores it while held.
 
-The root [README](../../README.md#controls) has the full default control table.
+The root [README](https://github.com/tuco86/iced_nodegraph#controls) has the
+full default control table.
 
 ## Connection Rules
 
@@ -60,13 +73,6 @@ The root [README](../../README.md#controls) has the full default control table.
 
 ```bash
 cargo run -p demo_interaction
-```
-
-This demo owns the `ScreenshotHelper` (`src/screenshot.rs`), so it also
-accepts the documentation-capture flag:
-
-```bash
-cargo run -p demo_interaction --bin interaction -- --screenshot shot.png
 ```
 
 ## Implementation Notes

@@ -7,19 +7,12 @@ license.workspace = true
 publish = false
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [[bin]]
 name = "hello_world"
 path = "src/main.rs"
 doc = false
-
-# `wasm-pack build --features wasm` (build_docs.sh) is the only consumer: it
-# turns on the browser entry points and embeds a font, since a browser has no
-# system fonts to detect.
-[features]
-default = []
-wasm = ["console_error_panic_hook", "iced/fira-sans", "wasm-bindgen"]
 
 [dependencies]
 demo_common.workspace = true
@@ -28,9 +21,6 @@ iced_nodegraph.workspace = true
 iced_palette.workspace = true
 # Node and edge ids; runs on both native and WASM (see getrandom below).
 nanoid.workspace = true
-
-console_error_panic_hook = { workspace = true, optional = true }
-wasm-bindgen = { workspace = true, optional = true }
 
 # The `persistence` module is `cfg(not(target_arch = "wasm32"))`, so these are
 # only ever compiled for native targets.

@@ -5,6 +5,15 @@ name, this is the most feature-complete demo: it combines a command palette,
 theme switching, a live style-configuration node system, selection and grouping,
 and persistent state.
 
+<figure class="demo-embed" data-scene="hello_world">
+  <div class="demo-frame">
+    <a href="https://tuco86.github.io/iced_nodegraph/demo_hello_world/index.html">
+      <img src="https://tuco86.github.io/iced_nodegraph/gallery/hello_world.png" alt="The hello_world demo: an email workflow graph with four connected nodes">
+    </a>
+  </div>
+  <figcaption>Runs live when scrolled into view (WebGPU, Chrome recommended); a still image otherwise. Click the canvas for keyboard input.</figcaption>
+</figure>
+
 The graph opens with a small example workflow (email trigger, parser, filter,
 calendar) wired together, or restores the last saved session on native targets.
 
@@ -50,8 +59,14 @@ calendar) wired together, or restores the last saved session on native targets.
 - Scroll - Zoom in or out at the cursor.
 - Right-drag - Pan the canvas.
 
-These are the widget defaults; the root [README](../../README.md#controls) has
-the full table, including the touch and web variants.
+These are the widget defaults; the root
+[README](https://github.com/tuco86/iced_nodegraph#controls) has the full table,
+including the touch and web variants.
+
+## Style Configuration
+
+Add input nodes (sliders, color pickers) and connect them to config nodes to
+dynamically adjust the graph's appearance.
 
 ## Running
 

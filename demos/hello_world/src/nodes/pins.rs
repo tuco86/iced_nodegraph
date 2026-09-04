@@ -5,6 +5,12 @@
 //!
 //! Marker types are used with `pin!(...).data_type::<MarkerType>()` to enable
 //! automatic type-based connection validation.
+//!
+//! The vocabulary is complete for the demo graph. Part of it is read only by
+//! the native entry point and the persistence codec, so a wasm build - where
+//! the gallery boots the app directly and neither exists - has no reader for
+//! those labels.
+#![cfg_attr(target_arch = "wasm32", allow(dead_code))]
 
 // =============================================================================
 // Marker Types for Connection Matching

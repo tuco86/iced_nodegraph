@@ -1,0 +1,56 @@
+/* Embedded demo figures.
+ *
+ * The still is rendered at 900x600 logical pixels and 2x, so it is laid out at
+ * 900x600 CSS pixels: one CSS pixel is one logical pixel, the same mapping the
+ * live canvas uses, and a frame narrower or shorter than that crops the still
+ * exactly where the canvas would end. `SIZE` and `SCALE` in
+ * demos/gallery/src/bin/screenshots.rs mirror these numbers. */
+
+.demo-embed {
+  margin: 2em 0;
+}
+
+.demo-frame {
+  position: relative;
+  width: 100%;
+  max-width: 900px;
+  height: 600px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #1e1e2e;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.demo-embed.compact .demo-frame {
+  height: 420px;
+}
+
+.demo-frame > a {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+
+.demo-frame img {
+  display: block;
+  width: 900px;
+  height: 600px;
+  max-width: none;
+}
+
+.demo-frame .demo-mount,
+.demo-frame canvas {
+  position: absolute !important;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+  display: block !important;
+  z-index: 2;
+  pointer-events: auto !important;
+}
+
+.demo-embed figcaption {
+  font-size: 0.8rem;
+  color: #a6adc8;
+  margin-top: 0.4em;
+}

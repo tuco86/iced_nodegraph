@@ -15,6 +15,15 @@
 //! node bodies, edges, pins, shadows, background - is drawn by one WGPU pipeline
 //! as signed distance fields, so it stays sharp at every zoom level.
 //!
+//! <figure class="demo-embed compact" data-scene="hello_world">
+//!   <div class="demo-frame">
+//!     <a href="https://tuco86.github.io/iced_nodegraph/demo_hello_world/index.html">
+//!       <img src="https://tuco86.github.io/iced_nodegraph/gallery/hello_world.png" alt="The hello_world demo: an email workflow graph with four connected nodes">
+//!     </a>
+//!   </div>
+//!   <figcaption>Runs live when scrolled into view (WebGPU, Chrome recommended); a still image otherwise. Click the canvas for keyboard input.</figcaption>
+//! </figure>
+//!
 //! ## Quick Start
 //!
 //! ```rust,no_run
@@ -197,6 +206,15 @@
 //! look is not chrome - it comes from the node's own closure through
 //! [`NodeStatus`].
 //!
+//! <figure class="demo-embed compact" data-scene="styling">
+//!   <div class="demo-frame">
+//!     <a href="https://tuco86.github.io/iced_nodegraph/demo_styling/index.html">
+//!       <img src="https://tuco86.github.io/iced_nodegraph/gallery/styling.png" alt="The styling demo: four preset-styled nodes with routing anchors and the style control panel">
+//!     </a>
+//!   </div>
+//!   <figcaption>Runs live when scrolled into view (WebGPU, Chrome recommended); a still image otherwise. Click the canvas for keyboard input.</figcaption>
+//! </figure>
+//!
 //! ## Interaction
 //!
 //! Connections behave like physical plugs: a dragged edge *snaps* to a compatible
@@ -221,6 +239,15 @@
 //! the full control scheme including mouse and touch gestures is in the
 //! [repository README](https://github.com/tuco86/iced_nodegraph#controls).
 //!
+//! <figure class="demo-embed compact" data-scene="interaction">
+//!   <div class="demo-frame">
+//!     <a href="https://tuco86.github.io/iced_nodegraph/demo_interaction/index.html">
+//!       <img src="https://tuco86.github.io/iced_nodegraph/gallery/interaction.png" alt="The interaction demo: typed pins with valid and rejected connections">
+//!     </a>
+//!   </div>
+//!   <figcaption>Runs live when scrolled into view (WebGPU, Chrome recommended); a still image otherwise. Click the canvas for keyboard input.</figcaption>
+//! </figure>
+//!
 //! ## Coordinates
 //!
 //! Screen space (pixels from input and the viewport) and world space (the
@@ -239,6 +266,10 @@
 //! Native Windows, macOS and Linux via WGPU, and WebAssembly on WebGPU-capable
 //! browsers. There is no WebGL and no tiny-skia fallback, so Chrome/Chromium is
 //! recommended on the web.
+//!
+//! Every demo runs in the browser at <https://tuco86.github.io/iced_nodegraph/>.
+//!
+//! <link rel="stylesheet" href="../gallery/pkg/demo.css"><script type="module" src="../gallery/pkg/demo-loader.js"></script>
 pub use connection::{default_can_connect, direction_ok, input_not_occupied, not_same_node};
 pub use content::{EdgeRadii, node_footer, node_header};
 pub use ids::{Id, Ids, Indexed};

@@ -20,6 +20,8 @@
   <em><a href="https://tuco86.github.io/iced_nodegraph/demo_hello_world/index.html">Run this demo in your browser</a> (WebGPU required, Chrome recommended)</em>
 </p>
 
+<p align="center">Documentation with live demos: <a href="https://tuco86.github.io/iced_nodegraph/">https://tuco86.github.io/iced_nodegraph/</a></p>
+
 Nodes are ordinary iced widgets - sliders, text inputs, whatever your `view`
 builds - placed on an infinite zoom/pan canvas and wired together through typed
 pins. The widget holds no graph state: your application owns the data model,

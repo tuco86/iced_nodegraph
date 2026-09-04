@@ -1,6 +1,7 @@
 //! Shared GPU resources for segment-based SDF rendering.
 //!
-//! Uses lazy initialization: OnceLock on native, thread_local on WASM.
+//! Every `SdfPipeline` built on the same device and surface format shares one
+//! shader module, one set of bind group layouts and one set of pipelines.
 
 use std::sync::Arc;
 
@@ -16,13 +17,49 @@ use iced_wgpu::wgpu::{
 
 use crate::pipeline::types;
 
+/// The cached resources together with the pair they were built for.
+///
+/// Bind group layouts and pipelines are device-bound: a host that drops its
+/// renderer and builds a new one - a browser embed that closes and reopens, a
+/// second headless device in one process - gets a device the previous
+/// resources cannot be used with, and wgpu rejects every command that mixes
+/// them. Keying the cache on the device is what makes reuse safe.
+struct Cached {
+    device: Device,
+    format: TextureFormat,
+    resources: Arc<SharedSdfResources>,
+}
+
 #[cfg(not(target_arch = "wasm32"))]
-static SHARED_RESOURCES: std::sync::OnceLock<Arc<SharedSdfResources>> = std::sync::OnceLock::new();
+static SHARED_RESOURCES: std::sync::Mutex<Option<Cached>> = std::sync::Mutex::new(None);
 
 #[cfg(target_arch = "wasm32")]
 thread_local! {
-    static SHARED_RESOURCES: std::cell::RefCell<Option<Arc<SharedSdfResources>>> =
+    static SHARED_RESOURCES: std::cell::RefCell<Option<Cached>> =
         const { std::cell::RefCell::new(None) };
+}
+
+fn reuse_or_build(
+    slot: &mut Option<Cached>,
+    device: &Device,
+    format: TextureFormat,
+) -> Arc<SharedSdfResources> {
+    if let Some(cached) = slot.as_ref()
+        && &cached.device == device
+        && cached.format == format
+    {
+        return Arc::clone(&cached.resources);
+    }
+
+    let resources = Arc::new(SharedSdfResources::new(device, format));
+
+    *slot = Some(Cached {
+        device: device.clone(),
+        format,
+        resources: Arc::clone(&resources),
+    });
+
+    resources
 }
 
 pub(crate) struct SharedSdfResources {
@@ -58,20 +95,16 @@ pub(crate) struct SharedSdfResources {
 impl SharedSdfResources {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn get_or_init(device: &Device, format: TextureFormat) -> Arc<Self> {
-        SHARED_RESOURCES
-            .get_or_init(|| Arc::new(Self::new(device, format)))
-            .clone()
+        let mut slot = SHARED_RESOURCES
+            .lock()
+            .expect("shared SDF resources poisoned");
+
+        reuse_or_build(&mut slot, device, format)
     }
 
     #[cfg(target_arch = "wasm32")]
     pub fn get_or_init(device: &Device, format: TextureFormat) -> Arc<Self> {
-        SHARED_RESOURCES.with(|cell| {
-            let mut opt = cell.borrow_mut();
-            if opt.is_none() {
-                *opt = Some(Arc::new(Self::new(device, format)));
-            }
-            opt.as_ref().unwrap().clone()
-        })
+        SHARED_RESOURCES.with(|cell| reuse_or_build(&mut cell.borrow_mut(), device, format))
     }
 
     fn new(device: &Device, format: TextureFormat) -> Self {

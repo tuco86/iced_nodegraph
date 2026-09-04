@@ -1,51 +1,13 @@
-//! # Visual Shader Editor Demo
-//!
-//! A visual shader editor demonstrating complex node graph functionality.
-//! Create WGSL shaders by connecting nodes visually.
-//!
-//! ## Interactive Demo
-//!
-//! <link rel="stylesheet" href="pkg/demo.css">
-//! <div id="demo-container">
-//!   <div id="demo-loading">
-//!     <div class="demo-spinner"></div>
-//!     <p>Loading demo...</p>
-//!   </div>
-//!   <div id="demo-canvas-container"></div>
-//!   <div id="demo-error">
-//!     <strong>Failed to load demo.</strong> WebGPU required.
-//!   </div>
-//! </div>
-//! <script type="module" src="pkg/demo-loader.js"></script>
-//!
-//! ## Controls
-//!
-//! - **Cmd/Ctrl+Space** - Open command palette to add shader nodes
-//! - **Drag nodes** - Move nodes around the canvas
-//! - **Drag from pins** - Create connections between compatible sockets
-//! - **Scroll** - Zoom in/out
-//! - **Right-drag** - Pan the canvas
-//!
-//! ## Available Nodes
-//!
-//! Use the command palette to add nodes from categories: Math, Vector, Color,
-//! Texture, Input, and Output. Connect them to build WGSL fragment shaders.
+#![doc = include_str!("../README.md")]
+#![doc = r#"<link rel="stylesheet" href="../gallery/pkg/demo.css"><script type="module" src="../gallery/pkg/demo-loader.js"></script>"#]
 
 mod colors;
 mod compiler;
 mod default_shader;
 mod shader_graph;
 
-#[cfg(feature = "wasm")]
-use wasm_bindgen::prelude::*;
-
-#[cfg(feature = "wasm")]
-#[wasm_bindgen(start)]
-pub fn wasm_init() {
-    console_error_panic_hook::set_once();
-}
-
 use compiler::ShaderCompiler;
+use demo_common::Demo;
 use iced::{
     Element, Event, Length, Point, Subscription, Task, Theme, Vector, event, keyboard,
     widget::{column, container, opaque, stack, text},
@@ -64,29 +26,14 @@ use shader_graph::nodes::ShaderNodeType;
 use std::collections::HashSet;
 
 pub fn main() -> iced::Result {
-    #[cfg(target_arch = "wasm32")]
-    let window_settings = iced::window::Settings {
-        platform_specific: iced::window::settings::PlatformSpecific {
-            target: Some(String::from("demo-canvas-container")),
-        },
-        ..Default::default()
-    };
-
-    #[cfg(not(target_arch = "wasm32"))]
     let window_settings = iced::window::Settings::default();
 
-    iced::application(Application::new, Application::update, Application::view)
+    iced::application(Application::boot, Application::update, Application::view)
         .subscription(Application::subscription)
         .title("Visual Shader Editor - iced_nodegraph")
         .theme(Application::theme)
         .window(window_settings)
         .run()
-}
-
-#[cfg(feature = "wasm")]
-#[wasm_bindgen]
-pub fn run_demo() {
-    let _ = main();
 }
 
 /// The id vocabulary of this demo: indexed nodes and pins, unidentified edges,
@@ -155,8 +102,10 @@ struct Application {
     camera_zoom: f32,
 }
 
-impl Application {
-    fn new() -> (Self, iced::Task<Message>) {
+impl demo_common::Demo for Application {
+    type Message = Message;
+
+    fn boot() -> (Self, iced::Task<Message>) {
         let shader_graph = default_shader::create_default_graph();
 
         // Convert shader graph connections to visual edges
@@ -212,20 +161,6 @@ impl Application {
         app.recompile();
 
         (app, iced::Task::none())
-    }
-
-    /// Calculate spawn position at screen center, converted to world coordinates.
-    fn spawn_position(&self) -> Point {
-        // Screen center
-        let screen_center_x = self.viewport_size.width / 2.0;
-        let screen_center_y = self.viewport_size.height / 2.0;
-
-        // Convert to world coordinates: world = screen / zoom - camera_position
-        let world_x = screen_center_x / self.camera_zoom - self.camera_position.x;
-        let world_y = screen_center_y / self.camera_zoom - self.camera_position.y;
-
-        // Offset for node size (approximate center)
-        Point::new(world_x - 60.0, world_y - 40.0)
     }
 
     fn update(&mut self, message: Message) -> iced::Task<Message> {
@@ -480,6 +415,30 @@ impl Application {
                 _ => None,
             }),
         ])
+    }
+}
+
+/// Boots this demo for the gallery.
+pub fn scene() -> (
+    Box<dyn demo_common::Scene>,
+    iced::Task<demo_common::SceneMessage>,
+) {
+    demo_common::erase::<Application>()
+}
+
+impl Application {
+    /// Calculate spawn position at screen center, converted to world coordinates.
+    fn spawn_position(&self) -> Point {
+        // Screen center
+        let screen_center_x = self.viewport_size.width / 2.0;
+        let screen_center_y = self.viewport_size.height / 2.0;
+
+        // Convert to world coordinates: world = screen / zoom - camera_position
+        let world_x = screen_center_x / self.camera_zoom - self.camera_position.x;
+        let world_y = screen_center_y / self.camera_zoom - self.camera_position.y;
+
+        // Offset for node size (approximate center)
+        Point::new(world_x - 60.0, world_y - 40.0)
     }
 
     fn build_palette_commands(&self) -> Vec<Command<Message>> {

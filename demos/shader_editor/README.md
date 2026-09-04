@@ -5,6 +5,15 @@ wired on the canvas; the graph is validated and compiled to WGSL on every
 change. The demo showcases a larger, more structured node graph with typed
 sockets and a node-to-code compiler.
 
+<figure class="demo-embed" data-scene="shader_editor">
+  <div class="demo-frame">
+    <a href="https://tuco86.github.io/iced_nodegraph/demo_shader_editor/index.html">
+      <img src="https://tuco86.github.io/iced_nodegraph/gallery/shader_editor.png" alt="The shader_editor demo: a WGSL node graph and its compiled preview">
+    </a>
+  </div>
+  <figcaption>Runs live when scrolled into view (WebGPU, Chrome recommended); a still image otherwise. Click the canvas for keyboard input.</figcaption>
+</figure>
+
 The editor opens with a small default graph (UV and Time inputs feeding a
 Circle SDF and a Smoothstep, combined into a color and routed to an Edge
 Output) that compiles successfully on launch.
@@ -37,8 +46,8 @@ Output) that compiles successfully on launch.
 - Scroll - Zoom in or out at the cursor.
 - Right-drag - Pan the canvas.
 
-These are the widget defaults; the root [README](../../README.md#controls) has
-the full table.
+These are the widget defaults; the root
+[README](https://github.com/tuco86/iced_nodegraph#controls) has the full table.
 
 ## Code Structure
 
@@ -84,9 +93,6 @@ authoring tool. Current behavior:
 ```bash
 cargo run -p demo_shader_editor
 ```
-
-For the browser build, compile with the `wasm` feature. WebGPU is required;
-Chromium-based browsers are recommended.
 
 ## References
 

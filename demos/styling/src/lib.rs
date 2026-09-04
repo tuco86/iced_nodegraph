@@ -1,70 +1,11 @@
-//! # Styling Demo
-//!
-//! Interactive demonstration of node graph styling capabilities.
-//!
-//! This demo showcases:
-//! - Per-node styling with NodeStyle
-//! - Live style controls (corner radius, opacity, border width)
-//! - Theme switching
-//! - Different node type presets (Input, Process, Output, Comment)
-//!
-//! ## Interactive Demo
-//!
-//! <link rel="stylesheet" href="pkg/demo.css">
-//! <div id="demo-container">
-//!   <div id="demo-loading">
-//!     <div class="demo-spinner"></div>
-//!     <p>Loading demo...</p>
-//!   </div>
-//!   <div id="demo-canvas-container"></div>
-//!   <div id="demo-error">
-//!     <strong>Failed to load demo.</strong> WebGPU required.
-//!   </div>
-//! </div>
-//! <script type="module" src="pkg/demo-loader.js"></script>
-//!
-//! ## Controls
-//!
-//! - **Select nodes** - Click nodes in the right panel to select
-//! - **Style sliders** - Adjust corner radius, opacity, border width
-//! - **Presets** - Apply Input/Process/Output/Comment presets
-//! - **Theme picker** - Switch between color themes
-//! - **Scroll** - Zoom in/out
-//! - **Right-drag** - Pan the canvas
-//!
-//! ## Routing anchors
-//!
-//! Two anchors sit under the Transform node, with three cables on each. Two of
-//! those cables come from different inputs and run through both anchors, and the
-//! angular interval each subtends contains the other's at one anchor and is
-//! contained by it at the other. Taking each anchor on its own therefore seats
-//! the two in opposite orders, which puts them on opposite sides of the stretch
-//! between the anchors and crosses them there. It does not happen: candidate
-//! ring orders are measured and the one that crosses least is kept, so a cable
-//! that flies the stretch between two anchors keeps to its own side of it.
-//! Clearing it moves the third cable at the first anchor off the innermost ring
-//! its interval asks for, out to the widest of the three. That is a consequence
-//! of the exchange rather than a price weighed against it: only the pair flying
-//! the stretch is built and counted, so nothing measured the third cable at all.
-//! The whole lifecycle is host logic:
-//!
-//! - **Drag a cable mid-run** - places a new anchor where you release
-//! - **Drag a cable where it wraps** - pulls it off that anchor
-//! - **Drop either drag on an anchor** - attaches during the drag, and every
-//!   cable at that anchor is reseated, the newcomer included; it can land on any
-//!   ring, the innermost among them
-//! - **Right-click an anchor core** - deletes it and strips it from every route
-//! - **Right-click a wrap** - detaches that one cable
-//! - **Drag an anchor core** - moves it
-//!
-//! An anchor whose last cable leaves is dropped: nothing in the library says
-//! so, it is what `update` below does with the routes it owns.
+#![doc = include_str!("../README.md")]
+#![doc = r#"<link rel="stylesheet" href="../gallery/pkg/demo.css"><script type="module" src="../gallery/pkg/demo-loader.js"></script>"#]
 
 mod nodes;
 
-use demo_common::{NodeContentStyle, node_title_bar};
+use demo_common::{Demo, NodeContentStyle, node_title_bar};
 use iced::{
-    Element, Length, Point, Rectangle, Size, Subscription, Task, Theme, Vector,
+    Element, Length, Point, Rectangle, Size, Task, Theme, Vector,
     widget::{Space, button, column, container, opaque, pick_list, row, slider, stack, text},
 };
 use iced_nodegraph::{
@@ -108,39 +49,13 @@ fn styling_pin_style(
     }
 }
 
-#[cfg(feature = "wasm")]
-use wasm_bindgen::prelude::*;
-
-#[cfg(feature = "wasm")]
-#[wasm_bindgen(start)]
-pub fn wasm_init() {
-    console_error_panic_hook::set_once();
-}
-
 pub fn main() -> iced::Result {
-    #[cfg(target_arch = "wasm32")]
-    let window_settings = iced::window::Settings {
-        platform_specific: iced::window::settings::PlatformSpecific {
-            target: Some(String::from("demo-canvas-container")),
-        },
-        ..Default::default()
-    };
-
-    #[cfg(not(target_arch = "wasm32"))]
-    let window_settings = iced::window::Settings::default();
-
-    iced::application(Application::new, Application::update, Application::view)
+    iced::application(Application::boot, Application::update, Application::view)
         .subscription(Application::subscription)
         .title("Styling Demo - iced_nodegraph")
         .theme(Application::theme)
-        .window(window_settings)
+        .window(iced::window::Settings::default())
         .run()
-}
-
-#[cfg(feature = "wasm")]
-#[wasm_bindgen]
-pub fn run_demo() {
-    let _ = main();
 }
 
 #[derive(Debug, Clone)]
@@ -401,13 +316,11 @@ impl Default for Application {
     }
 }
 
-impl Application {
-    fn new() -> (Self, Task<Message>) {
-        (Self::default(), Task::none())
-    }
+impl Demo for Application {
+    type Message = Message;
 
-    fn subscription(&self) -> Subscription<Message> {
-        Subscription::none()
+    fn boot() -> (Self, Task<Message>) {
+        (Self::default(), Task::none())
     }
 
     fn theme(&self) -> Theme {
@@ -521,36 +434,6 @@ impl Application {
         Task::none()
     }
 
-    /// Drops every anchor no route names any more.
-    ///
-    /// The library keeps an anchor as long as the host pushes it, cables or no
-    /// cables - so "the last cable left, the anchor goes" is a policy, and this
-    /// is where this host states it.
-    fn drop_unused_anchors(&mut self) {
-        let routed: HashSet<usize> = self
-            .edges
-            .iter()
-            .flat_map(|model| model.route.iter().copied())
-            .collect();
-        self.anchors.retain(|(id, _)| routed.contains(id));
-    }
-
-    /// The slider values of the selected node, or the starting values when no
-    /// node is selected.
-    fn selected_overrides(&self) -> NodeOverrides {
-        self.selected_node
-            .and_then(|index| self.nodes.get(index))
-            .map(|styled| styled.overrides)
-            .unwrap_or(NodeOverrides::START)
-    }
-
-    fn selected_overrides_mut(&mut self) -> Option<&mut NodeOverrides> {
-        let index = self.selected_node?;
-        self.nodes
-            .get_mut(index)
-            .map(|styled| &mut styled.overrides)
-    }
-
     fn view(&self) -> Element<'_, Message> {
         let control_panel = self.build_control_panel();
         let graph = self.build_graph();
@@ -580,6 +463,46 @@ impl Application {
             .align_x(iced::alignment::Horizontal::Right),
         ]
         .into()
+    }
+}
+
+/// Boots this demo for the gallery.
+pub fn scene() -> (
+    Box<dyn demo_common::Scene>,
+    iced::Task<demo_common::SceneMessage>,
+) {
+    demo_common::erase::<Application>()
+}
+
+impl Application {
+    /// Drops every anchor no route names any more.
+    ///
+    /// The library keeps an anchor as long as the host pushes it, cables or no
+    /// cables - so "the last cable left, the anchor goes" is a policy, and this
+    /// is where this host states it.
+    fn drop_unused_anchors(&mut self) {
+        let routed: HashSet<usize> = self
+            .edges
+            .iter()
+            .flat_map(|model| model.route.iter().copied())
+            .collect();
+        self.anchors.retain(|(id, _)| routed.contains(id));
+    }
+
+    /// The slider values of the selected node, or the starting values when no
+    /// node is selected.
+    fn selected_overrides(&self) -> NodeOverrides {
+        self.selected_node
+            .and_then(|index| self.nodes.get(index))
+            .map(|styled| styled.overrides)
+            .unwrap_or(NodeOverrides::START)
+    }
+
+    fn selected_overrides_mut(&mut self) -> Option<&mut NodeOverrides> {
+        let index = self.selected_node?;
+        self.nodes
+            .get_mut(index)
+            .map(|styled| &mut styled.overrides)
     }
 
     fn build_control_panel(&self) -> Element<'_, Message> {

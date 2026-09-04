@@ -826,11 +826,10 @@ checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 name = "demo_500_nodes"
 version = "0.5.0-dev"
 dependencies = [
- "console_error_panic_hook",
+ "demo_common",
  "iced",
  "iced_nodegraph",
  "iced_nodegraph_sdf",
- "wasm-bindgen",
  "web-time",
 ]
 
@@ -843,10 +842,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "demo_hello_world"
+name = "demo_gallery"
 version = "0.5.0-dev"
 dependencies = [
  "console_error_panic_hook",
+ "demo_500_nodes",
+ "demo_common",
+ "demo_hello_world",
+ "demo_interaction",
+ "demo_shader_editor",
+ "demo_styling",
+ "iced",
+ "iced_runtime",
+ "png",
+ "pollster",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "demo_hello_world"
+version = "0.5.0-dev"
+dependencies = [
  "demo_common",
  "directories",
  "getrandom 0.3.4",
@@ -856,41 +872,34 @@ dependencies = [
  "nanoid",
  "serde",
  "serde_json",
- "wasm-bindgen",
 ]
 
 [[package]]
 name = "demo_interaction"
 version = "0.5.0-dev"
 dependencies = [
- "console_error_panic_hook",
  "demo_common",
  "iced",
  "iced_nodegraph",
- "png",
- "wasm-bindgen",
 ]
 
 [[package]]
 name = "demo_shader_editor"
 version = "0.5.0-dev"
 dependencies = [
- "console_error_panic_hook",
+ "demo_common",
  "iced",
  "iced_nodegraph",
  "iced_palette",
- "wasm-bindgen",
 ]
 
 [[package]]
 name = "demo_styling"
 version = "0.5.0-dev"
 dependencies = [
- "console_error_panic_hook",
  "demo_common",
  "iced",
  "iced_nodegraph",
- "wasm-bindgen",
 ]
 
 [[package]]

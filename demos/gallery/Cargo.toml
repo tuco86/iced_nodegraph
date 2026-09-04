@@ -1,0 +1,39 @@
+[package]
+name = "demo_gallery"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+doc = false
+
+[[bin]]
+name = "gallery_screenshots"
+path = "src/bin/screenshots.rs"
+doc = false
+
+[dependencies]
+demo_common.workspace = true
+demo_hello_world.workspace = true
+demo_styling.workspace = true
+demo_interaction.workspace = true
+demo_500_nodes.workspace = true
+demo_shader_editor.workspace = true
+
+# `fira-sans` is unconditional: a browser has no system fonts to detect, and the
+# screenshot must be rendered with the same font the canvas uses.
+iced = { workspace = true, features = ["wgpu", "crisp", "thread-pool", "fira-sans"] }
+# The `core` re-export supplies `Headless`, `clipboard::Null`, `mouse`, `Event`
+# and `renderer::Style` without turning on iced's `advanced` feature.
+iced_runtime.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
+console_error_panic_hook.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+png.workspace = true
+pollster.workspace = true
