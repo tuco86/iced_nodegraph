@@ -24,12 +24,11 @@ use iced_wgpu::{Engine, Renderer};
 
 /// One shared headless renderer for the whole binary, behind a mutex.
 ///
-/// A real app owns ONE wgpu device, and the SDF substrate caches device-bound
-/// resources (`SharedSdfResources`) in a global keyed to the first device it
-/// sees. A second device would make those resources invalid ("Invalid resource"
-/// in wgpu-core), and many concurrent devices can deadlock some drivers. Sharing
-/// one device and serializing the GPU-touching tests behind this mutex avoids
-/// both. `None` => no GPU adapter, so callers skip rather than fail.
+/// A real app owns ONE wgpu device. Every additional device makes the SDF
+/// substrate rebuild its shared shader module, layouts and pipelines, and many
+/// concurrent devices can deadlock some drivers. Sharing one device and
+/// serializing the GPU-touching tests behind this mutex avoids both.
+/// `None` => no GPU adapter, so callers skip rather than fail.
 pub fn shared() -> Option<MutexGuard<'static, Renderer>> {
     static SHARED: OnceLock<Option<Mutex<Renderer>>> = OnceLock::new();
     SHARED

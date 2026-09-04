@@ -1,9 +1,10 @@
 //! Renders every gallery scene headlessly to the PNG fallback the docs show.
 //!
 //! Usage: `gallery_screenshots <out_dir> [scene]`. Without a scene name the
-//! process re-executes itself once per scene: the SDF substrate caches
-//! device-bound resources in a process-global keyed to the first wgpu device,
-//! so two scenes in one process would share a corrupted pipeline cache.
+//! process re-executes itself once per scene: one renderer means one
+//! `SdfPipeline`, and that pipeline carries frame-surviving state - the shape
+//! cache, the static-background texture cache, GPU buffers - so two scenes
+//! sharing it would corrupt each other's render.
 
 /// Rendering needs a native wgpu adapter and the `png` encoder, neither of
 /// which the package's wasm target carries; cargo still builds every bin of the

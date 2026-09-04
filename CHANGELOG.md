@@ -548,6 +548,15 @@ its name says: the canvas.
 
 ### Fixed
 
+- **The shared SDF resources are keyed by device and surface format.** The
+  shader module, bind group layouts and pipelines every `SdfPipeline` shares
+  used to be cached without a key, so a process that builds a second wgpu
+  device - a browser embed whose compositor is torn down and rebuilt when its
+  last window closes, two headless renderers in one test binary - handed the
+  new device the previous device's objects and wgpu rejected every submit that
+  named them. The cache now rebuilds when either the device or the format
+  changes.
+
 - **A contour no longer emits zero-length straight segments.**
   `ShapeBuilder::line` and `line_to` now refuse a step below `1e-4`, matching the
   guards `arc` and `close` already carried. A rounded rectangle whose corner
