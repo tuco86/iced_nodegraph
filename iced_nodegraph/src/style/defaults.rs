@@ -15,10 +15,10 @@
 //!
 //! The per-element defaults take a status and express its feedback in full: a
 //! selected node is not just a recolored border (see [`default_node_style`]), and
-//! an edge marked for cutting takes the cutting tool's own color. The two
-//! overlay defaults ([`default_selection_box_style`],
-//! [`default_cutting_tool_style`]) have no status - the overlay exists only while
-//! its gesture is running.
+//! an edge marked for cutting takes the cutting tool's own color. The chrome
+//! defaults ([`default_selection_box_style`], [`default_cutting_tool_style`],
+//! [`default_minimap_style`]) have no status: what they draw is either on
+//! screen or absent.
 //!
 //! ```rust,no_run
 //! use iced::{widget::text, Color, Point};
@@ -45,8 +45,8 @@ use iced_widget::core::{Color, Theme};
 use super::roles::Roles;
 use super::{
     AnchorStatus, AnchorStyle, CuttingToolStyle, EdgeCurve, EdgeStatus, EdgeStyle, GraphStyle,
-    NodeStatus, NodeStyle, PinShape, PinStatus, PinStyle, SelectionBoxStyle, TilingBackground,
-    ramp,
+    MinimapStyle, NodeStatus, NodeStyle, PinShape, PinStatus, PinStyle, SelectionBoxStyle,
+    TilingBackground, ramp,
 };
 
 /// Corner radius of a node body, in world units.
@@ -321,6 +321,38 @@ pub fn default_graph_style(theme: &Theme) -> GraphStyle {
     GraphStyle {
         background_color: roles.canvas,
         tiling: Some(TilingBackground::grid(40.0, 1.0, roles.grid)),
+    }
+}
+
+/// Theme-derived style of the minimap overlay.
+///
+/// The pane is a node body's elevation, slightly translucent: the map is a
+/// surface above the canvas, and reading as one is what separates it from the
+/// graph it floats over. The node marks are the wire rung of the legibility
+/// ladder and the viewport rectangle the terminal rung above it, at two alphas
+/// like the selection box. The accent stays reserved for selection, which is
+/// exactly what [`selected_node_color`](MinimapStyle::selected_node_color)
+/// spends it on.
+pub fn default_minimap_style(theme: &Theme) -> MinimapStyle {
+    let roles = Roles::of(theme);
+    MinimapStyle {
+        background: Color {
+            a: 0.9,
+            ..roles.body
+        },
+        border_color: roles.border,
+        border_width: 1.0,
+        node_color: roles.wire,
+        selected_node_color: roles.accent,
+        viewport_fill: Color {
+            a: 0.12,
+            ..roles.terminal
+        },
+        viewport_border_color: Color {
+            a: 0.8,
+            ..roles.terminal
+        },
+        viewport_border_width: 1.0,
     }
 }
 

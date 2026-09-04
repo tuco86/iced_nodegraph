@@ -127,6 +127,10 @@ pub(crate) enum Dragging {
         origin_screen: Point,
         target: PressTarget,
     },
+    /// Steering the camera from the minimap: every cursor position while this
+    /// is held re-centers the viewport on the world point under it. Carries no
+    /// captured point - the gesture is absolute, not a delta.
+    Minimap,
 }
 
 /// What a [`Dragging::PressPending`] would click if it never travels.

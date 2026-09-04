@@ -8,7 +8,8 @@
 //!
 //! The graph's own chrome follows the same shape, one type per thing the widget
 //! draws itself: [`GraphStyle`] for the canvas, [`SelectionBoxStyle`] for the
-//! selection box, [`CuttingToolStyle`] for the edge-cutting trail.
+//! selection box, [`CuttingToolStyle`] for the edge-cutting trail,
+//! [`MinimapStyle`] for the minimap overlay.
 
 use iced_widget::core::Color;
 
@@ -24,7 +25,7 @@ mod sdf;
 pub use anchor::AnchorStyle;
 pub use defaults::{
     default_anchor_style, default_cutting_tool_style, default_edge_style, default_graph_style,
-    default_node_style, default_pin_style, default_selection_box_style,
+    default_minimap_style, default_node_style, default_pin_style, default_selection_box_style,
 };
 pub use edge::EdgeStyle;
 pub use node::NodeStyle;
@@ -215,4 +216,31 @@ pub struct CuttingToolStyle {
     pub color: Color,
     /// Stroke width in SCREEN pixels, scaled like [`SelectionBoxStyle::border_width`].
     pub width: f32,
+}
+
+/// Style of the minimap overlay.
+///
+/// The theme-derived base is [`default_minimap_style`]; override it with
+/// [`NodeGraph::minimap_style`](crate::NodeGraph::minimap_style). Every length
+/// is in screen pixels: the minimap sits in the widget's corner and does not
+/// scale with the camera.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MinimapStyle {
+    /// Fill behind the node marks. Usually translucent, since the graph shows
+    /// through the map.
+    pub background: Color,
+    /// Stroke around the map.
+    pub border_color: Color,
+    /// Width of the map's own stroke.
+    pub border_width: f32,
+    /// Fill of an unselected node's mark.
+    pub node_color: Color,
+    /// Fill of a selected node's mark.
+    pub selected_node_color: Color,
+    /// Fill of the rectangle marking what the viewport currently shows.
+    pub viewport_fill: Color,
+    /// Stroke color of that rectangle.
+    pub viewport_border_color: Color,
+    /// Width of that rectangle's stroke.
+    pub viewport_border_width: f32,
 }

@@ -66,7 +66,7 @@ use crate::{
     style::{
         AnchorStatus, AnchorStyle, EdgeGeometry, EdgeStatus, EdgeStyle, NodeStatus, NodeStyle,
         PinStatus, PinStyle, TilingKind, default_anchor_style, default_cutting_tool_style,
-        default_selection_box_style,
+        default_minimap_style, default_selection_box_style,
     },
 };
 use iced_nodegraph_sdf::{Pattern, SdfPrimitive, Shape, Style, Tiling};
@@ -74,6 +74,7 @@ use iced_nodegraph_sdf::{Pattern, SdfPrimitive, Shape, Style, Tiling};
 mod camera_overlay;
 mod draw;
 pub(super) mod edge_path;
+mod minimap;
 pub(crate) mod update;
 
 use camera_overlay::CameraOverlay;
@@ -312,6 +313,9 @@ where
             | Dragging::Route { .. }
             | Dragging::RouteOver { .. }
             | Dragging::PressPending { .. } => return mouse::Interaction::Grabbing,
+            // The map is chrome the gesture steers from, not content it drags,
+            // so the cursor stays the one that offered the click.
+            Dragging::Minimap => return mouse::Interaction::Pointer,
             Dragging::Edge { .. }
             | Dragging::EdgeOver { .. }
             | Dragging::EdgeCutting { .. }
@@ -322,6 +326,15 @@ where
         // claimed the event - nothing here may claim the cursor.
         if cursor.position_over(layout.bounds()).is_none() {
             return mouse::Interaction::None;
+        }
+        // The map draws over everything, so it answers the cursor before any
+        // node does - and in screen space, the space it was placed in.
+        if let Some(minimap) = self.minimap.as_ref()
+            && cursor
+                .position_over(minimap::rect(minimap, layout.bounds()))
+                .is_some()
+        {
+            return mouse::Interaction::Pointer;
         }
         let camera = state.camera_for(layout);
         // The spaces the child `update` walk uses: cursor and viewport

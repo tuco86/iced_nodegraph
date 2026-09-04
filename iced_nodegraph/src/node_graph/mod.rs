@@ -26,10 +26,10 @@
 //! function as its base. [`Node::style`] and [`Node::pin_style`] for a node and
 //! its pins, [`Edge::style`] for an edge, and one entry point per piece of chrome
 //! the widget draws itself - [`NodeGraph::graph_style`] (canvas),
-//! [`NodeGraph::selection_box_style`], [`NodeGraph::cutting_tool_style`] and
-//! [`NodeGraph::dragging_edge_style`]. Per-element closures additionally receive
-//! a status, so selection and cut feedback are expressed in the style, not
-//! layered on afterwards.
+//! [`NodeGraph::selection_box_style`], [`NodeGraph::cutting_tool_style`],
+//! [`NodeGraph::minimap_style`] and [`NodeGraph::dragging_edge_style`].
+//! Per-element closures additionally receive a status, so selection and cut
+//! feedback are expressed in the style, not layered on afterwards.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -43,7 +43,7 @@ use crate::ids::{Ids, Indexed};
 use crate::node_pin::{PinDirection, PinEnd, PinInfo};
 use crate::style::{
     AnchorStatus, AnchorStyle, CuttingToolStyle, EdgeCurve, EdgeStatus, EdgeStyle, GraphStyle,
-    NodeStatus, NodeStyle, PinStatus, PinStyle, SelectionBoxStyle,
+    MinimapStyle, NodeStatus, NodeStyle, PinStatus, PinStyle, SelectionBoxStyle,
 };
 
 /// Pin click detection threshold, in screen pixels: divided by zoom before
@@ -710,6 +710,45 @@ impl<I: Ids> PinRef<I> {
     }
 }
 
+/// Which corner of the graph a [`Minimap`] sits in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Corner {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    #[default]
+    BottomRight,
+}
+
+/// Placement and size of the minimap overlay, enabled by
+/// [`NodeGraph::minimap`].
+///
+/// The map is screen-space chrome: it keeps its size and its corner at every
+/// zoom, and it shows the union of the graph's node bounds with what the
+/// viewport currently covers, so the viewport rectangle is always inside the
+/// map - over an empty graph as well. Its appearance is
+/// [`MinimapStyle`](crate::MinimapStyle).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Minimap {
+    /// Size of the map in screen pixels, capped at the graph's own size minus
+    /// the margin on both sides.
+    pub size: Size,
+    /// The corner of the graph the map is pinned to.
+    pub corner: Corner,
+    /// Distance from the two edges of that corner, in screen pixels.
+    pub margin: f32,
+}
+
+impl Default for Minimap {
+    fn default() -> Self {
+        Self {
+            size: Size::new(200.0, 150.0),
+            corner: Corner::BottomRight,
+            margin: 12.0,
+        }
+    }
+}
+
 /// Node graph widget: a frame-scoped collection of [`Node`]s and [`Edge`]s plus
 /// the callbacks and styles that apply to them.
 ///
@@ -795,6 +834,12 @@ pub struct NodeGraph<'a, I: Ids = Indexed, Message = (), Renderer = iced_widget:
     pub(super) selection_box_style: Option<Box<dyn Fn(&Theme) -> SelectionBoxStyle + 'a>>,
     /// Edge-cutting trail style; [`default_cutting_tool_style`] applies when unset.
     pub(super) cutting_tool_style: Option<Box<dyn Fn(&Theme) -> CuttingToolStyle + 'a>>,
+    /// The minimap overlay, when the host asked for one via
+    /// [`minimap`](Self::minimap). Absent leaves every draw and input path
+    /// untouched.
+    pub(super) minimap: Option<Minimap>,
+    /// Minimap style; [`default_minimap_style`] applies when unset.
+    pub(super) minimap_style: Option<Box<dyn Fn(&Theme) -> MinimapStyle + 'a>>,
     /// Host-controlled camera (world position + zoom). The widget syncs its
     /// internal camera to this whenever the host changes it, while still running
     /// pan/zoom interaction internally and committing via `on_camera`. Mirrors
@@ -841,6 +886,8 @@ impl<I: Ids, Message, Renderer> Default for NodeGraph<'_, I, Message, Renderer> 
             dragging_edge_style: None,
             selection_box_style: None,
             cutting_tool_style: None,
+            minimap: None,
+            minimap_style: None,
             camera: None,
             can_connect: None,
             keymap: input::Keymap::default(),
@@ -1431,6 +1478,54 @@ impl<'a, I: Ids, Message, Renderer> NodeGraph<'a, I, Message, Renderer> {
     /// ```
     pub fn cutting_tool_style(mut self, f: impl Fn(&Theme) -> CuttingToolStyle + 'a) -> Self {
         self.cutting_tool_style = Some(Box::new(f));
+        self
+    }
+
+    /// Shows a minimap overlay in one corner of the graph.
+    ///
+    /// The map draws every node as a mark inside the union of the graph's node
+    /// bounds and the visible world rectangle, plus a rectangle for what the
+    /// viewport shows. Clicking it centers the camera on the world point
+    /// pressed and dragging keeps centering it, both committed through
+    /// [`on_camera`](Self::on_camera) - so a host that does not wire that
+    /// callback still pans, it just never learns where to.
+    ///
+    /// ```
+    /// use iced_nodegraph::{Corner, Minimap, node_graph};
+    /// use iced::Size;
+    /// use iced_wgpu::Renderer;
+    ///
+    /// let graph = node_graph::<(), Renderer>().minimap(Minimap {
+    ///     size: Size::new(240.0, 160.0),
+    ///     corner: Corner::TopRight,
+    ///     ..Minimap::default()
+    /// });
+    /// ```
+    pub fn minimap(mut self, minimap: Minimap) -> Self {
+        self.minimap = Some(minimap);
+        self
+    }
+
+    /// Sets the style of the minimap overlay.
+    ///
+    /// [`default_minimap_style`](crate::default_minimap_style) is the
+    /// theme-derived base and applies when this is unset. The style is drawn
+    /// only while [`minimap`](Self::minimap) is set.
+    ///
+    /// ```
+    /// use iced_nodegraph::{Minimap, MinimapStyle, default_minimap_style, node_graph};
+    /// use iced::Color;
+    /// use iced_wgpu::Renderer;
+    ///
+    /// let graph = node_graph::<(), Renderer>()
+    ///     .minimap(Minimap::default())
+    ///     .minimap_style(|theme| MinimapStyle {
+    ///         background: Color { a: 1.0, ..default_minimap_style(theme).background },
+    ///         ..default_minimap_style(theme)
+    ///     });
+    /// ```
+    pub fn minimap_style(mut self, f: impl Fn(&Theme) -> MinimapStyle + 'a) -> Self {
+        self.minimap_style = Some(Box::new(f));
         self
     }
 

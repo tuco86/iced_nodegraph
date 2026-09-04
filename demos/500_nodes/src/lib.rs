@@ -50,8 +50,8 @@ use iced::{
     widget::{canvas, column, container, opaque, row, stack, text, toggler},
 };
 use iced_nodegraph::{
-    Counts, GraphInfo, GraphStyle, Ids, PinInfo, PinRef, PinStatus, PinStyle, default_graph_style,
-    default_pin_style, edge, node,
+    Counts, GraphInfo, GraphStyle, Ids, Minimap, PinInfo, PinRef, PinStatus, PinStyle,
+    default_graph_style, default_pin_style, edge, node,
 };
 use nodes::NodeType;
 use web_time::Instant;
@@ -372,7 +372,10 @@ impl Application {
             .on_disconnect(|from, to| ApplicationMessage::EdgeDisconnected { from, to })
             .on_move(|delta, indices| ApplicationMessage::NodesMoved { delta, indices })
             .on_select(ApplicationMessage::SelectionChanged)
-            .on_camera(|pos, zoom| ApplicationMessage::CameraReport { pos, zoom });
+            .on_camera(|pos, zoom| ApplicationMessage::CameraReport { pos, zoom })
+            // 500 nodes reach well past any one viewport, so the overview is
+            // the only way to see where the camera sits in the whole graph.
+            .minimap(Minimap::default());
         // The `on_info` frame stream exists only while the stats panel is
         // shown: live per-frame diagnostics force continuous redraws, so with
         // the panel hidden the demo is fully idle between interactions.

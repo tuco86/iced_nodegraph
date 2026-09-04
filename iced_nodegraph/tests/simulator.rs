@@ -16,7 +16,8 @@ use iced::widget::{container, text};
 use iced::{Element, Length, Point, Size, Theme, Vector};
 use iced::{keyboard, mouse};
 use iced_nodegraph::{
-    AnchorStatus, DragInfo, Ids, NodeGraph, PinRef, anchor, default_anchor_style, edge, node, pin,
+    AnchorStatus, DragInfo, Ids, Minimap, NodeGraph, PinRef, anchor, default_anchor_style, edge,
+    node, pin,
 };
 use iced_test::Simulator;
 
@@ -2540,4 +2541,85 @@ fn a_wrap_is_grabbable_where_it_is_drawn_at_any_zoom() {
             "the wrap took the press, so the core never moved at zoom {zoom}: {msgs:?}",
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Minimap
+// ---------------------------------------------------------------------------
+
+/// Where the default minimap's center lands in the 1024x768 root: 200x150 in
+/// the bottom-right corner, 12 px off both edges.
+const MAP_CENTER: Point = Point::new(1024.0 - 12.0 - 100.0, 768.0 - 12.0 - 75.0);
+
+/// A graph with the default minimap enabled and the callbacks a map press must
+/// not fire wired alongside the one it must.
+fn minimap_graph(nodes: &[(usize, Point)]) -> Element<'static, Msg, Theme, Renderer> {
+    let mut ng: Graph = NodeGraph::default()
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .minimap(Minimap::default())
+        .on_camera(Msg::Camera)
+        .on_select(Msg::Select)
+        .on_move(Msg::Move);
+    for &(id, pos) in nodes {
+        let body = container(text("n"))
+            .width(Length::Fixed(NODE_W))
+            .height(Length::Fixed(NODE_H));
+        ng = ng.push_node(node(id, pos, body));
+    }
+    ng.into()
+}
+
+/// The map's center is the center of what it shows, so a press there has to
+/// bring the graph into view - here from a node 1000 px past the viewport's
+/// far corner, which the default camera does not show at all.
+#[test]
+fn a_press_at_the_minimap_center_brings_the_graph_into_view() {
+    const NEAR: Point = Point::new(100.0, 100.0);
+    const FAR: Point = Point::new(2000.0, 1500.0);
+    let mut ui = Simulator::new(minimap_graph(&[(0, NEAR), (1, FAR)]));
+    click(&mut ui, MAP_CENTER);
+
+    let msgs = messages(ui);
+    let (position, zoom) = last_camera(&msgs).expect("a map press must publish a camera");
+    // The center of the graph's world bounds, mapped through the published
+    // camera: screen = (world + position) * zoom.
+    let center = Point::new(
+        (NEAR.x + FAR.x + NODE_W) / 2.0,
+        (NEAR.y + FAR.y + NODE_H) / 2.0,
+    );
+    let on_screen = Point::new(
+        (center.x + position.x) * zoom,
+        (center.y + position.y) * zoom,
+    );
+    assert!(
+        (0.0..=1024.0).contains(&on_screen.x) && (0.0..=768.0).contains(&on_screen.y),
+        "the graph's center must land in the viewport, got {on_screen:?} \
+         from camera {position:?} at zoom {zoom}",
+    );
+}
+
+/// The map draws over the canvas, so it must also take the press over it: a
+/// node the map happens to cover is chrome's business, not the node's.
+#[test]
+fn a_press_on_the_minimap_never_reaches_the_node_beneath_it() {
+    let covered = Point::new(MAP_CENTER.x - NODE_W / 2.0, MAP_CENTER.y - NODE_H / 2.0);
+    let mut ui = Simulator::new(minimap_graph(&[(0, covered)]));
+    drag(
+        &mut ui,
+        MAP_CENTER,
+        Point::new(MAP_CENTER.x + 20.0, MAP_CENTER.y + 10.0),
+    );
+
+    let msgs = messages(ui);
+    assert!(
+        !msgs
+            .iter()
+            .any(|m| matches!(m, Msg::Move(..) | Msg::Select(_))),
+        "the covered node must neither move nor be selected: {msgs:?}",
+    );
+    assert!(
+        msgs.iter().any(|m| matches!(m, Msg::Camera(..))),
+        "the press must still steer the camera: {msgs:?}",
+    );
 }
