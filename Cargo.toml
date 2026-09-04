@@ -9,6 +9,7 @@ members = [
     "demos/500_nodes",
     "demos/shader_editor",
     "demos/common",
+    "demos/gallery",
 ]
 resolver = "2"
 
@@ -25,6 +26,11 @@ repository = "https://github.com/tuco86/iced_nodegraph"
 iced_nodegraph = { path = "iced_nodegraph", version = "0.5.0-dev" }
 iced_nodegraph_sdf = { path = "iced_nodegraph_sdf", version = "0.5.0-dev" }
 demo_common = { path = "demos/common" }
+demo_hello_world = { path = "demos/hello_world" }
+demo_styling = { path = "demos/styling" }
+demo_interaction = { path = "demos/interaction" }
+demo_500_nodes = { path = "demos/500_nodes" }
+demo_shader_editor = { path = "demos/shader_editor" }
 
 # Iced framework.
 #
