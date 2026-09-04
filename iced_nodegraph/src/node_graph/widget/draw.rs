@@ -7,6 +7,7 @@
 
 use super::update::{CableHit, CableZone, drag_carries, drag_delta};
 use super::*;
+use crate::node_graph::euclid::{WorldRect, WorldSize};
 use crate::node_graph::state::AnchorGeometry;
 use crate::style::EdgeCurve;
 use iced_widget::core::{Border, Shadow};
@@ -1652,6 +1653,44 @@ where
                 sdf_cull_skipped: sdf.cull_skipped,
             };
             state.last_info.replace(Some(info));
+        }
+
+        // ========================================
+        // Layer N+3: Minimap overlay
+        // ========================================
+        // Screen space, on top of everything, no camera transform: the map is
+        // chrome pinned to a corner of the widget, not content on the canvas.
+        if let Some(minimap) = self.minimap.as_ref() {
+            let style = match &self.minimap_style {
+                Some(style_fn) => style_fn(theme),
+                None => default_minimap_style(theme),
+            };
+            // Node geometry is layout-absolute and carries this frame's drag
+            // offset, so a dragged node moves on the map with its body.
+            let node_world = |geom: &NodeGeom| {
+                WorldRect::new(
+                    camera.layout_to_world(geom.position),
+                    WorldSize::new(geom.size.width, geom.size.height),
+                )
+            };
+            let visible = camera.visible_world_rect(layout.bounds());
+            let map = minimap::rect(minimap, layout.bounds());
+            let projection = minimap::Projection::new(
+                map,
+                minimap::world_bounds(node_geoms.iter().flatten().map(node_world), visible),
+            );
+            renderer.with_layer(layout.bounds(), |renderer| {
+                minimap::draw(
+                    renderer,
+                    map,
+                    &projection,
+                    &style,
+                    node_geoms.iter().enumerate().filter_map(|(index, geom)| {
+                        Some((node_world(geom.as_ref()?), selection.contains(&index)))
+                    }),
+                    visible,
+                );
+            });
         }
     }
 }

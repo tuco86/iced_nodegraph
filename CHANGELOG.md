@@ -152,6 +152,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dropped into a frame is carried by the next drag with nothing for the host to
   register. Frame contents arrive in the same `on_move` report as the frame.
 
+- **Minimap overlay.** `NodeGraph::minimap(Minimap { size, corner, margin })`
+  pins an overview to a corner of the graph, styled through
+  `NodeGraph::minimap_style` over `default_minimap_style` like every other
+  piece of chrome. It shows one quad per node - selected ones in the accent -
+  inside the union of the graph's node bounds with the visible world
+  rectangle, so the rectangle marking the viewport is always inside the map,
+  over an empty graph as well. A click centers the camera on the world point
+  pressed and a drag keeps centering it, both committed through `on_camera`;
+  the map takes the press before any node, pin, cable or anchor under it.
+  Screen-space quads only, no SDF work and no edges. Opt-in: a graph without
+  `minimap` draws and reports exactly as before.
+
 - **Routing anchors.** An edge still connects exactly two pins and now also
   carries the anchors it wraps on the way: `Edge::route(anchors)`, plus
   `anchor(id, position)` and `NodeGraph::push_anchor`. Anchors carry their own id

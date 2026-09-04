@@ -12,7 +12,7 @@ use crate::node_graph::euclid::{WorldRect, WorldSize};
 use crate::node_graph::input::KeyAction;
 use crate::node_graph::state::AnchorGeometry;
 use crate::node_graph::{EDGE_CUT_THRESHOLD, FocusOptions, FocusTarget, PIN_CLICK_THRESHOLD};
-use iced_widget::core::{touch, window};
+use iced_widget::core::{Padding, touch, window};
 use std::collections::HashSet;
 
 /// Hysteresis thresholds for edge snap/unsnap (prevents jitter at boundary).
@@ -458,6 +458,7 @@ where
                         Dragging::GroupMove {
                             anchor, followers, ..
                         } => self.handle_group_move(&mut ctx, anchor, &followers),
+                        Dragging::Minimap => self.handle_minimap_drag(&mut ctx),
                     }
 
                     // Iterate top-first so the topmost node's child widgets get a
@@ -1502,20 +1503,103 @@ where
         }
     }
 
-    /// Dispatches a left-button press: edge cut, then per-node pin/body
-    /// hit-test (top-first by z-order), then the empty-space fallback.
+    /// Handles an in-progress minimap drag: every cursor position re-centers
+    /// the camera on the world point the map shows there, and the release ends
+    /// the gesture.
+    ///
+    /// Absolute rather than incremental, so the viewport marker stays under the
+    /// cursor no matter how far the drag has travelled or how the map's extent
+    /// changed under it.
+    fn handle_minimap_drag(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>) {
+        match ctx.event {
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                if let Some(cursor) = ctx.screen_cursor.position() {
+                    self.center_camera_from_minimap(ctx, cursor);
+                }
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                ctx.tree.state.downcast_mut::<NodeGraphState>().dragging = Dragging::None;
+                ctx.shell.capture_event();
+                ctx.shell.request_redraw();
+            }
+            _ => {}
+        }
+    }
+
+    /// Centers the viewport on the world point the minimap shows at `cursor`,
+    /// clamped to the map, and commits it - the continuous commit wheel zoom
+    /// and pinch use, since a map gesture has no single release to report.
+    ///
+    /// The map's world extent is re-derived from this frame's layout and
+    /// camera, so the mapping a press reads is the one the map was drawn with.
+    fn center_camera_from_minimap(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>, cursor: Point) {
+        let Some(minimap) = self.minimap.as_ref() else {
+            return;
+        };
+        let UpdateCtx {
+            tree,
+            layout,
+            shell,
+            ..
+        } = &mut *ctx;
+        let state = tree.state.downcast_mut::<NodeGraphState>();
+        let bounds = layout.bounds();
+        let map = minimap::rect(minimap, bounds);
+        let visible = state.camera.visible_world_rect(bounds);
+        let world = minimap::world_bounds(
+            layout.children().map(|child| {
+                let b = child.bounds();
+                WorldRect::new(
+                    state.camera.layout_to_world(LayoutPoint::new(b.x, b.y)),
+                    WorldSize::new(b.width, b.height),
+                )
+            }),
+            visible,
+        );
+        // Outside the pane the mapping would keep scaling, so a drag that left
+        // it would fly the camera off the graph; the edge of the map is the
+        // furthest it can steer.
+        let at = Point::new(
+            cursor.x.clamp(map.x, map.x + map.width),
+            cursor.y.clamp(map.y, map.y + map.height),
+        );
+        let target = Camera2D::position_for_center(
+            minimap::Projection::new(map, world).map_to_world(at),
+            state.camera.zoom(),
+            bounds.size(),
+            Padding::ZERO,
+        );
+        // User input beats a running tween (arbitration rule 2).
+        state.camera_tween = None;
+        state.camera = state.camera.move_by(target - state.camera.position());
+        if let Some(handler) = self.on_camera.as_ref() {
+            shell.publish(handler(Point::new(target.x, target.y), state.camera.zoom()));
+        }
+        shell.request_redraw();
+    }
+
+    /// Dispatches a left-button press: the minimap, then an edge cut, then the
+    /// per-node pin/body hit-test (top-first by z-order), then the empty-space
+    /// fallback.
     ///
     /// This holds every `Dragging::None -> *` transition of the left button;
     /// in-progress transitions live in the `handle_*` methods above.
     fn handle_left_press(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>, z_indices: &[usize]) {
-        // Multi-select-modifier+drag from an occupied pin forks a NEW edge
-        // instead of unplugging the existing one.
-        let state = ctx.tree.state.downcast_mut::<NodeGraphState>();
         // A press while another drag is in progress (e.g. left press during a
         // pan) must not hijack the state machine mid-drag.
-        if state.dragging != Dragging::None {
+        if ctx.tree.state.downcast_ref::<NodeGraphState>().dragging != Dragging::None {
             return;
         }
+
+        // The map is drawn over every layer, so it takes the press before any
+        // node, pin, cable or anchor is asked about it.
+        if self.try_press_minimap(ctx) {
+            return;
+        }
+
+        let state = ctx.tree.state.downcast_ref::<NodeGraphState>();
+        // Multi-select-modifier+drag from an occupied pin forks a NEW edge
+        // instead of unplugging the existing one.
         let multi_select_held = state.modifiers.contains(self.keymap.multi_select_modifiers);
         let edge_cut_held = state.modifiers.contains(self.keymap.edge_cut_modifiers);
 
@@ -1548,6 +1632,29 @@ where
         // Nothing hit - open a selection box on empty space, unless COMMAND is
         // held (reserved for edge cutting).
         self.start_selection_box_or_cut(ctx);
+    }
+
+    /// Takes a left press that landed on the minimap: jumps the camera to the
+    /// world point pressed and holds the map for the rest of the gesture.
+    /// Returns whether the map consumed the press.
+    ///
+    /// Screen space, because that is where the map was placed: the press is
+    /// tested against the raw cursor, not the camera-inverted one the node hit
+    /// tests use.
+    fn try_press_minimap(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>) -> bool {
+        let Some(minimap) = self.minimap.as_ref() else {
+            return false;
+        };
+        let Some(cursor) = ctx.screen_cursor.position() else {
+            return false;
+        };
+        if !minimap::rect(minimap, ctx.layout.bounds()).contains(cursor) {
+            return false;
+        }
+        self.center_camera_from_minimap(ctx, cursor);
+        ctx.tree.state.downcast_mut::<NodeGraphState>().dragging = Dragging::Minimap;
+        ctx.shell.capture_event();
+        true
     }
 
     /// Cuts the first edge within `EDGE_CUT_THRESHOLD` of the cursor

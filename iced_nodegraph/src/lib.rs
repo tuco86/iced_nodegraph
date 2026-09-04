@@ -190,8 +190,10 @@
 //! The chrome the widget draws itself follows the same closure-plus-default
 //! shape, one type per thing: [`GraphStyle`] (canvas background and tiling) via
 //! [`graph_style`](NodeGraph::graph_style), [`SelectionBoxStyle`] via
-//! [`selection_box_style`](NodeGraph::selection_box_style), and [`CuttingToolStyle`]
-//! via [`cutting_tool_style`](NodeGraph::cutting_tool_style). A selected node's
+//! [`selection_box_style`](NodeGraph::selection_box_style), [`CuttingToolStyle`]
+//! via [`cutting_tool_style`](NodeGraph::cutting_tool_style), and
+//! [`MinimapStyle`] via [`minimap_style`](NodeGraph::minimap_style) for the
+//! overview [`minimap`](NodeGraph::minimap) puts in a corner. A selected node's
 //! look is not chrome - it comes from the node's own closure through
 //! [`NodeStatus`].
 //!
@@ -241,7 +243,8 @@ pub use connection::{default_can_connect, direction_ok, input_not_occupied, not_
 pub use content::{EdgeRadii, node_footer, node_header};
 pub use ids::{Id, Ids, Indexed};
 pub use node_graph::{
-    Anchor, Counts, DragInfo, Edge, GraphInfo, Node, NodeGraph, OpTiming, PinRef, anchor, edge,
+    Anchor, Corner, Counts, DragInfo, Edge, GraphInfo, Minimap, Node, NodeGraph, OpTiming, PinRef,
+    anchor, edge,
     focus::{Easing, FocusAnimation, FocusOptions, FocusTarget, focus, focus_operation},
     input::{ComboKey, KeyAction, KeyCombo, Keymap},
     node,
@@ -260,6 +263,7 @@ pub use style::{
     EdgeStatus,
     EdgeStyle,
     GraphStyle,
+    MinimapStyle,
     NodeStatus,
     // Node/edge/pin style types (concrete; override via struct-update over defaults)
     NodeStyle,
@@ -274,6 +278,7 @@ pub use style::{
     default_cutting_tool_style,
     default_edge_style,
     default_graph_style,
+    default_minimap_style,
     default_node_style,
     default_pin_style,
     // Built-in status-driven default styles

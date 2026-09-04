@@ -159,7 +159,7 @@
 use super::FocusOptions;
 use super::euclid::{
     IntoEuclid, IntoIced, LayoutPoint, LayoutRect, LayoutSize, Screen, ScreenPoint, ScreenRect,
-    ScreenToWorld, ScreenVector, World, WorldPoint, WorldRect, WorldVector,
+    ScreenToWorld, ScreenVector, World, WorldPoint, WorldRect, WorldSize, WorldVector,
 };
 use euclid::{Scale, Transform2D};
 use iced_wgpu::core::{mouse, renderer};
@@ -397,6 +397,22 @@ impl Camera2D {
     /// [`world_to_layout`](Self::world_to_layout).
     pub fn layout_to_world(&self, p: LayoutPoint) -> WorldPoint {
         WorldPoint::new(p.x - self.viewport_origin.x, p.y - self.viewport_origin.y)
+    }
+
+    /// The world-space rectangle the widget's screen `bounds` currently shows.
+    ///
+    /// The preimage of `bounds` under `screen = (world + position) * zoom +
+    /// viewport_origin`. World space rather than the layout-absolute space
+    /// [`update_with`](Self::update_with) hands the child walk, so it can be
+    /// unioned with the world rects of the host's nodes - which is what an
+    /// overview of the whole graph is built from.
+    pub fn visible_world_rect(&self, bounds: Rectangle) -> WorldRect {
+        let inv_zoom = 1.0 / self.zoom.get();
+        WorldRect::new(
+            self.screen_to_world()
+                .transform_point(ScreenPoint::new(bounds.x, bounds.y)),
+            WorldSize::new(bounds.width * inv_zoom, bounds.height * inv_zoom),
+        )
     }
 
     fn viewport_screen_to_layout(&self, viewport: &Rectangle<f32>) -> Rectangle<f32> {

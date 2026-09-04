@@ -102,6 +102,8 @@ cargo run --release -p demo_500_nodes
 | Detach from anchor | Right-click a cable's wrap | - |
 | Delete anchor | Right-click an anchor's core | - |
 | Move anchor | Drag an anchor's core | Same |
+| Jump the camera | Click in the minimap | Tap in the minimap |
+| Pan via minimap | Drag in the minimap | Drag in the minimap |
 
 Ctrl is Cmd on macOS. On the web, clone avoids `Ctrl/Cmd+D` (the browser's
 bookmark shortcut) and delete drops the `Backspace` alternative (legacy
@@ -119,6 +121,10 @@ an anchor needs `on_anchor_move` - which also gates the core's hover highlight
 and the grab cursor, so a host wiring delete but not move gets a working delete
 on a core that never lights up. An unwired gesture leaves its zone inert rather
 than reporting into the void.
+
+The minimap is opt-in through `NodeGraph::minimap`; without it the two map rows
+do not apply and the corner stays empty canvas. It takes a press before any
+node under it does, and reports the camera it steers through `on_camera`.
 
 ## How it works
 
