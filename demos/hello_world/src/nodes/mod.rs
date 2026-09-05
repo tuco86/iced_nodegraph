@@ -1,5 +1,5 @@
 // `ConfigNodeType`'s config variants each carry a full set of optional style
-// fields, dwarfing the apply variants next to them.
+// fields, dwarfing the sink variants next to them.
 #![allow(clippy::large_enum_variant)]
 
 mod bool_toggle;
@@ -12,6 +12,7 @@ mod email_trigger;
 mod enum_selector;
 mod filter;
 mod float_slider;
+mod frame;
 mod int_slider;
 mod math;
 pub mod pins;
@@ -20,11 +21,14 @@ mod theme_node;
 pub use bool_toggle::{BoolToggleConfig, bool_toggle_node};
 pub use calendar::calendar_node;
 pub use color_picker::{color_picker_node, color_preset_node};
-pub use combine::{color_quad_node, vec2_node};
+pub use combine::{alpha_node, color_quad_node, vec2_node};
 pub use config::{
-    EdgeConfigInputs, EdgeSection, EdgeSections, GraphConfigInputs, NodeConfigInputs, NodeSection,
-    NodeSections, PatternType, PinConfigInputs, apply_to_graph_node, apply_to_node_node,
-    edge_config_node, graph_config_node, node_config_node, pin_config_node,
+    AnchorConfigInputs, ClassCandidate, CuttingToolConfigInputs, EdgeConfigInputs, EdgeSection,
+    EdgeSections, GraphConfigInputs, MinimapConfigInputs, NodeConfigInputs, NodeSection,
+    NodeSections, PatternType, PinConfigInputs, SelectionBoxConfigInputs, anchor_config_node,
+    catalog_node, cutting_tool_config_node, edge_config_node, graph_config_node,
+    minimap_config_node, node_class_node, node_config_node, pin_config_node,
+    selection_box_config_node,
 };
 pub use email_parser::email_parser_node;
 pub use email_trigger::email_trigger_node;
@@ -34,16 +38,21 @@ pub use enum_selector::{
 };
 pub use filter::filter_node;
 pub use float_slider::{FloatSliderConfig, float_slider_node};
+pub use frame::frame_node;
 pub use int_slider::{IntSliderConfig, int_slider_node};
 pub use math::math_node;
 pub use theme_node::{theme_extended_node, theme_node};
 
+use std::collections::HashSet;
+
 use iced::{
-    Color, Element, Length, Theme,
+    Color, Element, Length, Size, Theme,
     alignment::Horizontal,
     widget::{Row, container, row, text},
 };
 use iced_nodegraph::{ColorQuad, EdgeCurve, PinShape, TilingKind};
+
+use crate::ids::{NodeId, PinLabel};
 
 /// Semantic pin colors for consistent visual language across nodes.
 /// Based on "Industrial Precision" design system.
@@ -94,8 +103,9 @@ pub mod colors {
 /// The closed value vocabulary carried between the demo's pins.
 ///
 /// One variant per input node's output type, and one `as_*` accessor per
-/// variant: a config node reads the accessor matching its field's type, so a
-/// mismatched connection yields `None` rather than a wrong value.
+/// consuming field type: a config node reads the accessor matching its field,
+/// so a mismatched connection yields `None` rather than a wrong value. Two
+/// widenings are allowed: an `Int` reads as a float, a `Color` as a solid quad.
 #[derive(Debug, Clone)]
 pub enum NodeValue {
     Float(f32),
@@ -113,16 +123,12 @@ pub enum NodeValue {
 }
 
 impl NodeValue {
+    /// Reads a float; an [`NodeValue::Int`] widens, so an int slider can feed
+    /// any float pin.
     pub fn as_float(&self) -> Option<f32> {
         match self {
             NodeValue::Float(v) => Some(*v),
-            _ => None,
-        }
-    }
-
-    pub fn as_int(&self) -> Option<i32> {
-        match self {
-            NodeValue::Int(v) => Some(*v),
+            NodeValue::Int(v) => Some(*v as f32),
             _ => None,
         }
     }
@@ -180,23 +186,29 @@ impl NodeValue {
     }
 }
 
-/// Configuration node types that affect graph styling
+/// Configuration node types: one config node per `iced_nodegraph::Catalog`
+/// class, plus the two sinks a config chain can end in.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConfigNodeType {
     NodeConfig(NodeConfigInputs),
     EdgeConfig(EdgeConfigInputs),
     PinConfig(PinConfigInputs),
     GraphConfig(GraphConfigInputs),
-    // Apply nodes
-    ApplyToGraph {
-        has_node_config: bool,
-        has_edge_config: bool,
-        has_pin_config: bool,
-        has_graph_config: bool,
+    AnchorConfig(AnchorConfigInputs),
+    SelectionBoxConfig(SelectionBoxConfigInputs),
+    CuttingToolConfig(CuttingToolConfigInputs),
+    MinimapConfig(MinimapConfigInputs),
+    /// The sink: one input per Catalog class and status. `connected` is the
+    /// set of input pin labels that received a config this propagation, for
+    /// the "ok/--" display only.
+    Catalog {
+        connected: HashSet<PinLabel>,
     },
-    ApplyToNode {
+    /// Assigns a node config to exactly one node (`Node::class`). `target` is
+    /// host state; `has_node_config` is recomputed every propagation.
+    NodeClass {
+        target: Option<NodeId>,
         has_node_config: bool,
-        target_id: Option<i32>,
     },
 }
 
@@ -311,6 +323,24 @@ impl Vec2Node {
     }
 }
 
+/// Builder node that replaces a color's alpha. The palette nodes emit opaque
+/// colors, so every translucent style field is fed through one of these.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AlphaNode {
+    pub color: Option<Color>,
+    pub alpha: Option<f32>,
+}
+
+impl AlphaNode {
+    /// The input color with `alpha` applied (unset color = black, unset alpha = opaque).
+    pub fn color(&self) -> Color {
+        Color {
+            a: self.alpha.unwrap_or(1.0).clamp(0.0, 1.0),
+            ..self.color.unwrap_or(Color::BLACK)
+        }
+    }
+}
+
 /// Input node types that produce values
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputNodeType {
@@ -381,10 +411,14 @@ pub enum NodeType {
     ColorQuad(ColorQuadNode),
     /// Combines two scalars into a 2D vector
     Vec2(Vec2Node),
+    /// Replaces a color's alpha
+    Alpha(AlphaNode),
     /// Outputs the active theme's basic palette as color pins
     Theme,
     /// Outputs the active theme's extended palette (base/weak/strong) as color pins
     ThemeExtended,
+    /// A titled region that groups the nodes laid over it
+    Frame { label: String, size: Size },
 }
 
 impl NodeType {
@@ -398,9 +432,14 @@ impl NodeType {
                 let (x, y) = state.vec2();
                 Some(NodeValue::Vec2(x, y))
             }
+            Self::Alpha(state) => Some(NodeValue::Color(state.color())),
             // The Theme nodes' outputs are per-pin and theme-dependent; they are
             // resolved during propagation, not via this pin-agnostic method.
-            Self::Workflow(_) | Self::Config(_) | Self::Theme | Self::ThemeExtended => None,
+            Self::Workflow(_)
+            | Self::Config(_)
+            | Self::Theme
+            | Self::ThemeExtended
+            | Self::Frame { .. } => None,
         }
     }
 }

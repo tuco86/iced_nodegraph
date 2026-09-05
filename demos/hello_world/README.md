@@ -15,7 +15,9 @@ and persistent state.
 </figure>
 
 The graph opens with a small example workflow (email trigger, parser, filter,
-calendar) wired together, or restores the last saved session on native targets.
+calendar) wired together, plus the config rig to its right that drives every
+style the widget resolves, or restores the last saved session on native
+targets.
 
 ## Features
 
@@ -24,24 +26,39 @@ calendar) wired together, or restores the last saved session on native targets.
 - Multiple node families:
   - Workflow nodes: email trigger, email parser, filter, calendar.
   - Input nodes: float slider, integer slider, boolean toggle, RGB color
-    picker, color presets, and enum selectors for edge curve, pin shape, and
-    edge pattern type.
+    picker, color presets, and enum selectors for edge curve, pin shape, edge
+    pattern type and tiling kind.
   - Math nodes: Add, Subtract, Multiply, Divide. Math nodes can be chained;
     results propagate iteratively through the graph.
-  - Config nodes: Node Config, Edge Config, Pin Config, Graph Config, plus
-    Apply to Graph and Apply to Node.
-- Live style configuration: connect input nodes (sliders, color pickers) to
-  config nodes, then route those into an Apply node to drive the graph's
-  appearance (corner radius, opacity, colors, borders, shadows, edge stroke
-  and pattern, pin shape and size). Changes apply immediately as values flow.
+  - Builder nodes: Color Quad (four corners to a gradient), Vec2, and Alpha
+    (a color with a chosen opacity; the theme nodes emit opaque colors).
+  - Theme nodes: the active theme's palette and extended palette as color
+    outputs, so a rig follows the theme.
+  - Config nodes, one per `iced_nodegraph::Catalog` class: Node, Edge, Pin,
+    Graph, Anchor, Selection Box, Cutting Tool and Minimap Config. Each has
+    one input pin per style field and a config output.
+  - Sinks: the Catalog node, with one input per class and status (`node`,
+    `node:selected`, `pin`, `pin:valid_target`, `edge`, `edge:pending_cut`,
+    `drag_edge`, `anchor`, `anchor:hovered`, `anchor:valid_target`, `graph`,
+    `selection_box`, `cutting_tool`, `minimap`), and Node Class, which
+    assigns a node config to a single node picked from a list.
+  - Frame: a titled region that moves the nodes laid over it.
+- Live style configuration: connect input nodes (sliders, color pickers,
+  palette pins) to config nodes, then route those into the Catalog to drive
+  the graph's appearance. A status input layers over its idle class the way
+  the library's selected default layers over idle; a Node Class wins over
+  the Catalog for its one node. Changes apply immediately as values flow.
+- Routing anchors: drag a cable mid-run to create an anchor, drag a cable
+  onto an anchor's orbit to attach it, and a minimap in the bottom-right
+  corner.
 - Theme switching across 22 built-in Iced themes, with live preview while the
   theme submenu is open.
 - Selection, clone, delete, and group-move for nodes, with a selection box and an
   edge cutting tool.
 - Pan and zoom with cursor-anchored zoom.
-- State persistence (native only): nodes, edges, theme, camera, window
-  geometry, and config-section expansion are saved to disk and restored on
-  launch.
+- State persistence (native only): nodes, edges, anchors and routes, theme,
+  camera, window geometry, and config-section expansion are saved to disk
+  and restored on launch.
 
 ## Controls
 
@@ -65,8 +82,12 @@ including the touch and web variants.
 
 ## Style Configuration
 
-Add input nodes (sliders, color pickers) and connect them to config nodes to
-dynamically adjust the graph's appearance.
+The boot scene ships a complete rig: one frame per Catalog class and status,
+each holding a source for every field of its config node, all wired into one
+Catalog node, and a Node Class frame that tints the calendar node. Move any
+slider in a frame and the corresponding class updates live; the palette pins
+re-color when the theme changes. Add your own input nodes and config nodes
+through the palette to extend it.
 
 ## Running
 

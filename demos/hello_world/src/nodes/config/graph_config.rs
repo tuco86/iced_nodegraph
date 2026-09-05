@@ -4,8 +4,8 @@
 //! color plus the optional [`iced_nodegraph::TilingBackground`] (kind, spacing,
 //! thickness, color). Unlike the per-target config nodes it has no inheritance
 //! input; there is a single canvas, so the overlay flows straight into the
-//! Apply-to-Graph node's `graph` pin. Color inputs are `ColorQuad`s (the near
-//! corner is taken, since the canvas fields are plain `Color`).
+//! Catalog node's `graph` pin. Color inputs are `ColorQuad`s (the near corner
+//! is taken, since the canvas fields are plain `Color`).
 
 use demo_common::NodeContentStyle;
 use iced::{

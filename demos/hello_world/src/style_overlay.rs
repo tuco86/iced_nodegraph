@@ -8,12 +8,13 @@
 //! provide exactly that: builder setters, `merge` (self wins, fills the rest
 //! from another overlay), and `resolve_over` (apply the set fields onto a
 //! concrete base). They mirror the library style structs field-for-field where
-//! the editor exposes them.
+//! the editor exposes them, and there is one overlay per `Catalog` class so the
+//! config-node rig can drive every style the widget resolves.
 
 use iced::Color;
 use iced_nodegraph::{
-    ColorQuad, EdgeCurve, EdgeStyle, GraphStyle, NodeStyle, Pattern, PinShape, PinStyle,
-    TilingBackground, TilingKind,
+    AnchorStyle, ColorQuad, CuttingToolStyle, EdgeCurve, EdgeStyle, GraphStyle, MinimapStyle,
+    NodeStyle, Pattern, PinShape, PinStyle, SelectionBoxStyle, TilingBackground, TilingKind,
 };
 
 /// Overlay over [`NodeStyle`]: mirrors every field, since the node-config editor
@@ -448,6 +449,298 @@ impl PinOverlay {
         }
         if let Some(v) = self.border_width {
             base.border_width = v;
+        }
+        base
+    }
+}
+
+/// Overlay over [`AnchorStyle`]: mirrors every field.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AnchorOverlay {
+    pub core_size: Option<f32>,
+    pub core_radius: Option<f32>,
+    pub core_color: Option<ColorQuad>,
+    pub core_border_color: Option<ColorQuad>,
+    pub core_border_width: Option<f32>,
+    pub orbit_offset: Option<f32>,
+    pub orbit_spacing: Option<f32>,
+    pub ring_color: Option<ColorQuad>,
+    pub ring_width: Option<f32>,
+}
+
+impl AnchorOverlay {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn core_size(mut self, v: f32) -> Self {
+        self.core_size = Some(v);
+        self
+    }
+    pub fn core_radius(mut self, v: f32) -> Self {
+        self.core_radius = Some(v);
+        self
+    }
+    pub fn core_color(mut self, v: impl Into<ColorQuad>) -> Self {
+        self.core_color = Some(v.into());
+        self
+    }
+    pub fn core_border_color(mut self, v: impl Into<ColorQuad>) -> Self {
+        self.core_border_color = Some(v.into());
+        self
+    }
+    pub fn core_border_width(mut self, v: f32) -> Self {
+        self.core_border_width = Some(v);
+        self
+    }
+    pub fn orbit_offset(mut self, v: f32) -> Self {
+        self.orbit_offset = Some(v);
+        self
+    }
+    pub fn orbit_spacing(mut self, v: f32) -> Self {
+        self.orbit_spacing = Some(v);
+        self
+    }
+    pub fn ring_color(mut self, v: impl Into<ColorQuad>) -> Self {
+        self.ring_color = Some(v.into());
+        self
+    }
+    pub fn ring_width(mut self, v: f32) -> Self {
+        self.ring_width = Some(v);
+        self
+    }
+
+    /// Layers `self` over `other`; `self` wins where set. Stays partial.
+    pub fn merge(&self, other: &Self) -> Self {
+        Self {
+            core_size: self.core_size.or(other.core_size),
+            core_radius: self.core_radius.or(other.core_radius),
+            core_color: self.core_color.or(other.core_color),
+            core_border_color: self.core_border_color.or(other.core_border_color),
+            core_border_width: self.core_border_width.or(other.core_border_width),
+            orbit_offset: self.orbit_offset.or(other.orbit_offset),
+            orbit_spacing: self.orbit_spacing.or(other.orbit_spacing),
+            ring_color: self.ring_color.or(other.ring_color),
+            ring_width: self.ring_width.or(other.ring_width),
+        }
+    }
+
+    /// Applies the set fields onto a concrete base, leaving unset fields intact.
+    pub fn resolve_over(&self, mut base: AnchorStyle) -> AnchorStyle {
+        if let Some(v) = self.core_size {
+            base.core_size = v;
+        }
+        if let Some(v) = self.core_radius {
+            base.core_radius = v;
+        }
+        if let Some(v) = self.core_color {
+            base.core_color = v;
+        }
+        if let Some(v) = self.core_border_color {
+            base.core_border_color = v;
+        }
+        if let Some(v) = self.core_border_width {
+            base.core_border_width = v;
+        }
+        if let Some(v) = self.orbit_offset {
+            base.orbit_offset = v;
+        }
+        if let Some(v) = self.orbit_spacing {
+            base.orbit_spacing = v;
+        }
+        if let Some(v) = self.ring_color {
+            base.ring_color = v;
+        }
+        if let Some(v) = self.ring_width {
+            base.ring_width = v;
+        }
+        base
+    }
+}
+
+/// Overlay over [`SelectionBoxStyle`]. Colors are plain [`Color`]s like the
+/// style's; the setters take a quad and keep its `near_start` so a
+/// `ColorData` pin can feed them.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SelectionBoxOverlay {
+    pub fill: Option<Color>,
+    pub border_color: Option<Color>,
+    pub border_width: Option<f32>,
+}
+
+impl SelectionBoxOverlay {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn fill(mut self, v: impl Into<ColorQuad>) -> Self {
+        self.fill = Some(v.into().near_start);
+        self
+    }
+    pub fn border_color(mut self, v: impl Into<ColorQuad>) -> Self {
+        self.border_color = Some(v.into().near_start);
+        self
+    }
+    pub fn border_width(mut self, v: f32) -> Self {
+        self.border_width = Some(v);
+        self
+    }
+
+    /// Layers `self` over `other`; `self` wins where set. Stays partial.
+    pub fn merge(&self, other: &Self) -> Self {
+        Self {
+            fill: self.fill.or(other.fill),
+            border_color: self.border_color.or(other.border_color),
+            border_width: self.border_width.or(other.border_width),
+        }
+    }
+
+    /// Applies the set fields onto a concrete base, leaving unset fields intact.
+    pub fn resolve_over(&self, mut base: SelectionBoxStyle) -> SelectionBoxStyle {
+        if let Some(v) = self.fill {
+            base.fill = v;
+        }
+        if let Some(v) = self.border_color {
+            base.border_color = v;
+        }
+        if let Some(v) = self.border_width {
+            base.border_width = v;
+        }
+        base
+    }
+}
+
+/// Overlay over [`CuttingToolStyle`]; color handling as [`SelectionBoxOverlay`].
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CuttingToolOverlay {
+    pub color: Option<Color>,
+    pub width: Option<f32>,
+}
+
+impl CuttingToolOverlay {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn color(mut self, v: impl Into<ColorQuad>) -> Self {
+        self.color = Some(v.into().near_start);
+        self
+    }
+    pub fn width(mut self, v: f32) -> Self {
+        self.width = Some(v);
+        self
+    }
+
+    /// Layers `self` over `other`; `self` wins where set. Stays partial.
+    pub fn merge(&self, other: &Self) -> Self {
+        Self {
+            color: self.color.or(other.color),
+            width: self.width.or(other.width),
+        }
+    }
+
+    /// Applies the set fields onto a concrete base, leaving unset fields intact.
+    pub fn resolve_over(&self, mut base: CuttingToolStyle) -> CuttingToolStyle {
+        if let Some(v) = self.color {
+            base.color = v;
+        }
+        if let Some(v) = self.width {
+            base.width = v;
+        }
+        base
+    }
+}
+
+/// Overlay over [`MinimapStyle`]; color handling as [`SelectionBoxOverlay`].
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MinimapOverlay {
+    pub background: Option<Color>,
+    pub border_color: Option<Color>,
+    pub border_width: Option<f32>,
+    pub node_color: Option<Color>,
+    pub selected_node_color: Option<Color>,
+    pub viewport_fill: Option<Color>,
+    pub viewport_border_color: Option<Color>,
+    pub viewport_border_width: Option<f32>,
+}
+
+impl MinimapOverlay {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn background(mut self, v: impl Into<ColorQuad>) -> Self {
+        self.background = Some(v.into().near_start);
+        self
+    }
+    pub fn border_color(mut self, v: impl Into<ColorQuad>) -> Self {
+        self.border_color = Some(v.into().near_start);
+        self
+    }
+    pub fn border_width(mut self, v: f32) -> Self {
+        self.border_width = Some(v);
+        self
+    }
+    pub fn node_color(mut self, v: impl Into<ColorQuad>) -> Self {
+        self.node_color = Some(v.into().near_start);
+        self
+    }
+    pub fn selected_node_color(mut self, v: impl Into<ColorQuad>) -> Self {
+        self.selected_node_color = Some(v.into().near_start);
+        self
+    }
+    pub fn viewport_fill(mut self, v: impl Into<ColorQuad>) -> Self {
+        self.viewport_fill = Some(v.into().near_start);
+        self
+    }
+    pub fn viewport_border_color(mut self, v: impl Into<ColorQuad>) -> Self {
+        self.viewport_border_color = Some(v.into().near_start);
+        self
+    }
+    pub fn viewport_border_width(mut self, v: f32) -> Self {
+        self.viewport_border_width = Some(v);
+        self
+    }
+
+    /// Layers `self` over `other`; `self` wins where set. Stays partial.
+    pub fn merge(&self, other: &Self) -> Self {
+        Self {
+            background: self.background.or(other.background),
+            border_color: self.border_color.or(other.border_color),
+            border_width: self.border_width.or(other.border_width),
+            node_color: self.node_color.or(other.node_color),
+            selected_node_color: self.selected_node_color.or(other.selected_node_color),
+            viewport_fill: self.viewport_fill.or(other.viewport_fill),
+            viewport_border_color: self.viewport_border_color.or(other.viewport_border_color),
+            viewport_border_width: self.viewport_border_width.or(other.viewport_border_width),
+        }
+    }
+
+    /// Applies the set fields onto a concrete base, leaving unset fields intact.
+    pub fn resolve_over(&self, mut base: MinimapStyle) -> MinimapStyle {
+        if let Some(v) = self.background {
+            base.background = v;
+        }
+        if let Some(v) = self.border_color {
+            base.border_color = v;
+        }
+        if let Some(v) = self.border_width {
+            base.border_width = v;
+        }
+        if let Some(v) = self.node_color {
+            base.node_color = v;
+        }
+        if let Some(v) = self.selected_node_color {
+            base.selected_node_color = v;
+        }
+        if let Some(v) = self.viewport_fill {
+            base.viewport_fill = v;
+        }
+        if let Some(v) = self.viewport_border_color {
+            base.viewport_border_color = v;
+        }
+        if let Some(v) = self.viewport_border_width {
+            base.viewport_border_width = v;
         }
         base
     }

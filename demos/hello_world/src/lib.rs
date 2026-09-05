@@ -8,19 +8,22 @@ mod ids;
 mod nodes;
 #[cfg(not(target_arch = "wasm32"))]
 mod persistence;
+mod rig;
 mod style_overlay;
 
 // The trait methods are named directly only by the native `main`.
 #[cfg(not(target_arch = "wasm32"))]
 use demo_common::Demo;
 use iced::{
-    Color, Event, Length, Point, Subscription, Task, Theme, Vector, event, keyboard,
+    Color, Event, Length, Point, Size, Subscription, Task, Theme, Vector, event, keyboard,
     widget::{container, opaque, stack, text},
     window,
 };
 use iced_nodegraph::{
-    ColorQuad, CuttingToolStyle, EdgeStatus, EdgeStyle, FocusOptions, FocusTarget, PinRef,
-    SelectionBoxStyle, default_cutting_tool_style, default_edge_style, default_graph_style,
+    AnchorStatus, AnchorStyle, ColorQuad, CuttingToolStyle, EdgeStatus, EdgeStyle, FocusOptions,
+    FocusTarget, GraphStyle, Minimap, MinimapStyle, NodeStatus, NodeStyle, PinRef, PinStatus,
+    PinStyle, SelectionBoxStyle, anchor as ng_anchor, default_anchor_style,
+    default_cutting_tool_style, default_edge_style, default_graph_style, default_minimap_style,
     default_node_style, default_pin_style, default_selection_box_style, edge as ng_edge,
     node as ng_node,
 };
@@ -31,17 +34,23 @@ use iced_palette::{
 };
 use ids::{EdgeData, EdgeId, HelloIds, NodeId, PinLabel, generate_edge_id, generate_node_id};
 use nodes::{
-    BoolToggleConfig, ColorQuadNode, ConfigNodeType, EdgeConfigInputs, EdgeSection, EdgeSections,
-    FloatSliderConfig, GraphConfigInputs, InputNodeType, IntSliderConfig, MathNodeState,
-    MathOperation, NodeConfigInputs, NodeSection, NodeSections, NodeType, NodeValue, PatternType,
-    PinConfigInputs, Vec2Node, apply_to_graph_node, apply_to_node_node, bool_toggle_node,
-    color_picker_node, color_preset_node, color_quad_node, edge_config_node,
-    edge_curve_selector_node, float_slider_node, graph_config_node, int_slider_node, math_node,
-    node, node_config_node, pattern_type_selector_node, pin_config_node, pin_shape_selector_node,
-    theme_extended_node, theme_node, tiling_kind_selector_node, vec2_node,
+    AlphaNode, AnchorConfigInputs, BoolToggleConfig, ClassCandidate, ColorQuadNode, ConfigNodeType,
+    CuttingToolConfigInputs, EdgeConfigInputs, EdgeSection, EdgeSections, FloatSliderConfig,
+    GraphConfigInputs, InputNodeType, IntSliderConfig, MathNodeState, MathOperation,
+    MinimapConfigInputs, NodeConfigInputs, NodeSection, NodeSections, NodeType, NodeValue,
+    PatternType, PinConfigInputs, SelectionBoxConfigInputs, Vec2Node, alpha_node,
+    anchor_config_node, bool_toggle_node, catalog_node, color_picker_node, color_preset_node,
+    color_quad_node, cutting_tool_config_node, edge_config_node, edge_curve_selector_node,
+    float_slider_node, frame_node, graph_config_node, int_slider_node, math_node,
+    minimap_config_node, node, node_class_node, node_config_node, pattern_type_selector_node,
+    pin_config_node, pin_shape_selector_node, selection_box_config_node, theme_extended_node,
+    theme_node, tiling_kind_selector_node, vec2_node,
 };
 use std::collections::{HashMap, HashSet};
-use style_overlay::{EdgeOverlay, GraphOverlay, NodeOverlay, PinOverlay};
+use style_overlay::{
+    AnchorOverlay, CuttingToolOverlay, EdgeOverlay, GraphOverlay, MinimapOverlay, NodeOverlay,
+    PinOverlay, SelectionBoxOverlay,
+};
 
 /// Runs the demo natively, restoring the persisted graph and window geometry.
 ///
@@ -91,6 +100,28 @@ enum ApplicationMessage {
     },
     /// Edges the cutting tool destroyed, named by their own ids.
     EdgesCut(Vec<EdgeId>),
+    // Routing anchors
+    AnchorCreated {
+        edge: EdgeId,
+        position: Point,
+    },
+    AnchorMoved {
+        anchor: usize,
+        position: Point,
+    },
+    AnchorDeleted(usize),
+    RouteAttached {
+        edge: EdgeId,
+        anchor: usize,
+    },
+    RouteDetached {
+        edge: EdgeId,
+        anchor: usize,
+    },
+    /// Every gesture that can orphan an anchor ends here, which is when one no
+    /// cable names any more is safe to drop: during a drag it is still a target
+    /// the same drag may put the cable back onto.
+    DragEnded,
     ToggleCommandPalette,
     CommandPaletteInput(String),
     CommandPaletteNavigateUp,
@@ -185,6 +216,11 @@ enum ApplicationMessage {
         node_id: NodeId,
         section: NodeSection,
     },
+    /// The Node Class node's pick list chose (or lost) its target node.
+    NodeClassTargetChanged {
+        node_id: NodeId,
+        target: Option<NodeId>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -200,6 +236,10 @@ enum ConfigOutput {
     Edge(EdgeOverlay),
     Pin(PinOverlay),
     Graph(GraphOverlay),
+    Anchor(AnchorOverlay),
+    SelectionBox(SelectionBoxOverlay),
+    CuttingTool(CuttingToolOverlay),
+    Minimap(MinimapOverlay),
 }
 
 /// Maps a pin's data-type marker to its semantic color. Pins carry no style;
@@ -223,6 +263,10 @@ fn pin_color_for(ty: std::any::TypeId) -> Color {
         || ty == TypeId::of::<pins::EdgeConfigData>()
         || ty == TypeId::of::<pins::PinConfigData>()
         || ty == TypeId::of::<pins::GraphConfigData>()
+        || ty == TypeId::of::<pins::AnchorConfigData>()
+        || ty == TypeId::of::<pins::SelectionBoxConfigData>()
+        || ty == TypeId::of::<pins::CuttingToolConfigData>()
+        || ty == TypeId::of::<pins::MinimapConfigData>()
     {
         colors::PIN_CONFIG
     } else {
@@ -236,14 +280,59 @@ fn graph_id() -> iced::widget::Id {
     iced::widget::Id::new("graph")
 }
 
-/// Computed style overlays accumulated from connected config nodes. Each is a
-/// partial overlay resolved against the theme base at draw time.
+/// The overlays the config rig produced, one per `iced_nodegraph::Catalog`
+/// class and status, resolved against the theme base at draw time. A status
+/// overlay is layered over its idle base by the accessors, the way the
+/// library's `Selected` default is a struct-update over the idle one.
 #[derive(Debug, Clone, Default)]
-struct ComputedStyle {
+struct ComputedCatalog {
     node: NodeOverlay,
-    edge: EdgeOverlay,
+    node_selected: NodeOverlay,
     pin: PinOverlay,
+    pin_valid_target: PinOverlay,
+    edge: EdgeOverlay,
+    edge_pending_cut: EdgeOverlay,
+    drag_edge: EdgeOverlay,
+    anchor: AnchorOverlay,
+    anchor_hovered: AnchorOverlay,
+    anchor_valid_target: AnchorOverlay,
     graph: GraphOverlay,
+    selection_box: SelectionBoxOverlay,
+    cutting_tool: CuttingToolOverlay,
+    minimap: MinimapOverlay,
+    /// Per-node classes from `NodeClass` nodes, keyed by target node.
+    node_classes: HashMap<NodeId, NodeOverlay>,
+}
+
+impl ComputedCatalog {
+    fn node(&self, status: NodeStatus) -> NodeOverlay {
+        match status {
+            NodeStatus::Idle => self.node.clone(),
+            NodeStatus::Selected => self.node_selected.merge(&self.node),
+        }
+    }
+
+    fn pin(&self, status: PinStatus) -> PinOverlay {
+        match status {
+            PinStatus::Idle => self.pin.clone(),
+            PinStatus::ValidTarget => self.pin_valid_target.merge(&self.pin),
+        }
+    }
+
+    fn edge(&self, status: EdgeStatus) -> EdgeOverlay {
+        match status {
+            EdgeStatus::Idle => self.edge.clone(),
+            EdgeStatus::PendingCut => self.edge_pending_cut.merge(&self.edge),
+        }
+    }
+
+    fn anchor(&self, status: AnchorStatus) -> AnchorOverlay {
+        match status {
+            AnchorStatus::Idle => self.anchor.clone(),
+            AnchorStatus::Hovered => self.anchor_hovered.merge(&self.anchor),
+            AnchorStatus::ValidTarget => self.anchor_valid_target.merge(&self.anchor),
+        }
+    }
 }
 
 struct Application {
@@ -270,10 +359,15 @@ struct Application {
     palette_selected_index: usize,
     palette_preview_theme: Option<Theme>,
     palette_original_theme: Option<Theme>,
-    /// Computed style values from config node connections
-    computed_style: ComputedStyle,
-    /// Pending config outputs from config nodes to be applied by ApplyToGraph
+    /// The overlays the config rig produced this propagation
+    computed: ComputedCatalog,
+    /// Config outputs queued per sink node (Catalog or Node Class) until phase 4
     pending_configs: HashMap<NodeId, Vec<(PinLabel, ConfigOutput)>>,
+    /// Anchor id paired with its world position.
+    anchors: Vec<(usize, Point)>,
+    /// The next anchor id to mint. Only ever grows, so a deleted anchor's id is
+    /// never handed to a different anchor.
+    next_anchor: usize,
     /// Current viewport size for spawn-at-center calculation
     viewport_size: iced::Size,
     /// Current camera position from NodeGraph
@@ -328,7 +422,7 @@ impl Default for Application {
             ),
         );
 
-        let node_order = vec![
+        let mut node_order = vec![
             node0_id.clone(),
             node1_id.clone(),
             node2_id.clone(),
@@ -343,12 +437,12 @@ impl Default for Application {
         let edge0_id = generate_edge_id();
         edges.insert(
             edge0_id.clone(),
-            EdgeData {
-                from_node: node0_id.clone(),
-                from_pin: workflow::ON_EMAIL,
-                to_node: node1_id.clone(),
-                to_pin: workflow::EMAIL,
-            },
+            EdgeData::new(
+                node0_id.clone(),
+                workflow::ON_EMAIL,
+                node1_id.clone(),
+                workflow::EMAIL,
+            ),
         );
         edge_order.push(edge0_id);
 
@@ -356,24 +450,28 @@ impl Default for Application {
         let edge1_id = generate_edge_id();
         edges.insert(
             edge1_id.clone(),
-            EdgeData {
-                from_node: node1_id.clone(),
-                from_pin: workflow::SUBJECT,
-                to_node: node2_id.clone(),
-                to_pin: workflow::INPUT,
-            },
+            EdgeData::new(
+                node1_id.clone(),
+                workflow::SUBJECT,
+                node2_id.clone(),
+                workflow::INPUT,
+            ),
         );
         edge_order.push(edge1_id);
 
-        // Edge 2: email_parser "datetime" -> calendar "datetime"
+        // Edge 2: email_parser "datetime" -> calendar "datetime", wrapped
+        // around the boot anchor so the anchor class is visible at boot.
         let edge2_id = generate_edge_id();
         edges.insert(
             edge2_id.clone(),
             EdgeData {
-                from_node: node1_id.clone(),
-                from_pin: workflow::DATETIME,
-                to_node: node3_id.clone(),
-                to_pin: workflow::DATETIME,
+                route: vec![0],
+                ..EdgeData::new(
+                    node1_id.clone(),
+                    workflow::DATETIME,
+                    node3_id.clone(),
+                    workflow::DATETIME,
+                )
             },
         );
         edge_order.push(edge2_id);
@@ -382,16 +480,28 @@ impl Default for Application {
         let edge3_id = generate_edge_id();
         edges.insert(
             edge3_id.clone(),
-            EdgeData {
-                from_node: node2_id.clone(),
-                from_pin: workflow::MATCHES,
-                to_node: node3_id.clone(),
-                to_pin: workflow::TITLE,
-            },
+            EdgeData::new(
+                node2_id.clone(),
+                workflow::MATCHES,
+                node3_id.clone(),
+                workflow::TITLE,
+            ),
         );
         edge_order.push(edge3_id);
 
-        Self {
+        // The config rig sits to the right of the workflow (which ends at x
+        // about 900) and classes the calendar node.
+        let rig = rig::build(Point::new(1000.0, 0.0), node3_id);
+        for (id, position, node_type) in rig.nodes {
+            nodes.insert(id.clone(), (position, node_type));
+            node_order.push(id);
+        }
+        for (id, edge) in rig.edges {
+            edges.insert(id.clone(), edge);
+            edge_order.push(id);
+        }
+
+        let mut app = Self {
             nodes,
             node_order,
             edges,
@@ -407,15 +517,20 @@ impl Default for Application {
             palette_selected_index: 0,
             palette_preview_theme: None,
             palette_original_theme: None,
-            computed_style: ComputedStyle::default(),
+            computed: ComputedCatalog::default(),
             pending_configs: HashMap::new(),
+            anchors: vec![(0, Point::new(560.0, 160.0))],
+            next_anchor: 1,
             viewport_size: iced::Size::new(800.0, 600.0), // Default size
             camera_position: Point::ORIGIN,
             camera_zoom: 1.0,
             window_position: None,
             window_size: None,
             window_maximized: None,
-        }
+        };
+        // The rig is wired, so the catalog is resolved from the first frame.
+        app.propagate_values();
+        app
     }
 }
 
@@ -439,6 +554,8 @@ impl Application {
                         edge_config_sections,
                         node_config_sections,
                         window_maximized,
+                        anchors,
+                        next_anchor,
                     ) = saved.to_app();
                     println!(
                         "Loaded saved state: {} nodes, {} edges",
@@ -458,6 +575,8 @@ impl Application {
                         edge_config_sections,
                         node_config_sections,
                         window_maximized,
+                        anchors,
+                        next_anchor,
                         ..Self::default()
                     };
                     // Apply computed styles from config nodes immediately
@@ -491,8 +610,9 @@ impl Application {
         self.save_state();
     }
 
-    /// Saves current state to disk (native only).
-    #[cfg(not(target_arch = "wasm32"))]
+    /// Saves current state to disk (native only). Tests drive `update`
+    /// freely, so under `cfg(test)` nothing touches the user's save file.
+    #[cfg(all(not(target_arch = "wasm32"), not(test)))]
     fn save_state(&self) {
         let saved = persistence::SavedState::from_app(
             &self.nodes,
@@ -507,16 +627,16 @@ impl Application {
             &self.edge_config_sections,
             &self.node_config_sections,
             self.window_maximized,
+            &self.anchors,
+            self.next_anchor,
         );
         if let Err(e) = persistence::save_state(&saved) {
             eprintln!("Failed to save state: {}", e);
         }
     }
 
-    #[cfg(target_arch = "wasm32")]
-    fn save_state(&self) {
-        // No-op on WASM
-    }
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn save_state(&self) {}
 
     /// Calculate spawn position at screen center, converted to world coordinates.
     fn spawn_position(&self) -> Point {
@@ -583,11 +703,20 @@ impl Application {
                     NodeType::Vec2(state) => {
                         output.push_str(&format!("  Type: Vec2({:?})\n", state));
                     }
+                    NodeType::Alpha(state) => {
+                        output.push_str(&format!("  Type: Alpha({:?})\n", state));
+                    }
                     NodeType::Theme => {
                         output.push_str("  Type: Theme\n");
                     }
                     NodeType::ThemeExtended => {
                         output.push_str("  Type: ThemeExtended\n");
+                    }
+                    NodeType::Frame { label, size } => {
+                        output.push_str(&format!(
+                            "  Type: Frame(\"{}\", {:.0}x{:.0})\n",
+                            label, size.width, size.height
+                        ));
                     }
                 }
                 output.push('\n');
@@ -695,25 +824,35 @@ impl Application {
         // WASM: State export not available in browser
     }
 
-    /// Propagates values from input nodes to connected config nodes
+    /// The theme the rig reads palette colors from: the palette preview while
+    /// one is open, otherwise the applied theme.
+    fn effective_theme(&self) -> &Theme {
+        self.palette_preview_theme
+            .as_ref()
+            .unwrap_or(&self.current_theme)
+    }
+
     /// The value a node emits on a given output pin. For most nodes this is the
-    /// pin-agnostic `output_value()`; the Theme node resolves per-pin colors from
-    /// the current theme.
+    /// pin-agnostic `output_value()`; the Theme nodes resolve per-pin colors from
+    /// the effective theme.
     fn pin_output_value(&self, node_id: &NodeId, pin: &PinLabel) -> Option<NodeValue> {
         match self.nodes.get(node_id) {
             Some((_, NodeType::Theme | NodeType::ThemeExtended)) => {
-                theme_color(&self.current_theme, pin).map(NodeValue::Color)
+                theme_color(self.effective_theme(), pin).map(NodeValue::Color)
             }
             Some((_, node_type)) => node_type.output_value(),
             None => None,
         }
     }
 
+    /// Recomputes every config node's inputs and the [`ComputedCatalog`] from
+    /// the current edges, in four phases: reset, feed the combiner nodes until
+    /// stable, feed the config nodes, then collect what reaches a sink.
     fn propagate_values(&mut self) {
-        let mut new_computed = ComputedStyle::default();
+        let mut new_computed = ComputedCatalog::default();
         self.pending_configs.clear();
 
-        // Phase 1: Reset all config node and math node inputs to defaults
+        // Phase 1: Reset all config node and combiner node inputs to defaults
         for (_, node_type) in self.nodes.values_mut() {
             match node_type {
                 NodeType::Config(config) => match config {
@@ -721,24 +860,22 @@ impl Application {
                     ConfigNodeType::EdgeConfig(inputs) => *inputs = EdgeConfigInputs::default(),
                     ConfigNodeType::PinConfig(inputs) => *inputs = PinConfigInputs::default(),
                     ConfigNodeType::GraphConfig(inputs) => *inputs = GraphConfigInputs::default(),
-                    ConfigNodeType::ApplyToGraph {
-                        has_node_config,
-                        has_edge_config,
-                        has_pin_config,
-                        has_graph_config,
-                    } => {
-                        *has_node_config = false;
-                        *has_edge_config = false;
-                        *has_pin_config = false;
-                        *has_graph_config = false;
+                    ConfigNodeType::AnchorConfig(inputs) => *inputs = AnchorConfigInputs::default(),
+                    ConfigNodeType::SelectionBoxConfig(inputs) => {
+                        *inputs = SelectionBoxConfigInputs::default()
                     }
-                    ConfigNodeType::ApplyToNode {
-                        has_node_config,
-                        target_id,
-                    } => {
-                        *has_node_config = false;
-                        *target_id = None;
+                    ConfigNodeType::CuttingToolConfig(inputs) => {
+                        *inputs = CuttingToolConfigInputs::default()
                     }
+                    ConfigNodeType::MinimapConfig(inputs) => {
+                        *inputs = MinimapConfigInputs::default()
+                    }
+                    ConfigNodeType::Catalog { connected } => connected.clear(),
+                    // `target` is host state and survives; only the connection
+                    // flag is recomputed.
+                    ConfigNodeType::NodeClass {
+                        has_node_config, ..
+                    } => *has_node_config = false,
                 },
                 NodeType::Math(state) => {
                     state.input_a = None;
@@ -746,24 +883,25 @@ impl Application {
                 }
                 NodeType::ColorQuad(state) => *state = ColorQuadNode::default(),
                 NodeType::Vec2(state) => *state = Vec2Node::default(),
+                NodeType::Alpha(state) => *state = AlphaNode::default(),
                 _ => {}
             }
         }
 
-        // Phase 1.5: Propagate values INTO Math nodes (iteratively for chaining)
-        // Math nodes can be chained (e.g., (A+B)*C), so we iterate until stable
+        // Phase 1.5: Propagate values INTO combiner nodes (iteratively for chaining)
+        // Combiners can be chained (e.g., (A+B)*C, palette -> Alpha), so we
+        // iterate until stable
         let edges_snapshot: Vec<_> = self.edges.values().cloned().collect();
 
-        // We need multiple passes because Math→Math chains require the source
+        // We need multiple passes because combiner chains require the source
         // to have computed its result before the target can use it
         const MAX_ITERATIONS: usize = 10;
         for _ in 0..MAX_ITERATIONS {
             let mut changed = false;
 
             for edge in &edges_snapshot {
-                // Feed the target's combiner inputs (Math/ColorQuad/Vec2) from the
-                // source's output, in both edge directions (edges connect either
-                // way). `pin_output_value` resolves Theme node colors per pin.
+                // Feed the target's combiner inputs from the source's output, in
+                // both edge directions (edges connect either way).
                 let forward = self.pin_output_value(&edge.from_node, &edge.from_pin);
                 if let Some(value) = forward
                     && let Some((_, node)) = self.nodes.get_mut(&edge.to_node)
@@ -786,119 +924,44 @@ impl Application {
             }
         }
 
-        // Phase 2: Apply Input → Config connections (in both edge directions)
-        // Also apply Math → Config connections
-
+        // Phase 2: Feed every value-emitting node (inputs, combiners, theme
+        // pins) into the config node at the other end, in both edge directions.
+        // Config nodes emit no pin value, so a config -> config edge is skipped.
         for edge in &edges_snapshot {
-            let from_node_type = self.nodes.get(&edge.from_node).map(|(_, t)| t.clone());
-            let to_node_type = self.nodes.get(&edge.to_node).map(|(_, t)| t.clone());
-
-            if let (Some(from_type), Some(to_type)) = (from_node_type, to_node_type) {
-                // Handle Input → Config connections
-                if let (NodeType::Input(input), NodeType::Config(_)) = (&from_type, &to_type)
-                    && let Some(value) = input.output_value()
-                {
-                    self.apply_value_to_config_node(&edge.to_node, &edge.to_pin, &value);
-                }
-                // Handle Config → Input connections (reverse direction)
-                if let (NodeType::Config(_), NodeType::Input(input)) = (&from_type, &to_type)
-                    && let Some(value) = input.output_value()
-                {
-                    self.apply_value_to_config_node(&edge.from_node, &edge.from_pin, &value);
-                }
-                // Handle Math → Config connections
-                if let (NodeType::Math(state), NodeType::Config(_)) = (&from_type, &to_type)
-                    && let Some(result) = state.result()
-                {
-                    let value = NodeValue::Float(result);
-                    self.apply_value_to_config_node(&edge.to_node, &edge.to_pin, &value);
-                }
-                // Handle Config → Math connections (reverse direction)
-                if let (NodeType::Config(_), NodeType::Math(state)) = (&from_type, &to_type)
-                    && let Some(result) = state.result()
-                {
-                    let value = NodeValue::Float(result);
-                    self.apply_value_to_config_node(&edge.from_node, &edge.from_pin, &value);
-                }
-                // Handle Builder (ColorQuad/Vec2) → Config connections
-                if let (NodeType::ColorQuad(_) | NodeType::Vec2(_), NodeType::Config(_)) =
-                    (&from_type, &to_type)
-                    && let Some(value) = from_type.output_value()
-                {
-                    self.apply_value_to_config_node(&edge.to_node, &edge.to_pin, &value);
-                }
-                // Handle Config → Builder connections (reverse direction)
-                if let (NodeType::Config(_), NodeType::ColorQuad(_) | NodeType::Vec2(_)) =
-                    (&from_type, &to_type)
-                    && let Some(value) = to_type.output_value()
-                {
-                    self.apply_value_to_config_node(&edge.from_node, &edge.from_pin, &value);
-                }
-                // Handle Theme → Config connections (per-pin palette color)
-                if let (NodeType::Theme | NodeType::ThemeExtended, NodeType::Config(_)) =
-                    (&from_type, &to_type)
-                    && let Some(color) = theme_color(&self.current_theme, &edge.from_pin)
-                {
-                    self.apply_value_to_config_node(
-                        &edge.to_node,
-                        &edge.to_pin,
-                        &NodeValue::Color(color),
-                    );
-                }
-                // Handle Config → Theme connections (reverse direction)
-                if let (NodeType::Config(_), NodeType::Theme | NodeType::ThemeExtended) =
-                    (&from_type, &to_type)
-                    && let Some(color) = theme_color(&self.current_theme, &edge.to_pin)
-                {
-                    self.apply_value_to_config_node(
-                        &edge.from_node,
-                        &edge.from_pin,
-                        &NodeValue::Color(color),
-                    );
-                }
+            if let Some(value) = self.pin_output_value(&edge.from_node, &edge.from_pin) {
+                self.apply_value_to_config_node(&edge.to_node, &edge.to_pin, &value);
+            }
+            if let Some(value) = self.pin_output_value(&edge.to_node, &edge.to_pin) {
+                self.apply_value_to_config_node(&edge.from_node, &edge.from_pin, &value);
             }
         }
 
-        // Phase 3: After all inputs applied, process Config → ApplyToGraph connections
+        // Phase 3: After all inputs applied, process Config -> sink connections
         // Now config nodes have their updated inputs, so we can build configs
         for edge in &edges_snapshot {
-            let from_node_type = self.nodes.get(&edge.from_node).map(|(_, t)| t.clone());
-            let to_node_type = self.nodes.get(&edge.to_node).map(|(_, t)| t.clone());
-
-            if let (Some(from_type), Some(to_type)) = (from_node_type, to_node_type) {
-                // Handle Config → ApplyToGraph connections
-                if let (
-                    NodeType::Config(config),
-                    NodeType::Config(ConfigNodeType::ApplyToGraph { .. }),
-                ) = (&from_type, &to_type)
-                {
-                    self.connect_config_to_apply(
-                        &edge.from_node,
-                        config,
-                        &edge.to_node,
-                        &edge.to_pin,
-                    );
-                }
-                // Handle ApplyToGraph → Config connections (reverse)
-                if let (
-                    NodeType::Config(ConfigNodeType::ApplyToGraph { .. }),
-                    NodeType::Config(config),
-                ) = (&from_type, &to_type)
-                {
-                    self.connect_config_to_apply(
-                        &edge.to_node,
-                        config,
-                        &edge.from_node,
-                        &edge.from_pin,
-                    );
-                }
+            if self.is_sink(&edge.to_node) {
+                self.connect_config_to_sink(&edge.from_node, &edge.to_node, &edge.to_pin);
+            }
+            if self.is_sink(&edge.from_node) {
+                self.connect_config_to_sink(&edge.to_node, &edge.from_node, &edge.from_pin);
             }
         }
 
-        // Phase 4: Build configs from ApplyToGraph nodes and apply to computed style
-        self.apply_graph_configs(&mut new_computed);
+        // Phase 4: Collect what reached a sink into the computed catalog
+        self.apply_sinks(&mut new_computed);
 
-        self.computed_style = new_computed;
+        self.computed = new_computed;
+    }
+
+    /// Whether `id` names a Catalog or Node Class node.
+    fn is_sink(&self, id: &NodeId) -> bool {
+        matches!(
+            self.nodes.get(id),
+            Some((
+                _,
+                NodeType::Config(ConfigNodeType::Catalog { .. } | ConfigNodeType::NodeClass { .. })
+            ))
+        )
     }
 
     /// Applies an input value to a specific pin on a config node
@@ -908,7 +971,10 @@ impl Application {
         pin_label: &PinLabel,
         value: &NodeValue,
     ) {
-        use nodes::pins::{cfg, edge as epin, graph as gpin, node as npin, pin as ppin};
+        use nodes::pins::{
+            anchor as apin, cutting_tool as cpin, edge as epin, graph as gpin, minimap as mpin,
+            node as npin, pin as ppin, selection_box as spin,
+        };
 
         let Some((_, node_type)) = self.nodes.get_mut(node_id) else {
             return;
@@ -968,6 +1034,8 @@ impl Application {
                     inputs.dash_length = value.as_float();
                 } else if *pin_label == epin::GAP {
                     inputs.gap_length = value.as_float();
+                } else if *pin_label == epin::DOT_RADIUS {
+                    inputs.dot_radius = value.as_float();
                 } else if *pin_label == epin::ANGLE {
                     // Convert degrees from slider to radians for pattern angle
                     inputs.pattern_angle = value.as_float().map(|deg| deg.to_radians());
@@ -1032,116 +1100,230 @@ impl Application {
                     inputs.tiling_color = value.as_color_quad();
                 }
             }
-            ConfigNodeType::ApplyToNode { target_id, .. } if *pin_label == cfg::TARGET => {
-                *target_id = value.as_int();
+            ConfigNodeType::AnchorConfig(inputs) => {
+                if *pin_label == apin::CORE_SIZE {
+                    inputs.core_size = value.as_float();
+                } else if *pin_label == apin::CORE_RADIUS {
+                    inputs.core_radius = value.as_float();
+                } else if *pin_label == apin::CORE_COLOR {
+                    inputs.core_color = value.as_color_quad();
+                } else if *pin_label == apin::CORE_BORDER_COLOR {
+                    inputs.core_border_color = value.as_color_quad();
+                } else if *pin_label == apin::CORE_BORDER_WIDTH {
+                    inputs.core_border_width = value.as_float();
+                } else if *pin_label == apin::ORBIT_OFFSET {
+                    inputs.orbit_offset = value.as_float();
+                } else if *pin_label == apin::ORBIT_SPACING {
+                    inputs.orbit_spacing = value.as_float();
+                } else if *pin_label == apin::RING_COLOR {
+                    inputs.ring_color = value.as_color_quad();
+                } else if *pin_label == apin::RING_WIDTH {
+                    inputs.ring_width = value.as_float();
+                }
             }
-            _ => {}
+            ConfigNodeType::SelectionBoxConfig(inputs) => {
+                if *pin_label == spin::FILL {
+                    inputs.fill = value.as_color_quad();
+                } else if *pin_label == spin::BORDER_COLOR {
+                    inputs.border_color = value.as_color_quad();
+                } else if *pin_label == spin::BORDER_WIDTH {
+                    inputs.border_width = value.as_float();
+                }
+            }
+            ConfigNodeType::CuttingToolConfig(inputs) => {
+                if *pin_label == cpin::COLOR {
+                    inputs.color = value.as_color_quad();
+                } else if *pin_label == cpin::WIDTH {
+                    inputs.width = value.as_float();
+                }
+            }
+            ConfigNodeType::MinimapConfig(inputs) => {
+                if *pin_label == mpin::BACKGROUND {
+                    inputs.background = value.as_color_quad();
+                } else if *pin_label == mpin::BORDER_COLOR {
+                    inputs.border_color = value.as_color_quad();
+                } else if *pin_label == mpin::BORDER_WIDTH {
+                    inputs.border_width = value.as_float();
+                } else if *pin_label == mpin::NODE_COLOR {
+                    inputs.node_color = value.as_color_quad();
+                } else if *pin_label == mpin::SELECTED_NODE_COLOR {
+                    inputs.selected_node_color = value.as_color_quad();
+                } else if *pin_label == mpin::VIEWPORT_FILL {
+                    inputs.viewport_fill = value.as_color_quad();
+                } else if *pin_label == mpin::VIEWPORT_BORDER_COLOR {
+                    inputs.viewport_border_color = value.as_color_quad();
+                } else if *pin_label == mpin::VIEWPORT_BORDER_WIDTH {
+                    inputs.viewport_border_width = value.as_float();
+                }
+            }
+            // The sinks take whole configs, not values (phase 3).
+            ConfigNodeType::Catalog { .. } | ConfigNodeType::NodeClass { .. } => {}
         }
     }
 
-    /// Connects a config node's output to an ApplyToGraph node
-    fn connect_config_to_apply(
+    /// Whether a Catalog input pin takes the given output kind.
+    fn catalog_input_accepts(pin: PinLabel, output: &ConfigOutput) -> bool {
+        use nodes::pins::cfg;
+        match output {
+            ConfigOutput::Node(_) => pin == cfg::NODE_CONFIG || pin == cfg::NODE_SELECTED,
+            ConfigOutput::Pin(_) => pin == cfg::PIN_CONFIG || pin == cfg::PIN_VALID_TARGET,
+            ConfigOutput::Edge(_) => {
+                pin == cfg::EDGE_CONFIG || pin == cfg::EDGE_PENDING_CUT || pin == cfg::DRAG_EDGE
+            }
+            ConfigOutput::Anchor(_) => {
+                pin == cfg::ANCHOR || pin == cfg::ANCHOR_HOVERED || pin == cfg::ANCHOR_VALID_TARGET
+            }
+            ConfigOutput::Graph(_) => pin == cfg::GRAPH_CONFIG,
+            ConfigOutput::SelectionBox(_) => pin == cfg::SELECTION_BOX,
+            ConfigOutput::CuttingTool(_) => pin == cfg::CUTTING_TOOL,
+            ConfigOutput::Minimap(_) => pin == cfg::MINIMAP,
+        }
+    }
+
+    /// Queues a config node's built overlay on a sink's input pin, if the
+    /// sink accepts that kind there, and marks the input as connected.
+    fn connect_config_to_sink(
         &mut self,
         config_node_id: &NodeId,
-        _config_type: &ConfigNodeType, // Ignored - we read from current state
-        apply_node_id: &NodeId,
-        apply_pin_label: &PinLabel,
+        sink_node_id: &NodeId,
+        sink_pin: &PinLabel,
     ) {
-        use nodes::pins::cfg as pin;
+        use nodes::pins::cfg;
 
         // Build the config from the CURRENT state of the config node (not the snapshot)
-        let built_config = match self.nodes.get(config_node_id) {
-            Some((_, NodeType::Config(ConfigNodeType::NodeConfig(inputs)))) => {
-                Some(ConfigOutput::Node(inputs.build()))
-            }
-            Some((_, NodeType::Config(ConfigNodeType::EdgeConfig(inputs)))) => {
-                Some(ConfigOutput::Edge(inputs.build()))
-            }
-            Some((_, NodeType::Config(ConfigNodeType::PinConfig(inputs)))) => {
-                Some(ConfigOutput::Pin(inputs.build()))
-            }
-            Some((_, NodeType::Config(ConfigNodeType::GraphConfig(inputs)))) => {
-                Some(ConfigOutput::Graph(inputs.build()))
-            }
+        let built = match self.nodes.get(config_node_id) {
+            Some((_, NodeType::Config(config))) => match config {
+                ConfigNodeType::NodeConfig(inputs) => Some(ConfigOutput::Node(inputs.build())),
+                ConfigNodeType::EdgeConfig(inputs) => Some(ConfigOutput::Edge(inputs.build())),
+                ConfigNodeType::PinConfig(inputs) => Some(ConfigOutput::Pin(inputs.build())),
+                ConfigNodeType::GraphConfig(inputs) => Some(ConfigOutput::Graph(inputs.build())),
+                ConfigNodeType::AnchorConfig(inputs) => Some(ConfigOutput::Anchor(inputs.build())),
+                ConfigNodeType::SelectionBoxConfig(inputs) => {
+                    Some(ConfigOutput::SelectionBox(inputs.build()))
+                }
+                ConfigNodeType::CuttingToolConfig(inputs) => {
+                    Some(ConfigOutput::CuttingTool(inputs.build()))
+                }
+                ConfigNodeType::MinimapConfig(inputs) => {
+                    Some(ConfigOutput::Minimap(inputs.build()))
+                }
+                ConfigNodeType::Catalog { .. } | ConfigNodeType::NodeClass { .. } => None,
+            },
             _ => None,
         };
-
-        let Some((_, node_type)) = self.nodes.get_mut(apply_node_id) else {
+        let Some(output) = built else {
             return;
         };
 
-        if let NodeType::Config(ConfigNodeType::ApplyToGraph {
-            has_node_config,
-            has_edge_config,
-            has_pin_config,
-            has_graph_config,
-        }) = node_type
-        {
-            if *apply_pin_label == pin::NODE_CONFIG {
-                if matches!(&built_config, Some(ConfigOutput::Node(_))) {
+        let accepted = match self.nodes.get_mut(sink_node_id) {
+            Some((_, NodeType::Config(ConfigNodeType::Catalog { connected }))) => {
+                let ok = Self::catalog_input_accepts(sink_pin, &output);
+                if ok {
+                    connected.insert(sink_pin);
+                }
+                ok
+            }
+            Some((
+                _,
+                NodeType::Config(ConfigNodeType::NodeClass {
+                    has_node_config, ..
+                }),
+            )) => {
+                let ok = *sink_pin == cfg::NODE_CONFIG && matches!(output, ConfigOutput::Node(_));
+                if ok {
                     *has_node_config = true;
                 }
-            } else if *apply_pin_label == pin::EDGE_CONFIG {
-                if matches!(&built_config, Some(ConfigOutput::Edge(_))) {
-                    *has_edge_config = true;
-                }
-            } else if *apply_pin_label == pin::PIN_CONFIG {
-                if matches!(&built_config, Some(ConfigOutput::Pin(_))) {
-                    *has_pin_config = true;
-                }
-            } else if *apply_pin_label == pin::GRAPH_CONFIG
-                && matches!(&built_config, Some(ConfigOutput::Graph(_)))
-            {
-                *has_graph_config = true;
+                ok
             }
-        }
+            _ => false,
+        };
 
-        // Store the config for later application
-        if let Some(config) = built_config {
+        if accepted {
             self.pending_configs
-                .entry(apply_node_id.clone())
+                .entry(sink_node_id.clone())
                 .or_default()
-                .push((*apply_pin_label, config));
+                .push((*sink_pin, output));
         }
     }
 
-    /// Applies configs from ApplyToGraph nodes to the computed style
-    fn apply_graph_configs(&mut self, computed: &mut ComputedStyle) {
-        // Find ApplyToGraph nodes and apply their connected configs
+    /// Folds the queued sink inputs into the computed catalog. On the Catalog
+    /// node each pin names one field; a Node Class node with a target adds a
+    /// per-node class. A later config wins over an earlier one on the same pin.
+    fn apply_sinks(&mut self, computed: &mut ComputedCatalog) {
+        use nodes::pins::cfg;
+
         for (node_id, (_, node_type)) in &self.nodes {
-            if let NodeType::Config(ConfigNodeType::ApplyToGraph {
-                has_node_config,
-                has_edge_config,
-                has_pin_config,
-                has_graph_config,
-            }) = node_type
-                && let Some(configs) = self.pending_configs.get(node_id)
-            {
-                for (_, config) in configs {
-                    // Each config node's overlay wins over what is already accumulated.
-                    match config {
-                        ConfigOutput::Node(node) => {
-                            if *has_node_config {
-                                computed.node = node.merge(&computed.node);
+            let Some(configs) = self.pending_configs.get(node_id) else {
+                continue;
+            };
+            match node_type {
+                NodeType::Config(ConfigNodeType::Catalog { .. }) => {
+                    for (pin, output) in configs {
+                        match output {
+                            ConfigOutput::Node(o) => {
+                                let slot = if *pin == cfg::NODE_SELECTED {
+                                    &mut computed.node_selected
+                                } else {
+                                    &mut computed.node
+                                };
+                                *slot = o.merge(slot);
                             }
-                        }
-                        ConfigOutput::Edge(edge) => {
-                            if *has_edge_config {
-                                computed.edge = edge.merge(&computed.edge);
+                            ConfigOutput::Pin(o) => {
+                                let slot = if *pin == cfg::PIN_VALID_TARGET {
+                                    &mut computed.pin_valid_target
+                                } else {
+                                    &mut computed.pin
+                                };
+                                *slot = o.merge(slot);
                             }
-                        }
-                        ConfigOutput::Pin(pin) => {
-                            if *has_pin_config {
-                                computed.pin = pin.merge(&computed.pin);
+                            ConfigOutput::Edge(o) => {
+                                let slot = if *pin == cfg::EDGE_PENDING_CUT {
+                                    &mut computed.edge_pending_cut
+                                } else if *pin == cfg::DRAG_EDGE {
+                                    &mut computed.drag_edge
+                                } else {
+                                    &mut computed.edge
+                                };
+                                *slot = o.merge(slot);
                             }
-                        }
-                        ConfigOutput::Graph(graph) => {
-                            if *has_graph_config {
-                                computed.graph = graph.merge(&computed.graph);
+                            ConfigOutput::Anchor(o) => {
+                                let slot = if *pin == cfg::ANCHOR_HOVERED {
+                                    &mut computed.anchor_hovered
+                                } else if *pin == cfg::ANCHOR_VALID_TARGET {
+                                    &mut computed.anchor_valid_target
+                                } else {
+                                    &mut computed.anchor
+                                };
+                                *slot = o.merge(slot);
+                            }
+                            ConfigOutput::Graph(o) => computed.graph = o.merge(&computed.graph),
+                            ConfigOutput::SelectionBox(o) => {
+                                computed.selection_box = o.merge(&computed.selection_box)
+                            }
+                            ConfigOutput::CuttingTool(o) => {
+                                computed.cutting_tool = o.merge(&computed.cutting_tool)
+                            }
+                            ConfigOutput::Minimap(o) => {
+                                computed.minimap = o.merge(&computed.minimap)
                             }
                         }
                     }
                 }
+                NodeType::Config(ConfigNodeType::NodeClass {
+                    target: Some(target),
+                    has_node_config: true,
+                }) => {
+                    for (_, output) in configs {
+                        if let ConfigOutput::Node(o) = output {
+                            computed
+                                .node_classes
+                                .entry(target.clone())
+                                .and_modify(|c| *c = o.merge(c))
+                                .or_insert_with(|| o.clone());
+                        }
+                    }
+                }
+                _ => {}
             }
         }
         // Clear pending configs after application
@@ -1162,12 +1344,7 @@ impl demo_common::Demo for Application {
                 let edge_id = generate_edge_id();
                 self.edges.insert(
                     edge_id.clone(),
-                    EdgeData {
-                        from_node: from.node_id,
-                        from_pin: from.pin_id,
-                        to_node: to.node_id,
-                        to_pin: to.pin_id,
-                    },
+                    EdgeData::new(from.node_id, from.pin_id, to.node_id, to.pin_id),
                 );
                 self.edge_order.push(edge_id);
                 self.propagate_values();
@@ -1180,7 +1357,61 @@ impl demo_common::Demo for Application {
                     self.edges.remove(id);
                 }
                 self.edge_order.retain(|id| !ids.contains(id));
+                self.drop_unused_anchors();
                 self.propagate_values();
+                self.save_state();
+                Task::none()
+            }
+            ApplicationMessage::AnchorCreated { edge, position } => {
+                let id = self.next_anchor;
+                self.next_anchor += 1;
+                // An anchor nothing wraps is not something this host keeps, so
+                // it is only pushed once an edge has taken it. The id stays
+                // spent either way and can never name a second anchor.
+                if let Some(data) = self.edges.get_mut(&edge) {
+                    data.route.push(id);
+                    self.anchors.push((id, position));
+                }
+                self.save_state();
+                Task::none()
+            }
+            ApplicationMessage::AnchorMoved { anchor, position } => {
+                if let Some((_, p)) = self.anchors.iter_mut().find(|(id, _)| *id == anchor) {
+                    *p = position;
+                }
+                self.save_state();
+                Task::none()
+            }
+            ApplicationMessage::AnchorDeleted(anchor) => {
+                self.anchors.retain(|(id, _)| *id != anchor);
+                for data in self.edges.values_mut() {
+                    data.route.retain(|id| *id != anchor);
+                }
+                self.save_state();
+                Task::none()
+            }
+            ApplicationMessage::RouteAttached { edge, anchor } => {
+                if let Some(data) = self.edges.get_mut(&edge)
+                    && !data.route.contains(&anchor)
+                {
+                    data.route.push(anchor);
+                }
+                self.save_state();
+                Task::none()
+            }
+            ApplicationMessage::RouteDetached { edge, anchor } => {
+                if let Some(data) = self.edges.get_mut(&edge) {
+                    data.route.retain(|id| *id != anchor);
+                }
+                // No collection here: a detach fires DURING the drag, and the
+                // anchor just left is exactly the one the drag may put the
+                // cable straight back onto. Dropping it now would delete a live
+                // drop target mid-gesture.
+                self.save_state();
+                Task::none()
+            }
+            ApplicationMessage::DragEnded => {
+                self.drop_unused_anchors();
                 self.save_state();
                 Task::none()
             }
@@ -1202,6 +1433,7 @@ impl demo_common::Demo for Application {
                     self.edges.remove(&edge_id);
                     self.edge_order.retain(|id| id != &edge_id);
                 }
+                self.drop_unused_anchors();
                 self.propagate_values();
                 self.save_state();
                 Task::none()
@@ -1213,6 +1445,7 @@ impl demo_common::Demo for Application {
                         self.current_theme = original;
                     }
                     self.palette_preview_theme = None;
+                    self.propagate_values();
                     self.command_input.clear();
                     self.palette_view = PaletteView::Main;
                     self.palette_selected_index = 0;
@@ -1270,6 +1503,8 @@ impl demo_common::Demo for Application {
                         let themes = Self::get_available_themes();
                         if original_idx < themes.len() {
                             self.palette_preview_theme = Some(themes[original_idx].clone());
+                            // The rig's palette pins follow the previewed theme.
+                            self.propagate_values();
                         }
                     }
                 }
@@ -1377,6 +1612,7 @@ impl demo_common::Demo for Application {
                     self.current_theme = original;
                 }
                 self.palette_preview_theme = None;
+                self.propagate_values();
                 self.command_palette_open = false;
                 self.command_input.clear();
                 self.palette_view = PaletteView::Main;
@@ -1485,12 +1721,12 @@ impl demo_common::Demo for Application {
                         let new_edge_id = generate_edge_id();
                         self.edges.insert(
                             new_edge_id.clone(),
-                            EdgeData {
-                                from_node: new_from.clone(),
-                                from_pin: edge.from_pin,
-                                to_node: new_to.clone(),
-                                to_pin: edge.to_pin,
-                            },
+                            EdgeData::new(
+                                new_from.clone(),
+                                edge.from_pin,
+                                new_to.clone(),
+                                edge.to_pin,
+                            ),
                         );
                         self.edge_order.push(new_edge_id);
                     }
@@ -1502,27 +1738,7 @@ impl demo_common::Demo for Application {
                 Task::none()
             }
             ApplicationMessage::DeleteNodes(node_ids) => {
-                // With NanoIDs, deletion is simple - no index remapping needed!
-                for node_id in &node_ids {
-                    // Remove node
-                    self.nodes.remove(node_id);
-                    self.node_order.retain(|id| id != node_id);
-
-                    // Remove edges connected to this node
-                    let edges_to_remove: Vec<_> = self
-                        .edges
-                        .iter()
-                        .filter(|(_, e)| &e.from_node == node_id || &e.to_node == node_id)
-                        .map(|(id, _)| id.clone())
-                        .collect();
-
-                    for edge_id in edges_to_remove {
-                        self.edges.remove(&edge_id);
-                        self.edge_order.retain(|id| id != &edge_id);
-                    }
-                }
-
-                self.selected_nodes.clear();
+                self.delete_nodes(&node_ids);
                 self.propagate_values();
                 self.save_state();
                 Task::none()
@@ -1670,38 +1886,48 @@ impl demo_common::Demo for Application {
                 }
                 Task::none()
             }
+            ApplicationMessage::NodeClassTargetChanged { node_id, target } => {
+                if let Some((_, NodeType::Config(ConfigNodeType::NodeClass { target: t, .. }))) =
+                    self.nodes.get_mut(&node_id)
+                {
+                    *t = target;
+                    self.propagate_values();
+                    self.save_state();
+                }
+                Task::none()
+            }
         }
     }
 
     fn theme(&self) -> Theme {
-        self.palette_preview_theme
-            .as_ref()
-            .unwrap_or(&self.current_theme)
-            .clone()
+        self.effective_theme().clone()
     }
 
     fn set_theme(&mut self, theme: Theme) {
         self.current_theme = theme;
         self.palette_preview_theme = None;
+        // The rig's palette pins follow the theme.
+        self.propagate_values();
     }
 
     fn view(&self) -> iced::Element<'_, ApplicationMessage> {
         use iced_nodegraph::NodeGraph;
 
-        // Use preview theme if active (for theme selection), otherwise current theme
-        let theme = self
-            .palette_preview_theme
-            .as_ref()
-            .unwrap_or(&self.current_theme);
+        let theme = self.effective_theme();
 
-        // Graph-wide node defaults - combined with per-node overlays via merge()
-        let node_defaults = NodeOverlay::new().corner_radius(8.0).opacity(0.88);
-        // The dragging edge preview uses the graph-wide computed edge overlay
-        // (e.g. from an EdgeConfig -> ApplyToGraph chain).
-        let drag_overlay = self.computed_style.edge.clone();
-        // Canvas chrome (background + tiling) from a GraphConfig -> ApplyToGraph
-        // chain, layered over the theme-derived base each frame.
-        let graph_overlay = self.computed_style.graph.clone();
+        // The Node Class pick list offers every workflow node; each Node Class
+        // node takes its own copy.
+        let candidates: Vec<ClassCandidate> = self
+            .node_order
+            .iter()
+            .filter_map(|id| match self.nodes.get(id) {
+                Some((_, NodeType::Workflow(name))) => Some(ClassCandidate {
+                    id: id.clone(),
+                    label: format!("{} {}", name, &id[..6.min(id.len())]),
+                }),
+                _ => None,
+            })
+            .collect();
 
         let mut ng: NodeGraph<'_, HelloIds, ApplicationMessage, iced::Theme, iced::Renderer> =
             NodeGraph::new()
@@ -1718,7 +1944,20 @@ impl demo_common::Demo for Application {
                 .on_clone(ApplicationMessage::CloneNodes)
                 .on_delete(ApplicationMessage::DeleteNodes)
                 .on_camera(|position, zoom| ApplicationMessage::CameraChanged { position, zoom })
+                .on_anchor_move(|anchor, position| ApplicationMessage::AnchorMoved {
+                    anchor,
+                    position,
+                })
+                .on_anchor_create(|edge, position| ApplicationMessage::AnchorCreated {
+                    edge,
+                    position,
+                })
+                .on_anchor_delete(ApplicationMessage::AnchorDeleted)
+                .on_route_attach(|edge, anchor| ApplicationMessage::RouteAttached { edge, anchor })
+                .on_route_detach(|edge, anchor| ApplicationMessage::RouteDetached { edge, anchor })
+                .on_drag_end(|| ApplicationMessage::DragEnded)
                 .camera(self.camera_position, self.camera_zoom)
+                .minimap(Minimap::default())
                 // A connection is valid only between opposite directions (output ->
                 // input) carrying the same data type (the pin's TypeId marker). Color
                 // and ColorQuad share the `ColorData` marker, so a color pin accepts
@@ -1726,31 +1965,17 @@ impl demo_common::Demo for Application {
                 .can_connect(|from, to| {
                     from.direction() != to.direction() && from.info() == to.info()
                 })
-                // Per-node and per-edge styling flows through the `.style()` closures
-                // on the `node(..)` / `edge(..)` builders; only graph-wide chrome is
-                // configured here.
-                .selection_box_style(|theme| SelectionBoxStyle {
-                    fill: iced::Color::from_rgba(0.3, 0.6, 1.0, 0.15),
-                    border_color: iced::Color::from_rgb(0.3, 0.6, 1.0),
-                    ..default_selection_box_style(theme)
-                })
-                .cutting_tool_style(|theme| CuttingToolStyle {
-                    color: iced::Color::from_rgb(1.0, 0.3, 0.3),
-                    ..default_cutting_tool_style(theme)
-                })
-                .dragging_edge_style(move |theme, source| {
-                    // The loose edge takes the held pin's data-type color on both ends.
-                    let base = EdgeStyle {
-                        stroke_color: ColorQuad::solid(pin_color_for(*source.info())),
-                        ..default_edge_style(theme, EdgeStatus::Idle)
-                    };
-                    drag_overlay.resolve_over(base)
-                })
-                .graph_style(move |theme| {
-                    // With no GraphConfig connected the overlay is empty and this is
-                    // exactly the widget's own default (`default_graph_style`).
-                    graph_overlay.resolve_over(default_graph_style(theme))
-                });
+                // Every class the widget resolves is a method on `self`: the
+                // computed catalog over the theme-derived base, see `node_style`
+                // and its siblings.
+                .selection_box_style(|theme| self.selection_box_style(theme))
+                .cutting_tool_style(|theme| self.cutting_tool_style(theme))
+                .minimap_style(|theme| self.minimap_style(theme))
+                .dragging_edge_style(|theme, source| self.drag_edge_style(theme, *source.info()))
+                .graph_style(|theme| self.graph_style(theme))
+                .anchors(self.anchors.iter().map(|&(id, position)| {
+                    ng_anchor(id, position).style(|theme, status| self.anchor_style(theme, status))
+                }));
 
         // Add all nodes from state (in order)
         for node_id in &self.node_order {
@@ -1906,74 +2131,61 @@ impl demo_common::Demo for Application {
                     }
                     ConfigNodeType::PinConfig(inputs) => pin_config_node(theme, inputs),
                     ConfigNodeType::GraphConfig(inputs) => graph_config_node(theme, inputs),
-                    ConfigNodeType::ApplyToGraph {
+                    ConfigNodeType::AnchorConfig(inputs) => anchor_config_node(theme, inputs),
+                    ConfigNodeType::SelectionBoxConfig(inputs) => {
+                        selection_box_config_node(theme, inputs)
+                    }
+                    ConfigNodeType::CuttingToolConfig(inputs) => {
+                        cutting_tool_config_node(theme, inputs)
+                    }
+                    ConfigNodeType::MinimapConfig(inputs) => minimap_config_node(theme, inputs),
+                    ConfigNodeType::Catalog { connected } => catalog_node(theme, connected),
+                    ConfigNodeType::NodeClass {
+                        target,
                         has_node_config,
-                        has_edge_config,
-                        has_pin_config,
-                        has_graph_config,
-                    } => apply_to_graph_node(
-                        theme,
-                        *has_node_config,
-                        *has_edge_config,
-                        *has_pin_config,
-                        *has_graph_config,
-                    ),
-                    ConfigNodeType::ApplyToNode {
-                        has_node_config,
-                        target_id,
-                    } => apply_to_node_node(theme, *has_node_config, *target_id),
+                    } => {
+                        let id = node_id_clone.clone();
+                        node_class_node(
+                            theme,
+                            *has_node_config,
+                            target.as_ref(),
+                            candidates.clone(),
+                            move |target| ApplicationMessage::NodeClassTargetChanged {
+                                node_id: id.clone(),
+                                target,
+                            },
+                        )
+                    }
                 },
                 NodeType::Math(state) => math_node(theme, state),
                 NodeType::ColorQuad(state) => color_quad_node(theme, state),
                 NodeType::Vec2(state) => vec2_node(theme, state),
+                NodeType::Alpha(state) => alpha_node(theme, state),
                 NodeType::Theme => theme_node(theme),
                 NodeType::ThemeExtended => theme_extended_node(theme),
+                NodeType::Frame { label, size } => frame_node(theme, label, *size),
             };
 
-            // Apply the computed node-config overlay to every node ("Apply to
-            // Graph" means the whole graph); the per-node closure resolves it
-            // over the theme base. With no config connected, computed_style.node
-            // is empty and this is just node_defaults.
-            let overlay = self.computed_style.node.merge(&node_defaults);
-            // Pins: the per-pin data-type color wins, then the global Pin Config
-            // overlay (radius/shape/border from an ApplyToGraph chain), then the
-            // status default fills the rest.
-            let pin_overlay = self.computed_style.pin.clone();
-            ng = ng.push_node(
-                ng_node(node_id.clone(), *position, element)
-                    .style(move |theme, status| {
-                        overlay.resolve_over(default_node_style(theme, status))
-                    })
-                    .pin_style(move |theme, pin, _other, status| {
-                        PinOverlay::new()
-                            .color(pin_color_for(*pin.info()))
-                            .merge(&pin_overlay)
-                            .resolve_over(default_pin_style(theme, status))
-                    }),
-            );
+            let mut node = ng_node(node_id.clone(), *position, element)
+                .style(|theme, status| self.node_style(node_id, theme, status))
+                .pin_style(|theme, pin, _other, status| self.pin_style(*pin.info(), theme, status));
+            if matches!(node_type, NodeType::Frame { .. }) {
+                node = node.frame();
+            }
+            ng = ng.push_node(node);
         }
 
-        // Add stored edges with the computed overlay resolved per edge.
-        let edge_overlay = self.computed_style.edge.clone();
         for edge_id in &self.edge_order {
             if let Some(edge_data) = self.edges.get(edge_id) {
                 let from = PinRef::new(edge_data.from_node.clone(), edge_data.from_pin);
                 let to = PinRef::new(edge_data.to_node.clone(), edge_data.to_pin);
-                let overlay = edge_overlay.clone();
-                ng = ng.push_edge(ng_edge(edge_id.clone(), from, to).style(
-                    move |theme, status, start, end| {
-                        // Edges follow their connected pins' data-type colors; the
-                        // Edge Config overlay (if set) overrides the inherited stroke.
-                        let base = EdgeStyle {
-                            stroke_color: ColorQuad::arc(
-                                pin_color_for(*start.info()),
-                                pin_color_for(*end.info()),
-                            ),
-                            ..default_edge_style(theme, status)
-                        };
-                        overlay.resolve_over(base)
-                    },
-                ));
+                ng = ng.push_edge(
+                    ng_edge(edge_id.clone(), from, to)
+                        .route(edge_data.route.iter().copied())
+                        .style(|theme, status, start, end| {
+                            self.edge_style(theme, status, *start.info(), *end.info())
+                        }),
+                );
             }
         }
 
@@ -2119,6 +2331,139 @@ impl Application {
             ),
             None => Task::none(),
         }
+    }
+
+    // ---------------------------------------------------------------------
+    // Style resolution: the computed catalog over the theme-derived base.
+    // With nothing connected an overlay is empty and the base is exactly the
+    // widget's own default.
+    // ---------------------------------------------------------------------
+
+    /// A node's style: its per-node class (a Node Class node targeting it)
+    /// wins over the Catalog's status class, which is the selected overlay
+    /// layered over the idle one; the theme base fills the rest.
+    fn node_style(&self, node_id: &NodeId, theme: &Theme, status: NodeStatus) -> NodeStyle {
+        let global = self.computed.node(status);
+        let overlay = match self.computed.node_classes.get(node_id) {
+            Some(class) => class.merge(&global),
+            None => global,
+        };
+        overlay.resolve_over(default_node_style(theme, status))
+    }
+
+    /// A pin's style: the Catalog's pin class wins over the pin's data-type
+    /// color, then the status default fills the rest.
+    fn pin_style(&self, info: std::any::TypeId, theme: &Theme, status: PinStatus) -> PinStyle {
+        self.computed
+            .pin(status)
+            .merge(&PinOverlay::new().color(pin_color_for(info)))
+            .resolve_over(default_pin_style(theme, status))
+    }
+
+    /// An edge's style: the Catalog's edge class over an arc between its two
+    /// pins' data-type colors.
+    fn edge_style(
+        &self,
+        theme: &Theme,
+        status: EdgeStatus,
+        start: std::any::TypeId,
+        end: std::any::TypeId,
+    ) -> EdgeStyle {
+        let base = EdgeStyle {
+            stroke_color: ColorQuad::arc(pin_color_for(start), pin_color_for(end)),
+            ..default_edge_style(theme, status)
+        };
+        self.computed.edge(status).resolve_over(base)
+    }
+
+    /// The loose edge's style: the Catalog's drag-edge class over the held
+    /// pin's data-type color on both ends.
+    fn drag_edge_style(&self, theme: &Theme, source: std::any::TypeId) -> EdgeStyle {
+        let base = EdgeStyle {
+            stroke_color: ColorQuad::solid(pin_color_for(source)),
+            ..default_edge_style(theme, EdgeStatus::Idle)
+        };
+        self.computed.drag_edge.resolve_over(base)
+    }
+
+    fn anchor_style(&self, theme: &Theme, status: AnchorStatus) -> AnchorStyle {
+        self.computed
+            .anchor(status)
+            .resolve_over(default_anchor_style(theme, status))
+    }
+
+    fn graph_style(&self, theme: &Theme) -> GraphStyle {
+        self.computed.graph.resolve_over(default_graph_style(theme))
+    }
+
+    fn selection_box_style(&self, theme: &Theme) -> SelectionBoxStyle {
+        self.computed
+            .selection_box
+            .resolve_over(default_selection_box_style(theme))
+    }
+
+    fn cutting_tool_style(&self, theme: &Theme) -> CuttingToolStyle {
+        self.computed
+            .cutting_tool
+            .resolve_over(default_cutting_tool_style(theme))
+    }
+
+    fn minimap_style(&self, theme: &Theme) -> MinimapStyle {
+        self.computed
+            .minimap
+            .resolve_over(default_minimap_style(theme))
+    }
+
+    /// Drops every anchor no route names any more.
+    ///
+    /// The library keeps an anchor as long as the host pushes it, cables or no
+    /// cables - so "the last cable left, the anchor goes" is a policy, and this
+    /// is where this host states it.
+    fn drop_unused_anchors(&mut self) {
+        let routed: HashSet<usize> = self
+            .edges
+            .values()
+            .flat_map(|e| e.route.iter().copied())
+            .collect();
+        self.anchors.retain(|(id, _)| routed.contains(id));
+    }
+
+    /// Removes the nodes, the edges touching them, the anchors that leaves
+    /// unrouted, and the selection; a Node Class whose target is among them
+    /// points at nothing afterwards.
+    fn delete_nodes(&mut self, node_ids: &[NodeId]) {
+        for node_id in node_ids {
+            self.nodes.remove(node_id);
+            self.node_order.retain(|id| id != node_id);
+
+            let edges_to_remove: Vec<_> = self
+                .edges
+                .iter()
+                .filter(|(_, e)| &e.from_node == node_id || &e.to_node == node_id)
+                .map(|(id, _)| id.clone())
+                .collect();
+            for edge_id in edges_to_remove {
+                self.edges.remove(&edge_id);
+                self.edge_order.retain(|id| id != &edge_id);
+            }
+        }
+
+        for (_, node_type) in self.nodes.values_mut() {
+            if let NodeType::Config(ConfigNodeType::NodeClass {
+                target: Some(target),
+                ..
+            }) = node_type
+                && node_ids.contains(target)
+            {
+                *node_type = NodeType::Config(ConfigNodeType::NodeClass {
+                    target: None,
+                    has_node_config: false,
+                });
+            }
+        }
+
+        self.drop_unused_anchors();
+        self.selected_nodes.clear();
     }
 
     fn build_palette_commands(&self) -> (&'static str, Vec<Command<ApplicationMessage>>) {
@@ -2331,6 +2676,34 @@ impl Application {
                                 GraphConfigInputs::default(),
                             )),
                         }),
+                    command("anchor_config", "Anchor Config")
+                        .description("Anchor core, border and orbit ring")
+                        .action(ApplicationMessage::SpawnNode {
+                            node_type: NodeType::Config(ConfigNodeType::AnchorConfig(
+                                AnchorConfigInputs::default(),
+                            )),
+                        }),
+                    command("selection_box_config", "Selection Box Config")
+                        .description("Selection box fill and border")
+                        .action(ApplicationMessage::SpawnNode {
+                            node_type: NodeType::Config(ConfigNodeType::SelectionBoxConfig(
+                                SelectionBoxConfigInputs::default(),
+                            )),
+                        }),
+                    command("cutting_tool_config", "Cutting Tool Config")
+                        .description("Edge-cutting trail color and width")
+                        .action(ApplicationMessage::SpawnNode {
+                            node_type: NodeType::Config(ConfigNodeType::CuttingToolConfig(
+                                CuttingToolConfigInputs::default(),
+                            )),
+                        }),
+                    command("minimap_config", "Minimap Config")
+                        .description("Minimap background, marks and viewport")
+                        .action(ApplicationMessage::SpawnNode {
+                            node_type: NodeType::Config(ConfigNodeType::MinimapConfig(
+                                MinimapConfigInputs::default(),
+                            )),
+                        }),
                     // Builder nodes
                     command("color_quad", "Color Quad")
                         .description("Combine 4 corner colors into one ColorQuad")
@@ -2342,24 +2715,35 @@ impl Application {
                         .action(ApplicationMessage::SpawnNode {
                             node_type: NodeType::Vec2(Vec2Node::default()),
                         }),
-                    // Apply nodes
-                    command("apply_to_graph", "Apply to Graph")
-                        .description("Apply configs to all nodes/edges in graph")
+                    command("alpha", "Alpha")
+                        .description("Replace a color's alpha")
                         .action(ApplicationMessage::SpawnNode {
-                            node_type: NodeType::Config(ConfigNodeType::ApplyToGraph {
-                                has_node_config: false,
-                                has_edge_config: false,
-                                has_pin_config: false,
-                                has_graph_config: false,
+                            node_type: NodeType::Alpha(AlphaNode::default()),
+                        }),
+                    // Sinks
+                    command("catalog", "Catalog")
+                        .description("One input per style class and status")
+                        .action(ApplicationMessage::SpawnNode {
+                            node_type: NodeType::Config(ConfigNodeType::Catalog {
+                                connected: HashSet::new(),
                             }),
                         }),
-                    command("apply_to_node", "Apply to Node")
-                        .description("Apply config to a specific node by ID")
+                    command("node_class", "Node Class")
+                        .description("Assign a node config to one node")
                         .action(ApplicationMessage::SpawnNode {
-                            node_type: NodeType::Config(ConfigNodeType::ApplyToNode {
+                            node_type: NodeType::Config(ConfigNodeType::NodeClass {
+                                target: None,
                                 has_node_config: false,
-                                target_id: None,
                             }),
+                        }),
+                    // Layout
+                    command("frame", "Frame")
+                        .description("A titled region that moves the nodes laid over it")
+                        .action(ApplicationMessage::SpawnNode {
+                            node_type: NodeType::Frame {
+                                label: "Frame".to_string(),
+                                size: Size::new(400.0, 300.0),
+                            },
                         }),
                 ];
                 ("Style Config Nodes", commands)
@@ -2450,8 +2834,8 @@ fn theme_color(theme: &Theme, pin: &PinLabel) -> Option<iced::Color> {
 }
 
 /// Feeds a propagated `value` into a combiner node's input pin (Math, ColorQuad,
-/// or Vec2). Returns true if the stored input changed, so the propagation loop
-/// knows to keep iterating. No-op for any other node type or unknown pin.
+/// Vec2 or Alpha). Returns true if the stored input changed, so the propagation
+/// loop knows to keep iterating. No-op for any other node type or unknown pin.
 fn feed_combiner_input(node: &mut NodeType, pin: &PinLabel, value: &NodeValue) -> bool {
     use nodes::pins::{build as pin_build, math as pin_math};
 
@@ -2496,6 +2880,21 @@ fn feed_combiner_input(node: &mut NodeType, pin: &PinLabel, value: &NodeValue) -
                     changed = true;
                 } else if *pin == pin_build::Y && state.y != Some(f) {
                     state.y = Some(f);
+                    changed = true;
+                }
+            }
+        }
+        NodeType::Alpha(state) => {
+            if *pin == pin_build::ALPHA_COLOR {
+                let c = value.as_color_quad().map(|q| q.near_start);
+                if c.is_some() && state.color != c {
+                    state.color = c;
+                    changed = true;
+                }
+            } else if *pin == pin_build::ALPHA {
+                let a = value.as_float();
+                if a.is_some() && state.alpha != a {
+                    state.alpha = a;
                     changed = true;
                 }
             }
@@ -2663,507 +3062,770 @@ mod tests {
         }
     }
 
-    // === ComputedStyle Tests ===
+    // === Propagation chain tests ===
 
-    #[test]
-    fn test_computed_style_pin_overlay_empty() {
-        let style = ComputedStyle::default();
-        // Empty overlay leaves every field to inherit.
-        assert!(style.pin.color.is_none());
-        assert!(style.pin.radius.is_none());
-        assert!(style.pin.shape.is_none());
-    }
-
-    #[test]
-    fn test_computed_style_pin_overlay_with_values() {
-        let style = ComputedStyle {
-            pin: PinOverlay::new()
-                .color(Color::from_rgb(1.0, 0.0, 0.0))
-                .radius(10.0)
-                .shape(PinShape::Square),
-            ..Default::default()
-        };
-        assert!(style.pin.color.is_some());
-        assert_eq!(style.pin.radius, Some(10.0));
-        assert_eq!(style.pin.shape, Some(PinShape::Square));
-    }
-
-    #[test]
-    fn test_node_config_chain_applies_to_computed_style() {
-        // Full chain: ColorPicker -> NodeConfig.fill_color, NodeConfig -> ApplyToGraph.
-        // After propagation, computed_style.node must carry the fill color.
+    /// An application with an empty graph, ready for nodes and edges.
+    fn empty_app() -> Application {
         let mut app = Application::default();
         app.nodes.clear();
         app.node_order.clear();
         app.edges.clear();
         app.edge_order.clear();
+        app.anchors.clear();
+        app
+    }
 
+    fn add(app: &mut Application, node_type: NodeType) -> NodeId {
+        let id = generate_node_id();
+        app.nodes.insert(id.clone(), (Point::ORIGIN, node_type));
+        app.node_order.push(id.clone());
+        id
+    }
+
+    fn wire(app: &mut Application, from: &NodeId, fp: PinLabel, to: &NodeId, tp: PinLabel) {
+        let e = generate_edge_id();
+        app.edges
+            .insert(e.clone(), EdgeData::new(from.clone(), fp, to.clone(), tp));
+        app.edge_order.push(e);
+    }
+
+    fn catalog(app: &mut Application) -> NodeId {
+        add(
+            app,
+            NodeType::Config(ConfigNodeType::Catalog {
+                connected: HashSet::new(),
+            }),
+        )
+    }
+
+    fn node_config(app: &mut Application) -> NodeId {
+        add(
+            app,
+            NodeType::Config(ConfigNodeType::NodeConfig(NodeConfigInputs::default())),
+        )
+    }
+
+    fn slider(app: &mut Application, value: f32) -> NodeId {
+        add(
+            app,
+            NodeType::Input(InputNodeType::FloatSlider {
+                config: FloatSliderConfig::default(),
+                value,
+            }),
+        )
+    }
+
+    fn picker(app: &mut Application, color: Color) -> NodeId {
+        add(app, NodeType::Input(InputNodeType::ColorPicker { color }))
+    }
+
+    /// The Catalog inputs the given node reports as connected.
+    fn connected(app: &Application, catalog: &NodeId) -> HashSet<PinLabel> {
+        match app.nodes.get(catalog) {
+            Some((_, NodeType::Config(ConfigNodeType::Catalog { connected }))) => connected.clone(),
+            _ => panic!("catalog node missing"),
+        }
+    }
+
+    #[test]
+    fn test_node_config_chain_applies_to_catalog() {
+        // ColorPicker -> NodeConfig.fill_color, NodeConfig -> Catalog.node.
+        use nodes::pins;
+        let mut app = empty_app();
         let red = Color::from_rgb(1.0, 0.0, 0.0);
-        let picker = generate_node_id();
-        let cfg = generate_node_id();
-        let apply = generate_node_id();
-        let p = Point::new(0.0, 0.0);
-        app.nodes.insert(
-            picker.clone(),
-            (
-                p,
-                NodeType::Input(InputNodeType::ColorPicker { color: red }),
-            ),
+        let picker = picker(&mut app, red);
+        let cfg = node_config(&mut app);
+        let catalog = catalog(&mut app);
+        wire(
+            &mut app,
+            &picker,
+            pins::input::COLOR,
+            &cfg,
+            pins::node::FILL_COLOR,
         );
-        app.nodes.insert(
-            cfg.clone(),
-            (
-                p,
-                NodeType::Config(ConfigNodeType::NodeConfig(NodeConfigInputs::default())),
-            ),
+        wire(
+            &mut app,
+            &cfg,
+            pins::cfg::NODE_OUT,
+            &catalog,
+            pins::cfg::NODE_CONFIG,
         );
-        app.nodes.insert(
-            apply.clone(),
-            (
-                p,
-                NodeType::Config(ConfigNodeType::ApplyToGraph {
-                    has_node_config: false,
-                    has_edge_config: false,
-                    has_pin_config: false,
-                    has_graph_config: false,
-                }),
-            ),
-        );
-
-        let e1 = generate_edge_id();
-        app.edges.insert(
-            e1.clone(),
-            EdgeData {
-                from_node: picker.clone(),
-                from_pin: nodes::pins::input::COLOR,
-                to_node: cfg.clone(),
-                to_pin: nodes::pins::node::FILL_COLOR,
-            },
-        );
-        app.edge_order.push(e1);
-        let e2 = generate_edge_id();
-        app.edges.insert(
-            e2.clone(),
-            EdgeData {
-                from_node: cfg.clone(),
-                from_pin: nodes::pins::cfg::NODE_OUT,
-                to_node: apply.clone(),
-                to_pin: nodes::pins::cfg::NODE_CONFIG,
-            },
-        );
-        app.edge_order.push(e2);
 
         app.propagate_values();
 
-        // The ApplyToGraph must have registered the node config...
-        if let Some((
-            _,
-            NodeType::Config(ConfigNodeType::ApplyToGraph {
-                has_node_config, ..
-            }),
-        )) = app.nodes.get(&apply)
-        {
-            assert!(
-                *has_node_config,
-                "ApplyToGraph did not register node config"
-            );
-        } else {
-            panic!("apply node missing");
-        }
-        // ...and the computed style must carry the fill color.
+        assert!(connected(&app, &catalog).contains(pins::cfg::NODE_CONFIG));
         assert_eq!(
-            app.computed_style.node.fill_color.map(|q| q.near_start),
+            app.computed.node.fill_color.map(|q| q.near_start),
             Some(red),
-            "computed node style did not receive the config fill color",
+            "computed node class did not receive the config fill color",
         );
     }
 
     #[test]
-    fn test_graph_config_chain_applies_to_computed_style() {
-        // ColorPicker -> GraphConfig.background and TilingKind -> GraphConfig.tiling_kind,
-        // then GraphConfig -> ApplyToGraph.graph. The computed graph overlay must
-        // carry both, and resolve_over must install them onto the theme base.
-        use iced_nodegraph::TilingKind;
-
-        let mut app = Application::default();
-        app.nodes.clear();
-        app.node_order.clear();
-        app.edges.clear();
-        app.edge_order.clear();
-
-        let blue = Color::from_rgb(0.0, 0.0, 1.0);
-        let picker = generate_node_id();
-        let kind = generate_node_id();
-        let cfg = generate_node_id();
-        let apply = generate_node_id();
-        let p = Point::new(0.0, 0.0);
-        app.nodes.insert(
-            picker.clone(),
-            (
-                p,
-                NodeType::Input(InputNodeType::ColorPicker { color: blue }),
-            ),
-        );
-        app.nodes.insert(
-            kind.clone(),
-            (
-                p,
-                NodeType::Input(InputNodeType::TilingKindSelector {
-                    value: TilingKind::Dots,
-                }),
-            ),
-        );
-        app.nodes.insert(
-            cfg.clone(),
-            (
-                p,
-                NodeType::Config(ConfigNodeType::GraphConfig(GraphConfigInputs::default())),
-            ),
-        );
-        app.nodes.insert(
-            apply.clone(),
-            (
-                p,
-                NodeType::Config(ConfigNodeType::ApplyToGraph {
-                    has_node_config: false,
-                    has_edge_config: false,
-                    has_pin_config: false,
-                    has_graph_config: false,
-                }),
-            ),
-        );
-
+    fn test_catalog_rejects_mismatched_kind() {
+        // A node config wired into the `graph` input is not a graph config:
+        // nothing is connected and nothing is computed.
         use nodes::pins;
-        let mut edge = |from: NodeId, fp: PinLabel, to: NodeId, tp: PinLabel| {
-            let e = generate_edge_id();
-            app.edges.insert(
-                e.clone(),
-                EdgeData {
-                    from_node: from,
-                    from_pin: fp,
-                    to_node: to,
-                    to_pin: tp,
-                },
-            );
-            app.edge_order.push(e);
-        };
-        edge(
-            picker,
+        let mut app = empty_app();
+        let picker = picker(&mut app, Color::WHITE);
+        let cfg = node_config(&mut app);
+        let catalog = catalog(&mut app);
+        wire(
+            &mut app,
+            &picker,
             pins::input::COLOR,
-            cfg.clone(),
-            pins::graph::BACKGROUND,
+            &cfg,
+            pins::node::FILL_COLOR,
         );
-        edge(
-            kind,
-            pins::input::VALUE,
-            cfg.clone(),
-            pins::graph::TILING_KIND,
-        );
-        edge(
-            cfg,
-            pins::cfg::GRAPH_OUT,
-            apply.clone(),
+        wire(
+            &mut app,
+            &cfg,
+            pins::cfg::NODE_OUT,
+            &catalog,
             pins::cfg::GRAPH_CONFIG,
         );
 
         app.propagate_values();
 
-        // The ApplyToGraph must have registered the graph config.
-        if let Some((
-            _,
-            NodeType::Config(ConfigNodeType::ApplyToGraph {
-                has_graph_config, ..
+        assert!(connected(&app, &catalog).is_empty());
+        assert!(app.computed.node.fill_color.is_none());
+        assert!(app.computed.graph.background_color.is_none());
+    }
+
+    #[test]
+    fn test_graph_config_chain_applies_to_catalog() {
+        // ColorPicker -> GraphConfig.background and TilingKind ->
+        // GraphConfig.tiling_kind, then GraphConfig -> Catalog.graph. The
+        // computed overlay carries both and resolve_over installs them.
+        use nodes::pins;
+        let mut app = empty_app();
+        let blue = Color::from_rgb(0.0, 0.0, 1.0);
+        let picker = picker(&mut app, blue);
+        let kind = add(
+            &mut app,
+            NodeType::Input(InputNodeType::TilingKindSelector {
+                value: TilingKind::Dots,
             }),
-        )) = app.nodes.get(&apply)
-        {
-            assert!(
-                *has_graph_config,
-                "ApplyToGraph did not register graph config"
-            );
-        } else {
-            panic!("apply node missing");
-        }
-
-        // The computed overlay carries background + tiling kind...
-        assert_eq!(
-            app.computed_style.graph.background_color,
-            Some(blue),
-            "computed graph style did not receive the background color",
         );
-        assert_eq!(
-            app.computed_style.graph.tiling_kind,
-            Some(TilingKind::Dots),
-            "computed graph style did not receive the tiling kind",
+        let cfg = add(
+            &mut app,
+            NodeType::Config(ConfigNodeType::GraphConfig(GraphConfigInputs::default())),
+        );
+        let catalog = catalog(&mut app);
+        wire(
+            &mut app,
+            &picker,
+            pins::input::COLOR,
+            &cfg,
+            pins::graph::BACKGROUND,
+        );
+        wire(
+            &mut app,
+            &kind,
+            pins::input::VALUE,
+            &cfg,
+            pins::graph::TILING_KIND,
+        );
+        wire(
+            &mut app,
+            &cfg,
+            pins::cfg::GRAPH_OUT,
+            &catalog,
+            pins::cfg::GRAPH_CONFIG,
         );
 
-        // ...and resolve_over installs them onto a theme base.
+        app.propagate_values();
+
+        assert!(connected(&app, &catalog).contains(pins::cfg::GRAPH_CONFIG));
+        assert_eq!(app.computed.graph.background_color, Some(blue));
+        assert_eq!(app.computed.graph.tiling_kind, Some(TilingKind::Dots));
         let resolved = app
-            .computed_style
+            .computed
             .graph
-            .resolve_over(iced_nodegraph::default_graph_style(&app.current_theme));
+            .resolve_over(default_graph_style(&app.current_theme));
         assert_eq!(resolved.background_color, blue);
         assert_eq!(resolved.tiling.map(|t| t.kind), Some(TilingKind::Dots));
     }
 
     #[test]
     fn test_node_config_shadow_chain_with_vec2() {
-        // The user's exact scenario: ColorPicker -> shadow_color, slider ->
-        // shadow_distance, two sliders -> Vec2 -> shadow_offset, NodeConfig ->
-        // ApplyToGraph. Exercises the Vec2 builder propagation too.
-        let mut app = Application::default();
-        app.nodes.clear();
-        app.node_order.clear();
-        app.edges.clear();
-        app.edge_order.clear();
-
-        let red = Color::from_rgb(1.0, 0.0, 0.0);
-        let p = Point::new(0.0, 0.0);
-        let slider = |v: f32| {
-            NodeType::Input(InputNodeType::FloatSlider {
-                config: FloatSliderConfig::default(),
-                value: v,
-            })
-        };
-        let picker = generate_node_id();
-        let dist = generate_node_id();
-        let sx = generate_node_id();
-        let sy = generate_node_id();
-        let vec2 = generate_node_id();
-        let cfg = generate_node_id();
-        let apply = generate_node_id();
-        app.nodes.insert(
-            picker.clone(),
-            (
-                p,
-                NodeType::Input(InputNodeType::ColorPicker { color: red }),
-            ),
-        );
-        app.nodes.insert(dist.clone(), (p, slider(8.0)));
-        app.nodes.insert(sx.clone(), (p, slider(5.0)));
-        app.nodes.insert(sy.clone(), (p, slider(7.0)));
-        app.nodes
-            .insert(vec2.clone(), (p, NodeType::Vec2(Vec2Node::default())));
-        app.nodes.insert(
-            cfg.clone(),
-            (
-                p,
-                NodeType::Config(ConfigNodeType::NodeConfig(NodeConfigInputs::default())),
-            ),
-        );
-        app.nodes.insert(
-            apply.clone(),
-            (
-                p,
-                NodeType::Config(ConfigNodeType::ApplyToGraph {
-                    has_node_config: false,
-                    has_edge_config: false,
-                    has_pin_config: false,
-                    has_graph_config: false,
-                }),
-            ),
-        );
-
+        // ColorPicker -> shadow_color, slider -> shadow_distance, two sliders
+        // -> Vec2 -> shadow_offset, NodeConfig -> Catalog.node.
         use nodes::pins;
-        let mut edge = |from: NodeId, fp: PinLabel, to: NodeId, tp: PinLabel| {
-            let e = generate_edge_id();
-            app.edges.insert(
-                e.clone(),
-                EdgeData {
-                    from_node: from,
-                    from_pin: fp,
-                    to_node: to,
-                    to_pin: tp,
-                },
-            );
-            app.edge_order.push(e);
-        };
-        edge(
-            picker,
+        let mut app = empty_app();
+        let red = Color::from_rgb(1.0, 0.0, 0.0);
+        let picker = picker(&mut app, red);
+        let dist = slider(&mut app, 8.0);
+        let sx = slider(&mut app, 5.0);
+        let sy = slider(&mut app, 7.0);
+        let vec2 = add(&mut app, NodeType::Vec2(Vec2Node::default()));
+        let cfg = node_config(&mut app);
+        let catalog = catalog(&mut app);
+        wire(
+            &mut app,
+            &picker,
             pins::input::COLOR,
-            cfg.clone(),
+            &cfg,
             pins::node::SHADOW_COLOR,
         );
-        edge(
-            dist,
+        wire(
+            &mut app,
+            &dist,
             pins::input::VALUE,
-            cfg.clone(),
+            &cfg,
             pins::node::SHADOW_DISTANCE,
         );
-        edge(sx, pins::input::VALUE, vec2.clone(), pins::build::X);
-        edge(sy, pins::input::VALUE, vec2.clone(), pins::build::Y);
-        edge(
-            vec2,
+        wire(&mut app, &sx, pins::input::VALUE, &vec2, pins::build::X);
+        wire(&mut app, &sy, pins::input::VALUE, &vec2, pins::build::Y);
+        wire(
+            &mut app,
+            &vec2,
             pins::build::VEC2_OUT,
-            cfg.clone(),
+            &cfg,
             pins::node::SHADOW_OFFSET,
         );
-        edge(cfg, pins::cfg::NODE_OUT, apply, pins::cfg::NODE_CONFIG);
+        wire(
+            &mut app,
+            &cfg,
+            pins::cfg::NODE_OUT,
+            &catalog,
+            pins::cfg::NODE_CONFIG,
+        );
 
         app.propagate_values();
 
-        let node = &app.computed_style.node;
-        assert_eq!(
-            node.shadow_color,
-            Some(red),
-            "shadow color did not propagate",
-        );
-        assert_eq!(
-            node.shadow_distance,
-            Some(8.0),
-            "shadow distance did not propagate",
-        );
-        assert_eq!(
-            node.shadow_offset,
-            Some((5.0, 7.0)),
-            "shadow offset (via Vec2 builder) did not propagate",
-        );
+        let node = &app.computed.node;
+        assert_eq!(node.shadow_color, Some(red));
+        assert_eq!(node.shadow_distance, Some(8.0));
+        assert_eq!(node.shadow_offset, Some((5.0, 7.0)));
     }
 
     #[test]
     fn test_theme_node_feeds_config() {
-        // Theme.primary -> NodeConfig.fill_color -> ApplyToGraph. The computed
-        // node style must carry the active theme's primary color.
-        let mut app = Application::default();
-        app.nodes.clear();
-        app.node_order.clear();
-        app.edges.clear();
-        app.edge_order.clear();
-
-        let p = Point::new(0.0, 0.0);
-        let theme = generate_node_id();
-        let cfg = generate_node_id();
-        let apply = generate_node_id();
-        app.nodes.insert(theme.clone(), (p, NodeType::Theme));
-        app.nodes.insert(
-            cfg.clone(),
-            (
-                p,
-                NodeType::Config(ConfigNodeType::NodeConfig(NodeConfigInputs::default())),
-            ),
-        );
-        app.nodes.insert(
-            apply.clone(),
-            (
-                p,
-                NodeType::Config(ConfigNodeType::ApplyToGraph {
-                    has_node_config: false,
-                    has_edge_config: false,
-                    has_pin_config: false,
-                    has_graph_config: false,
-                }),
-            ),
-        );
-
+        // Theme.primary -> NodeConfig.fill_color -> Catalog.node carries the
+        // active theme's primary color.
         use nodes::pins;
-        let mut edge = |from: NodeId, fp: PinLabel, to: NodeId, tp: PinLabel| {
-            let e = generate_edge_id();
-            app.edges.insert(
-                e.clone(),
-                EdgeData {
-                    from_node: from,
-                    from_pin: fp,
-                    to_node: to,
-                    to_pin: tp,
-                },
-            );
-            app.edge_order.push(e);
-        };
-        edge(
-            theme,
+        let mut app = empty_app();
+        let theme = add(&mut app, NodeType::Theme);
+        let cfg = node_config(&mut app);
+        let catalog = catalog(&mut app);
+        wire(
+            &mut app,
+            &theme,
             pins::theme::PRIMARY,
-            cfg.clone(),
+            &cfg,
             pins::node::FILL_COLOR,
         );
-        edge(cfg, pins::cfg::NODE_OUT, apply, pins::cfg::NODE_CONFIG);
+        wire(
+            &mut app,
+            &cfg,
+            pins::cfg::NODE_OUT,
+            &catalog,
+            pins::cfg::NODE_CONFIG,
+        );
 
         let expected = app.current_theme.palette().primary;
         app.propagate_values();
         assert_eq!(
-            app.computed_style.node.fill_color.map(|q| q.near_start),
+            app.computed.node.fill_color.map(|q| q.near_start),
             Some(expected),
-            "theme primary color did not propagate to the node config",
         );
     }
 
     #[test]
     fn test_theme_extended_node_feeds_config() {
-        // ThemeExtended.primary_strong -> NodeConfig.fill_color -> ApplyToGraph.
-        // The computed node style must carry the extended palette's strong primary.
-        let mut app = Application::default();
-        app.nodes.clear();
-        app.node_order.clear();
-        app.edges.clear();
-        app.edge_order.clear();
-
-        let p = Point::new(0.0, 0.0);
-        let theme = generate_node_id();
-        let cfg = generate_node_id();
-        let apply = generate_node_id();
-        app.nodes
-            .insert(theme.clone(), (p, NodeType::ThemeExtended));
-        app.nodes.insert(
-            cfg.clone(),
-            (
-                p,
-                NodeType::Config(ConfigNodeType::NodeConfig(NodeConfigInputs::default())),
-            ),
-        );
-        app.nodes.insert(
-            apply.clone(),
-            (
-                p,
-                NodeType::Config(ConfigNodeType::ApplyToGraph {
-                    has_node_config: false,
-                    has_edge_config: false,
-                    has_pin_config: false,
-                    has_graph_config: false,
-                }),
-            ),
-        );
-
+        // ThemeExtended.primary_strong -> NodeConfig.fill_color -> Catalog.node
+        // carries the extended palette's strong primary.
         use nodes::pins;
-        let mut edge = |from: NodeId, fp: PinLabel, to: NodeId, tp: PinLabel| {
-            let e = generate_edge_id();
-            app.edges.insert(
-                e.clone(),
-                EdgeData {
-                    from_node: from,
-                    from_pin: fp,
-                    to_node: to,
-                    to_pin: tp,
-                },
-            );
-            app.edge_order.push(e);
-        };
-        edge(
-            theme,
+        let mut app = empty_app();
+        let theme = add(&mut app, NodeType::ThemeExtended);
+        let cfg = node_config(&mut app);
+        let catalog = catalog(&mut app);
+        wire(
+            &mut app,
+            &theme,
             pins::theme_ext::PRIMARY_STRONG,
-            cfg.clone(),
+            &cfg,
             pins::node::FILL_COLOR,
         );
-        edge(cfg, pins::cfg::NODE_OUT, apply, pins::cfg::NODE_CONFIG);
+        wire(
+            &mut app,
+            &cfg,
+            pins::cfg::NODE_OUT,
+            &catalog,
+            pins::cfg::NODE_CONFIG,
+        );
 
         let expected = app.current_theme.extended_palette().primary.strong.color;
         app.propagate_values();
         assert_eq!(
-            app.computed_style.node.fill_color.map(|q| q.near_start),
+            app.computed.node.fill_color.map(|q| q.near_start),
             Some(expected),
-            "extended palette strong primary did not propagate to the node config",
         );
     }
 
     #[test]
-    fn test_computed_style_node_overlay() {
-        let style = ComputedStyle {
-            node: NodeOverlay::new()
-                .corner_radius(12.0)
-                .opacity(0.8)
-                .fill_color(Color::from_rgb(0.2, 0.3, 0.4)),
-            ..Default::default()
+    fn test_palette_preview_recolors_rig() {
+        // With a preview theme open, the palette pins read the previewed
+        // theme, not the applied one.
+        use nodes::pins;
+        let mut app = empty_app();
+        let theme = add(&mut app, NodeType::Theme);
+        let cfg = node_config(&mut app);
+        let catalog = catalog(&mut app);
+        wire(
+            &mut app,
+            &theme,
+            pins::theme::PRIMARY,
+            &cfg,
+            pins::node::FILL_COLOR,
+        );
+        wire(
+            &mut app,
+            &cfg,
+            pins::cfg::NODE_OUT,
+            &catalog,
+            pins::cfg::NODE_CONFIG,
+        );
+
+        app.current_theme = Theme::Dark;
+        app.palette_preview_theme = Some(Theme::Light);
+        app.propagate_values();
+        assert_eq!(
+            app.computed.node.fill_color.map(|q| q.near_start),
+            Some(Theme::Light.palette().primary),
+        );
+    }
+
+    #[test]
+    fn catalog_status_input_layers_over_idle() {
+        // Idle fill red on `node`, selected border blue on `node:selected`:
+        // the selected class carries both, the idle class only the fill.
+        use nodes::pins;
+        let mut app = empty_app();
+        let red = Color::from_rgb(1.0, 0.0, 0.0);
+        let blue = Color::from_rgb(0.0, 0.0, 1.0);
+        let red_picker = picker(&mut app, red);
+        let blue_picker = picker(&mut app, blue);
+        let idle_cfg = node_config(&mut app);
+        let selected_cfg = node_config(&mut app);
+        let catalog = catalog(&mut app);
+        wire(
+            &mut app,
+            &red_picker,
+            pins::input::COLOR,
+            &idle_cfg,
+            pins::node::FILL_COLOR,
+        );
+        wire(
+            &mut app,
+            &blue_picker,
+            pins::input::COLOR,
+            &selected_cfg,
+            pins::node::BORDER_COLOR,
+        );
+        wire(
+            &mut app,
+            &idle_cfg,
+            pins::cfg::NODE_OUT,
+            &catalog,
+            pins::cfg::NODE_CONFIG,
+        );
+        wire(
+            &mut app,
+            &selected_cfg,
+            pins::cfg::NODE_OUT,
+            &catalog,
+            pins::cfg::NODE_SELECTED,
+        );
+
+        app.propagate_values();
+
+        let selected = app.computed.node(NodeStatus::Selected);
+        assert_eq!(selected.fill_color.map(|q| q.near_start), Some(red));
+        assert_eq!(selected.border_color.map(|q| q.near_start), Some(blue));
+        let idle = app.computed.node(NodeStatus::Idle);
+        assert_eq!(idle.fill_color.map(|q| q.near_start), Some(red));
+        assert!(idle.border_color.is_none());
+    }
+
+    #[test]
+    fn node_class_targets_one_node() {
+        // A Node Class with a target adds a per-node class and nothing to the
+        // global one; without a target it contributes nothing.
+        use nodes::pins;
+        let mut app = empty_app();
+        let green = Color::from_rgb(0.0, 1.0, 0.0);
+        let workflow = add(&mut app, NodeType::Workflow("filter".to_string()));
+        let picker = picker(&mut app, green);
+        let cfg = node_config(&mut app);
+        let class = add(
+            &mut app,
+            NodeType::Config(ConfigNodeType::NodeClass {
+                target: Some(workflow.clone()),
+                has_node_config: false,
+            }),
+        );
+        wire(
+            &mut app,
+            &picker,
+            pins::input::COLOR,
+            &cfg,
+            pins::node::FILL_COLOR,
+        );
+        wire(
+            &mut app,
+            &cfg,
+            pins::cfg::NODE_OUT,
+            &class,
+            pins::cfg::NODE_CONFIG,
+        );
+
+        app.propagate_values();
+
+        assert_eq!(
+            app.computed.node_classes[&workflow]
+                .fill_color
+                .map(|q| q.near_start),
+            Some(green),
+        );
+        assert!(app.computed.node.fill_color.is_none());
+        assert!(matches!(
+            app.nodes.get(&class),
+            Some((
+                _,
+                NodeType::Config(ConfigNodeType::NodeClass {
+                    has_node_config: true,
+                    ..
+                })
+            ))
+        ));
+
+        if let Some((_, NodeType::Config(ConfigNodeType::NodeClass { target, .. }))) =
+            app.nodes.get_mut(&class)
+        {
+            *target = None;
+        }
+        app.propagate_values();
+        assert!(app.computed.node_classes.is_empty());
+    }
+
+    #[test]
+    fn deleting_the_target_clears_the_node_class() {
+        let mut app = empty_app();
+        let workflow = add(&mut app, NodeType::Workflow("filter".to_string()));
+        let class = add(
+            &mut app,
+            NodeType::Config(ConfigNodeType::NodeClass {
+                target: Some(workflow.clone()),
+                has_node_config: false,
+            }),
+        );
+
+        app.delete_nodes(&[workflow]);
+
+        assert!(matches!(
+            app.nodes.get(&class),
+            Some((
+                _,
+                NodeType::Config(ConfigNodeType::NodeClass { target: None, .. })
+            ))
+        ));
+    }
+
+    #[test]
+    fn alpha_builder_applies_alpha_to_palette_color() {
+        // ThemeExtended.primary_base -> Alpha (alpha 0.25) -> SelectionBox.fill
+        // -> Catalog.selection_box: the fill is the palette color at 0.25.
+        use nodes::pins;
+        let mut app = empty_app();
+        let theme = add(&mut app, NodeType::ThemeExtended);
+        let alpha_slider = slider(&mut app, 0.25);
+        let alpha = add(&mut app, NodeType::Alpha(AlphaNode::default()));
+        let cfg = add(
+            &mut app,
+            NodeType::Config(ConfigNodeType::SelectionBoxConfig(
+                SelectionBoxConfigInputs::default(),
+            )),
+        );
+        let catalog = catalog(&mut app);
+        wire(
+            &mut app,
+            &theme,
+            pins::theme_ext::PRIMARY_BASE,
+            &alpha,
+            pins::build::ALPHA_COLOR,
+        );
+        wire(
+            &mut app,
+            &alpha_slider,
+            pins::input::VALUE,
+            &alpha,
+            pins::build::ALPHA,
+        );
+        wire(
+            &mut app,
+            &alpha,
+            pins::build::ALPHA_OUT,
+            &cfg,
+            pins::selection_box::FILL,
+        );
+        wire(
+            &mut app,
+            &cfg,
+            pins::cfg::SELECTION_BOX_OUT,
+            &catalog,
+            pins::cfg::SELECTION_BOX,
+        );
+
+        app.propagate_values();
+
+        let fill = app.computed.selection_box.fill.expect("fill not computed");
+        let base = app.current_theme.extended_palette().primary.base.color;
+        assert_eq!(fill.a, 0.25);
+        assert_eq!((fill.r, fill.g, fill.b), (base.r, base.g, base.b));
+    }
+
+    /// The four facts that prove the boot rig is complete and wired.
+    fn assert_rig_complete(app: &Application) {
+        use nodes::pins;
+        let catalog_id = app
+            .node_order
+            .iter()
+            .find(|id| {
+                matches!(
+                    app.nodes.get(*id),
+                    Some((_, NodeType::Config(ConfigNodeType::Catalog { .. })))
+                )
+            })
+            .expect("boot scene has no Catalog node");
+        let connected = connected(app, catalog_id);
+        for input in pins::cfg::CATALOG_INPUTS {
+            assert!(connected.contains(input), "Catalog input {input} unwired");
+        }
+        assert_eq!(app.computed.node.corner_radius, Some(8.0));
+        assert_eq!(app.computed.node.opacity, Some(0.88));
+        assert_eq!(app.computed.graph.tiling_spacing, Some(40.0));
+        assert_eq!(app.computed.node_classes.len(), 1);
+    }
+
+    #[test]
+    fn boot_rig_wires_every_catalog_input() {
+        let mut app = Application::default();
+        app.propagate_values();
+        assert_rig_complete(&app);
+    }
+
+    #[test]
+    fn boot_rig_feeds_every_config_field() {
+        // Every field pin of every config node in the rig has a source: the
+        // rig is the demo's proof that the node system covers the Catalog.
+        let mut app = Application::default();
+        app.propagate_values();
+
+        // Pins the rig deliberately leaves unwired to keep data-type coloring.
+        let optional: &[(&str, PinLabel)] = &[
+            ("Pin", nodes::pins::pin::COLOR),
+            ("Edge", nodes::pins::edge::STROKE_COLOR),
+        ];
+        let unwired = |title: &str, label: PinLabel, is_none: bool| {
+            assert!(
+                !is_none || optional.contains(&(title, label)),
+                "{title} config: {label} has no source"
+            );
         };
-        assert_eq!(style.node.corner_radius, Some(12.0));
-        assert_eq!(style.node.opacity, Some(0.8));
-        assert!(style.node.fill_color.is_some());
+
+        // The rig's "Node" frame (idle class) is the one whose config carries
+        // the corner radius; the others are partial by design.
+        let node_inputs: Vec<&NodeConfigInputs> = app
+            .nodes
+            .values()
+            .filter_map(|(_, t)| match t {
+                NodeType::Config(ConfigNodeType::NodeConfig(i)) => Some(i),
+                _ => None,
+            })
+            .collect();
+        let idle = node_inputs
+            .iter()
+            .find(|i| i.corner_radius.is_some())
+            .expect("idle node config");
+        for (label, none) in [
+            (nodes::pins::node::FILL_COLOR, idle.fill_color.is_none()),
+            (nodes::pins::node::OPACITY, idle.opacity.is_none()),
+            (nodes::pins::node::BORDER_COLOR, idle.border_color.is_none()),
+            (nodes::pins::node::BORDER_WIDTH, idle.border_width.is_none()),
+            (
+                nodes::pins::node::BORDER_OUTLINE_WIDTH,
+                idle.border_outline_width.is_none(),
+            ),
+            (
+                nodes::pins::node::BORDER_OUTLINE_COLOR,
+                idle.border_outline_color.is_none(),
+            ),
+            (nodes::pins::node::PATTERN, idle.pattern_type.is_none()),
+            (nodes::pins::node::DASH, idle.dash_length.is_none()),
+            (nodes::pins::node::GAP, idle.gap_length.is_none()),
+            (nodes::pins::node::ANGLE, idle.pattern_angle.is_none()),
+            (nodes::pins::node::SPEED, idle.animation_speed.is_none()),
+            (nodes::pins::node::SHADOW_COLOR, idle.shadow_color.is_none()),
+            (
+                nodes::pins::node::SHADOW_DISTANCE,
+                idle.shadow_distance.is_none(),
+            ),
+            (
+                nodes::pins::node::SHADOW_OFFSET,
+                idle.shadow_offset.is_none(),
+            ),
+        ] {
+            unwired("Node", label, none);
+        }
+
+        let edge = app
+            .nodes
+            .values()
+            .find_map(|(_, t)| match t {
+                NodeType::Config(ConfigNodeType::EdgeConfig(i)) if i.curve.is_some() => Some(i),
+                _ => None,
+            })
+            .expect("idle edge config");
+        for (label, none) in [
+            (nodes::pins::edge::STROKE_COLOR, edge.stroke_color.is_none()),
+            (nodes::pins::edge::THICKNESS, edge.thickness.is_none()),
+            (
+                nodes::pins::edge::STROKE_OUTLINE_WIDTH,
+                edge.stroke_outline_width.is_none(),
+            ),
+            (
+                nodes::pins::edge::STROKE_OUTLINE_COLOR,
+                edge.stroke_outline_color.is_none(),
+            ),
+            (nodes::pins::edge::PATTERN, edge.pattern_type.is_none()),
+            (nodes::pins::edge::DASH, edge.dash_length.is_none()),
+            (nodes::pins::edge::GAP, edge.gap_length.is_none()),
+            (nodes::pins::edge::DOT_RADIUS, edge.dot_radius.is_none()),
+            (nodes::pins::edge::ANGLE, edge.pattern_angle.is_none()),
+            (nodes::pins::edge::SPEED, edge.animation_speed.is_none()),
+            (nodes::pins::edge::BORDER_WIDTH, edge.border_width.is_none()),
+            (nodes::pins::edge::BORDER_GAP, edge.border_gap.is_none()),
+            (nodes::pins::edge::BORDER_COLOR, edge.border_color.is_none()),
+            (
+                nodes::pins::edge::BORDER_BACKGROUND,
+                edge.border_background.is_none(),
+            ),
+            (
+                nodes::pins::edge::BORDER_OUTLINE_WIDTH,
+                edge.border_outline_width.is_none(),
+            ),
+            (
+                nodes::pins::edge::BORDER_OUTLINE_COLOR,
+                edge.border_outline_color.is_none(),
+            ),
+            (nodes::pins::edge::SHADOW_COLOR, edge.shadow_color.is_none()),
+            (nodes::pins::edge::SHADOW_BLUR, edge.shadow_blur.is_none()),
+            (
+                nodes::pins::edge::SHADOW_EXPAND,
+                edge.shadow_expand.is_none(),
+            ),
+            (
+                nodes::pins::edge::SHADOW_OFFSET,
+                edge.shadow_offset.is_none(),
+            ),
+        ] {
+            unwired("Edge", label, none);
+        }
+
+        let pin = app
+            .nodes
+            .values()
+            .find_map(|(_, t)| match t {
+                NodeType::Config(ConfigNodeType::PinConfig(i)) if i.radius.is_some() => Some(i),
+                _ => None,
+            })
+            .expect("idle pin config");
+        for (label, none) in [
+            (nodes::pins::pin::COLOR, pin.color.is_none()),
+            (nodes::pins::pin::CUTOUT_RADIUS, pin.cutout_radius.is_none()),
+            (nodes::pins::pin::SHAPE, pin.shape.is_none()),
+            (nodes::pins::pin::BORDER_COLOR, pin.border_color.is_none()),
+            (nodes::pins::pin::BORDER_WIDTH, pin.border_width.is_none()),
+        ] {
+            unwired("Pin", label, none);
+        }
+
+        // The single-instance classes: every field is set.
+        let anchor = app.computed.anchor(AnchorStatus::Idle);
+        assert!(anchor.core_size.is_some() && anchor.ring_width.is_some());
+        assert!(anchor.core_color.is_some() && anchor.ring_color.is_some());
+        assert!(anchor.core_border_color.is_some() && anchor.core_border_width.is_some());
+        assert!(anchor.orbit_offset.is_some() && anchor.orbit_spacing.is_some());
+        assert!(anchor.core_radius.is_some());
+
+        let g = &app.computed.graph;
+        assert!(g.background_color.is_some() && g.tiling_kind.is_some());
+        assert!(g.tiling_thickness.is_some() && g.tiling_color.is_some());
+
+        let s = &app.computed.selection_box;
+        assert!(s.fill.is_some() && s.border_color.is_some() && s.border_width.is_some());
+
+        let c = &app.computed.cutting_tool;
+        assert!(c.color.is_some() && c.width.is_some());
+
+        let m = &app.computed.minimap;
+        assert!(m.background.is_some() && m.border_color.is_some());
+        assert!(m.border_width.is_some() && m.node_color.is_some());
+        assert!(m.selected_node_color.is_some() && m.viewport_fill.is_some());
+        assert!(m.viewport_border_color.is_some() && m.viewport_border_width.is_some());
+
+        // Translucency arrives through the Alpha builders.
+        assert!(s.fill.unwrap().a < 1.0);
+        assert!(m.background.unwrap().a < 1.0);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn persistence_round_trips_the_rig() {
+        let app = Application::default();
+        let saved = persistence::SavedState::from_app(
+            &app.nodes,
+            &app.node_order,
+            &app.edges,
+            &app.edge_order,
+            &app.current_theme,
+            app.camera_position,
+            app.camera_zoom,
+            None,
+            None,
+            &app.edge_config_sections,
+            &app.node_config_sections,
+            None,
+            &app.anchors,
+            app.next_anchor,
+        );
+        let json = serde_json::to_string(&saved).expect("serialize");
+        let loaded: persistence::SavedState = serde_json::from_str(&json).expect("parse");
+        let (nodes, node_order, edges, edge_order, _, _, _, _, _, _, _, _, anchors, next_anchor) =
+            loaded.to_app();
+
+        let mut restored = Application {
+            nodes,
+            node_order,
+            edges,
+            edge_order,
+            anchors,
+            next_anchor,
+            ..Application::default()
+        };
+        restored.propagate_values();
+        assert_rig_complete(&restored);
+        assert_eq!(restored.anchors, app.anchors);
+        assert_eq!(restored.next_anchor, 1);
+        let routed: Vec<_> = restored
+            .edges
+            .values()
+            .filter(|e| !e.route.is_empty())
+            .collect();
+        assert_eq!(routed.len(), 1);
+        assert_eq!(routed[0].route, vec![0]);
     }
 
     #[test]
@@ -3190,19 +3852,252 @@ mod tests {
         assert_eq!(resolved.shadow_offset, (4.0, 6.0));
     }
 
-    #[test]
-    fn test_computed_style_edge_overlay() {
-        let style = ComputedStyle::default();
-        assert!(style.edge.pattern.is_none());
+    // === Boot scene: what the widget resolves ===
 
-        let style = ComputedStyle {
-            edge: EdgeOverlay::new()
-                .pattern(iced_nodegraph::Pattern::solid(5.0))
-                .curve(EdgeCurve::Line),
-            ..Default::default()
+    /// The workflow node the boot rig's Node Class targets.
+    fn class_target(app: &Application) -> NodeId {
+        app.nodes
+            .values()
+            .find_map(|(_, t)| match t {
+                NodeType::Config(ConfigNodeType::NodeClass {
+                    target: Some(id), ..
+                }) => Some(id.clone()),
+                _ => None,
+            })
+            .expect("boot rig has a targeted Node Class")
+    }
+
+    #[test]
+    fn classed_node_keeps_its_tint_while_selected() {
+        let app = Application::default();
+        let theme = app.effective_theme().clone();
+        let palette = theme.extended_palette();
+        let calendar = class_target(&app);
+
+        let idle = app.node_style(&calendar, &theme, NodeStatus::Idle);
+        let selected = app.node_style(&calendar, &theme, NodeStatus::Selected);
+        // The class wins for what it sets (fill and border color)...
+        assert_eq!(idle.fill_color.near_start, palette.warning.weak.color);
+        assert_eq!(selected.fill_color.near_start, palette.warning.weak.color);
+        assert_eq!(selected.border_color.near_start, palette.warning.base.color);
+        // ...and the selected class supplies the rest.
+        assert_eq!(selected.border_pattern.thickness, 2.0);
+        assert_eq!(selected.border_outline_width, 3.0);
+        assert_eq!(selected.shadow_distance, 11.0);
+        assert_eq!(idle.border_pattern.thickness, 1.0);
+
+        // An unclassed node takes the Catalog's selected class as a whole.
+        let other = app.node_order[0].clone();
+        let plain = app.node_style(&other, &theme, NodeStatus::Selected);
+        assert_eq!(plain.fill_color.near_start, palette.primary.weak.color);
+        assert_eq!(plain.border_color.near_start, palette.primary.base.color);
+    }
+
+    #[test]
+    fn hovered_anchor_takes_the_accent() {
+        let app = Application::default();
+        let theme = app.effective_theme().clone();
+        let primary = theme.extended_palette().primary.base.color;
+
+        let idle = app.anchor_style(&theme, AnchorStatus::Idle);
+        let hovered = app.anchor_style(&theme, AnchorStatus::Hovered);
+        assert_eq!(idle.core_border_width, 1.0);
+        assert_eq!(hovered.core_border_width, 1.5);
+        let accent = hovered.core_border_color.near_start;
+        assert_eq!(
+            (accent.r, accent.g, accent.b),
+            (primary.r, primary.g, primary.b)
+        );
+        assert_eq!(accent.a, 0.6);
+        // Fields the hovered frame does not set come from the idle class.
+        assert_eq!(hovered.orbit_offset, idle.orbit_offset);
+        assert_eq!(hovered.core_size, 6.0);
+    }
+
+    #[test]
+    fn chrome_resolves_from_the_rig() {
+        let app = Application::default();
+        let theme = app.effective_theme().clone();
+        let palette = theme.extended_palette();
+
+        assert_eq!(app.selection_box_style(&theme).fill.a, 0.15);
+        assert_eq!(app.cutting_tool_style(&theme).width, 3.0);
+        assert_eq!(
+            app.cutting_tool_style(&theme).color,
+            palette.danger.base.color
+        );
+        assert_eq!(app.minimap_style(&theme).background.a, 0.9);
+        let graph = app.graph_style(&theme);
+        assert_eq!(graph.background_color, palette.background.base.color);
+        assert_eq!(graph.tiling.map(|t| t.spacing), Some(40.0));
+        let float = TypeId::of::<nodes::pins::Float>();
+        assert_eq!(app.pin_style(float, &theme, PinStatus::Idle).radius, 5.0);
+        assert_eq!(
+            app.edge_style(&theme, EdgeStatus::PendingCut, float, float)
+                .stroke_color
+                .near_start,
+            palette.danger.base.color
+        );
+    }
+
+    // === Headless interaction: real events through `view()` ===
+
+    use iced::mouse;
+    use iced_test::Simulator;
+    use std::any::TypeId;
+
+    type Sim<'a> = Simulator<'a, ApplicationMessage, Theme, iced::Renderer>;
+
+    /// The boot scene at the identity camera, large enough to hold the rig's
+    /// first frames, so layout coordinates are world coordinates.
+    fn simulator(app: &Application) -> Sim<'_> {
+        Simulator::with_size(
+            iced::Settings::default(),
+            Size::new(2000.0, 1600.0),
+            app.view(),
+        )
+    }
+
+    /// Runs the simulator's messages through `update` once the simulator has
+    /// released its borrow of `app`.
+    fn apply(app: &mut Application, msgs: Vec<ApplicationMessage>) {
+        for m in msgs {
+            let _ = app.update(m);
+        }
+    }
+
+    fn moved(p: Point) -> iced::Event {
+        iced::Event::Mouse(mouse::Event::CursorMoved { position: p })
+    }
+
+    fn click(ui: &mut Sim<'_>, at: Point) {
+        ui.point_at(at);
+        ui.simulate([
+            moved(at),
+            iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+        ]);
+    }
+
+    #[test]
+    fn clicking_the_corner_radius_slider_reshapes_every_node() {
+        let mut app = Application::default();
+        let theme = app.effective_theme().clone();
+        let calendar = class_target(&app);
+        assert_eq!(
+            app.node_style(&calendar, &theme, NodeStatus::Idle)
+                .corner_radius,
+            8.0
+        );
+
+        let msgs: Vec<_> = {
+            let mut ui = simulator(&app);
+            // The slider node: title bar (text + 4px padding), then a body with
+            // 10px padding holding the 100px-wide, 16px-tall slider.
+            let title = ui.find("corner_radius").expect("corner_radius slider node");
+            let bounds = title.bounds();
+            let slider_left = bounds.x + 4.0 + 1.0;
+            let slider_y = bounds.y + bounds.height + 4.0 + 10.0 + 8.0;
+            click(&mut ui, Point::new(slider_left + 75.0, slider_y));
+            ui.into_messages().collect()
         };
-        assert_eq!(style.edge.pattern.unwrap().thickness, 5.0);
-        assert_eq!(style.edge.curve, Some(EdgeCurve::Line));
+        apply(&mut app, msgs.clone());
+        let moved_to = msgs
+            .iter()
+            .find_map(|m| match m {
+                ApplicationMessage::SliderChanged { value, .. } => Some(*value),
+                _ => None,
+            })
+            .expect("the click reached the slider");
+        assert!((20.0..=28.0).contains(&moved_to), "slider value {moved_to}");
+        assert_eq!(app.computed.node.corner_radius, Some(moved_to));
+        for id in &app.node_order {
+            if matches!(app.nodes[id].1, NodeType::Workflow(_)) {
+                assert_eq!(
+                    app.node_style(id, &theme, NodeStatus::Idle).corner_radius,
+                    moved_to
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn selection_box_alpha_slider_drives_its_opacity() {
+        use nodes::pins;
+        let mut app = Application::default();
+        let theme = app.effective_theme().clone();
+        assert_eq!(app.selection_box_style(&theme).fill.a, 0.15);
+
+        // Walk the rig backwards: SelectionBoxConfig.fill <- Alpha <- slider.
+        let cfg = app
+            .nodes
+            .iter()
+            .find_map(|(id, (_, t))| {
+                matches!(t, NodeType::Config(ConfigNodeType::SelectionBoxConfig(_)))
+                    .then(|| id.clone())
+            })
+            .expect("selection box config");
+        let alpha = app
+            .edges
+            .values()
+            .find(|e| e.to_node == cfg && e.to_pin == pins::selection_box::FILL)
+            .map(|e| e.from_node.clone())
+            .expect("alpha node feeding fill");
+        let slider = app
+            .edges
+            .values()
+            .find(|e| e.to_node == alpha && e.to_pin == pins::build::ALPHA)
+            .map(|e| e.from_node.clone())
+            .expect("slider feeding alpha");
+
+        let _ = app.update(ApplicationMessage::SliderChanged {
+            node_id: slider,
+            value: 0.6,
+        });
+        assert_eq!(app.selection_box_style(&theme).fill.a, 0.6);
+    }
+
+    #[test]
+    fn node_class_pick_list_retargets_through_the_graph() {
+        let mut app = Application::default();
+        let theme = app.effective_theme().clone();
+        let before = class_target(&app);
+        let first_workflow = app.node_order[0].clone();
+        assert_ne!(before, first_workflow);
+
+        let msgs: Vec<_> = {
+            let mut ui = simulator(&app);
+            // The pick list sits right of the "target" label; opening it and
+            // clicking the first row picks the first workflow node.
+            let label = ui.find("target").expect("Node Class target row");
+            let bounds = label.bounds();
+            let picker = Point::new(bounds.x + bounds.width + 6.0 + 30.0, bounds.center_y());
+            click(&mut ui, picker);
+            click(&mut ui, Point::new(picker.x, picker.y + 24.0));
+            ui.into_messages().collect()
+        };
+        apply(&mut app, msgs.clone());
+        assert!(
+            msgs.iter().any(|m| matches!(
+                m,
+                ApplicationMessage::NodeClassTargetChanged { target: Some(t), .. } if *t == first_workflow
+            )),
+            "pick list did not report the new target: {msgs:?}"
+        );
+        assert_eq!(class_target(&app), first_workflow);
+        let palette = theme.extended_palette();
+        assert_eq!(
+            app.node_style(&first_workflow, &theme, NodeStatus::Idle)
+                .fill_color
+                .near_start,
+            palette.warning.weak.color
+        );
+        assert_ne!(
+            app.node_style(&before, &theme, NodeStatus::Idle)
+                .fill_color
+                .near_start,
+            palette.warning.weak.color
+        );
     }
 
     #[test]

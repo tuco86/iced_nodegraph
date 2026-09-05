@@ -29,6 +29,13 @@ directories.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
+[dev-dependencies]
+# Headless interaction tests drive `view()` through `iced_test::Simulator`
+# on the tiny-skia backend (`ICED_TEST_BACKEND=tiny-skia`), so no GPU device
+# is created per test.
+iced = { workspace = true, features = ["tiny-skia"] }
+iced_test.workspace = true
+
 # getrandom 0.3 (nanoid -> rand) has no implicit browser backend. It also needs
 # `--cfg getrandom_backend="wasm_js"`, exported in build_docs.sh (or a local
 # .cargo/config.toml for ad-hoc wasm checks).

@@ -343,6 +343,7 @@ where
                 (pins::edge::PATTERN, pins::PatternTypeData),
                 (pins::edge::DASH, pins::Float),
                 (pins::edge::GAP, pins::Float),
+                (pins::edge::DOT_RADIUS, pins::Float),
                 (pins::edge::ANGLE, pins::Float),
                 (pins::edge::SPEED, pins::Float)
             ]
@@ -380,6 +381,17 @@ where
                     ::std::any::TypeId::of::<pins::Float>()
                 ),
                 value_display(fmt_float(inputs.gap_length, 1)),
+            )
+            .into(),
+            pin_row(
+                pin!(
+                    Left,
+                    pins::edge::DOT_RADIUS,
+                    text("dot radius").size(10),
+                    Input,
+                    ::std::any::TypeId::of::<pins::Float>()
+                ),
+                value_display(fmt_float(inputs.dot_radius, 1)),
             )
             .into(),
             pin_row(

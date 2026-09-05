@@ -147,6 +147,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **hello_world mirrors the `Catalog`.** The demo's config-node system now has
+  one config node per style class (Node, Edge, Pin, Graph, Anchor, Selection
+  Box, Cutting Tool, Minimap), one input pin per style field, and a `Catalog`
+  sink with one input per class and status (`node`, `node:selected`, `pin`,
+  `pin:valid_target`, `edge`, `edge:pending_cut`, `drag_edge`, `anchor`,
+  `anchor:hovered`, `anchor:valid_target`, `graph`, `selection_box`,
+  `cutting_tool`, `minimap`); a status input layers over its idle class. A
+  `Node Class` node assigns a node config to one node picked from a list,
+  and an `Alpha` builder gives a palette color an opacity. The boot scene
+  ships a complete rig - one frame per class and status, every field wired
+  from a slider, selector or palette pin - plus routing anchors and a
+  minimap, all persisted. `Apply to Graph` and `Apply to Node` are gone; a
+  saved state naming them boots the default rig.
+
 - **Grid snap while dragging.** `NodeGraph::snap_grid(spacing)` puts a dragged
   node's origin on a world-unit grid; the preview and the delta `on_move`
   reports are the same number. The delta is computed on the grabbed node and

@@ -9,18 +9,19 @@
 //!
 //! Uses NanoID-based string IDs for nodes and edges, with string labels for pins.
 
-use iced::{Point, Theme};
+use iced::{Point, Size, Theme};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 
 use crate::ids::{EdgeData, EdgeId, NodeId};
 use crate::nodes::{
-    BoolToggleConfig, ColorQuadNode, ConfigNodeType, EdgeConfigInputs, EdgeSections,
-    FloatSliderConfig, GraphConfigInputs, InputNodeType, IntSliderConfig, MathNodeState,
-    MathOperation, NodeConfigInputs, NodeSections, NodeType, PatternType, PinConfigInputs,
-    Vec2Node,
+    AlphaNode, AnchorConfigInputs, BoolToggleConfig, ColorQuadNode, ConfigNodeType,
+    CuttingToolConfigInputs, EdgeConfigInputs, EdgeSections, FloatSliderConfig, GraphConfigInputs,
+    InputNodeType, IntSliderConfig, MathNodeState, MathOperation, MinimapConfigInputs,
+    NodeConfigInputs, NodeSections, NodeType, PatternType, PinConfigInputs,
+    SelectionBoxConfigInputs, Vec2Node,
 };
 use iced_nodegraph::{EdgeCurve, PinShape, TilingKind};
 
@@ -111,6 +112,12 @@ pub struct SavedState {
     /// Whether window was maximized - None for old save files
     #[serde(default)]
     pub window_maximized: Option<bool>,
+    /// Routing anchors as (id, x, y)
+    #[serde(default)]
+    pub anchors: Vec<(usize, f32, f32)>,
+    /// The next anchor id to mint
+    #[serde(default)]
+    pub next_anchor: usize,
 }
 
 /// Saved node with ID, position, and type.
@@ -174,15 +181,27 @@ pub enum SavedNodeType {
     EdgeConfig,
     PinConfig,
     GraphConfig,
-    ApplyToGraph,
-    ApplyToNode,
+    AnchorConfig,
+    SelectionBoxConfig,
+    CuttingToolConfig,
+    MinimapConfig,
+    Catalog,
+    NodeClass {
+        target: Option<String>,
+    },
     Math {
         operation: String,
     },
     ColorQuad,
     Vec2,
+    Alpha,
     Theme,
     ThemeExtended,
+    Frame {
+        label: String,
+        width: f32,
+        height: f32,
+    },
 }
 
 /// Saved edge connection with stable IDs.
@@ -199,6 +218,9 @@ pub struct SavedEdge {
     pub to_node: NodeId,
     /// Target pin label (unique within target node)
     pub to_pin: String,
+    /// Anchors the edge wraps
+    #[serde(default)]
+    pub route: Vec<usize>,
 }
 
 /// Maps a string pin label to its static equivalent.
@@ -222,18 +244,30 @@ pub fn to_static_pin_label(label: &str) -> &'static str {
         // Input pins
         s if s == input::VALUE => input::VALUE,
         s if s == input::COLOR => input::COLOR,
-        // Shared config plumbing + apply node pins
+        // Shared config plumbing + sink pins
         s if s == cfg::CONFIG => cfg::CONFIG,
         s if s == cfg::NODE_OUT => cfg::NODE_OUT,
         s if s == cfg::EDGE_OUT => cfg::EDGE_OUT,
         s if s == cfg::PIN_OUT => cfg::PIN_OUT,
-        s if s == cfg::NODE_CONFIG => cfg::NODE_CONFIG,
-        s if s == cfg::EDGE_CONFIG => cfg::EDGE_CONFIG,
-        s if s == cfg::PIN_CONFIG => cfg::PIN_CONFIG,
         s if s == cfg::GRAPH_OUT => cfg::GRAPH_OUT,
+        s if s == cfg::ANCHOR_OUT => cfg::ANCHOR_OUT,
+        s if s == cfg::SELECTION_BOX_OUT => cfg::SELECTION_BOX_OUT,
+        s if s == cfg::CUTTING_TOOL_OUT => cfg::CUTTING_TOOL_OUT,
+        s if s == cfg::MINIMAP_OUT => cfg::MINIMAP_OUT,
+        s if s == cfg::NODE_CONFIG => cfg::NODE_CONFIG,
+        s if s == cfg::NODE_SELECTED => cfg::NODE_SELECTED,
+        s if s == cfg::PIN_CONFIG => cfg::PIN_CONFIG,
+        s if s == cfg::PIN_VALID_TARGET => cfg::PIN_VALID_TARGET,
+        s if s == cfg::EDGE_CONFIG => cfg::EDGE_CONFIG,
+        s if s == cfg::EDGE_PENDING_CUT => cfg::EDGE_PENDING_CUT,
+        s if s == cfg::DRAG_EDGE => cfg::DRAG_EDGE,
+        s if s == cfg::ANCHOR => cfg::ANCHOR,
+        s if s == cfg::ANCHOR_HOVERED => cfg::ANCHOR_HOVERED,
+        s if s == cfg::ANCHOR_VALID_TARGET => cfg::ANCHOR_VALID_TARGET,
         s if s == cfg::GRAPH_CONFIG => cfg::GRAPH_CONFIG,
-        s if s == cfg::ON => cfg::ON,
-        s if s == cfg::TARGET => cfg::TARGET,
+        s if s == cfg::SELECTION_BOX => cfg::SELECTION_BOX,
+        s if s == cfg::CUTTING_TOOL => cfg::CUTTING_TOOL,
+        s if s == cfg::MINIMAP => cfg::MINIMAP,
         // Graph config field pins
         s if s == graph::BACKGROUND => graph::BACKGROUND,
         s if s == graph::TILING_KIND => graph::TILING_KIND,
@@ -262,6 +296,7 @@ pub fn to_static_pin_label(label: &str) -> &'static str {
         // Pin config field pins
         s if s == pin::COLOR => pin::COLOR,
         s if s == pin::RADIUS => pin::RADIUS,
+        s if s == pin::CUTOUT_RADIUS => pin::CUTOUT_RADIUS,
         s if s == pin::SHAPE => pin::SHAPE,
         // Edge config field pins
         s if s == edge::STROKE_COLOR => edge::STROKE_COLOR,
@@ -269,10 +304,29 @@ pub fn to_static_pin_label(label: &str) -> &'static str {
         s if s == edge::CURVE => edge::CURVE,
         s if s == edge::STROKE_OUTLINE_WIDTH => edge::STROKE_OUTLINE_WIDTH,
         s if s == edge::STROKE_OUTLINE_COLOR => edge::STROKE_OUTLINE_COLOR,
+        s if s == edge::DOT_RADIUS => edge::DOT_RADIUS,
         s if s == edge::BORDER_GAP => edge::BORDER_GAP,
         s if s == edge::BORDER_BACKGROUND => edge::BORDER_BACKGROUND,
         s if s == edge::SHADOW_BLUR => edge::SHADOW_BLUR,
         s if s == edge::SHADOW_EXPAND => edge::SHADOW_EXPAND,
+        // Anchor config field pins
+        s if s == anchor::CORE_SIZE => anchor::CORE_SIZE,
+        s if s == anchor::CORE_RADIUS => anchor::CORE_RADIUS,
+        s if s == anchor::CORE_COLOR => anchor::CORE_COLOR,
+        s if s == anchor::CORE_BORDER_COLOR => anchor::CORE_BORDER_COLOR,
+        s if s == anchor::CORE_BORDER_WIDTH => anchor::CORE_BORDER_WIDTH,
+        s if s == anchor::ORBIT_OFFSET => anchor::ORBIT_OFFSET,
+        s if s == anchor::ORBIT_SPACING => anchor::ORBIT_SPACING,
+        s if s == anchor::RING_COLOR => anchor::RING_COLOR,
+        s if s == anchor::RING_WIDTH => anchor::RING_WIDTH,
+        // Selection box / cutting tool / minimap field pins
+        s if s == selection_box::FILL => selection_box::FILL,
+        s if s == cutting_tool::WIDTH => cutting_tool::WIDTH,
+        s if s == minimap::NODE_COLOR => minimap::NODE_COLOR,
+        s if s == minimap::SELECTED_NODE_COLOR => minimap::SELECTED_NODE_COLOR,
+        s if s == minimap::VIEWPORT_FILL => minimap::VIEWPORT_FILL,
+        s if s == minimap::VIEWPORT_BORDER_COLOR => minimap::VIEWPORT_BORDER_COLOR,
+        s if s == minimap::VIEWPORT_BORDER_WIDTH => minimap::VIEWPORT_BORDER_WIDTH,
         // Theme node output pins (basic palette)
         s if s == theme::BACKGROUND => theme::BACKGROUND,
         s if s == theme::TEXT => theme::TEXT,
@@ -308,6 +362,9 @@ pub fn to_static_pin_label(label: &str) -> &'static str {
         s if s == build::X => build::X,
         s if s == build::Y => build::Y,
         s if s == build::VEC2_OUT => build::VEC2_OUT,
+        s if s == build::ALPHA_COLOR => build::ALPHA_COLOR,
+        s if s == build::ALPHA => build::ALPHA,
+        s if s == build::ALPHA_OUT => build::ALPHA_OUT,
         // Math pins
         s if s == math::A => math::A,
         s if s == math::B => math::B,
@@ -334,6 +391,8 @@ impl SavedState {
         edge_config_sections: &HashMap<NodeId, EdgeSections>,
         node_config_sections: &HashMap<NodeId, NodeSections>,
         window_maximized: Option<bool>,
+        anchors: &[(usize, Point)],
+        next_anchor: usize,
     ) -> Self {
         Self {
             nodes: node_order
@@ -356,6 +415,7 @@ impl SavedState {
                         from_pin: e.from_pin.to_string(),
                         to_node: e.to_node.clone(),
                         to_pin: e.to_pin.to_string(),
+                        route: e.route.clone(),
                     })
                 })
                 .collect(),
@@ -373,6 +433,8 @@ impl SavedState {
                 .map(|(id, s)| (id.clone(), SavedNodeSections::from(s)))
                 .collect(),
             window_maximized,
+            anchors: anchors.iter().map(|&(id, p)| (id, p.x, p.y)).collect(),
+            next_anchor,
         }
     }
 
@@ -395,6 +457,8 @@ impl SavedState {
         HashMap<NodeId, EdgeSections>,
         HashMap<NodeId, NodeSections>,
         Option<bool>,
+        Vec<(usize, Point)>,
+        usize,
     ) {
         let mut nodes = HashMap::new();
         let mut node_order = Vec::new();
@@ -410,6 +474,8 @@ impl SavedState {
         let mut edges = HashMap::new();
         let mut edge_order = Vec::new();
 
+        // A route may only name anchors the file also carries.
+        let known: HashSet<usize> = self.anchors.iter().map(|&(id, _, _)| id).collect();
         for e in &self.edges {
             edges.insert(
                 e.id.clone(),
@@ -418,6 +484,12 @@ impl SavedState {
                     from_pin: to_static_pin_label(&e.from_pin),
                     to_node: e.to_node.clone(),
                     to_pin: to_static_pin_label(&e.to_pin),
+                    route: e
+                        .route
+                        .iter()
+                        .copied()
+                        .filter(|id| known.contains(id))
+                        .collect(),
                 },
             );
             edge_order.push(e.id.clone());
@@ -451,6 +523,11 @@ impl SavedState {
             edge_config_sections,
             node_config_sections,
             self.window_maximized,
+            self.anchors
+                .iter()
+                .map(|&(id, x, y)| (id, Point::new(x, y)))
+                .collect(),
+            self.next_anchor,
         )
     }
 }
@@ -508,16 +585,28 @@ impl SavedNodeType {
                 ConfigNodeType::EdgeConfig(_) => SavedNodeType::EdgeConfig,
                 ConfigNodeType::PinConfig(_) => SavedNodeType::PinConfig,
                 ConfigNodeType::GraphConfig(_) => SavedNodeType::GraphConfig,
-                ConfigNodeType::ApplyToGraph { .. } => SavedNodeType::ApplyToGraph,
-                ConfigNodeType::ApplyToNode { .. } => SavedNodeType::ApplyToNode,
+                ConfigNodeType::AnchorConfig(_) => SavedNodeType::AnchorConfig,
+                ConfigNodeType::SelectionBoxConfig(_) => SavedNodeType::SelectionBoxConfig,
+                ConfigNodeType::CuttingToolConfig(_) => SavedNodeType::CuttingToolConfig,
+                ConfigNodeType::MinimapConfig(_) => SavedNodeType::MinimapConfig,
+                ConfigNodeType::Catalog { .. } => SavedNodeType::Catalog,
+                ConfigNodeType::NodeClass { target, .. } => SavedNodeType::NodeClass {
+                    target: target.clone(),
+                },
             },
             NodeType::Math(state) => SavedNodeType::Math {
                 operation: math_op_to_string(&state.operation),
             },
             NodeType::ColorQuad(_) => SavedNodeType::ColorQuad,
             NodeType::Vec2(_) => SavedNodeType::Vec2,
+            NodeType::Alpha(_) => SavedNodeType::Alpha,
             NodeType::Theme => SavedNodeType::Theme,
             NodeType::ThemeExtended => SavedNodeType::ThemeExtended,
+            NodeType::Frame { label, size } => SavedNodeType::Frame {
+                label: label.clone(),
+                width: size.width,
+                height: size.height,
+            },
         }
     }
 
@@ -604,23 +693,41 @@ impl SavedNodeType {
             SavedNodeType::GraphConfig => {
                 NodeType::Config(ConfigNodeType::GraphConfig(GraphConfigInputs::default()))
             }
-            SavedNodeType::ApplyToGraph => NodeType::Config(ConfigNodeType::ApplyToGraph {
-                has_node_config: false,
-                has_edge_config: false,
-                has_pin_config: false,
-                has_graph_config: false,
+            SavedNodeType::AnchorConfig => {
+                NodeType::Config(ConfigNodeType::AnchorConfig(AnchorConfigInputs::default()))
+            }
+            SavedNodeType::SelectionBoxConfig => NodeType::Config(
+                ConfigNodeType::SelectionBoxConfig(SelectionBoxConfigInputs::default()),
+            ),
+            SavedNodeType::CuttingToolConfig => NodeType::Config(
+                ConfigNodeType::CuttingToolConfig(CuttingToolConfigInputs::default()),
+            ),
+            SavedNodeType::MinimapConfig => {
+                NodeType::Config(ConfigNodeType::MinimapConfig(MinimapConfigInputs::default()))
+            }
+            SavedNodeType::Catalog => NodeType::Config(ConfigNodeType::Catalog {
+                connected: HashSet::new(),
             }),
-            SavedNodeType::ApplyToNode => NodeType::Config(ConfigNodeType::ApplyToNode {
+            SavedNodeType::NodeClass { target } => NodeType::Config(ConfigNodeType::NodeClass {
+                target: target.clone(),
                 has_node_config: false,
-                target_id: None,
             }),
             SavedNodeType::Math { operation } => {
                 NodeType::Math(MathNodeState::new(string_to_math_op(operation)))
             }
             SavedNodeType::ColorQuad => NodeType::ColorQuad(ColorQuadNode::default()),
             SavedNodeType::Vec2 => NodeType::Vec2(Vec2Node::default()),
+            SavedNodeType::Alpha => NodeType::Alpha(AlphaNode::default()),
             SavedNodeType::Theme => NodeType::Theme,
             SavedNodeType::ThemeExtended => NodeType::ThemeExtended,
+            SavedNodeType::Frame {
+                label,
+                width,
+                height,
+            } => NodeType::Frame {
+                label: label.clone(),
+                size: Size::new(*width, *height),
+            },
         }
     }
 }
@@ -631,7 +738,9 @@ pub fn state_file_path() -> Option<PathBuf> {
         .map(|dirs| dirs.data_dir().join("demo").join("state.json"))
 }
 
-/// Saves state to disk.
+/// Saves state to disk. Under `cfg(test)` the application never writes, so
+/// the user's save file survives a test run.
+#[cfg_attr(test, allow(dead_code))]
 pub fn save_state(state: &SavedState) -> Result<(), String> {
     let path = state_file_path().ok_or("Could not determine data directory")?;
 

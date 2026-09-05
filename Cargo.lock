@@ -869,6 +869,7 @@ dependencies = [
  "iced",
  "iced_nodegraph",
  "iced_palette",
+ "iced_test",
  "nanoid",
  "serde",
  "serde_json",

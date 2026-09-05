@@ -63,6 +63,18 @@ pub struct PinConfigData;
 /// Marker type for graph (canvas) configuration bundle pins
 pub struct GraphConfigData;
 
+/// Marker type for anchor configuration bundle pins
+pub struct AnchorConfigData;
+
+/// Marker type for selection-box configuration bundle pins
+pub struct SelectionBoxConfigData;
+
+/// Marker type for cutting-tool configuration bundle pins
+pub struct CuttingToolConfigData;
+
+/// Marker type for minimap configuration bundle pins
+pub struct MinimapConfigData;
+
 /// Marker type for tiling-kind selector pins (grid/dots/triangles/hex)
 pub struct TilingKindData;
 
@@ -110,8 +122,9 @@ pub mod input {
 }
 
 /// Shared plumbing pins for configuration node chains: the inheritance
-/// passthrough, the typed config outputs, and the apply-node inputs. Per-field
-/// pins live in the per-target [`node`], [`pin`], and [`edge`] submodules.
+/// passthrough, the typed config outputs, and the sink inputs. Per-field pins
+/// live in the per-class submodules ([`node`], [`pin`], [`edge`], [`graph`],
+/// [`anchor`], [`selection_box`], [`cutting_tool`], [`minimap`]).
 pub mod cfg {
     /// Config passthrough input pin (inherit from a parent config node)
     pub const CONFIG: &str = "config";
@@ -130,25 +143,66 @@ pub mod cfg {
     /// GraphConfig output pin
     pub const GRAPH_OUT: &str = "graph_config";
 
-    // === Apply Node Inputs ===
+    /// AnchorConfig output pin
+    pub const ANCHOR_OUT: &str = "anchor_config";
 
-    /// Node config input pin (apply nodes)
+    /// SelectionBoxConfig output pin
+    pub const SELECTION_BOX_OUT: &str = "selection_box_config";
+
+    /// CuttingToolConfig output pin
+    pub const CUTTING_TOOL_OUT: &str = "cutting_tool_config";
+
+    /// MinimapConfig output pin
+    pub const MINIMAP_OUT: &str = "minimap_config";
+
+    // === Catalog Inputs: one per class and status ===
+
+    /// Idle node class (Catalog); also the Node Class node's single input
     pub const NODE_CONFIG: &str = "node";
-
-    /// Edge config input pin (apply nodes)
-    pub const EDGE_CONFIG: &str = "edge";
-
-    /// Pin config input pin (apply nodes)
+    /// Selected node class
+    pub const NODE_SELECTED: &str = "node:selected";
+    /// Idle pin class
     pub const PIN_CONFIG: &str = "pin";
-
-    /// Graph (canvas) config input pin (apply-to-graph node)
+    /// Pin class while a drag could connect to it
+    pub const PIN_VALID_TARGET: &str = "pin:valid_target";
+    /// Idle edge class
+    pub const EDGE_CONFIG: &str = "edge";
+    /// Edge class while the cutting tool crosses it
+    pub const EDGE_PENDING_CUT: &str = "edge:pending_cut";
+    /// The edge being dragged out of a pin (an `EdgeStyle`)
+    pub const DRAG_EDGE: &str = "drag_edge";
+    /// Idle anchor class
+    pub const ANCHOR: &str = "anchor";
+    /// Hovered anchor class
+    pub const ANCHOR_HOVERED: &str = "anchor:hovered";
+    /// Anchor class while a route drag could attach to it
+    pub const ANCHOR_VALID_TARGET: &str = "anchor:valid_target";
+    /// Canvas class
     pub const GRAPH_CONFIG: &str = "graph";
+    /// Selection box class
+    pub const SELECTION_BOX: &str = "selection_box";
+    /// Cutting tool class
+    pub const CUTTING_TOOL: &str = "cutting_tool";
+    /// Minimap class
+    pub const MINIMAP: &str = "minimap";
 
-    /// Toggle on/off input pin
-    pub const ON: &str = "on";
-
-    /// Target ID input pin (apply to node)
-    pub const TARGET: &str = "target";
+    /// Every Catalog input, in row order.
+    pub const CATALOG_INPUTS: [&str; 14] = [
+        NODE_CONFIG,
+        NODE_SELECTED,
+        PIN_CONFIG,
+        PIN_VALID_TARGET,
+        EDGE_CONFIG,
+        EDGE_PENDING_CUT,
+        DRAG_EDGE,
+        ANCHOR,
+        ANCHOR_HOVERED,
+        ANCHOR_VALID_TARGET,
+        GRAPH_CONFIG,
+        SELECTION_BOX,
+        CUTTING_TOOL,
+        MINIMAP,
+    ];
 }
 
 /// NodeConfig field pins, mirroring [`iced_nodegraph::NodeStyle`]. The `border`
@@ -253,6 +307,66 @@ pub mod pin {
     pub const BORDER_WIDTH: &str = "border_width";
 }
 
+/// AnchorConfig field pins, mirroring [`iced_nodegraph::AnchorStyle`].
+pub mod anchor {
+    /// Core side length input pin
+    pub const CORE_SIZE: &str = "core_size";
+    /// Core corner radius input pin
+    pub const CORE_RADIUS: &str = "core_radius";
+    /// Core fill color input pin
+    pub const CORE_COLOR: &str = "core_color";
+    /// Core border color input pin
+    pub const CORE_BORDER_COLOR: &str = "core_border_color";
+    /// Core border width input pin
+    pub const CORE_BORDER_WIDTH: &str = "core_border_width";
+    /// Radius of orbit 0 input pin
+    pub const ORBIT_OFFSET: &str = "orbit_offset";
+    /// Radius step per orbit input pin
+    pub const ORBIT_SPACING: &str = "orbit_spacing";
+    /// Orbit ring color input pin
+    pub const RING_COLOR: &str = "ring_color";
+    /// Orbit ring width input pin
+    pub const RING_WIDTH: &str = "ring_width";
+}
+
+/// SelectionBoxConfig field pins, mirroring [`iced_nodegraph::SelectionBoxStyle`].
+pub mod selection_box {
+    /// Fill color input pin
+    pub const FILL: &str = "fill";
+    /// Border color input pin
+    pub const BORDER_COLOR: &str = "border_color";
+    /// Border width input pin
+    pub const BORDER_WIDTH: &str = "border_width";
+}
+
+/// CuttingToolConfig field pins, mirroring [`iced_nodegraph::CuttingToolStyle`].
+pub mod cutting_tool {
+    /// Trail color input pin
+    pub const COLOR: &str = "color";
+    /// Trail width input pin
+    pub const WIDTH: &str = "width";
+}
+
+/// MinimapConfig field pins, mirroring [`iced_nodegraph::MinimapStyle`].
+pub mod minimap {
+    /// Map background input pin
+    pub const BACKGROUND: &str = "background";
+    /// Map border color input pin
+    pub const BORDER_COLOR: &str = "border_color";
+    /// Map border width input pin
+    pub const BORDER_WIDTH: &str = "border_width";
+    /// Node mark color input pin
+    pub const NODE_COLOR: &str = "node_color";
+    /// Selected node mark color input pin
+    pub const SELECTED_NODE_COLOR: &str = "selected_node_color";
+    /// Viewport rectangle fill input pin
+    pub const VIEWPORT_FILL: &str = "viewport_fill";
+    /// Viewport rectangle border color input pin
+    pub const VIEWPORT_BORDER_COLOR: &str = "viewport_border_color";
+    /// Viewport rectangle border width input pin
+    pub const VIEWPORT_BORDER_WIDTH: &str = "viewport_border_width";
+}
+
 /// EdgeConfig field pins, mirroring [`iced_nodegraph::EdgeStyle`]. Each color is
 /// a single `ColorQuad` pin (the start/end gradient is encoded in the quad, so
 /// there is no separate "end" pin).
@@ -284,6 +398,9 @@ pub mod edge {
 
     /// Gap length input pin
     pub const GAP: &str = "gap";
+
+    /// Dot radius input pin (dotted pattern)
+    pub const DOT_RADIUS: &str = "dot_radius";
 
     /// Angle input pin
     pub const ANGLE: &str = "angle";
@@ -356,6 +473,17 @@ pub mod build {
 
     /// Vec2 output
     pub const VEC2_OUT: &str = "vec2";
+
+    // === Alpha builder (color, alpha -> color) ===
+
+    /// Color input whose alpha is replaced
+    pub const ALPHA_COLOR: &str = "alpha_color";
+
+    /// Alpha input (0..1)
+    pub const ALPHA: &str = "alpha";
+
+    /// Color output
+    pub const ALPHA_OUT: &str = "alpha_out";
 }
 
 /// Output pins of the Theme node: the active theme's basic [`iced::theme::Palette`]

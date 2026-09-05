@@ -44,7 +44,12 @@ impl Ids for HelloIds {
     type Payload = std::any::TypeId;
 }
 
-/// An edge in memory: the two endpoints it wires, by node id and pin label.
+/// An edge in memory: the two endpoints it wires, by node id and pin label,
+/// and the anchors it wraps.
+///
+/// The route is a set of anchor ids in no particular order - the widget derives
+/// which way round the cable meets them - so `update` only ever adds to it or
+/// removes from it.
 ///
 /// Distinct from `persistence::SavedEdge`, which carries owned `String` pin
 /// labels because a label read back from disk is not `'static`.
@@ -54,6 +59,20 @@ pub struct EdgeData {
     pub from_pin: PinLabel,
     pub to_node: NodeId,
     pub to_pin: PinLabel,
+    pub route: Vec<usize>,
+}
+
+impl EdgeData {
+    /// An unrouted edge between two pins.
+    pub fn new(from_node: NodeId, from_pin: PinLabel, to_node: NodeId, to_pin: PinLabel) -> Self {
+        Self {
+            from_node,
+            from_pin,
+            to_node,
+            to_pin,
+            route: Vec::new(),
+        }
+    }
 }
 
 /// Generates a new unique node ID.
