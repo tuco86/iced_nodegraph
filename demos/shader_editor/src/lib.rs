@@ -325,7 +325,7 @@ impl demo_common::Demo for Application {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let graph = ::iced_nodegraph::NodeGraph::<TypedIds, _, _>::new()
+        let graph = ::iced_nodegraph::NodeGraph::<TypedIds, _, _, _>::new()
             .on_connect(|from, to| Message::EdgeConnected { from, to })
             .on_move(|delta, indices| Message::NodesMoved { delta, indices })
             .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })

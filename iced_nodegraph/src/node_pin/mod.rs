@@ -20,7 +20,7 @@
 //!
 //! # #[derive(Debug, Clone)]
 //! # enum Message {}
-//! # type Pin<'a, UI> = NodePin<'a, u32, UI, Message, iced::Renderer>;
+//! # type Pin<'a, UI> = NodePin<'a, u32, UI, Message, iced::Theme, iced::Renderer>;
 //! let input: Pin<'_, ()> = pin!(Left, 0, text("Input"), Input);
 //! let output: Pin<'_, MyKind> = pin!(Right, 1, text("Output"), Output, MyKind::Audio);
 //! let same: Pin<'_, MyKind> = node_pin(PinSide::Right, 1, text("Output"))
@@ -58,7 +58,7 @@ use iced_wgpu::core::{
     Clipboard, Layout, Shell, Widget, layout, mouse, renderer,
     widget::{Tree, tree},
 };
-use iced_widget::core::{Element, Event, Length, Point, Rectangle, Size, Theme};
+use iced_widget::core::{Element, Event, Length, Point, Rectangle, Size};
 
 use crate::ids::{Id, Ids};
 
@@ -210,7 +210,7 @@ impl<'a, I: Ids> PinEnd<'a, I> {
 ///
 /// `P` is the pin id type and `UI` the payload type; both are inferred from
 /// the values given and must equal the graph's `Ids::PinId` / `Ids::Payload`.
-pub struct NodePin<'a, P, UI, Message, Renderer>
+pub struct NodePin<'a, P, UI, Message, Theme, Renderer>
 where
     P: Id,
     Renderer: renderer::Renderer,
@@ -223,7 +223,7 @@ where
     interactions_disabled: bool,
 }
 
-impl<'a, P, Message, Renderer> NodePin<'a, P, (), Message, Renderer>
+impl<'a, P, Message, Theme, Renderer> NodePin<'a, P, (), Message, Theme, Renderer>
 where
     P: Id,
     Renderer: renderer::Renderer,
@@ -246,7 +246,7 @@ where
     }
 }
 
-impl<'a, P, UI, Message, Renderer> NodePin<'a, P, UI, Message, Renderer>
+impl<'a, P, UI, Message, Theme, Renderer> NodePin<'a, P, UI, Message, Theme, Renderer>
 where
     P: Id,
     Renderer: renderer::Renderer,
@@ -276,10 +276,10 @@ where
     ///
     /// # #[derive(Debug, Clone)]
     /// # enum Message {}
-    /// let scalar: NodePin<'_, &str, MyKind, Message, iced::Renderer> =
+    /// let scalar: NodePin<'_, &str, MyKind, Message, iced::Theme, iced::Renderer> =
     ///     pin!(Left, "value", text("x"), Input).info(MyKind::Scalar);
     /// ```
-    pub fn info<UI2>(self, info: UI2) -> NodePin<'a, P, UI2, Message, Renderer> {
+    pub fn info<UI2>(self, info: UI2) -> NodePin<'a, P, UI2, Message, Theme, Renderer> {
         NodePin {
             side: self.side,
             direction: self.direction,
@@ -355,8 +355,8 @@ impl PinSlot {
     }
 }
 
-impl<'a, P, UI, Message, Renderer> Widget<Message, Theme, Renderer>
-    for NodePin<'a, P, UI, Message, Renderer>
+impl<'a, P, UI, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
+    for NodePin<'a, P, UI, Message, Theme, Renderer>
 where
     P: Id,
     UI: Clone + 'static,
@@ -500,25 +500,26 @@ where
     }
 }
 
-impl<'a, P, UI, Message, Renderer> From<NodePin<'a, P, UI, Message, Renderer>>
+impl<'a, P, UI, Message, Theme, Renderer> From<NodePin<'a, P, UI, Message, Theme, Renderer>>
     for Element<'a, Message, Theme, Renderer>
 where
     P: Id,
     UI: Clone + 'static,
+    Theme: 'a,
     Renderer: renderer::Renderer + 'a,
     Message: 'a,
 {
-    fn from(widget: NodePin<'a, P, UI, Message, Renderer>) -> Self {
+    fn from(widget: NodePin<'a, P, UI, Message, Theme, Renderer>) -> Self {
         Element::new(widget)
     }
 }
 
 /// Creates a [`NodePin`] on `side` with the given id wrapping `content`.
-pub fn node_pin<'a, P, Message, Renderer>(
+pub fn node_pin<'a, P, Message, Theme, Renderer>(
     side: PinSide,
     pin_id: P,
     content: impl Into<Element<'a, Message, Theme, Renderer>>,
-) -> NodePin<'a, P, (), Message, Renderer>
+) -> NodePin<'a, P, (), Message, Theme, Renderer>
 where
     P: Id,
     Renderer: renderer::Renderer,
@@ -545,7 +546,7 @@ where
 ///
 /// # #[derive(Debug, Clone)]
 /// # enum Message {}
-/// # type Pin<'a, UI> = NodePin<'a, &'static str, UI, Message, iced::Renderer>;
+/// # type Pin<'a, UI> = NodePin<'a, &'static str, UI, Message, iced::Theme, iced::Renderer>;
 /// // Full syntax: side, pin_id, content, direction, payload
 /// let full: Pin<'_, MyKind> = pin!(Right, "output", text("output"), Output, MyKind::Email);
 ///
@@ -590,12 +591,12 @@ mod tests {
     /// the next access downcast it to the wrong type and panicked.
     #[test]
     fn content_tree_is_rebuilt_when_the_content_type_changes() {
-        let stateful: Element<'_, (), Theme, iced::Renderer> =
+        let stateful: Element<'_, (), iced::Theme, iced::Renderer> =
             node_pin(PinSide::Left, 0usize, text_input("", "x")).into();
         let mut tree = Tree::new(&stateful);
         let stateful_tag = tree.children[0].tag;
 
-        let stateless: Element<'_, (), Theme, iced::Renderer> =
+        let stateless: Element<'_, (), iced::Theme, iced::Renderer> =
             node_pin(PinSide::Left, 0usize, text("y")).into();
         tree.diff(&stateless);
 
@@ -608,10 +609,10 @@ mod tests {
     /// so only the content subtree is replaced.
     #[test]
     fn the_pin_keeps_its_own_state_across_a_content_change() {
-        let before: Element<'_, (), Theme, iced::Renderer> =
+        let before: Element<'_, (), iced::Theme, iced::Renderer> =
             node_pin(PinSide::Left, 7usize, text("a")).into();
         let mut tree = Tree::new(&before);
-        let after: Element<'_, (), Theme, iced::Renderer> =
+        let after: Element<'_, (), iced::Theme, iced::Renderer> =
             node_pin(PinSide::Left, 7usize, text_input("", "b")).into();
         tree.diff(&after);
 
@@ -624,7 +625,7 @@ mod tests {
     /// slot and is recognisable as the wrong pin rather than as no pin.
     #[test]
     fn a_pin_of_another_type_is_told_apart_by_its_slot() {
-        let pin: Element<'_, (), Theme, iced::Renderer> =
+        let pin: Element<'_, (), iced::Theme, iced::Renderer> =
             node_pin(PinSide::Left, "named", text("a")).into();
         let tree = Tree::new(&pin);
 

@@ -97,7 +97,7 @@ const PROBE_SIZE: Size = Size::new(40.0, 20.0);
 const VIEWPORT: Size = Size::new(1024.0, 768.0);
 const GRAPH_SIZE: Size = Size::new(400.0, 400.0);
 
-type Graph = NodeGraph<'static, Indexed, (), Recorder>;
+type Graph = NodeGraph<'static, Indexed, (), Theme, Recorder>;
 
 /// A one-node graph placed at `origin` under the given camera, primed by one
 /// no-op update so `camera()` has synced into the widget camera.

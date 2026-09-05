@@ -49,7 +49,7 @@ impl<T: Clone + Eq + Hash + Debug + Send + Sync + 'static> Id for T {}
 ///
 /// The marker is a unit struct the host declares; the supertraits let every
 /// type generic over it derive `Clone`, `PartialEq`, `Hash` and `Debug`. Name it
-/// once when building the graph (`NodeGraph::<AppIds, _, _>::new()`) and in the
+/// once when building the graph (`NodeGraph::<AppIds, _, _, _>::new()`) and in the
 /// messages that carry a [`PinRef`](crate::PinRef); everything else infers.
 ///
 /// `EdgeId` is `()` for a host whose edges carry no identity of their own.

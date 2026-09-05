@@ -45,17 +45,22 @@ fn render_edge_grid() -> Option<Vec<[u8; 4]>> {
     let (sx, sy) = (90.0f32, 80.0f32);
     let zoom = (GW as f32 / (cols as f32 * sx)).min(GH as f32 / (rows as f32 * sy)) * 0.92;
 
-    let mut graph: iced_nodegraph::NodeGraph<'static, iced_nodegraph::Indexed, (), Renderer> =
-        iced_nodegraph::NodeGraph::default()
-            .width(Length::Fixed(GW as f32))
-            .height(Length::Fixed(GH as f32))
-            .camera(
-                Point::new(
-                    GW as f32 * 0.5 / zoom - cols as f32 * sx * 0.5,
-                    GH as f32 * 0.5 / zoom - rows as f32 * sy * 0.5,
-                ),
-                zoom,
-            );
+    let mut graph: iced_nodegraph::NodeGraph<
+        'static,
+        iced_nodegraph::Indexed,
+        (),
+        Theme,
+        Renderer,
+    > = iced_nodegraph::NodeGraph::default()
+        .width(Length::Fixed(GW as f32))
+        .height(Length::Fixed(GH as f32))
+        .camera(
+            Point::new(
+                GW as f32 * 0.5 / zoom - cols as f32 * sx * 0.5,
+                GH as f32 * 0.5 / zoom - rows as f32 * sy * 0.5,
+            ),
+            zoom,
+        );
 
     for i in 0..n {
         let (c, r) = ((i % cols) as f32, (i / cols) as f32);
@@ -277,11 +282,16 @@ fn render_minimal_edges() -> Option<Vec<[u8; 4]>> {
         Point::new(440.0, 320.0),
     ];
 
-    let mut graph: iced_nodegraph::NodeGraph<'static, iced_nodegraph::Indexed, (), Renderer> =
-        iced_nodegraph::NodeGraph::default()
-            .width(Length::Fixed(GW as f32))
-            .height(Length::Fixed(GH as f32))
-            .camera(Point::new(0.0, 0.0), 1.0);
+    let mut graph: iced_nodegraph::NodeGraph<
+        'static,
+        iced_nodegraph::Indexed,
+        (),
+        Theme,
+        Renderer,
+    > = iced_nodegraph::NodeGraph::default()
+        .width(Length::Fixed(GW as f32))
+        .height(Length::Fixed(GH as f32))
+        .camera(Point::new(0.0, 0.0), 1.0);
 
     for (i, p) in positions.iter().enumerate() {
         // NO text content - to test whether interleaved text rendering triggers the

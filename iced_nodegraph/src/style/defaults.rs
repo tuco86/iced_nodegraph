@@ -27,7 +27,7 @@
 //! # #[derive(Debug, Clone)]
 //! # enum Message {}
 //! # let (pos, body) = (Point::ORIGIN, text("body"));
-//! let n: Node<'_, Indexed, Message, iced::Renderer> = node(0, pos, body)
+//! let n: Node<'_, Indexed, Message, iced::Theme, iced::Renderer> = node(0, pos, body)
 //!     .style(|theme, status| NodeStyle {
 //!         fill_color: Color::WHITE.into(),      // user override wins
 //!         ..default_node_style(theme, status)   // theme base + status fills the rest

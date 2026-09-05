@@ -35,15 +35,17 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use iced_widget::core::widget::Id as WidgetId;
-use iced_widget::core::{Element, Length, Point, Size, Theme, Vector};
+use iced_widget::core::{Element, Length, Point, Size, Vector};
 
 use self::focus::{FocusOptions, FocusTarget};
 use self::widget::edge_path;
 use crate::ids::{Ids, Indexed};
 use crate::node_pin::{PinDirection, PinEnd, PinInfo};
 use crate::style::{
-    AnchorStatus, AnchorStyle, CuttingToolStyle, EdgeCurve, EdgeStatus, EdgeStyle, GraphStyle,
-    MinimapStyle, NodeStatus, NodeStyle, PinStatus, PinStyle, SelectionBoxStyle,
+    AnchorStatus, AnchorStyle, AnchorStyleFn, Catalog, CuttingToolStyle, CuttingToolStyleFn,
+    DragEdgeStyleFn, EdgeCurve, EdgeStatus, EdgeStyle, EdgeStyleFn, GraphStyle, GraphStyleFn,
+    MinimapStyle, MinimapStyleFn, NodeStatus, NodeStyle, NodeStyleFn, PinStatus, PinStyle,
+    PinStyleFn, SelectionBoxStyle, SelectionBoxStyleFn,
 };
 
 /// Pin click detection threshold, in screen pixels: divided by zoom before
@@ -130,48 +132,36 @@ pub(crate) const RESIZE_GRIP_SIDE: f32 = 12.0;
 /// to grab it back.
 pub(crate) const MIN_NODE_SIZE: Size = Size::new(32.0, 24.0);
 
-/// Per-node style callback: theme + status -> resolved style. Used by [`Node`].
-pub(crate) type NodeStyleFn<'a> = Box<dyn Fn(&Theme, NodeStatus) -> NodeStyle + 'a>;
-/// Per-edge style callback: theme + status + both endpoint pin infos (in draw
-/// order: start = output side, end = input side) -> resolved style. Used by
-/// [`Edge`].
-pub(crate) type EdgeStyleFn<'a, I> =
-    Box<dyn Fn(&Theme, EdgeStatus, PinInfo<'_, I>, PinInfo<'_, I>) -> EdgeStyle + 'a>;
-/// Per-node pin style callback: theme + this pin's info + the other endpoint's
-/// info (the drag source during an edge drag, else `None`) + status -> resolved
-/// pin style. The node styles all of its pins (pins carry no style of their
-/// own). Used by [`Node::pin_style`].
-pub(crate) type PinStyleFn<'a, I> =
-    Box<dyn Fn(&Theme, &PinInfo<'_, I>, Option<&PinInfo<'_, I>>, PinStatus) -> PinStyle + 'a>;
-/// Drag-edge style callback: theme + the source pin's info -> resolved style. A
-/// freshly dragged edge has no status. Used by [`NodeGraph::dragging_edge_style`].
-pub(crate) type DragEdgeStyleFn<'a, I> = Box<dyn Fn(&Theme, PinInfo<'_, I>) -> EdgeStyle + 'a>;
-/// Per-anchor style callback: theme + status -> resolved style. Used by
-/// [`Anchor`].
-pub(crate) type AnchorStyleFn<'a> = Box<dyn Fn(&Theme, AnchorStatus) -> AnchorStyle + 'a>;
-
-/// A node to push onto the graph: id, position, content element, an optional
-/// per-node style closure, and an optional closure styling all of its pins.
+/// A node to push onto the graph: id, position, content element, the class
+/// the theme styles it by, and the class it styles all of its pins by.
 /// Build with [`node`] + [`Node::style`]/[`Node::pin_style`], then add via
 /// [`NodeGraph::push_node`]. Looks like its own widget even though the body and
 /// pins are drawn by the graph.
-pub struct Node<'a, I: Ids = Indexed, Message = (), Renderer = iced_widget::renderer::Renderer> {
+pub struct Node<
+    'a,
+    I: Ids = Indexed,
+    Message = (),
+    Theme = iced_widget::core::Theme,
+    Renderer = iced_widget::renderer::Renderer,
+> where
+    Theme: Catalog,
+{
     pub(super) id: I::NodeId,
     pub(super) position: Point,
     pub(super) element: Element<'a, Message, Theme, Renderer>,
     pub(super) selected: bool,
     pub(super) resizable: bool,
     pub(super) frame: bool,
-    pub(super) style: Option<NodeStyleFn<'a>>,
-    pub(super) pin_style: Option<PinStyleFn<'a, I>>,
+    pub(super) class: Theme::NodeClass<'a>,
+    pub(super) pin_class: Theme::PinClass<'a, I>,
 }
 
-/// Creates a [`Node`] with default (theme) styling.
-pub fn node<'a, I: Ids, Message, Renderer>(
+/// Creates a [`Node`] with the theme's default classes.
+pub fn node<'a, I: Ids, Message, Theme: Catalog, Renderer>(
     id: I::NodeId,
     position: Point,
     element: impl Into<Element<'a, Message, Theme, Renderer>>,
-) -> Node<'a, I, Message, Renderer> {
+) -> Node<'a, I, Message, Theme, Renderer> {
     Node {
         id,
         position,
@@ -179,12 +169,12 @@ pub fn node<'a, I: Ids, Message, Renderer>(
         selected: false,
         resizable: false,
         frame: false,
-        style: None,
-        pin_style: None,
+        class: Theme::default_node(),
+        pin_class: Theme::default_pin(),
     }
 }
 
-impl<'a, I: Ids, Message, Renderer> Node<'a, I, Message, Renderer> {
+impl<'a, I: Ids, Message, Theme: Catalog, Renderer> Node<'a, I, Message, Theme, Renderer> {
     /// Sets the per-node style closure: receives the theme and the node's
     /// [`NodeStatus`], returns the resolved style. Layer over the built-in
     /// default:
@@ -195,14 +185,23 @@ impl<'a, I: Ids, Message, Renderer> Node<'a, I, Message, Renderer> {
     /// # #[derive(Debug, Clone)]
     /// # enum Message {}
     /// # let (pos, el) = (Point::ORIGIN, text("body"));
-    /// let n: Node<'_, Indexed, Message, iced::Renderer> = node(0, pos, el)
+    /// let n: Node<'_, Indexed, Message, iced::Theme, iced::Renderer> = node(0, pos, el)
     ///     .style(|theme, status| NodeStyle {
     ///         fill_color: Color::WHITE.into(),
     ///         ..default_node_style(theme, status)
     ///     });
     /// ```
-    pub fn style(mut self, f: impl Fn(&Theme, NodeStatus) -> NodeStyle + 'a) -> Self {
-        self.style = Some(Box::new(f));
+    pub fn style(mut self, f: impl Fn(&Theme, NodeStatus) -> NodeStyle + 'a) -> Self
+    where
+        Theme::NodeClass<'a>: From<NodeStyleFn<'a, Theme>>,
+    {
+        self.class = (Box::new(f) as NodeStyleFn<'a, Theme>).into();
+        self
+    }
+
+    /// Sets the class the theme styles this node by.
+    pub fn class(mut self, class: impl Into<Theme::NodeClass<'a>>) -> Self {
+        self.class = class.into();
         self
     }
 
@@ -269,7 +268,7 @@ impl<'a, I: Ids, Message, Renderer> Node<'a, I, Message, Renderer> {
     /// # enum Message {}
     /// # let (pos, el) = (Point::ORIGIN, text("body"));
     /// # fn color_for(_: &()) -> Color { Color::WHITE }
-    /// let n: Node<'_, Indexed, Message, iced::Renderer> = node(0, pos, el)
+    /// let n: Node<'_, Indexed, Message, iced::Theme, iced::Renderer> = node(0, pos, el)
     ///     .pin_style(|theme, pin, _other, status| PinStyle {
     ///         color: color_for(pin.info()).into(),
     ///         ..default_pin_style(theme, status)
@@ -278,18 +277,30 @@ impl<'a, I: Ids, Message, Renderer> Node<'a, I, Message, Renderer> {
     pub fn pin_style(
         mut self,
         f: impl Fn(&Theme, &PinInfo<'_, I>, Option<&PinInfo<'_, I>>, PinStatus) -> PinStyle + 'a,
-    ) -> Self {
-        self.pin_style = Some(Box::new(f));
+    ) -> Self
+    where
+        Theme::PinClass<'a, I>: From<PinStyleFn<'a, Theme, I>>,
+    {
+        self.pin_class = (Box::new(f) as PinStyleFn<'a, Theme, I>).into();
+        self
+    }
+
+    /// Sets the class the theme styles all of this node's pins by.
+    pub fn pin_class(mut self, class: impl Into<Theme::PinClass<'a, I>>) -> Self {
+        self.pin_class = class.into();
         self
     }
 }
 
 /// An edge to push onto the graph: a user id, endpoint pin references, the
-/// anchors it wraps on the way, and an optional per-edge status-driven style
-/// closure. Build with [`edge`] + [`Edge::route`]/[`Edge::style`], then add via
+/// anchors it wraps on the way, and the class the theme styles it by. Build
+/// with [`edge`] + [`Edge::route`]/[`Edge::style`], then add via
 /// [`NodeGraph::push_edge`]. The id is the user's own (e.g. a database key); it
 /// travels with the edge, symmetric to [`node`].
-pub struct Edge<'a, I: Ids = Indexed> {
+pub struct Edge<'a, I: Ids = Indexed, Theme = iced_widget::core::Theme>
+where
+    Theme: Catalog,
+{
     pub(super) id: I::EdgeId,
     pub(super) from: PinRef<I>,
     pub(super) to: PinRef<I>,
@@ -297,10 +308,10 @@ pub struct Edge<'a, I: Ids = Indexed> {
     /// a drawing order: the widget derives the order, the wrap side and the
     /// orbit each frame, so this is a set the host may keep in any order.
     pub(super) route: Vec<I::AnchorId>,
-    pub(super) style: Option<EdgeStyleFn<'a, I>>,
+    pub(super) class: Theme::EdgeClass<'a, I>,
 }
 
-/// Creates an [`Edge`] with the given id and default (theme) styling.
+/// Creates an [`Edge`] with the given id and the theme's default class.
 ///
 /// The id comes first, as in [`node`]. For a vocabulary whose `EdgeId` is `()`
 /// that reads `edge((), from, to)`.
@@ -310,25 +321,38 @@ pub struct Edge<'a, I: Ids = Indexed> {
 ///
 /// let e: Edge<'_, Indexed> = edge((), PinRef::new(0, 0), PinRef::new(1, 0));
 /// ```
-pub fn edge<'a, I: Ids>(id: I::EdgeId, from: PinRef<I>, to: PinRef<I>) -> Edge<'a, I> {
+pub fn edge<'a, I: Ids, Theme: Catalog>(
+    id: I::EdgeId,
+    from: PinRef<I>,
+    to: PinRef<I>,
+) -> Edge<'a, I, Theme> {
     Edge {
         id,
         from,
         to,
         route: Vec::new(),
-        style: None,
+        class: Theme::default_edge(),
     }
 }
 
-impl<'a, I: Ids> Edge<'a, I> {
+impl<'a, I: Ids, Theme: Catalog> Edge<'a, I, Theme> {
     /// Sets the per-edge style closure: theme, [`EdgeStatus`], and both endpoint
     /// [`PinInfo`]s in draw order (start = output side, end = input side) ->
     /// resolved style.
     pub fn style(
         mut self,
         f: impl Fn(&Theme, EdgeStatus, PinInfo<'_, I>, PinInfo<'_, I>) -> EdgeStyle + 'a,
-    ) -> Self {
-        self.style = Some(Box::new(f));
+    ) -> Self
+    where
+        Theme::EdgeClass<'a, I>: From<EdgeStyleFn<'a, Theme, I>>,
+    {
+        self.class = (Box::new(f) as EdgeStyleFn<'a, Theme, I>).into();
+        self
+    }
+
+    /// Sets the class the theme styles this edge by.
+    pub fn class(mut self, class: impl Into<Theme::EdgeClass<'a, I>>) -> Self {
+        self.class = class.into();
         self
     }
 
@@ -348,8 +372,8 @@ impl<'a, I: Ids> Edge<'a, I> {
     }
 }
 
-/// An anchor to push onto the graph: id, position, and an optional per-anchor
-/// style closure.
+/// An anchor to push onto the graph: id, position, and the class the theme
+/// styles it by.
 ///
 /// Build with [`anchor`] + [`Anchor::style`], then add via
 /// [`NodeGraph::push_anchor`]. Anchors have their own id space, are their own
@@ -357,26 +381,41 @@ impl<'a, I: Ids> Edge<'a, I> {
 /// it wraps through [`Edge::route`], and the widget lays the cable tangent to
 /// one orbit of each.
 #[allow(missing_debug_implementations)]
-pub struct Anchor<'a, I: Ids = Indexed> {
+pub struct Anchor<'a, I: Ids = Indexed, Theme = iced_widget::core::Theme>
+where
+    Theme: Catalog,
+{
     pub(super) id: I::AnchorId,
     pub(super) position: Point,
-    pub(super) style: Option<AnchorStyleFn<'a>>,
+    pub(super) class: Theme::AnchorClass<'a>,
 }
 
-/// Creates an [`Anchor`] with default (theme) styling.
-pub fn anchor<'a, I: Ids>(id: I::AnchorId, position: Point) -> Anchor<'a, I> {
+/// Creates an [`Anchor`] with the theme's default class.
+pub fn anchor<'a, I: Ids, Theme: Catalog>(
+    id: I::AnchorId,
+    position: Point,
+) -> Anchor<'a, I, Theme> {
     Anchor {
         id,
         position,
-        style: None,
+        class: Theme::default_anchor(),
     }
 }
 
-impl<'a, I: Ids> Anchor<'a, I> {
+impl<'a, I: Ids, Theme: Catalog> Anchor<'a, I, Theme> {
     /// Sets the per-anchor style closure: receives the theme and the anchor's
     /// [`AnchorStatus`], returns the resolved style.
-    pub fn style(mut self, f: impl Fn(&Theme, AnchorStatus) -> AnchorStyle + 'a) -> Self {
-        self.style = Some(Box::new(f));
+    pub fn style(mut self, f: impl Fn(&Theme, AnchorStatus) -> AnchorStyle + 'a) -> Self
+    where
+        Theme::AnchorClass<'a>: From<AnchorStyleFn<'a, Theme>>,
+    {
+        self.class = (Box::new(f) as AnchorStyleFn<'a, Theme>).into();
+        self
+    }
+
+    /// Sets the class the theme styles this anchor by.
+    pub fn class(mut self, class: impl Into<Theme::AnchorClass<'a>>) -> Self {
+        self.class = class.into();
         self
     }
 }
@@ -775,38 +814,44 @@ impl Default for Minimap {
 /// - `I`: the graph's [`Ids`] - node, pin, edge and anchor id types plus the
 ///   per-pin payload, named once on a marker type. Defaults to [`Indexed`].
 /// - `Message`: application message type
+/// - `Theme`: the theme, which styles everything the graph draws through its
+///   [`Catalog`] impl. Defaults to [`iced_widget::core::Theme`].
 /// - `Renderer`: iced renderer type
 ///
 /// `I` cannot be inferred from the ids pushed into the graph (an associated
 /// type does not identify its trait impl), so a graph over custom ids names
-/// it once: `NodeGraph::<AppIds, _, _>::new()`. `Message` and `Renderer` infer
-/// from the callbacks and the `Element` the graph becomes.
-///
-/// There is no theme parameter: the widget styles against
-/// [`iced_widget::core::Theme`] because every `default_*_style` reads that
-/// theme's palette.
+/// it once: `NodeGraph::<AppIds, _, _, _>::new()`. `Message`, `Theme` and
+/// `Renderer` infer from the callbacks and the `Element` the graph becomes.
 #[allow(missing_debug_implementations)]
-pub struct NodeGraph<'a, I: Ids = Indexed, Message = (), Renderer = iced_widget::renderer::Renderer>
+pub struct NodeGraph<
+    'a,
+    I: Ids = Indexed,
+    Message = (),
+    Theme = iced_widget::core::Theme,
+    Renderer = iced_widget::renderer::Renderer,
+> where
+    Theme: Catalog,
 {
     pub(super) size: Size<Length>,
     /// Set by [`id`](Self::id); what a [`focus`](crate::focus) task addresses.
     pub(super) id: Option<WidgetId>,
     /// Nodes in push order, which is also their initial z-order.
-    pub(super) nodes: Vec<Node<'a, I, Message, Renderer>>,
+    pub(super) nodes: Vec<Node<'a, I, Message, Theme, Renderer>>,
     /// Id -> index map: O(1) `node_index` lookups and deterministic duplicate
     /// detection in `push_node` (first push wins).
     pub(super) node_lookup: HashMap<I::NodeId, usize>,
     /// Anchors in push order. Cables wrap them, but they are laid out and drawn
     /// entirely by the graph, so they form their own collection (see
     /// [`Anchor`]).
-    pub(super) anchors: Vec<Anchor<'a, I>>,
+    pub(super) anchors: Vec<Anchor<'a, I, Theme>>,
     /// Id -> index map, the anchor counterpart of `node_lookup`. Its own id
     /// space: an anchor id never has to avoid a node's.
     pub(super) anchor_lookup: HashMap<I::AnchorId, usize>,
     /// Edges in push order. Endpoint pin ids are resolved to positional pin
     /// indices at draw time, since only the laid-out widget tree knows them.
-    pub(super) edges: Vec<Edge<'a, I>>,
-    pub(super) graph_style: Option<Box<dyn Fn(&Theme) -> GraphStyle + 'a>>,
+    pub(super) edges: Vec<Edge<'a, I, Theme>>,
+    /// The canvas class the theme resolves through [`Catalog::graph`].
+    pub(super) graph_class: Theme::GraphClass<'a>,
     pub(super) on_connect: Option<Box<dyn Fn(PinRef<I>, PinRef<I>) -> Message + 'a>>,
     pub(super) on_disconnect: Option<Box<dyn Fn(PinRef<I>, PinRef<I>) -> Message + 'a>>,
     pub(super) on_move: Option<Box<dyn Fn(Vector, Vec<I::NodeId>) -> Message + 'a>>,
@@ -844,20 +889,19 @@ pub struct NodeGraph<'a, I: Ids = Indexed, Message = (), Renderer = iced_widget:
     pub(super) on_camera: Option<Box<dyn Fn(Point, f32) -> Message + 'a>>,
     /// Per-frame diagnostics callback.
     pub(super) on_info: Option<Box<dyn Fn(GraphInfo) -> Message + 'a>>,
-    /// Style for the edge being dragged (theme -> resolved style). The graph
-    /// injects the source pin's color for inheriting (TRANSPARENT) stroke ends.
-    pub(super) dragging_edge_style: Option<DragEdgeStyleFn<'a, I>>,
-    /// Box-selection rectangle style; [`default_selection_box_style`] applies when
-    /// unset.
-    pub(super) selection_box_style: Option<Box<dyn Fn(&Theme) -> SelectionBoxStyle + 'a>>,
-    /// Edge-cutting trail style; [`default_cutting_tool_style`] applies when unset.
-    pub(super) cutting_tool_style: Option<Box<dyn Fn(&Theme) -> CuttingToolStyle + 'a>>,
+    /// The class of the edge being dragged. The graph injects the source pin's
+    /// color for inheriting (TRANSPARENT) stroke ends of the resolved style.
+    pub(super) drag_edge_class: Theme::DragEdgeClass<'a, I>,
+    /// Box-selection rectangle class.
+    pub(super) selection_box_class: Theme::SelectionBoxClass<'a>,
+    /// Edge-cutting trail class.
+    pub(super) cutting_tool_class: Theme::CuttingToolClass<'a>,
     /// The minimap overlay, when the host asked for one via
     /// [`minimap`](Self::minimap). Absent leaves every draw and input path
     /// untouched.
     pub(super) minimap: Option<Minimap>,
-    /// Minimap style; [`default_minimap_style`] applies when unset.
-    pub(super) minimap_style: Option<Box<dyn Fn(&Theme) -> MinimapStyle + 'a>>,
+    /// Minimap class.
+    pub(super) minimap_class: Theme::MinimapClass<'a>,
     /// Host-controlled camera (world position + zoom). The widget syncs its
     /// internal camera to this whenever the host changes it, while still running
     /// pan/zoom interaction internally and committing via `on_camera`. Mirrors
@@ -875,7 +919,9 @@ pub struct NodeGraph<'a, I: Ids = Indexed, Message = (), Renderer = iced_widget:
     pub(super) snap_grid: Option<f32>,
 }
 
-impl<I: Ids, Message, Renderer> Default for NodeGraph<'_, I, Message, Renderer> {
+impl<I: Ids, Message, Theme: Catalog, Renderer> Default
+    for NodeGraph<'_, I, Message, Theme, Renderer>
+{
     fn default() -> Self {
         Self {
             size: Size::new(Length::Fill, Length::Fill),
@@ -885,7 +931,7 @@ impl<I: Ids, Message, Renderer> Default for NodeGraph<'_, I, Message, Renderer> 
             anchors: Vec::new(),
             anchor_lookup: HashMap::new(),
             edges: Vec::new(),
-            graph_style: None,
+            graph_class: Theme::default_graph(),
             on_connect: None,
             on_disconnect: None,
             on_move: None,
@@ -904,11 +950,11 @@ impl<I: Ids, Message, Renderer> Default for NodeGraph<'_, I, Message, Renderer> 
             on_drag_end: None,
             on_camera: None,
             on_info: None,
-            dragging_edge_style: None,
-            selection_box_style: None,
-            cutting_tool_style: None,
+            drag_edge_class: Theme::default_drag_edge(),
+            selection_box_class: Theme::default_selection_box(),
+            cutting_tool_class: Theme::default_cutting_tool(),
             minimap: None,
-            minimap_style: None,
+            minimap_class: Theme::default_minimap(),
             camera: None,
             can_connect: None,
             keymap: input::Keymap::default(),
@@ -917,11 +963,11 @@ impl<I: Ids, Message, Renderer> Default for NodeGraph<'_, I, Message, Renderer> 
     }
 }
 
-impl<'a, I: Ids, Message, Renderer> NodeGraph<'a, I, Message, Renderer> {
+impl<'a, I: Ids, Message, Theme: Catalog, Renderer> NodeGraph<'a, I, Message, Theme, Renderer> {
     /// Creates an empty graph that fills its container.
     ///
     /// `I` is named here when it is not [`Indexed`]:
-    /// `NodeGraph::<AppIds, _, _>::new()`. [`node_graph`](crate::node_graph)
+    /// `NodeGraph::<AppIds, _, _, _>::new()`. [`node_graph`](crate::node_graph)
     /// is the shorthand for the indexed vocabulary.
     pub fn new() -> Self {
         Self::default()
@@ -968,7 +1014,7 @@ impl<'a, I: Ids, Message, Renderer> NodeGraph<'a, I, Message, Renderer> {
     /// push with the id wins) and debug builds assert on it. Prefer a stable id
     /// from your data (a DB key, `uuid::Uuid`, a typed newtype) over a
     /// hand-managed counter.
-    pub fn push_node(mut self, node: Node<'a, I, Message, Renderer>) -> Self {
+    pub fn push_node(mut self, node: Node<'a, I, Message, Theme, Renderer>) -> Self {
         if self.node_lookup.contains_key(&node.id) {
             debug_assert!(
                 false,
@@ -984,7 +1030,10 @@ impl<'a, I: Ids, Message, Renderer> NodeGraph<'a, I, Message, Renderer> {
 
     /// Adds every node of an iterator, as [`push_node`](Self::push_node) would
     /// one by one.
-    pub fn nodes(self, nodes: impl IntoIterator<Item = Node<'a, I, Message, Renderer>>) -> Self {
+    pub fn nodes(
+        self,
+        nodes: impl IntoIterator<Item = Node<'a, I, Message, Theme, Renderer>>,
+    ) -> Self {
         nodes.into_iter().fold(self, Self::push_node)
     }
 
@@ -994,7 +1043,7 @@ impl<'a, I: Ids, Message, Renderer> NodeGraph<'a, I, Message, Renderer> {
     /// Anchor ids are their own space, numbered from zero whatever the nodes
     /// use, and follow the same rule as [`push_node`](Self::push_node): unique,
     /// first push wins, debug builds assert on a collision.
-    pub fn push_anchor(mut self, anchor: Anchor<'a, I>) -> Self {
+    pub fn push_anchor(mut self, anchor: Anchor<'a, I, Theme>) -> Self {
         if self.anchor_lookup.contains_key(&anchor.id) {
             debug_assert!(
                 false,
@@ -1011,7 +1060,7 @@ impl<'a, I: Ids, Message, Renderer> NodeGraph<'a, I, Message, Renderer> {
 
     /// Adds every anchor of an iterator, as [`push_anchor`](Self::push_anchor)
     /// would one by one.
-    pub fn anchors(self, anchors: impl IntoIterator<Item = Anchor<'a, I>>) -> Self {
+    pub fn anchors(self, anchors: impl IntoIterator<Item = Anchor<'a, I, Theme>>) -> Self {
         anchors.into_iter().fold(self, Self::push_anchor)
     }
 
@@ -1020,14 +1069,14 @@ impl<'a, I: Ids, Message, Renderer> NodeGraph<'a, I, Message, Renderer> {
     /// The widget normalizes orientation when drawing and reporting, so the
     /// output pin is always the edge start (output -> input) regardless of the
     /// order given here.
-    pub fn push_edge(mut self, edge: Edge<'a, I>) -> Self {
+    pub fn push_edge(mut self, edge: Edge<'a, I, Theme>) -> Self {
         self.edges.push(edge);
         self
     }
 
     /// Adds every edge of an iterator, as [`push_edge`](Self::push_edge) would
     /// one by one.
-    pub fn edges(mut self, edges: impl IntoIterator<Item = Edge<'a, I>>) -> Self {
+    pub fn edges(mut self, edges: impl IntoIterator<Item = Edge<'a, I, Theme>>) -> Self {
         self.edges.extend(edges);
         self
     }
@@ -1465,8 +1514,17 @@ impl<'a, I: Ids, Message, Renderer> NodeGraph<'a, I, Message, Renderer> {
     /// [`cutting_tool_style`](Self::cutting_tool_style)), so this closure is only
     /// about the canvas itself. For a static style, ignore the theme argument:
     /// `.graph_style(|_| GraphStyle { ..base })`.
-    pub fn graph_style(mut self, f: impl Fn(&Theme) -> GraphStyle + 'a) -> Self {
-        self.graph_style = Some(Box::new(f));
+    pub fn graph_style(mut self, f: impl Fn(&Theme) -> GraphStyle + 'a) -> Self
+    where
+        Theme::GraphClass<'a>: From<GraphStyleFn<'a, Theme>>,
+    {
+        self.graph_class = (Box::new(f) as GraphStyleFn<'a, Theme>).into();
+        self
+    }
+
+    /// Sets the class the theme styles the canvas by.
+    pub fn graph_class(mut self, class: impl Into<Theme::GraphClass<'a>>) -> Self {
+        self.graph_class = class.into();
         self
     }
 
@@ -1485,15 +1543,24 @@ impl<'a, I: Ids, Message, Renderer> NodeGraph<'a, I, Message, Renderer> {
     /// use iced::Color;
     /// use iced_wgpu::Renderer;
     ///
-    /// let graph = node_graph::<(), Renderer>().selection_box_style(|theme| {
+    /// let graph = node_graph::<(), iced::Theme, Renderer>().selection_box_style(|theme| {
     ///     SelectionBoxStyle {
     ///         border_width: 2.0,
     ///         ..default_selection_box_style(theme)
     ///     }
     /// });
     /// ```
-    pub fn selection_box_style(mut self, f: impl Fn(&Theme) -> SelectionBoxStyle + 'a) -> Self {
-        self.selection_box_style = Some(Box::new(f));
+    pub fn selection_box_style(mut self, f: impl Fn(&Theme) -> SelectionBoxStyle + 'a) -> Self
+    where
+        Theme::SelectionBoxClass<'a>: From<SelectionBoxStyleFn<'a, Theme>>,
+    {
+        self.selection_box_class = (Box::new(f) as SelectionBoxStyleFn<'a, Theme>).into();
+        self
+    }
+
+    /// Sets the class the theme styles the selection box by.
+    pub fn selection_box_class(mut self, class: impl Into<Theme::SelectionBoxClass<'a>>) -> Self {
+        self.selection_box_class = class.into();
         self
     }
 
@@ -1506,15 +1573,24 @@ impl<'a, I: Ids, Message, Renderer> NodeGraph<'a, I, Message, Renderer> {
     /// use iced_nodegraph::{CuttingToolStyle, default_cutting_tool_style, node_graph};
     /// use iced_wgpu::Renderer;
     ///
-    /// let graph = node_graph::<(), Renderer>().cutting_tool_style(|theme| {
+    /// let graph = node_graph::<(), iced::Theme, Renderer>().cutting_tool_style(|theme| {
     ///     CuttingToolStyle {
     ///         width: 5.0,
     ///         ..default_cutting_tool_style(theme)
     ///     }
     /// });
     /// ```
-    pub fn cutting_tool_style(mut self, f: impl Fn(&Theme) -> CuttingToolStyle + 'a) -> Self {
-        self.cutting_tool_style = Some(Box::new(f));
+    pub fn cutting_tool_style(mut self, f: impl Fn(&Theme) -> CuttingToolStyle + 'a) -> Self
+    where
+        Theme::CuttingToolClass<'a>: From<CuttingToolStyleFn<'a, Theme>>,
+    {
+        self.cutting_tool_class = (Box::new(f) as CuttingToolStyleFn<'a, Theme>).into();
+        self
+    }
+
+    /// Sets the class the theme styles the edge-cutting trail by.
+    pub fn cutting_tool_class(mut self, class: impl Into<Theme::CuttingToolClass<'a>>) -> Self {
+        self.cutting_tool_class = class.into();
         self
     }
 
@@ -1532,7 +1608,7 @@ impl<'a, I: Ids, Message, Renderer> NodeGraph<'a, I, Message, Renderer> {
     /// use iced::Size;
     /// use iced_wgpu::Renderer;
     ///
-    /// let graph = node_graph::<(), Renderer>().minimap(Minimap {
+    /// let graph = node_graph::<(), iced::Theme, Renderer>().minimap(Minimap {
     ///     size: Size::new(240.0, 160.0),
     ///     corner: Corner::TopRight,
     ///     ..Minimap::default()
@@ -1554,15 +1630,24 @@ impl<'a, I: Ids, Message, Renderer> NodeGraph<'a, I, Message, Renderer> {
     /// use iced::Color;
     /// use iced_wgpu::Renderer;
     ///
-    /// let graph = node_graph::<(), Renderer>()
+    /// let graph = node_graph::<(), iced::Theme, Renderer>()
     ///     .minimap(Minimap::default())
     ///     .minimap_style(|theme| MinimapStyle {
     ///         background: Color { a: 1.0, ..default_minimap_style(theme).background },
     ///         ..default_minimap_style(theme)
     ///     });
     /// ```
-    pub fn minimap_style(mut self, f: impl Fn(&Theme) -> MinimapStyle + 'a) -> Self {
-        self.minimap_style = Some(Box::new(f));
+    pub fn minimap_style(mut self, f: impl Fn(&Theme) -> MinimapStyle + 'a) -> Self
+    where
+        Theme::MinimapClass<'a>: From<MinimapStyleFn<'a, Theme>>,
+    {
+        self.minimap_class = (Box::new(f) as MinimapStyleFn<'a, Theme>).into();
+        self
+    }
+
+    /// Sets the class the theme styles the minimap overlay by.
+    pub fn minimap_class(mut self, class: impl Into<Theme::MinimapClass<'a>>) -> Self {
+        self.minimap_class = class.into();
         self
     }
 
@@ -1572,8 +1657,17 @@ impl<'a, I: Ids, Message, Renderer> NodeGraph<'a, I, Message, Renderer> {
     pub fn dragging_edge_style(
         mut self,
         f: impl Fn(&Theme, PinInfo<'_, I>) -> EdgeStyle + 'a,
-    ) -> Self {
-        self.dragging_edge_style = Some(Box::new(f));
+    ) -> Self
+    where
+        Theme::DragEdgeClass<'a, I>: From<DragEdgeStyleFn<'a, Theme, I>>,
+    {
+        self.drag_edge_class = (Box::new(f) as DragEdgeStyleFn<'a, Theme, I>).into();
+        self
+    }
+
+    /// Sets the class the theme styles the edge being dragged by.
+    pub fn dragging_edge_class(mut self, class: impl Into<Theme::DragEdgeClass<'a, I>>) -> Self {
+        self.drag_edge_class = class.into();
         self
     }
 
@@ -1627,7 +1721,7 @@ impl<'a, I: Ids, Message, Renderer> NodeGraph<'a, I, Message, Renderer> {
     ///     select_all: None, // disable Select All
     ///     ..Keymap::default()
     /// };
-    /// let graph = node_graph::<(), Renderer>().keymap(keymap);
+    /// let graph = node_graph::<(), iced::Theme, Renderer>().keymap(keymap);
     /// ```
     pub fn keymap(mut self, keymap: input::Keymap) -> Self {
         self.keymap = keymap;
@@ -1925,7 +2019,8 @@ mod tests {
         type Payload = ();
     }
 
-    type Graph<'a> = NodeGraph<'a, AllUsize, (), iced_widget::renderer::Renderer>;
+    type Graph<'a> =
+        NodeGraph<'a, AllUsize, (), iced_widget::core::Theme, iced_widget::renderer::Renderer>;
 
     /// Node 0 carries the output at the origin, node 1 the input 400 to the
     /// right, so the run is the positive x axis and a projection is just an x
@@ -1954,7 +2049,7 @@ mod tests {
 
     /// Rings of a fixed radius, so a test reads the ORDER of the wraps rather
     /// than their size.
-    fn ring<'g>(graph: &'g Graph<'g>) -> impl Fn(usize, u8) -> Option<edge_path::Orbit> + 'g {
+    fn ring<'g>(graph: &'g Graph<'_>) -> impl Fn(usize, u8) -> Option<edge_path::Orbit> + 'g {
         move |anchor, _orbit| {
             let position = graph.anchors.get(anchor)?.position;
             Some(edge_path::Orbit {
@@ -1967,7 +2062,7 @@ mod tests {
     /// Rings whose radius encodes the orbit index, so a test can read WHICH
     /// orbit a wrap was given rather than only where it sits.
     fn indexed_ring<'g>(
-        graph: &'g Graph<'g>,
+        graph: &'g Graph<'_>,
     ) -> impl Fn(usize, u8) -> Option<edge_path::Orbit> + 'g {
         move |anchor, orbit| {
             let position = graph.anchors.get(anchor)?.position;

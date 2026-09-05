@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The id types are one `Ids` marker instead of five type parameters.**
   `NodeGraph<'a, N, P, E, A, UI, Message, Renderer>` is now
-  `NodeGraph<'a, I, Message, Renderer>` with `I: Ids`, a trait whose
+  `NodeGraph<'a, I, Message, Theme, Renderer>` with `I: Ids`, a trait whose
   associated types name the node, pin, edge and anchor ids and the per-pin
   payload once, on a unit marker the host declares:
 
@@ -112,19 +112,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   explicit discriminants are gone with them: nothing casts a `PinShape` to its
   discriminant.
 
-- **The `Theme` type parameter is gone** from `NodeGraph`, `Node`, `Edge`,
-  `NodePin` and the style-fn types; all of them are now concrete on
-  `iced::Theme`. For `NodeGraph` the parameter was already a fiction: its
-  `Widget` and `Element` impls spelled the concrete `iced::Theme`, not a
-  generic, so no other theme could reach an `Element` - and `node_graph()`
-  declared its own `Theme` parameter that shadowed the concrete import, so
-  `node_graph::<Msg, MyTheme, R>()` compiled and handed back a graph with no
-  `Widget` impl. `NodePin` is the one type that was honestly polymorphic: its
-  `Widget`, `From` and constructor were generic over `Theme`, and that
-  capability is deliberately dropped, because a `NodePin` only ever renders
-  inside a `NodeGraph`, which is monomorphic. Drop the parameter from every
-  turbofish and type annotation; `node_graph::<Msg, Renderer>()` is the new
-  spelling.
+- **The theme is a type parameter resolved through a `Catalog`.** `NodeGraph`,
+  `Node`, `Edge`, `Anchor` and `NodePin` take `Theme` in iced's position
+  (`<Message, Theme, Renderer>`), and the widget implements
+  `Widget<Message, Theme, Renderer>` for every `Theme: Catalog`. `Catalog` is
+  the shape of `iced_widget::button::Catalog` over everything the graph draws:
+  a class type per element (`NodeClass`, `PinClass`, `EdgeClass`,
+  `DragEdgeClass`, `AnchorClass`, `GraphClass`, `SelectionBoxClass`,
+  `CuttingToolClass`, `MinimapClass`), a `default_*` per class and a resolver
+  from class plus status to the concrete style. `iced::Theme` implements it
+  with the boxed closures now exported as `NodeStyleFn`, `PinStyleFn`,
+  `EdgeStyleFn`, `DragEdgeStyleFn`, `AnchorStyleFn`, `GraphStyleFn`,
+  `SelectionBoxStyleFn`, `CuttingToolStyleFn` and `MinimapStyleFn`, so every
+  `.style(|theme, status| ..)` builder keeps compiling unchanged on
+  `iced::Theme`; each gains a `.class(..)` sibling (`Node::class`,
+  `Node::pin_class`, `Edge::class`, `Anchor::class`, `NodeGraph::graph_class`,
+  `dragging_edge_class`, `selection_box_class`, `cutting_tool_class`,
+  `minimap_class`) that takes any class the theme defines. The parameter
+  defaults to `iced::Theme` everywhere except `NodePin`, where `Renderer` has
+  no default either, so a host that spells the renderer positionally names the
+  theme before it: `NodeGraph<'_, I, Msg, iced::Theme, iced::Renderer>`,
+  `node_graph::<Msg, iced::Theme, Renderer>()`,
+  `NodeGraph::<AppIds, _, _, _>::new()`.
 
 - **`Camera2D` is no longer public.** Eight of its fourteen methods - every
   one that sets or reads pan/zoom - name a type from the crate-private `euclid`

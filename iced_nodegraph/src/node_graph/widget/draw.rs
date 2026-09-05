@@ -153,69 +153,22 @@ fn push_edge_layers(
     }
 }
 
-/// Resolves a node's style: theme base, then the optional per-node callback.
-fn resolve_node_style(
-    style_fn: Option<&NodeStyleFn<'_>>,
-    theme: &Theme,
-    status: NodeStatus,
-) -> NodeStyle {
-    match style_fn {
-        Some(f) => f(theme, status),
-        None => crate::style::default_node_style(theme, status),
-    }
-}
-
-/// Resolves an edge's style: the per-edge callback, or the built-in default.
-fn resolve_edge_style<I: Ids>(
-    style_fn: Option<&EdgeStyleFn<'_, I>>,
-    theme: &Theme,
-    status: EdgeStatus,
-    start: Option<PinInfo<'_, I>>,
-    end: Option<PinInfo<'_, I>>,
-) -> EdgeStyle {
-    match (style_fn, start, end) {
-        (Some(f), Some(s), Some(e)) => f(theme, status, s, e),
-        _ => crate::style::default_edge_style(theme, status),
-    }
-}
-
-/// Resolves an anchor's style: the per-anchor callback, or the built-in
-/// default.
-fn resolve_anchor_style(
-    style_fn: Option<&AnchorStyleFn<'_>>,
-    theme: &Theme,
-    status: AnchorStatus,
-) -> AnchorStyle {
-    match style_fn {
-        Some(f) => f(theme, status),
-        None => default_anchor_style(theme, status),
-    }
-}
-
 /// Builds the read-only [`PinInfo`] view onto a pin state.
-fn pin_info<'s, I: Ids>(state: &'s NodePinState<I::PinId, I::Payload>) -> Option<PinInfo<'s, I>> {
-    Some(PinInfo::new(
-        state.direction,
-        &state.pin_id,
-        &state.user_info,
-    ))
+fn pin_info<'s, I: Ids>(state: &'s NodePinState<I::PinId, I::Payload>) -> PinInfo<'s, I> {
+    PinInfo::new(state.direction, &state.pin_id, &state.user_info)
 }
 
-/// Resolves a pin's drawn style: theme base merged with the per-pin overlay,
-/// then the indicator fill color forced to the pin's `color`.
-fn resolve_pin_style<I: Ids>(
-    pin_style_fn: Option<&PinStyleFn<'_, I>>,
+/// Resolves a pin's style through the theme, from the owning node's pin class.
+fn resolve_pin_style<I: Ids, Theme: Catalog>(
+    theme: &Theme,
+    pin_class: &Theme::PinClass<'_, I>,
     state: &NodePinState<I::PinId, I::Payload>,
     other: Option<&NodePinState<I::PinId, I::Payload>>,
-    theme: &Theme,
     status: PinStatus,
 ) -> PinStyle {
-    if let (Some(f), Some(this)) = (pin_style_fn, pin_info::<I>(state)) {
-        let other_info = other.and_then(pin_info::<I>);
-        f(theme, &this, other_info.as_ref(), status)
-    } else {
-        crate::style::default_pin_style(theme, status)
-    }
+    let this = pin_info::<I>(state);
+    let other = other.map(pin_info::<I>);
+    theme.pin(pin_class, &this, other.as_ref(), status)
 }
 
 /// Circular pin cutouts that puncture a node body, translated by `(tx, ty)`.
@@ -229,11 +182,11 @@ fn resolve_pin_style<I: Ids>(
 /// Layout-absolute `(center, radius)` of each pin cutout - the single source for the
 /// recipe cuts (`ShapeExpr::Circle` at local offsets) that punch the pin holes,
 /// so the body and its shadow punch identical holes.
-fn pin_cutout_params<I: Ids>(
+fn pin_cutout_params<I: Ids, Theme: Catalog>(
     pins: &[PinLayout<'_, I>],
-    pin_style_fn: Option<&PinStyleFn<'_, I>>,
-    other: Option<&NodePinState<I::PinId, I::Payload>>,
     theme: &Theme,
+    pin_class: &Theme::PinClass<'_, I>,
+    other: Option<&NodePinState<I::PinId, I::Payload>>,
     offset: LayoutVector,
     mut is_valid_target: impl FnMut(usize) -> bool,
 ) -> Vec<([f32; 2], f32)> {
@@ -245,7 +198,8 @@ fn pin_cutout_params<I: Ids>(
         } else {
             PinStatus::Idle
         };
-        let pin_style = resolve_pin_style::<I>(pin_style_fn, pin_state, other, theme, pin_status);
+        let pin_style =
+            resolve_pin_style::<I, Theme>(theme, pin_class, pin_state, other, pin_status);
         let cutout_r = pin_style.cutout_radius;
         if cutout_r <= 0.01 {
             continue;
@@ -263,9 +217,10 @@ fn pin_cutout_params<I: Ids>(
     cuts
 }
 
-impl<I, Message, Renderer> NodeGraph<'_, I, Message, Renderer>
+impl<I, Message, Theme, Renderer> NodeGraph<'_, I, Message, Theme, Renderer>
 where
     I: Ids,
+    Theme: Catalog,
     Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
     /// Signature mirrors the corresponding `Widget` trait method it backs.
@@ -333,12 +288,7 @@ where
         render_context.camera_zoom = camera.zoom();
         render_context.camera_position = camera.position();
 
-        // Resolve styles
-        let resolved_graph = if let Some(ref style_fn) = self.graph_style {
-            style_fn(theme)
-        } else {
-            crate::style::default_graph_style(theme)
-        };
+        let resolved_graph = theme.graph(&self.graph_class);
 
         // Check if we're edge dragging
         let is_edge_dragging = matches!(
@@ -479,7 +429,7 @@ where
                 } else {
                     NodeStatus::Idle
                 };
-                let resolved = resolve_node_style(node.style.as_ref(), theme, status);
+                let resolved = theme.node(&node.class, status);
                 let offset = compute_node_offset(node_index);
                 let position: LayoutPoint =
                     (node_layout.bounds().position().into_euclid().to_vector() + offset).to_point();
@@ -489,11 +439,11 @@ where
                     position.x + size.width * 0.5,
                     position.y + size.height * 0.5,
                 ];
-                let cut_params = pin_cutout_params(
+                let cut_params = pin_cutout_params::<I, Theme>(
                     pins,
-                    node.pin_style.as_ref(),
-                    drag_source.as_ref(),
                     theme,
+                    &node.pin_class,
+                    drag_source.as_ref(),
                     offset,
                     |pin_idx| {
                         is_edge_dragging
@@ -564,7 +514,9 @@ where
                     exclude: *detached,
                     kind: PhantomKind::At {
                         center: [center.x, center.y],
-                        radius: default_anchor_style(theme, AnchorStatus::Idle).orbit_radius(0),
+                        radius: theme
+                            .anchor(&Theme::default_anchor(), AnchorStatus::Idle)
+                            .orbit_radius(0),
                     },
                 }
             }),
@@ -630,7 +582,7 @@ where
                 } else {
                     AnchorStatus::Idle
                 };
-                resolve_anchor_style(anchor.style.as_ref(), theme, status)
+                theme.anchor(&anchor.class, status)
             })
             .collect();
         // Hand the resolved core and radii to the interaction path, which has no
@@ -651,7 +603,7 @@ where
                 let center = cursor_layout(p);
                 (
                     [center.x, center.y],
-                    default_anchor_style(theme, AnchorStatus::Hovered),
+                    theme.anchor(&Theme::default_anchor(), AnchorStatus::Hovered),
                 )
             }),
             _ => None,
@@ -744,7 +696,7 @@ where
                 let (_, pin_state, _) = node_pins[node_idx]
                     .iter()
                     .find(|(_, state, _)| state.pin_id == pin.pin_id)?;
-                pin_info::<I>(pin_state)
+                Some(pin_info::<I>(pin_state))
             };
             let hit_edge = cable_hit.as_ref().map(|hit| match &hit.zone {
                 CableZone::End { edge, .. }
@@ -781,13 +733,13 @@ where
                 } else {
                     EdgeStatus::Idle
                 };
-                let edge_style = resolve_edge_style(
-                    edge.style.as_ref(),
-                    theme,
-                    edge_status,
-                    end_info(geometry.ends.0),
-                    end_info(geometry.ends.1),
-                );
+                // `edge_hops` already drops an edge whose endpoint does not
+                // resolve, so this never skips in practice.
+                let Some((from, to)) = end_info(geometry.ends.0).zip(end_info(geometry.ends.1))
+                else {
+                    continue;
+                };
+                let edge_style = theme.edge(&edge.class, edge_status, from, to);
 
                 let built = edge_path::build(&geometry.hops, &edge_style.curve);
                 edge_curves[geometry.edge] = edge_style.curve;
@@ -1040,13 +992,8 @@ where
                 // graph is off the window origin.
                 let end_pos: LayoutPoint = cursor_layout(cursor_pos);
 
-                let drag_edge_style = match (
-                    self.dragging_edge_style.as_ref(),
-                    pin_info::<I>(from_pin_state),
-                ) {
-                    (Some(f), Some(info)) => f(theme, info),
-                    _ => crate::style::default_edge_style(theme, EdgeStatus::Idle),
-                };
+                let drag_edge_style =
+                    theme.drag_edge(&self.drag_edge_class, pin_info::<I>(from_pin_state));
 
                 let from_side: u32 = from_pin_state.side.into();
                 let cursor_side: u32 = match from_pin_state.side {
@@ -1295,11 +1242,11 @@ where
                     } else {
                         PinStatus::Idle
                     };
-                    let pin_style = resolve_pin_style(
-                        node.pin_style.as_ref(),
+                    let pin_style = resolve_pin_style::<I, Theme>(
+                        theme,
+                        &node.pin_class,
                         pin_state,
                         drag_source.as_ref(),
-                        theme,
                         pin_status,
                     );
                     let indicator_r = pin_style.radius;
@@ -1422,10 +1369,7 @@ where
             // cursor), so the live corner must match that space.
             let cursor_world = cursor.position().map(cursor_layout).unwrap_or(*start);
 
-            let selection_box = match &self.selection_box_style {
-                Some(style_fn) => style_fn(theme),
-                None => default_selection_box_style(theme),
-            };
+            let selection_box = theme.selection_box(&self.selection_box_class);
 
             let center = [
                 (start.x + cursor_world.x) * 0.5,
@@ -1490,10 +1434,7 @@ where
             // cursor), so the live corner must match that space.
             let cursor_world = cursor.position().map(cursor_layout).unwrap_or(*start);
 
-            let cut_style = match &self.cutting_tool_style {
-                Some(style_fn) => style_fn(theme),
-                None => default_cutting_tool_style(theme),
-            };
+            let cut_style = theme.cutting_tool(&self.cutting_tool_class);
             // Screen pixels, like the selection box outline.
             let cut_width = cut_style.width / render_context.camera_zoom;
 
@@ -1661,10 +1602,7 @@ where
         // Screen space, on top of everything, no camera transform: the map is
         // chrome pinned to a corner of the widget, not content on the canvas.
         if let Some(minimap) = self.minimap.as_ref() {
-            let style = match &self.minimap_style {
-                Some(style_fn) => style_fn(theme),
-                None => default_minimap_style(theme),
-            };
+            let style = theme.minimap(&self.minimap_class);
             // Node geometry is layout-absolute and carries this frame's drag
             // offset, so a dragged node moves on the map with its body.
             let node_world = |geom: &NodeGeom| {
@@ -1700,7 +1638,7 @@ mod tests {
     use super::*;
 
     use iced_wgpu::core::widget::Widget;
-    use iced_widget::core::{Background, Color, Element, Transformation, image};
+    use iced_widget::core::{Background, Color, Element, Theme, Transformation, image};
 
     use crate::style::EdgeStyle;
     use crate::{PinDirection, PinRef, PinSide, default_edge_style, edge, node, node_pin};
@@ -1786,7 +1724,7 @@ mod tests {
             height: 300.0,
         };
 
-        let mut graph: NodeGraph<'static, Indexed, (), NullRenderer> = NodeGraph::new()
+        let mut graph: NodeGraph<'static, Indexed, (), Theme, NullRenderer> = NodeGraph::new()
             .width(Length::Fixed(SIZE.width))
             .height(Length::Fixed(SIZE.height))
             .push_node(node(

@@ -36,7 +36,7 @@ impl Ids for SimIds {
 }
 
 type Renderer = iced::Renderer;
-type Graph = NodeGraph<'static, SimIds, Msg, Renderer>;
+type Graph = NodeGraph<'static, SimIds, Msg, Theme, Renderer>;
 type Pin = PinRef<SimIds>;
 
 /// Captures every interaction callback the graph can emit.
@@ -728,7 +728,7 @@ fn cutting_an_edge_reports_its_host_id() {
         Cut(Vec<&'static str>),
     }
 
-    let mut ng: NodeGraph<'_, WireIds, M, Renderer> = NodeGraph::default()
+    let mut ng: NodeGraph<'_, WireIds, M, Theme, Renderer> = NodeGraph::default()
         .width(Length::Fill)
         .height(Length::Fill)
         .on_disconnect(M::Disconnect)

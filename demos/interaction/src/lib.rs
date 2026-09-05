@@ -414,7 +414,7 @@ impl demo_common::Demo for App {
         let theme = self.theme();
 
         let registry = self.pin_registry.clone();
-        let mut ng = ::iced_nodegraph::NodeGraph::<TypedIds, _, _>::new()
+        let mut ng = ::iced_nodegraph::NodeGraph::<TypedIds, _, _, _>::new()
             .can_connect(move |from, to| {
                 // Live snap feedback: reject self-loops, direction conflicts and
                 // type mismatches before the edge is committed on release.

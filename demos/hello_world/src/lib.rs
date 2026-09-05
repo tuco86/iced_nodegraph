@@ -1698,51 +1698,54 @@ impl demo_common::Demo for Application {
         // chain, layered over the theme-derived base each frame.
         let graph_overlay = self.computed_style.graph.clone();
 
-        let mut ng: NodeGraph<'_, HelloIds, ApplicationMessage, iced::Renderer> = NodeGraph::new()
-            .id(graph_id())
-            .on_connect(|from: PinRef<HelloIds>, to: PinRef<HelloIds>| {
-                ApplicationMessage::EdgeConnected { from, to }
-            })
-            .on_disconnect(|from: PinRef<HelloIds>, to: PinRef<HelloIds>| {
-                ApplicationMessage::EdgeDisconnected { from, to }
-            })
-            .on_edge_delete(ApplicationMessage::EdgesCut)
-            .on_move(|delta, node_ids| ApplicationMessage::NodesMoved { delta, node_ids })
-            .on_select(ApplicationMessage::SelectionChanged)
-            .on_clone(ApplicationMessage::CloneNodes)
-            .on_delete(ApplicationMessage::DeleteNodes)
-            .on_camera(|position, zoom| ApplicationMessage::CameraChanged { position, zoom })
-            .camera(self.camera_position, self.camera_zoom)
-            // A connection is valid only between opposite directions (output ->
-            // input) carrying the same data type (the pin's TypeId marker). Color
-            // and ColorQuad share the `ColorData` marker, so a color pin accepts
-            // both a picker and the ColorQuad builder; Vec2 only matches Vec2.
-            .can_connect(|from, to| from.direction() != to.direction() && from.info() == to.info())
-            // Per-node and per-edge styling flows through the `.style()` closures
-            // on the `node(..)` / `edge(..)` builders; only graph-wide chrome is
-            // configured here.
-            .selection_box_style(|theme| SelectionBoxStyle {
-                fill: iced::Color::from_rgba(0.3, 0.6, 1.0, 0.15),
-                border_color: iced::Color::from_rgb(0.3, 0.6, 1.0),
-                ..default_selection_box_style(theme)
-            })
-            .cutting_tool_style(|theme| CuttingToolStyle {
-                color: iced::Color::from_rgb(1.0, 0.3, 0.3),
-                ..default_cutting_tool_style(theme)
-            })
-            .dragging_edge_style(move |theme, source| {
-                // The loose edge takes the held pin's data-type color on both ends.
-                let base = EdgeStyle {
-                    stroke_color: ColorQuad::solid(pin_color_for(*source.info())),
-                    ..default_edge_style(theme, EdgeStatus::Idle)
-                };
-                drag_overlay.resolve_over(base)
-            })
-            .graph_style(move |theme| {
-                // With no GraphConfig connected the overlay is empty and this is
-                // exactly the widget's own default (`default_graph_style`).
-                graph_overlay.resolve_over(default_graph_style(theme))
-            });
+        let mut ng: NodeGraph<'_, HelloIds, ApplicationMessage, iced::Theme, iced::Renderer> =
+            NodeGraph::new()
+                .id(graph_id())
+                .on_connect(|from: PinRef<HelloIds>, to: PinRef<HelloIds>| {
+                    ApplicationMessage::EdgeConnected { from, to }
+                })
+                .on_disconnect(|from: PinRef<HelloIds>, to: PinRef<HelloIds>| {
+                    ApplicationMessage::EdgeDisconnected { from, to }
+                })
+                .on_edge_delete(ApplicationMessage::EdgesCut)
+                .on_move(|delta, node_ids| ApplicationMessage::NodesMoved { delta, node_ids })
+                .on_select(ApplicationMessage::SelectionChanged)
+                .on_clone(ApplicationMessage::CloneNodes)
+                .on_delete(ApplicationMessage::DeleteNodes)
+                .on_camera(|position, zoom| ApplicationMessage::CameraChanged { position, zoom })
+                .camera(self.camera_position, self.camera_zoom)
+                // A connection is valid only between opposite directions (output ->
+                // input) carrying the same data type (the pin's TypeId marker). Color
+                // and ColorQuad share the `ColorData` marker, so a color pin accepts
+                // both a picker and the ColorQuad builder; Vec2 only matches Vec2.
+                .can_connect(|from, to| {
+                    from.direction() != to.direction() && from.info() == to.info()
+                })
+                // Per-node and per-edge styling flows through the `.style()` closures
+                // on the `node(..)` / `edge(..)` builders; only graph-wide chrome is
+                // configured here.
+                .selection_box_style(|theme| SelectionBoxStyle {
+                    fill: iced::Color::from_rgba(0.3, 0.6, 1.0, 0.15),
+                    border_color: iced::Color::from_rgb(0.3, 0.6, 1.0),
+                    ..default_selection_box_style(theme)
+                })
+                .cutting_tool_style(|theme| CuttingToolStyle {
+                    color: iced::Color::from_rgb(1.0, 0.3, 0.3),
+                    ..default_cutting_tool_style(theme)
+                })
+                .dragging_edge_style(move |theme, source| {
+                    // The loose edge takes the held pin's data-type color on both ends.
+                    let base = EdgeStyle {
+                        stroke_color: ColorQuad::solid(pin_color_for(*source.info())),
+                        ..default_edge_style(theme, EdgeStatus::Idle)
+                    };
+                    drag_overlay.resolve_over(base)
+                })
+                .graph_style(move |theme| {
+                    // With no GraphConfig connected the overlay is empty and this is
+                    // exactly the widget's own default (`default_graph_style`).
+                    graph_overlay.resolve_over(default_graph_style(theme))
+                });
 
         // Add all nodes from state (in order)
         for node_id in &self.node_order {

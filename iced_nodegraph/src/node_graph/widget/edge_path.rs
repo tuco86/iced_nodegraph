@@ -3024,8 +3024,13 @@ mod tests {
         type Payload = ();
     }
 
-    type GateGraph<'a> =
-        crate::node_graph::NodeGraph<'a, GateIds, (), iced_widget::renderer::Renderer>;
+    type GateGraph<'a> = crate::node_graph::NodeGraph<
+        'a,
+        GateIds,
+        (),
+        iced_widget::core::Theme,
+        iced_widget::renderer::Renderer,
+    >;
 
     /// A linear congruential generator, so a whole scene is named by one integer
     /// and rebuilt from it.

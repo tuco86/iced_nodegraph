@@ -266,7 +266,7 @@ impl demo_common::Demo for Application {
     }
 
     fn view(&self) -> iced::Element<'_, ApplicationMessage> {
-        let mut ng = ::iced_nodegraph::NodeGraph::<TypedIds, _, _>::new()
+        let mut ng = ::iced_nodegraph::NodeGraph::<TypedIds, _, _, _>::new()
             .on_connect(|from, to| ApplicationMessage::EdgeConnected { from, to })
             .on_disconnect(|from, to| ApplicationMessage::EdgeDisconnected { from, to })
             .on_move(|delta, indices| ApplicationMessage::NodesMoved { delta, indices })

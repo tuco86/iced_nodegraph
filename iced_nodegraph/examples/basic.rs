@@ -153,7 +153,7 @@ fn gate<'a>(
     id: usize,
     pos: Point,
     body: impl Into<Element<'a, Message>>,
-) -> Node<'a, LogicIds, Message, iced::Renderer> {
+) -> Node<'a, LogicIds, Message, iced::Theme, iced::Renderer> {
     node(id, pos, container(body).width(150.0)).pin_style(pin_style)
 }
 
@@ -242,7 +242,7 @@ impl App {
 
         // The pins carry `Port`, so the graph is over `LogicIds` rather than
         // the `Indexed` vocabulary `node_graph()` builds.
-        NodeGraph::<LogicIds, _, _>::new()
+        NodeGraph::<LogicIds, _, _, _>::new()
             .on_move(|delta, ids| Message::Moved { delta, ids })
             .on_connect(|from, to| Message::Connected { from, to })
             .on_disconnect(|from, to| Message::Disconnected { from, to })

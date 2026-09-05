@@ -64,9 +64,10 @@ struct UpdateCtx<'a, 'b, 'm, Message> {
     shell: &'a mut Shell<'m, Message>,
 }
 
-impl<I, Message, Renderer> NodeGraph<'_, I, Message, Renderer>
+impl<I, Message, Theme, Renderer> NodeGraph<'_, I, Message, Theme, Renderer>
 where
     I: Ids,
+    Theme: Catalog,
     Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
     /// Signature mirrors the corresponding `Widget` trait method it backs.
@@ -2769,14 +2770,15 @@ fn core_grab_half(geometry: AnchorGeometry, zoom: f32) -> f32 {
 /// `None` for an unknown/empty target -- a no-op per the design (no camera
 /// change, no `on_camera`): an unresolvable id is skipped, `All`/`Selection`
 /// with nothing to union is empty, `Nodes`/`Edges` union whatever resolves.
-pub(super) fn resolve_focus_target<I, Message, Renderer>(
-    graph: &NodeGraph<'_, I, Message, Renderer>,
+pub(super) fn resolve_focus_target<I, Message, Theme, Renderer>(
+    graph: &NodeGraph<'_, I, Message, Theme, Renderer>,
     layout: Layout<'_>,
     state: &NodeGraphState,
     target: &FocusTarget<I>,
 ) -> Option<WorldRect>
 where
     I: Ids,
+    Theme: Catalog,
     Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
     // Node layout bounds are layout-absolute (`viewport_origin + world`,
@@ -2869,8 +2871,8 @@ where
 /// `excluded_edge` is the edge currently being re-routed (its endpoints), left out
 /// of the occupancy check so it can be dropped back onto its own input. Pass `None`
 /// when starting a fresh edge.
-fn compute_valid_targets<I, Message, Renderer>(
-    graph: &NodeGraph<'_, I, Message, Renderer>,
+fn compute_valid_targets<I, Message, Theme, Renderer>(
+    graph: &NodeGraph<'_, I, Message, Theme, Renderer>,
     tree: &Tree,
     layout: Layout<'_>,
     from_node: usize,
@@ -2879,6 +2881,7 @@ fn compute_valid_targets<I, Message, Renderer>(
 ) -> std::collections::HashSet<(usize, usize)>
 where
     I: Ids,
+    Theme: Catalog,
     Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
     let mut valid_targets = std::collections::HashSet::new();
@@ -3053,13 +3056,14 @@ pub(super) fn drag_carries(
 ///
 /// Every node the drag carries moves by this exact vector, so a group keeps its
 /// internal layout and only the grabbed node lands on the snap grid.
-pub(super) fn drag_delta<I, Message, Renderer>(
+pub(super) fn drag_delta<I, Message, Theme, Renderer>(
     state: &NodeGraphState,
-    graph: &NodeGraph<'_, I, Message, Renderer>,
+    graph: &NodeGraph<'_, I, Message, Theme, Renderer>,
     cursor_layout: LayoutPoint,
 ) -> Option<LayoutVector>
 where
     I: Ids,
+    Theme: Catalog,
 {
     let (origin, anchor) = match &state.dragging {
         Dragging::Node { node, origin, .. } => (*origin, *node),
@@ -3075,14 +3079,15 @@ where
 /// The single answer to "where does this node sit right now", read by the draw
 /// preview and by the release handlers that publish `on_move`, so what the user
 /// sees and what the host is told cannot drift apart.
-pub(super) fn drag_offset<I, Message, Renderer>(
+pub(super) fn drag_offset<I, Message, Theme, Renderer>(
     state: &NodeGraphState,
-    graph: &NodeGraph<'_, I, Message, Renderer>,
+    graph: &NodeGraph<'_, I, Message, Theme, Renderer>,
     node_index: usize,
     cursor_layout: LayoutPoint,
 ) -> LayoutVector
 where
     I: Ids,
+    Theme: Catalog,
 {
     let Some(delta) = drag_delta(state, graph, cursor_layout) else {
         return LayoutVector::zero();
@@ -3105,14 +3110,15 @@ where
 /// The modifier is read off the live state, so pressing or releasing it
 /// mid-drag takes effect on the next frame. Layout and world space differ only
 /// in origin, so a delta is the same vector in both and needs no conversion.
-fn snapped_delta<I, Message, Renderer>(
+fn snapped_delta<I, Message, Theme, Renderer>(
     state: &NodeGraphState,
-    graph: &NodeGraph<'_, I, Message, Renderer>,
+    graph: &NodeGraph<'_, I, Message, Theme, Renderer>,
     anchor: usize,
     raw: LayoutVector,
 ) -> LayoutVector
 where
     I: Ids,
+    Theme: Catalog,
 {
     let Some(spacing) = graph.snap_grid.filter(|s| *s > 0.0 && s.is_finite()) else {
         return raw;

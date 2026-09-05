@@ -80,7 +80,7 @@
 //! }
 //!
 //! fn view() -> Element<'static, Message> {
-//!     NodeGraph::<AppIds, _, _>::new()
+//!     NodeGraph::<AppIds, _, _, _>::new()
 //!         .on_connect(Message::Connected)
 //!         .push_node(node(7, Point::ORIGIN, text("seven")))
 //!         .into()
@@ -151,7 +151,7 @@
 //! # #[derive(Debug, Clone)]
 //! # enum Message {}
 //! # let (pos, body) = (Point::ORIGIN, text("body"));
-//! let n: Node<'_, Indexed, Message, iced::Renderer> = node(0, pos, body).style(|theme, status| NodeStyle {
+//! let n: Node<'_, Indexed, Message, iced::Theme, iced::Renderer> = node(0, pos, body).style(|theme, status| NodeStyle {
 //!     fill_color: ColorQuad::solid(Color::from_rgb(0.2, 0.3, 0.5)),
 //!     ..default_node_style(theme, status)
 //! });
@@ -183,7 +183,7 @@
 //! # struct MyNode { id: usize, pos: Point }
 //! # let nodes = [MyNode { id: 0, pos: Point::ORIGIN }];
 //! # let is_working = |_: usize| true;
-//! let ng = node_graph::<Message, iced::Renderer>().nodes(nodes.iter().map(|n| {
+//! let ng = node_graph::<Message, iced::Theme, iced::Renderer>().nodes(nodes.iter().map(|n| {
 //!     let working = is_working(n.id);
 //!     node(n.id, n.pos, text("body")).style(move |theme, status| {
 //!         let base = default_node_style(theme, status);
@@ -286,22 +286,33 @@ pub use style::{
     // Anchor status and style (concrete; override via struct-update over the default)
     AnchorStatus,
     AnchorStyle,
+    AnchorStyleFn,
+    // The theme-side styling contract and the closure classes `iced::Theme` uses
+    Catalog,
     // Unified color type for style fields
     ColorQuad,
     CuttingToolStyle,
+    CuttingToolStyleFn,
+    DragEdgeStyleFn,
     EdgeCurve,
     // Status enums for widget-side styling
     EdgeStatus,
     EdgeStyle,
+    EdgeStyleFn,
     GraphStyle,
+    GraphStyleFn,
     MinimapStyle,
+    MinimapStyleFn,
     NodeStatus,
     // Node/edge/pin style types (concrete; override via struct-update over defaults)
     NodeStyle,
+    NodeStyleFn,
     PinShape,
     PinStatus,
     PinStyle,
+    PinStyleFn,
     SelectionBoxStyle,
+    SelectionBoxStyleFn,
     // Tiling background (grid/dots/...) for GraphStyle
     TilingBackground,
     TilingKind,

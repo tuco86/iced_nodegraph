@@ -657,7 +657,7 @@ impl Application {
 
         // `StylingIds::EdgeId` is `usize`: each edge carries a minted id, so
         // the anchor callbacks name one that survives a removal elsewhere.
-        ::iced_nodegraph::NodeGraph::<StylingIds, _, _>::new()
+        ::iced_nodegraph::NodeGraph::<StylingIds, _, _, _>::new()
             .on_connect(|from, to| Message::EdgeConnected { from, to })
             .on_disconnect(|from, to| Message::EdgeDisconnected { from, to })
             .on_move(|delta, indices| Message::NodesMoved { delta, indices })

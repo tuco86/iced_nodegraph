@@ -14,6 +14,7 @@
 use iced_widget::core::Color;
 
 mod anchor;
+mod catalog;
 mod defaults;
 mod edge;
 mod node;
@@ -23,6 +24,10 @@ mod roles;
 mod sdf;
 
 pub use anchor::AnchorStyle;
+pub use catalog::{
+    AnchorStyleFn, Catalog, CuttingToolStyleFn, DragEdgeStyleFn, EdgeStyleFn, GraphStyleFn,
+    MinimapStyleFn, NodeStyleFn, PinStyleFn, SelectionBoxStyleFn,
+};
 pub use defaults::{
     default_anchor_style, default_cutting_tool_style, default_edge_style, default_graph_style,
     default_minimap_style, default_node_style, default_pin_style, default_selection_box_style,

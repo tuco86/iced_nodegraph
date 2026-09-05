@@ -77,7 +77,7 @@ impl<'a, Message: 'a> From<ContentProbe> for Element<'a, Message, Theme, Recorde
 
 /// The graph shape every case here builds: default ids, no pin payload, the
 /// recording renderer.
-type Graph<Msg> = NodeGraph<'static, Indexed, Msg, Recorder>;
+type Graph<Msg> = NodeGraph<'static, Indexed, Msg, Theme, Recorder>;
 
 /// Lays out a single-node graph, places it at `widget_origin`, applies the
 /// given camera (zoom, world position), draws it, and returns the recorded

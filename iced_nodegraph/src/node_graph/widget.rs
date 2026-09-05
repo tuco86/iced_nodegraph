@@ -46,7 +46,7 @@ use iced_wgpu::core::{
     Clipboard, Layout, Shell, layout, mouse, overlay, renderer,
     widget::{self, Tree, tree},
 };
-use iced_widget::core::{Element, Event, Length, Point, Rectangle, Size, Theme, Vector, keyboard};
+use iced_widget::core::{Element, Event, Length, Point, Rectangle, Size, Vector, keyboard};
 use web_time::Instant;
 
 use super::{
@@ -56,7 +56,6 @@ use super::{
     euclid::{IntoIced, LayoutVector},
     state::{CameraTween, Dragging, NodeGraphState, PressTarget, z_render_indices},
 };
-use super::{AnchorStyleFn, EdgeStyleFn, NodeStyleFn, PinStyleFn};
 use crate::{
     PinDirection, PinRef, PinSide,
     ids::{Ids, Indexed},
@@ -64,9 +63,8 @@ use crate::{
     node_graph::focus::FocusRequest,
     node_pin::{NodePinState, PinEnd, PinInfo, PinSlot},
     style::{
-        AnchorStatus, AnchorStyle, EdgeGeometry, EdgeStatus, EdgeStyle, NodeStatus, NodeStyle,
-        PinStatus, PinStyle, TilingKind, default_anchor_style, default_cutting_tool_style,
-        default_minimap_style, default_selection_box_style,
+        AnchorStatus, AnchorStyle, Catalog, EdgeGeometry, EdgeStatus, EdgeStyle, NodeStatus,
+        NodeStyle, PinStatus, PinStyle, TilingKind,
     },
 };
 use iced_nodegraph_sdf::{Pattern, SdfPrimitive, Shape, Style, Tiling};
@@ -109,10 +107,11 @@ fn pin_side_direction(side: u32) -> [f32; 2] {
     }
 }
 
-impl<I, Message, Renderer> iced_wgpu::core::Widget<Message, Theme, Renderer>
-    for NodeGraph<'_, I, Message, Renderer>
+impl<I, Message, Theme, Renderer> iced_wgpu::core::Widget<Message, Theme, Renderer>
+    for NodeGraph<'_, I, Message, Theme, Renderer>
 where
     I: Ids,
+    Theme: Catalog,
     Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
 {
     fn tag(&self) -> tree::Tag {
@@ -402,14 +401,15 @@ where
     }
 }
 
-impl<'a, I, Message, Renderer> From<NodeGraph<'a, I, Message, Renderer>>
+impl<'a, I, Message, Theme, Renderer> From<NodeGraph<'a, I, Message, Theme, Renderer>>
     for Element<'a, Message, Theme, Renderer>
 where
     I: Ids,
+    Theme: Catalog + 'a,
     Renderer: iced_wgpu::core::renderer::Renderer + 'a + iced_wgpu::primitive::Renderer,
     Message: 'static,
 {
-    fn from(graph: NodeGraph<'a, I, Message, Renderer>) -> Self {
+    fn from(graph: NodeGraph<'a, I, Message, Theme, Renderer>) -> Self {
         Element::new(graph)
     }
 }
@@ -417,9 +417,10 @@ where
 /// Creates an empty graph over the [`Indexed`] vocabulary: `usize` node, pin
 /// and anchor ids, no edge ids, no pin payload.
 ///
-/// For any other vocabulary name it once: `NodeGraph::<AppIds, _, _>::new()`.
-pub fn node_graph<'a, Message, Renderer>() -> NodeGraph<'a, Indexed, Message, Renderer>
+/// For any other vocabulary name it once: `NodeGraph::<AppIds, _, _, _>::new()`.
+pub fn node_graph<'a, Message, Theme, Renderer>() -> NodeGraph<'a, Indexed, Message, Theme, Renderer>
 where
+    Theme: Catalog,
     Renderer: iced_wgpu::core::renderer::Renderer,
 {
     NodeGraph::new()

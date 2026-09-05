@@ -11,13 +11,13 @@ use super::*;
 /// cursor back into layout-absolute space for the wrapped overlay's
 /// hit-testing (the inverse of the draw transform, mirroring
 /// [`Camera2D::cursor_screen_to_layout`]).
-pub(super) struct CameraOverlay<'a, Message, Renderer> {
+pub(super) struct CameraOverlay<'a, Message, Theme, Renderer> {
     pub(super) content: overlay::Element<'a, Message, Theme, Renderer>,
     pub(super) camera: crate::node_graph::camera::Camera2D,
 }
 
-impl<Message, Renderer> overlay::Overlay<Message, Theme, Renderer>
-    for CameraOverlay<'_, Message, Renderer>
+impl<Message, Theme, Renderer> overlay::Overlay<Message, Theme, Renderer>
+    for CameraOverlay<'_, Message, Theme, Renderer>
 where
     Renderer: iced_wgpu::core::renderer::Renderer,
 {

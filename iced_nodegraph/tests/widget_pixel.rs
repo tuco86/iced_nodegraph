@@ -49,13 +49,14 @@ fn render_one_node() -> Option<Vec<[u8; 4]>> {
     let renderer = &mut *guard;
 
     // Camera centred so the node (world origin) lands mid-viewport at zoom 1.
-    let mut graph: NodeGraph<'static, iced_nodegraph::Indexed, (), Renderer> = NodeGraph::default()
-        .width(Length::Fixed(W as f32))
-        .height(Length::Fixed(H as f32))
-        .camera(
-            Point::new(W as f32 * 0.5 - 40.0, H as f32 * 0.5 - 20.0),
-            1.0,
-        );
+    let mut graph: NodeGraph<'static, iced_nodegraph::Indexed, (), Theme, Renderer> =
+        NodeGraph::default()
+            .width(Length::Fixed(W as f32))
+            .height(Length::Fixed(H as f32))
+            .camera(
+                Point::new(W as f32 * 0.5 - 40.0, H as f32 * 0.5 - 20.0),
+                1.0,
+            );
     graph = graph.push_node(node(
         0_usize,
         Point::new(0.0, 0.0),
@@ -202,7 +203,7 @@ fn zoomout_grid_missing_nodes_at(scale: f32, frames: u32, cam: Point, zoom: f32)
     let mut px: Vec<[u8; 4]> = Vec::new();
     for _ in 0..frames.max(1) {
         // Rebuild the camera each frame, exactly as a live app does.
-        let mut graph: NodeGraph<'static, iced_nodegraph::Indexed, (), Renderer> =
+        let mut graph: NodeGraph<'static, iced_nodegraph::Indexed, (), Theme, Renderer> =
             NodeGraph::default()
                 .width(Length::Fixed(GW as f32))
                 .height(Length::Fixed(GH as f32))
@@ -371,10 +372,11 @@ fn offscreen_node_does_not_desync_later_nodes() {
     let mut worlds = vec![(700.0_f32, 120.0_f32)];
     worlds.extend_from_slice(&visible);
 
-    let mut graph: NodeGraph<'static, iced_nodegraph::Indexed, (), Renderer> = NodeGraph::default()
-        .width(Length::Fixed(GW as f32))
-        .height(Length::Fixed(GH as f32))
-        .camera(cam, zoom);
+    let mut graph: NodeGraph<'static, iced_nodegraph::Indexed, (), Theme, Renderer> =
+        NodeGraph::default()
+            .width(Length::Fixed(GW as f32))
+            .height(Length::Fixed(GH as f32))
+            .camera(cam, zoom);
     for (id, &(wx, wy)) in worlds.iter().enumerate() {
         graph = graph.push_node(
             node(
@@ -511,13 +513,14 @@ fn render_node_selection(selected: bool) -> Option<Vec<[u8; 4]>> {
     let mut guard = shared()?;
     let renderer = &mut *guard;
 
-    let mut graph: NodeGraph<'static, iced_nodegraph::Indexed, (), Renderer> = NodeGraph::default()
-        .width(Length::Fixed(W as f32))
-        .height(Length::Fixed(H as f32))
-        .camera(
-            Point::new(W as f32 * 0.5 - 40.0, H as f32 * 0.5 - 20.0),
-            1.0,
-        );
+    let mut graph: NodeGraph<'static, iced_nodegraph::Indexed, (), Theme, Renderer> =
+        NodeGraph::default()
+            .width(Length::Fixed(W as f32))
+            .height(Length::Fixed(H as f32))
+            .camera(
+                Point::new(W as f32 * 0.5 - 40.0, H as f32 * 0.5 - 20.0),
+                1.0,
+            );
     // A realistically sized body: the halo is judged relative to the node, and a
     // bare text label is an order of magnitude smaller than a real node.
     graph = graph.push_node(
@@ -583,10 +586,11 @@ fn render_pin_shape(shape: iced_nodegraph::PinShape) -> Option<Vec<[u8; 4]>> {
     let mut guard = shared()?;
     let renderer = &mut *guard;
 
-    let mut graph: NodeGraph<'static, iced_nodegraph::Indexed, (), Renderer> = NodeGraph::default()
-        .width(Length::Fixed(W as f32))
-        .height(Length::Fixed(H as f32))
-        .camera(Point::ORIGIN, 1.0);
+    let mut graph: NodeGraph<'static, iced_nodegraph::Indexed, (), Theme, Renderer> =
+        NodeGraph::default()
+            .width(Length::Fixed(W as f32))
+            .height(Length::Fixed(H as f32))
+            .camera(Point::ORIGIN, 1.0);
     graph = graph.push_node(
         node(
             0_usize,
@@ -730,12 +734,13 @@ fn render_routed_edge(scene: RouteScene) -> Option<Vec<[u8; 4]>> {
 
     const ANCHOR: usize = 9;
 
-    let mut graph: NodeGraph<'static, iced_nodegraph::Indexed, (), Renderer> = NodeGraph::default()
-        .width(Length::Fixed(W as f32))
-        .height(Length::Fixed(H as f32))
-        .camera(Point::new(20.0, 20.0), 1.0)
-        .on_connect(|_, _| ())
-        .on_anchor_move(|_id, _position| ());
+    let mut graph: NodeGraph<'static, iced_nodegraph::Indexed, (), Theme, Renderer> =
+        NodeGraph::default()
+            .width(Length::Fixed(W as f32))
+            .height(Length::Fixed(H as f32))
+            .camera(Point::new(20.0, 20.0), 1.0)
+            .on_connect(|_, _| ())
+            .on_anchor_move(|_id, _position| ());
 
     let pin_body = || {
         container(text("p"))
@@ -776,21 +781,22 @@ fn render_routed_edge(scene: RouteScene) -> Option<Vec<[u8; 4]>> {
     let mut msgs: Vec<()> = Vec::new();
     let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
     let mut clipboard = clipboard::Null;
-    let mut feed = |graph: &mut NodeGraph<'static, iced_nodegraph::Indexed, (), Renderer>,
-                    tree: &mut Tree,
-                    event: iced::Event,
-                    cursor: mouse::Cursor| {
-        graph.update(
-            tree,
-            &event,
-            layout,
-            cursor,
-            &*renderer,
-            &mut clipboard,
-            &mut shell,
-            &viewport_rect,
-        );
-    };
+    let mut feed =
+        |graph: &mut NodeGraph<'static, iced_nodegraph::Indexed, (), Theme, Renderer>,
+         tree: &mut Tree,
+         event: iced::Event,
+         cursor: mouse::Cursor| {
+            graph.update(
+                tree,
+                &event,
+                layout,
+                cursor,
+                &*renderer,
+                &mut clipboard,
+                &mut shell,
+                &viewport_rect,
+            );
+        };
     feed(
         &mut graph,
         &mut tree,
@@ -871,7 +877,7 @@ fn render_route_drag(route: &[usize], drag: bool) -> Option<Vec<[u8; 4]>> {
 
     const ANCHOR: usize = 9;
 
-    let mut graph: NodeGraph<'static, RouteIds, (), Renderer> = NodeGraph::default()
+    let mut graph: NodeGraph<'static, RouteIds, (), Theme, Renderer> = NodeGraph::default()
         .width(Length::Fixed(W as f32))
         .height(Length::Fixed(H as f32))
         .camera(Point::new(20.0, 20.0), 1.0)
@@ -1003,7 +1009,7 @@ fn render_regrab(after_detach: &[usize], at_reattach: &[usize]) -> Option<Vec<[u
     const ANCHOR: usize = 9;
 
     let scene = |route: &[usize]| {
-        let mut graph: NodeGraph<'static, RouteIds, (), Renderer> = NodeGraph::default()
+        let mut graph: NodeGraph<'static, RouteIds, (), Theme, Renderer> = NodeGraph::default()
             .width(Length::Fixed(W as f32))
             .height(Length::Fixed(H as f32))
             .camera(Point::new(20.0, 20.0), 1.0)
