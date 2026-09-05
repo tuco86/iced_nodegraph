@@ -35,6 +35,8 @@
 //!     fn theme(&self) -> Theme {
 //!         Theme::CatppuccinFrappe
 //!     }
+//!
+//!     fn set_theme(&mut self, _theme: Theme) {}
 //! }
 //!
 //! pub fn scene() -> (Box<dyn Scene>, Task<SceneMessage>) {
@@ -71,6 +73,10 @@ pub trait Demo: Sized + 'static {
     fn view(&self) -> Element<'_, Self::Message>;
 
     fn theme(&self) -> Theme;
+
+    /// Switches the demo onto `theme`, the way the documentation site follows
+    /// rustdoc's page theme; the native binaries never call it.
+    fn set_theme(&mut self, theme: Theme);
 
     fn subscription(&self) -> Subscription<Self::Message> {
         Subscription::none()
@@ -140,6 +146,7 @@ pub trait Scene {
     fn update(&mut self, message: SceneMessage) -> Task<SceneMessage>;
     fn view(&self) -> Element<'_, SceneMessage>;
     fn theme(&self) -> Theme;
+    fn set_theme(&mut self, theme: Theme);
     fn subscription(&self) -> Subscription<SceneMessage>;
 }
 
@@ -159,6 +166,10 @@ impl<A: Demo> Scene for Erased<A> {
 
     fn theme(&self) -> Theme {
         self.0.theme()
+    }
+
+    fn set_theme(&mut self, theme: Theme) {
+        self.0.set_theme(theme);
     }
 
     fn subscription(&self) -> Subscription<SceneMessage> {

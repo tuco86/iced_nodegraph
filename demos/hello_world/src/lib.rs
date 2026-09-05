@@ -1680,6 +1680,11 @@ impl demo_common::Demo for Application {
             .clone()
     }
 
+    fn set_theme(&mut self, theme: Theme) {
+        self.current_theme = theme;
+        self.palette_preview_theme = None;
+    }
+
     fn view(&self) -> iced::Element<'_, ApplicationMessage> {
         use iced_nodegraph::NodeGraph;
 

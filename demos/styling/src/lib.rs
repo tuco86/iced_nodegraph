@@ -327,6 +327,10 @@ impl Demo for Application {
         self.current_theme.clone()
     }
 
+    fn set_theme(&mut self, theme: Theme) {
+        self.current_theme = theme;
+    }
+
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::EdgeConnected { from, to } => {

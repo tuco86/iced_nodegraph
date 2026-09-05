@@ -11,7 +11,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use demo_common::{Scene, SceneMessage};
+use demo_common::{Scene, SceneMessage, rustdoc_theme};
 use iced::futures::channel::mpsc;
 use iced::futures::{SinkExt, Stream, StreamExt};
 use iced::window::settings::PlatformSpecific;
@@ -41,12 +41,14 @@ pub fn run_gallery() {
         .run();
 }
 
-/// Opens `scene` in the DOM element with id `target`, replacing it with a canvas.
+/// Opens `scene` in the DOM element with id `target`, replacing it with a
+/// canvas, on the rustdoc page theme `theme` names.
 #[wasm_bindgen]
-pub fn open_scene(target: &str, scene: &str) {
+pub fn open_scene(target: &str, scene: &str, theme: &str) {
     push(Command::Open {
         target: target.to_owned(),
         scene: scene.to_owned(),
+        theme: theme.to_owned(),
     });
 }
 
@@ -58,10 +60,28 @@ pub fn close_scene(target: &str) {
     });
 }
 
+/// Switches every live scene onto the rustdoc page theme `theme` names. A
+/// name that is not one of rustdoc's leaves every scene as it is.
+#[wasm_bindgen]
+pub fn set_theme(theme: &str) {
+    push(Command::Theme {
+        name: theme.to_owned(),
+    });
+}
+
 #[derive(Clone, Debug)]
 enum Command {
-    Open { target: String, scene: String },
-    Close { target: String },
+    Open {
+        target: String,
+        scene: String,
+        theme: String,
+    },
+    Close {
+        target: String,
+    },
+    Theme {
+        name: String,
+    },
 }
 
 /// Commands that arrived before the daemon's subscription was listening.
@@ -143,7 +163,11 @@ impl Gallery {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Command(Command::Open { target, scene }) => {
+            Message::Command(Command::Open {
+                target,
+                scene,
+                theme,
+            }) => {
                 let Some(def) = SCENES.iter().find(|def| def.name == scene) else {
                     return Task::none();
                 };
@@ -152,7 +176,10 @@ impl Gallery {
                     return Task::none();
                 }
 
-                let (scene, boot) = (def.boot)();
+                let (mut scene, boot) = (def.boot)();
+                if let Some(theme) = rustdoc_theme(&theme) {
+                    scene.set_theme(theme);
+                }
                 let (id, open) = window::open(window::Settings {
                     platform_specific: PlatformSpecific {
                         target: Some(target.clone()),
@@ -166,6 +193,15 @@ impl Gallery {
                     open.discard(),
                     boot.map(move |message| Message::Scene(id, message)),
                 ])
+            }
+            Message::Command(Command::Theme { name }) => {
+                if let Some(theme) = rustdoc_theme(&name) {
+                    for live in self.live.values_mut() {
+                        live.scene.set_theme(theme.clone());
+                    }
+                }
+
+                Task::none()
             }
             Message::Command(Command::Close { target }) => {
                 let closing = self

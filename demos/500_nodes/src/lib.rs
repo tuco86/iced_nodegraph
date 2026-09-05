@@ -265,6 +265,10 @@ impl demo_common::Demo for Application {
         self.current_theme.clone()
     }
 
+    fn set_theme(&mut self, theme: Theme) {
+        self.current_theme = theme;
+    }
+
     fn view(&self) -> iced::Element<'_, ApplicationMessage> {
         let mut ng = ::iced_nodegraph::NodeGraph::<TypedIds, _, _, _>::new()
             .on_connect(|from, to| ApplicationMessage::EdgeConnected { from, to })

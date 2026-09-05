@@ -378,6 +378,10 @@ impl demo_common::Demo for Application {
         self.current_theme.clone()
     }
 
+    fn set_theme(&mut self, theme: Theme) {
+        self.current_theme = theme;
+    }
+
     fn subscription(&self) -> Subscription<Message> {
         use iced::keyboard::key::Named;
 

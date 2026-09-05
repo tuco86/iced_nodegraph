@@ -1,10 +1,12 @@
-//! Renders every gallery scene headlessly to the PNG fallback the docs show.
+//! Renders every gallery scene headlessly to the PNG stills the docs show.
 //!
-//! Usage: `gallery_screenshots <out_dir> [scene]`. Without a scene name the
-//! process re-executes itself once per scene: one renderer means one
-//! `SdfPipeline`, and that pipeline carries frame-surviving state - the shape
-//! cache, the static-background texture cache, GPU buffers - so two scenes
-//! sharing it would corrupt each other's render.
+//! Usage: `gallery_screenshots <out_dir> [scene theme]`. Without a scene the
+//! process re-executes itself once per scene and rustdoc theme: one renderer
+//! means one `SdfPipeline`, and that pipeline carries frame-surviving state -
+//! the shape cache, the static-background texture cache, GPU buffers - so two
+//! renders sharing it would corrupt each other. Each pair lands in
+//! `<scene>.<theme>.png`; `<scene>.png` is a copy of the dark one, the file
+//! GitHub, docs.rs and the landing-page cards show.
 
 /// Rendering needs a native wgpu adapter and the `png` encoder, neither of
 /// which the package's wasm target carries; cargo still builds every bin of the
@@ -17,6 +19,7 @@ mod native {
     use std::path::Path;
     use std::process;
 
+    use demo_common::{RUSTDOC_THEMES, rustdoc_theme};
     use demo_gallery::SCENES;
     use iced_runtime::core::{
         self as core, Event, Font, Pixels, Size, clipboard, mouse,
@@ -42,11 +45,12 @@ mod native {
 
         let out_dir = args
             .next()
-            .ok_or("usage: gallery_screenshots <out_dir> [scene]")?;
+            .ok_or("usage: gallery_screenshots <out_dir> [scene theme]")?;
 
-        match args.next() {
-            Some(scene) => render(&out_dir, &scene),
-            None => render_all(&out_dir),
+        match (args.next(), args.next()) {
+            (Some(scene), Some(theme)) => render(&out_dir, &scene, &theme),
+            (None, None) => render_all(&out_dir),
+            _ => Err("usage: gallery_screenshots <out_dir> [scene theme]".into()),
         }
     }
 
@@ -56,25 +60,36 @@ mod native {
         let exe = std::env::current_exe()?;
 
         for def in SCENES {
-            let status = process::Command::new(&exe)
-                .args([out_dir, def.name])
-                .status()?;
+            for theme in RUSTDOC_THEMES {
+                let status = process::Command::new(&exe)
+                    .args([out_dir, def.name, theme])
+                    .status()?;
 
-            if !status.success() {
-                return Err(format!("rendering {} failed: {status}", def.name).into());
+                if !status.success() {
+                    return Err(format!("rendering {} ({theme}) failed: {status}", def.name).into());
+                }
             }
+
+            let out = Path::new(out_dir);
+            fs::copy(
+                out.join(format!("{}.dark.png", def.name)),
+                out.join(format!("{}.png", def.name)),
+            )?;
         }
 
         Ok(())
     }
 
-    fn render(out_dir: &str, scene: &str) -> Result<(), Box<dyn Error>> {
+    fn render(out_dir: &str, scene: &str, theme: &str) -> Result<(), Box<dyn Error>> {
         let def = SCENES
             .iter()
             .find(|def| def.name == scene)
             .ok_or_else(|| format!("unknown scene: {scene}"))?;
+        let page_theme =
+            rustdoc_theme(theme).ok_or_else(|| format!("unknown rustdoc theme: {theme}"))?;
 
-        let (scene, _boot) = (def.boot)();
+        let (mut scene, _boot) = (def.boot)();
+        scene.set_theme(page_theme.clone());
 
         let mut renderer = pollster::block_on(<iced::Renderer as Headless>::new(
             Font::with_name("Fira Sans"),
@@ -82,8 +97,6 @@ mod native {
             None,
         ))
         .ok_or("no wgpu adapter: install a Vulkan driver (CI: mesa-vulkan-drivers)")?;
-
-        let theme = scene.theme();
 
         let mut ui = UserInterface::build(
             scene.view(),
@@ -105,9 +118,9 @@ mod native {
 
         ui.draw(
             &mut renderer,
-            &theme,
+            &page_theme,
             &renderer::Style {
-                text_color: theme.palette().text,
+                text_color: page_theme.palette().text,
             },
             mouse::Cursor::Unavailable,
         );
@@ -115,9 +128,14 @@ mod native {
         let physical = Size::new((SIZE.width * SCALE) as u32, (SIZE.height * SCALE) as u32);
         // The wgpu renderer has an inherent `screenshot` taking a `Viewport`;
         // name the trait so the logical-size-plus-scale one is selected.
-        let rgba = Headless::screenshot(&mut renderer, physical, SCALE, theme.palette().background);
+        let rgba = Headless::screenshot(
+            &mut renderer,
+            physical,
+            SCALE,
+            page_theme.palette().background,
+        );
 
-        let path = Path::new(out_dir).join(format!("{}.png", def.name));
+        let path = Path::new(out_dir).join(format!("{}.{theme}.png", def.name));
         write_png(&path, physical, &rgba)?;
 
         Ok(())

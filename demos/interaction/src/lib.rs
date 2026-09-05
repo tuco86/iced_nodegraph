@@ -410,6 +410,10 @@ impl demo_common::Demo for App {
         self.theme.clone()
     }
 
+    fn set_theme(&mut self, theme: Theme) {
+        self.theme = theme;
+    }
+
     fn view(&self) -> Element<'_, Message> {
         let theme = self.theme();
 
