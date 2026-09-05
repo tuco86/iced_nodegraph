@@ -10,7 +10,13 @@
  * there is one still per theme, and a theme switch re-themes every open scene.
  */
 
-import init, { run_gallery, open_scene, close_scene, set_theme } from "./demo_gallery.js";
+import init, {
+  run_gallery,
+  open_scene,
+  close_scene,
+  set_theme,
+  keep_alive,
+} from "./demo_gallery.js";
 
 (async function () {
   const embeds = [...document.querySelectorAll(".demo-embed[data-scene]")];
@@ -66,10 +72,25 @@ import init, { run_gallery, open_scene, close_scene, set_theme } from "./demo_ga
     return;
   }
 
+  // The runtime drops its wgpu device once the last embed closes and recreates
+  // it on the next open; Firefox's WebGPU crashes on that. One never-closed
+  // one-pixel window off screen keeps the device alive for the page's lifetime.
+  const openKeepAlive = () => {
+    const holder = document.createElement("div");
+    holder.style.cssText =
+      "position:fixed;left:-8px;top:-8px;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none";
+    const mount = document.createElement("div");
+    mount.id = "demo-keepalive";
+    holder.appendChild(mount);
+    document.body.appendChild(holder);
+    keep_alive(mount.id);
+  };
+
   let ready = null;
   const ensureStarted = () =>
     (ready ??= init().then(() => {
       run_gallery();
+      openKeepAlive();
       started = true;
     }));
 

@@ -6,6 +6,13 @@
 //! [`open_scene`] and [`close_scene`] as figures enter and leave the viewport;
 //! those run outside the daemon, so they push onto a queue that a subscription
 //! drains.
+//!
+//! The runtime drops the compositor - and with it the wgpu device and queue -
+//! whenever its last window closes, and creates a fresh one on the next open.
+//! Firefox's WebGPU crashes on that churn (it keeps using the freed queue), so
+//! the loader opens one [`keep_alive`] window first: an empty scene in a
+//! one-pixel element off screen that is never closed, so the device lives as
+//! long as the page.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
@@ -60,6 +67,15 @@ pub fn close_scene(target: &str) {
     });
 }
 
+/// Opens an empty, never-closed window in the DOM element with id `target`,
+/// so the compositor outlives every embed.
+#[wasm_bindgen]
+pub fn keep_alive(target: &str) {
+    push(Command::KeepAlive {
+        target: target.to_owned(),
+    });
+}
+
 /// Switches every live scene onto the rustdoc page theme `theme` names. A
 /// name that is not one of rustdoc's leaves every scene as it is.
 #[wasm_bindgen]
@@ -81,6 +97,9 @@ enum Command {
     },
     Theme {
         name: String,
+    },
+    KeepAlive {
+        target: String,
     },
 }
 
@@ -202,6 +221,19 @@ impl Gallery {
                 }
 
                 Task::none()
+            }
+            Message::Command(Command::KeepAlive { target }) => {
+                // No `Live` entry: `view` draws nothing and `theme` answers
+                // `Dark` for a window without a scene, and `Close` cannot name
+                // it because it never had a scene.
+                let (_, open) = window::open(window::Settings {
+                    platform_specific: PlatformSpecific {
+                        target: Some(target),
+                    },
+                    ..Default::default()
+                });
+
+                open.discard()
             }
             Message::Command(Command::Close { target }) => {
                 let closing = self
