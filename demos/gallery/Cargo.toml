@@ -31,6 +31,11 @@ iced = { workspace = true, features = ["wgpu", "crisp", "thread-pool", "fira-san
 iced_runtime.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+# WebGPU offers no sRGB surface format, so iced's linear shader output would
+# reach the canvas uncorrected. `web-colors` packs colors raw instead, which
+# is what makes the live canvas match the CSS palette and the still image the
+# native screenshot tool renders through an sRGB texture.
+iced = { workspace = true, features = ["web-colors"] }
 wasm-bindgen.workspace = true
 console_error_panic_hook.workspace = true
 

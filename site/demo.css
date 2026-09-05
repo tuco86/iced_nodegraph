@@ -6,8 +6,13 @@
  * exactly where the canvas would end. `SIZE` and `SCALE` in
  * demos/gallery/src/bin/screenshots.rs mirror these numbers. */
 
-.demo-embed {
+/* rustdoc gives every direct docblock child `overflow-x: auto` through a
+ * (0,3,0) selector, which turns the figure into a scroll container and clips
+ * the frame's shadow; the attribute selector outranks it. */
+.demo-embed,
+.docblock > figure.demo-embed[data-scene] {
   margin: 2em 0;
+  overflow: visible;
 }
 
 .demo-frame {
