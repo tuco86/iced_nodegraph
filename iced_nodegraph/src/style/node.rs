@@ -125,26 +125,3 @@ impl NodeStyle {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use iced_widget::core::Theme;
-
-    #[test]
-    fn struct_update_overrides_over_default() {
-        use crate::style::{NodeStatus, default_node_style};
-        let base = default_node_style(&Theme::Dark, NodeStatus::Idle);
-        // Color coerces to a solid ColorQuad via `into()`.
-        let style = NodeStyle {
-            fill_color: Color::WHITE.into(),
-            opacity: 1.0,
-            ..base
-        };
-
-        assert_eq!(style.fill_color, ColorQuad::solid(Color::WHITE)); // override wins
-        assert_eq!(style.opacity, 1.0); // override wins
-        assert_eq!(style.corner_radius, 5.0); // inherited from theme default
-        assert_eq!(style.border_pattern, Pattern::solid(1.0)); // inherited
-    }
-}

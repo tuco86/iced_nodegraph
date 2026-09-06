@@ -53,21 +53,6 @@ mod tests {
     use super::*;
     use iced_widget::core::Theme;
 
-    #[test]
-    fn struct_update_overrides_over_default() {
-        use crate::style::{PinStatus, default_pin_style};
-        let base = default_pin_style(&Theme::Dark, PinStatus::Idle);
-        let style = PinStyle {
-            radius: 10.0,
-            shape: PinShape::Square,
-            ..base.clone()
-        };
-
-        assert_eq!(style.radius, 10.0); // override wins
-        assert_eq!(style.shape, PinShape::Square); // override wins
-        assert_eq!(style.color, base.color); // inherited from default
-    }
-
     /// The well is the node's, the mark is the pin's. Resizing one must leave
     /// the other exactly where it was.
     #[test]

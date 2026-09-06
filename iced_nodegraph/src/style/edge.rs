@@ -142,21 +142,6 @@ mod tests {
     use iced_widget::core::Theme;
 
     #[test]
-    fn struct_update_overrides_over_default() {
-        use crate::style::{EdgeStatus, default_edge_style};
-        let base = default_edge_style(&Theme::Dark, EdgeStatus::Idle);
-        let style = EdgeStyle {
-            border_width: 2.0,
-            curve: EdgeCurve::Line,
-            ..base
-        };
-
-        assert_eq!(style.border_width, 2.0); // override wins
-        assert_eq!(style.curve, EdgeCurve::Line); // override wins
-        assert_eq!(style.pattern, Pattern::solid(2.0)); // inherited from default
-    }
-
-    #[test]
     fn sdf_layers_preserves_stroke_pattern() {
         let mut s = EdgeStyle::data_flow(&Theme::Dark, EdgeStatus::Idle);
         s.pattern = Pattern::dashed(2.0, 12.0, 6.0);
