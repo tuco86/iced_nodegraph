@@ -4436,7 +4436,8 @@ fn large_boolean_fill_interior_never_hollows() {
     let pixels = r.render_frames_scissored(&frames, w, h, 1.0);
 
     // Nothing is painted behind the body here, so the gap is the cleared target.
-    let is_fill = |p: &[u8; 4]| nearer(p, written_bytes(body_fill), [0, 0, 0]);
+    let fill_bytes = written_bytes(body_fill);
+    let is_fill = |p: &[u8; 4]| nearer(p, fill_bytes, [0, 0, 0]);
     let mut worst: Option<(f32, usize, usize)> = None;
     for (fi, px) in pixels.iter().enumerate() {
         let off = owned[fi].0;
@@ -4575,7 +4576,8 @@ fn pan_sweep_keeps_node_fills_intact() {
 
     let pixels = r.render_frames_scissored(&frames, w, h, scale);
 
-    let is_fill = |p: &[u8; 4]| nearer(p, written_bytes(body), written_bytes(canvas));
+    let (body_bytes, canvas_bytes) = (written_bytes(body), written_bytes(canvas));
+    let is_fill = |p: &[u8; 4]| nearer(p, body_bytes, canvas_bytes);
     // Expected body size in PHYSICAL px.
     let exp_w = nw * zoom * scale;
     let exp_h = nh * zoom * scale;
@@ -4744,7 +4746,8 @@ fn zoomed_out_per_node_fills_all_render() {
     let px = r.render_primitives_scissored(&seq, w, h);
 
     // A fill pixel matches the opaque gray body, not the dark grid / transparent gap.
-    let is_fill = |p: &[u8; 4]| nearer(p, written_bytes(body), written_bytes(canvas));
+    let (body_bytes, canvas_bytes) = (written_bytes(body), written_bytes(canvas));
+    let is_fill = |p: &[u8; 4]| nearer(p, body_bytes, canvas_bytes);
 
     let mut empty: Vec<usize> = Vec::new();
     for (i, c) in centers.iter().enumerate() {
