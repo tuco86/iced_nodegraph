@@ -386,6 +386,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An infinite node body is a debug assertion at layout.** Node bodies are
+  laid out against unbounded limits so they shrink to their content, which
+  lets a `Length::Fill` element inside one resolve to an infinite size. That
+  used to surface as an unclosed-loop assertion over NaN geometry in
+  `iced_nodegraph_sdf` (debug) or a silently misrendered node (release);
+  debug builds now name the node in `NodeGraph::layout`.
+
 - **A `NodeGraph` works as a node body.** A graph inside a node's body
   compiled before but misbehaved in four ways: the outer graph adopted the
   inner graph's pins as its own (or hit the foreign-id assertion when the two

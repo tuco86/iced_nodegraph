@@ -256,8 +256,8 @@
 //!
 //! Give the nested graph an explicit size (`.width(Length::Fixed(..))` and
 //! `.height(..)`, or a sized `container`). Node bodies are laid out against
-//! unbounded limits, so the default `Length::Fill` resolves to an unbounded
-//! graph.
+//! unbounded limits, so the default `Length::Fill` resolves to an infinite
+//! graph, which debug builds reject at layout like any other infinite body.
 //!
 //! The inner canvas takes the presses and wheel ticks that land on it; the
 //! containing node is moved by a body region outside the inner graph, such as

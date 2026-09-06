@@ -672,6 +672,22 @@ fn a_pin_over_foreign_id_types_asserts_in_debug() {
     click(&mut ui, center(OUT_POS));
 }
 
+/// A node body is laid out against unbounded limits so it shrinks to its
+/// content, which leaves a `Length::Fill` element with nothing to fill: its
+/// size is infinite and the node has no rectangle to draw. Debug builds name
+/// the node at layout instead of failing on NaN geometry in the renderer.
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "resolved to an infinite size")]
+fn a_fill_body_asserts_in_debug() {
+    let mut ui = Simulator::new(graph_of(&[], &[], false).push_node(node(
+        0usize,
+        OUT_POS,
+        container(text("wide")).width(Length::Fill),
+    )));
+    click(&mut ui, center(OUT_POS));
+}
+
 /// Two single-pin nodes: node 0 has a Right/Output pin, node 1 a Left/Input pin.
 /// `connect_ok` drives `can_connect`; `seed_edge` pre-pushes edge 0:0 -> 1:0.
 fn pin_graph(connect_ok: bool, seed_edge: bool) -> Element<'static, Msg, Theme, Renderer> {

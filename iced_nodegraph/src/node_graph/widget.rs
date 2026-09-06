@@ -134,17 +134,26 @@ where
     ) -> layout::Node {
         let limits = limits.width(self.size.width).height(self.size.height);
         let size = limits.resolve(self.size.width, self.size.height, Size::ZERO);
-        // Use loose limits for nodes so they can shrink-to-fit their content
-        // This prevents Length::Fill children from expanding to full graph size
+        // Loose limits so a node shrinks to fit its content: a `Length::Fill`
+        // child has nothing to fill and resolves to an infinite size instead
+        // of the whole graph. Such a body has no drawable rectangle, so debug
+        // builds name the node here rather than fail three crates down in the
+        // SDF boolean over NaN geometry.
         let node_limits = layout::Limits::new(Size::ZERO, Size::INFINITE);
         let nodes = self
             .elements_iter_mut()
             .zip(&mut tree.children)
-            .map(|((position, element), node_tree)| {
-                element
+            .enumerate()
+            .map(|(node_index, ((position, element), node_tree))| {
+                let node = element
                     .as_widget_mut()
-                    .layout(node_tree, renderer, &node_limits)
-                    .move_to(position)
+                    .layout(node_tree, renderer, &node_limits);
+                debug_assert!(
+                    node.size().width.is_finite() && node.size().height.is_finite(),
+                    "node {node_index} body resolved to an infinite size {:?}: a `Length::Fill` inside a node body has nothing to fill; give the element a fixed size",
+                    node.size(),
+                );
+                node.move_to(position)
             })
             .collect();
         layout::Node::with_children(size, nodes)

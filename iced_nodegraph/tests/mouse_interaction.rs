@@ -350,7 +350,11 @@ fn a_text_input_in_a_node_asks_for_the_text_cursor() {
     graph = graph.push_node(node(
         0usize,
         world,
-        Element::from(iced_widget::text_input::<(), Theme, Recorder>("", "hello").on_input(|_| ())),
+        Element::from(
+            iced_widget::text_input::<(), Theme, Recorder>("", "hello")
+                .on_input(|_| ())
+                .width(Length::Fixed(120.0)),
+        ),
     ));
 
     let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Recorder>);
