@@ -8,10 +8,11 @@
 
 use super::*;
 use crate::node_graph::camera::Camera2D;
-use crate::node_graph::euclid::{WorldRect, WorldSize};
+use crate::node_graph::euclid::{WorldRect, WorldSize, WorldVector};
 use crate::node_graph::input::KeyAction;
 use crate::node_graph::state::AnchorGeometry;
 use crate::node_graph::{EDGE_CUT_THRESHOLD, FocusOptions, FocusTarget, PIN_CLICK_THRESHOLD};
+use euclid::Vector2D;
 use iced_widget::core::{Padding, touch, window};
 use std::collections::HashSet;
 
@@ -908,12 +909,9 @@ where
         if let Some(cursor_position) = world_cursor.position() {
             // Both ends of the delta in one space: `origin` is a world point,
             // and the cursor arrives layout-absolute.
-            let cursor = tree
-                .state
-                .downcast_ref::<NodeGraphState>()
-                .camera
-                .layout_to_world(cursor_position.into_euclid());
-            let offset = cursor - origin;
+            let state = tree.state.downcast_ref::<NodeGraphState>();
+            let cursor = state.camera.layout_to_world(cursor_position.into_euclid());
+            let offset = anchor_drag_offset(state, self, anchor_index, cursor - origin);
             let moved = offset.x.abs() > f32::EPSILON || offset.y.abs() > f32::EPSILON;
             if let Some(anchor) = self.anchors.get(anchor_index)
                 && let Some(handler) = self.on_anchor_move.as_ref()
@@ -974,9 +972,19 @@ where
                     return;
                 };
                 if let Some(handler) = self.on_resize.as_ref() {
+                    // The far corner is what lands on the grid, not the size:
+                    // a node whose origin is off-grid still gets an on-grid
+                    // right and bottom edge.
+                    let state = tree.state.downcast_ref::<NodeGraphState>();
+                    let extent = snapped_delta(
+                        state,
+                        self,
+                        self.nodes[node_index].position,
+                        LayoutVector::new(start.width + offset.x, start.height + offset.y),
+                    );
                     let size = Size::new(
-                        (start.width + offset.x).max(MIN_NODE_SIZE.width),
-                        (start.height + offset.y).max(MIN_NODE_SIZE.height),
+                        extent.x.max(MIN_NODE_SIZE.width),
+                        extent.y.max(MIN_NODE_SIZE.height),
                     );
                     shell.publish(handler(node_id, size));
                 }
@@ -3070,7 +3078,13 @@ where
         Dragging::GroupMove { origin, anchor, .. } => (*origin, *anchor),
         _ => return None,
     };
-    Some(snapped_delta(state, graph, anchor, cursor_layout - origin))
+    let origin_world = graph.nodes.get(anchor)?.position;
+    Some(snapped_delta(
+        state,
+        graph,
+        origin_world,
+        cursor_layout - origin,
+    ))
 }
 
 /// The layout-space offset the in-flight drag applies to `node_index` this
@@ -3104,18 +3118,45 @@ where
     }
 }
 
-/// `raw` adjusted so the anchor node's world origin lands on the graph's snap
-/// grid; `raw` unchanged when no grid is set or the override modifier is held.
+/// The world-space offset an in-flight anchor drag applies to `anchor_index`:
+/// `raw` snapped so the anchor lands on the graph's grid.
+///
+/// Read by the draw preview and by the release handler that publishes
+/// `on_anchor_move`, so the anchor lands where it was shown.
+pub(super) fn anchor_drag_offset<I, Message, Theme, Renderer>(
+    state: &NodeGraphState,
+    graph: &NodeGraph<'_, I, Message, Theme, Renderer>,
+    anchor_index: usize,
+    raw: WorldVector,
+) -> WorldVector
+where
+    I: Ids,
+    Theme: Catalog,
+{
+    let Some(origin) = graph
+        .anchors
+        .get(anchor_index)
+        .map(|anchor| anchor.position)
+    else {
+        return raw;
+    };
+    snapped_delta(state, graph, origin, raw)
+}
+
+/// `raw` adjusted so the world point `origin` lands on the graph's snap grid
+/// once moved by it; `raw` unchanged when no grid is set or the override
+/// modifier is held.
 ///
 /// The modifier is read off the live state, so pressing or releasing it
 /// mid-drag takes effect on the next frame. Layout and world space differ only
-/// in origin, so a delta is the same vector in both and needs no conversion.
-fn snapped_delta<I, Message, Theme, Renderer>(
+/// in origin, so a delta is the same vector in both; the unit is generic for
+/// that reason.
+pub(super) fn snapped_delta<I, Message, Theme, Renderer, U>(
     state: &NodeGraphState,
     graph: &NodeGraph<'_, I, Message, Theme, Renderer>,
-    anchor: usize,
-    raw: LayoutVector,
-) -> LayoutVector
+    origin: Point,
+    raw: Vector2D<f32, U>,
+) -> Vector2D<f32, U>
 where
     I: Ids,
     Theme: Catalog,
@@ -3123,14 +3164,11 @@ where
     let Some(spacing) = graph.snap_grid.filter(|s| *s > 0.0 && s.is_finite()) else {
         return raw;
     };
-    let Some(origin) = graph.nodes.get(anchor).map(|node| node.position) else {
-        return raw;
-    };
     if state.modifiers.contains(graph.keymap.snap_override) {
         return raw;
     }
     let snap = |from: f32, delta: f32| ((from + delta) / spacing).round() * spacing - from;
-    LayoutVector::new(snap(origin.x, raw.x), snap(origin.y, raw.y))
+    Vector2D::new(snap(origin.x, raw.x), snap(origin.y, raw.y))
 }
 
 #[cfg(test)]

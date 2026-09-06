@@ -5,11 +5,11 @@
 //! Appearance decisions (which layers a style expands into) live in
 //! [`crate::style`]; this module owns placement, culling and batching.
 
-use super::update::{CableHit, CableZone, drag_carries, drag_delta};
+use super::update::{CableHit, CableZone, anchor_drag_offset, drag_carries, drag_delta};
 use super::*;
 use crate::node_graph::euclid::{WorldRect, WorldSize};
 use crate::node_graph::state::AnchorGeometry;
-use crate::style::EdgeCurve;
+use crate::style::{ColorQuad, EdgeCurve};
 use iced_widget::core::{Border, Shadow};
 
 /// Half-extent of a [`PinShape::Square`](crate::PinShape::Square) indicator, as
@@ -485,10 +485,8 @@ where
         // centre every frame.
         let anchor_drag = match state.dragging {
             Dragging::Anchor { anchor, origin } => cursor.position().map(|p| {
-                (
-                    anchor,
-                    camera.screen_to_world().transform_point(p.into_euclid()) - origin,
-                )
+                let raw = camera.screen_to_world().transform_point(p.into_euclid()) - origin;
+                (anchor, anchor_drag_offset(state, self, anchor, raw))
             }),
             _ => None,
         };

@@ -992,13 +992,16 @@ impl<'a, I: Ids, Message, Theme: Catalog, Renderer> NodeGraph<'a, I, Message, Th
         self
     }
 
-    /// Snaps a dragged node's origin to a `spacing`-wide world grid.
+    /// Snaps a dragged node's origin, a dragged anchor's position and a
+    /// resized node's far corner to a `spacing`-wide world grid.
     ///
-    /// The preview and the delta [`on_move`](Self::on_move) reports are the
-    /// same number, so a snapped drag lands where it was shown. The delta is
-    /// computed on the grabbed node and shared by everything the drag carries,
-    /// which keeps a group's relative layout intact - only the grabbed node
-    /// ends up exactly on the grid.
+    /// The preview and the value [`on_move`](Self::on_move),
+    /// [`on_anchor_move`](Self::on_anchor_move) or
+    /// [`on_resize`](Self::on_resize) reports are the same number, so a
+    /// snapped drag lands where it was shown. A node drag's delta is computed
+    /// on the grabbed node and shared by everything the drag carries, which
+    /// keeps a group's relative layout intact - only the grabbed node ends up
+    /// exactly on the grid.
     ///
     /// Holding [`Keymap::snap_override`](crate::Keymap::snap_override) (Alt by
     /// default) suspends the snap while it is held, mid-drag included.

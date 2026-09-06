@@ -399,6 +399,43 @@ fn snapped_group_move_shares_the_grabbed_node_delta() {
     assert_eq!((delta.x, delta.y), (60.0, 20.0), "got {delta:?}");
 }
 
+/// The report is the anchor's snapped position, not the cursor's: the
+/// anchor starts off the grid and the raw drop point (142, 117) is off it too.
+#[test]
+fn anchor_drag_lands_on_the_snap_grid() {
+    let at = Point::new(105.0, 105.0);
+    let mut ng: Graph = NodeGraph::default()
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .snap_grid(GRID)
+        .on_anchor_move(Msg::AnchorMove);
+    ng = ng.push_anchor(anchor(ANCHOR_A, at));
+    let mut ui = Simulator::new(Element::from(ng));
+    drag(&mut ui, at, at + Vector::new(37.0, 12.0));
+
+    assert_eq!(
+        messages(ui),
+        vec![Msg::AnchorMove(ANCHOR_A, Point::new(160.0, 120.0))]
+    );
+}
+
+/// The far corner lands on the grid, not the size: a node whose origin is off
+/// the grid still gets on-grid right and bottom edges.
+#[test]
+fn resize_snaps_the_far_corner() {
+    let start = Point::new(10.0, 10.0);
+    let mut ui = Simulator::new(Element::from(
+        graph_of(&[(0, start)], &[], true).snap_grid(GRID),
+    ));
+    // Raw size (167, 93) puts the far corner at (177, 103); the nearest grid
+    // point is (160, 120).
+    drag(&mut ui, grip(start), grip(start) + Vector::new(107.0, 63.0));
+
+    let (id, size) = last_resize(&messages(ui)).expect("dragging the grip must emit Resize");
+    assert_eq!(id, 0);
+    assert_eq!(size, Size::new(150.0, 110.0));
+}
+
 // ---------------------------------------------------------------------------
 // Frames
 // ---------------------------------------------------------------------------
