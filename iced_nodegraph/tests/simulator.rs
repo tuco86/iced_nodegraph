@@ -647,6 +647,28 @@ fn pin_body<M: 'static>() -> iced::widget::Container<'static, M, Theme, Renderer
         .height(Length::Fixed(NODE_H))
 }
 
+/// A pin is type-erased into its node, so the graph finds it by the
+/// `(PinId, Payload)` pair of its `Ids`; a pin built over a different id type
+/// is unreachable and debug builds say so the first time the graph looks for
+/// pins - here at a press on the node - instead of silently treating the node
+/// as one without pins.
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "a pin's id and payload types")]
+fn a_pin_over_foreign_id_types_asserts_in_debug() {
+    let mut ng: NodeGraph<'static, iced_nodegraph::Indexed, Msg, Theme, Renderer> =
+        NodeGraph::default()
+            .width(Length::Fill)
+            .height(Length::Fill);
+    ng = ng.push_node(node(
+        0usize,
+        OUT_POS,
+        pin!(Right, "out", pin_body::<_>(), Output),
+    ));
+    let mut ui = Simulator::new(Element::from(ng));
+    click(&mut ui, center(OUT_POS));
+}
+
 /// Two single-pin nodes: node 0 has a Right/Output pin, node 1 a Left/Input pin.
 /// `connect_ok` drives `can_connect`; `seed_edge` pre-pushes edge 0:0 -> 1:0.
 fn pin_graph(connect_ok: bool, seed_edge: bool) -> Element<'static, Msg, Theme, Renderer> {
