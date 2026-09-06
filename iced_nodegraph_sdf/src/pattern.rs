@@ -50,6 +50,22 @@ impl Default for Pattern {
     }
 }
 
+// GPU pattern ids, mirrored in `shader.wgsl`; `wgsl_constants_match_rust`
+// checks them.
+
+/// GPU id of a solid stroke.
+pub(crate) const PATTERN_SOLID: u32 = 0;
+/// GPU id of a dashed pattern.
+pub(crate) const PATTERN_DASHED: u32 = 1;
+/// GPU id of an arrowed pattern.
+pub(crate) const PATTERN_ARROWED: u32 = 2;
+/// GPU id of a dotted pattern.
+pub(crate) const PATTERN_DOTTED: u32 = 3;
+/// GPU id of a dash-dotted pattern.
+pub(crate) const PATTERN_DASH_DOTTED: u32 = 4;
+/// GPU id of an arrow-dotted pattern.
+pub(crate) const PATTERN_ARROW_DOTTED: u32 = 5;
+
 impl Pattern {
     /// Whether this is a plain solid stroke (no dashes, dots or arrows).
     pub fn is_solid(&self) -> bool {
@@ -173,9 +189,16 @@ impl Pattern {
     /// Convert to GPU format: (pattern_type_id, thickness, param0, param1, param2, flow_speed).
     pub(crate) fn as_gpu(self) -> (u32, f32, f32, f32, f32, f32) {
         match self.pattern_type {
-            PatternType::Solid => (0, self.thickness, 0.0, 0.0, 0.0, self.flow_speed),
+            PatternType::Solid => (
+                PATTERN_SOLID,
+                self.thickness,
+                0.0,
+                0.0,
+                0.0,
+                self.flow_speed,
+            ),
             PatternType::Dashed { dash, gap, angle } => (
-                1,
+                PATTERN_DASHED,
                 self.thickness,
                 dash,
                 gap,
@@ -187,26 +210,45 @@ impl Pattern {
                 gap,
                 angle,
             } => (
-                2,
+                PATTERN_ARROWED,
                 self.thickness,
                 segment,
                 gap,
                 clamp_cap_angle(angle),
                 self.flow_speed,
             ),
-            PatternType::Dotted { spacing, radius } => {
-                (3, self.thickness, spacing, radius, 0.0, self.flow_speed)
-            }
+            PatternType::Dotted { spacing, radius } => (
+                PATTERN_DOTTED,
+                self.thickness,
+                spacing,
+                radius,
+                0.0,
+                self.flow_speed,
+            ),
             PatternType::DashDotted {
                 dash,
                 gap,
                 dot_radius,
-            } => (4, self.thickness, dash, gap, dot_radius, self.flow_speed),
+            } => (
+                PATTERN_DASH_DOTTED,
+                self.thickness,
+                dash,
+                gap,
+                dot_radius,
+                self.flow_speed,
+            ),
             PatternType::ArrowDotted {
                 segment,
                 gap,
                 dot_radius,
-            } => (5, self.thickness, segment, gap, dot_radius, self.flow_speed),
+            } => (
+                PATTERN_ARROW_DOTTED,
+                self.thickness,
+                segment,
+                gap,
+                dot_radius,
+                self.flow_speed,
+            ),
         }
     }
 }

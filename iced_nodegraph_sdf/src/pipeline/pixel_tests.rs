@@ -58,6 +58,23 @@ fn wgsl_constants_match_rust() {
     assert_eq!(get_u32("CULL_SENTINEL"), crate::primitive::CULL_SENTINEL);
     assert_eq!(get_u32("FLAG_CLOSED"), crate::compile::FLAG_CLOSED);
     assert_eq!(get_u32("ENTRY_TILING"), crate::compile::ENTRY_TILING);
+    assert_eq!(get_u32("MAX_STOPS"), crate::style::MAX_STOPS as u32);
+    assert_eq!(
+        get_u32("STYLE_FLAG_HAS_PATTERN"),
+        crate::compile::STYLE_FLAG_HAS_PATTERN
+    );
+    assert_eq!(get_u32("PATTERN_SOLID"), crate::pattern::PATTERN_SOLID);
+    assert_eq!(get_u32("PATTERN_DASHED"), crate::pattern::PATTERN_DASHED);
+    assert_eq!(get_u32("PATTERN_ARROWED"), crate::pattern::PATTERN_ARROWED);
+    assert_eq!(get_u32("PATTERN_DOTTED"), crate::pattern::PATTERN_DOTTED);
+    assert_eq!(
+        get_u32("PATTERN_DASH_DOTTED"),
+        crate::pattern::PATTERN_DASH_DOTTED
+    );
+    assert_eq!(
+        get_u32("PATTERN_ARROW_DOTTED"),
+        crate::pattern::PATTERN_ARROW_DOTTED
+    );
     // f32 constants are compared as source text: the WGSL literal is written in
     // Rust's shortest round-trip form.
     let assert_f32 = |name: &str, value: f32| {

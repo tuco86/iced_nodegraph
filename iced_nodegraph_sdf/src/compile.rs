@@ -10,7 +10,8 @@ pub(crate) const FLAG_CLOSED: u32 = 1; // entry.flags
 /// `entry.entry_type` of an infinite analytic tiling (`DrawableType::Tiling`).
 pub(crate) const ENTRY_TILING: u32 = 2;
 const SEG_FLAG_SIGNED: u32 = 1; // segment.flags
-const STYLE_FLAG_HAS_PATTERN: u32 = 1;
+/// `style.flags` bit 0: the style carries a stroke pattern.
+pub(crate) const STYLE_FLAG_HAS_PATTERN: u32 = 1;
 /// The style-independent per-shape metadata an entry needs beyond the segment
 /// range: everything [`entry_from_meta`] reads that would otherwise require the
 /// evaluated [`Drawable`]. The pipeline stores this alongside a resident
