@@ -36,6 +36,9 @@ pub struct AnchorStyle {
     pub ring_color: ColorQuad,
     /// Ring stroke width.
     pub ring_width: f32,
+    /// Ring color of the orbit a route drag would land on: stroked one step
+    /// outside the rings the anchor carries while it is a valid target.
+    pub offered_ring_color: ColorQuad,
 }
 
 impl AnchorStyle {

@@ -150,6 +150,8 @@ pub struct EdgeOverlay {
     pub shadow_expand: Option<f32>,
     pub shadow_blur: Option<f32>,
     pub shadow_offset: Option<(f32, f32)>,
+    pub glow_color: Option<ColorQuad>,
+    pub glow_width: Option<f32>,
     pub curve: Option<EdgeCurve>,
 }
 
@@ -214,6 +216,14 @@ impl EdgeOverlay {
         self.shadow_offset = Some(v.into());
         self
     }
+    pub fn glow_color(mut self, v: impl Into<ColorQuad>) -> Self {
+        self.glow_color = Some(v.into());
+        self
+    }
+    pub fn glow_width(mut self, v: f32) -> Self {
+        self.glow_width = Some(v);
+        self
+    }
     pub fn curve(mut self, v: impl Into<EdgeCurve>) -> Self {
         self.curve = Some(v.into());
         self
@@ -236,6 +246,8 @@ impl EdgeOverlay {
             shadow_expand: self.shadow_expand.or(other.shadow_expand),
             shadow_blur: self.shadow_blur.or(other.shadow_blur),
             shadow_offset: self.shadow_offset.or(other.shadow_offset),
+            glow_color: self.glow_color.or(other.glow_color),
+            glow_width: self.glow_width.or(other.glow_width),
             curve: self.curve.or(other.curve),
         }
     }
@@ -283,6 +295,12 @@ impl EdgeOverlay {
         }
         if let Some(v) = self.shadow_offset {
             base.shadow_offset = v;
+        }
+        if let Some(v) = self.glow_color {
+            base.glow_color = v;
+        }
+        if let Some(v) = self.glow_width {
+            base.glow_width = v;
         }
         if let Some(v) = self.curve {
             base.curve = v;
@@ -466,6 +484,7 @@ pub struct AnchorOverlay {
     pub orbit_spacing: Option<f32>,
     pub ring_color: Option<ColorQuad>,
     pub ring_width: Option<f32>,
+    pub offered_ring_color: Option<ColorQuad>,
 }
 
 impl AnchorOverlay {
@@ -509,6 +528,10 @@ impl AnchorOverlay {
         self.ring_width = Some(v);
         self
     }
+    pub fn offered_ring_color(mut self, v: impl Into<ColorQuad>) -> Self {
+        self.offered_ring_color = Some(v.into());
+        self
+    }
 
     /// Layers `self` over `other`; `self` wins where set. Stays partial.
     pub fn merge(&self, other: &Self) -> Self {
@@ -522,6 +545,7 @@ impl AnchorOverlay {
             orbit_spacing: self.orbit_spacing.or(other.orbit_spacing),
             ring_color: self.ring_color.or(other.ring_color),
             ring_width: self.ring_width.or(other.ring_width),
+            offered_ring_color: self.offered_ring_color.or(other.offered_ring_color),
         }
     }
 
@@ -553,6 +577,9 @@ impl AnchorOverlay {
         }
         if let Some(v) = self.ring_width {
             base.ring_width = v;
+        }
+        if let Some(v) = self.offered_ring_color {
+            base.offered_ring_color = v;
         }
         base
     }

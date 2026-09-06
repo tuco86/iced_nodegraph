@@ -219,6 +219,11 @@ pub fn default_anchor_style(theme: &Theme, status: AnchorStatus) -> AnchorStyle 
         }
         .into(),
         ring_width: 1.0,
+        offered_ring_color: Color {
+            a: 0.1575,
+            ..roles.wire
+        }
+        .into(),
     };
 
     match status {
@@ -236,6 +241,11 @@ pub fn default_anchor_style(theme: &Theme, status: AnchorStatus) -> AnchorStyle 
             core_color: roles.valid.into(),
             ring_color: Color {
                 a: 0.7,
+                ..roles.valid
+            }
+            .into(),
+            offered_ring_color: Color {
+                a: 0.315,
                 ..roles.valid
             }
             .into(),
@@ -271,6 +281,12 @@ pub fn default_edge_style(theme: &Theme, status: EdgeStatus) -> EdgeStyle {
         shadow_expand: 0.0,
         shadow_blur: 0.0,
         shadow_offset: (0.0, 0.0),
+        glow_color: Color {
+            a: 0.45,
+            ..roles.wire
+        }
+        .into(),
+        glow_width: 6.0,
         curve: EdgeCurve::BezierCubic,
     };
 
@@ -280,6 +296,11 @@ pub fn default_edge_style(theme: &Theme, status: EdgeStatus) -> EdgeStyle {
             // An edge marked for cutting takes the cutting tool's own color, so
             // the trail and its victims read as one gesture.
             stroke_color: roles.danger.into(),
+            glow_color: Color {
+                a: 0.45,
+                ..roles.danger
+            }
+            .into(),
             ..base
         },
     }

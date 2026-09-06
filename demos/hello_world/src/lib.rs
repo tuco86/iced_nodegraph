@@ -242,6 +242,9 @@ enum ConfigOutput {
     Minimap(MinimapOverlay),
 }
 
+/// Alpha of an edge's hover glow, over the same type colors as its stroke.
+const EDGE_GLOW_OPACITY: f32 = 0.45;
+
 /// Maps a pin's data-type marker to its semantic color. Pins carry no style;
 /// the owning node colors them via `pin_style`, keyed on this.
 fn pin_color_for(ty: std::any::TypeId) -> Color {
@@ -296,6 +299,7 @@ struct ComputedCatalog {
     anchor: AnchorOverlay,
     anchor_hovered: AnchorOverlay,
     anchor_valid_target: AnchorOverlay,
+    drag_anchor: AnchorOverlay,
     graph: GraphOverlay,
     selection_box: SelectionBoxOverlay,
     cutting_tool: CuttingToolOverlay,
@@ -1068,6 +1072,11 @@ impl Application {
                     inputs.shadow_color = value.as_color_quad();
                 } else if *pin_label == epin::SHADOW_OFFSET {
                     inputs.shadow_offset = value.as_vec2();
+                // Hover glow
+                } else if *pin_label == epin::GLOW_COLOR {
+                    inputs.glow_color = value.as_color_quad();
+                } else if *pin_label == epin::GLOW_WIDTH {
+                    inputs.glow_width = value.as_float();
                 }
             }
             ConfigNodeType::PinConfig(inputs) => {
@@ -1119,6 +1128,8 @@ impl Application {
                     inputs.ring_color = value.as_color_quad();
                 } else if *pin_label == apin::RING_WIDTH {
                     inputs.ring_width = value.as_float();
+                } else if *pin_label == apin::OFFERED_RING_COLOR {
+                    inputs.offered_ring_color = value.as_color_quad();
                 }
             }
             ConfigNodeType::SelectionBoxConfig(inputs) => {
@@ -1171,7 +1182,10 @@ impl Application {
                 pin == cfg::EDGE_CONFIG || pin == cfg::EDGE_PENDING_CUT || pin == cfg::DRAG_EDGE
             }
             ConfigOutput::Anchor(_) => {
-                pin == cfg::ANCHOR || pin == cfg::ANCHOR_HOVERED || pin == cfg::ANCHOR_VALID_TARGET
+                pin == cfg::ANCHOR
+                    || pin == cfg::ANCHOR_HOVERED
+                    || pin == cfg::ANCHOR_VALID_TARGET
+                    || pin == cfg::DRAG_ANCHOR
             }
             ConfigOutput::Graph(_) => pin == cfg::GRAPH_CONFIG,
             ConfigOutput::SelectionBox(_) => pin == cfg::SELECTION_BOX,
@@ -1291,6 +1305,8 @@ impl Application {
                                     &mut computed.anchor_hovered
                                 } else if *pin == cfg::ANCHOR_VALID_TARGET {
                                     &mut computed.anchor_valid_target
+                                } else if *pin == cfg::DRAG_ANCHOR {
+                                    &mut computed.drag_anchor
                                 } else {
                                     &mut computed.anchor
                                 };
@@ -1972,6 +1988,11 @@ impl demo_common::Demo for Application {
                 .cutting_tool_style(|theme| self.cutting_tool_style(theme))
                 .minimap_style(|theme| self.minimap_style(theme))
                 .dragging_edge_style(|theme, source| self.drag_edge_style(theme, *source.info()))
+                .dragging_anchor_style(|theme, status| {
+                    self.computed
+                        .drag_anchor
+                        .resolve_over(default_anchor_style(theme, status))
+                })
                 .graph_style(|theme| self.graph_style(theme))
                 .anchors(self.anchors.iter().map(|&(id, position)| {
                     ng_anchor(id, position).style(|theme, status| self.anchor_style(theme, status))
@@ -2361,7 +2382,8 @@ impl Application {
     }
 
     /// An edge's style: the Catalog's edge class over an arc between its two
-    /// pins' data-type colors.
+    /// pins' data-type colors, with the hover glow on the same arc at
+    /// [`EDGE_GLOW_OPACITY`].
     fn edge_style(
         &self,
         theme: &Theme,
@@ -2369,8 +2391,10 @@ impl Application {
         start: std::any::TypeId,
         end: std::any::TypeId,
     ) -> EdgeStyle {
+        let type_colors = ColorQuad::arc(pin_color_for(start), pin_color_for(end));
         let base = EdgeStyle {
-            stroke_color: ColorQuad::arc(pin_color_for(start), pin_color_for(end)),
+            stroke_color: type_colors,
+            glow_color: type_colors.with_opacity(EDGE_GLOW_OPACITY),
             ..default_edge_style(theme, status)
         };
         self.computed.edge(status).resolve_over(base)
@@ -3627,6 +3651,7 @@ mod tests {
         let optional: &[(&str, PinLabel)] = &[
             ("Pin", nodes::pins::pin::COLOR),
             ("Edge", nodes::pins::edge::STROKE_COLOR),
+            ("Edge", nodes::pins::edge::GLOW_COLOR),
         ];
         let unwired = |title: &str, label: PinLabel, is_none: bool| {
             assert!(
@@ -3730,6 +3755,8 @@ mod tests {
                 nodes::pins::edge::SHADOW_OFFSET,
                 edge.shadow_offset.is_none(),
             ),
+            (nodes::pins::edge::GLOW_COLOR, edge.glow_color.is_none()),
+            (nodes::pins::edge::GLOW_WIDTH, edge.glow_width.is_none()),
         ] {
             unwired("Edge", label, none);
         }
@@ -3759,6 +3786,7 @@ mod tests {
         assert!(anchor.core_border_color.is_some() && anchor.core_border_width.is_some());
         assert!(anchor.orbit_offset.is_some() && anchor.orbit_spacing.is_some());
         assert!(anchor.core_radius.is_some());
+        assert!(anchor.offered_ring_color.is_some());
 
         let g = &app.computed.graph;
         assert!(g.background_color.is_some() && g.tiling_kind.is_some());

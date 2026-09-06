@@ -264,6 +264,7 @@ pub fn to_static_pin_label(label: &str) -> &'static str {
         s if s == cfg::ANCHOR => cfg::ANCHOR,
         s if s == cfg::ANCHOR_HOVERED => cfg::ANCHOR_HOVERED,
         s if s == cfg::ANCHOR_VALID_TARGET => cfg::ANCHOR_VALID_TARGET,
+        s if s == cfg::DRAG_ANCHOR => cfg::DRAG_ANCHOR,
         s if s == cfg::GRAPH_CONFIG => cfg::GRAPH_CONFIG,
         s if s == cfg::SELECTION_BOX => cfg::SELECTION_BOX,
         s if s == cfg::CUTTING_TOOL => cfg::CUTTING_TOOL,
@@ -309,6 +310,8 @@ pub fn to_static_pin_label(label: &str) -> &'static str {
         s if s == edge::BORDER_BACKGROUND => edge::BORDER_BACKGROUND,
         s if s == edge::SHADOW_BLUR => edge::SHADOW_BLUR,
         s if s == edge::SHADOW_EXPAND => edge::SHADOW_EXPAND,
+        s if s == edge::GLOW_COLOR => edge::GLOW_COLOR,
+        s if s == edge::GLOW_WIDTH => edge::GLOW_WIDTH,
         // Anchor config field pins
         s if s == anchor::CORE_SIZE => anchor::CORE_SIZE,
         s if s == anchor::CORE_RADIUS => anchor::CORE_RADIUS,
@@ -319,6 +322,7 @@ pub fn to_static_pin_label(label: &str) -> &'static str {
         s if s == anchor::ORBIT_SPACING => anchor::ORBIT_SPACING,
         s if s == anchor::RING_COLOR => anchor::RING_COLOR,
         s if s == anchor::RING_WIDTH => anchor::RING_WIDTH,
+        s if s == anchor::OFFERED_RING_COLOR => anchor::OFFERED_RING_COLOR,
         // Selection box / cutting tool / minimap field pins
         s if s == selection_box::FILL => selection_box::FILL,
         s if s == cutting_tool::WIDTH => cutting_tool::WIDTH,

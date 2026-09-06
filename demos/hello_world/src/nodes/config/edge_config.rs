@@ -88,6 +88,10 @@ pub struct EdgeConfigInputs {
     pub border_outline_width: Option<f32>,
     pub border_outline_color: Option<ColorQuad>,
 
+    // --- Hover glow ---
+    pub glow_color: Option<ColorQuad>,
+    pub glow_width: Option<f32>,
+
     // --- Shadow ---
     pub shadow_expand: Option<f32>,
     pub shadow_blur: Option<f32>,
@@ -115,6 +119,12 @@ impl EdgeConfigInputs {
         }
         if let Some(c) = self.stroke_outline_color {
             p = p.stroke_outline_color(c);
+        }
+        if let Some(c) = self.glow_color {
+            p = p.glow_color(c);
+        }
+        if let Some(w) = self.glow_width {
+            p = p.glow_width(w);
         }
         // Border ring
         if let Some(w) = self.border_width {
@@ -269,7 +279,9 @@ where
                 (pins::edge::THICKNESS, pins::Float),
                 (pins::edge::CURVE, pins::EdgeCurveData),
                 (pins::edge::STROKE_OUTLINE_WIDTH, pins::Float),
-                (pins::edge::STROKE_OUTLINE_COLOR, pins::ColorData)
+                (pins::edge::STROKE_OUTLINE_COLOR, pins::ColorData),
+                (pins::edge::GLOW_COLOR, pins::ColorData),
+                (pins::edge::GLOW_WIDTH, pins::Float)
             ]
             .into()
         }),
@@ -327,6 +339,28 @@ where
                     ::std::any::TypeId::of::<pins::ColorData>()
                 ),
                 color_swatch(inputs.stroke_outline_color.map(|q| q.near_start)),
+            )
+            .into(),
+            pin_row(
+                pin!(
+                    Left,
+                    pins::edge::GLOW_COLOR,
+                    text("glow color").size(10),
+                    Input,
+                    ::std::any::TypeId::of::<pins::ColorData>()
+                ),
+                color_swatch(inputs.glow_color.map(|q| q.near_start)),
+            )
+            .into(),
+            pin_row(
+                pin!(
+                    Left,
+                    pins::edge::GLOW_WIDTH,
+                    text("glow width").size(10),
+                    Input,
+                    ::std::any::TypeId::of::<pins::Float>()
+                ),
+                value_display(fmt_float(inputs.glow_width, 1)),
             )
             .into(),
         ],

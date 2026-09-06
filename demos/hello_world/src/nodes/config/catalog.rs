@@ -23,7 +23,7 @@ fn input_type(label: PinLabel) -> TypeId {
         cfg::EDGE_CONFIG | cfg::EDGE_PENDING_CUT | cfg::DRAG_EDGE => {
             TypeId::of::<pins::EdgeConfigData>()
         }
-        cfg::ANCHOR | cfg::ANCHOR_HOVERED | cfg::ANCHOR_VALID_TARGET => {
+        cfg::ANCHOR | cfg::ANCHOR_HOVERED | cfg::ANCHOR_VALID_TARGET | cfg::DRAG_ANCHOR => {
             TypeId::of::<pins::AnchorConfigData>()
         }
         cfg::GRAPH_CONFIG => TypeId::of::<pins::GraphConfigData>(),

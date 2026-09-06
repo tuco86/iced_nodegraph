@@ -20,17 +20,41 @@ use iced_widget::core::{Border, Shadow};
 /// its neighbours.
 const SQUARE_HALF_EXTENT: f32 = 0.886_226_9;
 
-/// Alpha multiplier for the one empty orbit ring an anchor offers.
+/// Strokes one orbit ring of `style` at `center` in `color`.
+fn push_ring(
+    bg: &mut SdfPrimitive,
+    center: [f32; 2],
+    radius: f32,
+    color: &ColorQuad,
+    style: &AnchorStyle,
+) {
+    let ring = Shape::circle(radius).translate(center);
+    bg.push(
+        &ring,
+        &Style::quad_stroke(color, Pattern::solid(style.ring_width)),
+        [0.0, 0.0],
+    );
+}
+
+/// Fills the anchor core and, when `core_border_width > 0`, its border.
 ///
-/// Visible enough to aim at, quiet enough that an idle anchor does not read as
-/// having a cable on it.
-const FREE_SHELL_OPACITY: f32 = 0.45;
-
-/// How much wider than its cable the hover glow is stroked.
-const GLOW_WIDTH_FACTOR: f32 = 3.0;
-
-/// Alpha of the hover glow around the cable stretch under the cursor.
-const GLOW_ALPHA: f32 = 0.45;
+/// The core is an axis-aligned rounded box: the SDF has no rotate op, so a
+/// diamond would need a primitive that does not exist.
+fn push_anchor_core(bg: &mut SdfPrimitive, center: [f32; 2], style: &AnchorStyle) {
+    let core = Shape::rounded_box([style.core_size; 2], [style.core_radius; 4]).translate(center);
+    bg.push(
+        &core,
+        &Style::quad_band(&style.core_color, -1e6, 0.0),
+        [0.0, 0.0],
+    );
+    if style.core_border_width > 0.0 {
+        bg.push(
+            &core,
+            &Style::quad_band(&style.core_border_color, -1e6, 0.0).expand(style.core_border_width),
+            [0.0, 0.0],
+        );
+    }
+}
 
 /// Intersects a shape's screen bounds with the widget's layout rectangle.
 ///
@@ -513,7 +537,7 @@ where
                     kind: PhantomKind::At {
                         center: [center.x, center.y],
                         radius: theme
-                            .anchor(&Theme::default_anchor(), AnchorStatus::Idle)
+                            .anchor(&self.drag_anchor_class, AnchorStatus::Idle)
                             .orbit_radius(0),
                     },
                 }
@@ -601,7 +625,7 @@ where
                 let center = cursor_layout(p);
                 (
                     [center.x, center.y],
-                    theme.anchor(&Theme::default_anchor(), AnchorStatus::Hovered),
+                    theme.anchor(&self.drag_anchor_class, AnchorStatus::Hovered),
                 )
             }),
             _ => None,
@@ -742,6 +766,7 @@ where
                 let built = edge_path::build(&geometry.hops, &edge_style.curve);
                 edge_curves[geometry.edge] = edge_style.curve;
                 if hit_edge == Some(geometry.edge)
+                    && edge_style.glow_width > 0.0
                     && let Some(hit) = cable_hit.as_ref()
                 {
                     let glow_path = built.path.slice(hit.window.0, hit.window.1);
@@ -749,8 +774,8 @@ where
                         hover_glow = Some((
                             glow_path.into_shape(),
                             Style::quad_stroke(
-                                &edge_style.stroke_color.with_opacity(GLOW_ALPHA),
-                                Pattern::solid(edge_style.pattern.thickness * GLOW_WIDTH_FACTOR),
+                                &edge_style.glow_color,
+                                Pattern::solid(edge_style.glow_width),
                             ),
                         ));
                     }
@@ -784,33 +809,18 @@ where
             state.edge_curves.replace(edge_curves);
 
             // z3: anchor cores and orbit rings, in front of the cables wrapping
-            // them (the node bodies of Layer 4 still cover both). The core is an
-            // axis-aligned rounded box: the SDF has no rotate op, so a diamond
-            // would need a primitive that does not exist.
+            // them (the node bodies of Layer 4 still cover both).
             if let Some((center, style)) = &phantom_visual {
                 if style.ring_width > 0.0 {
-                    let ring = Shape::circle(style.orbit_radius(0)).translate(*center);
-                    bg.push(
-                        &ring,
-                        &Style::quad_stroke(&style.ring_color, Pattern::solid(style.ring_width)),
-                        [0.0, 0.0],
+                    push_ring(
+                        &mut bg,
+                        *center,
+                        style.orbit_radius(0),
+                        &style.ring_color,
+                        style,
                     );
                 }
-                let core = Shape::rounded_box([style.core_size; 2], [style.core_radius; 4])
-                    .translate(*center);
-                bg.push(
-                    &core,
-                    &Style::quad_band(&style.core_color, -1e6, 0.0),
-                    [0.0, 0.0],
-                );
-                if style.core_border_width > 0.0 {
-                    bg.push(
-                        &core,
-                        &Style::quad_band(&style.core_border_color, -1e6, 0.0)
-                            .expand(style.core_border_width),
-                        [0.0, 0.0],
-                    );
-                }
+                push_anchor_core(&mut bg, *center, style);
             }
             for (anchor_idx, style) in anchor_styles.iter().enumerate() {
                 let center = anchor_layouts[anchor_idx];
@@ -821,53 +831,35 @@ where
                         let Ok(orbit) = u8::try_from(orbit) else {
                             break;
                         };
-                        let ring = Shape::circle(style.orbit_radius(orbit)).translate(center);
-                        bg.push(
-                            &ring,
-                            &Style::quad_stroke(
-                                &style.ring_color,
-                                Pattern::solid(style.ring_width),
-                            ),
-                            [0.0, 0.0],
+                        push_ring(
+                            &mut bg,
+                            center,
+                            style.orbit_radius(orbit),
+                            &style.ring_color,
+                            style,
                         );
                     }
                     // An anchor the drag could still take shows the ring the
-                    // cable would land on, dimmed and one step outside every
-                    // ring it already carries. The anchor the drag is ALREADY on
-                    // gets none: `pending` folds the drag into that anchor's
+                    // cable would land on, one step outside every ring it
+                    // already carries. The anchor the drag is ALREADY on gets
+                    // none: `pending` folds the drag into that anchor's
                     // occupancy, so the loop above has just stroked the very
                     // ring the cable rides.
                     if snapped_anchor != Some(anchor_idx)
                         && snap_eligible.contains(&anchor_idx)
                         && let Ok(offered) = u8::try_from(occupied)
                     {
-                        let ring = Shape::circle(style.orbit_radius(offered)).translate(center);
-                        bg.push(
-                            &ring,
-                            &Style::quad_stroke(
-                                &style.ring_color.with_opacity(FREE_SHELL_OPACITY),
-                                Pattern::solid(style.ring_width),
-                            ),
-                            [0.0, 0.0],
+                        push_ring(
+                            &mut bg,
+                            center,
+                            style.orbit_radius(offered),
+                            &style.offered_ring_color,
+                            style,
                         );
                     }
                 }
 
-                let core = Shape::rounded_box([style.core_size; 2], [style.core_radius; 4])
-                    .translate(center);
-                bg.push(
-                    &core,
-                    &Style::quad_band(&style.core_color, -1e6, 0.0),
-                    [0.0, 0.0],
-                );
-                if style.core_border_width > 0.0 {
-                    bg.push(
-                        &core,
-                        &Style::quad_band(&style.core_border_color, -1e6, 0.0)
-                            .expand(style.core_border_width),
-                        [0.0, 0.0],
-                    );
-                }
+                push_anchor_core(&mut bg, center, style);
             }
 
             // z2: edge strokes (frontmost in the background layer).

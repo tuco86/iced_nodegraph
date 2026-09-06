@@ -892,6 +892,8 @@ pub struct NodeGraph<
     /// The class of the edge being dragged. The graph injects the source pin's
     /// color for inheriting (TRANSPARENT) stroke ends of the resolved style.
     pub(super) drag_edge_class: Theme::DragEdgeClass<'a, I>,
+    /// The class of the phantom anchor a route drag holds at the cursor.
+    pub(super) drag_anchor_class: Theme::AnchorClass<'a>,
     /// Box-selection rectangle class.
     pub(super) selection_box_class: Theme::SelectionBoxClass<'a>,
     /// Edge-cutting trail class.
@@ -951,6 +953,7 @@ impl<I: Ids, Message, Theme: Catalog, Renderer> Default
             on_camera: None,
             on_info: None,
             drag_edge_class: Theme::default_drag_edge(),
+            drag_anchor_class: Theme::default_anchor(),
             selection_box_class: Theme::default_selection_box(),
             cutting_tool_class: Theme::default_cutting_tool(),
             minimap: None,
@@ -1671,6 +1674,26 @@ impl<'a, I: Ids, Message, Theme: Catalog, Renderer> NodeGraph<'a, I, Message, Th
     /// Sets the class the theme styles the edge being dragged by.
     pub fn dragging_edge_class(mut self, class: impl Into<Theme::DragEdgeClass<'a, I>>) -> Self {
         self.drag_edge_class = class.into();
+        self
+    }
+
+    /// Sets the style of the phantom anchor a route drag holds at the cursor.
+    /// Resolved at [`AnchorStatus::Hovered`] for its paint and at
+    /// [`AnchorStatus::Idle`] for the orbit radius the previewed cable wraps.
+    pub fn dragging_anchor_style(
+        mut self,
+        f: impl Fn(&Theme, AnchorStatus) -> AnchorStyle + 'a,
+    ) -> Self
+    where
+        Theme::AnchorClass<'a>: From<AnchorStyleFn<'a, Theme>>,
+    {
+        self.drag_anchor_class = (Box::new(f) as AnchorStyleFn<'a, Theme>).into();
+        self
+    }
+
+    /// Sets the class the theme styles the phantom anchor by.
+    pub fn dragging_anchor_class(mut self, class: impl Into<Theme::AnchorClass<'a>>) -> Self {
+        self.drag_anchor_class = class.into();
         self
     }
 

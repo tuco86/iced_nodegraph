@@ -136,10 +136,10 @@ impl Config {
     fn height(self) -> f32 {
         match self {
             Config::Node => 560.0,
-            Config::Edge => 760.0,
+            Config::Edge => 810.0,
             Config::Pin => 220.0,
             Config::Graph => 200.0,
-            Config::Anchor => 300.0,
+            Config::Anchor => 330.0,
             Config::SelectionBox => 150.0,
             Config::CuttingTool => 130.0,
             Config::Minimap => 280.0,
@@ -235,7 +235,8 @@ const FRAMES: &[Frame] = &[
         config: Config::Edge,
         // One output, two Catalog inputs: the drag edge is an EdgeStyle too.
         sinks: &[cfg::EDGE_CONFIG, cfg::DRAG_EDGE],
-        // `stroke_color` stays unwired for the same reason as the pin color.
+        // `stroke_color` and `glow_color` stay unwired for the same reason as
+        // the pin color: both follow the edge's data-type colors.
         rows: &[
             row(edge::THICKNESS, Source::F(f(0.5, 10.0, 0.5, 2.0))),
             row(edge::CURVE, Source::Curve(EdgeCurve::BezierCubic)),
@@ -272,6 +273,7 @@ const FRAMES: &[Frame] = &[
                 edge::SHADOW_OFFSET,
                 Source::Vec2(f(-20.0, 20.0, 1.0, 0.0), f(-20.0, 20.0, 1.0, 0.0)),
             ),
+            row(edge::GLOW_WIDTH, Source::F(f(0.0, 20.0, 0.5, 6.0))),
         ],
     },
     Frame {
@@ -286,7 +288,9 @@ const FRAMES: &[Frame] = &[
     Frame {
         title: "Anchor",
         config: Config::Anchor,
-        sinks: &[cfg::ANCHOR],
+        // One output, two Catalog inputs: the phantom anchor a route drag holds
+        // at the cursor is an AnchorStyle too.
+        sinks: &[cfg::ANCHOR, cfg::DRAG_ANCHOR],
         rows: &[
             row(anchor::CORE_SIZE, Source::F(f(2.0, 20.0, 1.0, 6.0))),
             row(anchor::CORE_RADIUS, Source::F(f(0.0, 10.0, 0.5, 3.0))),
@@ -303,6 +307,10 @@ const FRAMES: &[Frame] = &[
                 Source::PalA(theme_ext::PRIMARY_WEAK, 0.35),
             ),
             row(anchor::RING_WIDTH, Source::F(f(0.0, 4.0, 0.5, 1.0))),
+            row(
+                anchor::OFFERED_RING_COLOR,
+                Source::PalA(theme_ext::PRIMARY_WEAK, 0.16),
+            ),
         ],
     },
     Frame {
@@ -326,6 +334,10 @@ const FRAMES: &[Frame] = &[
             row(
                 anchor::RING_COLOR,
                 Source::PalA(theme_ext::SUCCESS_BASE, 0.7),
+            ),
+            row(
+                anchor::OFFERED_RING_COLOR,
+                Source::PalA(theme_ext::SUCCESS_BASE, 0.315),
             ),
         ],
     },

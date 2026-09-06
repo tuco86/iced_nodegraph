@@ -177,6 +177,8 @@ pub mod cfg {
     pub const ANCHOR_HOVERED: &str = "anchor:hovered";
     /// Anchor class while a route drag could attach to it
     pub const ANCHOR_VALID_TARGET: &str = "anchor:valid_target";
+    /// The phantom anchor a route drag holds at the cursor (an `AnchorStyle`)
+    pub const DRAG_ANCHOR: &str = "drag_anchor";
     /// Canvas class
     pub const GRAPH_CONFIG: &str = "graph";
     /// Selection box class
@@ -187,7 +189,7 @@ pub mod cfg {
     pub const MINIMAP: &str = "minimap";
 
     /// Every Catalog input, in row order.
-    pub const CATALOG_INPUTS: [&str; 14] = [
+    pub const CATALOG_INPUTS: [&str; 15] = [
         NODE_CONFIG,
         NODE_SELECTED,
         PIN_CONFIG,
@@ -198,6 +200,7 @@ pub mod cfg {
         ANCHOR,
         ANCHOR_HOVERED,
         ANCHOR_VALID_TARGET,
+        DRAG_ANCHOR,
         GRAPH_CONFIG,
         SELECTION_BOX,
         CUTTING_TOOL,
@@ -327,6 +330,8 @@ pub mod anchor {
     pub const RING_COLOR: &str = "ring_color";
     /// Orbit ring width input pin
     pub const RING_WIDTH: &str = "ring_width";
+    /// Offered orbit ring color input pin (the orbit a route drag would land on)
+    pub const OFFERED_RING_COLOR: &str = "offered_ring_color";
 }
 
 /// SelectionBoxConfig field pins, mirroring [`iced_nodegraph::SelectionBoxStyle`].
@@ -441,6 +446,14 @@ pub mod edge {
 
     /// Shadow offset input pin (2D vector)
     pub const SHADOW_OFFSET: &str = "shadow_offset";
+
+    // === Hover glow ===
+
+    /// Hover glow color input pin
+    pub const GLOW_COLOR: &str = "glow_color";
+
+    /// Hover glow width input pin (0 = no glow)
+    pub const GLOW_WIDTH: &str = "glow_width";
 }
 
 /// Builder node pins: combine primitive inputs into a `ColorQuad` or a 2D

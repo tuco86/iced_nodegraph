@@ -57,6 +57,12 @@ pub struct EdgeStyle {
     /// Shadow offset in world-space pixels (x, y).
     pub shadow_offset: (f32, f32),
 
+    // Hover glow: the stretch of cable under the cursor (glow_width 0 = none)
+    /// Color of the glow stroked under the cable stretch the cursor is over.
+    pub glow_color: ColorQuad,
+    /// Width of that glow stroke. 0 = no glow.
+    pub glow_width: f32,
+
     // Path
     /// Curve shape of the connection.
     pub curve: EdgeCurve,
@@ -124,13 +130,18 @@ impl EdgeStyle {
     /// stroke, so the cutting feedback wins over the preset's hue.
     fn stroked(theme: &Theme, status: EdgeStatus, hue: Color, pattern: Pattern) -> Self {
         let base = default_edge_style(theme, status);
-        let stroke_color = match status {
-            EdgeStatus::Idle => ColorQuad::solid(hue),
-            EdgeStatus::PendingCut => base.stroke_color,
+        let (stroke_color, glow_color) = match status {
+            EdgeStatus::Idle => (
+                ColorQuad::solid(hue),
+                ColorQuad::solid(Color { a: 0.45, ..hue }),
+            ),
+            EdgeStatus::PendingCut => (base.stroke_color, base.glow_color),
         };
         Self {
             stroke_color,
             pattern,
+            glow_color,
+            glow_width: pattern.thickness * 3.0,
             ..base
         }
     }

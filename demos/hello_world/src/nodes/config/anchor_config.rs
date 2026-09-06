@@ -28,6 +28,7 @@ pub struct AnchorConfigInputs {
     pub orbit_spacing: Option<f32>,
     pub ring_color: Option<ColorQuad>,
     pub ring_width: Option<f32>,
+    pub offered_ring_color: Option<ColorQuad>,
 }
 
 impl AnchorConfigInputs {
@@ -60,6 +61,9 @@ impl AnchorConfigInputs {
         }
         if let Some(v) = self.ring_width {
             a = a.ring_width(v);
+        }
+        if let Some(v) = self.offered_ring_color {
+            a = a.offered_ring_color(v);
         }
         match &self.config_in {
             Some(parent) => a.merge(parent),
@@ -200,6 +204,16 @@ where
                 ::std::any::TypeId::of::<pins::Float>()
             ),
             value_display(fmt_float(result.ring_width, 1)),
+        ),
+        pin_row(
+            pin!(
+                Left,
+                pins::anchor::OFFERED_RING_COLOR,
+                text("offered ring").size(10),
+                Input,
+                ::std::any::TypeId::of::<pins::ColorData>()
+            ),
+            color_swatch(result.offered_ring_color.map(|q| q.near_start)),
         ),
     ]
     .spacing(4);
