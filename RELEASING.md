@@ -53,15 +53,17 @@ Optionally refresh transitive dependencies in the same release
 
 ## 4. Run every gate (all must pass)
 
-Mirrors `.github/workflows/ci.yml` plus the wasm check from AGENTS.md's
-pre-push checklist:
+The pre-push list from AGENTS.md plus the two CI-only checks:
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy -p iced_nodegraph -p iced_nodegraph_sdf -- -D warnings
-cargo check -p iced_nodegraph --target wasm32-unknown-unknown
-cargo test -p iced_nodegraph
+cargo clippy -p iced_nodegraph -p iced_nodegraph_sdf --all-targets -- -D warnings
+ICED_TEST_BACKEND=tiny-skia cargo test -p iced_nodegraph
+cargo test -p iced_nodegraph --lib -- --ignored
 cargo test -p iced_nodegraph_sdf -- --test-threads=1   # GPU tests: serialize
+cargo check --workspace
+cargo check -p iced_nodegraph_bench --benches
+cargo check -p iced_nodegraph --target wasm32-unknown-unknown
 cargo deny --log-level error check
 # plus the semver-checks command from step 1
 ```

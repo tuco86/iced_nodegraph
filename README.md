@@ -90,20 +90,23 @@ cargo run --release -p demo_500_nodes
 | Disconnect | Click a connected pin to unplug | Tap a connected pin to unplug |
 | Fork edge | Shift+drag from a connected pin | - |
 | Move node | Drag node (hold Alt to ignore the snap grid) | Drag node |
-| Resize node | Drag the bottom-right grip (needs `Node::resizable`) | Drag the bottom-right grip |
+| Resize node | Drag the bottom-right grip (needs `Node::resizable`; hold Alt to ignore the snap grid) | Drag the bottom-right grip |
 | Move frame with contents | Drag a frame's empty area | Same |
 | Box select | Left drag on empty canvas | - (empty-canvas drag pans) |
 | Add to selection | Shift+click | - |
+| Clear selection | Escape | - |
 | Select all | Ctrl+A | - |
 | Clone selection | Ctrl+D (web: Alt+D) | - |
 | Delete selection | Delete / Backspace (web: Delete) | - |
+| Frame everything | Home | - |
+| Frame selection | F | - |
 | Cut edges | Ctrl+click an edge, or Ctrl+drag across edges | - |
 | Add routing anchor | Drag a cable mid-run | Same |
 | Re-route | Drag a cable where it wraps an anchor | Same |
 | Attach to anchor | Drop either drag onto an anchor | Same |
 | Detach from anchor | Right-click a cable's wrap | - |
 | Delete anchor | Right-click an anchor's core | - |
-| Move anchor | Drag an anchor's core | Same |
+| Move anchor | Drag an anchor's core (hold Alt to ignore the snap grid) | Same |
 | Jump the camera | Click in the minimap | Tap in the minimap |
 | Pan via minimap | Drag in the minimap | Drag in the minimap |
 
@@ -160,11 +163,17 @@ The workspace contains the widget (`iced_nodegraph`), the SDF renderer
 (`iced_nodegraph_sdf`), and the demos.
 
 ```bash
-cargo test --workspace
-cargo clippy --workspace -- -D warnings
-cargo bench -p iced_nodegraph      # CPU frame-prep cost at 100/500/2000 nodes
-./build_docs.sh                    # rustdoc + all demos as WASM (needs wasm-pack)
+cargo fmt --all -- --check
+cargo clippy -p iced_nodegraph -p iced_nodegraph_sdf --all-targets -- -D warnings
+ICED_TEST_BACKEND=tiny-skia cargo test -p iced_nodegraph
+cargo test -p iced_nodegraph_sdf -- --test-threads=1
+cargo bench -p iced_nodegraph_bench  # CPU shape-evaluation cost
+./build_docs.sh  # rustdoc + all demos as WASM (needs wasm-pack)
 ```
+
+[AGENTS.md](https://github.com/tuco86/iced_nodegraph/blob/main/AGENTS.md) has the
+full pre-push list, including the ignored orbit sweep and the workspace, bench
+and wasm checks.
 
 ## License
 
