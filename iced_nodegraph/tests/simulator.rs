@@ -2823,7 +2823,10 @@ const MAP_CENTER: Point = Point::new(1024.0 - 12.0 - 100.0, 768.0 - 12.0 - 75.0)
 
 /// A graph with the default minimap enabled and the callbacks a map press must
 /// not fire wired alongside the one it must.
-fn minimap_graph(nodes: &[(usize, Point)]) -> Element<'static, Msg, Theme, Renderer> {
+fn minimap_graph(
+    nodes: &[(usize, Point)],
+    anchors: &[(usize, Point)],
+) -> Element<'static, Msg, Theme, Renderer> {
     let mut ng: Graph = NodeGraph::default()
         .width(Length::Fill)
         .height(Length::Fill)
@@ -2837,7 +2840,17 @@ fn minimap_graph(nodes: &[(usize, Point)]) -> Element<'static, Msg, Theme, Rende
             .height(Length::Fixed(NODE_H));
         ng = ng.push_node(node(id, pos, body));
     }
+    for &(id, at) in anchors {
+        ng = ng.push_anchor(anchor(id, at));
+    }
     ng.into()
+}
+
+/// Whether the world point `p` lands inside the 1024x768 viewport under the
+/// camera `(position, zoom)`: screen = (world + position) * zoom.
+fn in_viewport(p: Point, position: Point, zoom: f32) -> bool {
+    let on_screen = Point::new((p.x + position.x) * zoom, (p.y + position.y) * zoom);
+    (0.0..=1024.0).contains(&on_screen.x) && (0.0..=768.0).contains(&on_screen.y)
 }
 
 /// The map's center is the center of what it shows, so a press there has to
@@ -2847,25 +2860,41 @@ fn minimap_graph(nodes: &[(usize, Point)]) -> Element<'static, Msg, Theme, Rende
 fn a_press_at_the_minimap_center_brings_the_graph_into_view() {
     const NEAR: Point = Point::new(100.0, 100.0);
     const FAR: Point = Point::new(2000.0, 1500.0);
-    let mut ui = Simulator::new(minimap_graph(&[(0, NEAR), (1, FAR)]));
+    let mut ui = Simulator::new(minimap_graph(&[(0, NEAR), (1, FAR)], &[]));
     click(&mut ui, MAP_CENTER);
 
     let msgs = messages(ui);
     let (position, zoom) = last_camera(&msgs).expect("a map press must publish a camera");
     // The center of the graph's world bounds, mapped through the published
-    // camera: screen = (world + position) * zoom.
+    // camera.
     let center = Point::new(
         (NEAR.x + FAR.x + NODE_W) / 2.0,
         (NEAR.y + FAR.y + NODE_H) / 2.0,
     );
-    let on_screen = Point::new(
-        (center.x + position.x) * zoom,
-        (center.y + position.y) * zoom,
-    );
     assert!(
-        (0.0..=1024.0).contains(&on_screen.x) && (0.0..=768.0).contains(&on_screen.y),
-        "the graph's center must land in the viewport, got {on_screen:?} \
-         from camera {position:?} at zoom {zoom}",
+        in_viewport(center, position, zoom),
+        "the graph's center must land in the viewport, got camera {position:?} at zoom {zoom}",
+    );
+}
+
+/// The map bounds what a frame-all would fit, anchors included: an anchor past
+/// every node is on the map, so the map's center is the center of node and
+/// anchor together. Bounded by nodes alone, the press would center on the
+/// lone node and leave that point off screen.
+#[test]
+fn the_minimap_bounds_anchors_beyond_every_node() {
+    const NEAR: Point = Point::new(100.0, 100.0);
+    const FAR_ANCHOR: Point = Point::new(2000.0, 1500.0);
+    let mut ui = Simulator::new(minimap_graph(&[(0, NEAR)], &[(ANCHOR_A, FAR_ANCHOR)]));
+    click(&mut ui, MAP_CENTER);
+
+    let msgs = messages(ui);
+    let (position, zoom) = last_camera(&msgs).expect("a map press must publish a camera");
+    let center = Point::new((NEAR.x + FAR_ANCHOR.x) / 2.0, (NEAR.y + FAR_ANCHOR.y) / 2.0);
+    assert!(
+        in_viewport(center, position, zoom),
+        "the node-and-anchor center must land in the viewport, got camera {position:?} \
+         at zoom {zoom}",
     );
 }
 
@@ -2874,7 +2903,7 @@ fn a_press_at_the_minimap_center_brings_the_graph_into_view() {
 #[test]
 fn a_press_on_the_minimap_never_reaches_the_node_beneath_it() {
     let covered = Point::new(MAP_CENTER.x - NODE_W / 2.0, MAP_CENTER.y - NODE_H / 2.0);
-    let mut ui = Simulator::new(minimap_graph(&[(0, covered)]));
+    let mut ui = Simulator::new(minimap_graph(&[(0, covered)], &[]));
     drag(
         &mut ui,
         MAP_CENTER,

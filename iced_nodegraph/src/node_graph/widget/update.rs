@@ -1541,6 +1541,36 @@ where
         }
     }
 
+    /// The world rect each anchor occupies, in index order: the outermost ring
+    /// it carries, or orbit 0 for one carrying no edge, the ring a bare core
+    /// sits inside. Read off the geometry the last draw published.
+    ///
+    /// An anchor has no child layout of its own, so its position is already
+    /// the world point. Framing and the minimap both bound anchors through
+    /// this, so the map shows everything a frame-all would fit.
+    pub(super) fn anchor_ring_rects(&self, state: &NodeGraphState) -> Vec<WorldRect> {
+        let anchor_geometry = state.anchor_geometry.borrow();
+        let rings = self.anchor_rings(None);
+        self.anchors
+            .iter()
+            .enumerate()
+            .map(|(index, anchor)| {
+                let orbit = u8::try_from(rings.get(index).copied().unwrap_or(0).saturating_sub(1))
+                    .unwrap_or(u8::MAX);
+                let radius = anchor_geometry
+                    .get(index)
+                    .copied()
+                    .unwrap_or_default()
+                    .orbit_radius(orbit);
+                let center = anchor.position;
+                WorldRect::new(
+                    WorldPoint::new(center.x - radius, center.y - radius),
+                    WorldSize::new(radius * 2.0, radius * 2.0),
+                )
+            })
+            .collect()
+    }
+
     /// Centers the viewport on the world point the minimap shows at `cursor`,
     /// clamped to the map, and commits it - the continuous commit wheel zoom
     /// and pinch use, since a map gesture has no single release to report.
@@ -1562,13 +1592,16 @@ where
         let map = minimap::rect(minimap, bounds);
         let visible = state.camera.visible_world_rect(bounds);
         let world = minimap::world_bounds(
-            layout.children().map(|child| {
-                let b = child.bounds();
-                WorldRect::new(
-                    state.camera.layout_to_world(LayoutPoint::new(b.x, b.y)),
-                    WorldSize::new(b.width, b.height),
-                )
-            }),
+            layout
+                .children()
+                .map(|child| {
+                    let b = child.bounds();
+                    WorldRect::new(
+                        state.camera.layout_to_world(LayoutPoint::new(b.x, b.y)),
+                        WorldSize::new(b.width, b.height),
+                    )
+                })
+                .chain(self.anchor_ring_rects(state)),
             visible,
         );
         // Outside the pane the mapping would keep scaling, so a drag that left
@@ -2827,28 +2860,8 @@ where
         Some(WorldRect::new(origin, WorldSize::new(b.width, b.height)))
     };
     let union_of = |rects: &mut dyn Iterator<Item = WorldRect>| rects.reduce(|a, b| a.union(&b));
-    let anchor_geometry = state.anchor_geometry.borrow();
-    // An anchor has no child layout of its own, so its position is already the
-    // world point, and what it occupies is the ring the frame draws around it.
-    let ring_rect = |anchor: usize, orbit: u8| -> Option<WorldRect> {
-        let center = graph.anchors.get(anchor)?.position;
-        let radius = anchor_geometry
-            .get(anchor)
-            .copied()
-            .unwrap_or_default()
-            .orbit_radius(orbit);
-        Some(WorldRect::new(
-            WorldPoint::new(center.x - radius, center.y - radius),
-            WorldSize::new(radius * 2.0, radius * 2.0),
-        ))
-    };
-    let rings = graph.anchor_rings(None);
-    // The outermost ring an anchor carries bounds it; one carrying no edge at
-    // all still bounds at orbit 0, the ring a bare core sits inside.
-    let anchor_rect = |index: usize| -> Option<WorldRect> {
-        let orbit = u8::try_from(rings.get(index)?.saturating_sub(1)).unwrap_or(u8::MAX);
-        ring_rect(index, orbit)
-    };
+    let anchor_rects = graph.anchor_ring_rects(state);
+    let anchor_rect = |index: usize| -> Option<WorldRect> { anchor_rects.get(index).copied() };
     let by_node =
         |id: &I::NodeId| -> Option<WorldRect> { graph.node_index(id).and_then(node_rect) };
     let by_anchor =

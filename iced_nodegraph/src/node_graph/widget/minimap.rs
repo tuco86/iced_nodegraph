@@ -49,18 +49,19 @@ pub(super) fn rect(minimap: &Minimap, bounds: Rectangle) -> Rectangle {
     }
 }
 
-/// The world rectangle a map covers: every node, plus what the viewport shows.
+/// The world rectangle a map covers: every node and every anchor's outermost
+/// ring, plus what the viewport shows.
 ///
 /// The visible rectangle is part of the union so the viewport marker lies
 /// inside the map by construction - including over an empty graph, where it is
 /// the entire extent and the map reads as fully covered.
 pub(super) fn world_bounds(
-    nodes: impl IntoIterator<Item = WorldRect>,
+    content: impl IntoIterator<Item = WorldRect>,
     visible: WorldRect,
 ) -> WorldRect {
-    nodes
+    content
         .into_iter()
-        .fold(visible, |whole, node| whole.union(&node))
+        .fold(visible, |whole, rect| whole.union(&rect))
 }
 
 /// The uniform, centered mapping between a map's world rectangle and its screen

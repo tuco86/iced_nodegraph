@@ -1605,7 +1605,14 @@ where
             let map = minimap::rect(minimap, layout.bounds());
             let projection = minimap::Projection::new(
                 map,
-                minimap::world_bounds(node_geoms.iter().flatten().map(node_world), visible),
+                minimap::world_bounds(
+                    node_geoms
+                        .iter()
+                        .flatten()
+                        .map(node_world)
+                        .chain(self.anchor_ring_rects(state)),
+                    visible,
+                ),
             );
             renderer.with_layer(layout.bounds(), |renderer| {
                 minimap::draw(
