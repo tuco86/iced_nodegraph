@@ -17,17 +17,13 @@
 //! Layer order matters: the first layer in a returned list is drawn closest to
 //! the viewer (lowest SDF z-order), the last is deepest.
 
+use iced_nodegraph_sdf::color::transparent;
 use iced_nodegraph_sdf::{Pattern, Stop, Style};
 use iced_widget::core::Color;
 
 use crate::node_pin::PinDirection;
 
 use super::{EdgeStyle, NodeStyle, PinStyle};
-
-/// Same color with zero alpha.
-fn transparent(c: Color) -> Color {
-    Color { a: 0.0, ..c }
-}
 
 /// Which geometry an edge layer is drawn on.
 ///

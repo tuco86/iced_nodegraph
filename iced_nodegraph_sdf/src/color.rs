@@ -11,6 +11,11 @@
 
 use iced_wgpu::core::Color;
 
+/// Same color with zero alpha.
+pub fn transparent(c: Color) -> Color {
+    Color { a: 0.0, ..c }
+}
+
 /// Four corner colors: arc-length (start/end) crossed with distance (near/far).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ColorQuad {

@@ -19,16 +19,12 @@
 
 use iced_wgpu::core::Color;
 
-use crate::color::ColorQuad;
+use crate::color::{ColorQuad, transparent};
 use crate::pattern::Pattern;
 
-/// Largest stop chain the GPU style supports. Keep in sync with `shader.wgsl`.
+/// Largest stop chain the GPU style supports. Mirrored in `shader.wgsl`;
+/// `wgsl_constants_match_rust` checks it.
 pub const MAX_STOPS: usize = 8;
-
-/// Same colour with zero alpha.
-fn transparent(c: Color) -> Color {
-    Color { a: 0.0, ..c }
-}
 
 /// One stop in a style's distance profile: an arc-length colour pair (`start`
 /// at arc 0, `end` at arc 1) placed at signed distance `dist`.
