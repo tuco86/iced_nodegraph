@@ -393,16 +393,16 @@ impl Application {
         println!(
             "{n:>6}  {mean:>7.2}  {p95:>6.2}  {:>5}  {:>10.2}  {:>7.2}  {:>8}  {:>7}  \
              {:>7.2}  {:>9.2}  {:>10.1}  {:>11.1}  {}",
-            i.sdf_draws,
-            i.sdf_shaded_px as f64 / 1e6,
-            i.sdf_segment_evals as f64 / 1e6,
-            i.sdf_fine_slots_max,
-            i.sdf_fine_evicted_tiles,
-            i.sdf_gpu_bytes as f64 / MIB,
-            i.sdf_index_bytes as f64 / MIB,
-            i.sdf_upload_bytes as f64 / 1024.0,
-            i.sdf_index_traffic_bytes as f64 / 1024.0,
-            i.sdf_cull_skipped,
+            i.sdf.sdf_draws,
+            i.sdf.shaded_px as f64 / 1e6,
+            i.sdf.segment_evals as f64 / 1e6,
+            i.sdf.fine_slots_max,
+            i.sdf.fine_evicted_tiles,
+            i.sdf.gpu_bytes as f64 / MIB,
+            i.sdf.index_bytes as f64 / MIB,
+            i.sdf.upload_bytes as f64 / 1024.0,
+            i.sdf.index_traffic_bytes as f64 / 1024.0,
+            i.sdf.cull_skipped,
         );
         self.reports += 1;
     }
@@ -420,7 +420,13 @@ impl Application {
 
         let info = self.latest_info.as_ref();
         let (nodes_c, pins_c, edges_c, entries, tiles) = match info {
-            Some(i) => (i.nodes, i.pins, i.edges, i.sdf_entries, i.sdf_tiles),
+            Some(i) => (
+                i.nodes,
+                i.pins,
+                i.edges,
+                i.sdf.entry_count,
+                i.sdf.tile_count,
+            ),
             None => (
                 Counts::default(),
                 Counts::default(),
@@ -497,26 +503,30 @@ fn gpu_rows(info: Option<&GraphInfo>) -> Element<'_, ApplicationMessage> {
         [
             format!(
                 "draws {}   shaded {:.2} Mpx",
-                i.sdf_draws,
-                i.sdf_shaded_px as f64 / 1e6
+                i.sdf.sdf_draws,
+                i.sdf.shaded_px as f64 / 1e6
             ),
             format!(
                 "evals {:.2} M   fine max {}/64",
-                i.sdf_segment_evals as f64 / 1e6,
-                i.sdf_fine_slots_max
+                i.sdf.segment_evals as f64 / 1e6,
+                i.sdf.fine_slots_max
             ),
-            format!("dropped tiles {}", i.sdf_fine_evicted_tiles),
+            format!("dropped tiles {}", i.sdf.fine_evicted_tiles),
+            format!(
+                "coarse overflow {}   dropped items {}",
+                i.sdf.coarse_overflow_tiles, i.sdf.gpu_dropped_items
+            ),
             format!(
                 "gpu {:.2} MiB   index {:.2} MiB",
-                i.sdf_gpu_bytes as f64 / MIB,
-                i.sdf_index_bytes as f64 / MIB
+                i.sdf.gpu_bytes as f64 / MIB,
+                i.sdf.index_bytes as f64 / MIB
             ),
             format!(
                 "upload {:.1} KiB   traffic {:.1} KiB",
-                i.sdf_upload_bytes as f64 / 1024.0,
-                i.sdf_index_traffic_bytes as f64 / 1024.0
+                i.sdf.upload_bytes as f64 / 1024.0,
+                i.sdf.index_traffic_bytes as f64 / 1024.0
             ),
-            format!("cull skipped: {}", i.sdf_cull_skipped),
+            format!("cull skipped: {}", i.sdf.cull_skipped),
         ]
         .map(row),
     )

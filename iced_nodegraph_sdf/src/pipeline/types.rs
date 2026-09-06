@@ -275,12 +275,13 @@ impl Default for DrawData {
 
 /// Performance statistics from the last completed frame.
 ///
-/// `#[non_exhaustive]` so new metrics stay a semver-additive patch: the v3 gates
-/// read these counters, and "v3 is faster" is an opinion without them. The dedup
-/// metrics (`cache_*`, `unique_shapes`, `segment_count`) quantify Improvement A:
-/// on a static graph `cache_hit_rate` -> ~1.0 (the R4 contract) and
-/// `unique_shapes` << `entry_count` when many nodes share a shape.
-#[derive(Clone, Debug, Default)]
+/// `#[non_exhaustive]` so new metrics stay a semver-additive patch: these
+/// counters are how a frame's GPU resource use and work volume can be
+/// quantified at all. The dedup metrics (`cache_*`, `unique_shapes`,
+/// `segment_count`) measure the recipe sharing: on a static graph
+/// `cache_hit_rate` -> ~1.0 and `unique_shapes` << `entry_count` when many
+/// nodes share a shape.
+#[derive(Clone, Debug, Default, PartialEq)]
 #[non_exhaustive]
 pub struct SdfStats {
     /// Draw commands submitted this frame (one per fill/border/shadow/edge).

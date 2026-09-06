@@ -1547,6 +1547,7 @@ where
                 culled: total - in_view,
             };
             let sdf = iced_nodegraph_sdf::sdf_stats();
+            let sdf_prepare = std::time::Duration::from_micros(sdf.prepare_cpu_us);
             let info = GraphInfo {
                 nodes: counts(node_geoms.len(), nodes_in),
                 pins: counts(pins_total, pins_in),
@@ -1567,21 +1568,10 @@ where
                     },
                     OpTiming {
                         label: "sdf_prepare",
-                        duration: std::time::Duration::from_micros(sdf.prepare_cpu_us),
+                        duration: sdf_prepare,
                     },
                 ],
-                sdf_entries: sdf.entry_count,
-                sdf_tiles: sdf.tile_count,
-                sdf_upload_bytes: sdf.upload_bytes,
-                sdf_gpu_bytes: sdf.gpu_bytes,
-                sdf_index_bytes: sdf.index_bytes,
-                sdf_draws: sdf.sdf_draws,
-                sdf_shaded_px: sdf.shaded_px,
-                sdf_segment_evals: sdf.segment_evals,
-                sdf_fine_slots_max: sdf.fine_slots_max,
-                sdf_fine_evicted_tiles: sdf.fine_evicted_tiles,
-                sdf_index_traffic_bytes: sdf.index_traffic_bytes,
-                sdf_cull_skipped: sdf.cull_skipped,
+                sdf,
             };
             state.last_info.replace(Some(info));
         }

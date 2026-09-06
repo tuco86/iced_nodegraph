@@ -327,8 +327,9 @@ pub use style::{
     default_selection_box_style,
 };
 
-// Re-export iced_nodegraph_sdf pattern types for downstream crates
+// Re-export iced_nodegraph_sdf types downstream crates meet through the widget
 pub use iced_nodegraph_sdf::Pattern;
+pub use iced_nodegraph_sdf::SdfStats;
 pub use iced_nodegraph_sdf::pattern::PatternType as SdfPatternType;
 
 pub mod connection;

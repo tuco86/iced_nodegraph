@@ -1972,3 +1972,100 @@ fn focusing_a_routed_cable_frames_its_anchor() {
         "a routed cable frames both pins and every ring it wraps",
     );
 }
+
+// ---------------------------------------------------------------------------
+// GraphInfo
+// ---------------------------------------------------------------------------
+
+/// `on_info` reports what `draw` measured, on the redraw after it - one frame
+/// behind, once per drawn frame - and `GraphInfo::sdf` is the SDF pipeline's
+/// own counters, whole.
+#[test]
+fn graph_info_is_delivered_one_frame_behind() {
+    use iced_nodegraph::{Counts, GraphInfo};
+
+    let mut graph: Graph<GraphInfo> = NodeGraph::default()
+        .width(Length::Fixed(400.0))
+        .height(Length::Fixed(400.0))
+        .on_info(|info| info);
+    graph = graph.push_node(node(
+        0_usize,
+        Point::new(10.0, 10.0),
+        Element::from(ContentProbe),
+    ));
+    graph = graph.push_node(node(
+        1_usize,
+        Point::new(5000.0, 5000.0),
+        Element::from(ContentProbe),
+    ));
+    graph = graph.push_edge(edge((), PinRef::new(0, 0), PinRef::new(1, 0)));
+
+    let mut tree = Tree::new(&graph as &dyn Widget<GraphInfo, Theme, Recorder>);
+    let mut renderer = Recorder::new(Rc::new(RefCell::new(Recorded::default())));
+    let layout_node = graph.layout(
+        &mut tree,
+        &renderer,
+        &layout::Limits::new(Size::ZERO, Size::new(1024.0, 768.0)),
+    );
+    let layout = Layout::with_offset(Vector::ZERO, &layout_node);
+    let viewport = Rectangle::new(Point::ORIGIN, Size::new(1024.0, 768.0));
+    let mut clipboard = clipboard::Null;
+    let redraw = || {
+        iced::Event::Window(iced::window::Event::RedrawRequested(
+            iced::time::Instant::now(),
+        ))
+    };
+    let mut tick = |graph: &mut Graph<GraphInfo>, tree: &mut Tree, renderer: &Recorder| {
+        let mut msgs: Vec<GraphInfo> = Vec::new();
+        let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
+        graph.update(
+            tree,
+            &redraw(),
+            layout,
+            mouse::Cursor::Unavailable,
+            renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+        msgs
+    };
+
+    assert!(
+        tick(&mut graph, &mut tree, &renderer).is_empty(),
+        "nothing has been drawn, so there is nothing to report"
+    );
+
+    graph.draw(
+        &tree,
+        &mut renderer,
+        &Theme::Dark,
+        &renderer::Style {
+            text_color: Color::WHITE,
+        },
+        layout,
+        mouse::Cursor::Unavailable,
+        &viewport,
+    );
+
+    let reported = tick(&mut graph, &mut tree, &renderer);
+    let [info] = reported.as_slice() else {
+        panic!("one drawn frame must report exactly one GraphInfo, got {reported:?}");
+    };
+    assert_eq!(
+        info.nodes,
+        Counts {
+            total: 2,
+            in_view: 1,
+            culled: 1
+        }
+    );
+    assert_eq!(info.edges.total, 1);
+    assert_eq!(info.anchors.total, 0);
+    assert_eq!(info.timings.len(), 4, "{:?}", info.timings);
+
+    assert!(
+        tick(&mut graph, &mut tree, &renderer).is_empty(),
+        "a frame that was not drawn again reports nothing more"
+    );
+}

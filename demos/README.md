@@ -102,10 +102,9 @@ no cull dispatch at all - the steady state for a static graph.
 | `NG_NO_EDGES=1` | keep the nodes, draw no edges |
 | `NG_NO_GRID=1` | remove the tiling background, one full-canvas SDF layer |
 
-The same counters are on `GraphInfo` (`sdf_draws`, `sdf_shaded_px`,
-`sdf_segment_evals`, `sdf_gpu_bytes`, `sdf_index_bytes`, `sdf_upload_bytes`,
-`sdf_index_traffic_bytes`, `sdf_cull_skipped`), so any application can report
-them; `iced_nodegraph_sdf::set_index_probe(true)` arms the ones that need the
+The same counters arrive on `GraphInfo::sdf`, the frame's whole `SdfStats`,
+so any application can report them;
+`iced_nodegraph_sdf::set_index_probe(true)` arms the ones that need the
 per-fine-tile readback.
 
 For the host-side decomposition (resolution / DPI / composition / draw-count /
