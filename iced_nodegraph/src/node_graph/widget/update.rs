@@ -787,6 +787,9 @@ where
                     }
                 }
                 ctx.tree.state.downcast_mut::<NodeGraphState>().dragging = Dragging::None;
+                if let Some(handler) = self.on_drag_end.as_ref() {
+                    ctx.shell.publish(handler());
+                }
                 ctx.shell.capture_event();
                 ctx.shell.request_redraw();
             }
@@ -994,6 +997,9 @@ where
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 let state = tree.state.downcast_mut::<NodeGraphState>();
                 state.dragging = Dragging::None;
+                if let Some(handler) = self.on_drag_end.as_ref() {
+                    shell.publish(handler());
+                }
                 shell.capture_event();
                 shell.invalidate_layout();
                 shell.request_redraw();
@@ -1923,6 +1929,11 @@ where
             origin: cursor_position.into_euclid(),
             start: bounds.size(),
         };
+        if let Some(handler) = self.on_drag_start.as_ref()
+            && let Some(node_id) = self.node_id_at(node_index).cloned()
+        {
+            ctx.shell.publish(handler(DragInfo::Resize { node_id }));
+        }
         ctx.shell.capture_event();
         true
     }
@@ -2086,6 +2097,9 @@ where
                     trail: vec![cursor_position],
                     pending_cuts: std::collections::HashSet::new(),
                 };
+                if let Some(handler) = self.on_drag_start.as_ref() {
+                    shell.publish(handler(DragInfo::EdgeCut));
+                }
                 shell.capture_event();
                 return;
             }
@@ -2562,6 +2576,11 @@ where
             anchor: anchor_index,
             origin,
         };
+        if let Some(handler) = self.on_drag_start.as_ref() {
+            ctx.shell.publish(handler(DragInfo::Anchor {
+                anchor_id: self.anchors[anchor_index].id.clone(),
+            }));
+        }
         ctx.shell.capture_event();
         ctx.shell.request_redraw();
         true
@@ -2631,8 +2650,8 @@ where
                 };
                 self.try_start_unplug(ctx, far, (&cable.from, &cable.to), (near_node, near_pin))
             }
-            // Already wrapping this anchor: the grab publishes nothing until it
-            // leaves (`handle_route_over`).
+            // Already wrapping this anchor: the grab publishes no route edit
+            // until it leaves (`handle_route_over`).
             CableZone::Wrap { edge, anchor } => {
                 let state = ctx.tree.state.downcast_mut::<NodeGraphState>();
                 state.dragging = Dragging::RouteOver {
@@ -2640,8 +2659,7 @@ where
                     anchor,
                     detached: None,
                 };
-                ctx.shell.capture_event();
-                ctx.shell.request_redraw();
+                self.publish_route_start(ctx, edge);
                 true
             }
             CableZone::Run { edge } => {
@@ -2650,11 +2668,21 @@ where
                     edge,
                     detached: None,
                 };
-                ctx.shell.capture_event();
-                ctx.shell.request_redraw();
+                self.publish_route_start(ctx, edge);
                 true
             }
         }
+    }
+
+    /// Reports the route drag just started on `edge` and claims the press.
+    fn publish_route_start(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>, edge: usize) {
+        if let Some(handler) = self.on_drag_start.as_ref() {
+            ctx.shell.publish(handler(DragInfo::Route {
+                edge_id: self.edges[edge].id.clone(),
+            }));
+        }
+        ctx.shell.capture_event();
+        ctx.shell.request_redraw();
     }
 
     /// Asks for the frame the hover feedback needs.

@@ -1564,6 +1564,109 @@ fn selection_box_drag_reports_its_anchor() {
     );
 }
 
+/// The number of `DragEnd`s in `msgs`.
+fn drag_ends(msgs: &[Msg]) -> usize {
+    msgs.iter().filter(|m| **m == Msg::DragEnd).count()
+}
+
+#[test]
+fn anchor_drag_reports_the_anchor() {
+    let at = Point::new(200.0, 150.0);
+    let mut ng: Graph = NodeGraph::default()
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .on_anchor_move(Msg::AnchorMove)
+        .on_drag_start(Msg::DragStart)
+        .on_drag_end(|| Msg::DragEnd);
+    ng = ng.push_anchor(anchor(ANCHOR_A, at));
+    let mut ui = Simulator::new(Element::from(ng));
+    drag(
+        &mut ui,
+        at + CORE_NUDGE,
+        at + CORE_NUDGE + Vector::new(60.0, 40.0),
+    );
+
+    let msgs = messages(ui);
+    assert_eq!(
+        drag_infos(&msgs),
+        vec![DragInfo::Anchor {
+            anchor_id: ANCHOR_A
+        }],
+        "an anchor drag must report exactly one start naming the anchor: {msgs:?}",
+    );
+    assert_eq!(
+        drag_ends(&msgs),
+        1,
+        "the drag must end exactly once: {msgs:?}"
+    );
+}
+
+#[test]
+fn route_drag_reports_the_edge() {
+    let ng = routing_graph()
+        .on_drag_start(Msg::DragStart)
+        .on_drag_end(|| Msg::DragEnd);
+    let mut ui = Simulator::new(route_scene(ng, View::IDENTITY, &[], &[]));
+    drag(&mut ui, bare_mid(), Point::new(330.0, 400.0));
+
+    let msgs = messages(ui);
+    assert_eq!(
+        drag_infos(&msgs),
+        vec![DragInfo::Route {
+            edge_id: ROUTE_EDGE
+        }],
+        "a grab of the cable's run must report exactly one start naming the edge: {msgs:?}",
+    );
+    assert_eq!(
+        drag_ends(&msgs),
+        1,
+        "the drag must end exactly once: {msgs:?}"
+    );
+}
+
+#[test]
+fn resize_drag_reports_the_node() {
+    let start = Point::new(100.0, 100.0);
+    let mut ui = Simulator::new(resizable_graph(&[(0, start)]));
+    drag(&mut ui, grip(start), grip(start) + Vector::new(40.0, 10.0));
+
+    let msgs = messages(ui);
+    assert_eq!(
+        drag_infos(&msgs),
+        vec![DragInfo::Resize { node_id: 0 }],
+        "a grip drag must report exactly one start naming the node: {msgs:?}",
+    );
+    assert_eq!(
+        drag_ends(&msgs),
+        1,
+        "the drag must end exactly once: {msgs:?}"
+    );
+}
+
+#[test]
+fn edge_cut_drag_reports_the_cutting_tool() {
+    let mut ui = Simulator::new(graph_with(&[(0, Point::new(400.0, 400.0))]));
+    let from = Point::new(50.0, 60.0);
+    ui.point_at(from);
+    ui.simulate([
+        iced::Event::Keyboard(keyboard::Event::ModifiersChanged(cmd())),
+        moved(from),
+    ]);
+    drag(&mut ui, from, Point::new(300.0, 300.0));
+
+    let msgs = messages(ui);
+    assert_eq!(
+        drag_infos(&msgs),
+        vec![DragInfo::EdgeCut],
+        "a cut across the canvas must report exactly one start: {msgs:?}",
+    );
+    assert_eq!(
+        drag_ends(&msgs),
+        1,
+        "the drag must end exactly once: {msgs:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Snapshot regression: a node dragged to the graph edge (partially clipped)
 // and back to its origin (still held) must render identically to before the

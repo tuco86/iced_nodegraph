@@ -735,6 +735,15 @@ pub enum DragInfo<I: Ids = Indexed> {
     },
     /// A selection box, anchored at this world-space corner.
     SelectionBox { start_x: f32, start_y: f32 },
+    /// Moving one anchor.
+    Anchor { anchor_id: I::AnchorId },
+    /// Re-routing one edge with a phantom anchor at the cursor, picked up from
+    /// the cable's run or from one of its wraps.
+    Route { edge_id: I::EdgeId },
+    /// Resizing one node from its corner grip.
+    Resize { node_id: I::NodeId },
+    /// Slicing across edges with the cutting tool.
+    EdgeCut,
 }
 
 /// Type-safe reference to a pin: a `node_id` paired with a `pin_id`, over the
@@ -1940,17 +1949,20 @@ impl<'a, I: Ids, Message, Theme: Catalog, Renderer> NodeGraph<'a, I, Message, Th
 
     /// Reports the start of a drag, naming what it moves.
     ///
-    /// Fires for the drags [`DragInfo`] can name, in addition to the
-    /// commit-on-release callbacks. It exists for hosts that mirror an
-    /// in-progress drag somewhere else - a collaborative session, an inspector -
-    /// and nothing is gated on it: omitting it changes no behaviour.
+    /// Fires for every drag of graph content - a node, a group, an edge, a
+    /// selection box, an anchor, a route, a resize grip, the cutting tool -
+    /// in addition to the commit-on-release callbacks, and each of those pairs
+    /// with one [`on_drag_end`](Self::on_drag_end). It exists for hosts that
+    /// mirror an in-progress drag somewhere else - a collaborative session, an
+    /// inspector - and nothing is gated on it: omitting it changes no
+    /// behaviour.
     ///
-    /// It does NOT pair with [`on_drag_end`](Self::on_drag_end) one for one. A
-    /// canvas pan reports neither; an anchor drag, a route drag and a pan-button
-    /// click on a core or a wrap report only the end, because `DragInfo` has no
-    /// variant that names an anchor or a route. A host that brackets work across
-    /// a drag must key the opening on `DragInfo` and tolerate a close it never
-    /// opened.
+    /// Two gestures report only the end: a travel-free pan-button click on an
+    /// anchor core or a cable wrap (a delete or a detach, kept so a host that
+    /// collects orphaned anchors on gesture end hears it), and a cancel (a
+    /// second touch contact, say). A canvas pan and a minimap drag report
+    /// neither. A host that brackets work across a drag must therefore key
+    /// the opening on `DragInfo` and tolerate a close it never opened.
     pub fn on_drag_start(mut self, f: impl Fn(DragInfo<I>) -> Message + 'a) -> Self {
         self.on_drag_start = Some(Box::new(f));
         self
@@ -1967,7 +1979,7 @@ impl<'a, I: Ids, Message, Theme: Catalog, Renderer> NodeGraph<'a, I, Message, Th
     /// Reports that a drag ended, whether it committed or was discarded.
     ///
     /// Fires on every transition back to idle, including a cancel (a second
-    /// touch contact, say) and including drags that reported no start - see
+    /// touch contact, say) and the end-only gestures listed at
     /// [`on_drag_start`](Self::on_drag_start). So it is the reliable place to
     /// notice that the widget is no longer dragging, and the wrong place to
     /// assume a matching start.
