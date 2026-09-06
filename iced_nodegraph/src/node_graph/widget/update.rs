@@ -263,86 +263,6 @@ where
             state.modifiers = *modifiers;
         }
 
-        // Handle keyboard shortcuts through the host-configurable keymap
-        // (`NodeGraph::keymap`). DeleteSelection is handled AFTER child
-        // widgets (further down) so text inputs can consume the key first.
-        if let Event::Keyboard(keyboard::Event::KeyPressed {
-            key,
-            physical_key,
-            modifiers,
-            ..
-        }) = event
-        {
-            match self.keymap.key_action(key, *physical_key, *modifiers) {
-                // Gated on on_clone: without a handler the clone cannot be
-                // persisted, so leave the shortcut unhandled and let the key
-                // fall through instead of silently swallowing it.
-                Some(KeyAction::CloneSelection)
-                    if !selection.is_empty() && self.on_clone.as_ref().is_some() =>
-                {
-                    let node_ids = self.selection_ids(&selection);
-                    if let Some(handler) = self.on_clone.as_ref() {
-                        shell.publish(handler(node_ids));
-                    }
-                    shell.capture_event();
-                }
-                Some(KeyAction::SelectAll) => {
-                    state.pending_selection = Some((0..self.nodes.len()).collect());
-                    let selected: Vec<I::NodeId> =
-                        self.nodes.iter().map(|node| node.id.clone()).collect();
-                    if let Some(handler) = self.on_select.as_ref() {
-                        shell.publish(handler(selected));
-                    }
-                    shell.capture_event();
-                    shell.request_redraw();
-                }
-                Some(KeyAction::ClearSelection) if !selection.is_empty() => {
-                    state.pending_selection = Some(HashSet::new());
-                    if let Some(handler) = self.on_select.as_ref() {
-                        shell.publish(handler(vec![]));
-                    }
-                    shell.capture_event();
-                    shell.request_redraw();
-                }
-                _ => {}
-            }
-        }
-
-        // `position_over` rejects Levitating cursors (sibling above claimed the
-        // event in a `stack`) and cursors outside the graph's layout bounds.
-        // Without this guard, scrolling above an overlapping widget zooms the
-        // graph anyway, and the event is consumed past where it should be.
-        if let Event::Mouse(mouse::Event::WheelScrolled { delta, .. }) = event
-            && let Some(cursor_pos) = screen_cursor.position_over(layout.bounds())
-        {
-            let cursor_pos: ScreenPoint = cursor_pos.into_euclid();
-
-            let scroll_amount = match delta {
-                mouse::ScrollDelta::Pixels { y, .. } => *y,
-                mouse::ScrollDelta::Lines { y, .. } => *y * 10.0,
-            };
-
-            // Different zoom speeds for WASM vs native
-            #[cfg(target_arch = "wasm32")]
-            let zoom_delta = scroll_amount * 0.001 * state.camera.zoom();
-            #[cfg(not(target_arch = "wasm32"))]
-            let zoom_delta = scroll_amount * 0.01 * state.camera.zoom();
-
-            // User-driven zoom aborts a running focus tween (arbitration:
-            // user input beats a tween).
-            state.camera_tween = None;
-            state.camera = state.camera.zoom_at(cursor_pos, zoom_delta);
-
-            // Commit the new camera (zoom shifts position too).
-            if let Some(handler) = self.on_camera.as_ref() {
-                let pos = state.camera.position();
-                shell.publish(handler(Point::new(pos.x, pos.y), state.camera.zoom()));
-            }
-
-            shell.capture_event();
-            shell.request_redraw();
-        }
-
         // Touch: translate the finger stream into the pointer model the rest
         // of this function speaks. Single finger emulates the left button
         // (with a synthesized Available cursor); two fingers pinch-zoom and
@@ -527,6 +447,52 @@ where
                         ctx.shell.request_redraw();
                     }
 
+                    // Every other keymap shortcut is handled here, after the
+                    // node bodies, so a focused text input or a nested graph
+                    // consumes the key first.
+                    if let Event::Keyboard(keyboard::Event::KeyPressed {
+                        key,
+                        physical_key,
+                        modifiers,
+                        ..
+                    }) = event
+                    {
+                        let state = ctx.tree.state.downcast_mut::<NodeGraphState>();
+                        match self.keymap.key_action(key, *physical_key, *modifiers) {
+                            // Gated on on_clone: without a handler the clone cannot be
+                            // persisted, so leave the shortcut unhandled and let the key
+                            // fall through instead of silently swallowing it.
+                            Some(KeyAction::CloneSelection)
+                                if !selection.is_empty() && self.on_clone.as_ref().is_some() =>
+                            {
+                                let node_ids = self.selection_ids(&selection);
+                                if let Some(handler) = self.on_clone.as_ref() {
+                                    ctx.shell.publish(handler(node_ids));
+                                }
+                                ctx.shell.capture_event();
+                            }
+                            Some(KeyAction::SelectAll) => {
+                                state.pending_selection = Some((0..self.nodes.len()).collect());
+                                let selected: Vec<I::NodeId> =
+                                    self.nodes.iter().map(|node| node.id.clone()).collect();
+                                if let Some(handler) = self.on_select.as_ref() {
+                                    ctx.shell.publish(handler(selected));
+                                }
+                                ctx.shell.capture_event();
+                                ctx.shell.request_redraw();
+                            }
+                            Some(KeyAction::ClearSelection) if !selection.is_empty() => {
+                                state.pending_selection = Some(HashSet::new());
+                                if let Some(handler) = self.on_select.as_ref() {
+                                    ctx.shell.publish(handler(vec![]));
+                                }
+                                ctx.shell.capture_event();
+                                ctx.shell.request_redraw();
+                            }
+                            _ => {}
+                        }
+                    }
+
                     // Frame-all / frame-selection: same after-children
                     // dispatch position as DeleteSelection (a focused text
                     // input consumes Home/f first). Gated on on_camera (like
@@ -586,6 +552,9 @@ where
                             if *button == self.keymap.pan_button =>
                         {
                             self.handle_pan_press(&mut ctx)
+                        }
+                        Event::Mouse(mouse::Event::WheelScrolled { delta, .. }) => {
+                            self.handle_wheel(&mut ctx, delta)
                         }
                         _ => {}
                     }
@@ -2203,6 +2172,49 @@ where
         state.camera_tween = None;
         state.dragging = Dragging::Graph(origin_world);
         ctx.shell.capture_event();
+    }
+
+    /// Zooms at the cursor on a wheel tick that no node body consumed.
+    ///
+    /// Dispatched after the children so a `scrollable` or a nested graph
+    /// under the cursor takes the tick first.
+    fn handle_wheel(&self, ctx: &mut UpdateCtx<'_, '_, '_, Message>, delta: &mouse::ScrollDelta) {
+        // `position_over` rejects Levitating cursors (sibling above claimed the
+        // event in a `stack`) and cursors outside the graph's layout bounds.
+        // Without this guard, scrolling above an overlapping widget zooms the
+        // graph anyway, and the event is consumed past where it should be.
+        let Some(cursor_pos) = ctx.screen_cursor.position_over(ctx.layout.bounds()) else {
+            return;
+        };
+        let cursor_pos: ScreenPoint = cursor_pos.into_euclid();
+
+        let scroll_amount = match delta {
+            mouse::ScrollDelta::Pixels { y, .. } => *y,
+            mouse::ScrollDelta::Lines { y, .. } => *y * 10.0,
+        };
+
+        let state = ctx.tree.state.downcast_mut::<NodeGraphState>();
+
+        // Different zoom speeds for WASM vs native
+        #[cfg(target_arch = "wasm32")]
+        let zoom_delta = scroll_amount * 0.001 * state.camera.zoom();
+        #[cfg(not(target_arch = "wasm32"))]
+        let zoom_delta = scroll_amount * 0.01 * state.camera.zoom();
+
+        // User-driven zoom aborts a running focus tween (arbitration:
+        // user input beats a tween).
+        state.camera_tween = None;
+        state.camera = state.camera.zoom_at(cursor_pos, zoom_delta);
+
+        // Commit the new camera (zoom shifts position too).
+        if let Some(handler) = self.on_camera.as_ref() {
+            let pos = state.camera.position();
+            ctx.shell
+                .publish(handler(Point::new(pos.x, pos.y), state.camera.zoom()));
+        }
+
+        ctx.shell.capture_event();
+        ctx.shell.request_redraw();
     }
 
     /// What the pan button would click at the cursor, or `None` when the press

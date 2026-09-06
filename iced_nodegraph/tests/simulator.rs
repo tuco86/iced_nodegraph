@@ -61,6 +61,9 @@ enum Msg {
     RouteAttached(usize, usize),
     RouteDetached(usize, usize),
     AnchorDeleted(usize),
+    InnerConnect(Pin, Pin),
+    InnerCamera(Point, f32),
+    InnerSelect(Vec<usize>),
 }
 
 const NODE_W: f32 = 60.0;
@@ -1183,6 +1186,161 @@ fn wheel_over_opaque_overlay_does_not_zoom_graph() {
     assert!(
         !msgs.iter().any(|m| matches!(m, Msg::Camera(_, _))),
         "a covered graph must not zoom under the overlay: {msgs:?}",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Nested graph: a NodeGraph as a node body. Each graph owns its own pins and
+// input: the outer graph never adopts the inner one's pins, and a wheel tick
+// or a keymap shortcut resolves to the innermost graph.
+//
+// The outer scene is `pin_graph`'s: node 0's Output pin at `out_anchor()`.
+// Node 1 at IN_POS is a 200x150 body holding the inner graph, whose node 0 at
+// the inner origin carries an Input pin, so that pin is drawn at `in_anchor()`
+// - exactly where the outer graph would anchor a Left pin of node 1.
+// ---------------------------------------------------------------------------
+
+const INNER_SIZE: Size = Size::new(200.0, 150.0);
+
+/// A point on the inner canvas, clear of the inner node.
+const ON_INNER_CANVAS: Point = Point::new(400.0, 200.0);
+/// A point on the outer canvas, clear of both nodes.
+const ON_OUTER_CANVAS: Point = Point::new(700.0, 500.0);
+
+/// The outer graph: every callback the tests observe wired to the plain `Msg`
+/// variants, node 1 wrapping `inner`.
+fn nested_graph(
+    inner: impl Into<Element<'static, Msg, Theme, Renderer>>,
+) -> Element<'static, Msg, Theme, Renderer> {
+    let mut ng: Graph = NodeGraph::default()
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .on_connect(Msg::Connect)
+        .on_camera(Msg::Camera)
+        .on_select(Msg::Select);
+    ng = ng.push_node(node(
+        0usize,
+        OUT_POS,
+        pin!(Right, 0usize, pin_body::<_>(), Output),
+    ));
+    ng = ng.push_node(node(
+        1usize,
+        IN_POS,
+        container(inner)
+            .width(INNER_SIZE.width)
+            .height(INNER_SIZE.height),
+    ));
+    ng.into()
+}
+
+/// The inner graph over the same `Ids`, reporting through the `Inner*`
+/// variants.
+fn inner_graph() -> Graph {
+    let ng: Graph = NodeGraph::default()
+        .on_connect(Msg::InnerConnect)
+        .on_camera(Msg::InnerCamera)
+        .on_select(Msg::InnerSelect);
+    ng.push_node(node(
+        0usize,
+        Point::ORIGIN,
+        pin!(Left, 0usize, pin_body::<_>(), Input),
+    ))
+}
+
+fn wheel_at(ui: &mut Simulator<'_, Msg, Theme, Renderer>, at: Point) {
+    ui.point_at(at);
+    ui.simulate([
+        moved(at),
+        iced::Event::Mouse(mouse::Event::WheelScrolled {
+            delta: mouse::ScrollDelta::Lines { x: 0.0, y: 3.0 },
+        }),
+    ]);
+}
+
+#[test]
+fn nested_graph_pins_are_not_outer_pins() {
+    let mut ui = Simulator::new(nested_graph(inner_graph()));
+    drag(&mut ui, out_anchor(), in_anchor());
+
+    let msgs = messages(ui);
+    assert!(
+        !msgs.iter().any(|m| matches!(m, Msg::Connect(..))),
+        "the outer graph must not connect to a pin of the nested graph: {msgs:?}",
+    );
+}
+
+/// The inner graph's id vocabulary is its own business: its pins are not the
+/// outer graph's to inspect, so they are no foreign-id assertion either.
+#[test]
+fn nested_graph_over_other_ids_does_not_assert() {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    struct InnerIds;
+
+    impl Ids for InnerIds {
+        type NodeId = usize;
+        type PinId = &'static str;
+        type EdgeId = usize;
+        type AnchorId = usize;
+        type Payload = ();
+    }
+
+    let inner: NodeGraph<'static, InnerIds, Msg, Theme, Renderer> = NodeGraph::default();
+    let inner = inner.push_node(node(
+        0usize,
+        Point::ORIGIN,
+        pin!(Left, "in", pin_body::<_>(), Input),
+    ));
+    let mut ui = Simulator::new(nested_graph(inner));
+    drag(&mut ui, out_anchor(), in_anchor());
+
+    let msgs = messages(ui);
+    assert!(
+        !msgs.iter().any(|m| matches!(m, Msg::Connect(..))),
+        "the outer graph must not connect to a pin of the nested graph: {msgs:?}",
+    );
+}
+
+#[test]
+fn wheel_over_nested_graph_zooms_inner_only() {
+    let mut ui = Simulator::new(nested_graph(inner_graph()));
+    wheel_at(&mut ui, ON_INNER_CANVAS);
+    let msgs = messages(ui);
+    assert!(
+        msgs.iter().any(|m| matches!(m, Msg::InnerCamera(..))),
+        "a wheel tick over the nested graph must zoom it: {msgs:?}",
+    );
+    assert!(
+        !msgs.iter().any(|m| matches!(m, Msg::Camera(..))),
+        "a wheel tick the nested graph took must not zoom the outer one: {msgs:?}",
+    );
+
+    let mut ui = Simulator::new(nested_graph(inner_graph()));
+    wheel_at(&mut ui, ON_OUTER_CANVAS);
+    let msgs = messages(ui);
+    assert!(
+        msgs.iter().any(|m| matches!(m, Msg::Camera(..))),
+        "a wheel tick on the outer canvas must zoom the outer graph: {msgs:?}",
+    );
+    assert!(
+        !msgs.iter().any(|m| matches!(m, Msg::InnerCamera(..))),
+        "a wheel tick off the nested graph must not zoom it: {msgs:?}",
+    );
+}
+
+#[test]
+fn select_all_reaches_innermost_graph_only() {
+    let mut ui = Simulator::new(nested_graph(inner_graph()));
+    ui.point_at(ON_OUTER_CANVAS);
+    ui.simulate([key_pressed(keyboard::Key::Character("a".into()), cmd())]);
+
+    let msgs = messages(ui);
+    assert!(
+        msgs.iter().any(|m| matches!(m, Msg::InnerSelect(..))),
+        "select-all must reach the nested graph: {msgs:?}",
+    );
+    assert!(
+        !msgs.iter().any(|m| matches!(m, Msg::Select(..))),
+        "a shortcut the nested graph took must not act on the outer one: {msgs:?}",
     );
 }
 

@@ -248,6 +248,25 @@
 //!   <figcaption>Runs live when scrolled into view (WebGPU, Chrome recommended); a still image otherwise. Click the canvas for keyboard input.</figcaption>
 //! </figure>
 //!
+//! ## Nesting
+//!
+//! A [`NodeGraph`] is an ordinary element and can be a node's body. Each graph
+//! keeps its own camera, selection and drag state and reports through its own
+//! callbacks; its [`Ids`] need not match the enclosing graph's.
+//!
+//! Give the nested graph an explicit size (`.width(Length::Fixed(..))` and
+//! `.height(..)`, or a sized `container`). Node bodies are laid out against
+//! unbounded limits, so the default `Length::Fill` resolves to an unbounded
+//! graph.
+//!
+//! The inner canvas takes the presses and wheel ticks that land on it; the
+//! containing node is moved by a body region outside the inner graph, such as
+//! a title bar. Keyboard shortcuts resolve innermost-first; disable bindings
+//! on one graph's [`Keymap`] to route them to the other.
+//!
+//! The inner graph's pins are its own: the outer graph never connects to them.
+//! Nested state lives with the node index like any other body state.
+//!
 //! ## Coordinates
 //!
 //! Screen space (pixels from input and the viewport) and world space (the

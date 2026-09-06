@@ -134,6 +134,7 @@ pub struct SdfPrimitive {
     entries: Vec<DrawEntry>,
     pub camera_position: (f32, f32),
     pub camera_zoom: f32,
+    layout_width: f32,
     pub time: f32,
     /// The `DrawData` slot this primitive was assigned in `prepare`, stored on the
     /// primitive itself rather than derived from draw order. iced PREPARES every
@@ -150,6 +151,7 @@ impl Clone for SdfPrimitive {
             entries: self.entries.clone(),
             camera_position: self.camera_position,
             camera_zoom: self.camera_zoom,
+            layout_width: self.layout_width,
             time: self.time,
             draw_slot: AtomicU32::new(self.draw_slot.load(Ordering::Relaxed)),
         }
@@ -162,6 +164,7 @@ impl SdfPrimitive {
             entries: Vec::new(),
             camera_position: (0.0, 0.0),
             camera_zoom: 1.0,
+            layout_width: 0.0,
             time: 0.0,
             draw_slot: AtomicU32::new(0),
         }
@@ -194,6 +197,18 @@ impl SdfPrimitive {
     pub fn camera(mut self, x: f32, y: f32, zoom: f32) -> Self {
         self.camera_position = (x, y);
         self.camera_zoom = zoom;
+        self
+    }
+
+    /// Records the rectangle this primitive is submitted under, before any
+    /// renderer transformation.
+    ///
+    /// `prepare` receives that rectangle after the transformation; the ratio
+    /// of the widths is the enclosing scale (a graph drawn inside a zoomed
+    /// graph), which is folded into the camera zoom. Unset, the primitive is
+    /// taken as untransformed.
+    pub fn layout_bounds(mut self, bounds: Rectangle) -> Self {
+        self.layout_width = bounds.width;
         self
     }
 
@@ -1431,6 +1446,12 @@ impl Primitive for SdfPrimitive {
 
         let prepare_start = Instant::now();
         let scale = viewport.scale_factor();
+        let enclosing_scale = if self.layout_width > 0.0 {
+            bounds.width / self.layout_width
+        } else {
+            1.0
+        };
+        let camera_zoom = self.camera_zoom * enclosing_scale;
         let draw_slot = pipeline.draw_data_buffer.len();
 
         // Geometry residency (ARCHITECTURE.md, Stage 1): a primitive whose
@@ -1532,7 +1553,7 @@ impl Primitive for SdfPrimitive {
         // sub-tile remainder (`grid_offset`, uploaded every frame like `camera_pos`)
         // so the tile index depends only on the world window, not on continuous
         // `camera_position` - a sub-tile pan leaves `grid_base` unchanged.
-        let cs = (self.camera_zoom * scale) as f64;
+        let cs = (camera_zoom * scale) as f64;
         let coarse_px = (TILE_SIZE * COARSE_FACTOR as f32) as f64; // 64.0
         let pan_x = self.camera_position.0 as f64 * cs;
         let pan_y = self.camera_position.1 as f64 * cs;
@@ -1618,7 +1639,7 @@ impl Primitive for SdfPrimitive {
             bounds_origin: grid_origin,
             camera_position: camera_pos,
             grid_offset,
-            camera_zoom: self.camera_zoom,
+            camera_zoom,
             scale_factor: scale,
             time: self.time,
             entry_count,

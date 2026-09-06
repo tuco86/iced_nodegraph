@@ -329,6 +329,82 @@ fn overlay_draws_through_camera_transform() {
 }
 
 #[test]
+fn overlay_of_nested_graph_composes_both_cameras() {
+    // A graph inside a node: the pop-out of the inner node must be drawn where
+    // the inner content is, which is the inner camera applied first and the
+    // outer camera on top -- origin + (P_o + N_o + Z_i * (N_i + P_i)) * Z_o.
+    let origin = Vector::new(0.0, 100.0);
+    let outer_world = Point::new(30.0, 40.0);
+    let outer_cam = Point::new(20.0, -10.0);
+    let outer_zoom = 2.0;
+    let inner_world = Point::new(11.0, 13.0);
+    let inner_cam = Point::new(5.0, 7.0);
+    let inner_zoom = 1.5;
+
+    let out = Rc::new(RefCell::new(Recorded::default()));
+    let mut renderer = Recorder::new(out.clone());
+    let inner: RecordedGraph = NodeGraph::default()
+        .width(Length::Fixed(200.0))
+        .height(Length::Fixed(200.0))
+        .camera(inner_cam, inner_zoom)
+        .push_node(node(
+            0usize,
+            inner_world,
+            Element::from(OverlayProbe { log: Rc::default() }),
+        ));
+    let (mut graph, mut tree, layout_node) = graph_with_node(
+        origin,
+        outer_world,
+        outer_cam,
+        outer_zoom,
+        Element::from(inner),
+        &renderer,
+    );
+    let layout = Layout::with_offset(origin, &layout_node);
+    let viewport = Rectangle::new(Point::ORIGIN, VIEWPORT);
+
+    let mut ov = graph
+        .overlay(&mut tree, layout, &renderer, &viewport, Vector::ZERO)
+        .expect("overlay must be present");
+    let onode = ov.as_overlay_mut().layout(&renderer, VIEWPORT);
+    let olayout = Layout::new(&onode);
+    ov.as_overlay().draw(
+        &mut renderer,
+        &Theme::Dark,
+        &renderer::Style {
+            text_color: Color::WHITE,
+        },
+        olayout,
+        mouse::Cursor::Unavailable,
+    );
+
+    let drawn = out
+        .borrow()
+        .quads
+        .first()
+        .copied()
+        .expect("overlay drew a quad");
+    let expected = Point::new(
+        origin.x
+            + (outer_cam.x + outer_world.x + inner_zoom * (inner_world.x + inner_cam.x))
+                * outer_zoom,
+        origin.y
+            + (outer_cam.y + outer_world.y + inner_zoom * (inner_world.y + inner_cam.y))
+                * outer_zoom,
+    );
+    assert!(
+        (drawn.x - expected.x).abs() < 0.5 && (drawn.y - expected.y).abs() < 0.5,
+        "nested overlay drawn at {drawn:?} should sit at {expected:?}",
+    );
+    let expected_width = 10.0 * inner_zoom * outer_zoom;
+    assert!(
+        (drawn.width - expected_width).abs() < 0.5,
+        "nested overlay should scale with both zooms: width {} expected {expected_width}",
+        drawn.width,
+    );
+}
+
+#[test]
 fn overlay_receives_the_cursor_in_its_anchor_space() {
     // Round trip: a screen cursor placed where the overlay anchor draws must
     // reach the wrapped overlay AS that anchor, whatever space the graph put

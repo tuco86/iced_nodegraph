@@ -386,6 +386,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A `NodeGraph` works as a node body.** A graph inside a node's body
+  compiled before but misbehaved in four ways: the outer graph adopted the
+  inner graph's pins as its own (or hit the foreign-id assertion when the two
+  `Ids` differed); one wheel tick zoomed both graphs and one `SelectAll` or
+  `CloneSelection` acted on both; the inner graph's pop-outs missed the outer
+  pan; and the inner SDF layers (fill, border, pins, edges, grid) ignored the
+  outer zoom while its iced content scaled. The pin walk now stops at a nested
+  graph, wheel and keymap shortcuts are dispatched after the node bodies so
+  the innermost graph (or a focused text input) takes them first, `overlay`
+  composes the translation its parent passes in, and `SdfPrimitive` folds the
+  enclosing renderer scale into its camera zoom through the new
+  `SdfPrimitive::layout_bounds`. The crate docs gained a `Nesting` section.
+
 - **Pop-outs of nodes away from the world origin.** A combo box or pick list
   menu inside a node opened only when the node's world coordinates fit inside
   `window / zoom`: the graph anchored pop-outs in layout-absolute space, and

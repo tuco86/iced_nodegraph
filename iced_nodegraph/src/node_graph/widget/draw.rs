@@ -109,7 +109,7 @@ fn draw_sdf<Renderer>(
     if primitive.has_animations() {
         animated.set(true);
     }
-    renderer.draw_primitive(clip, primitive);
+    renderer.draw_primitive(clip, primitive.layout_bounds(clip));
 }
 
 /// A world-space bounding box as SDF screen bounds `[x, y, width, height]`,

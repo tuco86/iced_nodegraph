@@ -218,7 +218,7 @@ where
         layout: Layout<'b>,
         renderer: &Renderer,
         viewport: &Rectangle,
-        _translation: Vector,
+        translation: Vector,
     ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
         // Iced collects pop-out widgets (combo box menus, tooltips, vanilla
         // `menu`) only through `Widget::overlay`. Without forwarding it to the
@@ -230,8 +230,14 @@ where
         // Collect each node's overlay (most yield None). Child layouts are in
         // the widget's layout-absolute space; the translation carries their
         // anchors into zoomed-screen space, where `CameraOverlay` lays them
-        // out and scales them (see its docs for why that space).
-        let translation = camera.overlay_translation();
+        // out and scales them (see its docs for why that space). A parent
+        // that itself translates (a scrollable, an enclosing graph) passes
+        // that offset in; it composes here.
+        //
+        // The incoming translation is in the parent's zoomed-screen space; the
+        // content is laid out in this widget's layout space and scaled by
+        // `zoom` in `CameraOverlay`, so the parent offset enters divided by zoom.
+        let translation = camera.overlay_translation() + translation * (1.0 / camera.zoom());
         let children: Vec<overlay::Element<'b, Message, Theme, Renderer>> = self
             .nodes
             .iter_mut()
@@ -439,6 +445,8 @@ pub(super) type PinLayout<'a, I> = (
 
 /// Every pin in a node's subtree, in depth-first layout order.
 ///
+/// The walk does not enter a nested `NodeGraph`; its pins are its own.
+///
 /// Every pin registers the same [`PinSlot`] tag; the slot's state is the
 /// pin's own `NodePinState<PinId, Payload>`. A pin over other types is a
 /// debug-build assertion and is skipped in release builds, where it would
@@ -456,6 +464,12 @@ fn inner_find_pins<'a, I: Ids>(
     node_layout: Layout<'a>,
     pin_tree: &'a Tree,
 ) {
+    // A nested graph's pins belong to that graph. Stop at its tree so the
+    // outer graph neither adopts them nor asserts on their id types.
+    if pin_tree.tag == tree::Tag::of::<NodeGraphState>() {
+        return;
+    }
+
     if pin_tree.tag == tree::Tag::of::<PinSlot>() {
         let slot = pin_tree.state.downcast_ref::<PinSlot>();
         match slot.get::<I::PinId, I::Payload>() {

@@ -25,7 +25,7 @@ use iced::{Color, Element, Length, Point, Rectangle, Size, Theme};
 use iced_wgpu::core::clipboard;
 
 use common::shared;
-use iced_nodegraph::{ColorQuad, NodeGraph, NodeStyle, default_node_style, node};
+use iced_nodegraph::{ColorQuad, NodeGraph, NodeStyle, Pattern, default_node_style, node};
 use iced_wgpu::Renderer;
 use iced_wgpu::graphics::Viewport;
 
@@ -576,6 +576,138 @@ fn render_node_selection(selected: bool) -> Option<Vec<[u8; 4]>> {
         Color::TRANSPARENT,
     );
     Some(bytes.as_chunks::<4>().0.to_vec())
+}
+
+/// A graph inside a node, viewed through a zoomed outer camera: the outer
+/// camera at zoom 2 over one node at the world origin whose body is a 150x100
+/// inner graph at zoom 1, holding one red 40x20 node at inner world (10, 10).
+/// That node's screen rect is (20, 20)-(100, 60).
+fn render_nested_graph() -> Option<Vec<[u8; 4]>> {
+    let mut guard = shared()?;
+    let renderer = &mut *guard;
+
+    let inner: NodeGraph<'static, iced_nodegraph::Indexed, (), Theme, Renderer> =
+        NodeGraph::default()
+            .width(Length::Fixed(150.0))
+            .height(Length::Fixed(100.0))
+            .camera(Point::ORIGIN, 1.0)
+            .push_node(
+                node(
+                    0_usize,
+                    Point::new(10.0, 10.0),
+                    Element::from(
+                        iced::widget::container(iced::widget::Space::new())
+                            .width(Length::Fixed(40.0))
+                            .height(Length::Fixed(20.0)),
+                    ),
+                )
+                .style(|theme, status| NodeStyle {
+                    fill_color: ColorQuad::solid(Color::from_rgb(1.0, 0.0, 0.0)),
+                    corner_radius: 0.0,
+                    border_pattern: Pattern::solid(0.0),
+                    border_outline_width: 0.0,
+                    shadow_distance: 0.0,
+                    shadow_color: Color::TRANSPARENT,
+                    ..default_node_style(theme, status)
+                }),
+            );
+    let mut graph: NodeGraph<'static, iced_nodegraph::Indexed, (), Theme, Renderer> =
+        NodeGraph::default()
+            .width(Length::Fixed(W as f32))
+            .height(Length::Fixed(H as f32))
+            .camera(Point::ORIGIN, 2.0);
+    graph = graph.push_node(node(0_usize, Point::ORIGIN, Element::from(inner)));
+
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Renderer>);
+    let layout_node = graph.layout(
+        &mut tree,
+        &*renderer,
+        &layout::Limits::new(Size::ZERO, Size::new(W as f32, H as f32)),
+    );
+    let layout = Layout::new(&layout_node);
+    let viewport_rect = Rectangle::new(Point::ORIGIN, Size::new(W as f32, H as f32));
+
+    // One update syncs both cameras: the outer directly, the inner through
+    // child dispatch.
+    let mut msgs: Vec<()> = Vec::new();
+    let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
+    let mut clipboard = clipboard::Null;
+    graph.update(
+        &mut tree,
+        &iced::Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(-1.0, -1.0),
+        }),
+        layout,
+        mouse::Cursor::Unavailable,
+        &*renderer,
+        &mut clipboard,
+        &mut shell,
+        &viewport_rect,
+    );
+    graph.draw(
+        &tree,
+        renderer,
+        &Theme::Dark,
+        &renderer::Style {
+            text_color: Color::WHITE,
+        },
+        layout,
+        mouse::Cursor::Unavailable,
+        &viewport_rect,
+    );
+    let bytes = renderer.screenshot(
+        &Viewport::with_physical_size(Size::new(W, H), 1.0),
+        Color::TRANSPARENT,
+    );
+    Some(bytes.as_chunks::<4>().0.to_vec())
+}
+
+/// The SDF layers of a nested graph scale with the enclosing camera like its
+/// iced content does: the inner node's fill covers its full doubled rect, not
+/// only the unscaled half of it.
+#[test]
+fn nested_graph_sdf_scales_with_outer_zoom() {
+    let Some(px) = render_nested_graph() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let at = |x: u32, y: u32| px[(y * W + x) as usize];
+    let is_red = |p: [u8; 4]| p[0] > 120 && p[1] < 90 && p[2] < 90;
+    assert!(
+        is_red(at(30, 30)),
+        "inner node fill missing near its top-left corner: {:?}",
+        at(30, 30),
+    );
+    assert!(
+        is_red(at(90, 50)),
+        "inner node fill must reach the far side of its doubled rect: {:?}",
+        at(90, 50),
+    );
+    assert!(
+        !is_red(at(110, 50)),
+        "inner node fill must stop at its doubled rect: {:?}",
+        at(110, 50),
+    );
+}
+
+/// Writes the nested-graph scene to PNG for eyeballing: the inner grid, node
+/// and text must all sit at double size, aligned with each other.
+#[test]
+#[ignore = "visual probe: writes nested_graph.png"]
+fn probe_nested_graph_appearance() {
+    let Some(px) = render_nested_graph() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let path = "nested_graph.png";
+    let file = std::fs::File::create(path).unwrap();
+    let mut enc = png::Encoder::new(std::io::BufWriter::new(file), W, H);
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut w = enc.write_header().unwrap();
+    let flat: Vec<u8> = px.iter().flat_map(|p| p.iter().copied()).collect();
+    w.write_image_data(&flat).unwrap();
+    eprintln!("wrote {path}");
 }
 
 /// One node whose single Output pin is drawn as `shape` in an unmistakable
