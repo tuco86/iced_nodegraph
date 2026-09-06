@@ -1,5 +1,4 @@
-//! Position-free shape recipes and their content-addressed hashes (the v3 dedup
-//! foundation, Improvement A).
+//! Position-free shape recipes and their content-addressed hashes.
 //!
 //! A `ShapeExpr` is the DEFINITION of a shape - the authored primitives and
 //! boolean ops, expressed in a LOCAL frame (centered on the shape's declared
@@ -547,7 +546,7 @@ impl ShapeCache {
     }
 
     /// Fraction of `get_or_eval` calls that hit the cache, over the cache's
-    /// lifetime. ~1.0 on a static graph is the R4 contract.
+    /// lifetime; ~1.0 on a static graph.
     pub fn hit_rate(&self) -> f32 {
         let total = self.hits + self.misses;
         if total == 0 {

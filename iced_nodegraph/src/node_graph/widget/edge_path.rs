@@ -13,9 +13,8 @@
 //! approximated, and the legs meet the arc without a kink because their control
 //! points lie along the wrap direction.
 //!
-//! The pin-to-pin case degrades to exactly the single tangent-bezier leg the
-//! widget has always drawn: same control-point formula, same
-//! [`adaptive_bezier_length`].
+//! The pin-to-pin case is one direct tangent-bezier leg: same control-point
+//! formula, same [`adaptive_bezier_length`].
 
 use super::{adaptive_bezier_length, pin_side_direction};
 use crate::style::EdgeCurve;
@@ -327,10 +326,9 @@ pub(crate) struct RingTouch {
 
 /// Builds the cable through `hops`, in order.
 ///
-/// Two pin hops is the plain edge: one leg, identical to what the widget drew
-/// before anchors existed. Each wrap in between adds its entry leg and the arc
-/// that leaves it, taking whichever of the two ways round realizes the shorter
-/// sweep.
+/// Two pin hops is the plain edge: one direct leg. Each wrap in between adds
+/// its entry leg and the arc that leaves it, taking whichever of the two ways
+/// round realizes the shorter sweep.
 ///
 /// Two wraps in a row are the belt between two pulleys: the run between them is
 /// the tangent common to both rings, so a cable chaining several anchors is

@@ -263,10 +263,10 @@ impl Drawable {
         }
     }
 
-    /// Approximate a cubic bezier as an arc-spline drawable (the v3 "arcs-only"
-    /// edge): the cubic is fit by circular arcs and lines within `tol` world
-    /// units, deleting the per-pixel bezier SDF. Segments carry cumulative
-    /// arc length so dash spacing and flow speed match the bezier's `u`.
+    /// Approximate a cubic bezier as an arc-spline drawable: the cubic is fit
+    /// by circular arcs and lines within `tol` world units. Segments carry
+    /// cumulative arc length so dash spacing and flow speed match the
+    /// bezier's `u`.
     pub(crate) fn bezier_arcs(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, tol: f32) -> Self {
         use crate::biarc::{ArcPiece, cubic_to_arcs};
 

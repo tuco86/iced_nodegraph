@@ -511,7 +511,7 @@ pub struct SdfPipeline {
     frame_queue: Option<Queue>,
     segment_scratch: Vec<types::GpuSegment>,
     frame_stats: types::SdfStats,
-    /// Frame-surviving cache of evaluated shape recipes (v3 dedup). Lives on the
+    /// Frame-surviving cache of evaluated shape recipes. Lives on the
     /// persistent pipeline, NOT the per-frame primitive, and is deliberately not
     /// cleared by `trim` so a unique shape's boolean runs once across frames.
     shape_cache: ShapeCache,

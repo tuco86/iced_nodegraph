@@ -2684,7 +2684,7 @@ where
     }
 
     /// Starts a fit toward `world_aabb`: a tween when `opts.animation` is
-    /// set with a positive duration, otherwise an immediate jump. Replaces
+    /// set with a positive duration, otherwise an immediate jump. Cancels
     /// any running tween (new focus/frame always wins, arbitration rule 1).
     /// The jump commits through `on_camera` immediately, like any other camera
     /// change; the tween commits once per `RedrawRequested` frame (see the

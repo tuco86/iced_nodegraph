@@ -107,7 +107,7 @@ struct GpuDrawEntry {
     _pad: u32,
     tiling_params: vec4<f32>,
     // Per-INSTANCE placement (D1): the entry's segments are local; evaluate at
-    // `world_p - translate`. `(0,0)` (v2 default) leaves geometry world-baked.
+    // `world_p - translate`. `(0,0)` leaves geometry world-baked.
     translate: vec2<f32>,
     _translate_pad: vec2<f32>,
 }
@@ -248,10 +248,8 @@ fn sd_line(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> SdfResult {
     return SdfResult(dist * sign, t);
 }
 
-// v3 is arc-only: the per-pixel cubic-bezier SDF (Newton refinement +
-// Gauss-Legendre arc-length quadrature) is GONE. Cubics are approximated by an
-// arc-spline on the CPU (crate::biarc) before reaching the GPU, so a line or
-// minor arc is the only thing the shader ever evaluates.
+// The shader evaluates lines and minor arcs only; cubics arrive as arc-splines
+// from crate::biarc.
 
 // Reconstruct (center, radius, start_angle, sweep) of the minor arc from its
 // endpoints and signed curvature - the GPU twin of crate::segment::arc_center +

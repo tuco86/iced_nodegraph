@@ -1,10 +1,7 @@
-//! Cubic bezier -> arc-spline approximation (the v3 "arcs-only" geometry).
+//! Cubic bezier -> arc-spline approximation.
 //!
-//! v3 deletes the per-pixel cubic-bezier SDF (Newton refinement + Gauss-Legendre
-//! arc-length quadrature, the single most expensive `eval_segment` branch) by
-//! approximating every cubic with circular arcs (and lines) on the CPU. Each arc
-//! has an exact, precomputable arc length (`radius * |sweep|`), so dash spacing
-//! and flow speed stay exact.
+//! Every cubic becomes circular arcs and lines on the CPU, so the shader
+//! evaluates only arcs and each dash length is exact.
 //!
 //! Algorithm: adaptive subdivision. Each cubic piece is approximated by ONE
 //! circular arc through its two endpoints and its midpoint; the maximum
@@ -27,7 +24,8 @@ use glam::Vec2;
 
 /// One piece of an arc-spline: a circular arc, or a straight line where the
 /// curve is locally flat. Endpoints are exact bezier points; `length` is the
-/// piece's exact arc length (used to carry cumulative arc length).
+/// piece's exact arc length, which callers accumulate into the spline's
+/// cumulative length.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum ArcPiece {
     /// Circular arc from `start` to `end`, center `center`, signed `sweep`

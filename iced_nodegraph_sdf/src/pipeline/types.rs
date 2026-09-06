@@ -301,7 +301,7 @@ pub struct SdfStats {
     /// style-side analogue of `unique_shapes`: entries that look identical share
     /// one `GpuStyle`, so this is << `entry_count` when many nodes share a look.
     pub unique_styles: u32,
-    /// Shape-cache hits over the pipeline's lifetime (Improvement A).
+    /// Shape-cache hits over the pipeline's lifetime.
     pub cache_hits: u64,
     /// Shape-cache misses (each a boolean->arcs evaluation) over the lifetime.
     pub cache_misses: u64,

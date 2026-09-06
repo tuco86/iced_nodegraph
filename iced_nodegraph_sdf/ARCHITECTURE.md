@@ -145,19 +145,10 @@ cross-frame: the segment/entry/style buffers are persistent arenas
   placements, styles) hash-match a resident block reuses it WHEREVER it sits in
   the prepare order - no evaluate, no upload; a reorder or an earlier rebuild
   invalidates nothing.
-  The "WHEREVER" is the whole point: reuse used to be positional AND
-  cursor-coupled - the buffers were packed front-to-back each frame, so a
-  primitive kept its data only if every primitive BEFORE it was byte-identical
-  too. Any reorder (a selection z-resort, a node add or remove) re-evaluated
-  and re-uploaded every shifted primitive, a ~2-3 ms hitch on 500 nodes. Pure
-  content keying could not fix that alone, because entries reference the
-  segments and styles of OTHER primitives by absolute index, so relocated
-  bytes would need reference fix-ups; the arenas exist so nothing relocates.
-  A reorder frame is now 0 rebuilds and 100% resident hits.
-  Blocks unused for `RESIDENT_MAX_AGE` (8) frames return
-  their ranges to the arenas; when an arena's high-water mark runs far ahead of
-  its live count, the residency state is dropped and the next frame rebuilds
-  tightly packed (`SdfStats::arena_compactions`).
+  Blocks unused for `RESIDENT_MAX_AGE` (8) frames return their ranges to the
+  arenas; when an arena's high-water mark runs far ahead of its live count, the
+  residency state is dropped and the next frame rebuilds tightly packed
+  (`SdfStats::arena_compactions`).
   The `Shape` recipe hash is computed once at CONSTRUCTION (each constructor and
   operator folds its params and child hashes), so `hash()` is an O(1) field read.
 
@@ -431,7 +422,7 @@ falling back to `grid_cols = 0` (iterate all entries).
 | `src/pattern.rs` | stroke `Pattern`s and GPU parameter encoding |
 | `src/color.rs` | `ColorQuad`, the four-corner colour field |
 | `src/compile.rs` | arcs + styles -> GPU structs |
-| `src/shared.rs` | shared GPU resources (shader module, layouts, pipelines) |
+| `src/shared.rs` | shared GPU resources (shader module, layouts, pipelines); keeps one entry, the last (device, surface format) pair; a different device or format replaces it (native: `Mutex<Option<..>>`, wasm: `thread_local!`) |
 | `src/primitive.rs` | `SdfPrimitive` + `SdfPipeline` (prepare / deferred compute / draw) |
 | `src/pipeline/shader.wgsl` | all GPU code (vertex, fragment, compute) |
 | `src/pipeline/types.rs` | GPU struct layouts (must match the WGSL) |

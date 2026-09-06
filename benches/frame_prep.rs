@@ -16,13 +16,6 @@
 //! the GPU tile cull (a compute shader), or upload/present - the full-frame
 //! wall-clock story lives in the `iced_nodegraph_sdf` pipeline tests.
 //!
-//! Recorded context (this machine, 500 nodes / 640 edges). The node-body dedup
-//! collapses the per-frame boolean from one-per-node to one total (~20x on the
-//! node bodies in isolation). Post-A4 the biarc edge build (~6 us/edge) became
-//! the dominant CPU term for an edged scene, so a realistic graph sees ~3x on
-//! CPU evaluation, not 10x - the dedup win is real but bounded by the edge
-//! floor. Caching static-edge arc-splines by endpoint is the open follow-up.
-//!
 //! Run with: `cargo bench -p iced_nodegraph_bench`.
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
