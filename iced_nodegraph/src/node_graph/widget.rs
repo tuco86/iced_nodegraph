@@ -223,15 +223,15 @@ where
         // Iced collects pop-out widgets (combo box menus, tooltips, vanilla
         // `menu`) only through `Widget::overlay`. Without forwarding it to the
         // node elements, their underlying widgets draw fine but the pop-out
-        // never appears. Mirror the camera the draw/update paths use so the
-        // pop-out anchors and scales with the node content beneath it.
+        // never appears.
         let state = tree.state.downcast_ref::<NodeGraphState>();
         let camera = state.camera_for(layout);
 
         // Collect each node's overlay (most yield None). Child layouts are in
-        // the widget's layout-absolute space; `CameraOverlay` applies the
-        // world->screen transform, so the child anchors in that space (zero
-        // extra translation) just as it does during draw.
+        // the widget's layout-absolute space; the translation carries their
+        // anchors into zoomed-screen space, where `CameraOverlay` lays them
+        // out and scales them (see its docs for why that space).
+        let translation = camera.overlay_translation();
         let children: Vec<overlay::Element<'b, Message, Theme, Renderer>> = self
             .nodes
             .iter_mut()
@@ -244,7 +244,7 @@ where
                     node_layout,
                     renderer,
                     viewport,
-                    Vector::ZERO,
+                    translation,
                 )
             })
             .collect();
@@ -256,7 +256,7 @@ where
         let content = overlay::Group::with_children(children).overlay();
         Some(overlay::Element::new(Box::new(CameraOverlay {
             content,
-            camera,
+            zoom: camera.zoom(),
         })))
     }
 

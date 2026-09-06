@@ -347,6 +347,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the resize grip's `ResizingDiagonallyDown`. Gated on node bounds, so an
   occluded node never claims a cursor over the node covering it.
 
+### Fixed
+
+- **Pop-outs of nodes away from the world origin.** A combo box or pick list
+  menu inside a node opened only when the node's world coordinates fit inside
+  `window / zoom`: the graph anchored pop-outs in layout-absolute space, and
+  iced's menu judges its room as `bounds - position`, so a node at world x
+  3000 panned onto the screen was told it had negative room and collapsed to
+  nothing. Pop-outs now anchor in zoomed-screen space (screen pixels over
+  zoom, origin at the window corner): the graph hands node contents the
+  matching `translation` in `Widget::overlay`, and the wrapper scales, lays
+  out and hit-tests in that space. Where the pop-out draws is unchanged.
+
 ### Changed
 
 - **The theme defaults are one mapping instead of six.** Every color the widget

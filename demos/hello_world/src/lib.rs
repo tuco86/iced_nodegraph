@@ -4065,13 +4065,21 @@ mod tests {
         let first_workflow = app.node_order[0].clone();
         assert_ne!(before, first_workflow);
 
+        // A 1024x768 window panned onto the Node Class node: its layout
+        // coordinates exceed the window, so the menu only works if the graph
+        // anchors pop-outs in screen space.
+        app.camera_position = Point::new(-1500.0, -400.0);
+        app.camera_zoom = 1.0;
         let msgs: Vec<_> = {
-            let mut ui = simulator(&app);
+            let mut ui = Simulator::new(app.view());
             // The pick list sits right of the "target" label; opening it and
-            // clicking the first row picks the first workflow node.
+            // clicking the first row picks the first workflow node. `find`
+            // reports layout coordinates; the clicks are screen pixels.
             let label = ui.find("target").expect("Node Class target row");
             let bounds = label.bounds();
-            let picker = Point::new(bounds.x + bounds.width + 6.0 + 30.0, bounds.center_y());
+            let pan = Vector::new(app.camera_position.x, app.camera_position.y);
+            let picker = Point::new(bounds.x + bounds.width + 6.0 + 30.0, bounds.center_y()) + pan;
+            assert!(picker.x > 0.0 && picker.x < 1024.0 && picker.y > 0.0 && picker.y < 768.0);
             click(&mut ui, picker);
             click(&mut ui, Point::new(picker.x, picker.y + 24.0));
             ui.into_messages().collect()

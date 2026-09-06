@@ -3,10 +3,14 @@
 //! wrapped in the camera transform. The wrapper has three jobs, one test each:
 //!
 //! 1. forward only when a child actually produces an overlay (else `None`),
-//! 2. draw the pop-out through the same world->screen transform as node content,
-//!    so it anchors to and scales with the node beneath it,
-//! 3. map the screen cursor back into layout space (the inverse transform) for
-//!    the wrapped overlay's hit-testing.
+//! 2. draw the pop-out at the same screen pixel as the node content beneath it,
+//!    so it anchors to and scales with that node,
+//! 3. hand the wrapped overlay a cursor in the space its anchor was given, so
+//!    its own hit-testing agrees with where it is drawn.
+//!
+//! The anchor space is zoomed-screen space (screen pixels over zoom, origin at
+//! the window corner): the one space in which iced's pop-outs judge their room
+//! correctly, see `CameraOverlay`.
 //!
 //! Like the sibling recording-renderer tests, these use a fake renderer: the
 //! guarantees live in the overlay element's presence, the absolute rect it
@@ -36,6 +40,9 @@ use common::record::{Recorded, Recorder};
 /// What a probe records about the frame it was drawn in.
 #[derive(Default)]
 struct ProbeLog {
+    /// Anchor the host widget captured: its layout position plus the
+    /// translation the graph handed it.
+    anchor: Cell<Option<Point>>,
     /// Cursor the overlay's `update` received.
     cursor: Cell<Option<Point>>,
     /// Innermost clip the overlay painted under.
@@ -122,6 +129,7 @@ impl Widget<(), Theme, Recorder> for OverlayProbe {
         translation: Vector,
     ) -> Option<overlay::Element<'a, (), Theme, Recorder>> {
         let anchor = layout.position() + translation;
+        self.log.anchor.set(Some(anchor));
         Some(overlay::Element::new(Box::new(ProbeOverlay {
             anchor,
             log: self.log.clone(),
@@ -321,10 +329,11 @@ fn overlay_draws_through_camera_transform() {
 }
 
 #[test]
-fn overlay_maps_cursor_into_layout_space() {
+fn overlay_receives_the_cursor_in_its_anchor_space() {
     // Round trip: a screen cursor placed where the overlay anchor draws must
-    // reach the wrapped overlay as the anchor's layout-absolute coordinate
-    // (origin + world) -- the inverse of the draw transform.
+    // reach the wrapped overlay AS that anchor, whatever space the graph put
+    // the anchor in -- the pop-out hit-tests the cursor against its own
+    // layout, so the two must agree.
     let origin = Vector::new(0.0, 100.0);
     let world = Point::new(30.0, 40.0);
     let cam_pos = Point::new(20.0, -10.0);
@@ -367,10 +376,50 @@ fn overlay_maps_cursor_into_layout_space() {
     );
 
     let seen = log.cursor.get().expect("overlay must receive a cursor");
-    let expected = Point::new(origin.x + world.x, origin.y + world.y);
+    let anchor = log.anchor.get().expect("probe captured its anchor");
     assert!(
-        (seen.x - expected.x).abs() < 0.5 && (seen.y - expected.y).abs() < 0.5,
-        "cursor reached overlay as {seen:?}, expected layout-absolute {expected:?}",
+        (seen.x - anchor.x).abs() < 0.5 && (seen.y - anchor.y).abs() < 0.5,
+        "cursor reached overlay as {seen:?}, expected its anchor {anchor:?}",
+    );
+}
+
+#[test]
+fn overlay_anchored_on_screen_has_room_under_pan() {
+    // A node far from the world origin, panned onto the screen: its layout
+    // coordinates exceed `window / zoom`, so an anchor left in layout space
+    // would tell a menu it has negative room to the right and below. The
+    // anchor must land inside the bounds the pop-out is laid out against.
+    let world = Point::new(3000.0, 2000.0);
+    let cam_pos = Point::new(-2800.0, -1900.0); // node at screen (200, 100)
+    let zoom = 1.0;
+
+    let log = Rc::new(ProbeLog::default());
+    let renderer = Recorder::detached();
+    let (mut graph, mut tree, layout_node) = graph_with_node(
+        Vector::ZERO,
+        world,
+        cam_pos,
+        zoom,
+        Element::from(OverlayProbe { log: log.clone() }),
+        &renderer,
+    );
+    let layout = Layout::new(&layout_node);
+    let viewport = Rectangle::new(Point::ORIGIN, VIEWPORT);
+
+    let mut ov = graph
+        .overlay(&mut tree, layout, &renderer, &viewport, Vector::ZERO)
+        .expect("overlay must be present");
+    let _ = ov.as_overlay_mut().layout(&renderer, VIEWPORT);
+
+    let anchor = log.anchor.get().expect("probe captured its anchor");
+    let bounds = log.bounds.get().expect("overlay must be laid out");
+    assert!(
+        (anchor.x - 200.0).abs() < 0.5 && (anchor.y - 100.0).abs() < 0.5,
+        "anchor {anchor:?} should be where the node is on screen, (200, 100)",
+    );
+    assert!(
+        anchor.x < bounds.width && anchor.y < bounds.height,
+        "anchor {anchor:?} must lie inside the room {bounds:?} the pop-out is given",
     );
 }
 

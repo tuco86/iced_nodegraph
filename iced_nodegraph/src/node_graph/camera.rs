@@ -163,7 +163,7 @@ use super::euclid::{
 };
 use euclid::{Scale, Transform2D};
 use iced_wgpu::core::{mouse, renderer};
-use iced_widget::core::{Padding, Point, Rectangle, Size, Transformation};
+use iced_widget::core::{Padding, Point, Rectangle, Size, Transformation, Vector};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Camera2D {
@@ -329,6 +329,20 @@ impl Camera2D {
         let v_x = self.viewport_origin.x * (1.0 - zoom) + zoom * self.position.x;
         let v_y = self.viewport_origin.y * (1.0 - zoom) + zoom * self.position.y;
         Transformation::translate(v_x, v_y) * Transformation::scale(zoom)
+    }
+
+    /// The offset that carries a layout-absolute point into zoomed-screen
+    /// space (`screen / zoom`, origin at the window's top-left): the
+    /// translation part of [`layer_transformation`](Self::layer_transformation)
+    /// divided by the zoom, so that `scale(zoom)` alone draws the result where
+    /// the node content beneath it is drawn. Handed to node elements as the
+    /// `translation` of `Widget::overlay`, which is what a pop-out adds to its
+    /// anchor.
+    pub fn overlay_translation(&self) -> Vector {
+        let zoom = self.zoom.get();
+        let v_x = self.viewport_origin.x * (1.0 - zoom) + zoom * self.position.x;
+        let v_y = self.viewport_origin.y * (1.0 - zoom) + zoom * self.position.y;
+        Vector::new(v_x / zoom, v_y / zoom)
     }
 
     pub fn draw_with<F, Renderer>(
