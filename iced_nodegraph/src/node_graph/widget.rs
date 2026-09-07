@@ -95,15 +95,30 @@ fn adaptive_bezier_length(start: [f32; 2], end: [f32; 2]) -> f32 {
 
 /// Returns the tangent direction vector for a pin side in the shader's `u32`
 /// side encoding (matches `get_pin_direction` in the WGSL).
-/// Left=(-1,0), Right=(1,0), Top=(0,-1), Bottom=(0,1); anything else (Row,
-/// synthetic mirror sides) defaults to (1,0).
+/// Left=(-1,0), Right=(1,0), Top=(0,-1), Bottom=(0,1). A row pin reaches a
+/// cable as the border it settled on, never as `PinSide::Row` itself, so the
+/// fallback covers no side a station carries.
 fn pin_side_direction(side: u32) -> [f32; 2] {
     match side {
         0 => [-1.0, 0.0], // Left
         1 => [1.0, 0.0],  // Right
         2 => [0.0, -1.0], // Top
         3 => [0.0, 1.0],  // Bottom
-        _ => [1.0, 0.0],  // Default (Row)
+        _ => [1.0, 0.0],
+    }
+}
+
+/// The side a station faces when it stands at the other end of a cable from
+/// `side`, in the same `u32` encoding: the loose end of a dragged edge points
+/// back at the pin it was pulled from, so the preview leaves that pin outward.
+/// A side with no opposite keeps its own.
+fn opposing_side(side: u32) -> u32 {
+    match side {
+        0 => 1, // Left <-> Right
+        1 => 0,
+        2 => 3, // Top <-> Bottom
+        3 => 2,
+        other => other,
     }
 }
 
@@ -536,6 +551,20 @@ fn pin_positions<P, UI>(state: &NodePinState<P, UI>, node_bounds: Rectangle) -> 
     }
 }
 
+/// The station a pin offers a cable, from the anchors
+/// [`pin_positions`] found for it and the side it declares.
+///
+/// [`PinSide::Row`] is the one side with two anchors, and the only one whose
+/// station leaves the choice open: it spans the node, so a cable takes the
+/// border nearer its other end. Every other side collapses to its single
+/// anchor and the outward normal it names.
+fn pin_station(side: PinSide, anchors: ([f32; 2], [f32; 2]), direction: PinDirection) -> Station {
+    match side {
+        PinSide::Row => Station::row(anchors.0, anchors.1, Some(direction)),
+        one_sided => Station::at(anchors.0, one_sided.into(), Some(direction)),
+    }
+}
+
 /// The bottom-right square a resizable node is grabbed by, in the same
 /// layout-absolute space as `bounds`.
 ///
@@ -629,5 +658,84 @@ mod orient_tests {
         let (from, to) = orient_connection(PinDirection::Both, PinDirection::Both, a, b);
         assert_eq!(from, PinRef::new(0, 0));
         assert_eq!(to, PinRef::new(1, 0));
+    }
+}
+
+#[cfg(test)]
+mod station_tests {
+    use super::{opposing_side, pin_station};
+    use crate::node_pin::{PinDirection, PinSide};
+
+    /// A row pin spanning x in [0, 100] at y = 10, as `pin_positions` hands it
+    /// over: left border first, right border second.
+    fn row() -> super::Station {
+        pin_station(
+            PinSide::Row,
+            ([0.0, 10.0], [100.0, 10.0]),
+            PinDirection::Both,
+        )
+    }
+
+    // The border a row pin's cable takes is the one nearer the far end, and the
+    // tangent side follows it, so the cable leaves the node outward on the side
+    // it attached to instead of running back through the body.
+    #[test]
+    fn a_row_pin_takes_the_border_nearer_the_far_end() {
+        let mut rightward = row();
+        rightward.settle([400.0, -900.0]);
+        assert_eq!(
+            (rightward.point, rightward.side),
+            ([100.0, 10.0], u32::from(PinSide::Right)),
+        );
+
+        let mut leftward = row();
+        leftward.settle([-400.0, 900.0]);
+        assert_eq!(
+            (leftward.point, leftward.side),
+            ([0.0, 10.0], u32::from(PinSide::Left)),
+        );
+    }
+
+    // Both borders sit at the same height, so the vertical distance cancels and
+    // only the half of the node the far end lies in decides. The flip point is
+    // the node's centre line, crossed once, which is why the choice needs no
+    // hysteresis; a far end exactly on that line keeps the left border.
+    #[test]
+    fn the_choice_turns_on_the_node_centre_line_alone() {
+        for height in [-1000.0, 0.0, 1000.0] {
+            let mut just_right = row();
+            just_right.settle([50.1, height]);
+            assert_eq!(just_right.side, u32::from(PinSide::Right));
+
+            let mut on_the_line = row();
+            on_the_line.settle([50.0, height]);
+            assert_eq!(on_the_line.side, u32::from(PinSide::Left));
+        }
+    }
+
+    // A pin that declares one side has nothing to choose: the side it named
+    // stands however the cable runs from it.
+    #[test]
+    fn a_one_sided_pin_keeps_the_side_it_declared() {
+        let mut left = pin_station(
+            PinSide::Left,
+            ([0.0, 10.0], [0.0, 10.0]),
+            PinDirection::Input,
+        );
+        left.settle([400.0, 10.0]);
+        assert_eq!(
+            (left.point, left.side),
+            ([0.0, 10.0], u32::from(PinSide::Left))
+        );
+    }
+
+    // The loose end of a dragged cable faces back at the pin it was pulled
+    // from, which is what aims the preview's far tangent at the node.
+    #[test]
+    fn a_loose_end_faces_back_at_its_pin() {
+        assert_eq!(opposing_side(PinSide::Left.into()), PinSide::Right.into());
+        assert_eq!(opposing_side(PinSide::Right.into()), PinSide::Left.into());
+        assert_eq!(opposing_side(PinSide::Top.into()), PinSide::Bottom.into());
+        assert_eq!(opposing_side(PinSide::Bottom.into()), PinSide::Top.into());
     }
 }

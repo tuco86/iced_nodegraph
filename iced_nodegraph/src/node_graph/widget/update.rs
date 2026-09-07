@@ -2341,13 +2341,13 @@ where
     ) -> Vec<(CableGeometry<'_, I>, edge_path::Built)> {
         let pin = |pin: &PinRef<I>| -> Option<Station> {
             let node_index = self.node_index(&pin.node_id)?;
-            let (_, (point, _), side, direction) =
+            let (_, (near, far), side, direction) =
                 pin_by_id::<I>(&tree.children, layout, node_index, &pin.pin_id)?;
-            Some(Station {
-                point: [point.x, point.y],
-                side: side.into(),
-                direction: Some(direction),
-            })
+            Some(pin_station(
+                side,
+                ([near.x, near.y], [far.x, far.y]),
+                direction,
+            ))
         };
         let ring = |anchor: usize, orbit: u8| self.orbit_ring(tree, anchor, orbit);
         let curves = tree

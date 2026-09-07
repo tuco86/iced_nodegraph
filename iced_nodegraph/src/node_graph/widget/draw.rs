@@ -696,16 +696,19 @@ where
 
             let pin = |pin: &PinRef<I>| -> Option<Station> {
                 let node_idx = self.node_index(&pin.node_id)?;
-                let (_, pin_state, (pin_pos, _)) = node_pins[node_idx]
+                let (_, pin_state, (near, far)) = node_pins[node_idx]
                     .iter()
                     .find(|(_, state, _)| state.pin_id == pin.pin_id)?;
-                let point =
-                    (pin_pos.into_euclid().to_vector() + compute_node_offset(node_idx)).to_point();
-                Some(Station {
-                    point: [point.x, point.y],
-                    side: pin_state.side.into(),
-                    direction: Some(pin_state.direction),
-                })
+                let offset = compute_node_offset(node_idx);
+                let shift = |anchor: &Point| {
+                    let at = (anchor.into_euclid().to_vector() + offset).to_point();
+                    [at.x, at.y]
+                };
+                Some(pin_station(
+                    pin_state.side,
+                    (shift(near), shift(far)),
+                    pin_state.direction,
+                ))
             };
             let ring = |anchor: usize, orbit: u8| -> Option<edge_path::Orbit> {
                 Some(edge_path::Orbit {
@@ -974,42 +977,50 @@ where
             && let Some(cursor_pos) = cursor.position()
         {
             let from_pins = &node_pins[*from_node_idx];
-            if let Some((_, from_pin_state, (from_pin_pos, _))) = from_pins.get(*from_pin_idx) {
+            if let Some((_, from_pin_state, (near, far))) = from_pins.get(*from_pin_idx) {
                 let from_offset = compute_node_offset(*from_node_idx);
-                let start_pos = (from_pin_pos.into_euclid().to_vector() + from_offset).to_point();
+                let shift = |anchor: &Point| {
+                    let at = (anchor.into_euclid().to_vector() + from_offset).to_point();
+                    [at.x, at.y]
+                };
                 // Loose end follows the cursor in the same layout-absolute space
                 // as the pin geometry so the dragged edge stays aligned when the
                 // graph is off the window origin.
-                let end_pos: LayoutPoint = cursor_layout(cursor_pos);
+                let cursor_at: LayoutPoint = cursor_layout(cursor_pos);
+                let end_pos = [cursor_at.x, cursor_at.y];
 
                 let drag_edge_style =
                     theme.drag_edge(&self.drag_edge_class, pin_info::<I>(from_pin_state));
 
-                let from_side: u32 = from_pin_state.side.into();
-                let cursor_side: u32 = match from_pin_state.side {
-                    PinSide::Left => 1,
-                    PinSide::Right => 0,
-                    PinSide::Top => 3,
-                    PinSide::Bottom => 2,
-                    PinSide::Row => 1,
-                };
+                // The cursor is the far end here, so a row pin settles on the
+                // border the cursor is nearer - the same rule a committed edge
+                // follows, which is what makes the preview land where the cable
+                // will.
+                let mut from = pin_station(
+                    from_pin_state.side,
+                    (shift(near), shift(far)),
+                    from_pin_state.direction,
+                );
+                from.settle(end_pos);
+                let start_pos = from.point;
+                let cursor_side = opposing_side(from.side);
 
                 // Output = start, input = end. Dragging FROM an input pin puts
                 // the held pin at the END and the cursor at the START (flip);
                 // from an output it stays start -> cursor end.
                 let (start_pos, end_pos, start_side, end_side) =
                     if matches!(from_pin_state.direction, PinDirection::Input) {
-                        (end_pos, start_pos, cursor_side, from_side)
+                        (end_pos, start_pos, cursor_side, from.side)
                     } else {
-                        (start_pos, end_pos, from_side, cursor_side)
+                        (start_pos, end_pos, from.side, cursor_side)
                     };
                 let hops = [
                     edge_path::Hop::Pin {
-                        point: [start_pos.x, start_pos.y],
+                        point: start_pos,
                         side: start_side,
                     },
                     edge_path::Hop::Pin {
-                        point: [end_pos.x, end_pos.y],
+                        point: end_pos,
                         side: end_side,
                     },
                 ];
@@ -1224,7 +1235,7 @@ where
                 }
 
                 // Pins
-                for (pin_idx, (_pin_index, pin_state, (pin_pos, _))) in pins.iter().enumerate() {
+                for (pin_idx, (_pin_index, pin_state, (near, far))) in pins.iter().enumerate() {
                     let is_valid_target = is_edge_dragging
                         && state.valid_drop_targets.contains(&(node_index, pin_idx));
                     let pin_status = if is_valid_target {
@@ -1240,19 +1251,16 @@ where
                         pin_status,
                     );
                     let indicator_r = pin_style.radius;
-                    let pin_layout: LayoutPoint =
-                        (pin_pos.into_euclid().to_vector() + offset).to_point();
-                    let pw = [pin_layout.x, pin_layout.y];
 
                     // Pin shapes are centred on the pin, and so is every
                     // primitive's origin, so the placement is just the pin
                     // position - and identical pins share a recipe.
-                    let (pin_shape, pin_place) = match pin_style.shape {
+                    let pin_shape = match pin_style.shape {
                         crate::style::PinShape::Square => {
                             let h = indicator_r * SQUARE_HALF_EXTENT;
-                            (Shape::rounded_box([2.0 * h, 2.0 * h], [0.0; 4]), pw)
+                            Shape::rounded_box([2.0 * h, 2.0 * h], [0.0; 4])
                         }
-                        crate::style::PinShape::Circle => (Shape::circle(indicator_r), pw),
+                        crate::style::PinShape::Circle => Shape::circle(indicator_r),
                     };
 
                     let pin_layers = pin_style.sdf_layers(pin_state.direction, indicator_r);
@@ -1265,23 +1273,39 @@ where
                             .map(|s| s.extent(true))
                             .fold(0.0_f32, f32::max)
                         + 2.0 / cam_zoom;
-                    let pin_bounds = world_bbox_to_screen_bounds(
-                        pin_layout.x - pin_pad,
-                        pin_layout.y - pin_pad,
-                        pin_layout.x + pin_pad,
-                        pin_layout.y + pin_pad,
-                        0.0,
-                        &render_context,
-                    );
 
-                    for style in &pin_layers {
-                        fg_batch.push(&pin_shape, style, pin_place);
+                    // A row pin spans the node and takes a cable on either
+                    // border, so it wears a mark on both - one per cutout
+                    // `pin_cutout_params` punches for it, and both carry the
+                    // status, so a valid target lights up whichever end the
+                    // cable comes from.
+                    let marks: &[Point] = if pin_state.side == PinSide::Row {
+                        &[*near, *far]
+                    } else {
+                        std::slice::from_ref(near)
+                    };
+                    for mark in marks {
+                        let pin_layout: LayoutPoint =
+                            (mark.into_euclid().to_vector() + offset).to_point();
+                        let pw = [pin_layout.x, pin_layout.y];
+                        let pin_bounds = world_bbox_to_screen_bounds(
+                            pin_layout.x - pin_pad,
+                            pin_layout.y - pin_pad,
+                            pin_layout.x + pin_pad,
+                            pin_layout.y + pin_pad,
+                            0.0,
+                            &render_context,
+                        );
+
+                        for style in &pin_layers {
+                            fg_batch.push(&pin_shape, style, pw);
+                        }
+
+                        fg_min_x = fg_min_x.min(pin_bounds[0]);
+                        fg_min_y = fg_min_y.min(pin_bounds[1]);
+                        fg_max_x = fg_max_x.max(pin_bounds[0] + pin_bounds[2]);
+                        fg_max_y = fg_max_y.max(pin_bounds[1] + pin_bounds[3]);
                     }
-
-                    fg_min_x = fg_min_x.min(pin_bounds[0]);
-                    fg_min_y = fg_min_y.min(pin_bounds[1]);
-                    fg_max_x = fg_max_x.max(pin_bounds[0] + pin_bounds[2]);
-                    fg_max_y = fg_max_y.max(pin_bounds[1] + pin_bounds[3]);
                 }
 
                 // Resize grip: two ticks parallel to the corner bevel, filling

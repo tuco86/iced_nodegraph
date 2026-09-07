@@ -41,7 +41,7 @@ use iced_widget::core::{Element, Length, Point, Size, Vector};
 use self::focus::{FocusOptions, FocusTarget};
 use self::widget::edge_path;
 use crate::ids::{Ids, Indexed};
-use crate::node_pin::{PinDirection, PinEnd, PinInfo};
+use crate::node_pin::{PinDirection, PinEnd, PinInfo, PinSide};
 use crate::style::{
     AnchorStatus, AnchorStyle, AnchorStyleFn, Catalog, CuttingToolStyle, CuttingToolStyleFn,
     DragEdgeStyleFn, EdgeCurve, EdgeStatus, EdgeStyle, EdgeStyleFn, GraphStyle, GraphStyleFn,
@@ -435,11 +435,80 @@ pub(crate) mod widget;
 /// different coordinate spaces (layout-absolute for drawing, world for input),
 /// and this is where they meet; `direction` is what orients a cable
 /// output-first.
+///
+/// A [`PinSide::Row`] pin spans its node and offers a border on either side of
+/// it, so its station arrives with both and [`Station::settle`] picks the one
+/// this cable takes.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct Station {
     pub point: [f32; 2],
     pub side: u32,
     pub direction: Option<PinDirection>,
+    /// The border still on offer, with its own side encoding, until `settle`
+    /// chooses between the two. `None` for a pin that declares one side.
+    across: Option<([f32; 2], u32)>,
+}
+
+impl Station {
+    /// A pin on one side of its node: one anchor, one outward normal.
+    pub fn at(point: [f32; 2], side: u32, direction: Option<PinDirection>) -> Self {
+        Self {
+            point,
+            side,
+            direction,
+            across: None,
+        }
+    }
+
+    /// A [`PinSide::Row`] pin, offering both vertical borders of its node.
+    ///
+    /// The left border stands in until [`Station::settle`] has seen the far
+    /// end; every path that draws a cable goes through
+    /// [`edge_hops`](NodeGraph::edge_hops), which settles both ends first.
+    pub fn row(left: [f32; 2], right: [f32; 2], direction: Option<PinDirection>) -> Self {
+        Self {
+            point: left,
+            side: PinSide::Left.into(),
+            direction,
+            across: Some((right, PinSide::Right.into())),
+        }
+    }
+
+    /// The point the far end of a cable measures ITS side against: the middle
+    /// of the borders on offer.
+    ///
+    /// Two row pins facing each other would otherwise each need the other's
+    /// choice to make their own. The midpoint is the one value neither has to
+    /// have decided yet, and it is the pin's own position wherever there is
+    /// nothing to choose.
+    pub fn aim(&self) -> [f32; 2] {
+        match self.across {
+            Some((other, _)) => [
+                0.5 * (self.point[0] + other[0]),
+                0.5 * (self.point[1] + other[1]),
+            ],
+            None => self.point,
+        }
+    }
+
+    /// Settles which border a row pin's cable leaves by, given where it runs
+    /// from here.
+    ///
+    /// Both borders sit at the same height, so the vertical distance is common
+    /// to them and the nearer one is whichever side of the node's centre line
+    /// `toward` lies on. The choice therefore flips exactly once, as the far
+    /// end crosses that line, which is what makes hysteresis unnecessary; a
+    /// tie keeps the left border. A pin that declares one side has nothing to
+    /// settle, and a station settled twice keeps its first choice.
+    pub fn settle(&mut self, toward: [f32; 2]) {
+        let Some((point, side)) = self.across.take() else {
+            return;
+        };
+        if (toward[0] - point[0]).abs() < (toward[0] - self.point[0]).abs() {
+            self.point = point;
+            self.side = side;
+        }
+    }
 }
 
 /// One edge's topology lowered to the hop chain it draws as.
@@ -1211,7 +1280,7 @@ impl<'a, I: Ids, Message, Theme: Catalog, Renderer> NodeGraph<'a, I, Message, Th
             // claiming the same direction leave nothing to order by.
             let is_output = |s: &Station| matches!(s.direction, Some(PinDirection::Output));
             let head_is_from = is_output(&a) || !is_output(&b);
-            let ((head, head_ref), (tail, tail_ref)) = if head_is_from {
+            let ((mut head, head_ref), (mut tail, tail_ref)) = if head_is_from {
                 ((a, &edge.from), (b, &edge.to))
             } else {
                 ((b, &edge.to), (a, &edge.from))
@@ -1259,11 +1328,17 @@ impl<'a, I: Ids, Message, Theme: Catalog, Renderer> NodeGraph<'a, I, Message, Th
                 }
             }
 
-            let run = [tail.point[0] - head.point[0], tail.point[1] - head.point[1]];
+            // A row pin offers two borders and which one is nearer is only
+            // decidable with the far end in hand, so the sides are settled
+            // here. Both the visiting order and the choice measure against the
+            // other end's `aim` rather than its chosen point, so two row pins
+            // decide independently and in either order.
+            let (head_aim, tail_aim) = (head.aim(), tail.aim());
+            let run = [tail_aim[0] - head_aim[0], tail_aim[1] - head_aim[1]];
             let len2 = run[0] * run[0] + run[1] * run[1];
             if len2 >= 1e-6 {
                 let projection = |c: &[f32; 2]| {
-                    ((c[0] - head.point[0]) * run[0] + (c[1] - head.point[1]) * run[1]) / len2
+                    ((c[0] - head_aim[0]) * run[0] + (c[1] - head_aim[1]) * run[1]) / len2
                 };
                 wraps.sort_by(|a, b| {
                     projection(&a.center)
@@ -1275,6 +1350,11 @@ impl<'a, I: Ids, Message, Theme: Catalog, Renderer> NodeGraph<'a, I, Message, Th
                         )
                 });
             }
+            // Each end leaves toward the first station it reaches: the wrap
+            // nearest it once the route is ordered, or the other pin when the
+            // cable wraps nothing.
+            head.settle(wraps.first().map_or(tail_aim, |wrap| wrap.center));
+            tail.settle(wraps.last().map_or(head_aim, |wrap| wrap.center));
             // Each wrap's span needs its NEIGHBOURS, so it is read once the
             // visiting order is settled.
             for i in 0..wraps.len() {
@@ -2040,16 +2120,8 @@ mod tests {
     /// coordinate.
     fn station(pin: &PinRef<AllUsize>) -> Option<Station> {
         match pin.node_id {
-            0 => Some(Station {
-                point: [0.0, 0.0],
-                side: 1,
-                direction: Some(PinDirection::Output),
-            }),
-            1 => Some(Station {
-                point: [400.0, 0.0],
-                side: 3,
-                direction: Some(PinDirection::Input),
-            }),
+            0 => Some(Station::at([0.0, 0.0], 1, Some(PinDirection::Output))),
+            1 => Some(Station::at([400.0, 0.0], 3, Some(PinDirection::Input))),
             _ => None,
         }
     }
@@ -2176,11 +2248,7 @@ mod tests {
                 3 => ([100.0, -100.0], 3, PinDirection::Input),
                 _ => return None,
             };
-            Some(Station {
-                point,
-                side,
-                direction: Some(direction),
-            })
+            Some(Station::at(point, side, Some(direction)))
         };
 
         let mut graph = Graph::default();
@@ -2424,13 +2492,8 @@ mod tests {
         let mut graph = graph_with_anchors(&[(10, 300.0), (11, 100.0)]);
         graph = graph.push_edge(edge(0, pin_ref(2), pin_ref(2)).route([10, 11]));
 
-        let collapsed = |_: &PinRef<AllUsize>| {
-            Some(Station {
-                point: [50.0, 50.0],
-                side: 1,
-                direction: Some(PinDirection::Output),
-            })
-        };
+        let collapsed =
+            |_: &PinRef<AllUsize>| Some(Station::at([50.0, 50.0], 1, Some(PinDirection::Output)));
         let ring = ring(&graph);
         let cables = graph.edge_hops(&collapsed, &ring, &curve, None);
 
@@ -2480,11 +2543,7 @@ mod tests {
                 3 => ([600.0, 323.0], 3, PinDirection::Input),
                 _ => return None,
             };
-            Some(Station {
-                point,
-                side,
-                direction: Some(direction),
-            })
+            Some(Station::at(point, side, Some(direction)))
         };
 
         let mut graph = Graph::default();
@@ -2568,11 +2627,7 @@ mod tests {
                 6 => ([600.0, 323.3], 3, PinDirection::Input),
                 _ => return None,
             };
-            Some(Station {
-                point,
-                side,
-                direction: Some(direction),
-            })
+            Some(Station::at(point, side, Some(direction)))
         };
         let mut graph = Graph::default();
         graph = graph.push_anchor(anchor(10, Point::new(300.0, 300.0)));
@@ -2614,6 +2669,84 @@ mod tests {
             corridor_crossings(&[vec![0], vec![0], vec![1, 1], vec![2, 2]]) > 0,
             "the adjacent exchange already clears this, so the scene does not \
              need the wider neighbourhood it exists to justify",
+        );
+    }
+
+    /// The pin hops of the one cable between two row pins, as
+    /// `(anchor, side)` in the order the cable runs them.
+    ///
+    /// Node 0 carries the output and spans `first` horizontally, node 1 the
+    /// input over `second`; both pins sit at y = 0, so only the horizontal
+    /// arrangement is in play.
+    fn row_pin_hops(first: (f32, f32), second: (f32, f32)) -> Vec<([f32; 2], u32)> {
+        let stations = move |pin: &PinRef<AllUsize>| {
+            let (borders, direction) = match pin.node_id {
+                0 => (first, PinDirection::Output),
+                1 => (second, PinDirection::Input),
+                _ => return None,
+            };
+            Some(Station::row(
+                [borders.0, 0.0],
+                [borders.1, 0.0],
+                Some(direction),
+            ))
+        };
+        let graph = Graph::default().push_edge(edge(0, pin_ref(0), pin_ref(1)));
+        let ring = ring(&graph);
+        let cables = graph.edge_hops(&stations, &ring, &curve, None);
+        cables[0]
+            .hops
+            .iter()
+            .filter_map(|hop| match hop {
+                edge_path::Hop::Pin { point, side } => Some((*point, *side)),
+                edge_path::Hop::Wrap { .. } => None,
+            })
+            .collect()
+    }
+
+    /// A cable between two row pins leaves each node by the border facing the
+    /// other one, tangent outward on that side: out of the left node's right
+    /// border, into the right node's left border, and the other way round once
+    /// the nodes trade places.
+    ///
+    /// Both ends measure against the OTHER pin's centre rather than its choice,
+    /// so neither waits on the other and the pair cannot disagree.
+    #[test]
+    fn a_cable_between_row_pins_takes_the_facing_borders() {
+        let right = u32::from(PinSide::Right);
+        let left = u32::from(PinSide::Left);
+
+        assert_eq!(
+            row_pin_hops((0.0, 100.0), (300.0, 400.0)),
+            vec![([100.0, 0.0], right), ([300.0, 0.0], left)],
+        );
+        assert_eq!(
+            row_pin_hops((300.0, 400.0), (0.0, 100.0)),
+            vec![([300.0, 0.0], left), ([100.0, 0.0], right)],
+        );
+    }
+
+    /// Two row pins sharing a centre line leave nothing to prefer, and the tie
+    /// keeps the left border at both ends.
+    ///
+    /// The choice turns only on which side of a node's centre the far end lies,
+    /// so overlapping nodes settle on one answer and hold it until that centre
+    /// is actually crossed - no hysteresis, no flicker.
+    #[test]
+    fn row_pins_over_the_same_centre_line_do_not_waver() {
+        let left = u32::from(PinSide::Left);
+        assert_eq!(
+            row_pin_hops((0.0, 100.0), (0.0, 100.0)),
+            vec![([0.0, 0.0], left), ([0.0, 0.0], left)],
+        );
+        // Nodes overlapping by all but a hair still agree with the geometry:
+        // the second node's centre is to the right, the first's to the left.
+        assert_eq!(
+            row_pin_hops((0.0, 100.0), (2.0, 102.0)),
+            vec![
+                ([100.0, 0.0], u32::from(PinSide::Right)),
+                ([2.0, 0.0], left)
+            ],
         );
     }
 

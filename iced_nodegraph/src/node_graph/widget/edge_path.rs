@@ -3471,17 +3471,9 @@ mod tests {
         let station = |pin: &PinRef<GateIds>| -> Option<Station> {
             let ends = scene.cables.get(pin.node_id / 2)?;
             Some(if pin.node_id.is_multiple_of(2) {
-                Station {
-                    point: ends.head,
-                    side: ends.head_side,
-                    direction: Some(PinDirection::Output),
-                }
+                Station::at(ends.head, ends.head_side, Some(PinDirection::Output))
             } else {
-                Station {
-                    point: ends.tail,
-                    side: ends.tail_side,
-                    direction: Some(PinDirection::Input),
-                }
+                Station::at(ends.tail, ends.tail_side, Some(PinDirection::Input))
             })
         };
         let centers = scene.anchors.clone();

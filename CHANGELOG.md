@@ -386,6 +386,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A `PinSide::Row` pin attaches on the border nearer the far end.** A row pin
+  spans its node and offers a border either side of it, but every cable took
+  the left one and left it along the encoding of `Row` itself, which the
+  tangent table reads as `+x` - so an edge started at the wrong indicator and
+  its tangent pointed back through the node body. Each end of a cable now
+  settles on the border facing its other end and leaves outward along it; both
+  ends measure against the far pin's centre rather than its choice, so two row
+  pins decide independently and the flip point is a node's centre line, crossed
+  once, which is what makes hysteresis unnecessary. A row pin now also paints
+  an indicator on both borders, matching the two cutouts its node body already
+  punched for it.
+
 - **An infinite node body is a debug assertion at layout.** Node bodies are
   laid out against unbounded limits so they shrink to their content, which
   lets a `Length::Fill` element inside one resolve to an infinite size. That
