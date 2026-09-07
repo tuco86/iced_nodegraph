@@ -166,6 +166,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`NodeGraph::on_connect_refused`.** Reports the pin pair of a drop the
+  connection validation turned down, once, on release: the one outcome of an
+  edge drag a host could not observe, since a refused drop snaps nothing and
+  so publishes no `on_connect`. A host can finally say why a connection did
+  not happen ("that field is on the same table", "int cannot feed str")
+  instead of leaving the drag to fail silently. The pair is in drag order
+  (source pin first) rather than normalized output-first, because a refused
+  pair need not contain an output; a release over empty canvas, over the
+  source pin, over a pin with `disable_interactions`, or over an accepting
+  pin reports nothing. It carries no reason: validation is a single predicate,
+  and one that answered `false` cannot say which of its rules did.
+
 - **`NodeGraph::dragging_anchor_style` / `dragging_anchor_class`.** The
   phantom anchor a route drag holds at the cursor is styled by its own class,
   the shape of `dragging_edge_style`; it used the theme's default anchor

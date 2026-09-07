@@ -49,6 +49,7 @@ enum Msg {
     Delete(Vec<usize>),
     Connect(Pin, Pin),
     Disconnect(Pin, Pin),
+    Refused(Pin, Pin),
     Camera(Point, f32),
     DragStart(DragInfo<SimIds>),
     DragUpdate(Point),
@@ -760,6 +761,123 @@ fn can_connect_false_blocks_connection() {
     assert!(
         !msgs.iter().any(|m| matches!(m, Msg::Connect(_, _))),
         "can_connect returning false must block the snap/connect: {msgs:?}",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Refused drops
+//
+// A drop the validation turns down publishes nothing else: no snap happened,
+// so no `on_connect`. `on_connect_refused` is what lets a host tell the user
+// why - and it must stay quiet for the outcomes that are not refusals.
+// ---------------------------------------------------------------------------
+
+/// The two-pin scene of [`pin_graph`] with the refusal report wired.
+/// `connect_ok` drives `can_connect`, so the same scene covers the accepted
+/// and the refused drop.
+fn refusal_graph(connect_ok: bool) -> Element<'static, Msg, Theme, Renderer> {
+    let mut ng: Graph = NodeGraph::default()
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .on_connect(Msg::Connect)
+        .on_connect_refused(Msg::Refused)
+        .can_connect(move |_, _| connect_ok);
+    ng = ng.push_node(node(
+        0usize,
+        OUT_POS,
+        pin!(Right, 0usize, pin_body::<_>(), Output),
+    ));
+    ng = ng.push_node(node(
+        1usize,
+        IN_POS,
+        pin!(Left, 0usize, pin_body::<_>(), Input),
+    ));
+    ng.into()
+}
+
+/// Every refused pair reported, in publish order.
+fn refusals(msgs: &[Msg]) -> Vec<(Pin, Pin)> {
+    msgs.iter()
+        .filter_map(|m| match m {
+            Msg::Refused(from, to) => Some((*from, *to)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_refused_drop_reports_the_pair_once() {
+    let mut ui = Simulator::new(refusal_graph(false));
+    drag(&mut ui, out_anchor(), in_anchor());
+
+    let msgs = messages(ui);
+    assert_eq!(
+        refusals(&msgs),
+        vec![(PinRef::new(0, 0), PinRef::new(1, 0))],
+        "a drop onto a pin can_connect refuses must be reported exactly once: {msgs:?}",
+    );
+    assert!(
+        !msgs.iter().any(|m| matches!(m, Msg::Connect(_, _))),
+        "a refused drop must not also connect: {msgs:?}",
+    );
+}
+
+#[test]
+fn a_refused_drop_reports_the_drag_order() {
+    // Dragged from the INPUT pin this time. `on_connect` would normalize the
+    // pair output-first; a refusal names the pin the drag started on first,
+    // because a refused pair need not contain an output at all.
+    let mut ui = Simulator::new(refusal_graph(false));
+    drag(&mut ui, in_anchor(), out_anchor());
+
+    assert_eq!(
+        refusals(&messages(ui)),
+        vec![(PinRef::new(1, 0), PinRef::new(0, 0))],
+    );
+}
+
+#[test]
+fn a_drop_on_empty_canvas_reports_no_refusal() {
+    // Nothing was refused there: the user simply let go of the cable.
+    let mut ui = Simulator::new(refusal_graph(false));
+    drag(&mut ui, out_anchor(), Point::new(600.0, 500.0));
+
+    let msgs = messages(ui);
+    assert_eq!(
+        refusals(&msgs),
+        vec![],
+        "empty canvas is not a refusal: {msgs:?}"
+    );
+}
+
+#[test]
+fn a_drop_back_on_the_source_pin_reports_no_refusal() {
+    // The pin the drag came from is not a target it was denied.
+    let mut ui = Simulator::new(refusal_graph(false));
+    drag(&mut ui, out_anchor(), out_anchor());
+
+    let msgs = messages(ui);
+    assert_eq!(
+        refusals(&msgs),
+        vec![],
+        "releasing on the source pin is not a refusal: {msgs:?}",
+    );
+}
+
+#[test]
+fn an_accepted_drop_reports_no_refusal() {
+    let mut ui = Simulator::new(refusal_graph(true));
+    drag(&mut ui, out_anchor(), in_anchor());
+
+    let msgs = messages(ui);
+    assert!(
+        msgs.contains(&Msg::Connect(PinRef::new(0, 0), PinRef::new(1, 0))),
+        "the drop must connect: {msgs:?}",
+    );
+    assert_eq!(
+        refusals(&msgs),
+        vec![],
+        "a connection that was accepted must not also be reported refused: {msgs:?}",
     );
 }
 

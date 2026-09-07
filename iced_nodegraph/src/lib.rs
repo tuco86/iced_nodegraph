@@ -221,7 +221,10 @@
 //! pin and [`on_connect`](NodeGraph::on_connect) fires immediately; moving away
 //! unsnaps and fires [`on_disconnect`](NodeGraph::on_disconnect). Releasing while
 //! snapped keeps the connection, releasing while loose discards the drag. Treat
-//! these callbacks as live state, not a commit.
+//! these callbacks as live state, not a commit. A drop onto a pin the
+//! validation turns down snaps nothing, and
+//! [`on_connect_refused`](NodeGraph::on_connect_refused) names that pair so
+//! the host can say why.
 //!
 //! [`NodeGraph::snap_grid`] puts a dragged node's origin on a world-unit grid.
 //! The preview and the delta [`on_move`](NodeGraph::on_move) reports are the

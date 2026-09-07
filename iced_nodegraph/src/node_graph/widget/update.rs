@@ -1073,6 +1073,29 @@ where
                 shell.request_redraw();
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                // A drop onto a pin the validation turned down is the one
+                // outcome of a drag nothing else reports: no snap happened, so
+                // no `on_connect`, and the drag simply ends. Read before the
+                // drag state is cleared, and only while a handler is wired -
+                // the pin scan is a tree walk.
+                if let Some(handler) = self.on_connect_refused.as_ref()
+                    && let Some(cursor) = world_cursor.position()
+                {
+                    let threshold = SNAP_THRESHOLD / state.camera.zoom();
+                    let valid = state.valid_drop_targets.clone();
+                    if let Some((from_ref, to_ref)) = refused_drop(
+                        self,
+                        tree,
+                        *layout,
+                        (from_node, from_pin),
+                        &valid,
+                        cursor,
+                        threshold,
+                    ) {
+                        shell.publish(handler(from_ref, to_ref));
+                    }
+                }
+                let state = tree.state.downcast_mut::<NodeGraphState>();
                 state.dragging = Dragging::None;
                 // Emit drag end event
                 if let Some(handler) = self.on_drag_end.as_ref() {
@@ -3026,6 +3049,69 @@ where
     }
 
     valid_targets
+}
+
+/// The pin pair a released drag refused to connect, in drag order, or `None`
+/// when the release names no refusal.
+///
+/// Reached only from the unsnapped `Edge` state, so an ACCEPTING pin under the
+/// cursor cannot appear here: reaching one moves the drag to `EdgeOver` while
+/// the cursor is still over it. What is left within reach is a pin the
+/// validation turned down, and `valid` keeps the accepting ones out regardless.
+///
+/// `threshold` is the snap radius, so "released over a pin" covers exactly the
+/// pins a connection could have landed on. The source pin and pins with
+/// interactions disabled name no refusal: one is where the drag came from, the
+/// other was deliberately taken out of play. The nearest candidate wins, so a
+/// drop between two refusing pins reports the one the user aimed at.
+fn refused_drop<I, Message, Theme, Renderer>(
+    graph: &NodeGraph<'_, I, Message, Theme, Renderer>,
+    tree: &Tree,
+    layout: Layout<'_>,
+    from: (usize, usize),
+    valid: &std::collections::HashSet<(usize, usize)>,
+    cursor: Point,
+    threshold: f32,
+) -> Option<(PinRef<I>, PinRef<I>)>
+where
+    I: Ids,
+    Theme: Catalog,
+    Renderer: iced_wgpu::core::renderer::Renderer + iced_wgpu::primitive::Renderer,
+{
+    let mut nearest: Option<(f32, usize, I::PinId)> = None;
+    for (node_index, (node_layout, node_tree)) in layout.children().zip(&tree.children).enumerate()
+    {
+        for (pin_index, pin_state, (a, b)) in find_pins::<I>(node_tree, node_layout) {
+            if (node_index, pin_index) == from
+                || pin_state.interactions_disabled
+                || valid.contains(&(node_index, pin_index))
+            {
+                continue;
+            }
+            let distance = a.distance(cursor).min(b.distance(cursor));
+            if distance >= threshold {
+                continue;
+            }
+            if nearest
+                .as_ref()
+                .is_none_or(|(closest, ..)| distance < *closest)
+            {
+                nearest = Some((distance, node_index, pin_state.pin_id.clone()));
+            }
+        }
+    }
+    let (_, to_node, to_pin_id) = nearest?;
+    let (_, from_pin_state, _) =
+        find_pins::<I>(tree.children.get(from.0)?, layout.children().nth(from.0)?)
+            .into_iter()
+            .nth(from.1)?;
+    Some((
+        PinRef::new(
+            graph.node_id_at(from.0)?.clone(),
+            from_pin_state.pin_id.clone(),
+        ),
+        PinRef::new(graph.node_id_at(to_node)?.clone(), to_pin_id),
+    ))
 }
 
 /// The positional index, anchors, side and direction of pin `pin_id` on node

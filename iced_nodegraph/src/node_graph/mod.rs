@@ -907,6 +907,10 @@ pub struct NodeGraph<
     pub(super) graph_class: Theme::GraphClass<'a>,
     pub(super) on_connect: Option<Box<dyn Fn(PinRef<I>, PinRef<I>) -> Message + 'a>>,
     pub(super) on_disconnect: Option<Box<dyn Fn(PinRef<I>, PinRef<I>) -> Message + 'a>>,
+    /// A drop the validation turned down, reported so the host can say why.
+    /// The pair is in drag order (source pin first), since a refused pair may
+    /// have no output to orient by.
+    pub(super) on_connect_refused: Option<Box<dyn Fn(PinRef<I>, PinRef<I>) -> Message + 'a>>,
     pub(super) on_move: Option<Box<dyn Fn(Vector, Vec<I::NodeId>) -> Message + 'a>>,
     /// Grip-resize report, the size counterpart to `on_move`. Only nodes marked
     /// [`Node::resizable`] carry a grip, and only while this is wired.
@@ -989,6 +993,7 @@ impl<I: Ids, Message, Theme: Catalog, Renderer> Default
             graph_class: Theme::default_graph(),
             on_connect: None,
             on_disconnect: None,
+            on_connect_refused: None,
             on_move: None,
             on_resize: None,
             on_anchor_move: None,
@@ -1842,6 +1847,36 @@ impl<'a, I: Ids, Message, Theme: Catalog, Renderer> NodeGraph<'a, I, Message, Th
     /// (`from` = output, `to` = input).
     pub fn on_disconnect(mut self, f: impl Fn(PinRef<I>, PinRef<I>) -> Message + 'a) -> Self {
         self.on_disconnect = Some(Box::new(f));
+        self
+    }
+
+    /// Sets a callback for a drop the connection validation turned down.
+    ///
+    /// Fires once, on release, when the drag ends over a pin that is reachable
+    /// (within the same distance a snap would have taken it) but is not an
+    /// accepted target - the one outcome of a drag a host cannot otherwise
+    /// observe, since no snap happened and so no
+    /// [`on_connect`](Self::on_connect) was published. A release over empty
+    /// canvas, over the pin the drag started from, over a pin with
+    /// [`disable_interactions`](crate::NodePin::disable_interactions), or over
+    /// an accepting pin (which is already connected by then) reports nothing.
+    ///
+    /// `from` is the pin the drag started on and `to` the pin it was dropped
+    /// on, in that order: what a refused pair has in common is nothing, not
+    /// even an output, so there is no data flow to normalize to the way
+    /// `on_connect` does.
+    ///
+    /// The refusal carries no reason. Validation is a single predicate -
+    /// [`can_connect`](Self::can_connect) when set, otherwise
+    /// [`default_can_connect`](crate::connection::default_can_connect) - and a
+    /// predicate that answered `false` cannot say which of its rules did. A
+    /// host that wants to distinguish "wrong direction" from "wrong type"
+    /// re-runs its own rules on the reported pair, where it has its model.
+    ///
+    /// Only reachable while [`on_connect`](Self::on_connect) is wired: without
+    /// it a pin press starts no edge drag at all.
+    pub fn on_connect_refused(mut self, f: impl Fn(PinRef<I>, PinRef<I>) -> Message + 'a) -> Self {
+        self.on_connect_refused = Some(Box::new(f));
         self
     }
 
