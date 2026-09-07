@@ -386,6 +386,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A pop-out inside a pin opens.** `NodePin` implemented `Widget` without
+  `overlay`, and iced collects a pop-out only through that method, so a
+  `pick_list`, `combo_box` or `tooltip` wrapped in a pin drew its trigger but
+  its menu never appeared - the one widget in the chain from the graph to the
+  content that dropped it. The pin now forwards `overlay` to its content like
+  any other wrapper; the graph's own camera transform is applied above it, so
+  the menu anchors to the pin at any zoom.
+
 - **A `PinSide::Row` pin attaches on the border nearer the far end.** A row pin
   spans its node and offers a border either side of it, but every cable took
   the left one and left it along the encoding of `Row` itself, which the

@@ -25,7 +25,7 @@ use iced::advanced::{Layout, layout, mouse, overlay, renderer};
 use iced::{Background, Color, Element, Length, Point, Rectangle, Size, Theme, Vector};
 use iced_wgpu::core::clipboard;
 
-use iced_nodegraph::{Indexed, NodeGraph, node};
+use iced_nodegraph::{Indexed, NodeGraph, PinSide, node, node_pin};
 
 mod common;
 
@@ -590,5 +590,53 @@ fn overlay_lays_out_in_layout_units() {
     assert!(
         (seen.width - expected.width).abs() < 0.5 && (seen.height - expected.height).abs() < 0.5,
         "content overlay laid out against {seen:?}, expected {expected:?} at zoom {zoom}",
+    );
+}
+
+#[test]
+fn overlay_of_a_pin_arrives_where_its_content_sits() {
+    // A pick list wrapped in a pin: the pin is a wrapper around node content,
+    // so its pop-out has to reach the graph at all, and at the same screen
+    // pixel the same content reaches it unwrapped. Without the pin forwarding
+    // `overlay`, the menu never opens.
+    let origin = Vector::new(0.0, 100.0);
+    let world = Point::new(30.0, 40.0);
+    let cam_pos = Point::new(20.0, -10.0);
+    let zoom = 2.0;
+
+    let popout_rect = |element: Element<'static, (), Theme, Recorder>| -> Rectangle {
+        let out = Rc::new(RefCell::new(Recorded::default()));
+        let mut renderer = Recorder::new(out.clone());
+        let (mut graph, mut tree, layout_node) =
+            graph_with_node(origin, world, cam_pos, zoom, element, &renderer);
+        let layout = Layout::with_offset(origin, &layout_node);
+        let viewport = Rectangle::new(Point::ORIGIN, VIEWPORT);
+
+        let mut ov = graph
+            .overlay(&mut tree, layout, &renderer, &viewport, Vector::ZERO)
+            .expect("a pop-out inside the node must reach the graph");
+        let onode = ov.as_overlay_mut().layout(&renderer, VIEWPORT);
+        ov.as_overlay().draw(
+            &mut renderer,
+            &Theme::Dark,
+            &renderer::Style {
+                text_color: Color::WHITE,
+            },
+            Layout::new(&onode),
+            mouse::Cursor::Unavailable,
+        );
+        out.borrow()
+            .quads
+            .first()
+            .copied()
+            .expect("overlay drew a quad")
+    };
+
+    let bare = popout_rect(Element::from(OverlayProbe { log: Rc::default() }));
+    let pinned =
+        popout_rect(node_pin(PinSide::Left, 0usize, OverlayProbe { log: Rc::default() }).into());
+    assert_eq!(
+        pinned, bare,
+        "a pop-out inside a pin must land where the same content lands unwrapped",
     );
 }

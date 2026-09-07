@@ -55,10 +55,10 @@
 use std::any::{Any, type_name};
 
 use iced_wgpu::core::{
-    Clipboard, Layout, Shell, Widget, layout, mouse, renderer,
+    Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer,
     widget::{Tree, tree},
 };
-use iced_widget::core::{Element, Event, Length, Point, Rectangle, Size};
+use iced_widget::core::{Element, Event, Length, Point, Rectangle, Size, Vector};
 
 use crate::ids::{Id, Ids};
 
@@ -482,6 +482,28 @@ where
         } else {
             mouse::Interaction::default()
         }
+    }
+
+    /// Iced collects a pop-out (a pick list or combo box menu, a tooltip)
+    /// only through `Widget::overlay`, so a pin that does not forward it
+    /// leaves everything it wraps drawn but unable to open.
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'b>,
+        renderer: &Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+        let content_tree = tree.children.first_mut()?;
+        let content_layout = layout.children().next()?;
+        self.content.as_widget_mut().overlay(
+            content_tree,
+            content_layout,
+            renderer,
+            viewport,
+            translation,
+        )
     }
 
     fn size_hint(&self) -> Size<Length> {
