@@ -7,8 +7,7 @@
 //! rounds only the two corners that touch the node edge, so header + body + footer
 //! reconstruct the full rounded outline with a flush seam in between.
 
-use iced_widget::core::{Border, Color, Element, Length, Theme, border};
-use iced_widget::renderer::Renderer;
+use iced_widget::core::{Border, Color, Element, Length, border};
 use iced_widget::{Container, container};
 
 /// Which edge of the node a section sits against: a header rounds the top pair
@@ -87,13 +86,16 @@ fn section_border_radius(radii: EdgeRadii, position: ContentPosition) -> border:
 /// let asymmetric: iced::widget::Container<'_, Message> =
 ///     node_header(text("Title"), Color::BLACK, (4.0, 8.0));
 /// ```
-pub fn node_header<'a, Message>(
+pub fn node_header<'a, Message, Theme, Renderer>(
     content: impl Into<Element<'a, Message, Theme, Renderer>>,
     background: Color,
     radii: impl Into<EdgeRadii>,
 ) -> Container<'a, Message, Theme, Renderer>
 where
     Message: Clone + 'a,
+    Theme: container::Catalog + 'a,
+    Theme::Class<'a>: From<container::StyleFn<'a, Theme>>,
+    Renderer: iced_widget::core::Renderer,
 {
     node_section(content, background, radii.into(), ContentPosition::Top)
 }
@@ -115,20 +117,23 @@ where
 /// let footer: iced::widget::Container<'_, Message> =
 ///     node_footer(text("Footer"), Color::from_rgb(0.15, 0.15, 0.15), 5.0);
 /// ```
-pub fn node_footer<'a, Message>(
+pub fn node_footer<'a, Message, Theme, Renderer>(
     content: impl Into<Element<'a, Message, Theme, Renderer>>,
     background: Color,
     radii: impl Into<EdgeRadii>,
 ) -> Container<'a, Message, Theme, Renderer>
 where
     Message: Clone + 'a,
+    Theme: container::Catalog + 'a,
+    Theme::Class<'a>: From<container::StyleFn<'a, Theme>>,
+    Renderer: iced_widget::core::Renderer,
 {
     node_section(content, background, radii.into(), ContentPosition::Bottom)
 }
 
 /// Shared rounded-box section for header/footer: fills `background` and rounds
 /// the corners at `position` to `radii`, at `Length::Fill` width.
-fn node_section<'a, Message>(
+fn node_section<'a, Message, Theme, Renderer>(
     content: impl Into<Element<'a, Message, Theme, Renderer>>,
     background: Color,
     radii: EdgeRadii,
@@ -136,6 +141,9 @@ fn node_section<'a, Message>(
 ) -> Container<'a, Message, Theme, Renderer>
 where
     Message: Clone + 'a,
+    Theme: container::Catalog + 'a,
+    Theme::Class<'a>: From<container::StyleFn<'a, Theme>>,
+    Renderer: iced_widget::core::Renderer,
 {
     let radius = section_border_radius(radii, position);
 
