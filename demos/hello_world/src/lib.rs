@@ -4138,8 +4138,6 @@ mod tests {
 
     #[test]
     fn test_edge_config_inputs_pattern_type_dashed() {
-        use iced_nodegraph::SdfPatternType;
-
         let inputs = EdgeConfigInputs {
             pattern_type: Some(PatternType::Dashed),
             thickness: Some(3.0),
@@ -4152,7 +4150,7 @@ mod tests {
         let pattern = config.pattern.expect("pattern should be Some");
         assert_eq!(pattern.thickness, 3.0);
         assert!(
-            matches!(pattern.pattern_type, SdfPatternType::Dashed { dash, gap, .. } if (dash - 10.0).abs() < 0.01 && (gap - 5.0).abs() < 0.01),
+            matches!(pattern.pattern_type, iced_nodegraph::PatternType::Dashed { dash, gap, .. } if (dash - 10.0).abs() < 0.01 && (gap - 5.0).abs() < 0.01),
             "Expected Dashed pattern, got {:?}",
             pattern.pattern_type
         );
@@ -4160,8 +4158,6 @@ mod tests {
 
     #[test]
     fn test_edge_config_inputs_pattern_type_arrowed() {
-        use iced_nodegraph::SdfPatternType;
-
         let inputs = EdgeConfigInputs {
             pattern_type: Some(PatternType::Arrowed),
             ..Default::default()
@@ -4170,7 +4166,10 @@ mod tests {
         let config = inputs.build();
         let pattern = config.pattern.expect("pattern should be Some");
         assert!(
-            matches!(pattern.pattern_type, SdfPatternType::Arrowed { .. }),
+            matches!(
+                pattern.pattern_type,
+                iced_nodegraph::PatternType::Arrowed { .. }
+            ),
             "Expected Arrowed pattern, got {:?}",
             pattern.pattern_type
         );
@@ -4178,8 +4177,6 @@ mod tests {
 
     #[test]
     fn test_edge_config_inputs_pattern_type_dotted() {
-        use iced_nodegraph::SdfPatternType;
-
         let inputs = EdgeConfigInputs {
             pattern_type: Some(PatternType::Dotted),
             dot_radius: Some(3.0),
@@ -4190,7 +4187,10 @@ mod tests {
         let config = inputs.build();
         let pattern = config.pattern.expect("pattern should be Some");
         assert!(
-            matches!(pattern.pattern_type, SdfPatternType::Dotted { .. }),
+            matches!(
+                pattern.pattern_type,
+                iced_nodegraph::PatternType::Dotted { .. }
+            ),
             "Expected Dotted pattern, got {:?}",
             pattern.pattern_type
         );
@@ -4198,8 +4198,6 @@ mod tests {
 
     #[test]
     fn test_edge_config_inputs_pattern_type_dash_dotted() {
-        use iced_nodegraph::SdfPatternType;
-
         let inputs = EdgeConfigInputs {
             pattern_type: Some(PatternType::DashDotted),
             ..Default::default()
@@ -4208,7 +4206,10 @@ mod tests {
         let config = inputs.build();
         let pattern = config.pattern.expect("pattern should be Some");
         assert!(
-            matches!(pattern.pattern_type, SdfPatternType::DashDotted { .. }),
+            matches!(
+                pattern.pattern_type,
+                iced_nodegraph::PatternType::DashDotted { .. }
+            ),
             "Expected DashDotted pattern, got {:?}",
             pattern.pattern_type
         );
@@ -4218,8 +4219,6 @@ mod tests {
     fn test_edge_config_inputs_pattern_preserved_through_build() {
         // Verify the full pipeline: EdgeConfigInputs -> build() -> EdgeConfig
         // Pattern, border, shadow must all survive
-        use iced_nodegraph::SdfPatternType;
-
         let inputs = EdgeConfigInputs {
             pattern_type: Some(PatternType::Dashed),
             thickness: Some(4.0),
@@ -4244,7 +4243,7 @@ mod tests {
         assert_eq!(pattern.thickness, 4.0);
         assert!(matches!(
             pattern.pattern_type,
-            SdfPatternType::Dashed { .. }
+            iced_nodegraph::PatternType::Dashed { .. }
         ));
         assert!((pattern.flow_speed - 50.0).abs() < 0.01);
 
