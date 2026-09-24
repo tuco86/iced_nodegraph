@@ -7,7 +7,7 @@
 
 use super::update::{CableHit, CableZone, anchor_drag_offset, drag_carries, drag_delta};
 use super::*;
-use crate::node_graph::euclid::{WorldRect, WorldSize};
+use crate::node_graph::euclid::{ScreenVector, WorldRect, WorldSize};
 use crate::node_graph::state::AnchorGeometry;
 use crate::style::{ColorQuad, EdgeCurve};
 use iced_widget::core::{Border, Shadow};
@@ -110,6 +110,18 @@ fn draw_sdf<Renderer>(
         animated.set(true);
     }
     renderer.draw_primitive(clip, primitive.layout_bounds(clip));
+}
+
+/// Shared per-frame rendering context for all primitives.
+#[derive(Debug, Clone, Copy)]
+struct RenderContext {
+    camera_zoom: f32,
+    camera_position: WorldPoint,
+    /// Screen-space top-left of the widget within the window. SDF screen
+    /// mapping must offset by this so layers align with Iced content when the
+    /// graph is not at the window origin (e.g. below a toolbar).
+    viewport_origin: ScreenVector,
+    time: f32,
 }
 
 /// A world-space bounding box as SDF screen bounds `[x, y, width, height]`,
@@ -278,18 +290,10 @@ where
             |i| self.nodes[i].frame,
         );
 
-        // Update time for animations. The same instant ages every particle,
-        // so a frame is self-consistent.
+        // The animation clock for this frame. The same instant ages every
+        // particle, so a frame is self-consistent.
         let now = Instant::now();
-        let time = {
-            if let Some(last_update) = state.last_update {
-                let delta = now.duration_since(last_update).as_secs_f32();
-                let capped_delta = delta.min(0.1);
-                state.time + capped_delta
-            } else {
-                state.time
-            }
-        };
+        let time = state.animation_time(now);
 
         // Create RenderContext (will be finalized after camera panning is applied)
         let mut render_context = RenderContext {
@@ -707,7 +711,7 @@ where
                     let at = (anchor.into_euclid().to_vector() + offset).to_point();
                     [at.x, at.y]
                 };
-                Some(pin_station(
+                Some(Station::for_pin(
                     pin_state.side,
                     (shift(near), shift(far)),
                     pin_state.direction,
@@ -1033,14 +1037,14 @@ where
                 // border the cursor is nearer - the same rule a committed edge
                 // follows, which is what makes the preview land where the cable
                 // will.
-                let mut from = pin_station(
+                let mut from = Station::for_pin(
                     from_pin_state.side,
                     (shift(near), shift(far)),
                     from_pin_state.direction,
                 );
                 from.settle(end_pos);
                 let start_pos = from.point;
-                let cursor_side = opposing_side(from.side);
+                let cursor_side = from.side.opposite();
 
                 // Output = start, input = end. Dragging FROM an input pin puts
                 // the held pin at the END and the cursor at the START (flip);
@@ -1689,7 +1693,7 @@ mod tests {
     use iced_widget::core::{Background, Color, Element, Theme, Transformation, image};
 
     use crate::style::EdgeStyle;
-    use crate::{PinDirection, PinRef, PinSide, default_edge_style, edge, node, node_pin};
+    use crate::{Indexed, PinDirection, PinRef, PinSide, default_edge_style, edge, node, node_pin};
 
     /// Satisfies the renderer bounds [`NodeGraph`] imposes and keeps nothing:
     /// what these tests read is widget state, not renderer output.

@@ -68,26 +68,19 @@ const DEFAULT_PIN_SIZE: Size = Size::new(50.0, 20.0);
 /// Which side of a node this pin attaches to.
 /// Determines the tangent direction for edge bezier curves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[repr(u32)]
 pub enum PinSide {
     /// Pin on the left edge, edges exit to the left.
     #[default]
-    Left = 0,
+    Left,
     /// Pin on the right edge, edges exit to the right.
-    Right = 1,
+    Right,
     /// Pin on the top edge, edges exit upward.
-    Top = 2,
+    Top,
     /// Pin on the bottom edge, edges exit downward.
-    Bottom = 3,
+    Bottom,
     /// Pin spanning the node: an edge may attach on either the left or the
     /// right border, whichever is nearer its other end.
-    Row = 4,
-}
-
-impl From<PinSide> for u32 {
-    fn from(side: PinSide) -> u32 {
-        side as u32
-    }
+    Row,
 }
 
 /// Direction of data flow for a pin.

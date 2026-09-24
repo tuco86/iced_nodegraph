@@ -7,14 +7,17 @@
 //!
 //! ## Rendering Layers
 //!
-//! The widget renders in three tiers for correct z-ordering:
+//! The widget renders in four tiers, back to front:
 //! 1. Solid background color.
 //! 2. Graph background: ONE batched SDF draw under all nodes, internally
-//!    ordered grid (z0), node + edge shadows (z1), edge strokes (z2).
+//!    ordered grid (z0), node + edge shadows (z1), edge strokes (z2) and
+//!    anchors (z3). The hover glow and the edge being dragged follow it, each
+//!    as a small primitive of its own.
 //! 3. Per node, composited by Iced in z-order: node background (fill) -> node
 //!    content (Iced widgets) -> node foreground (border + pins). Embedding Iced
 //!    widgets between the two SDF node layers lets nodes overlap correctly.
-//! 4. Graph foreground: interaction tools (selection box, edge-cutting overlay).
+//! 4. Graph foreground: interaction tools (selection box, edge-cutting overlay)
+//!    and the minimap.
 //!
 //! ## Interface contract
 //!
@@ -50,15 +53,16 @@ use iced_widget::core::{Element, Event, Length, Point, Rectangle, Size, Vector, 
 use web_time::Instant;
 
 use super::{
-    ANCHOR_GRAB_THRESHOLD, CableGeometry, Counts, DragInfo, EDGE_END_GRAB_LENGTH,
-    EDGE_GRAB_THRESHOLD, Edge, GraphInfo, MIN_NODE_SIZE, NodeGraph, OpTiming, PendingRoute,
-    PhantomKind, RESIZE_GRIP_SIDE, RenderContext, RoutePhantom, Station,
+    ANCHOR_GRAB_THRESHOLD, Counts, DragInfo, EDGE_END_GRAB_LENGTH, EDGE_GRAB_THRESHOLD, Edge,
+    GraphInfo, MIN_NODE_SIZE, NodeGraph, OpTiming, RESIZE_GRIP_SIDE,
+    cable::{CableGeometry, PendingRoute, PhantomKind, RoutePhantom, Station},
+    edge_path,
     euclid::{IntoIced, LayoutVector},
     state::{CameraTween, Dragging, NodeGraphState, PressTarget, z_render_indices},
 };
 use crate::{
     PinDirection, PinRef, PinSide,
-    ids::{Ids, Indexed},
+    ids::Ids,
     node_graph::euclid::{IntoEuclid, LayoutPoint, ScreenPoint, WorldPoint},
     node_graph::focus::FocusRequest,
     node_pin::{NodePinState, PinEnd, PinInfo, PinSlot},
@@ -71,56 +75,10 @@ use iced_nodegraph_sdf::{Pattern, SdfPrimitive, Shape, Style, Tiling};
 
 mod camera_overlay;
 mod draw;
-pub(super) mod edge_path;
 mod minimap;
 pub(crate) mod update;
 
 use camera_overlay::CameraOverlay;
-
-/// Length of bezier control point segments (in world-space pixels).
-/// Controls how far control points extend from pins along their tangent direction.
-const BEZIER_SEGMENT_LENGTH: f32 = 80.0;
-
-/// Adaptively pick the control-point length for an edge so the bezier never
-/// overshoots the other endpoint. With a fixed 80px length, two pins placed
-/// 20px apart would have control points 80px past each other, curling the
-/// curve into a tight loop that the SDF cannot resolve cleanly and the cull
-/// drops along the inner side. Clamp to ≈half the endpoint distance.
-fn adaptive_bezier_length(start: [f32; 2], end: [f32; 2]) -> f32 {
-    let dx = end[0] - start[0];
-    let dy = end[1] - start[1];
-    let d = (dx * dx + dy * dy).sqrt();
-    BEZIER_SEGMENT_LENGTH.min(d * 0.5).max(1.0)
-}
-
-/// Returns the tangent direction vector for a pin side in the shader's `u32`
-/// side encoding (matches `get_pin_direction` in the WGSL).
-/// Left=(-1,0), Right=(1,0), Top=(0,-1), Bottom=(0,1). A row pin reaches a
-/// cable as the border it settled on, never as `PinSide::Row` itself, so the
-/// fallback covers no side a station carries.
-fn pin_side_direction(side: u32) -> [f32; 2] {
-    match side {
-        0 => [-1.0, 0.0], // Left
-        1 => [1.0, 0.0],  // Right
-        2 => [0.0, -1.0], // Top
-        3 => [0.0, 1.0],  // Bottom
-        _ => [1.0, 0.0],
-    }
-}
-
-/// The side a station faces when it stands at the other end of a cable from
-/// `side`, in the same `u32` encoding: the loose end of a dragged edge points
-/// back at the pin it was pulled from, so the preview leaves that pin outward.
-/// A side with no opposite keeps its own.
-fn opposing_side(side: u32) -> u32 {
-    match side {
-        0 => 1, // Left <-> Right
-        1 => 0,
-        2 => 3, // Top <-> Bottom
-        3 => 2,
-        other => other,
-    }
-}
 
 impl<I, Message, Theme, Renderer> iced_wgpu::core::Widget<Message, Theme, Renderer>
     for NodeGraph<'_, I, Message, Theme, Renderer>
@@ -444,18 +402,6 @@ where
     }
 }
 
-/// Creates an empty graph over the [`Indexed`] vocabulary: `usize` node, pin
-/// and anchor ids, no edge ids, no pin payload.
-///
-/// For any other vocabulary name it once: `NodeGraph::<AppIds, _, _, _>::new()`.
-pub fn node_graph<'a, Message, Theme, Renderer>() -> NodeGraph<'a, Indexed, Message, Theme, Renderer>
-where
-    Theme: Catalog,
-    Renderer: iced_wgpu::core::renderer::Renderer,
-{
-    NodeGraph::new()
-}
-
 /// A pin as found in the laid-out widget tree: its positional index within the
 /// owning node, its state, and the `(start, end)` anchors an edge attaches to.
 ///
@@ -548,20 +494,6 @@ fn pin_positions<P, UI>(state: &NodePinState<P, UI>, node_bounds: Rectangle) -> 
         PinSide::Right => both(Point::new(right, y)),
         PinSide::Top => both(Point::new(x, top)),
         PinSide::Bottom => both(Point::new(x, bottom)),
-    }
-}
-
-/// The station a pin offers a cable, from the anchors
-/// [`pin_positions`] found for it and the side it declares.
-///
-/// [`PinSide::Row`] is the one side with two anchors, and the only one whose
-/// station leaves the choice open: it spans the node, so a cable takes the
-/// border nearer its other end. Every other side collapses to its single
-/// anchor and the outward normal it names.
-fn pin_station(side: PinSide, anchors: ([f32; 2], [f32; 2]), direction: PinDirection) -> Station {
-    match side {
-        PinSide::Row => Station::row(anchors.0, anchors.1, Some(direction)),
-        one_sided => Station::at(anchors.0, one_sided.into(), Some(direction)),
     }
 }
 
@@ -658,84 +590,5 @@ mod orient_tests {
         let (from, to) = orient_connection(PinDirection::Both, PinDirection::Both, a, b);
         assert_eq!(from, PinRef::new(0, 0));
         assert_eq!(to, PinRef::new(1, 0));
-    }
-}
-
-#[cfg(test)]
-mod station_tests {
-    use super::{opposing_side, pin_station};
-    use crate::node_pin::{PinDirection, PinSide};
-
-    /// A row pin spanning x in [0, 100] at y = 10, as `pin_positions` hands it
-    /// over: left border first, right border second.
-    fn row() -> super::Station {
-        pin_station(
-            PinSide::Row,
-            ([0.0, 10.0], [100.0, 10.0]),
-            PinDirection::Both,
-        )
-    }
-
-    // The border a row pin's cable takes is the one nearer the far end, and the
-    // tangent side follows it, so the cable leaves the node outward on the side
-    // it attached to instead of running back through the body.
-    #[test]
-    fn a_row_pin_takes_the_border_nearer_the_far_end() {
-        let mut rightward = row();
-        rightward.settle([400.0, -900.0]);
-        assert_eq!(
-            (rightward.point, rightward.side),
-            ([100.0, 10.0], u32::from(PinSide::Right)),
-        );
-
-        let mut leftward = row();
-        leftward.settle([-400.0, 900.0]);
-        assert_eq!(
-            (leftward.point, leftward.side),
-            ([0.0, 10.0], u32::from(PinSide::Left)),
-        );
-    }
-
-    // Both borders sit at the same height, so the vertical distance cancels and
-    // only the half of the node the far end lies in decides. The flip point is
-    // the node's centre line, crossed once, which is why the choice needs no
-    // hysteresis; a far end exactly on that line keeps the left border.
-    #[test]
-    fn the_choice_turns_on_the_node_centre_line_alone() {
-        for height in [-1000.0, 0.0, 1000.0] {
-            let mut just_right = row();
-            just_right.settle([50.1, height]);
-            assert_eq!(just_right.side, u32::from(PinSide::Right));
-
-            let mut on_the_line = row();
-            on_the_line.settle([50.0, height]);
-            assert_eq!(on_the_line.side, u32::from(PinSide::Left));
-        }
-    }
-
-    // A pin that declares one side has nothing to choose: the side it named
-    // stands however the cable runs from it.
-    #[test]
-    fn a_one_sided_pin_keeps_the_side_it_declared() {
-        let mut left = pin_station(
-            PinSide::Left,
-            ([0.0, 10.0], [0.0, 10.0]),
-            PinDirection::Input,
-        );
-        left.settle([400.0, 10.0]);
-        assert_eq!(
-            (left.point, left.side),
-            ([0.0, 10.0], u32::from(PinSide::Left))
-        );
-    }
-
-    // The loose end of a dragged cable faces back at the pin it was pulled
-    // from, which is what aims the preview's far tangent at the node.
-    #[test]
-    fn a_loose_end_faces_back_at_its_pin() {
-        assert_eq!(opposing_side(PinSide::Left.into()), PinSide::Right.into());
-        assert_eq!(opposing_side(PinSide::Right.into()), PinSide::Left.into());
-        assert_eq!(opposing_side(PinSide::Top.into()), PinSide::Bottom.into());
-        assert_eq!(opposing_side(PinSide::Bottom.into()), PinSide::Top.into());
     }
 }

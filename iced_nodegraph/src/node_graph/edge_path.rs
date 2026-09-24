@@ -1,4 +1,4 @@
-//! The single source of cable geometry (`plan/routing-pins.md`).
+//! The single source of cable geometry.
 //!
 //! A cable is a chain of hops: a node pin, the anchor orbits it wraps, and the
 //! node pin at the far end. It is emitted as one [`PathSeg`] chain for
@@ -16,8 +16,61 @@
 //! The pin-to-pin case is one direct tangent-bezier leg: same control-point
 //! formula, same [`adaptive_bezier_length`].
 
-use super::{adaptive_bezier_length, pin_side_direction};
 use crate::style::EdgeCurve;
+
+/// Length of bezier control point segments (in world-space pixels).
+/// Controls how far control points extend from pins along their tangent direction.
+const BEZIER_SEGMENT_LENGTH: f32 = 80.0;
+
+/// Adaptively pick the control-point length for an edge so the bezier never
+/// overshoots the other endpoint. With a fixed 80px length, two pins placed
+/// 20px apart would have control points 80px past each other, curling the
+/// curve into a tight loop that the SDF cannot resolve cleanly and the cull
+/// drops along the inner side. Clamp to ≈half the endpoint distance.
+fn adaptive_bezier_length(start: [f32; 2], end: [f32; 2]) -> f32 {
+    let dx = end[0] - start[0];
+    let dy = end[1] - start[1];
+    let d = (dx * dx + dy * dy).sqrt();
+    BEZIER_SEGMENT_LENGTH.min(d * 0.5).max(1.0)
+}
+
+/// The node border a pin station sits on, which fixes the outward normal a
+/// cable leaves or reaches it along.
+///
+/// A row pin offers two borders and settles on one per cable before any hop is
+/// built, so a hop always carries exactly one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Border {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+impl Border {
+    /// The outward unit normal in y-down screen orientation: Left `(-1, 0)`,
+    /// Right `(1, 0)`, Top `(0, -1)`, Bottom `(0, 1)`.
+    pub(crate) fn normal(self) -> [f32; 2] {
+        match self {
+            Border::Left => [-1.0, 0.0],
+            Border::Right => [1.0, 0.0],
+            Border::Top => [0.0, -1.0],
+            Border::Bottom => [0.0, 1.0],
+        }
+    }
+
+    /// The border a station faces when it stands at the other end of a cable
+    /// from this one: the loose end of a dragged edge points back at the pin it
+    /// was pulled from, so the preview leaves that pin outward.
+    pub(crate) fn opposite(self) -> Border {
+        match self {
+            Border::Left => Border::Right,
+            Border::Right => Border::Left,
+            Border::Top => Border::Bottom,
+            Border::Bottom => Border::Top,
+        }
+    }
+}
 
 /// Which way a cable wraps an anchor, as seen on screen.
 ///
@@ -141,7 +194,7 @@ fn arc_start_angle(cursor: [f32; 2], center: [f32; 2]) -> f32 {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum Hop {
     /// A node pin: its position and its side's outward normal.
-    Pin { point: [f32; 2], side: u32 },
+    Pin { point: [f32; 2], side: Border },
     /// A through-station: the ring carries the cable on, wrapping the short way
     /// round between its neighbours.
     Wrap { orbit: Orbit },
@@ -397,7 +450,7 @@ pub(crate) fn build(hops: &[Hop], curve: &EdgeCurve) -> Built {
         Hop::Pin { point, side } => (point, side),
         Hop::Wrap { .. } => return empty,
     };
-    let mut dir = pin_side_direction(start_side);
+    let mut dir = start_side.normal();
     let mut on_tangent = false;
     let mut cursor = start;
     // Length of everything pushed so far, so each wrap can record where along
@@ -418,7 +471,7 @@ pub(crate) fn build(hops: &[Hop], curve: &EdgeCurve) -> Built {
         };
         match hops[i] {
             Hop::Pin { point, side } => {
-                let normal = pin_side_direction(side);
+                let normal = side.normal();
                 push_leg(
                     &mut segs,
                     &mut walked,
@@ -597,12 +650,6 @@ pub(crate) fn belt(from: (Orbit, Hand), to: (Orbit, Hand)) -> Option<(Attachment
     Some((touch(a, ha), touch(b, hb)))
 }
 
-/// One leg between two stations: the widget's tangent-bezier construction with
-/// pre-resolved endpoints and tangents, so the pin-to-pin case is bit-for-bit
-/// the curve `edge_shape` builds.
-///
-/// `from_dir` points the way the cable leaves `from`; `to_dir` points AWAY from
-/// the way it arrives at `to`, so both control points sit outside the leg.
 /// Control-point length for a leg that has to turn a full quarter circle onto
 /// the line it wants to run along.
 ///
@@ -705,6 +752,11 @@ fn leg_reaches(from: Leg, to: Leg) -> (f32, f32) {
 }
 
 /// Pushes the segment of one leg and advances the running arc length by it.
+///
+/// The tangent-bezier construction with pre-resolved endpoints and tangents:
+/// `from.dir` points the way the cable leaves `from`; `to.dir` points AWAY
+/// from the way it arrives at `to`, so both control points sit outside the
+/// leg.
 fn push_leg(segs: &mut Vec<PathSeg>, walked: &mut f32, from: Leg, to: Leg, curve: &EdgeCurve) {
     let Leg {
         point: from_point,
@@ -1334,7 +1386,8 @@ pub(crate) fn crossings_between(a: &EdgePath, b: &EdgePath, corridors: &[Corrido
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::node_graph::{PinRef, Station};
+    use crate::node_graph::PinRef;
+    use crate::node_graph::cable::{Station, wrap_span};
     use crate::node_pin::PinDirection;
     use iced_widget::core::Point;
     use std::f32::consts::{FRAC_PI_2, PI, TAU};
@@ -1403,12 +1456,12 @@ mod tests {
             &[
                 Hop::Pin {
                     point: pin,
-                    side: 1,
+                    side: Border::Right,
                 },
                 Hop::Wrap { orbit },
                 Hop::Pin {
                     point: exit_pin_for(orbit, pin, Hand::Clockwise),
-                    side: 1,
+                    side: Border::Right,
                 },
             ],
             &EdgeCurve::BezierCubic,
@@ -1443,24 +1496,30 @@ mod tests {
         );
     }
 
-    /// The regression contract for every edge that exists today: a chain of two
-    /// pins must reproduce the widget's own tangent-bezier formula exactly, not
-    /// merely something similar. Recomputed here from the same primitives
-    /// rather than compared against a recorded constant.
+    /// The regression contract for a pin-to-pin edge: a chain of two pins must
+    /// reproduce the tangent-bezier formula exactly, not merely something
+    /// similar. Recomputed here from the same primitives rather than compared
+    /// against a recorded constant.
     #[test]
-    fn pin_to_pin_matches_edge_shape_formula() {
+    fn pin_to_pin_matches_tangent_bezier_formula() {
         let (p0, p1) = ([10.0, 20.0], [300.0, 140.0]);
         let path = build(
             &[
-                Hop::Pin { point: p0, side: 1 },
-                Hop::Pin { point: p1, side: 0 },
+                Hop::Pin {
+                    point: p0,
+                    side: Border::Right,
+                },
+                Hop::Pin {
+                    point: p1,
+                    side: Border::Left,
+                },
             ],
             &EdgeCurve::BezierCubic,
         )
         .path;
 
         let l = adaptive_bezier_length(p0, p1);
-        let (d0, d1) = (pin_side_direction(1), pin_side_direction(0));
+        let (d0, d1) = (Border::Right.normal(), Border::Left.normal());
         assert_eq!(path.start, p0);
         assert_eq!(
             path.segs,
@@ -1472,13 +1531,29 @@ mod tests {
         );
     }
 
+    // The loose end of a dragged cable faces back at the pin it was pulled
+    // from, which is what aims the preview's far tangent at the node.
+    #[test]
+    fn a_loose_end_faces_back_at_its_pin() {
+        assert_eq!(Border::Left.opposite(), Border::Right);
+        assert_eq!(Border::Right.opposite(), Border::Left);
+        assert_eq!(Border::Top.opposite(), Border::Bottom);
+        assert_eq!(Border::Bottom.opposite(), Border::Top);
+    }
+
     #[test]
     fn pin_to_pin_line() {
         let (p0, p1) = ([0.0, 0.0], [80.0, 0.0]);
         let path = build(
             &[
-                Hop::Pin { point: p0, side: 1 },
-                Hop::Pin { point: p1, side: 0 },
+                Hop::Pin {
+                    point: p0,
+                    side: Border::Right,
+                },
+                Hop::Pin {
+                    point: p1,
+                    side: Border::Left,
+                },
             ],
             &EdgeCurve::Line,
         )
@@ -1566,12 +1641,12 @@ mod tests {
             &[
                 Hop::Pin {
                     point: [0.0, 200.0],
-                    side: 1,
+                    side: Border::Right,
                 },
                 Hop::Wrap { orbit: ORBIT },
                 Hop::Pin {
                     point: [200.0, 500.0],
-                    side: 2,
+                    side: Border::Top,
                 },
             ],
             &EdgeCurve::BezierCubic,
@@ -1625,12 +1700,12 @@ mod tests {
                     &[
                         Hop::Pin {
                             point: pin,
-                            side: 1,
+                            side: Border::Right,
                         },
                         Hop::Wrap { orbit },
                         Hop::Pin {
                             point: exit_pin_for(orbit, pin, hand),
-                            side: 1,
+                            side: Border::Right,
                         },
                     ],
                     &EdgeCurve::BezierCubic,
@@ -1678,12 +1753,12 @@ mod tests {
             &[
                 Hop::Pin {
                     point: [0.0, 200.0],
-                    side: 1,
+                    side: Border::Right,
                 },
                 Hop::Wrap { orbit: ORBIT },
                 Hop::Pin {
                     point: [200.0, 500.0],
-                    side: 2,
+                    side: Border::Top,
                 },
             ],
             &EdgeCurve::BezierCubic,
@@ -1729,12 +1804,12 @@ mod tests {
                 &[
                     Hop::Pin {
                         point: head,
-                        side: 1,
+                        side: Border::Right,
                     },
                     Hop::Wrap { orbit: ORBIT },
                     Hop::Pin {
                         point: exit,
-                        side: 2,
+                        side: Border::Top,
                     },
                 ],
                 &EdgeCurve::BezierCubic,
@@ -1778,9 +1853,12 @@ mod tests {
             &[
                 Hop::Pin {
                     point: from,
-                    side: 1,
+                    side: Border::Right,
                 },
-                Hop::Pin { point: to, side: 0 },
+                Hop::Pin {
+                    point: to,
+                    side: Border::Left,
+                },
             ],
             &EdgeCurve::Line,
         )
@@ -1821,11 +1899,11 @@ mod tests {
                 &[
                     Hop::Pin {
                         point: [0.0, y],
-                        side: 1,
+                        side: Border::Right,
                     },
                     Hop::Pin {
                         point: [200.0, y + 40.0],
-                        side: 0,
+                        side: Border::Left,
                     },
                 ],
                 &EdgeCurve::BezierCubic,
@@ -1853,11 +1931,11 @@ mod tests {
                 &[
                     Hop::Pin {
                         point: pin,
-                        side: 1,
+                        side: Border::Right,
                     },
                     Hop::Pin {
                         point: target,
-                        side: 0,
+                        side: Border::Left,
                     },
                 ],
                 &EdgeCurve::BezierCubic,
@@ -1874,11 +1952,11 @@ mod tests {
             &[
                 Hop::Pin {
                     point: [-260.0, 200.0],
-                    side: 1,
+                    side: Border::Right,
                 },
                 Hop::Pin {
                     point: pin,
-                    side: 0,
+                    side: Border::Left,
                 },
             ],
             &EdgeCurve::BezierCubic,
@@ -1900,7 +1978,7 @@ mod tests {
             &[
                 Hop::Pin {
                     point: [50.0, 60.0],
-                    side: 1,
+                    side: Border::Right,
                 },
                 Hop::Wrap {
                     orbit: Orbit {
@@ -1910,7 +1988,7 @@ mod tests {
                 },
                 Hop::Pin {
                     point: [350.0, 60.0],
-                    side: 0,
+                    side: Border::Left,
                 },
             ],
             &EdgeCurve::BezierCubic,
@@ -1977,7 +2055,7 @@ mod tests {
                 &[
                     Hop::Pin {
                         point: at(ends.0),
-                        side: 1,
+                        side: Border::Right,
                     },
                     Hop::Wrap {
                         orbit: Orbit {
@@ -1987,7 +2065,7 @@ mod tests {
                     },
                     Hop::Pin {
                         point: at(ends.1),
-                        side: 3,
+                        side: Border::Bottom,
                     },
                 ],
                 &EdgeCurve::BezierCubic,
@@ -2096,13 +2174,13 @@ mod tests {
             &[
                 Hop::Pin {
                     point: pins.0,
-                    side: 1,
+                    side: Border::Right,
                 },
                 Hop::Wrap { orbit: a },
                 Hop::Wrap { orbit: b },
                 Hop::Pin {
                     point: pins.1,
-                    side: 3,
+                    side: Border::Bottom,
                 },
             ],
             &EdgeCurve::BezierCubic,
@@ -2260,12 +2338,12 @@ mod tests {
                 &[
                     Hop::Pin {
                         point: [0.0, 0.0],
-                        side: 1,
+                        side: Border::Right,
                     },
                     Hop::Wrap { orbit },
                     Hop::Pin {
                         point: far,
-                        side: 0,
+                        side: Border::Left,
                     },
                 ],
                 &EdgeCurve::BezierCubic,
@@ -2350,12 +2428,12 @@ mod tests {
                                 &[
                                     Hop::Pin {
                                         point: pin,
-                                        side: 1,
+                                        side: Border::Right,
                                     },
                                     Hop::Wrap { orbit },
                                     Hop::Pin {
                                         point: far,
-                                        side: 0,
+                                        side: Border::Left,
                                     },
                                 ],
                                 &EdgeCurve::BezierCubic,
@@ -2462,13 +2540,13 @@ mod tests {
                 &[
                     Hop::Pin {
                         point: head,
-                        side: 1,
+                        side: Border::Right,
                     },
                     Hop::Wrap { orbit: a },
                     Hop::Wrap { orbit: b },
                     Hop::Pin {
                         point: tail,
-                        side: 0,
+                        side: Border::Left,
                     },
                 ],
                 &EdgeCurve::BezierCubic,
@@ -2536,12 +2614,12 @@ mod tests {
             &[
                 Hop::Pin {
                     point: ORBIT.center,
-                    side: 1,
+                    side: Border::Right,
                 },
                 Hop::Wrap { orbit: ORBIT },
                 Hop::Pin {
                     point: far,
-                    side: 0,
+                    side: Border::Left,
                 },
             ],
             &EdgeCurve::BezierCubic,
@@ -2571,12 +2649,12 @@ mod tests {
             &[
                 Hop::Pin {
                     point: [0.0, 200.0],
-                    side: 1,
+                    side: Border::Right,
                 },
                 Hop::Wrap { orbit: ORBIT },
                 Hop::Pin {
                     point: [200.0, 500.0],
-                    side: 2,
+                    side: Border::Top,
                 },
             ],
             &EdgeCurve::BezierCubic,
@@ -2596,11 +2674,11 @@ mod tests {
             &[
                 Hop::Pin {
                     point: [0.0, 0.0],
-                    side: 1,
+                    side: Border::Right,
                 },
                 Hop::Pin {
                     point: [100.0, 0.0],
-                    side: 0,
+                    side: Border::Left,
                 },
             ],
             &EdgeCurve::Line,
@@ -2856,11 +2934,11 @@ mod tests {
             &[
                 Hop::Pin {
                     point: [0.0, 0.0],
-                    side: 1,
+                    side: Border::Right,
                 },
                 Hop::Pin {
                     point: [912.0, 406.0],
-                    side: 0,
+                    side: Border::Left,
                 },
             ],
             &EdgeCurve::BezierCubic,
@@ -3062,9 +3140,9 @@ mod tests {
     #[derive(Debug, Clone, Copy)]
     struct Ends {
         head: [f32; 2],
-        head_side: u32,
+        head_side: Border,
         tail: [f32; 2],
-        tail_side: u32,
+        tail_side: Border,
     }
 
     /// A layout the gate measures: the anchors every cable wraps, and the pins
@@ -3076,17 +3154,18 @@ mod tests {
         cables: Vec<Ends>,
     }
 
-    /// The side whose outward normal points most nearly from `pin` toward
-    /// `toward` - the side a cable heading that way would be wired to.
-    fn facing_side(pin: [f32; 2], toward: [f32; 2]) -> u32 {
+    /// The border whose outward normal points most nearly from `pin` toward
+    /// `toward` - the border a cable heading that way would be wired to.
+    fn facing_side(pin: [f32; 2], toward: [f32; 2]) -> Border {
         let want = [toward[0] - pin[0], toward[1] - pin[1]];
-        let score = |side: u32| {
-            let d = pin_side_direction(side);
+        let score = |side: Border| {
+            let d = side.normal();
             d[0] * want[0] + d[1] * want[1]
         };
-        (0..4)
+        [Border::Left, Border::Right, Border::Top, Border::Bottom]
+            .into_iter()
             .max_by(|&a, &b| score(a).total_cmp(&score(b)))
-            .unwrap_or(1)
+            .unwrap_or(Border::Right)
     }
 
     /// A scene of `anchors` anchors with `cables` cables through ALL of them, so
@@ -3379,7 +3458,7 @@ mod tests {
                         scene.anchors[anchor - 1]
                     };
                     let next = scene.anchors.get(anchor + 1).copied().unwrap_or(ends.tail);
-                    (crate::node_graph::wrap_span(center, previous, next), cable)
+                    (wrap_span(center, previous, next), cable)
                 })
                 .collect();
             order.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));

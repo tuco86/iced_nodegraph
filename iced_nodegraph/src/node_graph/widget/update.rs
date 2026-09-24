@@ -148,15 +148,9 @@ where
             self.begin_focus(state, world_aabb, layout.bounds().size(), &opts, shell);
         }
 
-        // Update time for animations
-        // Cap delta to prevent large time jumps when app is in background
+        // Advance the animation clock.
         let now = Instant::now();
-
-        if let Some(last_update) = state.last_update {
-            let delta = now.duration_since(last_update).as_secs_f32();
-            // Cap at 100ms to prevent freeze after background
-            state.time += delta.min(0.1);
-        }
+        state.time = state.animation_time(now);
         state.last_update = Some(now);
 
         // On each frame, drive continuous redraws for SDF animations and deliver
@@ -2366,7 +2360,7 @@ where
             let node_index = self.node_index(&pin.node_id)?;
             let (_, (near, far), side, direction) =
                 pin_by_id::<I>(&tree.children, layout, node_index, &pin.pin_id)?;
-            Some(pin_station(
+            Some(Station::for_pin(
                 side,
                 ([near.x, near.y], [far.x, far.y]),
                 direction,

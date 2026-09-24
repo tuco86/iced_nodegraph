@@ -77,7 +77,7 @@ pub(super) struct Wrap {
     /// The angle its two neighbours subtend at the anchor centre, in radians.
     ///
     /// An interval, not the arc the cable lays down; see
-    /// [`wrap_span`](super::wrap_span).
+    /// [`wrap_span`](super::cable::wrap_span).
     pub span: f32,
 }
 

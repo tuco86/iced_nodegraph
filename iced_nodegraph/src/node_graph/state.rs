@@ -323,6 +323,19 @@ impl NodeGraphState {
             .with_viewport_origin(layout.bounds().position().into_euclid().to_vector())
     }
 
+    /// The animation clock at `now`: `time` advanced by the wall time since
+    /// `last_update`.
+    ///
+    /// The step is capped at 0.1 s, so a frame after the app sat in the
+    /// background resumes every animation where it stopped instead of jumping
+    /// ahead by the whole time it was away.
+    pub(super) fn animation_time(&self, now: Instant) -> f32 {
+        match self.last_update {
+            Some(last_update) => self.time + now.duration_since(last_update).as_secs_f32().min(0.1),
+            None => self.time,
+        }
+    }
+
     /// Ensure every index in `0..node_count` has a z entry. Newly seen indices
     /// receive the next counter value, so freshly pushed nodes render on top.
     pub(super) fn ensure_z_entries(&mut self, node_count: usize) {

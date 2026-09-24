@@ -306,8 +306,7 @@ pub use node_graph::{
     Particle, PinRef, anchor, edge,
     focus::{Easing, FocusAnimation, FocusOptions, FocusTarget, focus, focus_operation},
     input::{ComboKey, KeyAction, KeyCombo, Keymap},
-    node, particle,
-    widget::node_graph,
+    node, node_graph, particle,
 };
 pub use node_pin::{NodePin, PinDirection, PinEnd, PinInfo, PinSide, node_pin};
 pub use style::{
