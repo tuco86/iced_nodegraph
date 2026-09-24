@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-24
+
 ### Migrating from 0.4
 
 - Ids: declare a marker implementing `Ids` (or keep the default `Indexed`) and
@@ -578,6 +580,7 @@ Initial release.
 - Z-ordering by last-moved with selected nodes drawn on top.
 - Demos: `hello_world`, `styling`, `interaction`, `500_nodes`, `shader_editor`.
 
+[0.5.0]: https://github.com/tuco86/iced_nodegraph/releases/tag/v0.5.0
 [0.4.2]: https://github.com/tuco86/iced_nodegraph/releases/tag/v0.4.2
 [0.4.1]: https://github.com/tuco86/iced_nodegraph/releases/tag/v0.4.1
 [0.4.0]: https://github.com/tuco86/iced_nodegraph/releases/tag/v0.4.0
