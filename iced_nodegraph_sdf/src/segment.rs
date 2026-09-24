@@ -10,8 +10,8 @@
 //!
 //! Why endpoints, not a center/radius/sweep form: a straight line has no finite
 //! center, so a center-based encoding cannot express a line as a degenerate arc
-//! (the limit is `radius -> infinity`, which is unstorable and the source of the
-//! old "giant arc / full circle" artifacts). Endpoints degenerate to a line
+//! (the limit is `radius -> infinity`, which is unstorable and yields "giant
+//! arc / full circle" artifacts). Endpoints degenerate to a line
 //! cleanly at `curvature = 0`, and keep geometry near its own coordinates,
 //! avoiding the far-from-origin precision loss the center form fights.
 //!

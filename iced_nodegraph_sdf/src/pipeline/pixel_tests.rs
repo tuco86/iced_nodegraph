@@ -209,10 +209,10 @@ impl TestRenderer {
         }))
         .expect("No GPU adapter found");
 
-        // Request TIMESTAMP_QUERY when the adapter supports it (R3): lets the
+        // Request TIMESTAMP_QUERY when the adapter supports it: lets the
         // GPU-work measurement isolate compute+render time from CPU/submit
         // overhead. Absent (e.g. on WASM/WebGPU) the tests fall back to
-        // wall-clock, per the plan's R3 note.
+        // wall-clock.
         let timestamps = adapter.features().contains(Features::TIMESTAMP_QUERY);
         let required_features = if timestamps {
             Features::TIMESTAMP_QUERY
@@ -3756,13 +3756,13 @@ fn corpus_scenes_render_plausible_coverage() {
     }
 }
 
-/// Phase A4 gate: an edge rendered as an arc-spline (bezier approximated by
-/// arcs/lines) is pixel-equal to the cubic-bezier reference edge WITHIN AA TOLERANCE.
+/// An edge rendered as an arc-spline (bezier approximated by arcs/lines) is
+/// pixel-equal to the cubic-bezier reference edge WITHIN AA TOLERANCE.
 /// The arc-spline is within `tol` world units of the curve, so the SDF differs
 /// by <= `tol`: a thin sub-pixel delta confined to the antialiased edge band,
-/// never a structural divergence (this is the plan's accepted delta, not the
-/// bit-identical bar). Asserts the two renders are structurally identical (no
-/// pixel grossly different) and only a thin edge band differs.
+/// never a structural divergence (an accepted delta, not a bit-identical
+/// bar). Asserts the two renders are structurally identical (no pixel grossly
+/// different) and only a thin edge band differs.
 #[test]
 fn arc_spline_edge_matches_bezier() {
     let r = shared_renderer();
@@ -3773,10 +3773,10 @@ fn arc_spline_edge_matches_bezier() {
         glam::Vec2::new(40.0, 40.0),
         glam::Vec2::new(120.0, 40.0),
     );
-    // The oracle is a dense POLYLINE of the true cubic (the GPU cubic SDF was
-    // removed). It is independent of the biarc fitter - not another arc-spline
-    // - so it still catches a structural arc-spline error. `Curve::bezier` itself
-    // now fits arcs, so it could not serve as the reference.
+    // The oracle is a dense POLYLINE of the true cubic (the shader has no
+    // cubic SDF). It is independent of the biarc fitter - not another
+    // arc-spline - so it still catches a structural arc-spline error.
+    // `Curve::bezier` itself fits arcs, so it cannot serve as the reference.
     let bez = crate::drawable::Drawable::bezier_polyline(cps.0, cps.1, cps.2, cps.3, 256);
     // Zoom-aware fine tolerance (sub-pixel at this zoom).
     let tol = 0.1 / zoom;
@@ -3903,7 +3903,8 @@ fn backward_edge_arc_spline_matches_cubic() {
 }
 
 /// Sweep the WIDGET's real edge geometry (every pin-side tangent pair x endpoint
-/// delta, mirroring `pin_side_direction` + `adaptive_bezier_length`, incl. the
+/// delta, mirroring `Border::normal` + `adaptive_bezier_length` in
+/// `iced_nodegraph/src/node_graph/edge_path.rs`, incl. the
 /// short tight-loop configs) and assert the tiled spatial-index render equals the
 /// brute-force untiled render. This is the reference-free correctness oracle: it
 /// proves the arc cull (the endpoint+curvature `seg_box_interval`) never drops or
@@ -4041,7 +4042,7 @@ fn corpus_tiled_matches_untiled() {
     }
 }
 
-/// C1 correctness guard (Phase C): the tile cull bins against the pattern's
+/// Cull conservativeness: the tile cull bins against the pattern's
 /// PERPENDICULAR envelope and is conservative - every tile that renders a
 /// non-zero pixel must have been binned, for EVERY pattern at EVERY angle
 /// (under-inclusion is the bug; over-inclusion is fine). Verified through the
@@ -4050,7 +4051,7 @@ fn corpus_tiled_matches_untiled() {
 /// has. A single straight stroke is one segment (untiled-safe), swept across
 /// angles that straddle tile boundaries.
 #[test]
-fn c1_cull_conservative_for_all_patterns_at_swept_angles() {
+fn cull_conservative_for_all_patterns_at_swept_angles() {
     let r = shared_renderer();
     let (w, h, zoom) = (256u32, 256u32, 1.0f32);
     let color = rgba(0.9, 0.7, 0.2, 1.0);
@@ -4074,14 +4075,14 @@ fn c1_cull_conservative_for_all_patterns_at_swept_angles() {
             let (worst, over, sample) = corpus_diff(&tiled, &untiled);
             assert!(
                 over == 0,
-                "C1 cull dropped pixels: pattern `{pname}` at {deg} deg - \
+                "cull dropped pixels: pattern `{pname}` at {deg} deg - \
                  {over} px differ (worst {worst}). First: {sample:?}",
             );
         }
     }
 }
 
-/// C2 correctness guard (Phase C): when a fine tile overflows `MAX_FINE_SLOTS`,
+/// Overflow determinism: when a fine tile overflows `MAX_FINE_SLOTS`,
 /// the result degrades DETERMINISTICALLY and never flickers. The cull keeps the
 /// NEAREST segments by distance-to-tile-centre (not insertion order), so even
 /// though the coarse candidate lists are appended in nondeterministic atomic
@@ -4090,7 +4091,7 @@ fn c1_cull_conservative_for_all_patterns_at_swept_angles() {
 /// central tiles) many times and asserts byte-identical output across all
 /// frames.
 #[test]
-fn c2_overflow_is_deterministic_no_flicker() {
+fn overflow_is_deterministic_no_flicker() {
     let r = shared_renderer();
     let (w, h, zoom) = (256u32, 256u32, 1.0f32);
     // ~40 overlapping circles crowded into the centre: each is several segments,
@@ -4116,16 +4117,16 @@ fn c2_overflow_is_deterministic_no_flicker() {
             .count();
         assert!(
             differ == 0,
-            "C2 overflow flickered: frame {frame} differs from frame 0 on \
+            "overflow flickered: frame {frame} differs from frame 0 on \
              {differ} pixels (nondeterministic overflow drop)",
         );
     }
 }
 
-/// A3 band-fold premultiplied blend: a falloff from opaque GREEN to TRANSPARENT
+/// Premultiplied band-fold blend: a falloff from opaque GREEN to TRANSPARENT
 /// RED must stay green through the fade, not fringe toward red. Straight-alpha
-/// in-loop mixing (the old behavior) pulls RGB toward the transparent stop's red
-/// and fails this; premultiplied mixing keeps it green.
+/// in-loop mixing pulls RGB toward the transparent stop's red and fails this;
+/// premultiplied mixing keeps it green.
 #[test]
 fn premultiplied_band_blend_no_rgb_fringe() {
     let r = shared_renderer();
@@ -4156,15 +4157,13 @@ fn premultiplied_band_blend_no_rgb_fringe() {
     );
 }
 
-/// A2 gate (time-uniform hoist): time and camera are per-frame uniform values,
-/// NOT baked into the input buffers (segments/entries/styles). Its plan gate is
-/// "pan-static-graph pixel-equal": panning a static graph re-renders correctly
-/// from the SAME geometry, and advancing time animates the pattern from that
-/// same geometry - so a frame-surviving input buffer stays valid across both.
-/// (`time` already lives in the per-frame `DrawData` uniform, never in the
-/// input buffers, so the literal "separate uniform" hoist is unnecessary here.)
+/// Time and camera are per-frame uniform values (`DrawData`), NOT baked into
+/// the input buffers (segments/entries/styles): panning a static graph
+/// re-renders correctly from the SAME geometry, and advancing time animates
+/// the pattern from that same geometry - so a frame-surviving input buffer
+/// stays valid across both.
 #[test]
-fn a2_time_and_camera_are_per_frame_uniforms() {
+fn time_and_camera_are_per_frame_uniforms() {
     let r = shared_renderer();
     let (w, h, zoom) = (256u32, 256u32, 1.0f32);
     let edge = Curve::bezier([-120.0, -40.0], [-40.0, -40.0], [40.0, 40.0], [120.0, 40.0]);
@@ -4184,7 +4183,7 @@ fn a2_time_and_camera_are_per_frame_uniforms() {
     );
 
     // Same geometry, two cameras: panning a STATIC graph re-renders correctly
-    // (the plan's pan-static gate) - the view shifts, the geometry does not.
+    // - the view shifts, the geometry does not.
     let solid = Style::stroke(rgba(0.9, 0.6, 0.2, 1.0), Pattern::solid(6.0));
     let s = [(&edge, &solid)];
     let cam_a = [(w as f32) * 0.5 / zoom, (h as f32) * 0.5 / zoom];
@@ -4297,10 +4296,10 @@ fn overflowing_tile_keeps_nearest_not_first() {
     );
 }
 
-/// A3 transfer (variant B) new-capability golden: a Gamma transfer warps the
-/// stop-blend parameter `t`, biasing a RED->BLUE falloff toward the near (red)
-/// stop versus the Linear identity. Gated as a NEW capability (it deliberately
-/// differs from the untransformed render), a deliberate visual change.
+/// Transfer golden: a Gamma transfer warps the stop-blend parameter `t`,
+/// biasing a RED->BLUE falloff toward the near (red) stop versus the Linear
+/// identity, so the Gamma render deliberately differs from the untransformed
+/// one.
 #[test]
 fn transfer_gamma_warps_blend_toward_near_stop() {
     let r = shared_renderer();
@@ -4334,11 +4333,11 @@ fn transfer_gamma_warps_blend_toward_near_stop() {
     );
 }
 
-/// A3 sign-aware patterns new-capability golden: a DOTTED pattern on a CLOSED
-/// contour keeps its dots on the OUTER half plus a thin inner line, so the
-/// interior stays clean (no inward dot bulge). At dist -4 inside the contour the
-/// old symmetric dot was opaque; sign-aware leaves it transparent. The dots still
-/// appear on the outer half. Gated as a NEW capability, a deliberate visual change.
+/// Sign-aware pattern golden: a DOTTED pattern on a CLOSED contour keeps its
+/// dots on the OUTER half plus a thin inner line, so the interior stays clean
+/// (no inward dot bulge). At dist -4 inside the contour a symmetric dot would
+/// be opaque; sign-aware composition leaves it transparent. The dots still
+/// appear on the outer half.
 #[test]
 fn sign_aware_dotted_border_no_inward_bulge() {
     let r = shared_renderer();
@@ -5280,15 +5279,15 @@ const TESSELLATION_MAX_CHANNEL_DELTA: i32 = 180;
 /// Measured 0.42% at 0.1, 0.97% at 0.5.
 const TESSELLATION_MAX_DIFFERING_FRACTION: f64 = 0.006;
 
-/// The bezier tessellation tolerance is a QUALITY contract, and until now
-/// nothing tested it. Every other bezier test either compares like against like
+/// The bezier tessellation tolerance is a QUALITY contract, and no other test
+/// can see it. Every other bezier test either compares like against like
 /// (`tiled` vs `untiled` uses the SAME tolerance for both, so it cannot see a
 /// tolerance change) or asserts a structural invariant (no holes, stroke
 /// present). Raising `CUBIC_ARC_TOL` from 0.05 to 0.5 - a tenfold bend away
-/// from the true cubic, plainly visible when zoomed in - left all 155 tests
+/// from the true cubic, plainly visible when zoomed in - leaves all of them
 /// green.
 ///
-/// This closes that hole by rendering against a tolerance-INDEPENDENT
+/// This test covers that gap by rendering against a tolerance-INDEPENDENT
 /// reference: the same curve fitted 20x finer than production. At the widget's
 /// maximum zoom, where `tol * zoom` is largest, production must stay close to
 /// it.
@@ -5379,10 +5378,10 @@ const SEGMENT_EVALS_BUDGET: u64 = 5_500_000;
 /// explode on a shared-VRAM iGPU, so it carries its own budget on top of the
 /// pipeline total.
 ///
-/// The 8px fine tile bought a 59% cut in fragment work for a 51% rise in this
-/// figure (25.04 -> 37.78 MiB): 4x the fine tiles at a quarter of the old slot
-/// capacity each is 2x the fine storage, and the coarse level - now half the
-/// index - did not change at all. That is the trade this budget records.
+/// The budget reflects the 8px fine tile: against a 16px fine tile it cuts
+/// fragment work by 59% for 51% more index memory (37.78 vs 25.04 MiB). The
+/// fine storage doubles while the coarse level, half the index, is unaffected.
+/// That is the trade this budget records.
 #[test]
 fn gpu_memory_budget_500_nodes() {
     use iced_wgpu::primitive::Pipeline;
@@ -6068,7 +6067,7 @@ fn coarse_overflow_telemetry_reports_true_demand() {
 /// 500-node frame (same scene re-prepared each frame, no camera change). Sizes
 /// the prize for caching static-edge arc-splines by endpoint - how much CPU an
 /// unchanged frame burns re-evaluating, recompiling and re-uploading identical
-/// data - which is the decision `benches/frame_prep.rs` is aimed at. Frame 0 is
+/// data - which is the decision `benches/shape_eval.rs` is aimed at. Frame 0 is
 /// cold (eval + buffer growth); frames 1+ are steady (shape-cache hits, no
 /// growth). Ignored because it measures rather than asserts. Run with:
 ///   cargo test -p iced_nodegraph_sdf idle_prepare_cost -- --ignored --nocapture

@@ -419,10 +419,10 @@ impl Default for SdfPrimitive {
 // The segment/entry/style buffers are persistent arenas: a primitive's
 // compiled output is allocated once, NEVER moves while resident, and is keyed
 // by CONTENT (`geometry_hash`), not by draw slot. Reuse therefore survives any
-// reorder of the prepare order (selection z-resort, node add/remove) - the
-// coupling the old packed-per-frame slots could not break: entries reference
-// segments and styles of OTHER primitives by absolute index, and packing
-// front-to-back made every offset positional.
+// reorder of the prepare order (selection z-resort, node add/remove).
+// Per-frame slots packed front-to-back could not offer that: entries
+// reference segments and styles of OTHER primitives by absolute index, and
+// packing made every offset positional, so any reorder invalidated them.
 
 /// A primitive's resident geometry: the arena ranges its compiled output
 /// occupies plus everything a later frame needs to draw it without
@@ -455,8 +455,8 @@ struct ResidentBlock {
 }
 
 /// A unique shape's segments, resident in the segment arena and shared by
-/// every block whose entries reference the range - the GPU-instancing dedup,
-/// now cross-frame and refcounted. `meta` carries what entry construction
+/// every block whose entries reference the range - GPU-instancing dedup that
+/// is cross-frame and refcounted. `meta` carries what entry construction
 /// needs beyond the range, so an instance of a resident shape never
 /// re-evaluates it: for a non-cacheable edge stroke that skips the whole biarc
 /// fit when only placement or style changed.
@@ -1101,7 +1101,7 @@ impl SdfPipeline {
     /// [`COMPACT_SLACK_FACTOR`]x ahead of its live count (fragmentation the
     /// free lists cannot reclaim), drop the WHOLE residency state and let the
     /// next frame rebuild tightly packed. One frame of full re-evaluation and
-    /// re-upload - the old per-reorder behavior as the rare worst case.
+    /// re-upload is the rare worst case.
     /// Running between frames (from `trim`) means no draw of the current frame
     /// can hold references into the dropped arenas.
     fn maybe_compact(&mut self) {
@@ -1214,11 +1214,11 @@ impl SdfPipeline {
             });
             pass.set_bind_group(0, &self.compute_group0, &[]);
             // Sort + fine re-cull: one workgroup per LIVE coarse tile,
-            // dispatched 1D-flat (x capped at 65535, y extends it). The old
-            // (max grid) x (draw count) dispatch launched the largest draw's
-            // grid for EVERY draw; with hundreds of small clipped node draws
-            // ~99% of the workgroups were dead on arrival and their launch
-            // overhead dominated the pass.
+            // dispatched 1D-flat (x capped at 65535, y extends it). A
+            // (max grid) x (draw count) dispatch would launch the largest
+            // draw's grid for EVERY draw; with hundreds of small clipped node
+            // draws ~99% of those workgroups are dead on arrival and their
+            // launch overhead dominates the pass.
             let wgs = self.total_coarse_tiles;
             if wgs > 0 && draw_count > 0 {
                 pass.set_pipeline(&self.shared.sort_fine_pipeline);
@@ -1645,7 +1645,7 @@ impl Primitive for SdfPrimitive {
             pipeline.fine_capacity = new_fine;
             pipeline.coarse_capacity = new_coarse;
             pipeline.spatial_index_gen += 1;
-            // The recreated index buffers no longer hold last frame's result.
+            // The recreated index buffers hold none of last frame's result.
             pipeline.cull_dirty = true;
         }
 

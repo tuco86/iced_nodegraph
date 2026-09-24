@@ -111,15 +111,16 @@ impl<T: ShaderSize> Buffer<T> {
         self.live_len
     }
 
-    /// Items this binding can ever hold, from the device's storage-binding
-    /// limit. Pushing past it drops the item (see [`Buffer::dropped_items`]).
-    // Read only by the arena-ceiling test; not `cfg(test)` so the doc link above resolves.
-    #[allow(dead_code)]
+    /// Items this binding can ever hold: the device's storage-binding limit
+    /// (rounded down to a 4-byte multiple) divided by the item size.
+    #[cfg(test)]
     pub fn capacity_items(&self) -> usize {
         (self.max_bytes / T::SHADER_SIZE.get()) as usize
     }
 
-    /// Items never uploaded because [`Buffer::capacity_items`] was exceeded.
+    /// Items never uploaded because the binding was full: the device's
+    /// `max_storage_buffer_binding_size` (rounded down to a 4-byte multiple)
+    /// divided by the item size bounds how many items it holds.
     pub fn dropped_items(&self) -> u64 {
         self.dropped_items
     }

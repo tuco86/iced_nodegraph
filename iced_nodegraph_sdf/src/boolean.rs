@@ -619,7 +619,7 @@ fn dedup_edges(edges: &mut Vec<Edge>) {
 /// tolerance. In a valid boolean result the true continuation is essentially
 /// coincident (a few float ULP) while every other edge start is at least a
 /// feature-size away, so the nearest match is unambiguous — and, crucially,
-/// independent of the absolute coordinate magnitude. A fixed tolerance (the old
+/// independent of the absolute coordinate magnitude. A fixed tolerance (such as
 /// `4*EPS`) erodes against float32 precision once a node is dragged into large
 /// world coordinates: a single junction then exceeds it, the whole multi-edge
 /// loop fails to close and is dropped, leaving an empty contour (observed on the
@@ -652,7 +652,7 @@ fn stitch(mut remaining: Vec<Edge>) -> Vec<Loop> {
         }
         // Accept loops that return to their start. The true closure gap is
         // float noise (a few ULP); an open chain is off by a whole feature.
-        // Since the boolean now runs in a recentered local frame, a small fixed
+        // Because the boolean runs in a recentered local frame, a small fixed
         // tolerance suffices regardless of world position. A lone full-circle
         // arc already has start == end.
         let end = loop_.last().unwrap().end();

@@ -98,7 +98,7 @@ impl Curve {
         p2: impl Into<[f32; 2]>,
         p3: impl Into<[f32; 2]>,
     ) -> Drawable {
-        // A4 arcs-only: fit the cubic with a biarc spline on the CPU so the
+        // Arcs only: fit the cubic with a biarc spline on the CPU so the
         // shader needs no cubic solver. `tol` is sub-pixel at zoom 1, keeping the
         // approximation within the AA bar; the spline preserves arc-length so
         // dash/flow parametrization matches the cubic.

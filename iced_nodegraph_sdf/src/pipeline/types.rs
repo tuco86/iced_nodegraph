@@ -106,7 +106,7 @@ pub(crate) struct GpuDrawEntry {
     pub _pad: u32,
     /// Tiling params: (spacing_x, spacing_y, thickness/radius, 0).
     pub tiling_params: GpuVec4,
-    /// Per-INSTANCE placement (D1). The entry's segments are stored in a local
+    /// Per-INSTANCE placement. The entry's segments are stored in a local
     /// frame; the shader evaluates them against `world_p - translate`. `(0,0)`
     /// leaves geometry at the origin. Holding the translate on
     /// the command (not the segment) lets identical shapes at different
@@ -139,7 +139,7 @@ pub(crate) struct GpuStyle {
     pub pattern_param1: f32,
     pub pattern_param2: f32,
     pub flow_speed: f32,
-    /// Transfer warp (A3): 0=linear, 1=smoothstep, 2=gamma.
+    /// Transfer warp: 0=linear, 1=smoothstep, 2=gamma.
     pub transfer_type: u32,
     /// Transfer parameter (gamma exponent when `transfer_type == 2`).
     pub transfer_param: f32,
@@ -306,8 +306,8 @@ pub struct SdfStats {
     pub cache_hits: u64,
     /// Shape-cache misses (each a boolean->arcs evaluation) over the lifetime.
     pub cache_misses: u64,
-    /// `cache_hits / (cache_hits + cache_misses)`; ~1.0 on a static graph is the
-    /// R4 cache-hit-rate contract.
+    /// `cache_hits / (cache_hits + cache_misses)`; ~1.0 is the expected rate
+    /// on a static graph.
     pub cache_hit_rate: f32,
     /// True when this frame kept the previous frame's spatial index and skipped
     /// the cull dispatch entirely: nothing that affects the index changed

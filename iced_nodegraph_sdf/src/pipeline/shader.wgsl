@@ -13,7 +13,8 @@ const TILE_SIZE: f32 = 8.0;
 // fine buffer (64x more fine tiles).
 const COARSE_FACTOR: u32 = 8u;        // fine tiles per coarse tile, per axis
 // Coarse: up to 512 (segment_idx, entry_idx) results per 64px tile. Scatter
-// appends first-come; K3 clamps, reserving 4 slots for tilings (see plan doc).
+// appends first-come; `cs_sort_fine` clamps, reserving TILING_RESERVE slots for
+// tilings (see ARCHITECTURE.md, Stage 2).
 const MAX_COARSE_SLOTS: u32 = 512u;
 const COARSE_STRIDE: u32 = 1024u;     // MAX_COARSE_SLOTS * 2 u32 per coarse tile
 // Fine: up to 64 16-bit indices into the parent coarse list, packed 2 per u32
@@ -106,7 +107,7 @@ struct GpuDrawEntry {
     tiling_type: u32,
     _pad: u32,
     tiling_params: vec4<f32>,
-    // Per-INSTANCE placement (D1): the entry's segments are local; evaluate at
+    // Per-INSTANCE placement: the entry's segments are local; evaluate at
     // `world_p - translate`. `(0,0)` leaves geometry world-baked.
     translate: vec2<f32>,
     _translate_pad: vec2<f32>,
@@ -133,7 +134,7 @@ struct GpuStyle {
     _transfer_pad1: u32,
 }
 
-// A3 transfer (variant B): a color-domain warp on the post-smoothstep blend t.
+// Transfer: a color-domain warp on the post-smoothstep blend t.
 // 0=linear (identity), 1=smoothstep, 2=gamma(param). Never touches `dist`.
 fn apply_transfer(t: f32, kind: u32, param: f32) -> f32 {
     if kind == 1u {
@@ -160,7 +161,8 @@ fn style_max_dist(style: GpuStyle) -> f32 {
 
 // Perpendicular half-reach of a pattern's stroke: the widest distance a feature
 // can occupy ACROSS the contour, independent of `time` and the along-u dash/dot
-// layout (C1). Half thickness for line-like patterns; the dot radius can exceed
+// layout, so the tile cull can bin against it conservatively for every
+// pattern and angle. Half thickness for line-like patterns; the dot radius can exceed
 // it for the dotted families.
 fn pattern_perp_reach(style: GpuStyle) -> f32 {
     let half_t = style.pattern_thickness * 0.5;
@@ -489,7 +491,7 @@ fn render_style(sdf: SdfResult, style: GpuStyle, draw: DrawData, total_arc: f32,
     // a zero-width step is a crisp AA edge), hold the last stop above it. One
     // continuous evaluation - no per-band compositing, so abutting bands never
     // seam.
-    // Blend the stop chain in PREMULTIPLIED space (A3 band-fold fix). Mixing
+    // Blend the stop chain in PREMULTIPLIED space. Mixing
     // straight-alpha RGBA toward a stop with different alpha pulls RGB toward the
     // (near-)transparent stop's RGB and fringes the falloff - visible on soft
     // shadows/glows where a transparent outer stop meets an opaque one.
@@ -506,7 +508,7 @@ fn render_style(sdf: SdfResult, style: GpuStyle, draw: DrawData, total_arc: f32,
             let m = (lo + hi) * 0.5;
             var nlo = m - aa * 0.5;
             var nhi = m + aa * 0.5;
-            // A3 widening clamp: a sub-aa interval is widened to >= aa for AA,
+            // Widening clamp: a sub-aa interval is widened to >= aa for AA,
             // but if two adjacent intervals both widen and OVERLAP, the thin band
             // between them is attenuated or vanishes. Cap the expansion at the
             // midpoint to each neighbouring stop so widened intervals abut
@@ -548,7 +550,7 @@ fn apply_pattern(dist: f32, sdf: SdfResult, style: GpuStyle, time: f32, is_close
             let dist_along = shifted_u - nearest;
             let dd = abs(vec2(dist_along, dist)) - vec2(dash * 0.5, half_t);
             let box_d = length(max(dd, vec2(0.0))) + min(max(dd.x, dd.y), 0.0);
-            // Lipschitz correction (A3): the box is measured in the sheared
+            // Lipschitz correction: the box is measured in the sheared
             // (u,dist) frame (|grad|=sec(angle)), over-estimating distance by
             // 1/cos(angle). Multiply by cos(angle) to restore |grad|=1 so the
             // analytic AA band on diagonal dash ends is the right width.
@@ -564,7 +566,7 @@ fn apply_pattern(dist: f32, sdf: SdfResult, style: GpuStyle, time: f32, is_close
             let dist_along = shifted_u - nearest;
             let dd = abs(vec2(dist_along, dist)) - vec2(segment * 0.5, half_t);
             let box_d = length(max(dd, vec2(0.0))) + min(max(dd.x, dd.y), 0.0);
-            return box_d * cos(angle); // Lipschitz correction (A3), see PATTERN_DASHED.
+            return box_d * cos(angle); // Lipschitz correction, see PATTERN_DASHED.
         }
         case PATTERN_DOTTED: {
             let spacing = style.pattern_param0;
@@ -573,12 +575,12 @@ fn apply_pattern(dist: f32, sdf: SdfResult, style: GpuStyle, time: f32, is_close
             let dist_to_center = abs(u - nearest);
             let feature = length(vec2(dist_to_center, dist)) - radius;
             if is_closed {
-                // Sign-aware composition (A3): on a CLOSED contour the interior
+                // Sign-aware composition: on a CLOSED contour the interior
                 // is negative, so a full dot bulging inward breaks the inner
                 // edge. Union the dots' OUTER half (clip to dist>=0) with a plain
                 // inner closed line: min(plain_band, max(feature, -dist)). Both
                 // min/max of 1-Lipschitz fields stay 1-Lipschitz, so AA is free.
-                // TUNING (called out per plan, not baked silently): the feature
+                // Tuning: the feature
                 // sits on the centerline and the inner line is a thin symmetric
                 // band (<=2px), NOT the full dot radius - which would swallow the
                 // bumps. Open contours keep the mirrored symmetric dot below.
@@ -791,7 +793,7 @@ var<workgroup> wg_bbox: vec4<f32>;
 
 // Sentinel for unused DrawData tiling slots and sort padding.
 const CULL_SENTINEL: u32 = 0xFFFFFFFFu;
-// Coarse slots K3 reserves for the draw's tilings when clamping the scattered
+// Coarse slots `cs_sort_fine` reserves for the draw's tilings when clamping the scattered
 // contour slots, so an overflowing tile can never drop the background.
 const TILING_RESERVE: u32 = 4u;
 
@@ -878,8 +880,8 @@ fn coarse_tile_box(draw: DrawData, tx: u32, ty: u32) -> vec4<f32> {
 }
 
 // Reserve one coarse slot of `coarse_global` and write the (seg, entry) pair.
-// Beyond the cap the pair is DROPPED first-come (the scatter cannot rank by
-// distance like the old single-threaded keep-nearest did); the count keeps
+// Beyond the cap the pair is DROPPED first-come (concurrent atomic appends
+// cannot rank by distance, so keep-nearest is not expressible); the count keeps
 // rising past the cap, so between the scatter and the sort it holds TRUE
 // demand - the overflow telemetry snapshots it in that window (the sort then
 // overwrites it with the clamped render list length). See
@@ -912,7 +914,7 @@ fn cs_fine_get(fine_base: u32, k: u32) -> u32 {
 
 // Append (or keep-nearest replace) a coarse-list index into a fine tile.
 // Single-threaded per fine tile (each thread owns one), so no atomics.
-// Returns true when an existing slot was REPLACED: the list is then no longer
+// Returns true when an existing slot was REPLACED: the list is then not
 // index-ascending and the caller must re-sort it, because the fragment folds
 // CONSECUTIVE same-entry references into one contour (a scrambled list splits
 // an entry into multiple runs, compositing it twice).
@@ -952,11 +954,11 @@ fn fine_push(
 // Exact segment <-> tile-box distance intervals (cull geometry)
 //
 // The cull asks one question per (segment, tile): does any STYLE BAND of this
-// segment touch this tile square? The old cull answered it by sampling the SDF
-// at the tile CENTRE and padding with the tile half-diagonal - a point sample of
-// a function that varies across the tile, so diagonal curves and reflex corners
-// slipped through the margin and dropped tiles (holes) or kept the wrong sign
-// (filled boxes). Instead compute the EXACT range [m, M] the segment's distance
+// segment touch this tile square? A point sample of the SDF at the tile CENTRE,
+// padded with the tile half-diagonal, cannot answer it: the function varies
+// across the tile, so diagonal curves and reflex corners slip through the
+// margin and drop tiles (holes) or keep the wrong sign (filled boxes).
+// Instead compute the EXACT range [m, M] the segment's distance
 // takes over the whole box: the band [lo, hi] touches the tile iff the intervals
 // overlap. The cull must be a conservative OVER-approximation - over-inclusion
 // is free (a far segment renders alpha 0 per pixel), under-inclusion is a hole -
@@ -1223,10 +1225,10 @@ fn cs_scatter_closed(
 }
 
 // One 64-thread workgroup per LIVE coarse tile, dispatched 1D-flat over
-// cs_launch.y tiles (x capped at 65535 workgroups, y extends it). The old
-// (max_cols, max_rows, draw) grid dispatched the LARGEST draw's grid for
-// every draw; on a 500-node scene 99% of workgroups were dead on arrival
-// and their launch overhead dominated the whole cull pass (~2 ms).
+// cs_launch.y tiles (x capped at 65535 workgroups, y extends it). A
+// (max_cols, max_rows, draw) grid would dispatch the LARGEST draw's grid for
+// every draw; on a 500-node scene 99% of those workgroups are dead on arrival
+// and their launch overhead dominates the whole cull pass (~2 ms).
 // Loads the scattered slots (clamped, TILING_RESERVE spare), appends the
 // draw's tilings, bitonic-sorts by (entry, seg) - a UNIQUE total order, so
 // the frame is deterministic regardless of atomic append order - writes the
@@ -1243,7 +1245,7 @@ fn cs_sort_fine(
     // Owning draw: the LARGEST d with coarse_base <= flat. coarse_base is the
     // exclusive prefix sum of the draws' coarse grids, so a zero-tile draw
     // (fallback grid 0) ties with its successor's base and loses the
-    // largest-index pick - it owns no workgroup, like the old per-grid abort.
+    // largest-index pick - it owns no workgroup.
     var lo = 0u;
     var hi = cs_launch.x - 1u;
     while lo < hi {

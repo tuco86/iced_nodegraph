@@ -55,7 +55,7 @@ impl Stop {
 }
 
 /// A unary warp on the post-smoothstep blend parameter `t` in the distance-stop
-/// fold (A3 transfer, variant B). It is COLOR-domain - it reshapes how one stop
+/// fold. It is COLOR-domain - it reshapes how one stop
 /// eases into the next without moving any stop or touching `dist`. [`Transfer::Linear`]
 /// is the identity and the default, so adding a transfer never changes an existing
 /// style's output.

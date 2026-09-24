@@ -54,12 +54,13 @@ carries its exact arc length so dash/flow parametrisation matches the cubic.
 
 ### Closed shapes via set algebra
 
-Compound closed shapes (a node body minus its pin cutouts) are built with boolean
-operations on contours (`src/boolean.rs`): the operands are clipped against each
-other and the surviving boundary is re-stitched into a single clean loop of arcs
-with `Point` junctions at corners. Combining is *not* `min`/`max` of fields —
-that would seam and mis-sign concave corners. Only `Line` and `Arc` segments
-participate as boolean operands.
+Compound closed shapes (a node body minus its pin cutouts) are authored with the
+`Shape` operators `-` / `|` / `&`. `Shape::evaluate` lowers them through the
+crate-internal boolean clipper (`src/boolean.rs`): the operands are clipped
+against each other and the surviving boundary is re-stitched into a single clean
+loop of arcs with `Point` junctions at corners. Combining is *not* `min`/`max` of
+fields — that would seam and mis-sign concave corners. Only `Line` and `Arc`
+segments participate as boolean operands.
 
 ### Styles: a distance-stop chain
 
@@ -159,8 +160,8 @@ the geometry; the draw's tiling entry ids (4, sentinel-padded) ride inside its
 `DrawData`. Each compute pipeline binds at most 8 storage buffers - the
 WebGPU spec-default per-stage limit, which wasm enforces.
 
-Cacheable booleans are evaluated through a frame-surviving `ShapeCache` (LRU,
-content-hash keyed), so a unique node body's boolean runs once across frames.
+Cacheable `Shape` recipes are evaluated through a frame-surviving `ShapeCache`
+(LRU, content-hash keyed), so a unique node body's boolean runs once across frames.
 
 **Resident-index skip:** the tile grid is **world-anchored** — `DrawData.grid_offset`
 folds the camera pan into the tile lattice, so a segment's tile membership depends
@@ -216,27 +217,28 @@ the viewport is never cell-aligned, so it always clips one extra cell; that
 apron is the minimal price of the anchoring (`local_px` in `[0, viewport)` and
 `off` in `[0, coarse_px)` bound the argument below `viewport + coarse_px`). The
 fragment clamps to `grid_cols - 1` rather than discarding, against float edge
-cases. At `off = 0` the formula reduces exactly to the screen-anchored one it
-replaced, which is what makes the origin-centred tests a regression guard.
+cases. At `off = 0` the formula reduces exactly to a screen-anchored mapping,
+which is what makes the origin-centred tests a regression guard.
 
 ### Stage 2: Compute shader (GPU) — scatter-built two-level tile index
 
 Three kernels build a two-level index, both levels persisted to storage
-buffers. They replaced a GATHER cull that scanned every entry x segment from
-every coarse tile - `O(tiles x entries x segments)` regardless of visibility,
-a 1.2-1.6 ms zoom-independent floor on the 500-node scene. Only the iteration
-direction flipped; the cull TEST (`seg_box_interval` against the style reach
-band) is unchanged and still exact. Measured on that scene, the lumped index
-build went 4260.9 -> 958.5 us (4.4x) at pixel-identical output.
+buffers. The build scatters from segments to tiles: a GATHER cull that scans
+every entry x segment from every coarse tile is `O(tiles x entries x segments)`
+regardless of visibility, a 1.2-1.6 ms zoom-independent floor on the 500-node
+scene. Scatter and gather differ only in iteration direction; the cull TEST
+(`seg_box_interval` against the style reach band) is the same exact test. On
+that scene the scatter builds the index 4.4x faster than the gather (958.5 vs
+4260.9 us) at pixel-identical output.
 
 - **Coarse** 64x64-pixel tiles (`COARSE_FACTOR = 8` fine tiles per axis). Each
   holds up to `MAX_COARSE_SLOTS = 512` `(segment_idx, entry_idx)` results (two u32
   each), sorted by entry so the fragment shader walks one shape at a time in
-  z-order. Tilings are marked by `TILING_BIT` on the segment field, as before.
+  z-order. Tilings are marked by `TILING_BIT` on the segment field.
   Past the cap, pairs drop FIRST-COME: which pairs survive depends on the atomic
   interleave, so the surviving SET is nondeterministic even though the per-tile
-  sort makes the surviving ORDER deterministic. The gather kernel used to rank
-  drops keep-nearest, a policy no atomic append can express. Rather than pay for
+  sort makes the surviving ORDER deterministic. A gather kernel can rank drops
+  keep-nearest; no atomic append can express that policy. Rather than pay for
   exact allocation speculatively, the cap carries telemetry: the demand counters
   keep counting past it, and an async readback taken between the scatter and the
   sort surfaces true per-tile demand as `SdfStats::coarse_demand_max` /
@@ -269,8 +271,8 @@ The split trades one indirection for memory: the fat coarse slots exist once per
 (few) coarse tiles; the 64x-more-numerous fine tiles cost two bytes per slot, not
 eight.
 
-**The build SCATTERS work-proportionally instead of gathering per tile.** The
-former gather kernel scanned every entry x segment from every coarse tile -
+**The build SCATTERS work-proportionally instead of gathering per tile.** A
+gather kernel scans every entry x segment from every coarse tile -
 O(tiles x segments) regardless of visibility, a zoom-independent cost floor.
 The scatter build's work is proportional to actual segment-tile overlaps:
 
@@ -288,16 +290,16 @@ The scatter build's work is proportional to actual segment-tile overlaps:
    per-pixel nearest anywhere in the tile.
 3. `cs_sort_fine` - one 64-thread workgroup per LIVE coarse tile, dispatched
    1D-flat; each workgroup binary-searches its owning draw over the draws'
-   coarse-base prefix sums, so no workgroup is dead on arrival (the old
-   per-draw-grid dispatch launched the largest draw's grid for every draw).
+   coarse-base prefix sums, so no workgroup is dead on arrival (a per-draw-grid
+   dispatch would launch the largest draw's grid for every draw).
    Loads the scattered slots, appends the draw's tilings,
    bitonic-sorts by (entry, seg) - a unique total order, so the frame is
    DETERMINISTIC regardless of atomic append order - writes the sorted list
    back, then all 64 threads re-cull one 8px fine tile each and write the
    16-bit references (keep-nearest at the 64 cap).
 
-Coarse overflow past 512 drops slots first-come (the old single-threaded
-keep-nearest ranking is not expressible with atomic appends); the doubled cap
+Coarse overflow past 512 drops slots first-come (keep-nearest ranking is not
+expressible with atomic appends); the doubled cap
 makes that pathological-only, and the count keeps rising past the cap so true
 demand stays observable. The counts buffer is cleared by
 `CommandEncoder::clear_buffer` before the pass; all dispatches share one
@@ -354,7 +356,7 @@ all of that draw's entries with the same nearest-segment fold.
 pixel is `1/(zoom * scale)` world units and the AA band is a `smoothstep` over that
 width. It is computed analytically, not with `fwidth`, because the per-tile loop is
 data-dependent and screen-space derivatives are undefined in non-uniform control
-flow (which produced a 1px tile-boundary seam on some GPUs).
+flow (where `fwidth` yields a 1px tile-boundary seam on some GPUs).
 
 ## Invariants
 
@@ -400,9 +402,9 @@ centre-distant pixel without ever hitting the cap. A zoom band can therefore
 only be cleared by MEASUREMENT: sweep `demos/500_nodes` across the zoom range
 and log `coarse_demand_max` / `coarse_overflow_tiles` at the top of each band;
 a band may land only if overflow stays 0 with headroom under the cap. Note that
-HALVING the fine tile moves the safe way on both counts, which is why that
-change needed no such gate - only the memory budget moved. A real LOD hierarchy
-is a larger step again: it replaces the dense arena with an atomic-insert hash
+HALVING the fine tile moves the safe way on both counts, which is why it
+needs no such gate - only the memory budget moves. A real LOD hierarchy
+is a larger step again: it would replace the dense arena with an atomic-insert hash
 whose collision handling must re-prove the frame determinism the bitonic sort
 gives today, and it is only worth it once zoomed-out overview has to stop
 falling back to `grid_cols = 0` (iterate all entries).
@@ -414,9 +416,9 @@ falling back to `grid_cols = 0` (iterate all entries).
 | `src/shape.rs` | `Shape` recipe tree, content hash, `ShapeCache` |
 | `src/segment.rs` | the arc encoding and its reference distance field |
 | `src/biarc.rs` | cubic bezier -> arc-spline fit |
-| `src/curve.rs` | `Curve` / `ShapeBuilder` geometry construction |
+| `src/curve.rs` | internal lowering: primitive contours and open strokes (`Curve` / `ShapeBuilder`, crate-private) |
 | `src/drawable.rs` | compiled `Segment` + `Drawable`, bounds, arc-length |
-| `src/boolean.rs` | union / difference / intersection on closed contours |
+| `src/boolean.rs` | internal lowering: union / difference / intersection on closed contours, driven by `Shape::evaluate` |
 | `src/tiling.rs` | infinite analytic background factories |
 | `src/style.rs` | the distance-stop `Style` system + `Stop` / `Transfer` |
 | `src/pattern.rs` | stroke `Pattern`s and GPU parameter encoding |

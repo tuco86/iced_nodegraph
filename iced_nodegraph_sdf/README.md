@@ -183,9 +183,10 @@ turned into arcs in its local frame (see `Shape::evaluate` in
 
 **Set operations clip and re-stitch.** A renderer that combined shapes by
 `min`/`max` of distance fields would seam at the joins and mis-sign concave
-corners. Instead, booleans (see [`src/boolean.rs`](src/boolean.rs)) clip the two
-contours against each other and stitch the surviving boundary into *one* clean
-loop of arcs, inserting junction points at corners:
+corners. Instead, `Shape::evaluate` lowers every `-` / `|` / `&` through the
+crate-internal boolean clipper (see [`src/boolean.rs`](src/boolean.rs)), which
+clips the two contours against each other and stitches the surviving boundary
+into *one* clean loop of arcs, inserting junction points at corners:
 
 <img src="docs/boolean.svg" alt="A rounded box minus three pin circles becomes a single closed contour with junction points." width="100%">
 
@@ -482,9 +483,9 @@ style, pattern, and tiling, with a tile-occupancy debug overlay.
 | [`src/shape.rs`](src/shape.rs) | `Shape` recipe tree, content hash, `ShapeCache` |
 | [`src/segment.rs`](src/segment.rs) | the arc encoding and its distance field |
 | [`src/biarc.rs`](src/biarc.rs) | cubic bezier &rarr; arc-spline fit |
-| [`src/curve.rs`](src/curve.rs) | `Curve` / `ShapeBuilder` geometry construction |
+| [`src/curve.rs`](src/curve.rs) | internal lowering: primitive contours and open strokes (`Curve` / `ShapeBuilder`, crate-private) |
 | [`src/drawable.rs`](src/drawable.rs) | compiled `Segment` + `Drawable` storage |
-| [`src/boolean.rs`](src/boolean.rs) | union / difference / intersection on contours |
+| [`src/boolean.rs`](src/boolean.rs) | internal lowering: union / difference / intersection on contours, driven by `Shape::evaluate` |
 | [`src/style.rs`](src/style.rs) | the distance-stop `Style` system |
 | [`src/pattern.rs`](src/pattern.rs) | stroke `Pattern`s (dash, dot, arrow, flow) |
 | [`src/tiling.rs`](src/tiling.rs) | infinite analytic backgrounds (grid, dots, ...) |
