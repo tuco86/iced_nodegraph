@@ -23,15 +23,29 @@ version accordingly (under Cargo's 0.x rules a break needs a minor bump).
 Two published libraries plus demos and a bench crate, with a strictly one-way
 dependency direction: `demos/* -> iced_nodegraph -> iced_nodegraph_sdf`.
 
-- **`iced_nodegraph_sdf`** - the renderer. Shape authoring (`Curve`,
-  `ShapeBuilder`, `Shape`, `Tiling`) lowers to `Drawable` segments, which
-  `compile.rs` turns into GPU records for `SdfPipeline` and `shader.wgsl`.
-  There is one GPU primitive: the circular arc.
-- **`iced_nodegraph`** - the widget. `node_graph/mod.rs` holds the builder DSL
-  and value types, `node_graph/state.rs` the only state that survives a frame,
-  `node_graph/orbits.rs` the ring each cable takes at each anchor it wraps,
-  `node_graph/widget.rs` (plus `widget/draw.rs` and `widget/update.rs`) the
-  iced `Widget` impl, and `style/*` the flat style structs.
+- **`iced_nodegraph_sdf`** - the renderer. `Shape` (plus `Tiling`) is the one
+  public authoring API; it lowers internally through `Curve`/`ShapeBuilder`
+  and the boolean stage to `Drawable` segments, which `compile.rs` turns into
+  GPU records for `SdfPipeline` and `shader.wgsl`. There is one GPU
+  primitive: the circular arc.
+- **`iced_nodegraph`** - the widget. Inside `node_graph/`, `widget/` consumes
+  every other module and nothing outside `widget/` imports from it:
+  - `widget.rs` (plus `widget/update.rs`, `widget/draw.rs`,
+    `widget/minimap.rs`, `widget/camera_overlay.rs`) - the iced `Widget`
+    impl: layout, event handling, drawing;
+  - `cable.rs` - the single walk from graph topology to each cable's hop
+    chain (`Station`, `CableGeometry`, `edge_hops`), which drawing, cutting,
+    hit-testing and hover all read;
+  - `edge_path.rs` - cable geometry: hop chain to path, bezier legs, arcs
+    around anchors, distance and crossing queries; `orbits.rs` - the ring
+    each cable takes at each anchor it wraps;
+  - `state.rs` - the only state that survives a frame; `camera.rs`,
+    `euclid.rs`, `focus.rs`, `input.rs` - camera math, coordinate spaces,
+    the `focus` task, the keymap;
+  - `mod.rs` - the builder DSL and the public value types.
+
+  Outside it, `style/*` holds the flat style structs and the `Catalog`,
+  `node_pin/` the pin widget, `ids.rs` the `Ids` vocabulary.
 - **`demos/*`** - hello_world, styling, interaction, 500_nodes, shader_editor,
   the shared `demo_common` crate, and `gallery`, the one wasm module and the
   screenshot tool behind the documentation site.
@@ -136,15 +150,15 @@ wasm check CI does not run.
 - `cargo clippy -p iced_nodegraph -p iced_nodegraph_sdf --all-targets -- -D warnings`
 - `ICED_TEST_BACKEND=tiny-skia cargo test -p iced_nodegraph` (the backend is
   not optional: `iced_test::Simulator` builds a headless renderer per
-  instance and never releases it, so on the GPU backend the 49 simulator
-  tests exhaust the device and the run segfaults or hangs about half the
-  time. They assert messages, not pixels. The pixel oracles build
+  instance and never releases it, so on the GPU backend the simulator tests
+  exhaust the device and the run segfaults or hangs about half the time.
+  They assert messages, not pixels. The pixel oracles build
   `iced_wgpu::Renderer` directly and are unaffected.)
 - `cargo test -p iced_nodegraph --lib -- --ignored` (the orbit search-quality
-  sweep, ~15s over 1111 layouts. It is `#[ignore]`d because it alone was 93% of
-  the lib suite's wall time and what it measures is the search's quality
-  distribution, not whether the geometry is correct - the other 165 lib tests
-  cover that in about a second. CI runs it as its own step.)
+  sweep over a generated set of layouts, about 15 s. It is `#[ignore]`d
+  because it dominates the lib suite's wall time and what it measures is the
+  search's quality distribution, not whether the geometry is correct - the
+  other lib tests cover that in about a second. CI runs it as its own step.)
 - `cargo test -p iced_nodegraph_sdf -- --test-threads=1` (the pixel tests each
   spin up a wgpu device; parallel runs oversubscribe the GPU)
 - `cargo check --workspace` (the demos compile nowhere else)
@@ -185,21 +199,28 @@ done - the hook will run it again at push time either way.
 ## Testing
 
 Unit tests live next to the code they cover (`camera.rs`, `input.rs`,
-`state.rs`, `widget.rs`, `content.rs`, `connection.rs`, `style/*`). Everything
-that drives the widget through its public API lives in `iced_nodegraph/tests/`:
-`clipping.rs`, `coordinates.rs` and `overlay.rs` assert on the arguments the
-widget hands its children using the shared recording renderer in
-`tests/common/record.rs`; `simulator.rs` drives real events through
-`iced_test::Simulator`; `widget_pixel.rs` and `edge_grid_pixel.rs` are pixel
-oracles against the headless GPU harness in `tests/common/mod.rs`;
-`theme_gallery.rs` is an ignored visual probe that renders one scene under
-every built-in theme to PNG contact sheets for review.
-The `iced_nodegraph_bench` member (`benches/frame_prep.rs`,
-`cargo bench -p iced_nodegraph_bench`) measures frame-preparation cost; it is a
-separate crate because `dev-dependencies` are package-wide, so criterion's 38
-crates would otherwise be compiled by every `cargo test -p iced_nodegraph`. The
-SDF crate's pixel tests in `iced_nodegraph_sdf/src/pipeline/pixel_tests.rs` need
-a real GPU adapter and serialized execution.
+`state.rs`, `cable.rs`, `edge_path.rs`, `orbits.rs`, `widget.rs`,
+`content.rs`, `connection.rs`, `style/*`). Everything that drives the widget
+through its public API lives in `iced_nodegraph/tests/`: `clipping.rs`,
+`coordinates.rs`, `overlay.rs` and `mouse_interaction.rs` call the `Widget`
+trait methods directly and assert on what the widget hands its children or
+returns, using the shared recording renderer in `tests/common/record.rs`;
+`simulator.rs` drives real events through `iced_test::Simulator`;
+`widget_pixel.rs`, `edge_grid_pixel.rs` and `catalog.rs` (a foreign theme
+styling through its own `Catalog`) are pixel oracles against the headless GPU
+harness in `tests/common/mod.rs`; `theme_gallery.rs` is an ignored visual
+probe that renders one scene under every built-in theme to PNG contact sheets
+for review. `iced_nodegraph/examples/basic.rs` is the crate's runnable
+example (`cargo run -p iced_nodegraph --example basic`); `--all-targets` in
+the clippy gate keeps it compiling.
+The `iced_nodegraph_bench` member (`benches/shape_eval.rs`,
+`cargo bench -p iced_nodegraph_bench`) measures the CPU shape-evaluation
+cost of a frame, cold and through `ShapeCache`; it is a
+separate crate because `dev-dependencies` are package-wide, so criterion's
+dependency tree would otherwise be compiled by every
+`cargo test -p iced_nodegraph`. The SDF crate's pixel tests in
+`iced_nodegraph_sdf/src/pipeline/pixel_tests.rs` need a real GPU adapter and
+serialized execution.
 
 There are no `#[cfg(test)]` modules at the crate root: a test that only touches
 the public API belongs in `tests/`, where it also proves the API is reachable

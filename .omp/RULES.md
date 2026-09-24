@@ -7,6 +7,7 @@ a long conversation has pushed that context out of view.
   `cargo fmt --all -- --check`,
   `cargo clippy -p iced_nodegraph -p iced_nodegraph_sdf --all-targets -- -D warnings`,
   `ICED_TEST_BACKEND=tiny-skia cargo test -p iced_nodegraph`,
+  `cargo test -p iced_nodegraph --lib -- --ignored`,
   `cargo test -p iced_nodegraph_sdf -- --test-threads=1`,
   `cargo check --workspace`,
   `cargo check -p iced_nodegraph_bench --benches`,

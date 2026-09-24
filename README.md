@@ -61,7 +61,10 @@ Ids are yours: name the node, pin, edge and anchor id types once on an
 [`Ids`](https://docs.rs/iced_nodegraph/latest/iced_nodegraph/trait.Ids.html)
 marker (`usize` everywhere by default). The
 [crate docs](https://docs.rs/iced_nodegraph) cover styling, connection
-validation, and the callback contract in detail.
+validation, and the callback contract in detail. A complete runnable graph
+with typed pin payloads and live evaluation is
+[`examples/basic.rs`](https://github.com/tuco86/iced_nodegraph/blob/main/iced_nodegraph/examples/basic.rs)
+(`cargo run -p iced_nodegraph --example basic`).
 
 ## Demos
 

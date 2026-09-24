@@ -169,6 +169,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the two methods; `iced::Theme` resolves them through `ParticleStyleFn` like
   every other class.
 
+- **`SdfPatternType` is `PatternType`.** The re-export of
+  `iced_nodegraph_sdf::pattern::PatternType` carries its own name, as `Pattern`
+  and `SdfStats` do. A host with its own `PatternType` in scope names the
+  crate's as `iced_nodegraph::PatternType`.
+
+- **`PinSide` has no integer encoding.** The `#[repr(u32)]`, the explicit
+  discriminants and `impl From<PinSide> for u32` are gone: nothing reads a
+  side as a number. The side a cable leaves a node through is a crate-private
+  enum, so an out-of-range side is unrepresentable rather than silently
+  treated as `Right`.
+
 ### Added
 
 - **`NodeGraph::on_connect_refused`.** Reports the pin pair of a drop the
@@ -836,6 +847,20 @@ its name says: the canvas.
   are headless and never open a window: `x11` costs 7 crates where `wayland`
   costs 34 (the smithay stack plus tiny-skia, pulled in by winit's adwaita
   client-side decorations).
+- Cable topology has its own module. `node_graph/cable.rs` holds `Station`,
+  `CableGeometry` and the lowering from edges and routes to hop chains
+  (`edge_hops`, `anchor_rings`); `node_graph/edge_path.rs` (formerly under
+  `widget/`) holds the path geometry, including the bezier control-length
+  rule. `node_graph/mod.rs` is the builder DSL and the public value types
+  only, and nothing outside `widget/` imports from the `Widget` impl.
+- The widget's animation clock is advanced in one place: `draw` reads the same
+  capped delta `update` stores.
+- The criterion bench is `benches/shape_eval.rs` (group `shape_eval`), named
+  for what it measures: CPU shape evaluation, cold and through `ShapeCache`.
+- `iced_nodegraph_sdf` comments and docs state current invariants and their
+  reasons; `README.md` and `ARCHITECTURE.md` present `Shape` as the one public
+  authoring API, with `Curve`, `ShapeBuilder` and the boolean stage as
+  internal lowering.
 
 ## [0.4.2] - 2026-07-23
 
