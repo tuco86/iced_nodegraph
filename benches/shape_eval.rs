@@ -1,20 +1,19 @@
 //! CPU-side shape-evaluation benchmark.
 //!
-//! Measures the CPU geometry work that survives in the single-renderer SDF
-//! pipeline: materialising a `Shape` recipe into arcs (`Shape::evaluate` - the
-//! rounded-box body with its pin cutouts subtracted via `difference_many`, the
-//! boolean the widget's comments flag as the expensive one), and stroking the
-//! edge beziers (the biarc spline build). It contrasts evaluating every node
-//! COLD against fetching it through the frame-surviving `ShapeCache`, so the
-//! delta is exactly the dedup win: N identical node bodies pay for ONE boolean.
+//! Measures the CPU geometry work of one frame: materialising a `Shape` recipe
+//! into arcs (`Shape::evaluate` - the rounded-box body with its pin cutouts
+//! subtracted, the expensive boolean), and stroking the edge beziers (the
+//! biarc spline build). It contrasts evaluating every node COLD against
+//! fetching it through the frame-surviving `ShapeCache`, so the delta is
+//! exactly the dedup win: N identical node bodies pay for ONE boolean.
 //!
-//! Scope. In the current architecture `SdfPrimitive::push` only stores the
-//! position-free `Shape`; the boolean/biarc evaluation runs inside the GPU
-//! pipeline's `prepare`, deduped per frame by recipe hash. This bench isolates
-//! that CPU evaluation headlessly (no device) by calling `evaluate` /
-//! `ShapeCache::get_or_eval` directly. It does NOT cover iced's `layout` pass,
-//! the GPU tile cull (a compute shader), or upload/present - the full-frame
-//! wall-clock story lives in the `iced_nodegraph_sdf` pipeline tests.
+//! Scope. `SdfPrimitive::push` only stores the position-free `Shape`; the
+//! boolean/biarc evaluation runs inside the GPU pipeline's `prepare`, deduped
+//! per frame by recipe hash. This bench isolates that CPU evaluation
+//! headlessly (no device) by calling `evaluate` / `ShapeCache::get_or_eval`
+//! directly. It does NOT cover iced's `layout` pass, the GPU tile cull (a
+//! compute shader), or upload/present - the full-frame wall-clock story lives
+//! in the `iced_nodegraph_sdf` pipeline tests.
 //!
 //! Run with: `cargo bench -p iced_nodegraph_bench`.
 
@@ -120,8 +119,8 @@ fn prep_frame_cached(scene: &Scene, cache: &mut ShapeCache) -> usize {
     segs
 }
 
-fn bench_frame_prep(c: &mut Criterion) {
-    let mut group = c.benchmark_group("frame_prep");
+fn bench_shape_eval(c: &mut Criterion) {
+    let mut group = c.benchmark_group("shape_eval");
     for &n in &[100usize, 500, 2000] {
         let scene = build_scene(n);
         // Cold: the silhouette boolean runs per node every frame.
@@ -137,5 +136,5 @@ fn bench_frame_prep(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_frame_prep);
+criterion_group!(benches, bench_shape_eval);
 criterion_main!(benches);
