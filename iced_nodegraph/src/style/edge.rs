@@ -162,7 +162,7 @@ mod tests {
         assert!(
             matches!(
                 pat.pattern_type,
-                iced_nodegraph_sdf::pattern::PatternType::Dashed { .. }
+                iced_nodegraph_sdf::PatternType::Dashed { .. }
             ),
             "stroke pattern is not Dashed: {:?}",
             pat.pattern_type

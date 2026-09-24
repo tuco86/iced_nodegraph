@@ -358,9 +358,7 @@ pub use style::{
 };
 
 // Re-export iced_nodegraph_sdf types downstream crates meet through the widget
-pub use iced_nodegraph_sdf::Pattern;
-pub use iced_nodegraph_sdf::SdfStats;
-pub use iced_nodegraph_sdf::pattern::PatternType;
+pub use iced_nodegraph_sdf::{Pattern, PatternType, SdfStats};
 
 pub mod connection;
 pub mod content;

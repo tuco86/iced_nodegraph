@@ -64,7 +64,7 @@ pub(crate) mod shared;
 // Public API re-exports
 pub use color::ColorQuad;
 pub use drawable::Drawable;
-pub use pattern::Pattern;
+pub use pattern::{Pattern, PatternType};
 pub use pipeline::types::SdfStats;
 pub use primitive::{SdfPrimitive, index_probe_enabled, sdf_stats, set_index_probe};
 pub use shape::{PathSeg, Shape, ShapeCache};
