@@ -97,10 +97,10 @@ pub struct SavedState {
     pub theme: String,
     pub camera_position: (f32, f32),
     pub camera_zoom: f32,
-    /// Window position (x, y) - None for old save files
+    /// Window position (x, y); `None` when not recorded
     #[serde(default)]
     pub window_position: Option<(i32, i32)>,
-    /// Window size (width, height) - None for old save files
+    /// Window size (width, height); `None` when not recorded
     #[serde(default)]
     pub window_size: Option<(u32, u32)>,
     /// Section expansion states for EdgeConfig nodes
@@ -109,7 +109,7 @@ pub struct SavedState {
     /// Section expansion states for NodeConfig nodes
     #[serde(default)]
     pub node_config_sections: HashMap<NodeId, SavedNodeSections>,
-    /// Whether window was maximized - None for old save files
+    /// Whether the window was maximized; `None` when not recorded
     #[serde(default)]
     pub window_maximized: Option<bool>,
     /// Routing anchors as (id, x, y)
@@ -875,7 +875,7 @@ fn pattern_type_to_string(pattern: &PatternType) -> String {
 fn string_to_pattern_type(s: &str) -> PatternType {
     match s {
         "Solid" => PatternType::Solid,
-        "Dashed" | "DashCapped" | "Angled" => PatternType::Dashed,
+        "Dashed" => PatternType::Dashed,
         "Arrowed" => PatternType::Arrowed,
         "Dotted" => PatternType::Dotted,
         "DashDotted" => PatternType::DashDotted,
