@@ -8,13 +8,15 @@ use demo_common::{Demo, NodeContentStyle};
 use iced::{
     Color, Element, Length, Point, Theme, Vector,
     alignment::Horizontal,
+    time::Instant,
     widget::{Space, button, checkbox, column, container, row, scrollable, text},
 };
 use iced_nodegraph::{
-    Ids, KeyCombo, Keymap, PinInfo as NgPinInfo, PinRef, PinStatus, PinStyle, default_pin_style,
-    edge, node, pin,
+    Ids, KeyCombo, Keymap, ParticleStyle, PinInfo as NgPinInfo, PinRef, PinStatus, PinStyle,
+    default_particle_style, default_pin_style, edge, node, particle, pin,
 };
 use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 
 /// The id vocabulary of this demo: indexed nodes and pins, unidentified edges,
 /// and a `TypeId` pin payload carrying the data type of each pin.
@@ -153,6 +155,8 @@ enum Message {
     Reset,
     ToggleRules,
     ToggleSnap(bool),
+    ToggleTraffic(bool),
+    Frame(Instant),
 }
 
 struct App {
@@ -163,6 +167,11 @@ struct App {
     feedback: Vec<String>,
     show_rules: bool,
     snap_to_grid: bool,
+    traffic: bool,
+    last_emit: Option<Instant>,
+    /// In-flight particles as (index into `edges`, birth). The host owns
+    /// their lifetime; the widget only draws them.
+    particles: Vec<(usize, Instant)>,
     theme: Theme,
 }
 
@@ -332,10 +341,21 @@ impl demo_common::Demo for App {
             feedback: vec!["Drag between pins to connect nodes.".into()],
             show_rules: false,
             snap_to_grid: false,
+            traffic: false,
+            last_emit: None,
+            particles: Vec::new(),
             theme: Theme::Dark,
         };
         app.register_pins();
         (app, iced::Task::none())
+    }
+
+    fn subscription(&self) -> iced::Subscription<Message> {
+        if self.traffic {
+            iced::window::frames().map(Message::Frame)
+        } else {
+            iced::Subscription::none()
+        }
     }
 
     fn update(&mut self, message: Message) -> iced::Task<Message> {
@@ -360,6 +380,7 @@ impl demo_common::Demo for App {
                             && t.node_id == from.node_id
                             && t.pin_id == from.pin_id))
                 });
+                self.particles.clear();
                 if let (Some(from_info), Some(to_info)) = (
                     self.pin_registry.get(&(from.node_id, from.pin_id)),
                     self.pin_registry.get(&(to.node_id, to.pin_id)),
@@ -383,10 +404,12 @@ impl demo_common::Demo for App {
             }
             Message::ClearAll => {
                 self.edges.clear();
+                self.particles.clear();
                 self.feedback.push("All connections cleared.".into());
             }
             Message::Reset => {
                 self.edges.clear();
+                self.particles.clear();
                 self.node_positions = Self::default_positions();
                 self.selected_nodes.clear();
                 self.feedback = vec!["Reset to initial state.".into()];
@@ -396,6 +419,25 @@ impl demo_common::Demo for App {
             }
             Message::ToggleSnap(on) => {
                 self.snap_to_grid = on;
+            }
+            Message::ToggleTraffic(on) => {
+                self.traffic = on;
+                if !on {
+                    self.particles.clear();
+                    self.last_emit = None;
+                }
+            }
+            Message::Frame(now) => {
+                if self
+                    .last_emit
+                    .is_none_or(|t| now.duration_since(t) >= Duration::from_millis(600))
+                {
+                    self.particles
+                        .extend((0..self.edges.len()).map(|i| (i, now)));
+                    self.last_emit = Some(now);
+                }
+                self.particles
+                    .retain(|(_, born)| now.duration_since(*born) < Duration::from_secs(6));
             }
         }
 
@@ -512,7 +554,25 @@ impl demo_common::Demo for App {
                 .pin_style(pin_style),
         );
 
-        ng = ng.edges(self.edges.iter().map(|(from, to)| edge((), *from, *to)));
+        let particle_speed = 160.0;
+        ng = ng.edges(self.edges.iter().enumerate().map(|(i, (from, to))| {
+            let color = self
+                .pin_registry
+                .get(&(from.node_id, from.pin_id))
+                .map(|info| info.pin_type.color())
+                .unwrap_or(PinType::Any.color());
+            edge((), *from, *to).particles(
+                self.particles
+                    .iter()
+                    .filter(|(edge_index, _)| *edge_index == i)
+                    .map(move |(_, born)| {
+                        particle(*born, particle_speed).style(move |theme| ParticleStyle {
+                            color,
+                            ..default_particle_style(theme)
+                        })
+                    }),
+            )
+        }));
 
         // Toolbar
         let toolbar = container(
@@ -528,6 +588,9 @@ impl demo_common::Demo for App {
                 checkbox(self.snap_to_grid)
                     .label("Snap to grid")
                     .on_toggle(Message::ToggleSnap),
+                checkbox(self.traffic)
+                    .label("Traffic")
+                    .on_toggle(Message::ToggleTraffic),
                 Space::new().width(Length::Fill),
                 text(format!("{} connections", self.edges.len())).size(13),
             ]
@@ -787,6 +850,7 @@ pub fn main() -> iced::Result {
 
     iced::application(App::boot, App::update, App::view)
         .theme(App::theme)
+        .subscription(App::subscription)
         .title("Interaction Demo - Connection Validation")
         .window(window_settings)
         .run()

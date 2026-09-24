@@ -36,6 +36,11 @@ window, and the gallery boots it in the browser through `demo_common::Demo`.
   toggle the rules reference with "Show Rules".
 - **Snap to grid**: the toolbar toggle puts every node drag on a 40-unit world
   grid; holding Alt ignores it for as long as it is held.
+- **Traffic**: the toolbar toggle sends a particle in the source pin's colour
+  down every edge every 0.6 s; each glides to the input pin and vanishes.
+  The host pushes each particle every frame with its birth time and the
+  widget draws it where its age puts it, so the demo stores birth times,
+  never positions.
 
 ## Demo Graph
 
@@ -57,6 +62,7 @@ window, and the gallery boots it in the browser through `demo_common::Demo`.
 - **Clear All** removes every connection; **Reset** restores the initial graph;
   **Show Rules** toggles the rules reference.
 - **Snap to grid** toggles the 40-unit drag grid; **Alt** ignores it while held.
+- **Traffic** toggles the particles travelling along the edges.
 
 The root [README](https://github.com/tuco86/iced_nodegraph#controls) has the
 full default control table.

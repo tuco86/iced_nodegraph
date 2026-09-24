@@ -278,9 +278,10 @@ where
             |i| self.nodes[i].frame,
         );
 
-        // Update time for animations
+        // Update time for animations. The same instant ages every particle,
+        // so a frame is self-consistent.
+        let now = Instant::now();
         let time = {
-            let now = Instant::now();
             if let Some(last_update) = state.last_update {
                 let delta = now.duration_since(last_update).as_secs_f32();
                 let capped_delta = delta.min(0.1);
@@ -693,6 +694,8 @@ where
             };
             let mut edge_strokes: Vec<(Shape, Style)> = Vec::with_capacity(self.edges.len() * 2);
             let mut edge_shadows: Vec<(Shape, Style)> = Vec::with_capacity(self.edges.len());
+            let mut edge_particles: Vec<(Shape, Style)> = Vec::new();
+            let mut particles_in_flight = false;
 
             let pin = |pin: &PinRef<I>| -> Option<Station> {
                 let node_idx = self.node_index(&pin.node_id)?;
@@ -783,6 +786,29 @@ where
                         ));
                     }
                 }
+                if !edge.particles.is_empty() {
+                    let total = built.path.total_len();
+                    for particle in &edge.particles {
+                        // A particle born in the future has not started; one
+                        // past the input pin has arrived. Neither is drawn,
+                        // but a pending one still needs the redraw loop.
+                        let Some(age) = now.checked_duration_since(particle.born) else {
+                            particles_in_flight = true;
+                            continue;
+                        };
+                        let along = particle.speed * age.as_secs_f32();
+                        if !(0.0..=total).contains(&along) {
+                            continue;
+                        }
+                        particles_in_flight = true;
+                        let style = theme.particle(&particle.class);
+                        let dot = Shape::circle(style.radius).translate(built.path.point_at(along));
+                        edge_particles.push((
+                            dot,
+                            Style::quad_band(&ColorQuad::solid(style.color), -1e6, 0.0),
+                        ));
+                    }
+                }
                 let shape = built.path.into_shape();
                 // Translation commutes with the path construction, so shifting
                 // the finished cable is the same geometry as building it from
@@ -810,6 +836,17 @@ where
             // Hand the resolved curves to the hit test and to next frame's orbit
             // assignment, neither of which has a theme to resolve a style with.
             state.edge_curves.replace(edge_curves);
+
+            // Entries composite front-to-back in push order.
+            // z4: particles, riding the cables and the rings they wrap.
+            for (shape, style) in &edge_particles {
+                bg.push(shape, style, [0.0, 0.0]);
+            }
+            // A moving or pending particle needs the next frame; the last one
+            // arriving lets the redraw loop wind down.
+            if particles_in_flight {
+                bg.mark_animated();
+            }
 
             // z3: anchor cores and orbit rings, in front of the cables wrapping
             // them (the node bodies of Layer 4 still cover both).
@@ -865,7 +902,7 @@ where
                 push_anchor_core(&mut bg, center, style);
             }
 
-            // z2: edge strokes (frontmost in the background layer).
+            // z2: edge strokes.
             for (shape, style) in &edge_strokes {
                 bg.push(shape, style, [0.0, 0.0]);
             }

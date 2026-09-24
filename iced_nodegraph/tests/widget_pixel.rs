@@ -1445,3 +1445,180 @@ fn a_hovered_cable_end_glows() {
          stretch the press would take",
     );
 }
+
+/// Renders the bare two-pin cable of `render_routed_edge` (a straight 140 px
+/// run from screen (80, 45) to (220, 45)) carrying one magenta particle per
+/// `(age_secs, speed)` pair. A negative age is a particle born in the future.
+///
+/// Also returns whether the frame after the draw asked for another one: the
+/// widget drives its own redraws while a particle is moving or pending.
+fn render_particles(particles: &[(f32, f32)]) -> Option<(Vec<[u8; 4]>, bool)> {
+    use iced::time::{Duration, Instant};
+    use iced::widget::container;
+    use iced_nodegraph::{ParticleStyle, PinDirection, PinRef, PinSide, edge, node_pin, particle};
+
+    let mut guard = shared()?;
+    let renderer = &mut *guard;
+
+    let mut graph: NodeGraph<'static, iced_nodegraph::Indexed, (), Theme, Renderer> =
+        NodeGraph::default()
+            .width(Length::Fixed(W as f32))
+            .height(Length::Fixed(H as f32))
+            .camera(Point::new(20.0, 20.0), 1.0)
+            .on_connect(|_, _| ());
+
+    let pin_body = || {
+        container(text("p"))
+            .width(Length::Fixed(60.0))
+            .height(Length::Fixed(50.0))
+    };
+    graph = graph.push_node(node(
+        0usize,
+        Point::new(0.0, 0.0),
+        Element::from(node_pin(PinSide::Right, 0usize, pin_body()).direction(PinDirection::Output)),
+    ));
+    graph = graph.push_node(node(
+        1usize,
+        Point::new(200.0, 0.0),
+        Element::from(node_pin(PinSide::Left, 0usize, pin_body()).direction(PinDirection::Input)),
+    ));
+
+    let now = Instant::now();
+    let born = |age: f32| {
+        if age >= 0.0 {
+            now - Duration::from_secs_f32(age)
+        } else {
+            now + Duration::from_secs_f32(-age)
+        }
+    };
+    graph = graph.push_edge(
+        edge((), PinRef::new(0usize, 0usize), PinRef::new(1usize, 0usize)).particles(
+            particles.iter().map(|&(age, speed)| {
+                particle(born(age), speed).style(|_| ParticleStyle {
+                    color: Color::from_rgb(1.0, 0.0, 1.0),
+                    radius: 5.0,
+                })
+            }),
+        ),
+    );
+
+    let mut tree = Tree::new(&graph as &dyn Widget<(), Theme, Renderer>);
+    let layout_node = graph.layout(
+        &mut tree,
+        &*renderer,
+        &layout::Limits::new(Size::ZERO, Size::new(W as f32, H as f32)),
+    );
+    let layout = Layout::new(&layout_node);
+    let viewport_rect = Rectangle::new(Point::ORIGIN, Size::new(W as f32, H as f32));
+
+    let mut msgs: Vec<()> = Vec::new();
+    let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
+    let mut clipboard = clipboard::Null;
+    graph.update(
+        &mut tree,
+        &iced::Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(-1.0, -1.0),
+        }),
+        layout,
+        mouse::Cursor::Unavailable,
+        &*renderer,
+        &mut clipboard,
+        &mut shell,
+        &viewport_rect,
+    );
+
+    graph.draw(
+        &tree,
+        renderer,
+        &Theme::Dark,
+        &renderer::Style {
+            text_color: Color::WHITE,
+        },
+        layout,
+        mouse::Cursor::Unavailable,
+        &viewport_rect,
+    );
+
+    let bytes = renderer.screenshot(
+        &Viewport::with_physical_size(Size::new(W, H), 1.0),
+        Color::TRANSPARENT,
+    );
+
+    let mut msgs: Vec<()> = Vec::new();
+    let mut shell = iced_wgpu::core::Shell::new(&mut msgs);
+    graph.update(
+        &mut tree,
+        &iced::Event::Window(iced::window::Event::RedrawRequested(Instant::now())),
+        layout,
+        mouse::Cursor::Unavailable,
+        &*renderer,
+        &mut clipboard,
+        &mut shell,
+        &viewport_rect,
+    );
+    let redraws = shell.redraw_request() == iced::window::RedrawRequest::NextFrame;
+
+    Some((bytes.as_chunks::<4>().0.to_vec(), redraws))
+}
+
+/// One second at 70 world units per second puts the particle 70 px along the
+/// 140 px cable: at screen (150, 45), and nowhere else on the run. A moving
+/// particle keeps the frame loop running without the host driving a clock.
+#[test]
+fn a_particle_rides_the_cable_by_speed_and_age() {
+    let Some((px, redraws)) = render_particles(&[(1.0, 70.0)]) else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    assert!(redraws, "a moving particle did not request the next frame");
+    let magenta = |p: [u8; 4]| p[0] > 150 && p[1] < 100 && p[2] > 150;
+    let at = |x: u32, y: u32| px[(y * W + x) as usize];
+
+    assert!(
+        magenta(at(150, 45)),
+        "no particle at the cable's midpoint: {:?}",
+        at(150, 45)
+    );
+    assert!(
+        !magenta(at(120, 45)),
+        "particle drawn behind its position: {:?}",
+        at(120, 45)
+    );
+    assert!(
+        !magenta(at(180, 45)),
+        "particle drawn ahead of its position: {:?}",
+        at(180, 45)
+    );
+}
+
+/// Three seconds at 70 per second is 210 px, past the 140 px cable: the
+/// particle has arrived, is not drawn anywhere, and lets the frame loop stop.
+#[test]
+fn an_arrived_particle_is_not_drawn() {
+    let Some((px, redraws)) = render_particles(&[(3.0, 70.0)]) else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    assert!(!redraws, "an arrived particle kept the frame loop running");
+    let magenta = |p: [u8; 4]| p[0] > 150 && p[1] < 100 && p[2] > 150;
+    assert!(
+        !px.iter().copied().any(magenta),
+        "an arrived particle is still drawn somewhere in the frame"
+    );
+}
+
+/// A particle born one second from now has not started: nothing is drawn, but
+/// the frame loop keeps running so it appears on time.
+#[test]
+fn an_unborn_particle_is_not_drawn() {
+    let Some((px, redraws)) = render_particles(&[(-1.0, 70.0)]) else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    assert!(redraws, "a pending particle did not request the next frame");
+    let magenta = |p: [u8; 4]| p[0] > 150 && p[1] < 100 && p[2] > 150;
+    assert!(
+        !px.iter().copied().any(magenta),
+        "an unborn particle is drawn somewhere in the frame"
+    );
+}

@@ -37,6 +37,7 @@ use std::time::Duration;
 use iced_nodegraph_sdf::SdfStats;
 use iced_widget::core::widget::Id as WidgetId;
 use iced_widget::core::{Element, Length, Point, Size, Vector};
+use web_time::Instant;
 
 use self::focus::{FocusOptions, FocusTarget};
 use self::widget::edge_path;
@@ -45,8 +46,8 @@ use crate::node_pin::{PinDirection, PinEnd, PinInfo, PinSide};
 use crate::style::{
     AnchorStatus, AnchorStyle, AnchorStyleFn, Catalog, CuttingToolStyle, CuttingToolStyleFn,
     DragEdgeStyleFn, EdgeCurve, EdgeStatus, EdgeStyle, EdgeStyleFn, GraphStyle, GraphStyleFn,
-    MinimapStyle, MinimapStyleFn, NodeStatus, NodeStyle, NodeStyleFn, PinStatus, PinStyle,
-    PinStyleFn, SelectionBoxStyle, SelectionBoxStyleFn,
+    MinimapStyle, MinimapStyleFn, NodeStatus, NodeStyle, NodeStyleFn, ParticleStyle,
+    ParticleStyleFn, PinStatus, PinStyle, PinStyleFn, SelectionBoxStyle, SelectionBoxStyleFn,
 };
 
 /// Pin click detection threshold, in screen pixels: divided by zoom before
@@ -310,6 +311,7 @@ where
     /// orbit each frame, so this is a set the host may keep in any order.
     pub(super) route: Vec<I::AnchorId>,
     pub(super) class: Theme::EdgeClass<'a, I>,
+    pub(super) particles: Vec<Particle<'a, Theme>>,
 }
 
 /// Creates an [`Edge`] with the given id and the theme's default class.
@@ -333,6 +335,7 @@ pub fn edge<'a, I: Ids, Theme: Catalog>(
         to,
         route: Vec::new(),
         class: Theme::default_edge(),
+        particles: Vec::new(),
     }
 }
 
@@ -369,6 +372,60 @@ impl<'a, I: Ids, Theme: Catalog> Edge<'a, I, Theme> {
     /// skipped, and a repeated id counts once.
     pub fn route(mut self, anchors: impl IntoIterator<Item = I::AnchorId>) -> Self {
         self.route = anchors.into_iter().collect();
+        self
+    }
+
+    /// Appends the particles travelling along this edge this frame.
+    ///
+    /// Each one is drawn where its age and speed put it; one past the input
+    /// pin is skipped. Calls accumulate, so several sources may contribute.
+    pub fn particles(mut self, particles: impl IntoIterator<Item = Particle<'a, Theme>>) -> Self {
+        self.particles.extend(particles);
+        self
+    }
+}
+
+/// A marker travelling along an edge: a packet, a message in the queue the
+/// edge stands for. Push one per frame through [`Edge::particles`]; the widget
+/// draws it `speed * age` world units along the cable from the output pin and
+/// nothing once that is past the input pin. It keeps no particle state and
+/// reports nothing, so dropping a particle from the next frame is how a host
+/// ends it.
+pub struct Particle<'a, Theme = iced_widget::core::Theme>
+where
+    Theme: Catalog,
+{
+    pub(super) born: Instant,
+    pub(super) speed: f32,
+    pub(super) class: Theme::ParticleClass<'a>,
+}
+
+/// Creates a [`Particle`] born at `born` that travels `speed` world units per
+/// second, with the theme's default class.
+///
+/// `born` is an `iced::time::Instant` (`web_time` on the web), the same clock
+/// `iced::window::frames` reports.
+pub fn particle<'a, Theme: Catalog>(born: Instant, speed: f32) -> Particle<'a, Theme> {
+    Particle {
+        born,
+        speed,
+        class: Theme::default_particle(),
+    }
+}
+
+impl<'a, Theme: Catalog> Particle<'a, Theme> {
+    /// Sets the style closure: theme -> resolved style.
+    pub fn style(mut self, f: impl Fn(&Theme) -> ParticleStyle + 'a) -> Self
+    where
+        Theme::ParticleClass<'a>: From<ParticleStyleFn<'a, Theme>>,
+    {
+        self.class = (Box::new(f) as ParticleStyleFn<'a, Theme>).into();
+        self
+    }
+
+    /// Sets the class the theme styles this particle by.
+    pub fn class(mut self, class: impl Into<Theme::ParticleClass<'a>>) -> Self {
+        self.class = class.into();
         self
     }
 }

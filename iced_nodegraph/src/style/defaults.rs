@@ -45,8 +45,8 @@ use iced_widget::core::{Color, Theme};
 use super::roles::Roles;
 use super::{
     AnchorStatus, AnchorStyle, CuttingToolStyle, EdgeCurve, EdgeStatus, EdgeStyle, GraphStyle,
-    MinimapStyle, NodeStatus, NodeStyle, PinShape, PinStatus, PinStyle, SelectionBoxStyle,
-    TilingBackground, ramp,
+    MinimapStyle, NodeStatus, NodeStyle, ParticleStyle, PinShape, PinStatus, PinStyle,
+    SelectionBoxStyle, TilingBackground, ramp,
 };
 
 /// Corner radius of a node body, in world units.
@@ -327,6 +327,15 @@ pub fn default_cutting_tool_style(theme: &Theme) -> CuttingToolStyle {
     CuttingToolStyle {
         color: Roles::of(theme).danger,
         width: 3.0,
+    }
+}
+
+/// Theme-derived style of an edge particle: the accent color, since a
+/// particle marks activity the way the selection does.
+pub fn default_particle_style(theme: &Theme) -> ParticleStyle {
+    ParticleStyle {
+        color: Roles::of(theme).accent,
+        radius: 4.0,
     }
 }
 

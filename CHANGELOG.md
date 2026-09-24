@@ -164,6 +164,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   state. The host's camera API is `NodeGraph::camera` in and `on_camera`
   out, both plain `(Point, f32)`.
 
+- **`Catalog` gained `ParticleClass`, `default_particle` and `particle`.** A
+  theme that implements the trait itself must add the associated type and
+  the two methods; `iced::Theme` resolves them through `ParticleStyleFn` like
+  every other class.
+
 ### Added
 
 - **`NodeGraph::on_connect_refused`.** Reports the pin pair of a drop the
@@ -177,6 +182,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   source pin, over a pin with `disable_interactions`, or over an accepting
   pin reports nothing. It carries no reason: validation is a single predicate,
   and one that answered `false` cannot say which of its rules did.
+
+- **Edge particles.** `Edge::particles` takes any number of `Particle`s
+  (`particle(born, speed)`, styled with `ParticleStyle` through
+  `Particle::style` / `Particle::class` over `default_particle_style`). The
+  widget draws each one `speed * age` world units along its cable, in front
+  of the cable and the rings it wraps, and nothing once it is past the input
+  pin or not yet born; a moving or pending particle keeps the widget's own
+  redraw loop running, so the host needs no frame clock for the motion. The
+  widget keeps no particle state and reports nothing: the host pushes each
+  particle every frame and ends it by leaving it out. The `interaction` demo's
+  "Traffic" toggle sends one down every edge every 0.6 s.
 
 - **`SdfPrimitive::mark_animated`.** Declares geometry whose placement the
   caller recomputes every frame, so `has_animations` reports it like a

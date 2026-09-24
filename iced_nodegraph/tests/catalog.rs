@@ -23,10 +23,10 @@ use common::record::Recorder;
 use common::shared;
 use iced_nodegraph::{
     AnchorStatus, AnchorStyle, Catalog, ColorQuad, CuttingToolStyle, EdgeStatus, EdgeStyle,
-    GraphStyle, Ids, Indexed, MinimapStyle, NodeGraph, NodeStatus, NodeStyle, PinInfo, PinStatus,
-    PinStyle, SelectionBoxStyle, default_anchor_style, default_cutting_tool_style,
-    default_edge_style, default_minimap_style, default_node_style, default_pin_style,
-    default_selection_box_style, node,
+    GraphStyle, Ids, Indexed, MinimapStyle, NodeGraph, NodeStatus, NodeStyle, ParticleStyle,
+    PinInfo, PinStatus, PinStyle, SelectionBoxStyle, default_anchor_style,
+    default_cutting_tool_style, default_edge_style, default_minimap_style, default_node_style,
+    default_particle_style, default_pin_style, default_selection_box_style, node,
 };
 
 const W: u32 = 320;
@@ -48,6 +48,7 @@ impl Catalog for Mono {
     type GraphClass<'a> = ();
     type SelectionBoxClass<'a> = ();
     type CuttingToolClass<'a> = ();
+    type ParticleClass<'a> = ();
     type MinimapClass<'a> = ();
 
     fn default_node<'a>() -> Self::NodeClass<'a> {}
@@ -115,6 +116,12 @@ impl Catalog for Mono {
 
     fn cutting_tool(&self, (): &Self::CuttingToolClass<'_>) -> CuttingToolStyle {
         default_cutting_tool_style(&iced::Theme::Dark)
+    }
+
+    fn default_particle<'a>() -> Self::ParticleClass<'a> {}
+
+    fn particle(&self, (): &Self::ParticleClass<'_>) -> ParticleStyle {
+        default_particle_style(&iced::Theme::Dark)
     }
 
     fn default_minimap<'a>() -> Self::MinimapClass<'a> {}

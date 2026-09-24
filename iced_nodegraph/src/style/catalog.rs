@@ -14,9 +14,10 @@ use iced_widget::core::Theme;
 
 use super::{
     AnchorStatus, AnchorStyle, CuttingToolStyle, EdgeStatus, EdgeStyle, GraphStyle, MinimapStyle,
-    NodeStatus, NodeStyle, PinStatus, PinStyle, SelectionBoxStyle, default_anchor_style,
-    default_cutting_tool_style, default_edge_style, default_graph_style, default_minimap_style,
-    default_node_style, default_pin_style, default_selection_box_style,
+    NodeStatus, NodeStyle, ParticleStyle, PinStatus, PinStyle, SelectionBoxStyle,
+    default_anchor_style, default_cutting_tool_style, default_edge_style, default_graph_style,
+    default_minimap_style, default_node_style, default_particle_style, default_pin_style,
+    default_selection_box_style,
 };
 use crate::ids::Ids;
 use crate::node_pin::PinInfo;
@@ -53,6 +54,9 @@ pub type SelectionBoxStyleFn<'a, Theme> = Box<dyn Fn(&Theme) -> SelectionBoxStyl
 /// A styling function for the edge-cutting trail.
 pub type CuttingToolStyleFn<'a, Theme> = Box<dyn Fn(&Theme) -> CuttingToolStyle + 'a>;
 
+/// A styling function for an edge particle.
+pub type ParticleStyleFn<'a, Theme> = Box<dyn Fn(&Theme) -> ParticleStyle + 'a>;
+
 /// A styling function for the minimap overlay.
 pub type MinimapStyleFn<'a, Theme> = Box<dyn Fn(&Theme) -> MinimapStyle + 'a>;
 
@@ -85,6 +89,8 @@ pub trait Catalog {
     type SelectionBoxClass<'a>;
     /// The class of the edge-cutting trail.
     type CuttingToolClass<'a>;
+    /// The class of a particle travelling along an edge.
+    type ParticleClass<'a>;
     /// The class of the minimap overlay.
     type MinimapClass<'a>;
 
@@ -151,6 +157,11 @@ pub trait Catalog {
     /// Resolves the cutting trail style.
     fn cutting_tool(&self, class: &Self::CuttingToolClass<'_>) -> CuttingToolStyle;
 
+    /// The class a particle gets without [`Particle::class`](crate::Particle::class).
+    fn default_particle<'a>() -> Self::ParticleClass<'a>;
+    /// Resolves a particle's style.
+    fn particle(&self, class: &Self::ParticleClass<'_>) -> ParticleStyle;
+
     /// The class the minimap gets without
     /// [`NodeGraph::minimap_class`](crate::NodeGraph::minimap_class).
     fn default_minimap<'a>() -> Self::MinimapClass<'a>;
@@ -167,6 +178,7 @@ impl Catalog for Theme {
     type GraphClass<'a> = GraphStyleFn<'a, Self>;
     type SelectionBoxClass<'a> = SelectionBoxStyleFn<'a, Self>;
     type CuttingToolClass<'a> = CuttingToolStyleFn<'a, Self>;
+    type ParticleClass<'a> = ParticleStyleFn<'a, Self>;
     type MinimapClass<'a> = MinimapStyleFn<'a, Self>;
 
     fn default_node<'a>() -> Self::NodeClass<'a> {
@@ -246,6 +258,14 @@ impl Catalog for Theme {
     }
 
     fn cutting_tool(&self, class: &Self::CuttingToolClass<'_>) -> CuttingToolStyle {
+        class(self)
+    }
+
+    fn default_particle<'a>() -> Self::ParticleClass<'a> {
+        Box::new(default_particle_style)
+    }
+
+    fn particle(&self, class: &Self::ParticleClass<'_>) -> ParticleStyle {
         class(self)
     }
 

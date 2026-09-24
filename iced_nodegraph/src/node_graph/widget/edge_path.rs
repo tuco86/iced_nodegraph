@@ -281,7 +281,7 @@ impl EdgePath {
     }
 
     /// The point `len` along the cable, clamped to its ends.
-    fn point_at(&self, len: f32) -> [f32; 2] {
+    pub(crate) fn point_at(&self, len: f32) -> [f32; 2] {
         let mut cursor = self.start;
         let mut walked = 0.0;
         for seg in &self.segs {

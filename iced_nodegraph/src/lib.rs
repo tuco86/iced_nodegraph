@@ -133,6 +133,11 @@
 //!   `text_input::focus` or `scrollable::scroll_to`.
 //! - [`Keymap`] holds the rebindable key and pointer bindings, with
 //!   platform-appropriate defaults.
+//! - [`Particle`] is a marker gliding along an edge, for traffic or queued
+//!   work: [`particle`]`(born, speed)` pushed through [`Edge::particles`] is
+//!   drawn `speed * age` world units along the cable and vanishes at the
+//!   input pin. The widget keeps the redraw loop running while one moves;
+//!   the host owns each particle's lifetime by pushing it every frame.
 //! - [`GraphInfo`] carries per-frame diagnostics to
 //!   [`on_info`](NodeGraph::on_info): element counts (total / in view / culled),
 //!   CPU op timings, and the SDF pipeline's GPU work and memory counters.
@@ -200,7 +205,8 @@
 //! shape, one type per thing: [`GraphStyle`] (canvas background and tiling) via
 //! [`graph_style`](NodeGraph::graph_style), [`SelectionBoxStyle`] via
 //! [`selection_box_style`](NodeGraph::selection_box_style), [`CuttingToolStyle`]
-//! via [`cutting_tool_style`](NodeGraph::cutting_tool_style), and
+//! via [`cutting_tool_style`](NodeGraph::cutting_tool_style), [`ParticleStyle`]
+//! via [`Particle::style`], and
 //! [`MinimapStyle`] via [`minimap_style`](NodeGraph::minimap_style) for the
 //! overview [`minimap`](NodeGraph::minimap) puts in a corner. A selected node's
 //! look is not chrome - it comes from the node's own closure through
@@ -296,11 +302,11 @@ pub use connection::{default_can_connect, direction_ok, input_not_occupied, not_
 pub use content::{EdgeRadii, node_footer, node_header};
 pub use ids::{Id, Ids, Indexed};
 pub use node_graph::{
-    Anchor, Corner, Counts, DragInfo, Edge, GraphInfo, Minimap, Node, NodeGraph, OpTiming, PinRef,
-    anchor, edge,
+    Anchor, Corner, Counts, DragInfo, Edge, GraphInfo, Minimap, Node, NodeGraph, OpTiming,
+    Particle, PinRef, anchor, edge,
     focus::{Easing, FocusAnimation, FocusOptions, FocusTarget, focus, focus_operation},
     input::{ComboKey, KeyAction, KeyCombo, Keymap},
-    node,
+    node, particle,
     widget::node_graph,
 };
 pub use node_pin::{NodePin, PinDirection, PinEnd, PinInfo, PinSide, node_pin};
@@ -329,6 +335,8 @@ pub use style::{
     // Node/edge/pin style types (concrete; override via struct-update over defaults)
     NodeStyle,
     NodeStyleFn,
+    ParticleStyle,
+    ParticleStyleFn,
     PinShape,
     PinStatus,
     PinStyle,
@@ -344,6 +352,7 @@ pub use style::{
     default_graph_style,
     default_minimap_style,
     default_node_style,
+    default_particle_style,
     default_pin_style,
     // Built-in status-driven default styles
     default_selection_box_style,

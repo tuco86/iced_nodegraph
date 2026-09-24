@@ -26,11 +26,12 @@ mod sdf;
 pub use anchor::AnchorStyle;
 pub use catalog::{
     AnchorStyleFn, Catalog, CuttingToolStyleFn, DragEdgeStyleFn, EdgeStyleFn, GraphStyleFn,
-    MinimapStyleFn, NodeStyleFn, PinStyleFn, SelectionBoxStyleFn,
+    MinimapStyleFn, NodeStyleFn, ParticleStyleFn, PinStyleFn, SelectionBoxStyleFn,
 };
 pub use defaults::{
     default_anchor_style, default_cutting_tool_style, default_edge_style, default_graph_style,
-    default_minimap_style, default_node_style, default_pin_style, default_selection_box_style,
+    default_minimap_style, default_node_style, default_particle_style, default_pin_style,
+    default_selection_box_style,
 };
 pub use edge::EdgeStyle;
 pub use node::NodeStyle;
@@ -221,6 +222,18 @@ pub struct CuttingToolStyle {
     pub color: Color,
     /// Stroke width in SCREEN pixels, scaled like [`SelectionBoxStyle::border_width`].
     pub width: f32,
+}
+
+/// Style of a [`Particle`](crate::Particle) travelling along an edge.
+///
+/// The theme-derived base is [`default_particle_style`]; override it with
+/// [`Particle::style`](crate::Particle::style).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParticleStyle {
+    /// Fill of the dot.
+    pub color: Color,
+    /// Radius in world units, so the dot scales with the cable it rides.
+    pub radius: f32,
 }
 
 /// Style of the minimap overlay.
