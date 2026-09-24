@@ -11,7 +11,7 @@ there is no tool-specific copy to keep in sync.
 
 ## Project Status
 
-Published on crates.io through `v0.4.2`; the working tree is `0.5.0-dev`
+Published on crates.io through `v0.5.0`; the working tree is `0.6.0-dev`
 (`[workspace.package] version` in the root `Cargo.toml`). Still pre-1.0, so
 breaking changes are allowed when justified - but they are no longer free.
 Prefer additive, backwards-compatible changes; when a break is genuinely
