@@ -7,10 +7,12 @@
 //! helpers. Graph-level configuration set once (`GraphStyle` and the overlay
 //! styles) is imported explicitly when opted into.
 
-// Builders: the entry point, the node/edge/anchor/pin constructors and the
-// types they return (named when writing helpers per node type), and the `pin!`
-// macro.
-pub use crate::{Anchor, Edge, Node, anchor, edge, node, node_graph, node_pin, pin};
+// Builders: the entry point, the node/edge/anchor/particle/pin constructors and
+// the types they return (named when writing helpers per node type), and the
+// `pin!` macro.
+pub use crate::{
+    Anchor, Edge, Node, Particle, anchor, edge, node, node_graph, node_pin, particle, pin,
+};
 
 // Core types named when declaring the id vocabulary, wiring callbacks and edges.
 pub use crate::{Ids, Indexed, NodeGraph, PinRef};
@@ -32,8 +34,9 @@ pub use crate::connection::{default_can_connect, direction_ok, input_not_occupie
 
 // Concrete style structs and their theme-derived defaults to layer overrides over.
 pub use crate::{
-    AnchorStyle, ColorQuad, EdgeCurve, EdgeStyle, NodeStyle, Pattern, PinShape, PinStyle,
-    default_anchor_style, default_edge_style, default_node_style, default_pin_style,
+    AnchorStyle, ColorQuad, EdgeCurve, EdgeStyle, NodeStyle, ParticleStyle, Pattern, PinShape,
+    PinStyle, default_anchor_style, default_edge_style, default_node_style, default_particle_style,
+    default_pin_style,
 };
 
 // Rounded header/footer helpers for node interiors.
