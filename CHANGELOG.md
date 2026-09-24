@@ -7,38 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Migrating from 0.4
+
+- Ids: declare a marker implementing `Ids` (or keep the default `Indexed`) and
+  name it once, as `NodeGraph::<AppIds, _, _, _>::new()` and in messages as
+  `PinRef<AppIds>`. The marker traits `NodeId`, `PinId`, `EdgeId` are gone.
+- Type parameters: `NodeGraph<'a, I, Message, Theme, Renderer>`; `Node`,
+  `Edge`, `Anchor`, `PinRef` and `DragInfo` take `I`; `Theme` must implement
+  `Catalog` (`iced::Theme` does).
+- Builders: `push_node` / `push_edge` return the graph (chain them, or
+  `graph = graph.push_node(..)`); `edge(from, to, id)` -> `edge(id, from, to)`;
+  `edge!(from, to)` -> `edge((), from, to)`.
+- Renames: `view` -> `camera`, `on_pan` -> `on_camera`, `box_select_style` ->
+  `selection_box_style`, `DragInfo::BoxSelect` -> `DragInfo::SelectionBox`,
+  `SdfPatternType` -> `PatternType`, `GraphStyle::from_theme` ->
+  `default_graph_style`.
+- Selection: `NodeGraph::selection(..)` -> `Node::selected(bool)` per node.
+- Styles: `NodeStyle` / `EdgeStyle` presets take `(theme, status)`; the overlay
+  closures return `SelectionBoxStyle` / `CuttingToolStyle`; a `PinStyle::radius`
+  times 0.4 keeps 0.4.2's size; struct literals name the new fields, or use
+  struct-update over the `default_*_style`.
+- Removed, with replacement: `Camera2D` (use `camera` / `on_camera`),
+  `GraphStyle::new` / `dark` / `light` / `Default` (use `default_graph_style`),
+  `SelectionStyle` (use `NodeStatus::Selected` in the node style), the
+  `PinStyle` presets (use `default_pin_style`), `PinShape::Diamond` /
+  `Triangle`, `NodePin`'s public fields (use its builder), `Curve` /
+  `ShapeBuilder` / `boolean` (use `Shape` and its operators), `pub use iced`
+  (depend on `iced`).
+
 ### Breaking
 
-- **`GraphInfo` carries the frame's `SdfStats` whole.** The twelve hand-copied
-  `sdf_*` fields are one `sdf: SdfStats` (re-exported from
-  `iced_nodegraph_sdf`), so every pipeline counter reaches a host, including
-  the correctness ones the copy left out (`gpu_dropped_items`,
-  `coarse_overflow_tiles`, `fine_evicted_slots`, `arena_compactions`).
-  `GraphInfo` also gained `anchors: Counts`. Every field is `pub` and the
-  struct is not `#[non_exhaustive]`, so a host that builds one with a struct
-  literal - the only way to seed it, since there is no constructor and no
-  `Default` - stops compiling until it names the new fields. `cargo
-  semver-checks` classifies this as major (`constructible_struct_adds_field`).
-  `SdfStats` now derives `PartialEq`.
-
-- **`EdgeStyle` and `AnchorStyle` gained fields.** `EdgeStyle::glow_color` /
-  `glow_width` are the hover glow under the cable stretch the cursor is over
-  (`glow_width` 0 turns it off), and `AnchorStyle::offered_ring_color` is the
-  ring a route drag would land on while the anchor is a valid target. All
-  three were private renderer constants; a host closure could not reach them.
-  Struct-update sites over a `default_*_style` are unaffected; full literals
-  must name the new fields. The defaults reproduce the previous rendering.
-
-- **`DragInfo` names every drag of graph content.** New variants `Anchor`,
-  `Route`, `Resize` and `EdgeCut`; an exhaustive `match` must add arms.
-  `on_drag_start` now fires for those drags too, and every start pairs with
-  one `on_drag_end` (a resize and an edge cut previously ended without one).
-
-- **The id types are one `Ids` marker instead of five type parameters.**
-  `NodeGraph<'a, N, P, E, A, UI, Message, Renderer>` is now
-  `NodeGraph<'a, I, Message, Theme, Renderer>` with `I: Ids`, a trait whose
-  associated types name the node, pin, edge and anchor ids and the per-pin
-  payload once, on a unit marker the host declares:
+- **The id types are one `Ids` marker.** 0.4.2's
+  `NodeGraph<'a, N, P, UI, Message, Theme, Renderer, E>` is
+  `NodeGraph<'a, I, Message, Theme, Renderer>` with `I: Ids`, whose associated
+  types name the node, pin, edge and anchor ids and the per-pin payload once:
 
   ```rust
   #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -50,817 +52,296 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ```
 
   `Node`, `Edge`, `Anchor`, `PinRef`, `PinEnd`, `PinInfo`, `DragInfo` and
-  `FocusTarget` take the same single parameter. `Indexed` (`usize` ids, no
-  edge id, no payload) is the default everywhere and what `node_graph()`
-  builds; any other vocabulary is named once, on the graph
-  (`NodeGraph::<AppIds, _, _>::new()`) and in the messages that carry a
-  `PinRef<AppIds>`, and every builder and callback infers it from there. The
-  motivation is inference: the payload type was never inferable (a pin is
-  type-erased into its node's content) and the anchor and edge ids only when
-  one was pushed, so every host spelled all seven parameters out. Id literals
-  now infer from the vocabulary too, so `node(0, ..)` needs no `0usize`.
+  `FocusTarget` take that one parameter; `Indexed` is the default and what
+  `node_graph()` builds. The marker traits `NodeId`, `PinId` and `EdgeId` are
+  replaced by `Id`, blanket-implemented for every `Clone + Eq + Hash + Debug +
+  Send + Sync + 'static` type. A `NodePin` whose id or payload type does not
+  match the graph's is a debug-build assertion at the first layout.
 
-  The marker traits `NodeId`, `PinId`, `EdgeId` and `AnchorId` are gone. Their
-  bounds were identical; the single `Id` trait that replaces them is
-  blanket-implemented for every `Clone + Eq + Hash + Debug + Send + Sync +
-  'static` type, so a newtype, an enum or a `uuid::Uuid` needs no impl at all.
+- **The theme is resolved through a `Catalog`.** 0.4.2 implemented `Widget`
+  for `iced::Theme` only; `NodeGraph`, `Node`, `Edge`, `Anchor` and `NodePin`
+  now work with any `Theme: Catalog`. The trait has a class type per element
+  (`NodeClass`, `PinClass`, `EdgeClass`, `DragEdgeClass`, `AnchorClass`,
+  `GraphClass`, `SelectionBoxClass`, `CuttingToolClass`, `ParticleClass`,
+  `MinimapClass`), a `default_*` per class and a resolver per class.
+  `iced::Theme` implements it through the exported boxed closures (`NodeStyleFn`
+  and siblings), so every `.style(..)` closure keeps compiling, and each gains a
+  `.class(..)` sibling (`Node::class`, `Node::pin_class`, `Edge::class`,
+  `NodeGraph::graph_class`, `selection_box_class`, ...).
 
-  `NodePin` keeps its own `P` and `UI` parameters, inferred from the literals
-  it is built with, because it is type-erased before the graph sees it. A pin
-  whose pair is not the graph's `Ids::PinId` / `Ids::Payload` used to vanish
-  silently; it is now a debug-build assertion at the first layout, naming both
-  types, and is skipped in release builds.
+- **`edge(id, from, to)`.** The id comes first, as in `node`, and the `edge!`
+  macro is removed; the no-id case is `edge((), from, to)`.
 
-- **`edge(id, from, to)`: the id comes first, as in `node`, and the `edge!`
-  macro is gone.** The macro existed only to default the id to `()`; with the
-  vocabulary fixed on the graph that case is `edge((), from, to)`.
-
-- **`push_node`, `push_edge` and `push_anchor` consume and return the graph**,
-  like `Column::push`, and `nodes(iter)`, `edges(iter)` and `anchors(iter)`
-  add in bulk, like `Column::extend`. A `view` is one expression again, and
-  the graph's type is inferred from it rather than annotated on a `let mut`.
+- **`push_node` and `push_edge` consume and return the graph**, like
+  `Column::push`; `push_anchor` and the bulk adders `nodes`, `edges` and
+  `anchors` follow the same shape, so a `view` is one expression.
   `NodeGraph::new()` is added beside `Default`.
 
-- **`NodeGraph::view` is `camera` and `on_pan` is `on_camera`.** `view` read
-  as the iced `view` function next to it, and `on_pan` also fired on zoom and
-  on a programmatic fit. The signatures are unchanged.
+- **`NodeGraph::view` is `camera` and `on_pan` is `on_camera`.** The
+  signatures are unchanged.
 
-- **Programmatic focus is a `Task`, not a nonce.** `NodeGraph::focus(seq,
-  target, opts)` and the host-side sequence counter are gone. Give the graph
-  an id with `NodeGraph::id` and run `iced_nodegraph::focus(id, target, opts)
-  -> Task<Message>` from `update`, the same shape as `text_input::focus` and
-  `scrollable::scroll_to`. The graph resolves the target against its live
-  layout when the operation reaches it and starts the fit on its next update,
-  committing through `on_camera` as before. `focus_operation` exposes the
-  underlying `widget::Operation` for hosts that run operations themselves.
-  The crate depends on `iced_runtime` for `Task`; it is already in every
-  iced application's tree.
+- **Selection is a property of the node.** `NodeGraph::selection(..)` is
+  removed; mark nodes with `Node::selected(bool)`. The widget still keeps a
+  working selection from clicks and the selection box and reports it through
+  `on_select`; a changed marked set overrides it. Pressing empty canvas keeps
+  the old highlight until the selection box closes.
+
+- **`GraphInfo` carries the frame's `SdfStats` whole.** `sdf_entries` and
+  `sdf_tiles` are replaced by `sdf: SdfStats` (every pipeline counter,
+  re-exported), and `anchors: Counts` is new. A struct literal must name both.
+
+- **`DragInfo` names every drag of graph content.** It is generic over
+  `I: Ids`, `BoxSelect` is `SelectionBox`, and the new variants `Anchor`,
+  `Route`, `Resize` and `EdgeCut` need match arms. Every `on_drag_start` pairs
+  with one `on_drag_end`. `DragInfo` derives `PartialEq`.
+
+- **Style structs and `Keymap` gained fields.** `EdgeStyle::glow_color` /
+  `glow_width` (the cable hover glow), `PinStyle::cutout_radius` (the well the
+  pin opens in the node body) and `Keymap::frame_all` / `frame_selection` /
+  `snap_override`. Full struct literals must name them; struct-update over a
+  `default_*_style` or `Keymap::default()` is unaffected.
+
+- **`PinStyle::radius` is the drawn radius.** 0.4.2 scaled it by 0.4, so the
+  same value now draws 2.5x larger; multiply an old value by 0.4 to keep the
+  size. The default is 5.0. A `PinShape::Square` takes the area of the circle
+  of the same radius.
 
 - **The style presets take `(theme, status)` and derive from the palette.**
-  `NodeStyle::input`, `process`, `output` and `comment`, and
-  `EdgeStyle::data_flow`, `error`, `disabled`, `highlighted` and `debug`, have
-  the same shape as the `default_*_style` functions, so they drop straight into
-  `.style(NodeStyle::input)` like iced's `button::success`. They were
-  hard-coded dark colors that ignored the theme and lost the selected and
-  pending-cut feedback; now the node presets tint the default toward the
-  theme's `primary`, `success` and `warning`, and the edge presets keep the
-  default's cut feedback. A host that stored a preset as a value stores which
-  preset instead and resolves it in the style closure.
+  `NodeStyle::input`, `process`, `output`, `comment` and `EdgeStyle::data_flow`,
+  `error`, `disabled`, `highlighted`, `debug` have the shape of the
+  `default_*_style` functions and drop into `.style(NodeStyle::input)`. They
+  keep the selected and pending-cut feedback.
+
+- **The `PinStyle::data` / `execution` / `control` / `event` presets are
+  removed.** Type pins with `PinStyle { color, ..default_pin_style(theme,
+  status) }`.
 
 - **`GraphStyle` follows the one styling convention.** `GraphStyle::from_theme`
-  is `default_graph_style(theme)`, and the theme-free `Default` impl and the
-  `background_color` / `tiling` builder methods are gone: override the two
-  public fields with struct-update over the default, as for every other style.
+  is `default_graph_style(theme)`. `GraphStyle::new`, `dark`, `light`, the
+  `Default` impl and the `background_color` / `tiling` / `selection_style`
+  builders are removed: override the fields with struct-update over the
+  default. `SelectionStyle` and the `GraphStyle::selection_style` field are
+  removed; the overlays have their own styles and the selected-node look is
+  `default_node_style(theme, NodeStatus::Selected)`.
+
+- **The overlay styles are named structs.** `box_select_style` is
+  `selection_box_style` and returns `SelectionBoxStyle` (base
+  `default_selection_box_style`) instead of a `(Color, Color)`;
+  `cutting_tool_style` returns `CuttingToolStyle` (base
+  `default_cutting_tool_style`) instead of a `Color`.
 
 - **`NodePin`'s fields are private.** `side`, `direction`, `pin_id`,
-  `user_info` and `content` were `pub` on a widget whose builder methods set
-  them; the builder is the API.
+  `user_info` and `content` are set through its builder methods.
 
-- **`iced_nodegraph_sdf` authors geometry through `Shape` alone.** `Curve`,
-  `ShapeBuilder` and the `boolean` module are no longer public, and
-  `Segment`, `DrawableType` and `TilingType` are crate-private. They were an
-  authoring layer with no sink: `SdfPrimitive::push` accepts only a `&Shape`,
-  so a `Drawable` built through them could never be submitted. `Shape`'s
-  primitives plus the `-` / `|` / `&` operators express the same set algebra,
-  and `Drawable` stays public as `Shape::evaluate`'s return type.
-
-- **`PinShape` carries only the two shapes the renderer draws**, `Circle` and
-  `Square`. `Diamond` and `Triangle` were declared but never drawn - the pin
-  draw path matched `Square` and sent everything else to a circle - so a host
-  that selected one got a circle and no diagnostic. The `#[repr(u32)]` and the
-  explicit discriminants are gone with them: nothing casts a `PinShape` to its
-  discriminant.
-
-- **The theme is a type parameter resolved through a `Catalog`.** `NodeGraph`,
-  `Node`, `Edge`, `Anchor` and `NodePin` take `Theme` in iced's position
-  (`<Message, Theme, Renderer>`), and the widget implements
-  `Widget<Message, Theme, Renderer>` for every `Theme: Catalog`. `Catalog` is
-  the shape of `iced_widget::button::Catalog` over everything the graph draws:
-  a class type per element (`NodeClass`, `PinClass`, `EdgeClass`,
-  `DragEdgeClass`, `AnchorClass`, `GraphClass`, `SelectionBoxClass`,
-  `CuttingToolClass`, `MinimapClass`), a `default_*` per class and a resolver
-  from class plus status to the concrete style. `iced::Theme` implements it
-  with the boxed closures now exported as `NodeStyleFn`, `PinStyleFn`,
-  `EdgeStyleFn`, `DragEdgeStyleFn`, `AnchorStyleFn`, `GraphStyleFn`,
-  `SelectionBoxStyleFn`, `CuttingToolStyleFn` and `MinimapStyleFn`, so every
-  `.style(|theme, status| ..)` builder keeps compiling unchanged on
-  `iced::Theme`; each gains a `.class(..)` sibling (`Node::class`,
-  `Node::pin_class`, `Edge::class`, `Anchor::class`, `NodeGraph::graph_class`,
-  `dragging_edge_class`, `selection_box_class`, `cutting_tool_class`,
-  `minimap_class`) that takes any class the theme defines. The parameter
-  defaults to `iced::Theme` everywhere except `NodePin`, where `Renderer` has
-  no default either, so a host that spells the renderer positionally names the
-  theme before it: `NodeGraph<'_, I, Msg, iced::Theme, iced::Renderer>`,
-  `node_graph::<Msg, iced::Theme, Renderer>()`,
-  `NodeGraph::<AppIds, _, _, _>::new()`.
-
-- **`Camera2D` is no longer public.** Eight of its fourteen methods - every
-  one that sets or reads pan/zoom - name a type from the crate-private `euclid`
-  module. Those were reachable only out of band, by taking a matching `euclid`
-  dependency and letting the unit parameter infer; the remaining six (`new`,
-  `zoom`, `layer_transformation`, `draw_with`, `update_with`,
-  `cursor_screen_to_layout`) were plainly callable. What no caller could ever
-  obtain is the camera the widget actually uses: it lives in private widget
-  state. The host's camera API is `NodeGraph::camera` in and `on_camera`
-  out, both plain `(Point, f32)`.
-
-- **`Catalog` gained `ParticleClass`, `default_particle` and `particle`.** A
-  theme that implements the trait itself must add the associated type and
-  the two methods; `iced::Theme` resolves them through `ParticleStyleFn` like
-  every other class.
-
-- **`SdfPatternType` is `PatternType`.** The re-export of
-  `iced_nodegraph_sdf::pattern::PatternType` carries its own name, as `Pattern`
-  and `SdfStats` do. A host with its own `PatternType` in scope names the
-  crate's as `iced_nodegraph::PatternType`.
+- **`PinShape` has only `Circle` and `Square`.** `Diamond` and `Triangle` were
+  drawn as circles. The `#[repr(u32)]` and explicit discriminants are removed.
 
 - **`PinSide` has no integer encoding.** The `#[repr(u32)]`, the explicit
-  discriminants and `impl From<PinSide> for u32` are gone: nothing reads a
-  side as a number. The side a cable leaves a node through is a crate-private
-  enum, so an out-of-range side is unrepresentable rather than silently
-  treated as `Right`.
+  discriminants and `impl From<PinSide> for u32` are removed.
+
+- **`Camera2D` is no longer public.** The widget's camera lives in private
+  state; the host's camera API is `NodeGraph::camera` in and `on_camera` out,
+  both plain `(Point, f32)`.
+
+- **`SdfPatternType` is `PatternType`.** It is exported under its own name as
+  `iced_nodegraph::PatternType` and `iced_nodegraph_sdf::PatternType`.
+
+- **No `iced` umbrella dependency.** `iced_nodegraph` builds on `iced_widget`
+  and `iced_nodegraph_sdf` on `iced_wgpu`, so the libraries no longer switch
+  iced's default features (`tiny-skia`, `web-colors`) back on for the host.
+  `pub use iced` is replaced by `pub use iced_widget` and `pub use iced_wgpu`;
+  depend on `iced` directly. The public types are unchanged.
+
+- **`iced_nodegraph_sdf` authors geometry through `Shape` alone.** `Curve`,
+  `ShapeBuilder` and the `boolean` module are no longer public: nothing they
+  built could be submitted, since `SdfPrimitive::push` takes a `&Shape`. Use
+  `Shape`'s primitives and the `-` / `|` / `&` operators.
 
 ### Added
 
-- **`NodeGraph::on_connect_refused`.** Reports the pin pair of a drop the
-  connection validation turned down, once, on release: the one outcome of an
-  edge drag a host could not observe, since a refused drop snaps nothing and
-  so publishes no `on_connect`. A host can finally say why a connection did
-  not happen ("that field is on the same table", "int cannot feed str")
-  instead of leaving the drag to fail silently. The pair is in drag order
-  (source pin first) rather than normalized output-first, because a refused
-  pair need not contain an output; a release over empty canvas, over the
-  source pin, over a pin with `disable_interactions`, or over an accepting
-  pin reports nothing. It carries no reason: validation is a single predicate,
-  and one that answered `false` cannot say which of its rules did.
+- **Routing anchors.** `anchor(id, position)`, `NodeGraph::push_anchor` /
+  `anchors` and `Edge::route(anchors)` route a cable around anchors, with ids
+  from `Ids::AnchorId`; the widget derives visiting order, wrap direction and
+  ring per cable every frame. Gestures report through `on_anchor_create`,
+  `on_anchor_move`, `on_anchor_delete`, `on_route_attach`, `on_route_detach`.
+  Styled by `AnchorStyle` (incl. `offered_ring_color`) / `AnchorStatus` /
+  `default_anchor_style`; `dragging_anchor_style` / `dragging_anchor_class`.
 
-- **Edge particles.** `Edge::particles` takes any number of `Particle`s
-  (`particle(born, speed)`, styled with `ParticleStyle` through
-  `Particle::style` / `Particle::class` over `default_particle_style`). The
-  widget draws each one `speed * age` world units along its cable, in front
-  of the cable and the rings it wraps, and nothing once it is past the input
-  pin or not yet born; a moving or pending particle keeps the widget's own
-  redraw loop running, so the host needs no frame clock for the motion. The
-  widget keeps no particle state and reports nothing: the host pushes each
-  particle every frame and ends it by leaving it out. The `interaction` demo's
-  "Traffic" toggle sends one down every edge every 0.6 s.
+- **Fit-to-view focus.** `iced_nodegraph::focus(id, target, opts)` returns a
+  `Task` that frames a `FocusTarget` (`All`, `Selection`, nodes, anchors,
+  edges or a world `Rect`) in the graph carrying `NodeGraph::id`;
+  `focus_operation` exposes the underlying operation. `FocusOptions` carries
+  padding, zoom bounds and a `FocusAnimation` with an `Easing`. The keymap
+  gains `frame_all` (`Home`) and `frame_selection` (`F`).
 
-- **`SdfPrimitive::mark_animated`.** Declares geometry whose placement the
-  caller recomputes every frame, so `has_animations` reports it like a
-  flowing pattern and the same redraw path serves both. The particles use it;
-  before, only shader-side pattern flow could keep the frame loop alive.
+- **Edge particles.** `Edge::particles` takes `particle(born, speed)` values
+  that travel `speed * age` world units along the cable, styled by
+  `ParticleStyle` through `Particle::style` / `Particle::class` over
+  `default_particle_style`. The widget keeps them animating; the host pushes
+  each particle every frame and ends it by leaving it out.
 
-- **`NodeGraph::dragging_anchor_style` / `dragging_anchor_class`.** The
-  phantom anchor a route drag holds at the cursor is styled by its own class,
-  the shape of `dragging_edge_style`; it used the theme's default anchor
-  class regardless of what the host set on its anchors.
+- **Cable hover glow.** The stretch of cable under the cursor gets a glow,
+  styled by `EdgeStyle::glow_color` / `glow_width` (`glow_width` 0 turns it
+  off).
 
-- **The snap grid covers anchor moves and grip resizes.** `snap_grid` snaps a
-  dragged anchor's position and a resized node's far corner as it snaps a
-  dragged node's origin; the preview and the reported value agree, and the
-  snap-override modifier applies to all three.
+- **Grid snap while dragging.** `NodeGraph::snap_grid(spacing)` snaps dragged
+  nodes, anchor moves and grip resizes to a world-unit grid; a group keeps its
+  layout. Holding `Keymap::snap_override` (default Alt) suspends it.
 
-- **The minimap bounds anchors.** The map's world extent is the union of every
-  node and every anchor's outermost ring, the same rectangle `FocusTarget::All`
-  frames, so an anchor past every node is on the map and a map press can
-  steer to it.
-
-- `iced_nodegraph_sdf::color::transparent`, the zero-alpha helper both crates
-  carried privately.
-
-- **hello_world mirrors the `Catalog`.** The demo's config-node system now has
-  one config node per style class (Node, Edge, Pin, Graph, Anchor, Selection
-  Box, Cutting Tool, Minimap), one input pin per style field, and a `Catalog`
-  sink with one input per class and status (`node`, `node:selected`, `pin`,
-  `pin:valid_target`, `edge`, `edge:pending_cut`, `drag_edge`, `anchor`,
-  `anchor:hovered`, `anchor:valid_target`, `graph`, `selection_box`,
-  `cutting_tool`, `minimap`); a status input layers over its idle class. A
-  `Node Class` node assigns a node config to one node picked from a list,
-  and an `Alpha` builder gives a palette color an opacity. The boot scene
-  ships a complete rig - one frame per class and status, every field wired
-  from a slider, selector or palette pin - plus routing anchors and a
-  minimap, all persisted. `Apply to Graph` and `Apply to Node` are gone; a
-  saved state naming them boots the default rig.
-
-- **Grid snap while dragging.** `NodeGraph::snap_grid(spacing)` puts a dragged
-  node's origin on a world-unit grid; the preview and the delta `on_move`
-  reports are the same number. The delta is computed on the grabbed node and
-  shared by everything the drag carries, so a group keeps its internal layout.
-  Holding `Keymap::snap_override` (default Alt, read live each frame) suspends
-  the snap mid-drag. A graph without `snap_grid` is unchanged.
-
-- **Frames.** `Node::frame()` turns a node into a backdrop: it renders behind
-  every non-frame node, takes a press only where none of them covers the point,
-  and carries the nodes whose bounds lie fully inside its own. Containment is
-  resolved from the live layout at each press rather than remembered, so a node
-  dropped into a frame is carried by the next drag with nothing for the host to
-  register. Frame contents arrive in the same `on_move` report as the frame.
+- **Frames.** `Node::frame()` makes a node a backdrop that renders behind the
+  other nodes and carries the nodes lying fully inside it when dragged.
 
 - **Minimap overlay.** `NodeGraph::minimap(Minimap { size, corner, margin })`
-  pins an overview to a corner of the graph, styled through
-  `NodeGraph::minimap_style` over `default_minimap_style` like every other
-  piece of chrome. It shows one quad per node - selected ones in the accent -
-  inside the union of the graph's node bounds with the visible world
-  rectangle, so the rectangle marking the viewport is always inside the map,
-  over an empty graph as well. A click centers the camera on the world point
-  pressed and a drag keeps centering it, both committed through `on_camera`;
-  the map takes the press before any node, pin, cable or anchor under it.
-  Screen-space quads only, no SDF work and no edges. Opt-in: a graph without
-  `minimap` draws and reports exactly as before.
+  pins an overview of nodes and anchor rings to a corner, styled through
+  `minimap_style` over `default_minimap_style`. Clicking or dragging on it
+  moves the camera through `on_camera`.
 
-- **Routing anchors.** An edge still connects exactly two pins and now also
-  carries the anchors it wraps on the way: `Edge::route(anchors)`, plus
-  `anchor(id, position)` and `NodeGraph::push_anchor`. Anchors carry their own id
-  type, `Ids::AnchorId`, so a host numbers them from zero whatever its nodes use.
-  An id naming nothing is skipped and a repeat counts once, so a host mid-edit
-  degrades rather than breaks.
-
-  Nothing about a route is authored beyond the set of anchors. The widget
-  derives the rest every frame: the visiting order from where each anchor lies
-  along the run between the two pins, the wrap direction from the arc the cable
-  actually lays down, and the ring each cable takes at each anchor.
-
-  That last one is chosen by counting, not by rule. An anchor with `n` cables
-  shows `n` concentric rings, and which cable sits on which decides whether
-  cables cross - including out in the open between two anchors a pair flies
-  together, which is the worst place to spend a crossing. It is not a function
-  of ring order alone: it also depends on which way each cable wraps each end,
-  and that is picked by the geometry from the radii, so it cannot be known
-  before the rings are. Candidates are therefore built and the crossings inside
-  their corridors counted: a corridor is the band between two consecutive shared
-  anchors, between the two centres and clear of both anchors' outermost ring,
-  since a crossing inside a ring is at the wrap rather than out in the run.
-  Containment seeds the search - cables at an anchor are ordered by the angular
-  interval their neighbours subtend there, smallest interval innermost, so where
-  two cables' intervals nest the contained one sits inside and their legs do not
-  cut across each other - and rings are exchanged while that measurably helps,
-  within a work ceiling set by the frame budget. Minimising crossings over a
-  graph is NP-hard, so this is a bounded search and not a solver: it is never
-  worse than containment alone, a pure function of the frame, and on a sweep of
-  1111 corridor layouts it reaches the best reachable arrangement in 975 and
-  improves on containment in 728 of the 849 that cross. A graph whose cables
-  each wrap at most one anchor can produce no corridor and pays nothing.
-
-  One edge is one cable is one stroke, so a dash or flow pattern phases over the
-  whole run, a cut kills exactly one edge, and each edge resolves its own style.
-  An edge with an empty route is the same single tangent-bezier leg as before.
-
-  The gestures report through five new callbacks - `on_anchor_create`,
-  `on_anchor_move`, `on_anchor_delete`, `on_route_attach`, `on_route_detach` -
-  and the host applies all of them, including whether an anchor outlives its
-  last cable. Dragging a cable mid-run places an anchor, dragging it at a wrap
-  pulls it off, and a route attaches and detaches during the drag like a pin
-  connection does. `AnchorStyle` and `default_anchor_style` style the core and
-  the orbit radii, and `AnchorStatus` carries the hover and drop-target
-  feedback. `FocusTarget` frames anchors too: `All` covers them, `Anchor` and
-  `Anchors` name them, and an edge's rect includes every anchor it routes
-  through. See `demos/styling` for the full lifecycle.
-
-- **`Shape::path`**: one open multi-segment stroke as a single drawable, built
-  from a start point plus `PathSeg::{Line, Arc, Bezier}` in absolute
-  coordinates. Arc length runs continuously across the whole path, so a dash
-  or flow pattern phases once over the entire stroke instead of restarting per
-  segment - which is what a routed edge needs to read as one cable.
-
-  `PathSeg::Arc` carries no start angle: the running cursor supplies it, so an
-  explicit one could only ever disagree. Internally this restores the absolute
-  moves (`line_to`/`arc_to`/`bezier_to`) and the open finalizer (`end`) to the
-  crate-private contour builder, which until now emitted closed contours only;
-  a path is therefore never a fillable shape.
-- **Fit-to-view focus.** `iced_nodegraph::focus(id, target, opts)` returns a
-  `Task` that frames content in the graph carrying `NodeGraph::id`: the app
-  names a `FocusTarget` (`All`, `Selection`, node, anchor or edge ids, or an
-  explicit world `Rect`) and the widget resolves it to a world AABB from live
-  layout, so the host never computes node bounds. `FocusOptions` carries
-  per-side padding, optional zoom bounds (`max_zoom` defaults to `Some(1.0)`,
-  so focusing one small node fits it at native size) and the tween. The keymap
-  gains `frame_all` (`Home`) and `frame_selection` (`f`), both gated on
-  `on_camera` like every other camera change. An unknown id or an empty
-  selection is a no-op.
-
-  The camera travels one perceptual path rather than two ramps: zoom
-  interpolates geometrically (apparent size is linear in `log(zoom)`, so the
-  visual midpoint of 1x to 4x is 2x) and the center is weighted by `1/zoom`,
-  the same invariant zoom-at-cursor holds. Every world point therefore crosses
-  the screen in a straight line and reaches the same fraction of its path at
-  the same instant. Interpolating center and zoom on separate linear ramps
-  does not: content swings out and back - 5.8x its straight-line screen
-  distance on a 12.5x zoom-in - and which half appears to lead flips with the
-  zoom direction.
 - **Resizable nodes.** `Node::resizable(true)` gives a node a bottom-right
-  grip; dragging it reports the size its content should have through
-  `NodeGraph::on_resize(|node_id, size| ...)`. Both halves are required - the
-  widget owns no node size, the host's content layout does, so a grip drag is
-  a report the host applies on the next frame, exactly like `on_move` for
-  position. Every report is absolute (size at press plus cursor delta, floored
-  at 32x24 world px), so applying none, some or all of them still tracks the
-  cursor. The grip is 12 screen px across at any zoom, hover reports
-  `mouse::Interaction::ResizingDiagonallyDown`, and it is drawn only where it
-  is live - no grip without `on_resize`, and the corner of a node that is not
-  `resizable` drags it as before.
+  grip whose drag reports the new absolute content size through
+  `NodeGraph::on_resize`; the host applies it.
+
+- **`NodeGraph::on_connect_refused`** reports the pin pair of a drop the
+  connection validation turned down, once, on release.
+
+- **`NodeGraph::on_edge_delete`** reports the ids of the edges one cutting
+  gesture destroyed, as `on_delete` does for nodes.
+
+- **Node content can set the mouse cursor.** `mouse_interaction` forwards to
+  the topmost node under the cursor; the graph claims the cursor only while
+  panning, dragging, cutting, box-selecting or over a resize grip.
+
+- **`Shape::path`** builds one open multi-segment stroke from a start point and
+  `PathSeg::{Line, Arc, Bezier}`; a dash or flow pattern phases once over the
+  whole path.
+
 - **GPU work and memory counters.** `SdfStats` gains `upload_bytes`,
   `gpu_bytes`, `index_bytes`, `sdf_draws`, `shaded_px`, `segment_evals`,
-  `fine_slots_max`, `fine_live_tiles`, `fine_evicted_tiles`,
-  `fine_evicted_slots` and `index_traffic_bytes`, so any machine can
-  self-report SDF GPU resource use. These are work and byte counts, not
-  timings: `iced_wgpu` 0.14 hardcodes `Features::empty()`, so a shipped iced
-  app cannot use `TIMESTAMP_QUERY`.
-- `iced_nodegraph_sdf::set_index_probe` / `index_probe_enabled` arm a second,
-  opt-in async readback of the per-fine-tile slot counts. `Sum(fine_counts) * 64`
-  is the `eval_segment` call count the fragment shader performs per frame - the
-  hardware-independent fragment-cost metric. Off by default: it copies 4 bytes
-  per fine tile per culled frame (~480 KiB on a 500-node 1280x768 frame).
-- **Fine-slot eviction telemetry.** `fine_counts` now packs the live slot count
-  in its low 16 bits and the count of candidates DROPPED at the
-  `MAX_FINE_SLOTS` cap in its high 16 bits. Previously a full tile silently
-  discarded a candidate - either evicting the resident slot furthest from the
-  tile centre or rejecting the newcomer - and `fine_slots_max == 128` could not
-  be told apart from "exactly full". A dropped segment that would have been the
-  per-pixel nearest renders a wrong distance, so this is a correctness signal.
-  Currently 0 on every measured configuration.
-- Three non-ignored GPU budget tests on the canonical 500-node scene:
-  `gpu_memory_budget_500_nodes` (pipeline and spatial-index bytes),
-  `idle_frame_uploads_nothing` (a static graph re-uploads only the per-frame
-  draw table) and `fragment_work_budget_500_nodes` (`segment_evals`, plus
-  `fine_evicted_tiles == 0` as a hard correctness gate).
-- `gpu_cost_report`, an ignored cost-decomposition probe
-  (`cargo test -p iced_nodegraph_sdf --release gpu_cost_report -- --ignored --nocapture`).
-  It sweeps resolution, DPI scale, scene composition, draw count at near-zero
-  fragment work and ALU amplification, then prices the fragment, bandwidth,
-  fill and per-draw terms at a configurable target GPU and names the dominant
-  one. Tunable through `SDF_PROBE_*` environment variables.
-- `GraphInfo` mirrors the SDF counters as `sdf_upload_bytes`, `sdf_gpu_bytes`,
-  `sdf_index_bytes`, `sdf_draws`, `sdf_shaded_px`, `sdf_segment_evals`,
-  `sdf_fine_slots_max`, `sdf_fine_evicted_tiles`, `sdf_index_traffic_bytes`
-  and `sdf_cull_skipped`, so an application can report GPU resource use
-  through the existing per-frame diagnostics channel.
-- `demos/500_nodes` reporter knobs `NG_REPORT`, `NG_SCALE`, `NG_NODES`,
-  `NG_NO_EDGES` and `NG_NO_GRID`, plus the new counters in its stats panel and
-  a periodic report line. See "Diagnosing GPU cost" in `demos/README.md`.
-- `SdfStats::gpu_dropped_items`: geometry never uploaded because a buffer hit
-  the device's `max_storage_buffer_binding_size`. Nonzero means part of the
-  scene is absent from the frame.
-- `gpu_cost_report` times the scatter and sort halves of the index build
-  separately (six timestamps instead of four), because they scale on different
-  axes. Measured on the canonical scene: scatter 45.5 us and CONSTANT across
-  0.5x-2x resolution (it tracks geometry), sort 254.2 us and rising with
-  resolution (it tracks tiles) - so the scatter is 15% of index-build time.
+  `fine_slots_max`, `fine_live_tiles`, `index_traffic_bytes`,
+  `fine_evicted_tiles`, `fine_evicted_slots` and `gpu_dropped_items` (geometry
+  dropped at the device's buffer limit), and derives `PartialEq`.
+  `set_index_probe` / `index_probe_enabled` arm an opt-in readback that feeds
+  `segment_evals`.
 
-- `NodeGraph::on_edge_delete(Vec<EdgeId>)` reports the edges the cutting tool
-  destroyed, named by the ids the host passed to `edge`. Until now the edge id
-  went in and never came back out, so a host keyed by edge id had to recover it
-  by matching the endpoint pair - `demos/hello_world` did exactly that. This is
-  the only path where the widget holds a host-supplied edge: `on_disconnect`
-  also fires while a drag leaves a snapped pin, where no host edge exists yet.
-  Mirrors `on_delete(Vec<N>)` for nodes: one batched call per cut gesture.
-- `SelectionBoxStyle` + `default_selection_box_style(theme)` and
-  `CuttingToolStyle` + `default_cutting_tool_style(theme)`: the two interaction
-  overlays now follow the crate's one styling shape - a closure over the theme
-  with a `default_*_style` base - like nodes, pins and edges already did.
-  Both structs expose the stroke width the widget previously kept in a private
-  constant, so a host closure can reach everything the default reaches.
-- `DragInfo` derives `PartialEq`, like the other public diagnostic types.
-- **Node content can set the mouse cursor.** `NodeGraph::mouse_interaction`
-  forwards the query into the topmost node under the cursor, so a text input,
-  button or slider embedded in a node shows its own cursor. The graph claims
-  the cursor itself only for what it owns: `Grabbing` while panning or moving
-  nodes, `Crosshair` while dragging an edge, cutting edges or rubber-banding,
-  and the resize grip's `ResizingDiagonallyDown`. Gated on node bounds, so an
-  occluded node never claims a cursor over the node covering it.
+- **`SdfPrimitive::mark_animated`** declares geometry the caller recomputes
+  every frame, so `has_animations` keeps the redraw loop running for it.
 
-### Fixed
+- **`SdfPrimitive::layout_bounds`** lets a primitive drawn inside a scaled
+  parent fold that scale into its camera zoom.
 
-- **A pop-out inside a pin opens.** `NodePin` implemented `Widget` without
-  `overlay`, and iced collects a pop-out only through that method, so a
-  `pick_list`, `combo_box` or `tooltip` wrapped in a pin drew its trigger but
-  its menu never appeared - the one widget in the chain from the graph to the
-  content that dropped it. The pin now forwards `overlay` to its content like
-  any other wrapper; the graph's own camera transform is applied above it, so
-  the menu anchors to the pin at any zoom.
+- `iced_nodegraph_sdf::color::transparent`, the zero-alpha helper.
 
-- **A `PinSide::Row` pin attaches on the border nearer the far end.** A row pin
-  spans its node and offers a border either side of it, but every cable took
-  the left one and left it along the encoding of `Row` itself, which the
-  tangent table reads as `+x` - so an edge started at the wrong indicator and
-  its tangent pointed back through the node body. Each end of a cable now
-  settles on the border facing its other end and leaves outward along it; both
-  ends measure against the far pin's centre rather than its choice, so two row
-  pins decide independently and the flip point is a node's centre line, crossed
-  once, which is what makes hysteresis unnecessary. A row pin now also paints
-  an indicator on both borders, matching the two cutouts its node body already
-  punched for it.
+- `PatternType` is exported at the `iced_nodegraph_sdf` crate root.
 
-- **An infinite node body is a debug assertion at layout.** Node bodies are
-  laid out against unbounded limits so they shrink to their content, which
-  lets a `Length::Fill` element inside one resolve to an infinite size. That
-  used to surface as an unclosed-loop assertion over NaN geometry in
-  `iced_nodegraph_sdf` (debug) or a silently misrendered node (release);
-  debug builds now name the node in `NodeGraph::layout`.
-
-- **A `NodeGraph` works as a node body.** A graph inside a node's body
-  compiled before but misbehaved in four ways: the outer graph adopted the
-  inner graph's pins as its own (or hit the foreign-id assertion when the two
-  `Ids` differed); one wheel tick zoomed both graphs and one `SelectAll` or
-  `CloneSelection` acted on both; the inner graph's pop-outs missed the outer
-  pan; and the inner SDF layers (fill, border, pins, edges, grid) ignored the
-  outer zoom while its iced content scaled. The pin walk now stops at a nested
-  graph, wheel and keymap shortcuts are dispatched after the node bodies so
-  the innermost graph (or a focused text input) takes them first, `overlay`
-  composes the translation its parent passes in, and `SdfPrimitive` folds the
-  enclosing renderer scale into its camera zoom through the new
-  `SdfPrimitive::layout_bounds`. The crate docs gained a `Nesting` section.
-
-- **Pop-outs of nodes away from the world origin.** A combo box or pick list
-  menu inside a node opened only when the node's world coordinates fit inside
-  `window / zoom`: the graph anchored pop-outs in layout-absolute space, and
-  iced's menu judges its room as `bounds - position`, so a node at world x
-  3000 panned onto the screen was told it had negative room and collapsed to
-  nothing. Pop-outs now anchor in zoomed-screen space (screen pixels over
-  zoom, origin at the window corner): the graph hands node contents the
-  matching `translation` in `Widget::overlay`, and the wrapper scales, lays
-  out and hit-tests in that space. Where the pop-out draws is unchanged.
-
-- **The shared SDF resources are keyed by device and surface format.** The
-  shader module, bind group layouts and pipelines every `SdfPipeline` shares
-  used to be cached without a key, so a process that builds a second wgpu
-  device - a browser embed whose compositor is torn down and rebuilt when its
-  last window closes, two headless renderers in one test binary - handed the
-  new device the previous device's objects and wgpu rejected every submit that
-  named them. The cache now rebuilds when either the device or the format
-  changes.
-
-- **A contour no longer emits zero-length straight segments.**
-  `ShapeBuilder::line` and `line_to` now refuse a step below `1e-4`, matching the
-  guards `arc` and `close` already carried. A rounded rectangle whose corner
-  radius fills its half-extent - the way to ask for a circle or a pill - asked
-  for exactly that on all four sides, and a zero-length segment is encoded with
-  no heading where the GPU reads one, so it painted a spur off the shape.
-  Skipping it changes no geometry: the neighbours already meet at the point it
-  would have occupied.
-
-- **Hovering a cable no longer re-uploads the whole background.** The hover
-  glow is sliced from the cable at `arc_len +/- half`, so its shape moves with
-  the cursor; it was pushed into the one batched background primitive whose
-  entry set is deliberately kept input-independent, so `prepare` can reuse the
-  compiled buffers. Every mouse-move frame within grab distance of a cable
-  therefore changed that batch's geometry hash and re-evaluated the grid
-  tiling, every edge biarc, every node shadow and every anchor ring - a larger
-  rebuild than the selection-click case the batch is arranged to avoid, and a
-  far more frequent one. The glow is now its own small primitive above the
-  background, like the dragged-edge preview. It paints over the cable rather
-  than under it, which is not a visible change: the glow carries the stroke's
-  own color, so the line gains a wash of itself and no hue shift.
-
-- **A cable is hit-tested against the curve it was drawn with.** `draw` built
-  each cable with the edge's resolved `EdgeCurve` while the interaction path
-  built with `EdgeCurve::default()`, because resolving an edge style needs a
-  theme and `update` has none. For any edge a host styled `EdgeCurve::Line`, the
-  press thresholds and the hover glow window were measured on a different shape
-  than the one on screen. `NodeGraphState` now carries the curve each edge was
-  last drawn with and both paths read it.
-
-- **A touch pan drifted by the widget's screen offset.** The press captured its
-  anchor in the widget's layout-absolute space while the release compared
-  against the raw screen cursor, so a graph placed anywhere but the window
-  origin - below a toolbar, in a `row!` - panned by the finger travel plus that
-  offset. Mouse panning was always correct; only the touch entry point mixed
-  the two spaces.
-- **Pop-out overlays at zoom laid out against the wrong region.** A node's
-  combo box menu or tooltip places itself in the graph's layout-absolute space
-  but was handed the window size in screen pixels, so at zoom 2 it believed it
-  had twice the room and flipped or clamped against an edge that was not there.
-  It is now told the region divided by zoom.
-- **Shapes went missing after a draw-set change.** A primitive skipped
-  re-uploading its cull lists when a per-draw-slot record matched on resident
-  block plus list cursors. That predicate cannot express what the skip needs.
-  The record is keyed by draw slot while the bytes are keyed by cursor, and the
-  cull buffers are one flat arena whose ranges a per-frame cursor hands out, so a
-  frame in which a slot is absent lets a LOWER slot write at the same cursor
-  while the record survives untouched. Every list element embeds its own draw
-  slot, so honouring the stale record scattered the primitive's geometry into a
-  foreign draw's tiles and dropped it from its own: a node lost its border, a pin
-  its indicator, another pin half of one, all with straight tile-aligned edges.
-  It took a particular sequence of moves to hit, which is why it survived since
-  the index reuse landed.
-
-  The reuse decision is now CONTENT-based: `Buffer::write_or_skip` takes what the
-  caller believes the buffer should hold, compares it against the mirror and
-  uploads only on a difference. Ownership of a range is no longer something a key
-  has to encode, so the failure is unrepresentable rather than merely detected.
-  `Buffer::skip`, the scatter-slot records and the block generation they keyed on
-  are gone. Costs nothing: an idle frame's `upload_bytes` and `cull_skipped` are
-  unchanged, since what the skip saves is the GPU upload, not the CPU rebuild.
-
-- **Every SDF-drawn color was a gamma step too bright.** `compile::c2v` uploaded
-  a `Color`'s sRGB-encoded components as if they were already linear, while
-  iced's own quad and text pipelines pack through `graphics::color::pack`. The
-  same `Color` therefore rendered as two different colors depending on which
-  pipeline drew it - the canvas quad correct, every node body, border, pin, edge
-  and shadow lifted (`#3A3C40` came out as `#83858A`). Because the error
-  compresses the dark end hardest, it flattened the distinctions between
-  palettes: 22 built-in themes rendered node bodies in nearly the same mid grey.
-  Colors now route through `graphics::color::pack`, so an SDF surface and an
-  iced quad of one `Color` match, gradients interpolate in the target's space,
-  and the pixel-test fill predicates derive their expected bytes from the style
-  instead of transcribing them.
-- **The widget pixel-oracle harness never started a frame.** `edge_grid_pixel`
-  drew through `graph.draw` + `Renderer::screenshot` without calling
-  `Renderer::reset`, which the iced runtime does per frame and which
-  `screenshot()` - unlike `present()` - does not. Every render therefore piled
-  another copy of the scene onto the previous layers: the Nth screenshot
-  prepared N scenes, so draws, entries and index tiles grew linearly
-  (1001 -> 6006 draws over six renders). `edge_grid_stable_across_frames` was
-  measuring accumulation, not stability, and passed only because the tile total
-  happened to stay under the device-limit fallback within six frames. Edge
-  coverage is now byte-identical across frames (52456 six times, previously
-  drifting 52494 -> 58035 once the fallback engaged). The same missing reset was
-  the real cause behind two tests ignored as "shared-renderer cross-test
-  pollution"; both are un-ignored and pass in the full suite.
-- **The geometry arenas could exceed the device's storage-binding limit.** The
-  tile index has always clamped against `max_storage_buffer_binding_size` and
-  degraded to `grid_cols = 0`; `Buffer<T>` grew 1.5x unconditionally until wgpu
-  rejected the allocation - a hard failure with no fallback, and the only
-  unbounded resource in the pipeline. At the wgpu default of 128 MiB that is
-  2_097_152 `GpuSegment`s, with the first overshooting grow at ~1_398_101 live
-  segments. Growth now clamps, and every write path checks capacity BEFORE
-  mutating, so a refusal needs no rollback: the slot never becomes live and
-  consumers bounded by `len()` cannot read it. Refused items are counted in
-  `SdfStats::gpu_dropped_items` instead of being silent.
-- The bezier tessellation tolerance is now actually tested.
-  `bezier_tessellation_matches_a_finer_reference` renders a production-fitted
-  curve against a 20x finer reference spline at the widget's maximum zoom, and
-  `cubic_tolerance_stays_within_one_screen_pixel_at_max_zoom` pins the stated
-  `tol * zoom <= 1.0 px` contract. Every existing bezier test either compared
-  like against like (`tiled` vs `untiled` uses the same tolerance for both, so
-  it cannot see a tolerance change) or asserted a structural invariant, so a
-  tenfold tolerance increase - plainly visible when zoomed in - left all 155
-  tests green.
-
-- The doc examples for the `pin!` macro and for the `node_pin` module were
-  `ignore`d pseudo-code fragments that did not compile (macro calls in item
-  position, undeclared types). They are now real, compile-checked examples, so
-  `cargo test --doc` covers the macro surface.
+- The prelude includes `Particle`, `particle`, `ParticleStyle` and
+  `default_particle_style`.
 
 ### Changed
 
-- **The theme defaults are one mapping instead of six.** Every color the widget
-  picks for itself now comes from a single internal role table derived from the
-  iced palette, so the same relationships hold in all 22 built-in themes:
+- **The theme defaults are one mapping.** Every color the widget picks comes
+  from one role table derived from the iced palette: surfaces are lightness
+  steps from the background, marks sit between canvas and foreground, and
+  accents are floored to a minimum separation, in all 22 built-in themes.
 
-  - SURFACES (canvas, grid, node body, node border) are perceptual lightness
-    steps away from the window background in Oklab, holding its hue and chroma.
-    The previous mapping used `background.weak`/`background.strong`, whose
-    `deviate` helper multiplies chroma as it moves lightness - on a dark,
-    saturated canvas one step also doubles saturation, which a node graph shows
-    as a colored slab under a colored lattice rather than as elevation.
-  - MARKS (edge stroke, pin indicator) sit at a fixed fraction of the distance
-    from the canvas to the theme's own foreground, so each theme places them
-    inside its own contrast range. An edge was `secondary.base`, which is
-    derived from background and text alone and therefore looked the same in
-    every theme; a pin was `primary.base`, the selection accent.
-  - ACCENTS keep the theme's authored hue but are floored to a minimum
-    separation from the canvas. `Theme::KanagawaDragon` pairs a `#181616`
-    background with a `#223249` primary, which previously selected a node in a
-    color 0.09 in lightness from its own background.
+- **The default look is opaque.** Node bodies are opaque (0.4.2 used 0.75 /
+  0.85 opacity), the canvas grid is opaque one elevation step above the
+  background, and node shadows fall straight down.
 
-  Cross-theme tests pin the contract: the ladder is ordered and equally spaced
-  in every theme, marks resolve against canvas and body, accents separate from
-  both, a pin never wears the selection accent, and a node body keeps at least
-  three quarters of the canvas text contrast.
-- **Node bodies are opaque.** `default_node_style` returned `opacity` 0.75
-  (dark) / 0.85 (light), so the grid and any edge behind a node showed through
-  its content. Selection therefore no longer signals through opacity: a selected
-  body is tinted toward the accent, which also identifies it when its border is
-  scrolled off screen.
-- The canvas grid is opaque one elevation step above the background, rather
-  than `background.strong` at 35% alpha. Node shadows are straight down
-  (`offset (0, 3)`) and carry the elevation the fill no longer does.
-- **`PinStyle::cutout_radius` sets the well a pin opens in the node body.** The
-  hole used to be `(radius * 0.4 + border_width) * 2.0`, so it could only be
-  resized by resizing the pin, and neither number was reachable from a style
-  closure. It is now its own field, defaulted in `default_pin_style` to
-  `PIN_CLICK_THRESHOLD` - how far the body steps aside is how far the pin's hit
-  area reaches, which is a property of the interaction rather than of how big
-  the mark happens to be drawn.
-- **`PinStyle::radius` is the drawn radius.** It was scaled by 0.4 before
-  reaching the renderer, so the documented "indicator radius in world-space
-  pixels" rendered at 40% of its value. The default is 5.0, which draws the
-  10-pixel dot the old default's 6.0 never did. A `PinShape::Square` takes the
-  area of the circle of the same radius, so changing a pin's shape changes its
-  outline and not its visual weight.
-- **`PinStatus::ValidTarget` has static feedback again.** Since the valid-target
-  pulse was withdrawn - animation invalidates too much of the SDF renderer's
-  resident shape cache to be worth it yet - `default_pin_style` ignored its
-  status argument entirely, so every pin looked identical during an edge drag. A
-  valid target now takes the theme's `success` color with a translucent halo
-  filling its cutout: the third and last accent, next to `primary` for selection
-  and `danger` for destruction, each still meaning exactly one thing. Both pin
-  states resolve to the same indicator recipe and the same node silhouette
-  (`valid_target_feedback_costs_no_geometry`), so the feedback repaints resident
-  shapes and cannot churn the cache - the property an animated pulse could not
-  offer. `node_pin`'s module docs no longer describe the withdrawn pulse.
-- **Removed the `PinStyle::data`/`execution`/`control`/`event` presets.** Four
-  unused constructors with hard-coded colors that ignored the theme, teaching
-  the opposite of the one styling convention; two of them also advertised
-  `PinShape::Triangle`/`Diamond`, which the renderer draws as circles. Every
-  demo already types its pins the supported way, with
-  `PinStyle { color, ..default_pin_style(theme, status) }`.
-- **Removed `GraphStyle::new`, `GraphStyle::dark` and `GraphStyle::light`.**
-  Two were aliases for `GraphStyle::default` and the third was a hand-picked
-  pale canvas, so together they were a second, theme-blind mapping standing
-  beside `GraphStyle::from_theme`. A fixed canvas is a struct literal over
-  `default_graph_style(theme)`.
-- **Fine tiles are 8x8 pixels instead of 16x16** (`TILE_SIZE 16 -> 8`,
-  `COARSE_FACTOR 4 -> 8`; coarse tiles stay 64px), and `MAX_FINE_SLOTS` drops
-  128 -> 64. The index keeps a segment when its lower distance bound to the tile
-  is below `kbound`, the smallest upper bound any segment achieves over that
-  tile - a ceiling that scales with the TILE DIAGONAL, not with the geometry.
-  Halving the tile halves the ceiling, so on the canonical 1280x768 scene:
-  node `slot/live` 15.30 -> 8.25, edge `slot/live` 12.34 -> 4.72,
-  `segment_evals` 10.62 M -> 4.38 M (mean 8.60 -> 3.55 slots/pixel), fragment
-  365.2 -> 224.1 us and index sort 172.3 -> 125.2 us. The whole GPU frame goes
-  583 -> 393 us, and the 1080p iGPU verdict 11.0 -> 7.2 ms of a 16.7 ms budget
-  (66% -> 43% of one 60 Hz frame).
-  The sort got FASTER rather than paying for the extra tiles: `cs_sort_fine`
-  gave its fine phase `lindex >= 16u` of a 64-thread workgroup, so 48 threads
-  idled there; at `COARSE_FACTOR = 8` the 64 fine tiles per coarse tile use all
-  64. Cost is index memory, 25.04 -> 37.78 MiB on the budget scene: 4x the fine
-  tiles at a quarter the slot capacity each is 2x the fine storage, while the
-  coarse level - now half the index - is untouched. The budgets are re-baselined
-  accordingly. `MAX_FINE_SLOTS = 64` keeps ~3.4x headroom over the deepest tile
-  measured (19, live demo 18) with `fine_evicted_tiles == 0` everywhere; 32
-  would have been memory-neutral but leaves too little margin on a cap whose
-  overflow silently renders wrong distances.
-- `SdfStats::segment_evals` now multiplies the fine-slot sum by `FINE_TILE_PX`
-  (`TILE_SIZE^2`) instead of a hardcoded 256, so the fragment-work figure no
-  longer silently rescales by 4x with the tile geometry. `index_pruning_ceiling`
-  is likewise driven off `TILE_SIZE` rather than a literal 16.
-- Bezier arc-spline tolerance `CUBIC_ARC_TOL` raised from 0.05 to 0.1 world
-  units. Screen error is `tol * zoom`, so this is <= 1.0 px at the widget's
-  maximum zoom of 10 and invisible everywhere below it - at overview zoom it is
-  0.024 px. Curved edges drop from 12.0 to 8.0 arc segments, which multiplies
-  through the whole pipeline: on the canonical 1280x768 scene the edge layer's
-  slots per live tile fall 16.92 -> 12.34, sort+fine 192.8 -> 145.7 us and
-  fragment 238.6 -> 183.0 us; the whole GPU frame goes 688.7 -> 576.9 us
-  (-16%). Node bodies are unaffected - they are boxes and circles, not beziers.
-  0.1 captures about two thirds of the total available saving at a fifth of the
-  error: 0.5 would buy only another 9% while flipping pixels outright when
-  zoomed in. `Curve::bezier` also stopped hardcoding its own copy of the value.
-- `cs_sort_fine` no longer evaluates the segment field at the fine tile centre
-  for OPEN entries. That value feeds exactly one consumer, the closed-contour
-  interior test, so every stroke and edge computed it and threw it away - once
-  per (slot, fine tile) pair, on arcs, which are the expensive segment kind.
-  Sort+fine pass at 1280x768: edges-only 231.7 -> 192.8 us (-17%), all layers
-  254.2 -> 225.6 us (-11%); nodes are closed contours and are unchanged, which
-  is the control. Output stays pixel-identical.
-- The `bench_scene` test fixture generated its 640 bezier edges from
-  `(i % 25, i % 20)`, a pair with period `lcm(25, 20) = 100` — so 640 edges
-  collapsed onto 100 distinct curves stacked ~6.4 deep. Per-tile entry counts,
-  and with them the fine-slot demand and the measured fragment cost of the edge
-  layer, were inflated far past any real graph. Now `32 x 20 = 640` on the same
-  24px pitch, one distinct start per edge. Measured effect on the edge layer at
-  1280x768: live fine tiles 406 -> 1614, slots per live tile 67.2 -> 16.9, peak
-  slots per tile 128 (the cap) -> 41, fragment cost 398 -> 241 us. Every
-  `gpu_cost_report` figure recorded before this change understates the index's
-  discrimination and overstates edge cost.
-- SDF cull grid is now **world-anchored** instead of screen-anchored. A new
-  `DrawData.grid_offset` folds the camera pan into the tile lattice, so tile
-  membership depends only on world position, zoom and a tile-quantized window
-  base — not the continuous camera. Panning therefore reuses the resident
-  spatial index and skips the Stage-2 cull dispatch (`SdfStats::cull_skipped`)
-  for every frame that does not cross a 64px coarse-tile boundary (measured: a
-  256px pan runs the cull ~4× instead of ~256×). Output is pixel-identical; the
-  only cost is a one-coarse-tile apron per axis (a small, constant increase in
-  index size). Zoom still reculls as before.
-- **Breaking:** neither library depends on the `iced` umbrella crate anymore.
-  `iced_nodegraph` now uses `iced_widget` (which re-exports `iced_core` as
-  `core` and `iced_renderer` as `renderer`) and `iced_nodegraph_sdf` uses
-  `iced_wgpu` (which re-exports `iced_core` as `core` and `wgpu`). All public
-  types are unchanged - they were always these crates' types, reached through
-  the umbrella's re-exports.
+- **Selected nodes are styled in full.** `default_node_style(theme,
+  NodeStatus::Selected)` gives an accent border, an accent halo, a tinted body
+  and a deeper shadow.
 
-  The umbrella dependency was declared as `iced = { features = ["wgpu"] }`
-  without `default-features = false`. Because Cargo unifies features
-  additively, that silently switched iced's whole default set back on for every
-  downstream application, even one that carefully wrote
-  `default-features = false` itself. Two consequences, both now gone:
-  `tiny-skia` compiled a second, unused software renderer (`iced_tiny_skia`,
-  `softbuffer`, `tiny-xlib`, `kurbo`) into the binary, and `web-colors` forced
-  colors to be blended in sRGB rather than linear space.
+- **Valid drop targets are highlighted.** `default_pin_style` shows
+  `PinStatus::ValidTarget` statically in the theme's `success` color with a
+  halo filling the pin's cutout.
 
-  Dropping the umbrella also drops the windowing shell (`iced_winit`, `winit`,
-  `window_clipboard`, x11/wayland, `mundy`/`zbus`) from the widget's dependency
-  tree, where it never belonged: `cargo tree -p iced_nodegraph -e normal` goes
-  from 221 to 117 crates.
-- **Breaking:** `pub use iced;` is replaced by `pub use iced_widget;` and
-  `pub use iced_wgpu;`. Downstream code that reached for
-  `iced_nodegraph::iced::*` should depend on `iced` directly, or use
-  `iced_nodegraph::iced_widget::core::*`.
-- Demos require `iced_palette` 0.1.1, the first release that also drops the
-  `iced` umbrella crate. Older versions depended on `iced` with default
-  features, which re-enabled `tiny-skia` and `web-colors` for the whole demo
-  graph regardless of what the demos themselves asked for. No demo pulls the
-  software renderer any more.
+- **The edge-cutting trail width is in screen pixels**, divided by the zoom
+  like the selection box, instead of a fixed world width.
 
-**BREAKING.** Selection is a property of the node: `Node::selected(bool)`
-replaces `NodeGraph::selection(..)`.
+- **The SDF renderer does less work per frame.**
+  - Fine tiles are 8px instead of 16px: the GPU frame on the 500-node
+    benchmark scene goes 583 -> 393 us, at +13 MiB of index memory.
+  - The tile grid is world-anchored: panning reuses the tile index and skips
+    the cull pass until it crosses a 64px tile boundary.
+  - Beziers fit to 0.1 world units (<= 1 px at maximum zoom), 8 instead of 12
+    arcs per curve (-16% GPU frame); the tile sort is 11% cheaper.
 
-```rust
-ng.push_node(node(id, pos, body).selected(self.selection.contains(&id)));
-```
+### Fixed
 
-`selection()` resolved the given ids against the already-pushed nodes, so calling
-it before `push_node` - which is where a builder chain naturally puts it - matched
-nothing and was silently dropped. Every demo in this repository did exactly that,
-so host-controlled selection had never actually worked. A flag on the node has no
-resolution step and no ordering to get wrong.
+- **A pop-out inside a pin opens.** A `pick_list`, `combo_box` or `tooltip`
+  wrapped in a `NodePin` drew its trigger but never its menu; the pin now
+  forwards `overlay` to its content.
 
-Selection behaviour itself is unchanged: the widget still keeps a working
-selection driven by clicks and the selection box, so a host that only reads
-`on_select` needs no changes at all. Marking nodes overrides that working value
-whenever the marked set changes - which is what `selection()` was for, minus the
-ordering trap. An unchanged marked set leaves the working value alone, so a host
-frame that has not caught up cannot undo an interaction.
+- **Pop-outs of nodes away from the world origin and at zoom.** A menu inside a
+  node far from the origin collapsed to nothing, and at zoom one was laid out
+  against the wrong region and flipped or clamped against a phantom edge.
 
-One visible difference: pressing empty canvas no longer clears the highlight on
-press. The selection is replaced when the box closes, so the previous one stays
-visible while rubber-banding.
+- **A `NodeGraph` works as a node body.** The outer graph no longer adopts the
+  inner graph's pins, wheel and shortcuts go to the innermost graph first, and
+  the inner graph's pop-outs and SDF layers follow the outer pan and zoom.
 
-**BREAKING.** The selection rectangle is called the *selection box* everywhere
-now, so `DragInfo::BoxSelect` is `DragInfo::SelectionBox`. Previously the type
-said `SelectionBoxStyle` while the drag variant said `BoxSelect`.
+- **A `PinSide::Row` pin attaches on the border nearer the far end.** Cables
+  always took the left border and pointed back through the node; each end now
+  leaves outward on the border facing its other end, and both borders show an
+  indicator.
 
-**BREAKING.** `NodeGraph::box_select_style` is now `selection_box_style`, and
-both overlay closures return a named struct instead of a bare `(Color, Color)` /
-`Color`:
+- **A cable is hit-tested against the curve it is drawn with.** An edge styled
+  `EdgeCurve::Line` was cut and pressed as if it were a bezier.
 
-```rust
-ng.selection_box_style(|theme| SelectionBoxStyle {
-    border_width: 2.0,
-    ..default_selection_box_style(theme)
-})
-```
+- **A touch pan drifted by the widget's screen offset** when the graph was not
+  at the window origin.
 
-A selected node's appearance is no longer a border tweak.
-`default_node_style(theme, NodeStatus::Selected)` now expresses it in full - an
-accent border, an accent halo ring, full opacity and a deepened shadow - so a
-host that wants the theme's selection feedback copies those fields instead of
-reconstructing them from two numbers. Every channel is style-level, so switching
-selection does not rebuild node geometry.
+- **Every SDF-drawn color was a gamma step too bright.** SDF surfaces now match
+  an iced quad of the same `Color`, and gradients interpolate in the target's
+  color space.
 
-The edge-cutting trail's stroke width is now specified in screen pixels and
-divided by the zoom, matching the selection box and the hit thresholds; it
-previously stayed at a fixed world width and thinned out when zoomed away.
+- **Shapes went missing after a draw-set change.** A sequence of moves could
+  scatter one primitive's geometry into another draw's tiles, leaving nodes
+  and pins with straight, tile-aligned gaps.
 
-### Removed
+- **A `Shape::rounded_box` whose corner radius fills its half-extent** (a
+  circle or a pill) no longer paints a spur off the shape.
 
-**BREAKING.** `SelectionStyle` and `GraphStyle::selection_style`. The struct
-mixed two scopes: three colors for the transient overlays, which the renderer
-read from the configured `GraphStyle`, and `selected_border_color` /
-`selected_border_width`, which it never read at all - `default_node_style` built
-its own `SelectionStyle::from_theme`, so setting those two through `graph_style`
-silently did nothing. The overlays moved to their own style types (above) and the
-selected-node look moved into `default_node_style`, leaving `GraphStyle` as what
-its name says: the canvas.
+- **The shared SDF resources are keyed by device and surface format**, so a
+  second wgpu device in one process (a rebuilt browser embed, two headless
+  renderers) no longer has its submits rejected.
+
+- **The geometry buffers stop at the device's storage-binding limit** instead
+  of failing the allocation; what does not fit is counted in
+  `SdfStats::gpu_dropped_items`.
+
+- **An infinite node body is a debug assertion at layout**, naming the node,
+  instead of NaN geometry or a silently misrendered node.
 
 ### Internal
 
-- `NodeGraph` stores `Node` and `Edge` values directly instead of decomposing
-  them into anonymous tuples on push, so the builders are the single
-  representation of a node and an edge.
-- The recording-renderer widget tests moved from `src/{clipping,coordinate,
-  overlay}_tests.rs` into `tests/{clipping,coordinates,overlay}.rs` and now share
-  one fake renderer in `tests/common/record.rs`, replacing three near-identical
-  copies. The crate has no `#[cfg(test)]` modules at its root.
-- `demos/shader_editor` reports compilation failures through `Display` on
-  `CompileError`/`ValidationError` rather than a `{:?}` dump, and refuses to
-  generate WGSL for an unhandled node type instead of emitting a stub function
-  with a `TODO` comment.
-- The criterion benchmark moved from `iced_nodegraph/benches/` into its own
-  `iced_nodegraph_bench` workspace member (`cargo bench -p
-  iced_nodegraph_bench`). Cargo scopes `dev-dependencies` to the package, not to
-  the target that uses them, so every `cargo test -p iced_nodegraph` was
-  compiling criterion's 38-crate tree (~59 CPU-seconds) for test binaries that
-  never link it. The bench only ever used `iced_nodegraph_sdf`.
-- The `iced` dev-dependency drops the `wayland` feature. `winit` refuses to
-  compile on Linux without a display backend, so one is required, but the tests
-  are headless and never open a window: `x11` costs 7 crates where `wayland`
-  costs 34 (the smithay stack plus tiny-skia, pulled in by winit's adwaita
-  client-side decorations).
-- Cable topology has its own module. `node_graph/cable.rs` holds `Station`,
-  `CableGeometry` and the lowering from edges and routes to hop chains
-  (`edge_hops`, `anchor_rings`); `node_graph/edge_path.rs` (formerly under
-  `widget/`) holds the path geometry, including the bezier control-length
-  rule. `node_graph/mod.rs` is the builder DSL and the public value types
-  only, and nothing outside `widget/` imports from the `Widget` impl.
-- The widget's animation clock is advanced in one place: `draw` reads the same
-  capped delta `update` stores.
-- The criterion bench is `benches/shape_eval.rs` (group `shape_eval`), named
-  for what it measures: CPU shape evaluation, cold and through `ShapeCache`.
-- `iced_nodegraph_sdf` comments and docs state current invariants and their
-  reasons; `README.md` and `ARCHITECTURE.md` present `Shape` as the one public
-  authoring API, with `Curve`, `ShapeBuilder` and the boolean stage as
-  internal lowering.
+- `demos/hello_world` has one config node per `Catalog` class and status and
+  boots a complete styling rig.
+- The criterion bench lives in the `iced_nodegraph_bench` member as
+  `benches/shape_eval.rs`, so `cargo test -p iced_nodegraph` no longer builds
+  criterion.
+- GPU budget tests on the 500-node scene (memory, idle-frame uploads, fragment
+  work) and the ignored `gpu_cost_report` probe, which also times the index
+  scatter and sort separately.
+- `demos/500_nodes` reporter knobs (`NG_REPORT`, `NG_SCALE`, `NG_NODES`,
+  `NG_NO_EDGES`, `NG_NO_GRID`); see "Diagnosing GPU cost" in
+  `demos/README.md`.
+- The `bench_scene` fixture draws 640 distinct edges instead of 100 stacked
+  ones.
+- The widget pixel-oracle harness resets the renderer per frame; two tests
+  ignored for cross-test pollution run again.
+- A test pins the bezier tessellation tolerance against a finer reference.
+- The `pin!` and `node_pin` doc examples compile.
+- Demos require `iced_palette` 0.1.1, which drops the `iced` umbrella crate.
+- `NodeGraph` stores `Node` and `Edge` values directly.
+- The recording-renderer tests live in `tests/` and share
+  `tests/common/record.rs`.
+- `demos/shader_editor` reports compile errors through `Display` and refuses
+  unhandled node types.
+- The `iced` dev-dependency uses `x11` instead of `wayland`.
+- Cable topology lives in `node_graph/cable.rs`, path geometry in
+  `node_graph/edge_path.rs`.
+- The animation clock advances in one place.
+- `iced_nodegraph_sdf` docs present `Shape` as the one public authoring API.
 
 ## [0.4.2] - 2026-07-23
 
