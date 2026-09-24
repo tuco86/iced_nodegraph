@@ -136,6 +136,9 @@ pub struct SdfPrimitive {
     pub camera_zoom: f32,
     layout_width: f32,
     pub time: f32,
+    /// Set by [`mark_animated`](Self::mark_animated): an entry sits where the
+    /// caller computed it for this frame and somewhere else next frame.
+    animated_geometry: bool,
     /// The `DrawData` slot this primitive was assigned in `prepare`, stored on the
     /// primitive itself rather than derived from draw order. iced PREPARES every
     /// queued instance but SKIPS drawing those whose bounds snap empty or fall off
@@ -153,6 +156,7 @@ impl Clone for SdfPrimitive {
             camera_zoom: self.camera_zoom,
             layout_width: self.layout_width,
             time: self.time,
+            animated_geometry: self.animated_geometry,
             draw_slot: AtomicU32::new(self.draw_slot.load(Ordering::Relaxed)),
         }
     }
@@ -166,6 +170,7 @@ impl SdfPrimitive {
             camera_zoom: 1.0,
             layout_width: 0.0,
             time: 0.0,
+            animated_geometry: false,
             draw_slot: AtomicU32::new(0),
         }
     }
@@ -223,8 +228,23 @@ impl SdfPrimitive {
         self.entries.len()
     }
 
+    /// Declares that some entry's placement is a function of time: the caller
+    /// recomputes it every frame, so this primitive needs the next frame the
+    /// way a flowing pattern does.
+    ///
+    /// A shape's shader position is fixed at push time; the shader only
+    /// animates patterns. Geometry that moves on the CPU is invisible to
+    /// [`has_animations`](Self::has_animations) unless declared here.
+    pub fn mark_animated(&mut self) -> &mut Self {
+        self.animated_geometry = true;
+        self
+    }
+
+    /// Whether drawing this primitive again next frame would show something
+    /// different: a flowing pattern, or geometry declared moving through
+    /// [`mark_animated`](Self::mark_animated).
     pub fn has_animations(&self) -> bool {
-        self.entries.iter().any(|e| e.style.is_animated())
+        self.animated_geometry || self.entries.iter().any(|e| e.style.is_animated())
     }
 
     /// The `DrawData` slot assigned in the last `prepare` (test hook for the

@@ -178,6 +178,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pin reports nothing. It carries no reason: validation is a single predicate,
   and one that answered `false` cannot say which of its rules did.
 
+- **`SdfPrimitive::mark_animated`.** Declares geometry whose placement the
+  caller recomputes every frame, so `has_animations` reports it like a
+  flowing pattern and the same redraw path serves both. The particles use it;
+  before, only shader-side pattern flow could keep the frame loop alive.
+
 - **`NodeGraph::dragging_anchor_style` / `dragging_anchor_class`.** The
   phantom anchor a route drag holds at the cursor is styled by its own class,
   the shape of `dragging_edge_style`; it used the theme's default anchor
