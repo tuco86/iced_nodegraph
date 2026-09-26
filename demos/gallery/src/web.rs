@@ -13,12 +13,15 @@
 //! the loader opens one [`keep_alive`] window first: an empty scene in a
 //! one-pixel element off screen that is never closed, so the device lives as
 //! long as the page.
+//!
+//! [`watch_messages`] taps one embed: every message its scene receives is also
+//! reported to the page as a DOM event, which the project site prints.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use demo_common::{Scene, SceneMessage, rustdoc_theme};
+use demo_common::{Scene, SceneMessage, page_theme};
 use iced::futures::channel::mpsc;
 use iced::futures::{SinkExt, Stream, StreamExt};
 use iced::window::settings::PlatformSpecific;
@@ -49,7 +52,7 @@ pub fn run_gallery() {
 }
 
 /// Opens `scene` in the DOM element with id `target`, replacing it with a
-/// canvas, on the rustdoc page theme `theme` names.
+/// canvas, on the page theme `theme` names (see `demo_common::PAGE_THEMES`).
 #[wasm_bindgen]
 pub fn open_scene(target: &str, scene: &str, theme: &str) {
     push(Command::Open {
@@ -76,12 +79,25 @@ pub fn keep_alive(target: &str) {
     });
 }
 
-/// Switches every live scene onto the rustdoc page theme `theme` names. A
-/// name that is not one of rustdoc's leaves every scene as it is.
+/// Switches every live scene onto the page theme `theme` names. A name that is
+/// not a page theme leaves every scene as it is.
 #[wasm_bindgen]
 pub fn set_theme(theme: &str) {
     push(Command::Theme {
         name: theme.to_owned(),
+    });
+}
+
+/// Reports every message the scene at `target` receives, until that scene
+/// closes, as a `gallery-message` `CustomEvent` on `window` whose `detail` is
+/// `{ target, message }`, `message` being the demo message's `Debug` form.
+///
+/// Queued like the other commands, so it may precede the matching
+/// [`open_scene`]; a later scene in the same target needs a fresh call.
+#[wasm_bindgen]
+pub fn watch_messages(target: &str) {
+    push(Command::Watch {
+        target: target.to_owned(),
     });
 }
 
@@ -99,6 +115,9 @@ enum Command {
         name: String,
     },
     KeepAlive {
+        target: String,
+    },
+    Watch {
         target: String,
     },
 }
@@ -161,6 +180,9 @@ struct Live {
 
 struct Gallery {
     live: HashMap<window::Id, Live>,
+    /// Targets whose scene messages are reported to the page. A target stays
+    /// here until its window closes, so a watch may precede its scene.
+    watched: HashSet<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -175,6 +197,7 @@ impl Gallery {
         (
             Self {
                 live: HashMap::new(),
+                watched: HashSet::new(),
             },
             Task::none(),
         )
@@ -196,7 +219,7 @@ impl Gallery {
                 }
 
                 let (mut scene, boot) = (def.boot)();
-                if let Some(theme) = rustdoc_theme(&theme) {
+                if let Some(theme) = page_theme(&theme) {
                     scene.set_theme(theme);
                 }
                 let (id, open) = window::open(window::Settings {
@@ -214,7 +237,7 @@ impl Gallery {
                 ])
             }
             Message::Command(Command::Theme { name }) => {
-                if let Some(theme) = rustdoc_theme(&name) {
+                if let Some(theme) = page_theme(&name) {
                     for live in self.live.values_mut() {
                         live.scene.set_theme(theme.clone());
                     }
@@ -247,15 +270,27 @@ impl Gallery {
                     None => Task::none(),
                 }
             }
+            Message::Command(Command::Watch { target }) => {
+                let _ = self.watched.insert(target);
+
+                Task::none()
+            }
             Message::Scene(id, scene_message) => match self.live.get_mut(&id) {
-                Some(live) => live
-                    .scene
-                    .update(scene_message)
-                    .map(move |message| Message::Scene(id, message)),
+                Some(live) => {
+                    if self.watched.contains(&live.target) {
+                        report(&live.target, &scene_message);
+                    }
+
+                    live.scene
+                        .update(scene_message)
+                        .map(move |message| Message::Scene(id, message))
+                }
                 None => Task::none(),
             },
             Message::Closed(id) => {
-                let _ = self.live.remove(&id);
+                if let Some(live) = self.live.remove(&id) {
+                    let _ = self.watched.remove(&live.target);
+                }
 
                 Task::none()
             }
@@ -300,5 +335,25 @@ impl Gallery {
             .into_iter()
             .chain(scenes),
         )
+    }
+}
+
+/// Dispatches `message` as a `gallery-message` event on `window`. The tap is
+/// an observer: a page without a `window` or a failed dispatch leaves the
+/// scene untouched.
+fn report(target: &str, message: &SceneMessage) {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+
+    let detail = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(&detail, &"target".into(), &target.into());
+    let _ = js_sys::Reflect::set(&detail, &"message".into(), &format!("{message:?}").into());
+
+    let init = web_sys::CustomEventInit::new();
+    init.set_detail(&detail);
+
+    if let Ok(event) = web_sys::CustomEvent::new_with_event_init_dict("gallery-message", &init) {
+        let _ = window.dispatch_event(&event);
     }
 }

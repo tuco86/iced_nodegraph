@@ -3,9 +3,9 @@
 //! implements so the gallery can run it.
 
 mod content;
-mod rustdoc;
+mod page_theme;
 mod scene;
 
 pub use content::{NodeContentStyle, node_title_bar};
-pub use rustdoc::{RUSTDOC_THEMES, rustdoc_theme};
+pub use page_theme::{PAGE_THEMES, page_theme};
 pub use scene::{Demo, Scene, SceneDef, SceneMessage, erase};

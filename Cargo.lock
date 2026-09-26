@@ -853,10 +853,13 @@ dependencies = [
  "demo_shader_editor",
  "demo_styling",
  "iced",
+ "iced_nodegraph",
  "iced_runtime",
+ "js-sys",
  "png",
  "pollster",
  "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]

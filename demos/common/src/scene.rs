@@ -74,8 +74,8 @@ pub trait Demo: Sized + 'static {
 
     fn theme(&self) -> Theme;
 
-    /// Switches the demo onto `theme`, the way the documentation site follows
-    /// rustdoc's page theme; the native binaries never call it.
+    /// Switches the demo onto `theme`, the way an embed follows the page
+    /// theme of the site it sits in; the native binaries never call it.
     fn set_theme(&mut self, theme: Theme);
 
     fn subscription(&self) -> Subscription<Self::Message> {

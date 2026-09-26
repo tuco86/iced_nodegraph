@@ -1,12 +1,16 @@
 //! Renders every gallery scene headlessly to the PNG stills the docs show.
 //!
 //! Usage: `gallery_screenshots <out_dir> [scene theme]`. Without a scene the
-//! process re-executes itself once per scene and rustdoc theme: one renderer
+//! process re-executes itself once per scene and page theme: one renderer
 //! means one `SdfPipeline`, and that pipeline carries frame-surviving state -
 //! the shape cache, the static-background texture cache, GPU buffers - so two
 //! renders sharing it would corrupt each other. Each pair lands in
 //! `<scene>.<theme>.png`; `<scene>.png` is a copy of the dark one, the file
 //! GitHub, docs.rs and the landing-page cards show.
+//!
+//! A scene's boot task is run for its widget operations only - a scene that
+//! frames its camera on boot does so through one - so the still shows the
+//! composition the live canvas opens on.
 
 /// Rendering needs a native wgpu adapter and the `png` encoder, neither of
 /// which the package's wasm target carries; cargo still builds every bin of the
@@ -19,14 +23,16 @@ mod native {
     use std::path::Path;
     use std::process;
 
-    use demo_common::{RUSTDOC_THEMES, rustdoc_theme};
+    use demo_common::{PAGE_THEMES, page_theme};
     use demo_gallery::SCENES;
+    use iced::futures::StreamExt;
     use iced_runtime::core::{
         self as core, Event, Font, Pixels, Size, clipboard, mouse,
         renderer::{self, Headless},
         window,
     };
     use iced_runtime::user_interface::{self, UserInterface};
+    use iced_runtime::{Action, task};
 
     /// Logical size of an embed; mirrors `.demo-frame` max-width and height in
     /// `site/demo.css`, which lays the still out at that size in CSS pixels so
@@ -60,7 +66,7 @@ mod native {
         let exe = std::env::current_exe()?;
 
         for def in SCENES {
-            for theme in RUSTDOC_THEMES {
+            for theme in PAGE_THEMES {
                 let status = process::Command::new(&exe)
                     .args([out_dir, def.name, theme])
                     .status()?;
@@ -85,11 +91,10 @@ mod native {
             .iter()
             .find(|def| def.name == scene)
             .ok_or_else(|| format!("unknown scene: {scene}"))?;
-        let page_theme =
-            rustdoc_theme(theme).ok_or_else(|| format!("unknown rustdoc theme: {theme}"))?;
+        let iced_theme = page_theme(theme).ok_or_else(|| format!("unknown page theme: {theme}"))?;
 
-        let (mut scene, _boot) = (def.boot)();
-        scene.set_theme(page_theme.clone());
+        let (mut scene, boot) = (def.boot)();
+        scene.set_theme(iced_theme.clone());
 
         let mut renderer = pollster::block_on(<iced::Renderer as Headless>::new(
             Font::with_name("Fira Sans"),
@@ -105,6 +110,17 @@ mod native {
             &mut renderer,
         );
 
+        // Widget operations resolve against the layout `build` computed and
+        // take effect in the next `update`, as they do in the runtime. Every
+        // other action needs a running application and is dropped.
+        if let Some(mut actions) = task::into_stream(boot) {
+            while let Some(action) = pollster::block_on(actions.next()) {
+                if let Action::Widget(mut operation) = action {
+                    ui.operate(&renderer, operation.as_mut());
+                }
+            }
+        }
+
         let mut messages = Vec::new();
         let _ = ui.update(
             &[Event::Window(window::Event::RedrawRequested(
@@ -118,9 +134,9 @@ mod native {
 
         ui.draw(
             &mut renderer,
-            &page_theme,
+            &iced_theme,
             &renderer::Style {
-                text_color: page_theme.palette().text,
+                text_color: iced_theme.palette().text,
             },
             mouse::Cursor::Unavailable,
         );
@@ -132,7 +148,7 @@ mod native {
             &mut renderer,
             physical,
             SCALE,
-            page_theme.palette().background,
+            iced_theme.palette().background,
         );
 
         let path = Path::new(out_dir).join(format!("{}.{theme}.png", def.name));

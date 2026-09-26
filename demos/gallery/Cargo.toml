@@ -22,10 +22,12 @@ demo_styling.workspace = true
 demo_interaction.workspace = true
 demo_500_nodes.workspace = true
 demo_shader_editor.workspace = true
+iced_nodegraph.workspace = true
 
 # `fira-sans` is unconditional: a browser has no system fonts to detect, and the
-# screenshot must be rendered with the same font the canvas uses.
-iced = { workspace = true, features = ["wgpu", "crisp", "thread-pool", "fira-sans"] }
+# screenshot must be rendered with the same font the canvas uses. `canvas` is
+# the scope scene's screen.
+iced = { workspace = true, features = ["wgpu", "crisp", "thread-pool", "fira-sans", "canvas"] }
 # The `core` re-export supplies `Headless`, `clipboard::Null`, `mouse`, `Event`
 # and `renderer::Style` without turning on iced's `advanced` feature.
 iced_runtime.workspace = true
@@ -38,6 +40,9 @@ iced_runtime.workspace = true
 iced = { workspace = true, features = ["web-colors"] }
 wasm-bindgen.workspace = true
 console_error_panic_hook.workspace = true
+# The message tap dispatches a `CustomEvent` on `window`.
+web-sys = { workspace = true, features = ["Window", "EventTarget", "CustomEvent", "CustomEventInit"] }
+js-sys.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 png.workspace = true
