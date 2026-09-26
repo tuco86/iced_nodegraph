@@ -108,7 +108,7 @@ enum ApplicationMessage {
         delta: Vector,
         indices: Vec<usize>,
     },
-    Info(GraphInfo),
+    Info(Box<GraphInfo>),
     /// Stats-panel toggle (top right). Hiding the panel also drops the
     /// `on_info` subscription, so the demo stops rendering while idle.
     StatsToggled(bool),
@@ -247,7 +247,7 @@ impl demo_common::Demo for Application {
                     self.intervals
                         .push_back(now.duration_since(prev).as_secs_f32() * 1000.0);
                 }
-                self.latest_info = Some(info);
+                self.latest_info = Some(*info);
                 if self.report {
                     self.since_report += 1;
                     if self.since_report >= REPORT_EVERY {
@@ -283,7 +283,7 @@ impl demo_common::Demo for Application {
         // shown: live per-frame diagnostics force continuous redraws, so with
         // the panel hidden the demo is fully idle between interactions.
         if self.stats_visible {
-            ng = ng.on_info(ApplicationMessage::Info);
+            ng = ng.on_info(|info| ApplicationMessage::Info(Box::new(info)));
         }
         // `NG_NO_GRID=1` removes the tiling layer the theme default carries,
         // dropping one full-canvas SDF draw from every frame.
