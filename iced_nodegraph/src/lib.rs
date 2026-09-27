@@ -295,7 +295,7 @@
 //! browsers. There is no WebGL and no tiny-skia fallback, so Chrome/Chromium is
 //! recommended on the web.
 //!
-//! Every demo runs in the browser at <https://tuco86.github.io/iced_nodegraph/>.
+//! Every demo runs in the browser at <https://nodegraph.doodleshnookie.net/>.
 //!
 //! <link rel="stylesheet" href="../gallery/pkg/demo.css"><script type="module" src="../gallery/pkg/demo-loader.js"></script>
 pub use connection::{default_can_connect, direction_ok, input_not_occupied, not_same_node};

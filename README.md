@@ -13,14 +13,14 @@
 </p>
 
 <p align="center">
-  <a href="https://tuco86.github.io/iced_nodegraph/demo_hello_world/index.html">
+  <a href="https://nodegraph.doodleshnookie.net/#demo-hello_world">
     <img src="https://raw.githubusercontent.com/tuco86/iced_nodegraph/main/assets/hero.png" alt="The hello_world demo: an email workflow graph with four connected nodes" width="800">
   </a>
   <br>
-  <em><a href="https://tuco86.github.io/iced_nodegraph/demo_hello_world/index.html">Run this demo in your browser</a> (WebGPU required, Chrome recommended)</em>
+  <em><a href="https://nodegraph.doodleshnookie.net/#demo-hello_world">Run this demo in your browser</a> (WebGPU required, Chrome recommended)</em>
 </p>
 
-<p align="center">Documentation with live demos: <a href="https://tuco86.github.io/iced_nodegraph/">https://tuco86.github.io/iced_nodegraph/</a></p>
+<p align="center">Project site with live demos and the guide: <a href="https://nodegraph.doodleshnookie.net/">nodegraph.doodleshnookie.net</a></p>
 
 Nodes are ordinary iced widgets - sliders, text inputs, whatever your `view`
 builds - placed on an infinite zoom/pan canvas and wired together through typed
@@ -72,11 +72,11 @@ Every demo runs natively and in the browser.
 
 | Demo | Live | Shows |
 |------|------|-------|
-| [`hello_world`](https://github.com/tuco86/iced_nodegraph/tree/main/demos/hello_world) | [run](https://tuco86.github.io/iced_nodegraph/demo_hello_world/index.html) | Command palette, theme switching, selection, clone/delete, persistence |
-| [`styling`](https://github.com/tuco86/iced_nodegraph/tree/main/demos/styling) | [run](https://tuco86.github.io/iced_nodegraph/demo_styling/index.html) | Style presets and live node styling controls |
-| [`interaction`](https://github.com/tuco86/iced_nodegraph/tree/main/demos/interaction) | [run](https://tuco86.github.io/iced_nodegraph/demo_interaction/index.html) | Pin direction and type rules, connection validation, snap feedback |
-| [`500_nodes`](https://github.com/tuco86/iced_nodegraph/tree/main/demos/500_nodes) | [run](https://tuco86.github.io/iced_nodegraph/demo_500_nodes/index.html) | 500 nodes / 640 edges stress test with a runtime stats overlay |
-| [`shader_editor`](https://github.com/tuco86/iced_nodegraph/tree/main/demos/shader_editor) | [run](https://tuco86.github.io/iced_nodegraph/demo_shader_editor/index.html) | Visual WGSL editor: the graph compiles to a running shader |
+| [`hello_world`](https://github.com/tuco86/iced_nodegraph/tree/main/demos/hello_world) | [run](https://nodegraph.doodleshnookie.net/#demo-hello_world) | Command palette, theme switching, selection, clone/delete, persistence |
+| [`styling`](https://github.com/tuco86/iced_nodegraph/tree/main/demos/styling) | [run](https://nodegraph.doodleshnookie.net/#demo-styling) | Style presets and live node styling controls |
+| [`interaction`](https://github.com/tuco86/iced_nodegraph/tree/main/demos/interaction) | [run](https://nodegraph.doodleshnookie.net/#demo-interaction) | Pin direction and type rules, connection validation, snap feedback |
+| [`500_nodes`](https://github.com/tuco86/iced_nodegraph/tree/main/demos/500_nodes) | [run](https://nodegraph.doodleshnookie.net/#demo-500_nodes) | 500 nodes / 640 edges stress test with a runtime stats overlay |
+| [`shader_editor`](https://github.com/tuco86/iced_nodegraph/tree/main/demos/shader_editor) | [run](https://nodegraph.doodleshnookie.net/#demo-shader_editor) | Visual WGSL editor: the graph compiles to a running shader |
 
 ```bash
 cargo run -p demo_hello_world             # also: demo_styling, demo_interaction, demo_shader_editor

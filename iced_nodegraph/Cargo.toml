@@ -5,6 +5,7 @@ edition.workspace = true
 authors.workspace = true
 description = "High-performance node graph editor widget for Iced with SDF-based rendering"
 repository.workspace = true
+homepage.workspace = true
 license.workspace = true
 readme = "../README.md"
 keywords = ["iced", "gui", "node-graph", "widget"]

@@ -19,6 +19,7 @@ edition = "2024"
 authors = ["tuco86"]
 license = "MIT"
 repository = "https://github.com/tuco86/iced_nodegraph"
+homepage = "https://nodegraph.doodleshnookie.net"
 
 [workspace.dependencies]
 # Core libraries. The `version` is required for publishing: crates.io strips
